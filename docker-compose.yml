@@ -1,0 +1,46 @@
+# Local stack for development and tests (ARCHITECTURE.md, "Testing and evals").
+#   docker compose up -d --wait     start and wait until healthy
+#   docker compose down -v          stop and delete all local data
+# Ports bind to 127.0.0.1 only.
+name: copilot
+
+services:
+  postgres:
+    # Aurora PostgreSQL 16 compatible, with pgvector.
+    image: pgvector/pgvector:0.8.7-pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: copilot
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d copilot"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  valkey:
+    # ElastiCache Serverless for Valkey runs 8.x.
+    image: valkey/valkey:8.1-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  elasticmq:
+    # SQS-compatible queue. Endpoint http://localhost:9324, any credentials, region us-east-1.
+    image: softwaremill/elasticmq-native:1.7.1
+    ports:
+      - "127.0.0.1:9324:9324"   # SQS API
+      - "127.0.0.1:9325:9325"   # web UI
+    volumes:
+      - ./docker/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
+
+volumes:
+  postgres-data:
