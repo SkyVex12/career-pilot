@@ -1,0 +1,24 @@
+{
+  "name": "@copilot/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Realtime protocol types, generated from protocol.schema.json",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./protocol.schema.json"
+  },
+  "scripts": {
+    "codegen:ts": "node scripts/codegen-ts.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
