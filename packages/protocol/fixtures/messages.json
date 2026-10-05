@@ -1,0 +1,204 @@
+{
+  "client": [
+    {
+      "type": "session.start",
+      "mode": "interview",
+      "job_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
+      "platform": "zoom",
+      "client_version": "1.4.0",
+      "consent": { "store_transcript": true },
+      "audio": { "sample_rate": 16000, "encoding": "pcm16" }
+    },
+    {
+      "type": "session.start",
+      "mode": "standup",
+      "meeting_title": "Payments daily standup",
+      "platform": "meet",
+      "client_version": "1.4.0",
+      "consent": { "store_transcript": false },
+      "audio": { "sample_rate": 16000, "encoding": "pcm16" }
+    },
+    { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "last_seq": 411 },
+    { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "last_seq": 0 },
+    { "type": "auth.refresh", "access_token": "eyJraWQiOiJ0ZXN0In0.eyJzdWIiOiJ0ZXN0In0.c2ln" },
+    { "type": "question.force" },
+    { "type": "question.force", "text": "How would you shard the ledger table?" },
+    { "type": "screenshot", "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U" },
+    {
+      "type": "screenshot",
+      "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U",
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"
+    },
+    { "type": "answer.expand", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" },
+    { "type": "answer.feedback", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210", "rating": "up" },
+    {
+      "type": "answer.feedback",
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "rating": "down",
+      "reason": "Wrong project"
+    },
+    { "type": "mode.set", "mode": "meeting" },
+    { "type": "session.end" }
+  ],
+  "server": [
+    {
+      "type": "session.ready",
+      "seq": 1,
+      "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
+      "server_time": "2026-10-05T15:02:11Z",
+      "limits": { "max_minutes": 120 }
+    },
+    { "type": "transcript.partial", "seq": 2, "channel": "them", "seg_id": 0, "text": "Tell me about a time" },
+    {
+      "type": "transcript.final",
+      "seq": 3,
+      "channel": "them",
+      "seg_id": 0,
+      "text": "Tell me about a time you scaled a system.",
+      "start_ms": 1200,
+      "end_ms": 3850
+    },
+    {
+      "type": "question.detected",
+      "seq": 4,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "text": "Tell me about a time you scaled a system.",
+      "question_type": "behavioral",
+      "confidence": 0.92,
+      "speculative": true
+    },
+    { "type": "question.cancelled", "seq": 5, "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" },
+    {
+      "type": "answer.delta",
+      "seq": 412,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "fast",
+      "text": "- Led the payments migration at Acme, cut p95 latency 40% [n:3f2a]\n"
+    },
+    {
+      "type": "answer.done",
+      "seq": 413,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "deep",
+      "memory_refs": [{ "node_id": "0192f3d0-0a11-7e2b-8c3d-2f1e0b9a7c44", "label": "Payments migration" }],
+      "usage": { "input_tokens": 9120, "cached_tokens": 8000, "output_tokens": 214 }
+    },
+    {
+      "type": "answer.done",
+      "seq": 414,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "fast",
+      "memory_refs": [],
+      "usage": { "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0 }
+    },
+    {
+      "type": "answer.error",
+      "seq": 415,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "deep",
+      "code": "llm_timeout"
+    },
+    { "type": "status", "seq": 416, "component": "stt", "state": "reconnecting", "message": "Reconnecting transcription" },
+    { "type": "auth.expiring", "seq": 417, "expires_in_s": 120 },
+    { "type": "error", "seq": 418, "code": "rate_limited", "message": "Too many requests", "fatal": true, "retry_after_ms": 1000 },
+    { "type": "error", "seq": 419, "code": "bad_message", "message": "Unknown message type", "fatal": false }
+  ],
+  "invalid": [
+    { "side": "client", "why": "unknown type", "message": { "type": "session.pause" } },
+    { "side": "client", "why": "missing type", "message": { "mode": "meeting" } },
+    {
+      "side": "client",
+      "why": "mode not in enum",
+      "message": {
+        "type": "session.start",
+        "mode": "lecture",
+        "platform": "zoom",
+        "client_version": "1.4.0",
+        "consent": { "store_transcript": true },
+        "audio": { "sample_rate": 16000, "encoding": "pcm16" }
+      }
+    },
+    {
+      "side": "client",
+      "why": "sample rate must be 16000",
+      "message": {
+        "type": "session.start",
+        "mode": "interview",
+        "platform": "zoom",
+        "client_version": "1.4.0",
+        "consent": { "store_transcript": true },
+        "audio": { "sample_rate": 48000, "encoding": "pcm16" }
+      }
+    },
+    {
+      "side": "client",
+      "why": "consent required",
+      "message": {
+        "type": "session.start",
+        "mode": "interview",
+        "platform": "zoom",
+        "client_version": "1.4.0",
+        "audio": { "sample_rate": 16000, "encoding": "pcm16" }
+      }
+    },
+    { "side": "client", "why": "missing last_seq", "message": { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33" } },
+    { "side": "client", "why": "session_id not a uuid", "message": { "type": "session.resume", "session_id": "abc", "last_seq": 1 } },
+    { "side": "client", "why": "negative last_seq", "message": { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "last_seq": -1 } },
+    { "side": "client", "why": "rating not in enum", "message": { "type": "answer.feedback", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210", "rating": "meh" } },
+    { "side": "client", "why": "empty access token", "message": { "type": "auth.refresh", "access_token": "" } },
+    { "side": "server", "why": "server message without seq", "message": { "type": "question.cancelled", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" } },
+    { "side": "server", "why": "seq starts at 1", "message": { "type": "question.cancelled", "seq": 0, "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" } },
+    {
+      "side": "server",
+      "why": "confidence above 1",
+      "message": {
+        "type": "question.detected",
+        "seq": 4,
+        "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+        "text": "Why?",
+        "question_type": "technical",
+        "confidence": 1.5,
+        "speculative": false
+      }
+    },
+    { "side": "server", "why": "channel not in enum", "message": { "type": "transcript.partial", "seq": 2, "channel": "both", "seg_id": 0, "text": "hi" } },
+    { "side": "server", "why": "pass not in enum", "message": { "type": "answer.delta", "seq": 2, "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210", "pass": "slow", "text": "x" } },
+    {
+      "side": "server",
+      "why": "server_time without a timezone",
+      "message": {
+        "type": "session.ready",
+        "seq": 1,
+        "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
+        "server_time": "2026-10-05T15:02:11",
+        "limits": { "max_minutes": 120 }
+      }
+    },
+    { "side": "server", "why": "client message sent as server message", "message": { "type": "session.end", "seq": 3 } }
+  ],
+  "audio_frames": [
+    {
+      "why": "them channel, speech start, with audio",
+      "header": { "channel": 0, "flags": 1, "frame_seq": 0, "capture_ms": 0 },
+      "audio_hex": "0100ff7f",
+      "frame_hex": "000100000000000000000100ff7f"
+    },
+    {
+      "why": "me channel, speech end, empty, max frame_seq",
+      "header": { "channel": 1, "flags": 2, "frame_seq": 4294967295, "capture_ms": 123456789 },
+      "audio_hex": "",
+      "frame_hex": "0102ffffffff075bcd15"
+    },
+    {
+      "why": "them channel, no flags, big-endian check",
+      "header": { "channel": 0, "flags": 0, "frame_seq": 258, "capture_ms": 3600000 },
+      "audio_hex": "0000",
+      "frame_hex": "0000000001020036ee800000"
+    }
+  ],
+  "invalid_audio_frames": [
+    { "why": "shorter than the header", "frame_hex": "000100000000" },
+    { "why": "channel 2", "frame_hex": "02000000000000000000" },
+    { "why": "flags above 3", "frame_hex": "00040000000000000000" }
+  ]
+}
