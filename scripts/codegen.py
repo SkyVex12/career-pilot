@@ -4,8 +4,9 @@
     uv run python scripts/codegen.py --check   # fail if they are out of date  (pnpm codegen:check)
 
 Python types come from datamodel-code-generator, TypeScript types from
-json-schema-to-typescript (needs `pnpm install` first). Both are generated into a temp
-directory first, so --check never touches the working tree.
+json-schema-to-typescript (needs `pnpm install` first), and Rust types from
+packages/protocol/scripts/codegen_rs.py (no Rust toolchain needed). All three are generated
+into a temp directory first, so --check never touches the working tree.
 """
 
 import argparse
@@ -21,6 +22,7 @@ PROTOCOL = ROOT / "packages" / "protocol"
 SCHEMA = PROTOCOL / "protocol.schema.json"
 PY_OUT = PROTOCOL / "python" / "copilot_protocol" / "models.py"
 TS_OUT = PROTOCOL / "src" / "generated.ts"
+RS_OUT = PROTOCOL / "rust" / "src" / "generated.rs"
 
 PY_HEADER = (
     "# Generated from protocol.schema.json by datamodel-code-generator."
@@ -67,6 +69,12 @@ def generate_typescript(out: Path) -> None:
     )
 
 
+def generate_rust(out: Path) -> None:
+    subprocess.run(
+        [sys.executable, str(PROTOCOL / "scripts" / "codegen_rs.py"), str(out)], check=True
+    )
+
+
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n") if path.exists() else ""
 
@@ -77,9 +85,14 @@ def main() -> int:
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
-        targets = {PY_OUT: Path(tmp, "models.py"), TS_OUT: Path(tmp, "generated.ts")}
+        targets = {
+            PY_OUT: Path(tmp, "models.py"),
+            TS_OUT: Path(tmp, "generated.ts"),
+            RS_OUT: Path(tmp, "generated.rs"),
+        }
         generate_python(targets[PY_OUT])
         generate_typescript(targets[TS_OUT])
+        generate_rust(targets[RS_OUT])
 
         stale: list[Path] = []
         for committed, fresh in targets.items():

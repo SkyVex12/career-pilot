@@ -349,6 +349,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "copilot-client"
+version = "0.0.0"
+dependencies = [
+ "copilot-protocol",
+]
+
+[[package]]
 name = "copilot-desktop"
 version = "0.0.0"
 dependencies = [
@@ -356,6 +363,16 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+]
+
+[[package]]
+name = "copilot-protocol"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
