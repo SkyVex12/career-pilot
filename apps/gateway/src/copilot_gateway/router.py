@@ -6,43 +6,16 @@ primary model id, then its retry id), each later provider one. Either provider c
 alone, so Stage 0 can start with only one set of credentials.
 """
 
-import logging
 from collections.abc import Sequence
 from typing import Any, Literal
 
-import anthropic
-from anthropic.lib.bedrock import AsyncAnthropicBedrockMantle
-
-from copilot_core.llm import AnthropicProvider, FallbackHook, LLMProvider, ModelRouter, Route
+from copilot_core.llm import FallbackHook, LLMProvider, ModelRouter, Route
+from copilot_core.providers import make_providers
 from copilot_gateway.config import Settings
-
-log = logging.getLogger(__name__)
 
 Family = Literal["haiku", "sonnet"]
 JOBS: dict[str, Family] = {"detector": "haiku", "fast": "haiku", "deep": "sonnet"}
 SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-
-def make_providers(settings: Settings) -> list[LLMProvider]:
-    timeout = anthropic.Timeout(30.0, connect=2.0)
-    providers: list[LLMProvider] = []
-    for name in settings.llm_providers:
-        if name == "bedrock":
-            key = settings.bedrock_api_key.get_secret_value() if settings.bedrock_api_key else None
-            client = AsyncAnthropicBedrockMantle(
-                aws_region=settings.aws_region, api_key=key, max_retries=0, timeout=timeout
-            )
-            providers.append(AnthropicProvider("bedrock", client))
-        elif settings.anthropic_api_key is None:
-            log.warning("ANTHROPIC_API_KEY is not set; skipping the direct Anthropic API route")
-        else:
-            client = anthropic.AsyncAnthropic(
-                api_key=settings.anthropic_api_key.get_secret_value(),
-                max_retries=0,
-                timeout=timeout,
-            )
-            providers.append(AnthropicProvider("anthropic", client))
-    return providers
 
 
 def _model_ids(settings: Settings, provider: str, family: Family) -> tuple[str, str]:
