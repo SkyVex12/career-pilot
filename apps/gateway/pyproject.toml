@@ -6,7 +6,12 @@ dependencies = [
   "copilot-core",
   "copilot-protocol",
   "fastapi>=0.115",
+  "orjson>=3.10",
+  "pydantic-settings>=2.6",
   "uvicorn[standard]>=0.32",
+  "uvloop>=0.21 ; sys_platform != 'win32'",
+  "valkey>=6.1",
+  "websockets>=14",
 ]
 
 [project.scripts]

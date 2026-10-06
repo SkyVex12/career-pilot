@@ -39,6 +39,21 @@ class SessionLimits(BaseModel):
     """
 
 
+class LatencyMs(BaseModel):
+    """
+    Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    turn_end_ms: Annotated[int | None, Field(ge=0)] = None
+    detector_ms: Annotated[int | None, Field(ge=0)] = None
+    first_token_ms: Annotated[int | None, Field(ge=0)] = None
+    first_delta_ms: Annotated[int | None, Field(ge=0)] = None
+    total_ms: Annotated[int | None, Field(ge=0)] = None
+
+
 class MemoryRef(BaseModel):
     """
     A memory node an answer cited; the gateway maps short ids like n:3f2a back to node ids.
@@ -389,6 +404,11 @@ class AnswerDone(BaseModel):
     """
     memory_refs: list[MemoryRef]
     usage: Usage
+    source: Literal["model", "prepared", "cache"] | None = None
+    """
+    Where the answer came from: model, prepared (a prepared answer in the session pack) or cache (an exact repeat).
+    """
+    latency_ms: LatencyMs | None = None
 
 
 class AnswerError(BaseModel):
@@ -468,10 +488,12 @@ class ServerError(BaseModel):
     retry_after_ms: Annotated[int | None, Field(ge=0)] = None
 
 
-class CloseCode(RootModel[Literal[1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]]):
-    root: Literal[1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]
+class CloseCode(
+    RootModel[Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4429, 4500]]
+):
+    root: Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4429, 4500]
     """
-    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4429 rate limited; 4500 internal error (resume).
+    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4429 rate limited; 4500 internal error (resume).
     """
 
 

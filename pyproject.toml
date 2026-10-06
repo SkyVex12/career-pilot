@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "copilot-api",
   "copilot-core",
+  "copilot-evals",
   "copilot-gateway",
   "copilot-protocol",
   "copilot-worker",
@@ -18,6 +19,7 @@ dev = [
   "boto3>=1.40",
   "boto3-stubs[sqs]>=1.40",
   "datamodel-code-generator[ruff]>=0.34",
+  "fakeredis[lua]>=2.26",
   "httpx2>=2.13.1",
   "jsonschema[format-nongpl]>=4.23",
   "pyright>=1.1.400",
@@ -31,11 +33,12 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol"]
+members = ["apps/api", "apps/gateway", "apps/worker", "evals", "packages/core", "packages/protocol"]
 
 [tool.uv.sources]
 copilot-api = { workspace = true }
 copilot-core = { workspace = true }
+copilot-evals = { workspace = true }
 copilot-gateway = { workspace = true }
 copilot-protocol = { workspace = true }
 copilot-worker = { workspace = true }
@@ -48,16 +51,20 @@ extend-exclude = ["packages/protocol/python/copilot_protocol/models.py", "apps/d
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF", "SIM", "PT"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test helpers take `timeout=` the way pytest helpers do.
+"apps/gateway/src/copilot_gateway/testing.py" = ["ASYNC109"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["copilot_api", "copilot_core", "copilot_gateway", "copilot_protocol", "copilot_worker"]
 
 [tool.pyright]
-include = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol", "migrations", "scripts", "tests"]
+include = ["apps/api", "apps/gateway", "apps/worker", "evals", "packages/core", "packages/protocol", "migrations", "scripts", "tests"]
 exclude = ["**/node_modules", "**/.venv", "apps/desktop"]
 pythonVersion = "3.12"
 # Strict for shipped code; standard for tests, scripts and the generated models.
 typeCheckingMode = "standard"
-strict = ["apps/api/src", "apps/gateway/src", "apps/worker/src", "packages/core/src", "packages/protocol/python/copilot_protocol/audio.py"]
+strict = ["apps/api/src", "apps/gateway/src", "apps/worker/src", "evals/src", "packages/core/src", "packages/protocol/python/copilot_protocol/audio.py"]
 venvPath = "."
 venv = ".venv"
 
@@ -66,6 +73,7 @@ testpaths = [
   "apps/api/tests",
   "apps/gateway/tests",
   "apps/worker/tests",
+  "evals/tests",
   "packages/core/tests",
   "packages/protocol/tests",
   "migrations/tests",

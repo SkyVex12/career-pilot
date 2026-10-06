@@ -111,6 +111,17 @@
       },
       "required": ["max_minutes"]
     },
+    "LatencyMs": {
+      "description": "Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.",
+      "type": "object",
+      "properties": {
+        "turn_end_ms": { "type": "integer", "minimum": 0 },
+        "detector_ms": { "type": "integer", "minimum": 0 },
+        "first_token_ms": { "type": "integer", "minimum": 0 },
+        "first_delta_ms": { "type": "integer", "minimum": 0 },
+        "total_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
     "MemoryRef": {
       "description": "A memory node an answer cited; the gateway maps short ids like n:3f2a back to node ids.",
       "type": "object",
@@ -320,7 +331,13 @@
         "question_id": { "$ref": "#/$defs/Uuid" },
         "pass": { "$ref": "#/$defs/Pass" },
         "memory_refs": { "type": "array", "items": { "$ref": "#/$defs/MemoryRef" } },
-        "usage": { "$ref": "#/$defs/Usage" }
+        "usage": { "$ref": "#/$defs/Usage" },
+        "source": {
+          "description": "Where the answer came from: model, prepared (a prepared answer in the session pack) or cache (an exact repeat).",
+          "type": "string",
+          "enum": ["model", "prepared", "cache"]
+        },
+        "latency_ms": { "$ref": "#/$defs/LatencyMs" }
       },
       "required": ["type", "seq", "question_id", "pass", "memory_refs", "usage"]
     },
@@ -373,9 +390,9 @@
     },
 
     "CloseCode": {
-      "description": "WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4429 rate limited; 4500 internal error (resume).",
+      "description": "WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4429 rate limited; 4500 internal error (resume).",
       "type": "integer",
-      "enum": [1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]
+      "enum": [1000, 1001, 4401, 4403, 4408, 4409, 4410, 4429, 4500]
     },
     "AudioFrameHeader": {
       "description": "Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200 bytes; may be empty on a speech-end frame, and is always empty on the me channel). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.",

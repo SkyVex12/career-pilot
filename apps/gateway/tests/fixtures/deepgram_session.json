@@ -1,0 +1,14 @@
+{
+  "note": "Deepgram live-transcription messages for one utterance, in the documented wire format. Replace with a recording from scripts/record_fixtures.py once a key is available.",
+  "on_audio": [
+    {"type": "Metadata", "request_id": "fixture", "model_info": {"name": "nova-3"}},
+    {"type": "Results", "channel_index": [0, 1], "duration": 1.2, "start": 0.0, "is_final": false, "speech_final": false,
+     "channel": {"alternatives": [{"transcript": "how did you", "confidence": 0.91, "words": []}]}},
+    {"type": "Results", "channel_index": [0, 1], "duration": 2.1, "start": 0.0, "is_final": false, "speech_final": false,
+     "channel": {"alternatives": [{"transcript": "how did you scale the ledger", "confidence": 0.93, "words": []}]}}
+  ],
+  "on_finalize": [
+    {"type": "Results", "channel_index": [0, 1], "duration": 2.4, "start": 0.0, "is_final": true, "speech_final": true, "from_finalize": true,
+     "channel": {"alternatives": [{"transcript": "How did you scale the ledger?", "confidence": 0.95, "words": []}]}}
+  ]
+}
