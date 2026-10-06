@@ -236,6 +236,11 @@ export interface AnswerDone {
   pass: Pass;
   memory_refs: MemoryRef[];
   usage: Usage;
+  /**
+   * Where the answer came from: model, prepared (a prepared answer in the session pack) or cache (an exact repeat).
+   */
+  source?: "model" | "prepared" | "cache";
+  latency_ms?: LatencyMs;
 }
 /**
  * A memory node an answer cited; the gateway maps short ids like n:3f2a back to node ids.
@@ -251,6 +256,16 @@ export interface Usage {
   input_tokens: number;
   cached_tokens: number;
   output_tokens: number;
+}
+/**
+ * Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.
+ */
+export interface LatencyMs {
+  turn_end_ms?: number;
+  detector_ms?: number;
+  first_token_ms?: number;
+  first_delta_ms?: number;
+  total_ms?: number;
 }
 /**
  * That pass failed; the other pass may still arrive.

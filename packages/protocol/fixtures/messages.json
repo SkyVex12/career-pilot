@@ -92,6 +92,16 @@
       "usage": { "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0 }
     },
     {
+      "type": "answer.done",
+      "seq": 415,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "fast",
+      "memory_refs": [],
+      "usage": { "input_tokens": 4410, "cached_tokens": 4096, "output_tokens": 61 },
+      "source": "model",
+      "latency_ms": { "turn_end_ms": 412, "detector_ms": 280, "first_token_ms": 390, "first_delta_ms": 705, "total_ms": 1460 }
+    },
+    {
       "type": "answer.error",
       "seq": 415,
       "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",

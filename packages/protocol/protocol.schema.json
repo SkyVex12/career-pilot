@@ -111,6 +111,17 @@
       },
       "required": ["max_minutes"]
     },
+    "LatencyMs": {
+      "description": "Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.",
+      "type": "object",
+      "properties": {
+        "turn_end_ms": { "type": "integer", "minimum": 0 },
+        "detector_ms": { "type": "integer", "minimum": 0 },
+        "first_token_ms": { "type": "integer", "minimum": 0 },
+        "first_delta_ms": { "type": "integer", "minimum": 0 },
+        "total_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
     "MemoryRef": {
       "description": "A memory node an answer cited; the gateway maps short ids like n:3f2a back to node ids.",
       "type": "object",
@@ -320,7 +331,13 @@
         "question_id": { "$ref": "#/$defs/Uuid" },
         "pass": { "$ref": "#/$defs/Pass" },
         "memory_refs": { "type": "array", "items": { "$ref": "#/$defs/MemoryRef" } },
-        "usage": { "$ref": "#/$defs/Usage" }
+        "usage": { "$ref": "#/$defs/Usage" },
+        "source": {
+          "description": "Where the answer came from: model, prepared (a prepared answer in the session pack) or cache (an exact repeat).",
+          "type": "string",
+          "enum": ["model", "prepared", "cache"]
+        },
+        "latency_ms": { "$ref": "#/$defs/LatencyMs" }
       },
       "required": ["type", "seq", "question_id", "pass", "memory_refs", "usage"]
     },
