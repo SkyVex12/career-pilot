@@ -1,0 +1,421 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://copilot.local/protocol/v1/protocol.schema.json",
+  "title": "Message",
+  "description": "Realtime protocol between the desktop client and the gateway (ARCHITECTURE.md, section 1). JSON text frames carry these messages; binary frames carry audio with AudioFrameHeader. Python and TypeScript types are generated from this file; edit it, then run `pnpm codegen`.",
+  "oneOf": [
+    { "$ref": "#/$defs/ClientMessage" },
+    { "$ref": "#/$defs/ServerMessage" }
+  ],
+  "$defs": {
+    "ClientMessage": {
+      "type": "object",
+      "description": "Any JSON message the client sends to the gateway.",
+      "oneOf": [
+        { "$ref": "#/$defs/SessionStart" },
+        { "$ref": "#/$defs/SessionResume" },
+        { "$ref": "#/$defs/AuthRefresh" },
+        { "$ref": "#/$defs/QuestionForce" },
+        { "$ref": "#/$defs/Screenshot" },
+        { "$ref": "#/$defs/AnswerExpand" },
+        { "$ref": "#/$defs/AnswerFeedback" },
+        { "$ref": "#/$defs/ModeSet" },
+        { "$ref": "#/$defs/SessionEnd" }
+      ],
+      "discriminator": { "propertyName": "type" }
+    },
+    "ServerMessage": {
+      "type": "object",
+      "description": "Any JSON message the gateway sends to the client. Every server message carries seq.",
+      "oneOf": [
+        { "$ref": "#/$defs/SessionReady" },
+        { "$ref": "#/$defs/TranscriptPartial" },
+        { "$ref": "#/$defs/TranscriptFinal" },
+        { "$ref": "#/$defs/QuestionDetected" },
+        { "$ref": "#/$defs/QuestionCancelled" },
+        { "$ref": "#/$defs/AnswerDelta" },
+        { "$ref": "#/$defs/AnswerDone" },
+        { "$ref": "#/$defs/AnswerError" },
+        { "$ref": "#/$defs/Status" },
+        { "$ref": "#/$defs/AuthExpiring" },
+        { "$ref": "#/$defs/ServerError" }
+      ],
+      "discriminator": { "propertyName": "type" }
+    },
+
+    "Uuid": {
+      "description": "UUID (v7 for ids we generate), lowercase hex with dashes.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "Seq": {
+      "description": "Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "Mode": {
+      "description": "Session mode; picks the session pack and prompt template.",
+      "type": "string",
+      "enum": ["interview", "standup", "meeting"]
+    },
+    "Channel": {
+      "description": "Audio source: them = system output (the other side), me = microphone (the user).",
+      "type": "string",
+      "enum": ["them", "me"]
+    },
+    "Pass": {
+      "description": "Answer pass: fast (Haiku talking points) or deep (Sonnet).",
+      "type": "string",
+      "enum": ["fast", "deep"]
+    },
+    "QuestionType": {
+      "description": "Question type from the detector.",
+      "type": "string",
+      "enum": [
+        "behavioral",
+        "technical",
+        "system_design",
+        "coding",
+        "standup_status",
+        "small_talk",
+        "other"
+      ]
+    },
+    "Consent": {
+      "type": "object",
+      "properties": {
+        "store_transcript": {
+          "description": "Whether the transcript may be stored after the call.",
+          "type": "boolean"
+        }
+      },
+      "required": ["store_transcript"]
+    },
+    "AudioFormat": {
+      "description": "Audio frames are 16 kHz, mono, 16-bit little-endian PCM.",
+      "type": "object",
+      "properties": {
+        "sample_rate": { "type": "integer", "const": 16000 },
+        "encoding": { "type": "string", "const": "pcm16" }
+      },
+      "required": ["sample_rate", "encoding"]
+    },
+    "SessionLimits": {
+      "type": "object",
+      "properties": {
+        "max_minutes": {
+          "description": "Minutes this session may run under the user's plan.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["max_minutes"]
+    },
+    "MemoryRef": {
+      "description": "A memory node an answer cited; the gateway maps short ids like n:3f2a back to node ids.",
+      "type": "object",
+      "properties": {
+        "node_id": { "$ref": "#/$defs/Uuid" },
+        "label": { "type": "string" }
+      },
+      "required": ["node_id", "label"]
+    },
+    "Usage": {
+      "description": "Token usage for one answer pass.",
+      "type": "object",
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "cached_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["input_tokens", "cached_tokens", "output_tokens"]
+    },
+
+    "SessionStart": {
+      "description": "First message of a new session.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.start" },
+        "mode": { "$ref": "#/$defs/Mode" },
+        "job_id": { "$ref": "#/$defs/Uuid" },
+        "meeting_title": { "type": "string" },
+        "platform": {
+          "description": "Call platform, for example zoom, meet or teams.",
+          "type": "string",
+          "minLength": 1
+        },
+        "client_version": { "type": "string", "minLength": 1 },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "audio": { "$ref": "#/$defs/AudioFormat" }
+      },
+      "required": ["type", "mode", "platform", "client_version", "consent", "audio"]
+    },
+    "SessionResume": {
+      "description": "First message after a reconnect.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.resume" },
+        "session_id": { "$ref": "#/$defs/Uuid" },
+        "last_seq": {
+          "description": "seq of the last server message the client processed, 0 if none.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "session_id", "last_seq"]
+    },
+    "AuthRefresh": {
+      "description": "Sent before the current access token expires.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "auth.refresh" },
+        "access_token": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "access_token"]
+    },
+    "QuestionForce": {
+      "description": "Hotkey pressed (no text) or a typed question (with text). At most once per second.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "question.force" },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type"]
+    },
+    "Screenshot": {
+      "description": "Coding question from the screen. The whole message is at most 2 MB.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "screenshot" },
+        "image": {
+          "description": "Base64 JPEG, at most 1.5 MB before encoding (2,000,000 base64 characters).",
+          "type": "string",
+          "contentEncoding": "base64",
+          "contentMediaType": "image/jpeg",
+          "minLength": 1,
+          "maxLength": 2000000
+        },
+        "question_id": { "$ref": "#/$defs/Uuid" }
+      },
+      "required": ["type", "image"]
+    },
+    "AnswerExpand": {
+      "description": "User opens the deep answer.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer.expand" },
+        "question_id": { "$ref": "#/$defs/Uuid" }
+      },
+      "required": ["type", "question_id"]
+    },
+    "AnswerFeedback": {
+      "description": "Thumbs up or down on an answer.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer.feedback" },
+        "question_id": { "$ref": "#/$defs/Uuid" },
+        "rating": { "type": "string", "enum": ["up", "down"] },
+        "reason": { "type": "string" }
+      },
+      "required": ["type", "question_id", "rating"]
+    },
+    "ModeSet": {
+      "description": "User switches mode mid-call.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "mode.set" },
+        "mode": { "$ref": "#/$defs/Mode" }
+      },
+      "required": ["type", "mode"]
+    },
+    "SessionEnd": {
+      "description": "User ends the session.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.end" }
+      },
+      "required": ["type"]
+    },
+
+    "SessionReady": {
+      "description": "Session accepted; audio may flow.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.ready" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "session_id": { "$ref": "#/$defs/Uuid" },
+        "server_time": { "type": "string", "format": "date-time" },
+        "limits": { "$ref": "#/$defs/SessionLimits" }
+      },
+      "required": ["type", "seq", "session_id", "server_time", "limits"]
+    },
+    "TranscriptPartial": {
+      "description": "Interim STT text, replaced by later partials for the same segment.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "transcript.partial" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "channel": { "$ref": "#/$defs/Channel" },
+        "seg_id": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" }
+      },
+      "required": ["type", "seq", "channel", "seg_id", "text"]
+    },
+    "TranscriptFinal": {
+      "description": "Final text for a segment.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "transcript.final" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "channel": { "$ref": "#/$defs/Channel" },
+        "seg_id": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" },
+        "start_ms": { "type": "integer", "minimum": 0 },
+        "end_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "seq", "channel", "seg_id", "text", "start_ms", "end_ms"]
+    },
+    "QuestionDetected": {
+      "description": "A question aimed at the user. speculative: true means it may still be cancelled; confirmation repeats the same question_id with speculative: false.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "question.detected" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "question_id": { "$ref": "#/$defs/Uuid" },
+        "text": { "type": "string" },
+        "question_type": { "$ref": "#/$defs/QuestionType" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "speculative": { "type": "boolean" }
+      },
+      "required": ["type", "seq", "question_id", "text", "question_type", "confidence", "speculative"]
+    },
+    "QuestionCancelled": {
+      "description": "A speculative question was dropped because the speaker kept talking.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "question.cancelled" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "question_id": { "$ref": "#/$defs/Uuid" }
+      },
+      "required": ["type", "seq", "question_id"]
+    },
+    "AnswerDelta": {
+      "description": "Next chunk of streamed answer text.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer.delta" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "question_id": { "$ref": "#/$defs/Uuid" },
+        "pass": { "$ref": "#/$defs/Pass" },
+        "text": { "type": "string" }
+      },
+      "required": ["type", "seq", "question_id", "pass", "text"]
+    },
+    "AnswerDone": {
+      "description": "Answer pass finished.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer.done" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "question_id": { "$ref": "#/$defs/Uuid" },
+        "pass": { "$ref": "#/$defs/Pass" },
+        "memory_refs": { "type": "array", "items": { "$ref": "#/$defs/MemoryRef" } },
+        "usage": { "$ref": "#/$defs/Usage" }
+      },
+      "required": ["type", "seq", "question_id", "pass", "memory_refs", "usage"]
+    },
+    "AnswerError": {
+      "description": "That pass failed; the other pass may still arrive.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer.error" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "question_id": { "$ref": "#/$defs/Uuid" },
+        "pass": { "$ref": "#/$defs/Pass" },
+        "code": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "seq", "question_id", "pass", "code"]
+    },
+    "Status": {
+      "description": "Drives the small status badge in the overlay.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "status" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "component": { "type": "string", "enum": ["stt", "llm", "memory"] },
+        "state": { "type": "string", "enum": ["ok", "degraded", "reconnecting"] },
+        "message": { "type": "string" }
+      },
+      "required": ["type", "seq", "component", "state", "message"]
+    },
+    "AuthExpiring": {
+      "description": "Asks the client to send auth.refresh now.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "auth.expiring" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "expires_in_s": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "seq", "expires_in_s"]
+    },
+    "ServerError": {
+      "description": "Protocol or server error; fatal: true is followed by a close. Before a 4429 close, retry_after_ms says when to retry.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "error" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "fatal": { "type": "boolean" },
+        "retry_after_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "seq", "code", "message", "fatal"]
+    },
+
+    "CloseCode": {
+      "description": "WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4429 rate limited; 4500 internal error (resume).",
+      "type": "integer",
+      "enum": [1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]
+    },
+    "AudioFrameHeader": {
+      "description": "Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200 bytes; may be empty on a speech-end frame, and is always empty on the me channel). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.",
+      "type": "object",
+      "x-binary-layout": {
+        "byteOrder": "big-endian",
+        "size": 10,
+        "fields": [
+          { "name": "channel", "offset": 0, "type": "uint8" },
+          { "name": "flags", "offset": 1, "type": "uint8" },
+          { "name": "frame_seq", "offset": 2, "type": "uint32" },
+          { "name": "capture_ms", "offset": 6, "type": "uint32" }
+        ]
+      },
+      "properties": {
+        "channel": {
+          "description": "0 = them (system output), 1 = me (microphone; speech flags only, no audio).",
+          "type": "integer",
+          "enum": [0, 1]
+        },
+        "flags": {
+          "description": "Bit 0 = VAD speech start, bit 1 = VAD speech end. Other bits are 0.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "frame_seq": {
+          "description": "Per channel, starts at 0. The server drops frames it has already seen.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "capture_ms": {
+          "description": "Milliseconds since session start.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": ["channel", "flags", "frame_seq", "capture_ms"]
+    }
+  }
+}

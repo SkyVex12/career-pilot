@@ -359,7 +359,8 @@ This section is the contract between the desktop client and the gateway. Message
 - **First message:** the client must send `session.start` or `session.resume` within 5 seconds, or the server closes with `4408`.
 - **Heartbeat:** WebSocket ping frames from the client every 30 seconds. The server closes a socket that has been silent for 90 seconds.
 - **Frames:** JSON text frames for control messages, binary frames for audio.
-- **Ordering:** every server message carries `seq`, a counter that increases by one per session. The client stores the last `seq` it processed and sends it on resume.
+- **Ordering:** every server message carries `seq`, a counter that starts at 1 and increases by one per session. The client stores the last `seq` it processed and sends it on resume, or `0` if it has processed none.
+- **Unknown fields:** receivers accept and ignore fields they do not know, so either side can add an optional field without breaking an older peer.
 
 ### Audio frames
 
@@ -407,14 +408,14 @@ Example:
 | `session.ready` | `session_id`, `server_time`, `limits.max_minutes` | Session accepted; audio may flow |
 | `transcript.partial` | `channel`, `seg_id`, `text` | Interim STT text, replaced by later partials |
 | `transcript.final` | `channel`, `seg_id`, `text`, `start_ms`, `end_ms` | Final text for a segment |
-| `question.detected` | `question_id`, `text`, `type`, `confidence`, `speculative` | A question aimed at the user; `speculative: true` means it may still be cancelled |
+| `question.detected` | `question_id`, `text`, `question_type`, `confidence`, `speculative` | A question aimed at the user; `speculative: true` means it may still be cancelled. `question_type` is the detector's type (`type` is taken by the message type) |
 | `question.cancelled` | `question_id` | A speculative question was dropped because the speaker kept talking |
 | `answer.delta` | `question_id`, `pass` (fast, deep), `text` | Next chunk of streamed answer text |
-| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` | Answer finished |
+| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`) | Answer finished |
 | `answer.error` | `question_id`, `pass`, `code` | That pass failed; the other pass may still arrive |
 | `status` | `component` (stt, llm, memory), `state` (ok, degraded, reconnecting), `message` | Drives the small status badge in the overlay |
 | `auth.expiring` | `expires_in_s` | Ask the client to send `auth.refresh` now |
-| `error` | `code`, `message`, `fatal` | Protocol or server error; `fatal: true` is followed by a close |
+| `error` | `code`, `message`, `fatal`, `retry_after_ms?` | Protocol or server error; `fatal: true` is followed by a close. `retry_after_ms` comes before a `4429` close |
 
 Every server message also carries `seq`. Example:
 
@@ -460,7 +461,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 
 - **Ids:** UUIDv7, generated in the application, so ids sort by creation time.
 - **Timestamps:** `timestamptz`, stored in UTC.
-- **Tenancy:** every user-owned table has `user_id` and a row-level security policy (see below).
+- **Tenancy:** every user-owned table has `user_id` and a row-level security policy (see below). Foreign keys between user-owned tables are composite on `(id, user_id)`, so a row can only point at rows of the same user; row-level security does not apply to foreign key checks, so it cannot prevent such references on its own.
 - **Encrypted text:** columns ending in `_enc` hold AES-256-GCM ciphertext made with the user's data key; `key_version` says which key. The associated data is the table name plus row id, so ciphertext cannot be copied between rows.
 - **Migrations:** plain SQL files in `migrations/`, applied by a one-off ECS task before each deploy. Changes follow expand then contract, so old and new code both work during a deploy.
 
@@ -506,16 +507,19 @@ create table app.jobs (
   title       text not null,
   description text not null,
   url         text,
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  unique (id, user_id)                         -- target of same-user foreign keys
 );
 
 create table app.interviews (
   id         uuid primary key,
   user_id    uuid not null references app.users(id) on delete cascade,
-  job_id     uuid not null references app.jobs(id) on delete cascade,
+  job_id     uuid not null,
   round      text not null,                    -- phone_screen, technical, system_design, final
   starts_at  timestamptz not null,
-  pack_id    uuid
+  pack_id    uuid,
+  unique (id, user_id),
+  foreign key (job_id, user_id) references app.jobs(id, user_id) on delete cascade
 );
 
 -- Memory graph
@@ -536,18 +540,21 @@ create table app.memory_nodes (
                 (to_tsvector('english', title || ' ' || summary)) stored,
   embedding   vector(1024),                    -- must match the embedding model's dimension
   created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  updated_at  timestamptz not null default now(),
+  unique (id, user_id)
 );
 create index memory_nodes_user_kind on app.memory_nodes (user_id, kind) where status = 'active';
 create index memory_nodes_search on app.memory_nodes using gin (search);
 
 create table app.memory_edges (
   user_id  uuid not null references app.users(id) on delete cascade,
-  src      uuid not null references app.memory_nodes(id) on delete cascade,
+  src      uuid not null,
   rel      text not null check (rel in
              ('part_of','demonstrates','used','worked_with','about','follows_up')),
-  dst      uuid not null references app.memory_nodes(id) on delete cascade,
-  primary key (src, rel, dst)
+  dst      uuid not null,
+  primary key (src, rel, dst),
+  foreign key (src, user_id) references app.memory_nodes(id, user_id) on delete cascade,
+  foreign key (dst, user_id) references app.memory_nodes(id, user_id) on delete cascade
 );
 create index memory_edges_dst on app.memory_edges (dst);
 
@@ -562,11 +569,12 @@ create table app.memory_proposals (
   session_id     uuid,
   source         jsonb not null,
   action         text not null check (action in ('create','update','merge')),
-  target_node_id uuid references app.memory_nodes(id) on delete cascade,
+  target_node_id uuid,
   payload        jsonb not null,               -- proposed node, or changed fields
   status         text not null default 'pending' check (status in ('pending','approved','rejected')),
   created_at     timestamptz not null default now(),
-  decided_at     timestamptz
+  decided_at     timestamptz,
+  foreign key (target_node_id, user_id) references app.memory_nodes(id, user_id) on delete cascade
 );
 
 -- Sessions and logs
@@ -574,8 +582,8 @@ create table app.sessions (
   id               uuid primary key,
   user_id          uuid not null references app.users(id) on delete cascade,
   mode             text not null check (mode in ('interview','standup','meeting')),
-  job_id           uuid references app.jobs(id) on delete set null,
-  interview_id     uuid references app.interviews(id) on delete set null,
+  job_id           uuid,
+  interview_id     uuid,
   platform         text,
   title            text,
   store_transcript boolean not null,
@@ -583,12 +591,17 @@ create table app.sessions (
   ended_at         timestamptz,
   billed_seconds   int not null default 0,
   me_audio_status  text not null default 'pending'
-                   check (me_audio_status in ('pending','uploaded','transcribed','none'))
+                   check (me_audio_status in ('pending','uploaded','transcribed','none')),
+  unique (id, user_id),
+  -- set null on the reference column only; user_id stays
+  foreign key (job_id, user_id) references app.jobs(id, user_id) on delete set null (job_id),
+  foreign key (interview_id, user_id) references app.interviews(id, user_id)
+    on delete set null (interview_id)
 );
 create index sessions_user_started on app.sessions (user_id, started_at desc);
 
 create table app.transcript_segments (
-  session_id  uuid not null references app.sessions(id) on delete cascade,
+  session_id  uuid not null,
   channel     text not null check (channel in ('them','me')),
   seg_id      int  not null,
   user_id     uuid not null,
@@ -596,12 +609,13 @@ create table app.transcript_segments (
   end_ms      int  not null,
   text_enc    bytea not null,
   key_version int  not null,
-  primary key (session_id, channel, seg_id)
+  primary key (session_id, channel, seg_id),
+  foreign key (session_id, user_id) references app.sessions(id, user_id) on delete cascade
 );
 
 create table app.questions (
   id                uuid primary key,
-  session_id        uuid not null references app.sessions(id) on delete cascade,
+  session_id        uuid not null,
   user_id           uuid not null,
   text_enc          bytea not null,
   key_version       int  not null,
@@ -609,12 +623,14 @@ create table app.questions (
   addressed_to_user boolean not null,
   speculative_kept  boolean not null,
   forced_by_hotkey  boolean not null default false,
-  detected_at       timestamptz not null
+  detected_at       timestamptz not null,
+  unique (id, user_id),
+  foreign key (session_id, user_id) references app.sessions(id, user_id) on delete cascade
 );
 
 create table app.answers (
   id              uuid primary key,
-  question_id     uuid not null references app.questions(id) on delete cascade,
+  question_id     uuid not null,
   user_id         uuid not null,
   pass            text not null check (pass in ('fast','deep')),
   model           text not null,
@@ -629,17 +645,19 @@ create table app.answers (
   memory_node_ids uuid[] not null default '{}',
   expanded        boolean not null default false,
   feedback        text check (feedback in ('up','down')),
-  created_at      timestamptz not null default now()
+  created_at      timestamptz not null default now(),
+  foreign key (question_id, user_id) references app.questions(id, user_id) on delete cascade
 );
 
 create table app.session_outputs (
   id          uuid primary key,
-  session_id  uuid not null references app.sessions(id) on delete cascade,
+  session_id  uuid not null,
   user_id     uuid not null,
   kind        text not null check (kind in ('summary','feedback','follow_up_email','standup_report')),
   content_enc bytea not null,
   key_version int  not null,
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  foreign key (session_id, user_id) references app.sessions(id, user_id) on delete cascade
 );
 
 -- Documents, integrations, usage

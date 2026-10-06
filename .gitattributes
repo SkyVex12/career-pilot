@@ -1,0 +1,7 @@
+# Keep LF everywhere so generated files compare byte-for-byte on Windows and Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.wav binary

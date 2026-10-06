@@ -1,0 +1,14 @@
+{
+  "name": "copilot",
+  "private": true,
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "codegen": "uv run python scripts/codegen.py",
+    "codegen:check": "uv run python scripts/codegen.py --check",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
