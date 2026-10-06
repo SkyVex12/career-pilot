@@ -4,7 +4,10 @@ version = "0.0.0"
 description = "Shared Python: db access, memory search, prompts, model router, crypto"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "anthropic[bedrock]>=1.11",
   "asyncpg>=0.30",
+  "boto3>=1.40",
+  "pydantic>=2.9",
 ]
 
 [project.scripts]
