@@ -37,8 +37,8 @@ from copilot_core.embed import BedrockCohereEmbedder
 from copilot_core.ids import uuid7
 from copilot_core.llm import LLMRequest, ModelRouter, RefusedError, Route, SystemBlock
 from copilot_core.packs import Digest, NodeRef, SessionPack, encode_embedding, render_pack
+from copilot_core.providers import make_providers
 from copilot_gateway.config import Settings
-from copilot_gateway.router import make_providers
 from copilot_gateway.store import make_client
 
 PACK_TTL_S = 24 * 3600

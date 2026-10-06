@@ -418,10 +418,14 @@ version = "0.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "copilot-core" },
+    { name = "tzdata" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "copilot-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "copilot-core", editable = "packages/core" },
+    { name = "tzdata", specifier = ">=2025.1" },
+]
 
 [[package]]
 name = "cryptography"

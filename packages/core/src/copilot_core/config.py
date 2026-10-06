@@ -18,7 +18,11 @@ def split_list(value: object) -> object:
 
 class CoreSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="COPILOT_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_prefix="COPILOT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
     )
 
     # Environment. `dev` is the only one that may use the dev token verifier or the dev key
@@ -91,7 +95,8 @@ class CoreSettings(BaseSettings):
 class DataSettings(CoreSettings):
     """The API's and the workers' extra stores: Postgres, S3 and KMS."""
 
-    # Each service connects as its own role (README, "Database roles").
+    # Each service connects as its own role (README, "Database roles"), from its own
+    # variable: COPILOT_DATABASE_URL is the migration runner's superuser URL.
     database_url: str = "postgresql://app_api:app_api-local@localhost:5432/copilot"
     db_pool_min: int = 1
     db_pool_max: int = 10

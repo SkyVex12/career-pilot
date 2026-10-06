@@ -59,3 +59,26 @@ class MemoryJobQueue:
 
     async def send(self, message: Mapping[str, Any], delay_s: int = 0) -> None:
         self.sent.append(dict(message))
+
+
+def digest_tag(digest_version: str | None) -> str:
+    """A short form of a digest version for idempotency keys ("none" before the first)."""
+    return digest_version.removeprefix("sha256:")[:16] if digest_version else "none"
+
+
+def pack_build(
+    user_id: UUID, mode: str, context: str, due_at: datetime, digest_version: str | None
+) -> dict[str, Any]:
+    """`pack.build` for one call context: `interview:{id}`, `job:{id}` or `standup:{date}`.
+
+    A pack depends on its context and on the digest it was built from, so the key names both:
+    a digest rebuild makes a new key and the pack is rebuilt; a repeat for the same digest is
+    skipped.
+    """
+    key = f"pack.build:{user_id}:{context}:{digest_tag(digest_version)}"
+    payload = {
+        "mode": mode,
+        "context": context,
+        "due_at": due_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return envelope("pack.build", key, user_id, payload)

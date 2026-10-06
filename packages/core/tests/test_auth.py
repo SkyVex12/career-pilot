@@ -7,9 +7,9 @@ from collections.abc import Mapping
 from typing import Any
 
 import jwt
-from jwt.algorithms import RSAAlgorithm
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 
 from copilot_core.auth import AuthError, CognitoVerifier, JwksCache, make_verifier
 from copilot_core.config import CoreSettings
