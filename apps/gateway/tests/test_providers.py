@@ -20,6 +20,27 @@ from copilot_gateway.stt.deepgram import DeepgramSTT, parse_message
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def sse_expectations() -> dict[str, Any]:
+    """What the recorded stream says: its text, stop reason and usage."""
+    text, out = "", {}
+    for line in (FIXTURES / "anthropic_fast.sse").read_text("utf-8").splitlines():
+        if not line.startswith("data:"):
+            continue
+        event = json.loads(line[5:])
+        if event["type"] == "message_start":
+            usage = event["message"]["usage"]
+            out["input"] = usage["input_tokens"]
+            out["cache_read"] = usage.get("cache_read_input_tokens") or 0
+            out["cache_write"] = usage.get("cache_creation_input_tokens") or 0
+        elif event["type"] == "content_block_delta" and event["delta"]["type"] == "text_delta":
+            text += event["delta"]["text"]
+        elif event["type"] == "message_delta":
+            out["stop_reason"] = event["delta"]["stop_reason"]
+            out["output"] = event["usage"]["output_tokens"]
+    out["text"] = text
+    return out
+
+
 def anthropic_client(captured: list[dict[str, Any]]) -> anthropic.AsyncAnthropic:
     body = (FIXTURES / "anthropic_fast.sse").read_bytes()
 
@@ -42,11 +63,15 @@ async def test_anthropic_provider_streams_fixture_and_sends_cached_prefix() -> N
     text = "".join(c for c in chunks if isinstance(c, str))
     done = chunks[-1]
     assert isinstance(done, LLMDone)
-    assert text.startswith("- Led the payments migration")
-    assert done.stop_reason == "end_turn"
-    assert done.usage.cached_tokens == 4180
-    assert done.usage.input_tokens == 214 + 4180
-    assert done.usage.output_tokens == 27
+    expected = sse_expectations()
+    assert text == expected["text"]
+    assert done.stop_reason == expected["stop_reason"]
+    assert done.usage.cached_tokens == expected["cache_read"]
+    assert (
+        done.usage.input_tokens
+        == expected["input"] + expected["cache_read"] + expected["cache_write"]
+    )
+    assert done.usage.output_tokens == expected["output"]
 
     sent = captured[0]["json"]
     assert sent["model"] == "claude-haiku-4-5"
@@ -55,7 +80,7 @@ async def test_anthropic_provider_streams_fixture_and_sends_cached_prefix() -> N
     assert sent["service_tier"] == "standard_only"
     system = sent["system"]
     # Block order: rules, <digest> (breakpoint), <session_pack> (breakpoint).
-    assert system[0]["text"].startswith("You help Alex answer a question live in a interview")
+    assert system[0]["text"].startswith("You help Alex answer a question live in an interview")
     assert "cache_control" not in system[0]
     assert system[1]["text"].startswith("<digest>")
     assert system[1]["cache_control"] == {"type": "ephemeral"}
@@ -99,15 +124,13 @@ async def test_route_order_for_each_provider_setup() -> None:
 
 def test_deepgram_parse_message() -> None:
     fixture = json.loads((FIXTURES / "deepgram_session.json").read_text())
-    assert parse_message(fixture["on_audio"][0]) is None  # Metadata
-    interim = parse_message(fixture["on_audio"][2])
+    assert parse_message({"type": "Metadata", "request_id": "x"}) is None
+    results = [m for m in fixture["on_audio"] if m.get("type") == "Results"]
+    interim = parse_message(results[-1])
     assert interim is not None
-    assert (interim.text, interim.is_final, interim.end_ms) == (
-        "how did you scale the ledger",
-        False,
-        2100,
-    )
-    final = parse_message(fixture["on_finalize"][0])
+    assert interim.text == results[-1]["channel"]["alternatives"][0]["transcript"]
+    assert interim.end_ms == round((results[-1]["start"] + results[-1]["duration"]) * 1000)
+    final = parse_message([m for m in fixture["on_finalize"] if m.get("from_finalize")][-1])
     assert final is not None
     assert final.is_final
     assert final.flushed
@@ -170,11 +193,16 @@ async def test_deepgram_stream_against_replayed_server() -> None:
     assert "interim_results=true" in seen["path"]
     assert seen["audio"] == 32000
     assert "Finalize" in seen["control"]
+    flushed = [m for m in fixture["on_finalize"] if m.get("from_finalize")][-1]
     final = next(r for r in results if r.flushed)
-    assert final.text == "How did you scale the ledger?"
-    assert (final.start_ms, final.end_ms) == (5000, 7400)
-    assert [r.text for r in results if not r.is_final] == [
-        "how did you",
-        "how did you scale the ledger",
+    assert final.text == flushed["channel"]["alternatives"][0]["transcript"]
+    # Provider times map back to capture time: speech started 5 s into the call.
+    assert final.start_ms == 5000 + round(flushed["start"] * 1000)
+    assert final.end_ms == 5000 + round((flushed["start"] + flushed["duration"]) * 1000)
+    interims = [
+        m["channel"]["alternatives"][0]["transcript"]
+        for m in fixture["on_audio"] + fixture["on_finalize"]
+        if m.get("type") == "Results" and not m.get("is_final")
     ]
+    assert [r.text for r in results if not r.is_final] == interims
     assert statuses == []
