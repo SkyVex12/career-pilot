@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Main window and overlay: app commands, events, and dragging the frameless overlay",
+  "windows": ["main", "overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-hide",
+    "core:window:allow-show"
+  ]
 }

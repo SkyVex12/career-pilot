@@ -13,7 +13,10 @@ Bedrock is reachable (COPILOT_EMBEDDER=bedrock); without them prepared-answer ma
 Writes (ARCHITECTURE.md, "Valkey key design" and "Session pack and hot digest formats"):
   digest:{uid}                       digest.v1 JSON: text, version, short-id refs
   pack:{uid}:{pack_id}               session_pack.v1 JSON, 24 h TTL
-  pack:{uid}:index                   mode:interview (and job:{job_id}) -> pack_id
+  pack:{uid}:index                   mode:interview and job:{job_id} -> pack_id
+
+Each run indexes the pack under a job id (a new one unless --job-id is given), which the
+desktop app lists on its start screen.
 """
 
 import argparse
@@ -311,7 +314,9 @@ async def main() -> int:
     parser.add_argument("--resume", type=Path, required=True)
     parser.add_argument("--job", type=Path, required=True, help="job description file")
     parser.add_argument("--user-id", help="defaults to COPILOT_DEV_USER_ID")
-    parser.add_argument("--job-id", help="also index the pack under job:{job_id}")
+    parser.add_argument(
+        "--job-id", type=UUID, help="index the pack under job:{job_id} (default: a new id)"
+    )
     parser.add_argument("--round", default="technical", help="phone_screen, technical, ...")
     parser.add_argument("--questions", type=int, default=30)
     parser.add_argument("--out", type=Path, help="also write digest.json and pack.json here")
@@ -321,6 +326,7 @@ async def main() -> int:
     load_dotenv()
     settings = Settings()
     user_id = UUID(args.user_id or settings.dev_user_id)
+    job_id: UUID = args.job_id or uuid7()
     data = await extract(settings, args.resume, args.job, args.round, args.questions)
     digest, pack, _ = build(data, user_id, args.round)
     embedded = await embed_prepared(settings, pack)
@@ -351,15 +357,14 @@ async def main() -> int:
     client: Any = make_client(settings)
     await client.set(keys.digest(user_id), digest_json)
     await client.set(keys.pack(user_id, pack.pack_id), pack_json, ex=PACK_TTL_S)
-    index = {"mode:interview": str(pack.pack_id)}
-    if args.job_id:
-        index[f"job:{args.job_id}"] = str(pack.pack_id)
+    index = {"mode:interview": str(pack.pack_id), f"job:{job_id}": str(pack.pack_id)}
     await client.hset(keys.pack_index(user_id), mapping=index)
     await client.aclose()
     print(
         f"  loaded into {settings.valkey_url}:",
         f"{keys.digest(user_id)}, {keys.pack(user_id, pack.pack_id)}",
     )
+    print(f"  job id {job_id} (pick it on the desktop start screen)")
     return 0
 
 
