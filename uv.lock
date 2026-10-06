@@ -309,6 +309,7 @@ dependencies = [
     { name = "copilot-core" },
     { name = "copilot-protocol" },
     { name = "fastapi" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -317,6 +318,7 @@ requires-dist = [
     { name = "copilot-core", editable = "packages/core" },
     { name = "copilot-protocol", editable = "packages/protocol" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "tzdata", specifier = ">=2025.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
