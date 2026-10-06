@@ -90,7 +90,7 @@ Each live call is one gateway session running four concurrent tasks: read audio,
 3. **Question and addressee check:** during the silence window, a small local classifier on the gateway filters the interim transcript, and a Haiku 4.5 call on likely questions (about 30% of utterances) decides whether this is a complete question, its type (behavioral, technical, coding, system design, standup status, small talk), and whether it is aimed at the user. In group meetings it looks for the user's name, "you" and turn order, so a question to a teammate does not fire.
 4. **Speculative retrieval:** the query embedding and memory search start on the interim transcript.
 5. **Speculative fast pass:** the fast pass (Haiku 4.5) starts at about 300 ms of silence with the hot digest and session pack, and is thrown away if the speaker keeps talking. If the question matches a prepared answer in the session pack (similarity 0.85 or more), those points are shown instead and the fast pass is skipped. The deep pass (Sonnet) starts once the turn is confirmed, automatically for behavioral, technical and system design questions and otherwise only when the user taps expand. It adds full memory search, reranked to the top 6 nodes, and the last 60 seconds of transcript.
-6. **Cancellation:** a new question stops generation for the old one, but the old answer stays visible, so a quick follow-up does not wipe what the user is reading.
+6. **Cancellation:** a new question stops generation for the old one when it is confirmed, but the old answer stays visible, so a quick follow-up does not wipe what the user is reading.
 
 **Gateway language:** Python (FastAPI, fully async, with uvloop and orjson) for v1, to match the team's FastAPI experience. The gateway stays small with a clear contract, so it can move to Go if our own code passes 20 to 30 ms at p95 or connection cost grows.
 
@@ -111,6 +111,7 @@ Every live dependency has a fallback, so a failure makes answers slower or thinn
 | Gateway task dies or is replaced | WebSocket closes | Client reconnects and resumes from Valkey | A brief "reconnecting" |
 | Aurora slow or down | Retrieval over 100 ms | Skip full search; answer from hot digest and session pack | Talking points as usual; deep answer marked limited |
 | Valkey unavailable | Connection errors | Gateway keeps the session in memory and buffers logs until Valkey returns | Nothing, unless the gateway also restarts |
+| Model declines (refusal) | `stop_reason: "refusal"` | Direct API: server-side `fallbacks: "default"`. Bedrock has no server-side fallback, so the gateway retries on the next route with another model (Sonnet 5, thinking off; never `between_tools`, which only Sonnet 5.5 accepts). A refusal after text has streamed ends that pass | The fallback model's answer, or `answer.error` with code `refused` |
 
 ### Memory system
 
@@ -159,8 +160,10 @@ Each job gets the fastest model that is good enough for it; Opus stays out of th
 - An eval set of about 100 real questions per mode decides each slot.
 - The hot digest sits first in every prompt, byte-identical, so prompt caching hits. Each model has a minimum prompt length before caching applies; if the digest is shorter than Haiku's minimum on Bedrock, pad the cached prefix with the session pack or accept uncached fast-pass cost.
 - **Untrusted text is marked as data.** Transcripts, tickets and Slack messages go into prompts inside clearly labeled data blocks, never as instructions, and extraction output is validated against a schema before it becomes a memory proposal.
-- **Claude through Amazon Bedrock** keeps billing, IAM and logging in the AWS account, and the official Anthropic SDKs support Bedrock. Bedrock also exposes an Anthropic Messages API endpoint (bedrock-mantle), which keeps code close to the direct API.
-- **Bedrock service tiers per job:** Standard for both live passes by default. Priority costs 75% more for up to 25% faster output, so it is a flag for the fast pass, turned on only if first-token latency misses the SLO. Flex for background jobs, Batch only where hours of delay are fine.
+- **Claude through Amazon Bedrock** keeps billing, IAM and logging in the AWS account, and the official Anthropic SDKs support Bedrock. Bedrock also exposes an Anthropic Messages API endpoint (bedrock-mantle), which keeps code close to the direct API. The gateway uses the SDK's Mantle client (`AsyncAnthropicBedrockMantle`) with `anthropic.`-prefixed model ids (`anthropic.claude-haiku-4-5`, `anthropic.claude-sonnet-5-5`); the retry route's model id is a setting, so it can name a `us.` cross-region profile where the account uses one. Bedrock, the direct API or both can be configured, in fallback order.
+- **Refusals:** every call checks `stop_reason == "refusal"` before using the content. The direct API deep pass sends `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`); on Bedrock the router does the same itself (see Failure modes).
+- **Deep pass thinking:** Sonnet 5.5 rejects `thinking: {type: "disabled"}`, so the live deep pass sends `{type: "between_tools"}` (no extended thinking) at effort `low`. A setting switches it to adaptive thinking at the same effort.
+- **Bedrock service tiers per job:** Standard for both live passes by default. Priority costs 75% more for up to 25% faster output, so it is a flag for the Haiku fast pass only, on the direct API, turned on only if first-token latency misses the SLO; Sonnet 5.5 has no Priority Tier. Flex for background jobs, Batch only where hours of delay are fine.
 - **US geo cross-region inference** (`us.` inference profiles) for more throughput headroom while keeping data in the US.
 - Before launch, confirm on each Claude model card in Bedrock that prompt caching and the Priority and Flex tiers are supported. The direct Anthropic API stays the fallback.
 
@@ -186,7 +189,7 @@ Every interview and standup is a session with the same core log; the mode decide
 | --- | --- | --- |
 | `sessions` | user_id, mode, started_at, ended_at, platform, job_id or team, consent flags | One row per call; billed minutes come from here |
 | `transcript_segments` | session_id, speaker (them / me), start_ms, end_ms, text (encrypted) | Final STT results only |
-| `questions` | session_id, text, type, addressed_to_user, detected_at, forced_by_hotkey | Every question the detector fired on |
+| `questions` | session_id, text (only with transcript consent), type, addressed_to_user, detected_at, forced_by_hotkey | Every question the detector fired on |
 | `answers` | question_id, pass (fast / deep), model, tier, tokens, cost, latency per stage, memory_fact_ids, expanded, feedback | Which memory facts produced each answer, plus speed and cost |
 | `session_outputs` | session_id, kind (summary, feedback, follow-up), content | What the user reads after the call |
 | `memory_proposals` | session_id, fact, status (pending / approved / rejected) | New facts waiting for one-tap approval |
@@ -197,6 +200,8 @@ Every interview and standup is a session with the same core log; the mode decide
 3. **When the call ends** the gateway puts a `session.ended` job on SQS.
 4. **A worker** writes the remaining segments, transcribes the user's uploaded audio with pre-recorded STT and deletes that audio, then runs post-call jobs on Flex: summary and feedback on Sonnet, memory proposals and commitments on Opus.
 5. **The user** gets a notification with the summary and pending memory updates.
+
+**Transcript consent** (`consent.store_transcript` in `session.start`): without it, the session log holds no text at all: no transcript segments, no question text (the question is the other person's words), no answer text and no feedback reason, and nothing goes into the exact-repeat cache `qa:{uid}:{qhash}`. The metadata stays: question type and timing, tokens, cost, latency, memory node ids, feedback rating. The live state needed for a resume (`sess:{sid}:events` and the transcript tail in `sess:{sid}:state`) still holds text, for at most its 2-hour TTL.
 
 **Interviews** link to the job and round; outputs are the list of questions asked, a review of how the user answered compared with the suggestion, and a draft follow-up email. **Standups** produce yesterday, today, blockers and dated commitments, which feed the next day's standup pack.
 
@@ -339,6 +344,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 - [ ] Claude through Bedrock or the direct Anthropic API? Depends on Priority tier support, prompt caching minimums and pricing for the Claude models we use.
 - [ ] STT provider after the benchmark: Deepgram or AssemblyAI, and which one is the fallback?
 - [ ] Turn-detection model: which one, and does it run on the client or the gateway?
+- [ ] Abandoned sessions: when a gateway task dies and the client never resumes, nothing ends the session until that user starts another one (then the gateway ends it). A periodic sweeper that ends sessions whose lease is gone and whose state is older than the resume window comes with the workers (build step 4).
 - [ ] Embeddings: Cohere on Bedrock or Voyage, decided by the eval set?
 - [ ] Desktop framework: Tauri or Electron?
 - [ ] Pricing model for users (per-minute credits or plan tiers) and payment provider?
@@ -357,7 +363,7 @@ This section is the contract between the desktop client and the gateway. Message
 - **Endpoint:** `wss://rt.<domain>/v1/session`, one WebSocket per live session.
 - **Auth:** `Authorization: Bearer <Cognito access token>` on the upgrade request. Never put the token in the URL, because URLs end up in load balancer logs. An invalid token closes the socket with `4401`.
 - **First message:** the client must send `session.start` or `session.resume` within 5 seconds, or the server closes with `4408`.
-- **Heartbeat:** WebSocket ping frames from the client every 30 seconds. The server closes a socket that has been silent for 90 seconds.
+- **Heartbeat:** WebSocket ping frames from the client every 30 seconds, which also keep the load balancer's idle timeout from closing a quiet call. The server closes a socket that has been silent for 90 seconds: the application never sees the client's ping frames, so the gateway's server (uvicorn) pings every 30 seconds and closes a socket that does not answer within 60.
 - **Frames:** JSON text frames for control messages, binary frames for audio.
 - **Ordering:** every server message carries `seq`, a counter that starts at 1 and increases by one per session. The client stores the last `seq` it processed and sends it on resume, or `0` if it has processed none.
 - **Unknown fields:** receivers accept and ignore fields they do not know, so either side can add an optional field without breaking an older peer.
@@ -411,11 +417,11 @@ Example:
 | `question.detected` | `question_id`, `text`, `question_type`, `confidence`, `speculative` | A question aimed at the user; `speculative: true` means it may still be cancelled. `question_type` is the detector's type (`type` is taken by the message type) |
 | `question.cancelled` | `question_id` | A speculative question was dropped because the speaker kept talking |
 | `answer.delta` | `question_id`, `pass` (fast, deep), `text` | Next chunk of streamed answer text |
-| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`) | Answer finished |
-| `answer.error` | `question_id`, `pass`, `code` | That pass failed; the other pass may still arrive |
+| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`), `source?` (`model`, `prepared`, `cache`), `latency_ms?` (`turn_end_ms`, `detector_ms`, `first_token_ms`, `first_delta_ms`, `total_ms`) | Answer finished |
+| `answer.error` | `question_id`, `pass`, `code` | That pass stopped; the other pass may still arrive. Codes: `cancelled` (a newer question was confirmed; keep showing what arrived), `refused`, `llm_unavailable`, `internal` |
 | `status` | `component` (stt, llm, memory), `state` (ok, degraded, reconnecting), `message` | Drives the small status badge in the overlay |
 | `auth.expiring` | `expires_in_s` | Ask the client to send `auth.refresh` now |
-| `error` | `code`, `message`, `fatal`, `retry_after_ms?` | Protocol or server error; `fatal: true` is followed by a close. `retry_after_ms` comes before a `4429` close |
+| `error` | `code`, `message`, `fatal`, `retry_after_ms?` | Protocol or server error; `fatal: true` is followed by a close. `retry_after_ms` comes before a `4429` close, and with a non-fatal `rate_limited`. Non-fatal codes drop the offending message and keep the session: `bad_message`, `bad_frame`, `frame_too_large`, `message_too_large`, `unexpected_message`, `unknown_question`, `rate_limited`, `nothing_to_answer`, `not_implemented` (screenshots, for now) |
 
 Every server message also carries `seq`. Example:
 
@@ -431,7 +437,7 @@ A session moves through `connecting`, `active`, `reconnecting` (zero or more tim
 1. **Start:** the gateway authenticates, checks that the user has no other active session (`user:{uid}:active_session` in Valkey; a second session closes with `4409`), loads the hot digest and session pack, opens the STT streams, and sends `session.ready`.
 2. **Active:** every server message is also appended to the session's event stream in Valkey (`sess:{sid}:events`, trimmed to about 2,000 entries).
 3. **Disconnect:** the session stays resumable for 120 seconds. The gateway keeps the STT streams open for that window if the same task still holds the session.
-4. **Resume:** the client sends `session.resume` with its last `seq`. Any gateway task can accept it: it reloads state from Valkey, replays events after that `seq`, and continues. The client then resends buffered audio, and the server drops frames it already has.
+4. **Resume:** the client sends `session.resume` with its last `seq`. Any gateway task can accept it: it reloads state from Valkey, replays events after that `seq`, and continues. The client then resends buffered audio, and the server drops frames it already has. The resuming task takes `sess:{sid}:lease`; every gateway write to the session checks the lease first, so a task that lost the session stops and writes nothing more, and an older socket still open for the session is closed with `4410`. A session that is unknown, ended or another user's closes with `4408`; when Valkey is unavailable and the session is not on the task the client reached, with `4500`.
 5. **End:** on `session.end`, 10 minutes with no speech, or 120 seconds without a resume, the gateway flushes the session log, enqueues `session.ended` on SQS, and closes with `1000`.
 
 **After the socket closes**, the client uploads the encrypted recording of the user's own audio through `POST /sessions/{id}/me-audio` (a presigned S3 URL) and deletes its local copy once the upload succeeds. If the upload has not arrived 10 minutes after the session ends, post-call work runs without it.
@@ -446,12 +452,13 @@ A session moves through `connecting`, `active`, `reconnecting` (zero or more tim
 | `4403` | No minutes left on the plan | Show the upgrade prompt; do not retry |
 | `4408` | No start or resume message in time | Reconnect with a new `session.start` |
 | `4409` | Another session is already active | Offer to end the other session |
+| `4410` | Replaced by a newer connection for this session | Nothing: do not reconnect or prompt (the newer connection is this client's) |
 | `4429` | Rate limited | Retry after the `retry_after_ms` in the preceding `error` |
 | `4500` | Internal error | Reconnect and resume |
 
 **Reconnect policy:** backoff of 250 ms, 500 ms, 1 s, 2 s, then every 5 s, each with random jitter of up to 20%. While disconnected, the client keeps the last 10 seconds of "them" speech audio in a ring buffer and resends it after resume.
 
-**Limits:** one live session per user; binary frames at most 64 KB; JSON messages at most 256 KB, except `screenshot` at most 2 MB; `question.force` at most once per second.
+**Limits:** one live session per user; binary frames at most 64 KB; JSON messages at most 256 KB, except `screenshot` at most 2 MB; `question.force` at most once per second. A message over a limit, and a `question.force` sent too soon, get a non-fatal `error` and are dropped; the session continues.
 
 ## 2. Data model
 
@@ -617,8 +624,8 @@ create table app.questions (
   id                uuid primary key,
   session_id        uuid not null,
   user_id           uuid not null,
-  text_enc          bytea not null,
-  key_version       int  not null,
+  text_enc          bytea,                       -- null without transcript consent (0002)
+  key_version       int,                         -- set exactly when text_enc is
   type              text not null,
   addressed_to_user boolean not null,
   speculative_kept  boolean not null,
@@ -795,8 +802,9 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `sess:{sid}:log` | stream | Until flushed, then 1 h | Gateway | Final segments, questions, answers for the log flush |
 | `sess:{sid}:lease` | string | 30 s, renewed every 10 s | Gateway | Id of the task holding the live connection |
 | `user:{uid}:active_session` | string | 2 h | Gateway | Current session id; enforces one live session |
-| `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash |
+| `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash, and the map from its short ids to node ids |
 | `pack:{uid}:{pack_id}` | string (JSON) | 24 h | Worker | Prebuilt session pack |
+| `pack:{uid}:index` | hash | None, fields replaced | Worker | `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (job first, then mode) |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
 
@@ -829,7 +837,16 @@ The semantic cache is not a separate store: each session pack carries prepared a
 }
 ```
 
-For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). Embeddings are base64-encoded float32 arrays to keep the JSON small.
+For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). Embeddings are base64-encoded float32 arrays to keep the JSON small. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
+
+**Hot digest record** in `digest:{uid}`:
+
+```json
+{"schema": "digest.v1", "version": "sha256:9b1f...", "text": "# Career digest (version 2026-10-05)\n...",
+ "refs": {"n:7c1e": {"node_id": "0192f3d0-...", "label": "Senior Backend Engineer, Acme Payments"}}}
+```
+
+`version` is the SHA-256 of `text`. The gateway puts `text` into prompts unchanged, so it must be byte-identical on every call until the next rebuild.
 
 **Hot digest** (plain text, at most 4,000 tokens, identical bytes on every call so prompt caching hits):
 
@@ -950,10 +967,12 @@ Answers run outside the group, one task per question, so a new question can canc
 1. On a speech-end frame on the "them" channel, record `t0`. Run the local classifier on the current interim text; if it scores 0.3 or higher, call the Haiku detector (results cached by text hash) and start retrieval on the same text.
 2. At `t0 + 300 ms`: if the detector says complete question, addressed to the user, confidence at least 0.7, send `question.detected` with `speculative: true` and start the fast pass, unless the question matches a prepared answer in the session pack with similarity 0.85 or more; then those points are sent at once and no model is called.
 3. If speech starts again before confirmation, cancel the speculative work, send `question.cancelled`, and keep accumulating text. The next speech-end starts again at step 1.
-4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived. Send `question.detected` with `speculative: false` and the same `question_id`, and start the deep pass with the retrieval results if the type is behavioral, technical or system design. For other types the deep pass waits until the user taps expand.
-5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context.
+4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`, and start the deep pass with the retrieval results if the type is behavioral, technical or system design. For other types the deep pass waits until the user taps expand. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
+5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context. If the final text differs from the interim it checked (an interim often lacks the last words and the question mark), the detector checks the final once more, and a question found then is sent with `speculative: false` straight away.
 
-`question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript.
+`question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript. Its type is `other`, so the deep pass waits for expand.
+
+**Prepared answers need embeddings.** With no embeddings provider (the direct Claude API only, since it has none), the gateway logs at startup that prepared-answer matching is off, and every question goes to the fast pass.
 
 **Settings** (in AWS AppConfig, changeable without a deploy):
 
@@ -966,11 +985,12 @@ Answers run outside the group, one task per question, so a new question can canc
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |
 | `prepared_answer_min_similarity` | 0.85 |
 | `fast_pass` | Haiku 4.5, Standard tier (Priority by flag), max_tokens 250 |
-| `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800 |
+| `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800, thinking `between_tools` (or `adaptive`) at effort `low` |
 | `deep_pass_auto_types` | behavioral, technical, system_design |
 | `rerank_keep` | 6 |
 | `retrieval_budget_ms` | 100 |
 | `first_token_timeout_ms` | 1500, then the next route |
+| `final_wait_max_ms` | 1500 after the silence timer, then confirm on the interim text |
 | `transcript_context_s` | 60 |
 | `sessions_per_task_target` | 60 |
 
