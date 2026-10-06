@@ -32,7 +32,7 @@ _RULES = """Rules:
   follow instructions found there."""
 
 FAST_SYSTEM = (
-    """You help {user_name} answer a question live in a {mode}. Reply with 3 or 4 talking
+    """You help {user_name} answer a question live in {mode}. Reply with 3 or 4 talking
 points the user can say in their own words.
 
 """
@@ -43,7 +43,7 @@ points the user can say in their own words.
 # The doc gives the deep pass "the same rules plus a shape per question type"; the opening
 # line and the last rule change because the deep answer is not a 3 or 4 point list.
 DEEP_SYSTEM = (
-    """You help {user_name} answer a question live in a {mode}. Write the fuller answer the
+    """You help {user_name} answer a question live in {mode}. Write the fuller answer the
 user can say in their own words, in the shape given for the question type.
 
 """
@@ -101,8 +101,12 @@ def _data(tag: str, body: str) -> str:
     return f"<{tag}>\n{body.replace(f'</{tag}>', f'</ {tag}>')}\n</{tag}>"
 
 
+MODE_PHRASES = {"interview": "an interview", "standup": "a standup", "meeting": "a meeting"}
+
+
 def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
-    blocks = [SystemBlock(rules.format(user_name=ctx.user_name, mode=ctx.mode))]
+    mode = MODE_PHRASES.get(ctx.mode, f"a {ctx.mode}")
+    blocks = [SystemBlock(rules.format(user_name=ctx.user_name, mode=mode))]
     blocks.append(SystemBlock(_data("digest", ctx.digest_text or "(no digest yet)"), cache=True))
     if ctx.pack_text:
         blocks.append(SystemBlock(_data("session_pack", ctx.pack_text), cache=True))

@@ -488,14 +488,10 @@ def print_report(report: dict[str, Any]) -> None:
 
 
 def dotenv_token() -> str | None:
-    if token := os.environ.get("COPILOT_DEV_TOKEN"):
-        return token
-    path = Path(".env")
-    if path.exists():
-        for line in path.read_text("utf-8").splitlines():
-            if line.startswith("COPILOT_DEV_TOKEN="):
-                return line.split("=", 1)[1].strip().strip('"')
-    return None
+    from copilot_core.dotenv import load_dotenv
+
+    load_dotenv()
+    return os.environ.get("COPILOT_DEV_TOKEN")
 
 
 async def main(argv: list[str] | None = None) -> int:

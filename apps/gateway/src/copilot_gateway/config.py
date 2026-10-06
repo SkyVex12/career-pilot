@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # Valkey and the jobs queue.
     valkey_url: str = "redis://localhost:6379/0"
     valkey_cluster: bool = False
-    sqs_endpoint: str | None = None
+    sqs_endpoint: str | None = "http://localhost:9324"  # unset in AWS (empty string)
     sqs_queue_url: str = "http://localhost:9324/000000000000/jobs"
 
     # Session lifecycle and limits (ARCHITECTURE.md section 1).

@@ -29,6 +29,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from copilot_core import keys
+from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import BedrockCohereEmbedder
 from copilot_core.ids import uuid7
 from copilot_core.llm import LLMRequest, ModelRouter, Route, SystemBlock
@@ -313,6 +314,7 @@ async def main() -> int:
     parser.add_argument("--no-load", action="store_true", help="do not write to Valkey")
     args = parser.parse_args()
 
+    load_dotenv()
     settings = Settings()
     user_id = UUID(args.user_id or settings.dev_user_id)
     data = await extract(settings, args.resume, args.job, args.round, args.questions)

@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "Eval runners: replay recorded calls through the gateway and measure latency"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "copilot-core",
   "copilot-protocol",
   "numpy>=2.5.3",
   "pysilero-vad>=3.4.0",

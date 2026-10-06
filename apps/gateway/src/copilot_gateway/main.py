@@ -10,6 +10,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket
 
 from copilot_core import __version__
+from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import BedrockCohereEmbedder, Embedder
 from copilot_core.jobs import SqsJobQueue
 from copilot_gateway.auth import make_verifier
@@ -51,7 +52,7 @@ def build_services(settings: Settings) -> Services:
         settings=settings,
         store=GatewayStore(make_client(settings), settings),
         jobs=SqsJobQueue(
-            settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint
+            settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
         router=build_router(settings),
         verifier=make_verifier(settings),
@@ -99,6 +100,7 @@ def uvicorn_options(settings: Settings) -> dict[str, object]:
 
 
 def run() -> None:
+    load_dotenv()
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     uvicorn.run(
         "copilot_gateway.main:app",

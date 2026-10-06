@@ -321,6 +321,7 @@ name = "copilot-evals"
 version = "0.0.0"
 source = { editable = "evals" }
 dependencies = [
+    { name = "copilot-core" },
     { name = "copilot-protocol" },
     { name = "numpy" },
     { name = "pysilero-vad" },
@@ -330,6 +331,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "copilot-core", editable = "packages/core" },
     { name = "copilot-protocol", editable = "packages/protocol" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "pysilero-vad", specifier = ">=3.4.0" },
