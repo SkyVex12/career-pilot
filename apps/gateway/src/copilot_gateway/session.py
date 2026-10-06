@@ -49,6 +49,7 @@ CLOSE_UNAUTHORIZED = 4401
 CLOSE_NO_MINUTES = 4403
 CLOSE_NO_START = 4408
 CLOSE_SESSION_ACTIVE = 4409
+CLOSE_REPLACED = 4410  # a newer connection took this session; the client must not reconnect
 CLOSE_RATE_LIMITED = 4429
 CLOSE_INTERNAL = 4500
 
@@ -529,7 +530,7 @@ class Session:
 
     async def _stop_lost(self, ws: WebSocket | None) -> None:
         if ws is not None:
-            await close_ws(ws, CLOSE_SESSION_ACTIVE, "resumed elsewhere")
+            await close_ws(ws, CLOSE_REPLACED, "replaced by a newer connection")
         await self._stop()
 
     async def _stop(self) -> None:
@@ -560,7 +561,7 @@ class Session:
             old = self.ws
             if self.send_q is not None:
                 self.send_q.put_nowait(None)
-            await close_ws(old, CLOSE_SESSION_ACTIVE, "replaced by a newer connection")
+            await close_ws(old, CLOSE_REPLACED, "replaced by a newer connection")
         q: asyncio.Queue[str | None] = asyncio.Queue()
         self.ws, self.send_q, self.disconnected_at = ws, q, None
         self.auth_warned = False

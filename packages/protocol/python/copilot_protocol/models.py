@@ -488,10 +488,12 @@ class ServerError(BaseModel):
     retry_after_ms: Annotated[int | None, Field(ge=0)] = None
 
 
-class CloseCode(RootModel[Literal[1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]]):
-    root: Literal[1000, 1001, 4401, 4403, 4408, 4409, 4429, 4500]
+class CloseCode(
+    RootModel[Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4429, 4500]]
+):
+    root: Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4429, 4500]
     """
-    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4429 rate limited; 4500 internal error (resume).
+    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4429 rate limited; 4500 internal error (resume).
     """
 
 

@@ -114,8 +114,8 @@ async def test_newer_connection_replaces_older(env) -> None:
         c2.session_id, c2.last_seq = c.session_id, c.last_seq
         await c2.resume()
         await c.closed()
-        assert c.close_code == 4409
-        assert stale.close_code == 4409
+        assert c.close_code == 4410
+        assert stale.close_code == 4410
         await c2.send({"type": "question.force", "text": "Why us?"})
         await c2.wait_type("answer.done", pass_="fast")
 
@@ -129,3 +129,15 @@ async def test_resume_rejects_another_users_session(env) -> None:
         other.session_id = c.session_id
         await other.resume()
         assert await other.closed() == 4408
+
+
+async def test_session_moved_to_another_task_closes_old_socket_4410(env) -> None:
+    async with GatewayServer(env.services()) as a, GatewayServer(env.services()) as b:
+        old = ProtocolClient(a.url)
+        await old.start()
+        new = ProtocolClient(b.url)
+        new.session_id, new.last_seq = old.session_id, old.last_seq
+        await new.resume()  # the old socket is still open on task A
+        assert await old.closed(timeout=5) == 4410
+        await new.send({"type": "question.force", "text": "Why us?"})
+        await new.wait_type("answer.done", pass_="fast")
