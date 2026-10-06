@@ -401,12 +401,12 @@ class Session:
             await asyncio.sleep(self.settings.lease_renew_s)
             try:
                 held = await self.svc.store.renew_lease(self.sid, self.svc.task_id)
+                if not held:
+                    self._on_lease_lost()
+                    return
                 await self.svc.store.refresh_active(self.principal.user_id, self.sid)
             except UNAVAILABLE:
                 continue  # Valkey down: keep the session in memory
-            if not held:
-                self._on_lease_lost()
-                return
 
     async def _flush_loop(self) -> None:
         while True:
@@ -909,6 +909,16 @@ class SessionManager:
                     ws, CLOSE_NO_START, "session_not_found", "no resumable session with that id"
                 )
                 return
+            other = await store.claim_active(uid, sid)
+            if other is not None and other != str(sid):
+                if not await self._stale(other):
+                    await self.reject(
+                        ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
+                    )
+                    return
+                await self._end_abandoned(uid, other)
+                await store.replace_active(uid, other, sid)
+            await store.set_active(uid, sid)
             await store.take_lease(sid, self.svc.task_id)
             replay = await store.events_after(sid, msg.last_seq)
             seq = max(
@@ -918,7 +928,6 @@ class SessionManager:
             pack = None
             if state.get("pack_id"):
                 pack = await store.get_pack_by_id(uid, state["pack_id"])
-            await store.refresh_active(uid, sid)
         except UNAVAILABLE:
             await self.reject(
                 ws, CLOSE_INTERNAL, "unavailable", "session state is unavailable; retry"

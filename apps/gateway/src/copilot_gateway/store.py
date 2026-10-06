@@ -68,6 +68,11 @@ end
 return 0
 """
 
+EXPIRE_IF_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) end
+return 0
+"""
+
 DEL_IF_LUA = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
@@ -98,6 +103,7 @@ class GatewayStore:
         self._append = client.register_script(APPEND_LUA)
         self._renew = client.register_script(RENEW_LUA)
         self._del_if = client.register_script(DEL_IF_LUA)
+        self._expire_if = client.register_script(EXPIRE_IF_LUA)
 
     async def ping(self) -> bool:
         try:
@@ -127,6 +133,11 @@ class GatewayStore:
         return False
 
     async def refresh_active(self, uid: UUID, sid: UUID) -> None:
+        """Extend the slot's TTL, only while it still names this session."""
+        key = keys.user_active_session(uid)
+        await self._expire_if(keys=[key], args=[str(sid), self.settings.state_ttl_s])
+
+    async def set_active(self, uid: UUID, sid: UUID) -> None:
         await self.client.set(keys.user_active_session(uid), str(sid), ex=self.settings.state_ttl_s)
 
     async def release_active(self, uid: UUID, sid: UUID) -> None:
