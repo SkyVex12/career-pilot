@@ -254,6 +254,9 @@ class Session:
         else:
             self.set_status("llm", "degraded", "Answers are slower than usual")
 
+    def store_text(self) -> bool:
+        return self.info.store_transcript
+
     def cache_version(self) -> str:
         digest = self.digest.version if self.digest else "-"
         pack = str(self.pack.pack_id) if self.pack else "-"
@@ -676,7 +679,7 @@ class Session:
                         "kind": "feedback",
                         "question_id": str(message.question_id),
                         "rating": message.rating,
-                        "reason": message.reason,
+                        **({"reason": message.reason} if self.store_text() else {}),
                     }
                 )
             case models.ModeSet():

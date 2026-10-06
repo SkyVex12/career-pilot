@@ -456,3 +456,85 @@ async def test_final_text_is_rechecked_when_the_interim_was_cut_short(env) -> No
         await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
         session = next(iter(gw.manager.sessions.values()))
         assert session.turns.final_rechecks == 1
+
+
+async def test_no_text_stored_without_transcript_consent(env) -> None:
+    await seed_memory(env)
+    question = "How did you scale the ledger?"
+    typed = "What would you change next?"
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(consent={"store_transcript": False})
+        await c.say(question)
+        q = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
+        await c.send({"type": "question.force", "text": typed})
+        q2 = await c.wait(lambda m: m["type"] == "question.detected" and m["text"] == typed)
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
+        await c.send(
+            {
+                "type": "answer.feedback",
+                "question_id": q["question_id"],
+                "rating": "down",
+                "reason": "too long winded",
+            }
+        )
+        await c.send({"type": "session.end"})
+        assert await c.closed() == 1000
+    answers = [m["text"] for m in c.of_type("answer.delta")]
+    vk = env.client()
+    raw = [f[b"e"].decode() for _, f in await vk.xrange(keys.sess_log(c.session_id))]
+    log = [json.loads(e) for e in raw]
+    kinds = [e["kind"] for e in log]
+    assert "segment" not in kinds
+    for entry in log:
+        if entry["kind"] in ("question", "answer", "feedback"):
+            assert "text" not in entry
+            assert "reason" not in entry
+    # Nothing textual anywhere in the log: not the words, not the answers.
+    blob = "\n".join(raw)
+    for text in (question, "scale the ledger", typed, "too long winded", *answers):
+        assert text.strip() not in blob, text
+    # Metadata stays.
+    answer_entries = [e for e in log if e["kind"] == "answer"]
+    assert {e["pass"] for e in answer_entries} == {"fast", "deep"}
+    assert all("latency_ms" in e and "output_tokens" in e for e in answer_entries)
+    assert any(e["memory_node_ids"] for e in answer_entries)
+    questions = [e for e in log if e["kind"] == "question"]
+    assert {e["type"] for e in questions} == {"technical", "other"}
+    assert next(e for e in log if e["kind"] == "feedback")["rating"] == "down"
+    # The exact-repeat cache holds answer text, so it is not written either.
+    assert await vk.keys("qa:*") == []
+
+
+async def test_text_is_logged_with_consent(env) -> None:
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "Why us?"})
+        await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    log = [json.loads(f[b"e"]) for _, f in await env.client().xrange(keys.sess_log(c.session_id))]
+    assert next(e for e in log if e["kind"] == "question")["text"] == "Why us?"
+    assert next(e for e in log if e["kind"] == "answer")["text"]
+
+
+async def test_refusal_mid_answer_sends_answer_error(env) -> None:
+    provider = ScriptedProvider("anthropic")
+
+    def refuse(job: str, req: Any) -> Reply:
+        reply = default_reply(job, req)
+        if job == "fast":
+            reply.stop_reason = "refusal"
+        return reply
+
+    provider.reply = refuse
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "Why us?"})
+        err = await c.wait_type("answer.error")
+        assert err["code"] == "refused"
+        assert not c.of_type("answer.done")

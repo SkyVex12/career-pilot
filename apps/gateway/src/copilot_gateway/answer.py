@@ -7,6 +7,8 @@ ARCHITECTURE.md, "Realtime pipeline" steps 5 and 6:
 - The deep pass (Sonnet) starts at confirmation for the auto types, otherwise on expand.
 - A new confirmed question stops generation for the old one; the old answer stays on screen
   (the client keeps what it has; the server sends answer.error with code `cancelled`).
+- Without transcript consent the session log keeps question and answer metadata only, and
+  nothing goes into the exact-repeat cache (it holds answer text).
 
 Each pass runs as its own task outside the session's task group, one per question and pass.
 """
@@ -109,6 +111,10 @@ class AnswerHost(Protocol):
     def emit(self, cls: type[Any], **fields: Any) -> int: ...
 
     def log_entry(self, entry: Mapping[str, Any]) -> None: ...
+
+    def store_text(self) -> bool:
+        """Transcript consent: without it, question and answer text are never stored."""
+        ...
 
     def transcript(self, seconds: float) -> str: ...
 
@@ -261,7 +267,7 @@ class AnswerEngine:
                     "model": done_info.model if done_info else source,
                     "fallback_attempt": done_info.attempt if done_info else 0,
                     "tier": "standard",
-                    "text": "".join(state["parts"]),
+                    **({"text": "".join(state["parts"])} if host.store_text() else {}),
                     "input_tokens": usage.input_tokens if usage else 0,
                     "cached_tokens": usage.cached_tokens if usage else 0,
                     "output_tokens": usage.output_tokens if usage else 0,
@@ -314,7 +320,7 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs())
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded:
+            if not q.cancelled and not q.superseded and host.store_text():
                 task = asyncio.create_task(self._cache_put(qhash, pass_, text, refs))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
@@ -383,7 +389,7 @@ class AnswerEngine:
             {
                 "kind": "question",
                 "question_id": str(q.qid),
-                "text": q.text,
+                **({"text": q.text} if self.host.store_text() else {}),
                 "type": q.qtype,
                 "confidence": q.confidence,
                 "addressed_to_user": q.addressed,
