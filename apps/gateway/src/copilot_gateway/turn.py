@@ -9,6 +9,9 @@ On a speech-end frame on the "them" channel, at t0:
 4. at t0 + silence_timer_ms (or earlier, if the turn model says the turn is complete), once
    the STT final has arrived, the same question_id is confirmed with speculative: false;
 5. not a question for the user: nothing is shown and the text stays in the transcript.
+   If the interim did not look like a question but the final text differs, the final is
+   checked once more (an interim often lacks the last words), and a question found then is
+   sent confirmed straight away.
 
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
@@ -105,6 +108,7 @@ class TurnDetector:
         # Counters for metrics and tests.
         self.speculative_starts = 0
         self.speculative_cancels = 0
+        self.final_rechecks = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -174,6 +178,21 @@ class TurnDetector:
             detection = await detection_task
             if not detection.fires(self.min_confidence):
                 await self._turn_end(t0)
+                final_text = self.utterance()
+                if final_text and final_text != text:
+                    # The interim was cut short (often the last words and the "?"); check
+                    # the final once more before deciding it was not a question.
+                    if match is not None:
+                        match.cancel()
+                    match = self.host.start_match(final_text)
+                    detection = await self.host.detect(final_text)
+                    if detection.fires(self.min_confidence):
+                        self.final_rechecks += 1
+                        turn_end_ms = int((time.monotonic() - t0) * 1000)
+                        qid = self.host.begin_question(
+                            final_text, detection, speculative=False, t0=t0, match=match
+                        )
+                        self.host.confirm_question(qid, final_text, turn_end_ms)
                 self.reset()  # step 5: the text stays in the transcript tail only
                 return
             qid: UUID | None = None

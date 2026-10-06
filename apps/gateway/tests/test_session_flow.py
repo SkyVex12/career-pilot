@@ -442,3 +442,17 @@ def start_message() -> dict[str, Any]:
         "consent": {"store_transcript": False},
         "audio": {"sample_rate": 16000, "encoding": "pcm16"},
     }
+
+
+async def test_final_text_is_rechecked_when_the_interim_was_cut_short(env) -> None:
+    env.stt.final_suffix = " ledger?"  # the interim stops before the last word and the "?"
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the")
+        q = await c.wait_type("question.detected")
+        assert q["speculative"] is False
+        assert q["text"] == "How did you scale the ledger?"
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.final_rechecks == 1

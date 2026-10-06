@@ -25,6 +25,7 @@ class TextSTTControl:
     connect_failures: int = 0  # the next N connects fail
     stall: bool = False  # swallow audio, emit nothing
     drop_after_chunks: int | None = None  # close the connection after N audio chunks
+    final_suffix: str = ""  # appended to finals only: an interim that missed the last words
     sent_text: list[str] = field(default_factory=list[str])
     names: list[str] = field(default_factory=list[str])
 
@@ -67,7 +68,7 @@ class TextSTT:
     async def finalize(self) -> None:
         if self.control.stall:
             return
-        text = " ".join(self.words)
+        text = " ".join(self.words) + (self.control.final_suffix if self.words else "")
         self.words = []
         self.queue.put_nowait(STTResult(text, True, self.seg_start, self.ms, flushed=True))
         self.seg_start = self.ms
