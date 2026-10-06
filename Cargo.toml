@@ -1,7 +1,7 @@
 # Rust workspace: the desktop app, its client core, and the generated protocol types.
 [workspace]
 resolver = "3"
-members = ["apps/desktop/src-tauri", "packages/protocol/rust"]
+members = ["apps/desktop/src-tauri", "apps/desktop/core", "packages/protocol/rust"]
 
 [workspace.package]
 edition = "2024"

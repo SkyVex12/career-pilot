@@ -1,0 +1,31 @@
+[package]
+name = "copilot-client"
+version = "0.0.0"
+description = "Desktop client core: audio capture, echo cancellation, VAD and the gateway connection"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+copilot-protocol = { path = "../../../packages/protocol/rust" }
+cpal = "0.18"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+keyring = "4"
+# Silero VAD. download-binaries links a static ONNX Runtime at build time, so there is no DLL
+# to ship. Pinned: ort 2.0 is still a release candidate and its API moves between them.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# WebRTC audio processing (AEC3), a pure Rust port; see audio/aec.rs.
+sonora = "0.2"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+hound = "3"
