@@ -406,3 +406,144 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
     for role, allowed in (("app_api", False), ("app_gateway", False), ("app_worker", True)):
         _, _, err = await as_user(db, role, db.a, "select 1 from app.job_runs")
         assert (err is None) == allowed, f"{role} job_runs access should be {allowed}"
+
+
+# Cross-user references ---------------------------------------------------------------
+# Foreign keys between user-owned tables are composite on (id, user_id), so a row can
+# only point at rows of the same user. Row-level security alone does not stop this:
+# foreign key checks do not apply RLS.
+
+FOREIGN_KEY_VIOLATION = "23503"
+
+# (child table, reference column, parent table) for every foreign key between user tables.
+REFERENCES = [
+    ("interviews", "job_id", "jobs"),
+    ("memory_edges", "src", "memory_nodes"),
+    ("memory_edges", "dst", "memory_nodes"),
+    ("memory_proposals", "target_node_id", "memory_nodes"),
+    ("sessions", "job_id", "jobs"),
+    ("sessions", "interview_id", "interviews"),
+    ("transcript_segments", "session_id", "sessions"),
+    ("questions", "session_id", "sessions"),
+    ("answers", "question_id", "questions"),
+    ("session_outputs", "session_id", "sessions"),
+]
+WRITE_ROLES = [r for r in APP_ROLES if can_write(r)]
+
+
+def parent_id(w: World, parent: str) -> uuid.UUID:
+    return {
+        "jobs": w.job_id,
+        "interviews": w.interview_id,
+        "memory_nodes": w.node_ids[0],
+        "sessions": w.session_id,
+        "questions": w.question_id,
+    }[parent]
+
+
+def insert_sql(table: str, row: dict[str, Any]) -> str:
+    params = ", ".join(f"${i}" for i in range(1, len(row) + 1))
+    return f"insert into app.{table} ({', '.join(row)}) values ({params})"
+
+
+def ref_id(child: str, column: str, parent: str) -> str:
+    return f"{child}.{column}->{parent}"
+
+
+@pytest.mark.parametrize("role", WRITE_ROLES)
+@pytest.mark.parametrize(
+    ("child", "column", "parent"), REFERENCES, ids=[ref_id(*r) for r in REFERENCES]
+)
+async def test_cannot_insert_reference_to_another_users_row(
+    db: Db, role: str, child: str, column: str, parent: str
+) -> None:
+    own = ROWS[child](db.a, 3) | {column: parent_id(db.a, parent)}
+    _, _, err = await as_user(db, role, db.a, insert_sql(child, own), *own.values())
+    assert err is None, f"control insert into {child} failed ({err}); the test row is broken"
+
+    other = ROWS[child](db.a, 3) | {column: parent_id(db.b, parent)}
+    _, _, err = await as_user(db, role, db.a, insert_sql(child, other), *other.values())
+    assert err == FOREIGN_KEY_VIOLATION, (
+        f"{role} inserted a {child} row of user A that points at user B's {parent}"
+    )
+
+
+@pytest.mark.parametrize("role", WRITE_ROLES)
+@pytest.mark.parametrize(
+    ("child", "column", "parent"), REFERENCES, ids=[ref_id(*r) for r in REFERENCES]
+)
+async def test_cannot_repoint_reference_to_another_users_row(
+    db: Db, role: str, child: str, column: str, parent: str
+) -> None:
+    # transcript_segments' key includes session_id; move seg_id so the update cannot collide
+    # with user B's seeded segment, which would fail on the key before the foreign key check.
+    extra = ", seg_id = seg_id + 1000" if child == "transcript_segments" else ""
+    sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
+    status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
+    assert err == FOREIGN_KEY_VIOLATION, (
+        f"{role} pointed user A's {child}.{column} at user B's {parent}: {status}"
+    )
+
+
+async def test_cross_user_reference_fails_even_without_rls(db: Db) -> None:
+    """The constraint holds for roles that bypass RLS too (here the superuser)."""
+    row = ROWS["interviews"](db.a, 3) | {"job_id": db.b.job_id}
+    try:
+        async with db.conn.transaction():
+            await insert(db.conn, "interviews", row)
+            raise Rollback
+    except Rollback:
+        pytest.fail("superuser inserted an interview pointing at another user's job")
+    except asyncpg.ForeignKeyViolationError:
+        pass
+
+
+async def test_deleting_a_job_nulls_session_references_but_keeps_the_session(db: Db) -> None:
+    """sessions uses `on delete set null (job_id)`: only the reference column is cleared."""
+    a = db.a
+    try:
+        async with db.conn.transaction():
+            await db.conn.execute(
+                "update app.sessions set job_id = $1, interview_id = $2 where id = $3",
+                a.job_id,
+                a.interview_id,
+                a.session_id,
+            )
+            await db.conn.execute("delete from app.jobs where id = $1", a.job_id)  # cascades
+            row = await db.conn.fetchrow(
+                "select job_id, interview_id, user_id from app.sessions where id = $1",
+                a.session_id,
+            )
+            assert row is not None, "deleting a job deleted the session"
+            assert (row["job_id"], row["interview_id"], row["user_id"]) == (None, None, a.user_id)
+            raise Rollback
+    except Rollback:
+        pass
+
+
+async def test_every_reference_between_user_tables_is_same_user(db: Db) -> None:
+    rows = await db.conn.fetch(
+        """
+        select cl.relname as child, pcl.relname as parent,
+               array(select a.attname from unnest(c.conkey) with ordinality k(n, i)
+                     join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.n
+                     order by k.i)::text[] as cols,
+               array(select a.attname from unnest(c.confkey) with ordinality k(n, i)
+                     join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.n
+                     order by k.i)::text[] as ref_cols
+        from pg_constraint c
+        join pg_class cl on cl.oid = c.conrelid
+        join pg_class pcl on pcl.oid = c.confrelid
+        where c.contype = 'f' and c.connamespace = 'app'::regnamespace
+          and pcl.relname <> 'users'
+        """
+    )
+    found: set[tuple[str, str, str]] = set()
+    for r in rows:
+        cols, ref_cols = list(r["cols"]), list(r["ref_cols"])
+        assert "user_id" in cols, f"{r['child']} -> {r['parent']}: foreign key lacks user_id"
+        pairs = dict(zip(cols, ref_cols, strict=True))
+        assert pairs.pop("user_id") == "user_id", f"{r['child']}: user_id not matched to user_id"
+        assert list(pairs.values()) == ["id"], f"{r['child']}: unexpected key {r['ref_cols']}"
+        found.add((r["child"], next(iter(pairs)), r["parent"]))
+    assert found == set(REFERENCES), "foreign keys and this test's REFERENCES differ"
