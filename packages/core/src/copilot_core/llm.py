@@ -5,6 +5,13 @@ maps to an ordered list of routes. A route is tried until it yields its first to
 or no first token within `first_token_timeout_s`, moves on to the next route. Once text has
 streamed, an error is final, since the user has already seen that text.
 
+Refusals: every response is checked for `stop_reason == "refusal"`. A refusal before any
+text moves on to the next route that runs a different model, with `between_tools` thinking
+removed (only Sonnet 5.5 accepts it); routes marked `refusal_only` are tried only then. This
+does on Bedrock what the direct API's server-side `fallbacks` does. A refusal after text has
+streamed is passed to the caller as an LLMDone with that stop reason, and `complete()` raises
+`RefusedError`, so no caller reads refused content as an answer.
+
 Providers wrap the official Anthropic SDK: `AsyncAnthropic` for the direct API and
 `AsyncAnthropicBedrockMantle` for Bedrock. Both expose the same `messages.stream` surface.
 """
@@ -73,6 +80,7 @@ class Route:
     model: str
     # Extra request fields for this route, for example thinking or output_config.effort.
     params: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    refusal_only: bool = False  # tried only after another model refused
 
     @property
     def label(self) -> str:
@@ -85,8 +93,23 @@ class AllRoutesFailedError(Exception):
         self.errors = errors
 
 
-class FirstTokenTimeoutError(Exception):
-    pass
+class RefusedError(Exception):
+    def __init__(self, job: str, done: "LLMDone") -> None:
+        super().__init__(f"{job}: refused by {done.provider}:{done.model}")
+        self.done = done
+
+
+def model_family(model: str) -> str:
+    """claude-sonnet-5-5, anthropic.claude-sonnet-5-5 and us.anthropic.claude-sonnet-5-5 match."""
+    return model.rsplit(".", 1)[-1].split(":")[0]
+
+
+def without_between_tools(params: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(params)
+    thinking = out.get("thinking")
+    if isinstance(thinking, Mapping) and thinking.get("type") == "between_tools":  # pyright: ignore[reportUnknownMemberType]
+        del out["thinking"]
+    return out
 
 
 def _system_param(blocks: Sequence[SystemBlock]) -> list[dict[str, Any]]:
@@ -175,22 +198,37 @@ class ModelRouter:
             raise AllRoutesFailedError(job, ["no routes configured"])
         hooks = [h for h in (self.on_fallback, on_fallback) if h is not None]
         errors: list[str] = []
+        refused: set[str] = set()  # model families that refused this request
+
+        def failed(route: Route, reason: str) -> None:
+            log.warning("%s route %s failed: %s", job, route.label, reason)
+            errors.append(f"{route.label}: {reason}")
+            for hook in hooks:
+                hook(job, route, reason)
+
         for attempt, route in enumerate(routes):
+            if route.refusal_only and not refused:
+                continue
+            if model_family(route.model) in refused:
+                continue
+            params = without_between_tools(route.params) if refused else route.params
             started = time.monotonic()
-            agen = route.provider.stream(route.model, req, route.params)
+            agen = route.provider.stream(route.model, req, params)
             try:
                 first = await asyncio.wait_for(anext(agen), self.first_token_timeout_s)
             except (TimeoutError, StopAsyncIteration, Exception) as e:  # next route on any error
                 await agen.aclose()
-                reason = (
+                failed(
+                    route,
                     "first token timeout"
                     if isinstance(e, TimeoutError)
-                    else f"{type(e).__name__}: {e}"
+                    else f"{type(e).__name__}: {e}",
                 )
-                log.warning("%s route %s failed: %s", job, route.label, reason)
-                errors.append(f"{route.label}: {reason}")
-                for hook in hooks:
-                    hook(job, route, reason)
+                continue
+            if isinstance(first, LLMDone) and first.stop_reason == "refusal":
+                await agen.aclose()
+                refused.add(model_family(route.model))
+                failed(route, "refusal")
                 continue
             first_ms = int((time.monotonic() - started) * 1000)
             try:
@@ -221,4 +259,6 @@ class ModelRouter:
             else:
                 parts.append(chunk)
         assert done is not None
+        if done.stop_reason == "refusal":
+            raise RefusedError(job, done)
         return "".join(parts), done

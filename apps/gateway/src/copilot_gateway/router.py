@@ -59,15 +59,16 @@ def _model_ids(settings: Settings, provider: str, family: Family) -> tuple[str, 
 def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if job == "deep":
-        # Sonnet 5.5: no extended thinking on the live path; `between_tools` is its lowest
-        # thinking setting (`disabled` is rejected).
-        params["thinking"] = {"type": "between_tools"}
+        # Sonnet 5.5 rejects thinking {type: "disabled"}; `between_tools` is its lowest
+        # setting. Sonnet 5.5 has no Priority Tier, so the deep pass never sets service_tier.
+        params["thinking"] = {"type": settings.deep_pass_thinking}
         params["output_config"] = {"effort": settings.deep_pass_effort}
         if provider == "anthropic":
-            # Server-side refusal fallback; Claude API only.
+            # Server-side refusal fallback; Claude API only (Bedrock: see build_routes).
             params["extra_headers"] = {"anthropic-beta": SERVER_FALLBACK_BETA}
             params["extra_body"] = {"fallbacks": "default"}
     if job == "fast" and provider == "anthropic":
+        # Priority Tier is a direct-API flag for the Haiku fast pass only.
         params["service_tier"] = "auto" if settings.fast_pass_priority else "standard_only"
     return params
 
@@ -82,6 +83,16 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
             job_routes.append(Route(provider, primary, params))
             if i == 0:
                 job_routes.append(Route(provider, retry, params))
+            if job == "deep" and provider.name == "bedrock" and settings.bedrock_refusal_model:
+                # What `fallbacks: "default"` does on the direct API: a refused Sonnet 5.5
+                # request reruns on Sonnet 5 with thinking off.
+                refusal_params = {
+                    "thinking": {"type": "disabled"},
+                    "output_config": {"effort": settings.deep_pass_effort},
+                }
+                job_routes.append(
+                    Route(provider, settings.bedrock_refusal_model, refusal_params, True)
+                )
         routes[job] = job_routes
     return routes
 

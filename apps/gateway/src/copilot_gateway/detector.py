@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import replace
 
 from copilot_core import prompts
-from copilot_core.llm import AllRoutesFailedError, ModelRouter
+from copilot_core.llm import AllRoutesFailedError, ModelRouter, RefusedError
 from copilot_gateway.turn import Detection
 
 log = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class Detector:
         try:
             text, _ = await self.router.complete("detector", req)
             detection = parse_detection(text)
-        except (AllRoutesFailedError, ValueError) as e:
+        except (AllRoutesFailedError, RefusedError, ValueError) as e:
             log.warning("detector failed: %s", e)
             return replace(NO_QUESTION, error=str(e))
         result = replace(detection, latency_ms=int((time.monotonic() - started) * 1000))

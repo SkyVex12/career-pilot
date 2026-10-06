@@ -72,10 +72,17 @@ class Settings(BaseSettings):
     # The retry route; set to the `us.` cross-region profile if the account uses one.
     bedrock_haiku_retry_model: str | None = None
     bedrock_sonnet_retry_model: str | None = None
+    # Sonnet 5.5 deep pass: "between_tools" is its lowest thinking setting (no extended
+    # thinking); "adaptive" lets the model think, still at deep_pass_effort.
+    deep_pass_thinking: Literal["between_tools", "adaptive"] = "between_tools"
     deep_pass_effort: Literal["low", "medium", "high"] = "low"
+    # Bedrock has no server-side refusal fallback: after a Sonnet 5.5 refusal the gateway
+    # retries this model itself, with thinking off. Empty turns the route off.
+    bedrock_refusal_model: str = "anthropic.claude-sonnet-5"
 
-    # Embeddings for prepared-answer matching; "none" turns matching off.
-    embedder: Literal["bedrock", "none"] = "bedrock"
+    # Embeddings for prepared-answer matching. "auto" uses Bedrock when Bedrock is a Claude
+    # provider and turns matching off otherwise (the direct API has no embeddings).
+    embedder: Literal["auto", "bedrock", "none"] = "auto"
     embed_model: str = "cohere.embed-v4:0"
 
     # Speech to text, in fallback order (ARCHITECTURE.md "Failure modes").
@@ -114,6 +121,12 @@ class Settings(BaseSettings):
     ws_ping_interval_s: float = 30.0
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
+
+    @property
+    def embeddings_on_bedrock(self) -> bool:
+        if self.embedder == "auto":
+            return "bedrock" in self.llm_providers
+        return self.embedder == "bedrock"
 
     @field_validator("deep_pass_auto_types", "llm_providers", "stt_providers", mode="before")
     @classmethod

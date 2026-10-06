@@ -44,10 +44,21 @@ def stt_providers(settings: Settings) -> list[tuple[str, STTFactory]]:
     return providers
 
 
+def make_embedder(settings: Settings) -> Embedder | None:
+    if settings.embeddings_on_bedrock:
+        log.info("prepared-answer matching on: %s embeddings on Bedrock", settings.embed_model)
+        return BedrockCohereEmbedder(settings.embed_model, settings.aws_region)
+    log.warning(
+        "prepared-answer matching is off: no embeddings provider (COPILOT_EMBEDDER=%s, "
+        "Claude providers %s); every question goes to the fast pass",
+        settings.embedder,
+        ",".join(settings.llm_providers),
+    )
+    return None
+
+
 def build_services(settings: Settings) -> Services:
-    embedder: Embedder | None = None
-    if settings.embedder == "bedrock":
-        embedder = BedrockCohereEmbedder(settings.embed_model, settings.aws_region)
+    embedder = make_embedder(settings)
     return Services(
         settings=settings,
         store=GatewayStore(make_client(settings), settings),

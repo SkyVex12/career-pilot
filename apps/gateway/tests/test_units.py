@@ -16,6 +16,7 @@ from copilot_core.llm import (
     LLMRequest,
     LLMUsage,
     ModelRouter,
+    RefusedError,
     Route,
 )
 from copilot_core.packs import Digest, NodeRef, PreparedAnswer, cited_refs, cosine, encode_embedding
@@ -34,15 +35,23 @@ class Fake:
         self.behaviour = behaviour
         self.delay = delay
         self.calls = 0
+        self.seen: list[tuple[str, dict[str, Any]]] = []  # (model, params) per call
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> AsyncGenerator[LLMChunk]:
         self.calls += 1
+        self.seen.append((model, dict(params)))
         await asyncio.sleep(self.delay)
         if self.behaviour == "error":
             raise RuntimeError("boom")
+        if self.behaviour == "refuse" or (self.behaviour == "refuse_5_5" and "5-5" in model):
+            yield LLMDone(LLMUsage(10, 0, 0), "refusal")
+            return
         yield "hello "
+        if self.behaviour == "refuse_after_text":
+            yield LLMDone(LLMUsage(10, 0, 1), "refusal")
+            return
         if self.behaviour == "error_after_first":
             raise RuntimeError("mid-stream")
         yield "world"
@@ -87,6 +96,115 @@ async def test_router_all_fail() -> None:
         await router.complete("j", REQ)
     with pytest.raises(AllRoutesFailedError):
         await router.complete("unknown", REQ)
+
+
+BETWEEN = {"thinking": {"type": "between_tools"}, "output_config": {"effort": "low"}}
+
+
+async def test_refusal_moves_to_another_model_without_between_tools() -> None:
+    bedrock = Fake("bedrock", "refuse_5_5")
+    direct = Fake("anthropic", "ok")
+    hooks: list[str] = []
+    router = ModelRouter(
+        {
+            "deep": [
+                Route(bedrock, "anthropic.claude-sonnet-5-5", BETWEEN),
+                Route(bedrock, "us.anthropic.claude-sonnet-5-5", BETWEEN),  # same model: skipped
+                Route(bedrock, "anthropic.claude-sonnet-5", BETWEEN, refusal_only=True),
+                Route(direct, "claude-sonnet-5-5", BETWEEN),  # same model: skipped
+            ]
+        },
+        first_token_timeout_s=1,
+        on_fallback=lambda job, route, reason: hooks.append(f"{route.label} {reason}"),
+    )
+    text, done = await router.complete("deep", REQ)
+    assert text == "hello world"
+    assert done.model == "anthropic.claude-sonnet-5"
+    assert [m for m, _ in bedrock.seen] == [
+        "anthropic.claude-sonnet-5-5",
+        "anthropic.claude-sonnet-5",
+    ]
+    assert "thinking" not in bedrock.seen[1][1]  # between_tools is Sonnet 5.5 only
+    assert bedrock.seen[1][1]["output_config"] == {"effort": "low"}
+    assert direct.calls == 0
+    assert hooks == ["bedrock:anthropic.claude-sonnet-5-5 refusal"]
+
+
+async def test_refusal_only_routes_wait_for_a_refusal() -> None:
+    a, spare = Fake("a", "ok"), Fake("spare", "ok")
+    router = ModelRouter(
+        {"j": [Route(spare, "m0", refusal_only=True), Route(a, "m1")]}, first_token_timeout_s=1
+    )
+    _, done = await router.complete("j", REQ)
+    assert done.provider == "a"
+    assert spare.calls == 0
+
+
+async def test_refusal_everywhere_and_after_text() -> None:
+    router = ModelRouter({"j": [Route(Fake("a", "refuse"), "m")]}, first_token_timeout_s=1)
+    with pytest.raises(AllRoutesFailedError, match="refusal"):
+        await router.complete("j", REQ)
+    late = ModelRouter(
+        {"j": [Route(Fake("a", "refuse_after_text"), "m"), Route(Fake("b", "ok"), "n")]},
+        first_token_timeout_s=1,
+    )
+    # Text already streamed: the refusal reaches the caller, and complete() raises.
+    chunks = [c async for c in late.stream("j", REQ)]
+    assert chunks[0] == "hello "
+    last = chunks[-1]
+    assert isinstance(last, LLMDone)
+    assert last.stop_reason == "refusal"
+    with pytest.raises(RefusedError):
+        await late.complete("j", REQ)
+
+
+async def test_detector_treats_a_refusal_as_no_question() -> None:
+    from copilot_gateway.detector import Detector
+
+    late = ModelRouter(
+        {"detector": [Route(Fake("a", "refuse_after_text"), "m")]}, first_token_timeout_s=1
+    )
+    d = await Detector(late, "Alex", 80).detect("How did you do it?", "")
+    assert not d.fires(0.0)
+    assert d.error is not None
+
+
+def test_bedrock_deep_routes_and_thinking_setting() -> None:
+    from copilot_gateway.router import build_routes, job_params
+
+    class P:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+    routes = build_routes(s, [P("bedrock")])  # pyright: ignore[reportArgumentType]
+    deep = routes["deep"]
+    assert [(r.model, r.refusal_only) for r in deep] == [
+        ("anthropic.claude-sonnet-5-5", False),
+        ("anthropic.claude-sonnet-5-5", False),
+        ("anthropic.claude-sonnet-5", True),
+    ]
+    assert deep[2].params["thinking"] == {"type": "disabled"}
+    assert all(not r.refusal_only for r in routes["fast"])
+    assert "service_tier" not in job_params(s, "anthropic", "deep")
+    adaptive = s.model_copy(update={"deep_pass_thinking": "adaptive"})
+    assert job_params(adaptive, "anthropic", "deep")["thinking"] == {"type": "adaptive"}
+    priority = s.model_copy(update={"fast_pass_priority": True})
+    assert job_params(priority, "anthropic", "fast")["service_tier"] == "auto"
+    assert "service_tier" not in job_params(priority, "bedrock", "fast")
+
+
+def test_embedder_auto_and_startup_log(caplog: pytest.LogCaptureFixture) -> None:
+    from copilot_gateway.main import make_embedder
+
+    direct = Settings(_env_file=None, llm_providers=["anthropic"])  # pyright: ignore[reportCallIssue]
+    with caplog.at_level("WARNING"):
+        assert make_embedder(direct) is None
+    assert "prepared-answer matching is off" in caplog.text
+    both = Settings(_env_file=None, llm_providers=["bedrock", "anthropic"])  # pyright: ignore[reportCallIssue]
+    assert both.embeddings_on_bedrock
+    off = both.model_copy(update={"embedder": "none"})
+    assert not off.embeddings_on_bedrock
 
 
 def test_parse_detection() -> None:

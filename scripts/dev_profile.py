@@ -32,7 +32,7 @@ from copilot_core import keys
 from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import BedrockCohereEmbedder
 from copilot_core.ids import uuid7
-from copilot_core.llm import LLMRequest, ModelRouter, Route, SystemBlock
+from copilot_core.llm import LLMRequest, ModelRouter, RefusedError, Route, SystemBlock
 from copilot_core.packs import Digest, NodeRef, SessionPack, encode_embedding, render_pack
 from copilot_gateway.config import Settings
 from copilot_gateway.router import make_providers
@@ -166,7 +166,10 @@ async def extract(
         max_tokens=32000,
         json_schema=SCHEMA,
     )
-    text, done = await make_router(settings).complete("profile", req)
+    try:
+        text, done = await make_router(settings).complete("profile", req)
+    except RefusedError as e:
+        sys.exit(f"Claude declined to build the profile ({e}); check the input files")
     print(
         f"extracted with {done.provider}:{done.model}: {done.usage.input_tokens} in, "
         f"{done.usage.output_tokens} out",
@@ -289,7 +292,8 @@ def build(
 
 
 async def embed_prepared(settings: Settings, pack: SessionPack) -> bool:
-    if settings.embedder != "bedrock" or not pack.prepared_answers:
+    if not settings.embeddings_on_bedrock or not pack.prepared_answers:
+        print("no embeddings provider: prepared-answer matching stays off", file=sys.stderr)
         return False
     embedder = BedrockCohereEmbedder(settings.embed_model, settings.aws_region)
     try:
