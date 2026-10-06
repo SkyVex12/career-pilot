@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "copilot-api",
   "copilot-core",
+  "copilot-evals",
   "copilot-gateway",
   "copilot-protocol",
   "copilot-worker",
@@ -32,11 +33,12 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol"]
+members = ["apps/api", "apps/gateway", "apps/worker", "evals", "packages/core", "packages/protocol"]
 
 [tool.uv.sources]
 copilot-api = { workspace = true }
 copilot-core = { workspace = true }
+copilot-evals = { workspace = true }
 copilot-gateway = { workspace = true }
 copilot-protocol = { workspace = true }
 copilot-worker = { workspace = true }
@@ -57,12 +59,12 @@ select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF", "SIM", "PT"]
 known-first-party = ["copilot_api", "copilot_core", "copilot_gateway", "copilot_protocol", "copilot_worker"]
 
 [tool.pyright]
-include = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol", "migrations", "scripts", "tests"]
+include = ["apps/api", "apps/gateway", "apps/worker", "evals", "packages/core", "packages/protocol", "migrations", "scripts", "tests"]
 exclude = ["**/node_modules", "**/.venv", "apps/desktop"]
 pythonVersion = "3.12"
 # Strict for shipped code; standard for tests, scripts and the generated models.
 typeCheckingMode = "standard"
-strict = ["apps/api/src", "apps/gateway/src", "apps/worker/src", "packages/core/src", "packages/protocol/python/copilot_protocol/audio.py"]
+strict = ["apps/api/src", "apps/gateway/src", "apps/worker/src", "evals/src", "packages/core/src", "packages/protocol/python/copilot_protocol/audio.py"]
 venvPath = "."
 venv = ".venv"
 
@@ -71,6 +73,7 @@ testpaths = [
   "apps/api/tests",
   "apps/gateway/tests",
   "apps/worker/tests",
+  "evals/tests",
   "packages/core/tests",
   "packages/protocol/tests",
   "migrations/tests",
