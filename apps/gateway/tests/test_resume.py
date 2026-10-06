@@ -99,6 +99,9 @@ async def test_resume_on_another_task(env) -> None:
         assert_contiguous(c)
         await c.send({"type": "session.end"})
         assert await c.closed() == 1000
+        # Task A's lease loop must not put the active-session slot back after the end.
+        await asyncio.sleep(0.5)
+        assert await vk.get(keys.user_active_session(env.user_a)) is None
     assert len([j for j in env.jobs.sent if j["type"] == "session.ended"]) == 1
 
 
