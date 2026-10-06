@@ -206,6 +206,11 @@ impl Engine {
         self.client.command(Command::DropConnection).await;
     }
 
+    /// Ask for `session.end` without waiting; whoever awaits [`Engine::finish`] sees the stop.
+    pub async fn request_end(&self) {
+        self.client.command(Command::End).await;
+    }
+
     /// End the session (`session.end`), stop the audio, and wait for the client to finish.
     pub async fn end(&self) -> Option<StopReason> {
         self.client.command(Command::End).await;
