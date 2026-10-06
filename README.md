@@ -104,9 +104,9 @@ TypeScript uses json-schema-to-typescript; both versions are pinned by the lockf
 ## Tests and checks
 
 ```sh
-uv run pytest                 # all Python tests, including the database tests
-uv run pytest -m "not db"     # without the local stack
-uv run pytest -m db           # only the row-level security test
+uv run pytest                 # all Python tests, including those that need the stack
+uv run pytest -m "not stack"  # without the local stack
+uv run pytest -m stack        # only the tests against the local stack
 pnpm test                     # TypeScript contract tests (vitest)
 pnpm typecheck                # tsc for protocol and desktop
 pnpm codegen:check            # generated protocol types are current
@@ -118,9 +118,15 @@ uv run pyright
   `packages/protocol/fixtures/messages.json` round-trip through the Python and TypeScript
   types. They cover every message type, messages that must be rejected, and audio frame
   headers that must encode to the same bytes in both languages.
-- **Row-level security test** (`migrations/tests/test_rls.py`, marker `db`): migrates a
+- **Row-level security test** (`migrations/tests/test_rls.py`, marker `stack`): migrates a
   throwaway database, seeds two users across every user table, and checks for `app_api`,
   `app_worker` and `app_gateway` that neither user can read or write the other's rows. It
-  also fails if a new table with `user_id` lacks forced row-level security or is missing
-  from the test. It needs the Postgres from `docker compose`, or any Postgres 16+ with
-  pgvector, given as a superuser URL in `COPILOT_DATABASE_URL`.
+  also checks that no row can reference another user's row: foreign keys between user
+  tables are composite on `(id, user_id)`, and inserting or repointing a cross-user
+  reference must fail for every relationship. It fails if a new table with `user_id` lacks
+  forced row-level security, or a new foreign key between user tables lacks `user_id`. It
+  needs the Postgres from `docker compose`, or any Postgres 16+ with pgvector, given as a
+  superuser URL in `COPILOT_DATABASE_URL`.
+- **Local stack smoke tests** (`tests/test_local_stack.py`, marker `stack`): a set and get
+  with TTL on Valkey; on ElasticMQ, the `jobs` queue's dead-letter policy and a create,
+  send, receive and delete with a `MessageGroupId`.

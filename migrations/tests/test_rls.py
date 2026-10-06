@@ -6,7 +6,7 @@ for B are refused, updates and deletes of B's rows touch nothing, and A cannot m
 own rows to B. Roles without a grant on a table must get "permission denied".
 
 Needs the local Postgres (docker compose up -d --wait). Each run migrates a fresh
-throwaway database and drops it afterwards. Run with: uv run pytest -m db
+throwaway database and drops it afterwards. Run with: uv run pytest -m stack
 """
 
 import json
@@ -25,7 +25,7 @@ import pytest_asyncio
 
 from copilot_core.migrate import DEFAULT_DATABASE_URL, apply
 
-pytestmark = [pytest.mark.db, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.stack, pytest.mark.asyncio(loop_scope="session")]
 
 MIGRATIONS = Path(__file__).resolve().parent.parent
 INSUFFICIENT_PRIVILEGE = "42501"  # both "permission denied" and RLS policy violations
@@ -216,7 +216,7 @@ async def db() -> AsyncIterator[Db]:
     except (OSError, asyncpg.PostgresError) as e:
         pytest.fail(
             f"cannot reach Postgres at {admin_url} ({e}). Start the local stack with "
-            "`docker compose up -d --wait`, or deselect with -m 'not db'.",
+            "`docker compose up -d --wait`, or deselect with -m 'not stack'.",
             pytrace=False,
         )
     name = f"copilot_rls_{uuid.uuid4().hex[:12]}"

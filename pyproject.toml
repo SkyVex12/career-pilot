@@ -15,6 +15,8 @@ dependencies = [
 [dependency-groups]
 dev = [
   "asyncpg-stubs>=0.30",
+  "boto3>=1.40",
+  "boto3-stubs[sqs]>=1.40",
   "datamodel-code-generator[ruff]>=0.34",
   "httpx2>=2.13.1",
   "jsonschema[format-nongpl]>=4.23",
@@ -22,6 +24,7 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.25",
   "ruff>=0.11",
+  "valkey>=6.1",
 ]
 
 [tool.uv]
@@ -49,7 +52,7 @@ select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF", "SIM", "PT"]
 known-first-party = ["copilot_api", "copilot_core", "copilot_gateway", "copilot_protocol", "copilot_worker"]
 
 [tool.pyright]
-include = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol", "migrations", "scripts"]
+include = ["apps/api", "apps/gateway", "apps/worker", "packages/core", "packages/protocol", "migrations", "scripts", "tests"]
 exclude = ["**/node_modules", "**/.venv", "apps/desktop"]
 pythonVersion = "3.12"
 # Strict for shipped code; standard for tests, scripts and the generated models.
@@ -66,9 +69,10 @@ testpaths = [
   "packages/core/tests",
   "packages/protocol/tests",
   "migrations/tests",
+  "tests",
 ]
 addopts = ["--import-mode=importlib", "--strict-markers"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-markers = ["db: needs the local Postgres from docker compose (COPILOT_DATABASE_URL)"]
+markers = ["stack: needs the docker compose stack (Postgres, Valkey, ElasticMQ)"]
