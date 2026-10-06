@@ -73,12 +73,12 @@ The desktop client signs in through Cognito and streams audio to the gateway, wh
 The client is a Tauri app: a React and TypeScript UI on a Rust core, for macOS and Windows.
 
 - **Audio capture:** two separate streams, system output (the other side of the call) and the microphone (the user). ScreenCaptureKit on macOS, WASAPI loopback on Windows. Separate channels replace speaker diarization. Live, the mic channel supplies only speech timing; its audio is recorded locally, encrypted, uploaded after the call and transcribed then.
-- **Echo cancellation:** WebRTC acoustic echo cancellation on the mic stream before VAD, so users without headphones don't get the other side's voice transcribed as their own.
-- **Voice activity detection:** Silero VAD runs on the client, so silence is never sent and the server does no audio processing.
+- **Echo cancellation:** WebRTC acoustic echo cancellation on the mic stream before VAD, so users without headphones don't get the other side's voice transcribed as their own. The client uses AEC3 from `sonora`, a pure Rust port of WebRTC's audio processing module, with the captured system output as the reference; the C++ module needs meson and a C++ toolchain to build. Both streams run on one 10 ms tick clock, filled with silence while loopback delivers nothing (Windows sends no loopback packets while nothing plays).
+- **Voice activity detection:** Silero VAD (v6.2, the same release as the replay tool's) runs on the client, so silence is never sent and the server does no audio processing. Speech starts at a score of 0.5 held for 120 ms and ends after 200 ms under 0.35, the replay tool's segmenter; "them" frames carry 200 ms of pre-roll before the speech start.
 - **Transport:** 16 kHz PCM frames of about 100 ms over one WebSocket, with automatic reconnect and session resume.
 - **Overlay:** an always-on-top window showing talking points first, then the detailed answer below. A hotkey forces a trigger when detection misses a question.
 - **Screenshots:** for coding questions, a captured screen region goes to a vision model.
-- **Login:** Amazon Cognito with OAuth and PKCE in the browser; the token is kept in the OS keychain and refreshed over the open socket during long calls. Career-OS sign-in can be added later as a federated identity provider.
+- **Login:** Amazon Cognito with OAuth and PKCE in the browser; the token is kept in the OS keychain and refreshed over the open socket during long calls. Career-OS sign-in can be added later as a federated identity provider. Until Cognito exists (build step 4) the client sends the gateway's dev token, kept in the Windows Credential Manager, behind the same token-provider interface.
 - **Distribution:** signed and notarized macOS build, signed Windows build, Tauri updater for auto-updates.
 
 ### Realtime pipeline
@@ -346,7 +346,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 - [ ] Turn-detection model: which one, and does it run on the client or the gateway?
 - [ ] Abandoned sessions: when a gateway task dies and the client never resumes, nothing ends the session until that user starts another one (then the gateway ends it). A periodic sweeper that ends sessions whose lease is gone and whose state is older than the resume window comes with the workers (build step 4).
 - [ ] Embeddings: Cohere on Bedrock or Voyage, decided by the eval set?
-- [ ] Desktop framework: Tauri or Electron?
+- [x] Desktop framework: Tauri 2 (build step 3).
 - [ ] Pricing model for users (per-minute credits or plan tiers) and payment provider?
 - [ ] When to revisit Career-OS integration, and who owns the data if it happens?
 
@@ -356,7 +356,7 @@ AWS announcements checked on 2026-10-03: [ECS Express Mode](https://aws.amazon.c
 
 ## 1. Realtime protocol
 
-This section is the contract between the desktop client and the gateway. Message schemas live in one JSON Schema file (`packages/protocol`), generated into Python and TypeScript types so the two sides never drift.
+This section is the contract between the desktop client and the gateway. Message schemas live in one JSON Schema file (`packages/protocol`), generated into Python, TypeScript and Rust types so the sides never drift.
 
 ### Connection and auth
 
@@ -451,12 +451,12 @@ A session moves through `connecting`, `active`, `reconnecting` (zero or more tim
 | `4401` | Token invalid or expired | Refresh the token, then reconnect and resume |
 | `4403` | No minutes left on the plan | Show the upgrade prompt; do not retry |
 | `4408` | No start or resume message in time | Reconnect with a new `session.start` |
-| `4409` | Another session is already active | Offer to end the other session |
+| `4409` | Another session is already active | Offer to end the other session (when this client knows its id: resume it and send `session.end`) |
 | `4410` | Replaced by a newer connection for this session | Nothing: do not reconnect or prompt (the newer connection is this client's) |
 | `4429` | Rate limited | Retry after the `retry_after_ms` in the preceding `error` |
 | `4500` | Internal error | Reconnect and resume |
 
-**Reconnect policy:** backoff of 250 ms, 500 ms, 1 s, 2 s, then every 5 s, each with random jitter of up to 20%. While disconnected, the client keeps the last 10 seconds of "them" speech audio in a ring buffer and resends it after resume.
+**Reconnect policy:** backoff of 250 ms, 500 ms, 1 s, 2 s, then every 5 s, each with random jitter of up to 20% added; it starts over once a connection has delivered a message or stayed up 3 seconds. While disconnected, the client keeps the last 10 seconds of "them" speech audio in a ring buffer and resends it after resume; the "me" channel's flag-only frames ride along in order, so a speech start or end during the outage still arrives. A resume has no acknowledgement: the client counts it as accepted on the first server message, or after 500 ms without a close. When a resume closes with `4408` (the session is gone), the client starts a new session: `frame_seq` starts again at 0, the ring is cleared, and `capture_ms` counts from the new start. A `4401` gets one token refresh; a second `4401` right after it stops the client.
 
 **Limits:** one live session per user; binary frames at most 64 KB; JSON messages at most 256 KB, except `screenshot` at most 2 MB; `question.force` at most once per second. A message over a limit, and a `question.force` sent too soon, get a non-fatal `error` and are dropped; the session continues.
 
@@ -917,18 +917,20 @@ One monorepo:
 copilot/
   apps/
     desktop/      Tauri app: Rust core (audio, AEC, VAD, WebSocket) + React UI
+      core/       copilot-client crate: capture, AEC, VAD, framing, gateway client
+      src-tauri/  Tauri shell: windows, commands, global hotkey, settings
     gateway/      FastAPI WebSocket service
     api/          FastAPI REST service
     worker/       SQS consumer service
   packages/
     core/         shared Python: db access, memory search, prompts, model router, crypto
-    protocol/     protocol.schema.json, generated into Python and TypeScript types
+    protocol/     protocol.schema.json, generated into Python, TypeScript and Rust types
   migrations/     SQL migrations
   evals/          eval sets, recorded calls, runners
   infra/          Terraform
 ```
 
-Python uses uv workspaces, Ruff, Pyright and pytest. TypeScript uses pnpm. Protocol types are generated in CI (datamodel-code-generator for Python, json-schema-to-typescript for TypeScript), and the build fails if the generated files are out of date.
+Python uses uv workspaces, Ruff, Pyright and pytest. TypeScript uses pnpm. Protocol types are generated in CI (datamodel-code-generator for Python, json-schema-to-typescript for TypeScript, and a small generator in `packages/protocol/scripts/codegen_rs.py` for Rust serde types with the schema's constraints), and the build fails if the generated files are out of date.
 
 ### Gateway internals
 
@@ -1075,6 +1077,8 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call; completion enqueues `me_audio.transcribe` |
 
 The desktop app polls `GET /sessions/{id}` for up to 5 minutes after a call to show the summary and pending memory updates as soon as they are ready.
+
+Until the API exists (build step 4), the gateway serves one dev-only route with the same bearer token: `GET /v1/dev/jobs` lists the jobs in the caller's `pack:{uid}:index`, for the desktop start screen. It is mounted only with `COPILOT_ENV` dev or test.
 
 ### Workers
 
@@ -1240,7 +1244,7 @@ GitHub Actions, authenticating to AWS through OIDC roles.
 
 ### Testing and evals
 
-- **Unit and contract tests:** protocol messages round-trip through both the Python and TypeScript generated types.
+- **Unit and contract tests:** protocol messages round-trip through the Python, TypeScript and Rust generated types.
 - **Local stack:** Docker Compose with Postgres plus pgvector, Valkey and ElasticMQ (an SQS-compatible queue); model and STT calls go to recorded fixtures by default.
 - **Row-level security test:** an automated test creates two users and checks that every table refuses cross-user reads and writes for every app role.
 - **Recorded call corpus:** at least 50 mock interviews and standups, recorded with every participant's consent and labeled with question times and addressee. Replayed in real time through the gateway, it measures detection precision and recall, addressee accuracy, first-word latency and speculative waste.
