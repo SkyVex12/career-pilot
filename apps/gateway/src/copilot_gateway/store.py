@@ -247,6 +247,10 @@ class GatewayStore:
             return None
         return await self.get_pack_by_id(uid, _s(pack_id))
 
+    async def pack_index(self, uid: UUID) -> dict[str, str]:
+        raw = await self.client.hgetall(keys.pack_index(uid))  # pyright: ignore[reportUnknownMemberType]
+        return {_s(k): _s(v) for k, v in cast(dict[Any, Any], raw).items()}
+
     async def get_pack_by_id(self, uid: UUID, pack_id: str) -> SessionPack | None:
         raw = await self.client.get(keys.pack(uid, pack_id))
         return None if raw is None else SessionPack.model_validate_json(raw)
