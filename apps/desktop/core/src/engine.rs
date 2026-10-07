@@ -87,6 +87,8 @@ impl Engine {
         let (client, task) = client::spawn(config, tokens, events_tx);
         let latency = Arc::new(Mutex::new(LatencyTracker::default()));
         let session_id = Arc::new(Mutex::new(None));
+        // The recording of the user's audio follows the session ids the client goes live with.
+        let bind_recording = audio.recorder.session_binder();
 
         // Audio thread: frames to the client, speech edges to the UI and the latency tracker.
         let pipeline = Pipeline::new(audio.aec, audio.them_vad, audio.me_vad, audio.recorder);
@@ -135,7 +137,10 @@ impl Engine {
                         ClientEvent::Connection(state) => {
                             match &state {
                                 ConnectionState::Live { session_id: sid, .. } => {
-                                    *session_id.lock().unwrap() = Some(*sid)
+                                    *session_id.lock().unwrap() = Some(*sid);
+                                    if let Some(bind) = &bind_recording {
+                                        bind(*sid);
+                                    }
                                 }
                                 ConnectionState::Stopped { reason } => {
                                     let reason = *reason;
