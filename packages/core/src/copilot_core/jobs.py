@@ -1,6 +1,7 @@
 """Job envelope for the `jobs` queue (ARCHITECTURE.md, "SQS job catalog")."""
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -66,16 +67,31 @@ def digest_tag(digest_version: str | None) -> str:
     return digest_version.removeprefix("sha256:")[:16] if digest_version else "none"
 
 
+def embedding_tag(embedding_model: str | None) -> str:
+    """A short form of an embedding model id for idempotency keys ("none" without one)."""
+    if not embedding_model:
+        return "none"
+    return hashlib.sha256(embedding_model.encode("utf-8")).hexdigest()[:8]
+
+
 def pack_build(
-    user_id: UUID, mode: str, context: str, due_at: datetime, digest_version: str | None
+    user_id: UUID,
+    mode: str,
+    context: str,
+    due_at: datetime,
+    digest_version: str | None,
+    embedding_model: str | None = None,
 ) -> dict[str, Any]:
     """`pack.build` for one call context: `interview:{id}`, `job:{id}` or `standup:{date}`.
 
-    A pack depends on its context and on the digest it was built from, so the key names both:
-    a digest rebuild makes a new key and the pack is rebuilt; a repeat for the same digest is
-    skipped.
+    A pack depends on its context, on the digest it was built from and on the embedding model
+    of its prepared answers' vectors, so the key names all three: a digest rebuild or a new
+    embedding model makes a new key and the pack is rebuilt; a repeat is skipped.
     """
-    key = f"pack.build:{user_id}:{context}:{digest_tag(digest_version)}"
+    key = (
+        f"pack.build:{user_id}:{context}:{digest_tag(digest_version)}"
+        f":{embedding_tag(embedding_model)}"
+    )
     payload = {
         "mode": mode,
         "context": context,

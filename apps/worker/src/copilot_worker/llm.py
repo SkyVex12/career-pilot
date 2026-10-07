@@ -3,6 +3,10 @@
 Opus for memory extraction; Sonnet for job descriptions, session packs and post-call outputs.
 On Bedrock each job tries the Flex tier first and then Standard; the direct API, which has no
 Flex tier, comes last on Standard. Thinking is adaptive (neither model accepts it off).
+
+OpenAI routes take their model and reasoning effort per job from settings
+(`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`), on the default tier; the Claude-only
+settings (adaptive thinking, effort, Flex) never reach them.
 """
 
 import json
@@ -10,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
 from copilot_core.llm import LLMProvider, LLMRequest, ModelRouter, RefusedError, Route
+from copilot_core.providers import openai_params
 from copilot_worker.config import WorkerSettings
 
 Family = Literal["sonnet", "opus"]
@@ -39,6 +44,10 @@ def build_routes(
         }
         job_routes: list[Route] = []
         for provider in providers:
+            if provider.name == "openai":
+                model, _ = settings.openai_route(job)
+                job_routes.append(Route(provider, model, openai_params(settings, job)))
+                continue
             model = _model(settings, provider.name, family)
             if provider.name == "bedrock" and settings.bedrock_background_tier:
                 tier = {"extra_body": {"service_tier": settings.bedrock_background_tier}}

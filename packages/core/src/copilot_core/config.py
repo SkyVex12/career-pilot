@@ -11,6 +11,12 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
 
+LLMProviderName = Literal["bedrock", "anthropic", "openai"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+# Model routes, one per job: the gateway's live jobs and the workers' background jobs.
+OPENAI_JOBS = ("detector", "fast", "deep", "extract", "job", "pack", "postcall")
+EMBED_DIMENSIONS = 1024  # memory_nodes.embedding is vector(1024)
+
 
 def split_list(value: object) -> object:
     if isinstance(value, str):
@@ -44,8 +50,9 @@ class CoreSettings(BaseSettings):
     cognito_domain: str | None = None
     jwks_ttl_s: int = 3600
 
-    # Claude. Providers in fallback order; the first gets one retry before the next.
-    llm_providers: Annotated[list[Literal["bedrock", "anthropic"]], NoDecode] = Field(
+    # Model providers in fallback order; the first gets one retry before the next. Claude
+    # (bedrock, anthropic) is the design default; openai is a supported alternative.
+    llm_providers: Annotated[list[LLMProviderName], NoDecode] = Field(
         default_factory=lambda: ["bedrock", "anthropic"]
     )
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
@@ -59,16 +66,57 @@ class CoreSettings(BaseSettings):
     bedrock_haiku_model: str = "anthropic.claude-haiku-4-5"
     bedrock_sonnet_model: str = "anthropic.claude-sonnet-5-5"
     bedrock_opus_model: str = "anthropic.claude-opus-5-5"
+    # OpenAI (Responses API). Model and reasoning effort per job; no model names are built
+    # in, so each job the services run must be set when openai is a provider (.env.example
+    # has suggestions). An unset effort sends no reasoning setting (the model's default).
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_base_url: str | None = Field(default=None, validation_alias="OPENAI_BASE_URL")
+    openai_detector_model: str | None = None
+    openai_fast_model: str | None = None
+    openai_deep_model: str | None = None
+    openai_extract_model: str | None = None  # memory extraction from documents
+    openai_job_model: str | None = None  # job description to company, title, summary
+    openai_pack_model: str | None = None
+    openai_postcall_model: str | None = None  # post-call summary and feedback
+    openai_detector_reasoning: ReasoningEffort | None = None
+    openai_fast_reasoning: ReasoningEffort | None = None
+    openai_deep_reasoning: ReasoningEffort | None = None
+    openai_extract_reasoning: ReasoningEffort | None = None
+    openai_job_reasoning: ReasoningEffort | None = None
+    openai_pack_reasoning: ReasoningEffort | None = None
+    openai_postcall_reasoning: ReasoningEffort | None = None
+    # OpenAI counts reasoning tokens in max_output_tokens (Claude's thinking also counts in
+    # max_tokens, but the live passes run Claude without it): a job with a reasoning effort
+    # other than "none" gets this many extra output tokens, so reasoning cannot eat the
+    # answer's budget.
+    openai_reasoning_headroom_tokens: int = 2048
+    # First-token timeouts for OpenAI's live routes (None: the gateway's first_token_timeout_ms,
+    # like every route). Measured from a desktop in October 2026, warm and cached, OpenAI's
+    # first token came after 0.8 to 2.5 s on the fast pass and 2 to 4.3 s on a deep pass that
+    # reasons first, so the live 1.5 s would give up on most of them.
+    openai_first_token_timeout_ms: int | None = None  # detector and fast pass
+    openai_deep_first_token_timeout_ms: int | None = None
+    # How long idle connections to OpenAI stay open. The SDK default (5 s) makes nearly every
+    # live question pay a new TLS handshake (about 2 s measured from a desktop in October 2026);
+    # the gateway also opens the connection when it starts and when a session starts.
+    openai_keepalive_s: float = 120.0
+    # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
+    # its first-token timeout cancels only its stream, not the connection the retry needs.
+    openai_http2: bool = True
+
     # Prices per million tokens, for answers.cost_usd (copilot_core.pricing). JSON; entries
     # given are merged over the defaults, e.g.
     # {"claude-haiku-4-5": {"input": 1, "cached": 0.1, "output": 5}}.
     model_prices: dict[str, ModelPrice] = Field(default_factory=lambda: dict(DEFAULT_PRICES))
     tier_price_multipliers: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_TIERS))
 
-    # Embeddings for prepared-answer matching. "auto" uses Bedrock when Bedrock is a Claude
-    # provider and turns matching off otherwise (the direct API has no embeddings).
-    embedder: Literal["auto", "bedrock", "none"] = "auto"
-    embed_model: str = "cohere.embed-v4:0"
+    # Embeddings for prepared-answer matching, always 1024 dimensions. "auto" uses Bedrock
+    # (Cohere) when bedrock is a model provider, else OpenAI when openai is one, and turns
+    # matching off otherwise (the direct Claude API has no embeddings). Vectors from
+    # different embedding models are never compared (copilot_core.embed).
+    embedder: Literal["auto", "bedrock", "openai", "none"] = "auto"
+    embed_model: str = "cohere.embed-v4:0"  # Bedrock
+    openai_embed_model: str | None = None
 
     # Deepgram: streaming STT in the gateway, pre-recorded STT in the workers.
     deepgram_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
@@ -81,10 +129,46 @@ class CoreSettings(BaseSettings):
     sqs_queue_url: str = "http://localhost:9324/000000000000/jobs"
 
     @property
-    def embeddings_on_bedrock(self) -> bool:
+    def embedding_provider(self) -> Literal["bedrock", "openai"] | None:
         if self.embedder == "auto":
-            return "bedrock" in self.llm_providers
-        return self.embedder == "bedrock"
+            if "bedrock" in self.llm_providers:
+                return "bedrock"
+            if "openai" in self.llm_providers and self.openai_embed_model:
+                return "openai"
+            return None
+        if self.embedder == "openai" and not self.openai_embed_model:
+            return None
+        return None if self.embedder == "none" else self.embedder
+
+    @property
+    def embedding_model_id(self) -> str | None:
+        """Which embedding model makes the vectors: `provider:model@dimensions`. Stored with
+        every vector (packs, memory nodes); vectors with another id are never compared."""
+        provider = self.embedding_provider
+        if provider is None:
+            return None
+        model = self.embed_model if provider == "bedrock" else self.openai_embed_model
+        return f"{provider}:{model}@{EMBED_DIMENSIONS}"
+
+    def openai_first_token_timeout_s(self, job: str) -> float | None:
+        """An OpenAI live route's own first-token timeout, if one is set."""
+        if job == "deep":
+            ms = self.openai_deep_first_token_timeout_ms
+        else:
+            ms = self.openai_first_token_timeout_ms
+        return ms / 1000 if ms else None
+
+    def openai_route(self, job: str) -> tuple[str, ReasoningEffort | None]:
+        """The OpenAI model and reasoning effort for a job; an unset model is an error."""
+        if job not in OPENAI_JOBS:
+            raise ValueError(f"no OpenAI settings for job {job!r}")
+        model = getattr(self, f"openai_{job}_model")
+        if not model:
+            raise ValueError(
+                f"COPILOT_OPENAI_{job.upper()}_MODEL is not set; it is needed when openai is "
+                "in COPILOT_LLM_PROVIDERS (see .env.example)"
+            )
+        return str(model), getattr(self, f"openai_{job}_reasoning")
 
     @property
     def cognito_issuer(self) -> str | None:
@@ -107,6 +191,18 @@ class CoreSettings(BaseSettings):
     @classmethod
     def _comma_list(cls, value: object) -> object:
         return split_list(value)
+
+    @field_validator(
+        *(f"openai_{job}_{part}" for job in OPENAI_JOBS for part in ("model", "reasoning")),
+        "openai_embed_model",
+        "openai_base_url",
+        "openai_first_token_timeout_ms",
+        "openai_deep_first_token_timeout_ms",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_unset(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 class DataSettings(CoreSettings):

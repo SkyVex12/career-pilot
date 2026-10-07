@@ -1,9 +1,11 @@
 """Worker tests against the docker compose stack: a throwaway migrated database (connected as
-app_worker and app_system), Valkey database 14, the S3 store, and recorded Claude and
-Deepgram responses replayed through the real clients (see copilot_worker.testing)."""
+app_worker and app_system), Valkey database 14, the S3 store, and recorded model and
+Deepgram responses replayed through the real clients (see copilot_worker.testing).
+`stack` replays Claude's recordings; `openai_stack` OpenAI's, with only openai configured."""
 
 import base64
 from collections.abc import AsyncIterator
+from typing import Any
 
 import asyncpg
 import pytest
@@ -16,22 +18,29 @@ from copilot_core.storage import S3Store
 from copilot_core.teststack import StackUnavailableError, as_role, temp_database
 from copilot_core.valkey_client import make_valkey
 from copilot_worker.context import Ctx
-from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures, fixture_provider
+from copilot_worker.fixtures import DeepgramFixtures, fixture_provider, model_fixtures
 from copilot_worker.llm import build_router
 from copilot_worker.prompts import JOB_PROMPTS
 from copilot_worker.stt import DeepgramPrerecorded
 from copilot_worker.testing import FIXTURES, Stack, worker_settings
 
+OPENAI: dict[str, Any] = {
+    "llm_providers": ["openai"],
+    "openai_extract_model": "gpt-6-astra",
+    "openai_extract_reasoning": "medium",
+    **{f"openai_{job}_model": "gpt-6.1-sol" for job in ("job", "pack", "postcall")},
+    **{f"openai_{job}_reasoning": "medium" for job in ("job", "pack", "postcall")},
+}
 
-@pytest_asyncio.fixture(scope="module", loop_scope="session")
-async def stack() -> AsyncIterator[Stack]:
+
+async def make_stack(wire: str, **settings_over: Any) -> AsyncIterator[Stack]:
     try:
         db = temp_database("copilot_worker")
         url = await db.__aenter__()
     except StackUnavailableError as e:
         pytest.fail(str(e), pytrace=False)
-    settings = worker_settings()
-    claude = ClaudeFixtures(FIXTURES, JOB_PROMPTS)
+    settings = worker_settings(**settings_over)
+    claude = model_fixtures(FIXTURES, JOB_PROMPTS, wire)
     deepgram = DeepgramFixtures(FIXTURES)
     jobs = MemoryJobQueue()
     store = S3Store(settings)
@@ -59,3 +68,15 @@ async def stack() -> AsyncIterator[Stack]:
         await ctx.system_pool.close()
         await ctx.valkey.aclose()
         await db.__aexit__(None, None, None)
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
+async def stack() -> AsyncIterator[Stack]:
+    async for s in make_stack("claude"):
+        yield s
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
+async def openai_stack() -> AsyncIterator[Stack]:
+    async for s in make_stack("openai", **OPENAI):
+        yield s

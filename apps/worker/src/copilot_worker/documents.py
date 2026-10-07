@@ -103,6 +103,11 @@ async def ingest_job_description(
     digest = await current_digest(ctx, uid)
     await ctx.queue.send(
         jobs.pack_build(
-            uid, "interview", f"job:{doc_id}", datetime.now(UTC), digest.version if digest else None
+            uid,
+            "interview",
+            f"job:{doc_id}",
+            datetime.now(UTC),
+            digest.version if digest else None,
+            ctx.settings.embedding_model_id,
         )
     )

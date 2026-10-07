@@ -9,6 +9,10 @@ open commitments.
 `pack:{uid}:index` points the gateway at the newest pack per job and per mode. A build only
 updates the index while its digest is still the current one; otherwise it queues a rebuild
 for the new digest, which will.
+
+Prepared answers carry vectors from the worker's embedder, and the pack names its model
+(`embedding_model`). A digest rebuild also rebuilds packs whose vectors came from another
+embedding model than the current one (the gateway asks for the same when it loads one).
 """
 
 import logging
@@ -73,7 +77,7 @@ async def digest_rebuild(job: Job, ctx: Ctx) -> None:
     contexts: list[str] = []
     for row in interviews:
         pack = await stored_pack(ctx, uid, str(row["pack_id"])) if row["pack_id"] else None
-        if pack is None or pack.digest_version != digest.version:
+        if pack is None or stale(ctx, pack, digest):
             contexts.append(f"interview:{row['id']}")
     index = await ctx.valkey.hgetall(keys.pack_index(uid))
     for field, pack_id in index.items():
@@ -81,11 +85,23 @@ async def digest_rebuild(job: Job, ctx: Ctx) -> None:
         if not name_.startswith("job:"):
             continue
         pack = await stored_pack(ctx, uid, text(pack_id))
-        if pack is None or pack.digest_version != digest.version:
+        if pack is None or stale(ctx, pack, digest):
             contexts.append(name_)
     now = datetime.now(UTC)
+    embedding = ctx.settings.embedding_model_id
     for context in dict.fromkeys(contexts):
-        await ctx.queue.send(jobs.pack_build(uid, "interview", context, now, digest.version))
+        await ctx.queue.send(
+            jobs.pack_build(uid, "interview", context, now, digest.version, embedding)
+        )
+
+
+def stale(ctx: Ctx, pack: SessionPack, digest: Digest) -> bool:
+    """Built from an older digest, or its vectors came from another embedding model (when
+    there is an embedder to replace them with)."""
+    if pack.digest_version != digest.version:
+        return True
+    current = ctx.embedder.model_id if ctx.embedder is not None else None
+    return current is not None and bool(pack.prepared_answers) and pack.embedding_model != current
 
 
 @handler("pack.build")
@@ -119,7 +135,11 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
         # it can see in the index, and this one is not there yet, so rebuild it from here:
         # the new digest makes a new key, which runs once.
         log.info("pack %s built from an older digest; rebuilding it", pack.pack_id)
-        await ctx.queue.send(jobs.pack_build(uid, mode, context, due_at, latest.version))
+        await ctx.queue.send(
+            jobs.pack_build(
+                uid, mode, context, due_at, latest.version, ctx.settings.embedding_model_id
+            )
+        )
         return
     fields = {f"mode:{mode}": str(pack.pack_id)}
     if job_id is not None:
@@ -178,7 +198,8 @@ async def build_interview_pack(
     by_node = {r.node_id: short for short, r in refs.items()}
 
     ranked: list[dict[str, Any]] = []
-    order = [refs[s].node_id for s in map(str, as_list(data.get("ranked_story_ids"))) if s in refs]
+    ranked_ids = [short_id(s) for s in as_list(data.get("ranked_story_ids"))]
+    order = [refs[s].node_id for s in ranked_ids if s in refs]
     order += [n for n in stories if n not in order]
     for node_id in order:
         story = stories.get(node_id)
@@ -231,6 +252,13 @@ async def build_interview_pack(
     return pack, row["job_id"], row["interview_id"]
 
 
+def short_id(value: object) -> str:
+    """A ranked story id as the model wrote it: `n:3f2a`, `[n:3f2a]` or a bare `3f2a` (OpenAI
+    models drop the prefix), to the digest's form."""
+    text = str(value).strip().strip("[]").strip()
+    return text if text.startswith("n:") else f"n:{text}"
+
+
 def _keep_known_citations(point: str, refs: dict[str, NodeRef]) -> str:
     """Drop citations of short ids the digest does not have (they would point nowhere)."""
     return re.sub(
@@ -248,6 +276,7 @@ async def embed_prepared(ctx: Ctx, pack: SessionPack) -> None:
         return
     for answer, vec in zip(pack.prepared_answers, vectors, strict=True):
         answer.embedding_b64 = encode_embedding(vec)
+    pack.embedding_model = ctx.embedder.model_id
 
 
 async def build_standup_pack(ctx: Ctx, uid: UUID, digest: Digest | None) -> SessionPack:

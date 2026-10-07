@@ -1,10 +1,17 @@
 """Re-record the provider fixtures in apps/gateway/tests/fixtures from the real services.
 
-    uv run python scripts/record_fixtures.py --wav clip.wav            # both
+    uv run python scripts/record_fixtures.py --wav clip.wav            # all
     uv run python scripts/record_fixtures.py --only anthropic
+    uv run python scripts/record_fixtures.py --only openai
 
-Needs ANTHROPIC_API_KEY (direct API) and DEEPGRAM_API_KEY, from the environment or .env.
+Needs ANTHROPIC_API_KEY (direct API), OPENAI_API_KEY and DEEPGRAM_API_KEY, from the
+environment or .env. OpenAI uses the models set for the detector, fast and deep jobs
+(COPILOT_OPENAI_<JOB>_MODEL).
 - anthropic_fast.sse: the raw event stream of one fast-pass request, byte for byte.
+- openai_fast.sse, openai_deep.sse, openai_detector.sse: raw Responses API event streams of a
+  fast pass, a deep pass and a detector call (structured output), sent through
+  `OpenAIProvider` exactly as the gateway sends them. The fast pass goes twice and the second
+  response is kept, so it shows a prompt cache hit when OpenAI gives one.
 - deepgram_session.json: every message Deepgram sends for the first utterance of the clip,
   split into those that arrived before and after the Finalize message.
 The adapter tests derive their expectations from these files, so they keep passing.
@@ -18,9 +25,13 @@ from pathlib import Path
 from typing import Any
 
 import anthropic
+import httpx2
+import openai
 
 from copilot_core import prompts
 from copilot_core.dotenv import load_dotenv
+from copilot_core.llm import LLMDone, LLMRequest, OpenAIProvider
+from copilot_core.providers import openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.router import job_params
 from copilot_gateway.stt.deepgram import DeepgramSTT
@@ -65,6 +76,63 @@ async def record_anthropic(settings: Settings) -> None:
             chunks.append(chunk)
     (FIXTURES / "anthropic_fast.sse").write_bytes(b"".join(chunks))
     print(f"wrote anthropic_fast.sse ({sum(map(len, chunks))} bytes)")
+
+
+class Recorder(httpx2.AsyncBaseTransport):
+    """Forwards to the network and keeps the last response body, byte for byte."""
+
+    def __init__(self) -> None:
+        self.inner = httpx2.AsyncHTTPTransport()
+        self.body = b""
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        response = await self.inner.handle_async_request(request)
+        self.body = await response.aread()
+        return httpx2.Response(response.status_code, headers=response.headers, content=self.body)
+
+
+def fixture_context() -> prompts.PromptContext:
+    # A cacheable prefix over OpenAI's 1,024-token minimum, as a real digest and pack are.
+    pack = "Mode: interview\n" + "\n".join(
+        f"Q: Prepared question {i} about the ledger migration?\n- Point [n:3f2a]" for i in range(60)
+    )
+    return prompts.PromptContext("Alex", "interview", DIGEST, pack)
+
+
+async def record_openai(settings: Settings) -> None:
+    if settings.openai_api_key is None:
+        sys.exit("OPENAI_API_KEY is not set")
+    recorder = Recorder()
+    client = openai.AsyncOpenAI(
+        api_key=settings.openai_api_key.get_secret_value(),
+        http_client=openai.DefaultAsyncHttpxClient(transport=recorder),
+        max_retries=0,
+    )
+    provider = OpenAIProvider("openai", client)
+    ctx = fixture_context()
+    question = "How did you scale the ledger?"
+    transcript = f"[00:12] Them: {question}"
+    requests: list[tuple[str, str, LLMRequest, int]] = [
+        ("detector", "detector", prompts.detector("Alex", transcript, question, 80), 1),
+        ("fast", "fast", prompts.fast_pass(ctx, transcript, question, "technical", 250), 2),
+        ("deep", "deep", prompts.deep_pass(ctx, transcript, question, "technical", 800), 1),
+    ]
+    for name, job, req, times in requests:
+        model, _ = settings.openai_route(job)
+        done: LLMDone | None = None
+        for _ in range(times):
+            async for chunk in provider.stream(model, req, openai_params(settings, job)):
+                if isinstance(chunk, LLMDone):
+                    done = chunk
+        assert done is not None
+        if done.stop_reason != "end_turn":
+            sys.exit(f"openai_{name}: stop reason {done.stop_reason}; not saved")
+        (FIXTURES / f"openai_{name}.sse").write_bytes(recorder.body)
+        u = done.usage
+        print(
+            f"wrote openai_{name}.sse ({len(recorder.body)} bytes, {model}, "
+            f"{u.input_tokens} in / {u.cached_tokens} cached / {u.output_tokens} out)"
+        )
 
 
 async def record_deepgram(settings: Settings, wav: Path) -> None:
@@ -120,12 +188,14 @@ async def record_deepgram(settings: Settings, wav: Path) -> None:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Re-record provider fixtures.")
     parser.add_argument("--wav", type=Path, help="clip whose first utterance is sent to Deepgram")
-    parser.add_argument("--only", choices=["anthropic", "deepgram"])
+    parser.add_argument("--only", choices=["anthropic", "openai", "deepgram"])
     args = parser.parse_args()
     load_dotenv()
     settings = Settings()
     if args.only in (None, "anthropic"):
         await record_anthropic(settings)
+    if args.only in (None, "openai"):
+        await record_openai(settings)
     if args.only in (None, "deepgram"):
         if args.wav is None:
             parser.error("--wav is needed to record Deepgram")

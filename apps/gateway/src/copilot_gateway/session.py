@@ -162,6 +162,7 @@ class Session:
             svc.embedder,
             pack.prepared_answers if pack else [],
             self.settings.prepared_answer_min_similarity,
+            pack.embedding_model if pack else None,
         )
         self.turns = TurnDetector(
             self,
@@ -193,6 +194,7 @@ class Session:
         self.lost = False
         self.core_task: asyncio.Task[None] | None = None
         self.end_task: asyncio.Task[None] | None = None
+        self._warm: asyncio.Task[None] | None = None
 
     # Messages to the client.
 
@@ -396,6 +398,8 @@ class Session:
                 tg.create_task(self._lease_loop())
                 tg.create_task(self._flush_loop())
                 tg.create_task(self._watchdog())
+                if self.matcher.stale:
+                    tg.create_task(self._rebuild_stale_pack())
         except* asyncio.CancelledError:
             raise
         except* Exception as eg:
@@ -432,6 +436,39 @@ class Session:
         if ok:
             self.flushed_upto = upto
             self.writer.set_state(flushed_upto=upto)
+
+    def warm_models(self) -> None:
+        """Open the model connections while the user gets ready, so the first question does
+        not pay the handshake (OpenAI; see ModelRouter.warm)."""
+        task = asyncio.create_task(self.router.warm())
+        self._warm = task  # keep a reference until it finishes
+
+    async def _rebuild_stale_pack(self) -> None:
+        """The pack's vectors came from another embedding model (or it has none): matching is
+        off for this session, and the pack is rebuilt for the next one. The key names the
+        gateway's embedding model, so this runs once per pack and model."""
+        pack, embedder = self.pack, self.svc.embedder
+        if pack is None or embedder is None:
+            return
+        info = self.info
+        if info.interview_id is not None:
+            context = f"interview:{info.interview_id}"
+        elif info.job_id is not None:
+            context = f"job:{info.job_id}"
+        else:
+            return
+        log.info(
+            "pack %s has %s vectors, not %s: prepared-answer matching off; rebuilding it",
+            pack.pack_id, pack.embedding_model or "no", embedder.model_id,
+        )  # fmt: skip
+        message = jobs.pack_build(
+            self.principal.user_id, pack.mode, context, datetime.now(UTC),
+            pack.digest_version or None, embedder.model_id,
+        )  # fmt: skip
+        try:
+            await self.svc.jobs.send(message)
+        except Exception as e:
+            log.warning("enqueue %s failed: %s", message["idempotency_key"], e)
 
     async def _send_job(
         self, job_type: str, key: str, payload: Mapping[str, Any], attempts: int = 3
@@ -889,6 +926,7 @@ class SessionManager:
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
         session.start_core()
+        session.warm_models()
         session.emit(
             models.SessionReady,
             session_id=sid,

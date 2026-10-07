@@ -124,7 +124,9 @@ async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     assert job["description"] == (INPUTS / "job.md").read_text("utf-8")  # text kept as written
     [message] = stack.take("pack.build")
     assert message["payload"]["context"] == f"job:{doc}"
-    assert message["idempotency_key"].endswith(digest.version.removeprefix("sha256:")[:16])
+    # The key names the digest, then the embedding model ("none": no embedder here).
+    tag = digest.version.removeprefix("sha256:")[:16]
+    assert message["idempotency_key"].endswith(f":{tag}:none")
     await stack.run(message)
 
     pack = await pack_for(stack, uid, f"job:{doc}")
@@ -236,7 +238,9 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
     assert await stack.ctx.valkey.hget(keys.pack_index(uid), f"job:{doc}") is None
     [again] = stack.take("pack.build")
     digest = await digest_of(stack, uid)
-    assert again["idempotency_key"].endswith(digest.version.removeprefix("sha256:")[:16])
+    # The key names the digest, then the embedding model ("none": no embedder here).
+    tag = digest.version.removeprefix("sha256:")[:16]
+    assert again["idempotency_key"].endswith(f":{tag}:none")
     monkeypatch.setattr(packs, "current_digest", real)
     await stack.run(again)
     pack = await pack_for(stack, uid, f"job:{doc}")

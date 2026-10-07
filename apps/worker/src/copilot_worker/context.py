@@ -13,13 +13,13 @@ import asyncpg
 from copilot_core import jobs
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import Conn, create_pool, system_tx, user_tx
-from copilot_core.embed import BedrockCohereEmbedder, Embedder
+from copilot_core.embed import Embedder, make_embedder
 from copilot_core.llm import ModelRouter
 from copilot_core.providers import make_providers
 from copilot_core.storage import ObjectStore, S3Store
 from copilot_core.valkey_client import Valkey, make_valkey
 from copilot_worker.config import WorkerSettings
-from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures, fixture_provider
+from copilot_worker.fixtures import DeepgramFixtures, fixture_provider, model_fixtures
 from copilot_worker.llm import build_router
 from copilot_worker.prompts import JOB_PROMPTS
 from copilot_worker.stt import DeepgramPrerecorded, PrerecordedSTT
@@ -66,12 +66,14 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         if settings.env not in ("dev", "test"):
             raise RuntimeError("COPILOT_FIXTURES_DIR works only with COPILOT_ENV dev or test")
         directory = Path(settings.fixtures_dir)
-        claude = ClaudeFixtures(directory, JOB_PROMPTS)
-        router = build_router(settings, [fixture_provider(claude)])
+        # The first configured provider's recordings: openai/ for OpenAI, claude/ otherwise.
+        wire = "openai" if settings.llm_providers[:1] == ["openai"] else "claude"
+        fixtures = model_fixtures(directory, JOB_PROMPTS, wire)
+        router = build_router(settings, [fixture_provider(fixtures)])
         stt: PrerecordedSTT | None = DeepgramPrerecorded(
             "fixture", transport=DeepgramFixtures(directory)
         )
-        log.warning("offline: Claude and Deepgram answer from fixtures in %s", directory)
+        log.warning("offline: %s and Deepgram answer from fixtures in %s", wire, directory)
     else:
         router = build_router(settings, make_providers(settings, settings.llm_timeout_s))
         stt = None
@@ -84,8 +86,9 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         else:
             log.warning("DEEPGRAM_API_KEY is not set; the user's own audio is not transcribed")
     embedder: Embedder | None = None
-    if settings.embeddings_on_bedrock and not settings.fixtures_dir:
-        embedder = BedrockCohereEmbedder(settings.embed_model, settings.aws_region)
+    if not settings.fixtures_dir:
+        embedder = make_embedder(settings)
+        log.info("pack embeddings: %s", embedder.model_id if embedder else "off")
     store = S3Store(settings)
     if settings.env in ("dev", "test"):
         await store.ensure_bucket()

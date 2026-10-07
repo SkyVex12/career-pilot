@@ -72,7 +72,11 @@ class PreparedAnswer(_Model):
 
 
 class SessionPack(_Model):
-    """`pack:{uid}:{pack_id}`: `session_pack.v1`."""
+    """`pack:{uid}:{pack_id}`: `session_pack.v1`.
+
+    `embedding_model` names the model that made the prepared answers' vectors
+    (`CoreSettings.embedding_model_id`); None when they have none. The gateway compares them
+    only with question vectors from the same model."""
 
     schema_: Literal["session_pack.v1"] = Field("session_pack.v1", alias="schema")
     pack_id: UUID
@@ -83,6 +87,7 @@ class SessionPack(_Model):
     context: PackContext = PackContext()
     ranked_stories: list[RankedStory] = []
     prepared_answers: list[PreparedAnswer] = []
+    embedding_model: str | None = None
     standup: dict[str, object] | None = None
     token_count: int = 0
     # Short ids used in prepared talking points that are not ranked stories.

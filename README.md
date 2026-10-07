@@ -113,11 +113,12 @@ variables below they need:
 | `COPILOT_KEY_PROVIDER=dev`, `COPILOT_DEV_MASTER_KEY` | Per-user data keys wrapped by a local master key instead of KMS (dev only; see ARCHITECTURE.md "Security and privacy"). Make one with `uv run python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"` |
 | `COPILOT_S3_ENDPOINT`, `COPILOT_S3_ACCESS_KEY`, `COPILOT_S3_SECRET_KEY` | The compose S3 store |
 | `ANTHROPIC_API_KEY` or Bedrock credentials | Workers: resume extraction (Opus), job descriptions, packs and post-call outputs (Sonnet). On Bedrock they try the Flex tier first, then Standard |
+| Or `OPENAI_API_KEY` with `COPILOT_LLM_PROVIDERS=openai` | The same jobs on OpenAI: a model and reasoning effort per job in `COPILOT_OPENAI_<JOB>_MODEL` and `..._REASONING` (extract, job, pack, postcall); `.env.example` has suggestions, nothing is built in. Pack embeddings use `COPILOT_OPENAI_EMBED_MODEL` |
 | `DEEPGRAM_API_KEY` | Workers: transcribing the user's own audio after a call. Without it the audio is deleted untranscribed |
 
 `COPILOT_FIXTURES_DIR=apps/worker/tests/fixtures` (dev and test only) makes the worker answer
-every Claude and Deepgram call from the recorded fixtures, for running the whole flow without
-keys. In AWS the API and workers use `COPILOT_AUTH=cognito` with
+every model and Deepgram call from the recorded fixtures, for running the whole flow without
+keys: OpenAI's recordings when `openai` is the first provider, Claude's otherwise. In AWS the API and workers use `COPILOT_AUTH=cognito` with
 `COPILOT_COGNITO_USER_POOL_ID` and `COPILOT_COGNITO_CLIENT_IDS`, and `COPILOT_KEY_PROVIDER=kms`
 with `COPILOT_KMS_KEY_ID` (build step 5).
 
@@ -143,9 +144,11 @@ The gateway needs a `.env` (gitignored; start from `.env.example`) with:
 | Variable | For |
 | --- | --- |
 | `COPILOT_ENV=dev`, `COPILOT_AUTH=dev`, `COPILOT_DEV_TOKEN` | Dev auth: a static bearer token for `COPILOT_DEV_USER_ID`. It works only with `COPILOT_ENV=dev` and never inside AWS. Cognito comes later |
-| `COPILOT_LLM_PROVIDERS` | `anthropic`, `bedrock`, or both in fallback order |
+| `COPILOT_LLM_PROVIDERS` | `anthropic`, `bedrock`, `openai`, or several in fallback order (`openai,anthropic`) |
 | `ANTHROPIC_API_KEY` | The direct Claude API |
 | AWS credentials or `AWS_BEARER_TOKEN_BEDROCK` | Claude on Bedrock (Mantle), and Cohere embeddings when `COPILOT_EMBEDDER=bedrock` |
+| `OPENAI_API_KEY` | OpenAI, with `COPILOT_OPENAI_DETECTOR_MODEL`, `..._FAST_MODEL`, `..._DEEP_MODEL` and their `..._REASONING` (see `.env.example`), its own first-token timeouts (`COPILOT_OPENAI_FIRST_TOKEN_TIMEOUT_MS`, `COPILOT_OPENAI_DEEP_FIRST_TOKEN_TIMEOUT_MS`), and OpenAI embeddings for prepared answers (`COPILOT_OPENAI_EMBED_MODEL`) |
+| `COPILOT_MODEL_PRICES` | Prices per million tokens for `answers.cost_usd`. Claude's are built in; set the OpenAI models' (JSON, see `.env.example`). The gateway logs models without a price at startup |
 | `DEEPGRAM_API_KEY` | Streaming STT. Without it the gateway runs, but only typed questions (`question.force` with text) get answers |
 
 Every live setting from ARCHITECTURE.md ("Settings") is an environment variable with the
@@ -179,9 +182,11 @@ One terminal per long-running step.
 1. **Stack:** `docker compose up -d --wait`, then `uv run copilot-migrate` and
    `uv run copilot-dev-roles` (once).
 2. **`.env`** (from `.env.example`): `COPILOT_ENV=dev`, `COPILOT_AUTH=dev`, a
-   `COPILOT_DEV_TOKEN` of 16+ characters, `COPILOT_DEV_MASTER_KEY`, Claude credentials
-   (`ANTHROPIC_API_KEY` with `COPILOT_LLM_PROVIDERS=anthropic`, or Bedrock) and
-   `DEEPGRAM_API_KEY`. Leave `COPILOT_FIXTURES_DIR` unset for real Claude and Deepgram.
+   `COPILOT_DEV_TOKEN` of 16+ characters, `COPILOT_DEV_MASTER_KEY`, model credentials
+   (`ANTHROPIC_API_KEY` with `COPILOT_LLM_PROVIDERS=anthropic`, or Bedrock, or
+   `OPENAI_API_KEY` with `COPILOT_LLM_PROVIDERS=openai` and the `COPILOT_OPENAI_*` model
+   settings and `COPILOT_MODEL_PRICES` from `.env.example`) and `DEEPGRAM_API_KEY`. Leave
+   `COPILOT_FIXTURES_DIR` unset for real models and Deepgram.
 3. **API, worker, gateway:** `uv run copilot-api`, `uv run copilot-worker` and
    `uv run copilot-gateway`, each in its own terminal (and `uv run copilot-scheduler` for the
    timed jobs, optional locally). Bind `HOST=0.0.0.0` only if the app runs on another machine.
@@ -229,15 +234,17 @@ post-call outputs) runs without any key; documents then come back as the recorde
 
 ### End-to-end test with a teammate
 
-A real call from a fresh stack, with real Claude and Deepgram. You need a teammate on a call
+A real call from a fresh stack, with real models (Claude or OpenAI) and Deepgram. You need a teammate on a call
 app (Zoom, Meet or Teams) who agrees to be recorded and plays the interviewer; about 30
 minutes. Use your own resume (PDF or Markdown) and a real job description saved as a PDF,
 Markdown or text file.
 
 1. **Fresh stack.** `docker compose down -v`, then `docker compose up -d --wait`,
    `uv run copilot-migrate`, `uv run copilot-dev-roles`.
-2. **`.env`** as in step 2 above, with `ANTHROPIC_API_KEY`, `COPILOT_LLM_PROVIDERS=anthropic`
-   and `DEEPGRAM_API_KEY`, and without `COPILOT_FIXTURES_DIR`.
+2. **`.env`** as in step 2 above, with `ANTHROPIC_API_KEY` and
+   `COPILOT_LLM_PROVIDERS=anthropic` (or `OPENAI_API_KEY`, `COPILOT_LLM_PROVIDERS=openai` and
+   the OpenAI settings from `.env.example`) and `DEEPGRAM_API_KEY`, and without
+   `COPILOT_FIXTURES_DIR`.
 3. **Services**, one terminal each: `uv run copilot-api`, `uv run copilot-worker`,
    `uv run copilot-gateway`, `uv run copilot-scheduler`. Check
    `curl http://127.0.0.1:8080/healthz` and the same on ports 8081 and 8082. Keep the worker
@@ -247,8 +254,8 @@ Markdown or text file.
    have no headphones, keep echo cancellation on. Save. History is empty after `down -v`: the
    database is new.
 5. **Upload the resume** under Documents. Expect Processing, then Processed and "Career
-   digest: Ready" within about 1 to 2 minutes (Opus reads the resume; the worker logs
-   `memory.extract`, then `digest.rebuild`).
+   digest: Ready" within about 1 to 2 minutes (Opus, or the OpenAI extract model, reads the
+   resume; the worker logs `memory.extract`, then `digest.rebuild`).
 6. **Upload the job description.** Expect Processing, then Processed with the company and
    title read from it, and "Pack ready (N answers)" a minute later (`pack.build`).
 7. **Schedule the interview** under Jobs: the job, the round you will play (technical or
@@ -260,8 +267,9 @@ Markdown or text file.
 9. **Run the interview** for 10 to 15 minutes. Ask your teammate for a mix: one behavioral
    ("Tell me about a time..."), two technical, one system design, plus small talk and a
    question for someone else ("Sam, what do you think?"), which should not fire. Answer
-   aloud. Expect talking points about a second after each question ends, and a deeper
-   answer below for behavioral, technical and system design ones. Try the hotkey once after
+   aloud. Expect talking points about a second after each question ends (on OpenAI about
+   2 to 3 seconds: see "OpenAI as a provider" in ARCHITECTURE.md), and a deeper answer below
+   for behavioral, technical and system design ones. Try the hotkey once after
    a question the overlay missed, and type one question into the overlay. Open the debug
    panel (Ctrl+Shift+D) to see the latency per question.
 10. **End the session.** The post-call screen shows "Waiting for your audio", then "Your audio
@@ -277,8 +285,17 @@ Markdown or text file.
     "delete"): History is empty afterwards.
 
 Things worth sending back: the debug panel's latency table, questions the overlay missed or
-answered when it should not have, anything wrong in the outputs, and the worker log around
-any failure.
+answered when it should not have, anything wrong in the outputs, the provider you ran on, and
+the worker log around any failure.
+
+**On OpenAI without the app**, the same path from the command line (API, worker and gateway
+running with `COPILOT_LLM_PROVIDERS=openai`): `scripts/dev_profile.py` as above, then a
+session with typed `question.force` messages through `copilot_gateway.testing.ProtocolClient`
+(`ws://127.0.0.1:8081/v1/session`, the dev token), `answer.expand` for the deep pass,
+`session.end`, the user's audio through `POST /sessions/{id}/me-audio` and `.../complete`, and
+`GET /sessions/{id}` until it is `ready`. The gateway logs `prepared-answer matching on:
+openai:...` at startup and opens its OpenAI connection (`GET /v1/models`) before the first
+question.
 
 ### Database roles
 
@@ -344,8 +361,9 @@ uv run pyright
   RSA keys (signature, issuer, expiry, `token_use`, app client, `alg` confusion, JWKS caching
   and rotation), envelope encryption (round trip, row and table bound associated data, a data
   key that opens only for its user; KMS calls checked for the `user_id` encryption context),
-  answer pricing (model names across providers, cache reads, tiers, configured prices), and
-  monotonic UUIDv7.
+  answer pricing (model names across providers, cache reads, tiers, configured prices),
+  OpenAI request content (a PDF as `input_file`), the prefix cache key, OpenAI embeddings at
+  1024 dimensions, and monotonic UUIDv7.
 - **API tests** (`apps/api/tests/`, marker `stack`): a throwaway database connected as
   `app_api`, Valkey database 14 and the S3 store. First login, profile and settings each on
   their own path, presigned uploads through S3 (and a tampered URL refused), ingest and its
@@ -354,7 +372,10 @@ uv run pyright
   session is live), usage, account deletion, and a Cognito token end to end.
 - **Worker tests** (`apps/worker/tests/`, marker `stack`): every job against the stack, with
   Claude and Deepgram replayed from `apps/worker/tests/fixtures` through the real clients
-  (see the README there; re-record with `scripts/record_worker_fixtures.py`). Resume to memory
+  (see the README there; re-record with `scripts/record_worker_fixtures.py`, and
+  `--provider openai` for OpenAI's). `test_openai_jobs.py` runs extraction, the job
+  description, the pack and post-call outputs on OpenAI only, and checks that pack vectors
+  name their embedding model and are rebuilt when it changes. Resume to memory
   nodes and digest, job description to job and pack, interview packs and their TTL, stale
   pack rebuilds, the session log flush (including an answer logged before its question),
   session end and billing, the user's audio, post-call outputs, no text at all without
@@ -374,9 +395,13 @@ uv run pyright
   gateway owns: model fallback, STT reconnect and provider switch, a task dying mid-call, and
   Valkey unavailable. `test_stack.py` (marker `stack`) repeats the Valkey and queue parts
   against the compose stack.
-- **Provider fixtures** (`apps/gateway/tests/fixtures/`): the Anthropic SDK stream and the
-  Deepgram WebSocket are replayed from wire-format recordings, so no test needs the network.
-  `uv run python scripts/record_fixtures.py --wav clip.wav` re-records them with real keys.
+- **Provider fixtures** (`apps/gateway/tests/fixtures/`): the Anthropic SDK stream, OpenAI
+  Responses API streams and the Deepgram WebSocket are replayed from wire-format recordings,
+  so no test needs the network. `uv run python scripts/record_fixtures.py --wav clip.wav`
+  re-records them with real keys (`--only openai` for OpenAI's). `test_openai.py` covers
+  streaming with the same prompt blocks, the detector's structured output, a refusal, a
+  failure mid-stream falling back to Claude, and model, tokens and cost through a session on
+  OpenAI only.
 - **Replay tool tests** (`evals/tests/`): `copilot-replay` against an in-process gateway,
   with and without a dropped socket.
 - **Desktop client unit tests** (`apps/desktop/core/src/`): resampling, the tick clock, WebRTC
