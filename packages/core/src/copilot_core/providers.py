@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 import anthropic
+import httpx2
 import openai
 from anthropic.lib.bedrock import AsyncAnthropicBedrockMantle
 
@@ -20,11 +21,17 @@ log = logging.getLogger(__name__)
 
 def openai_client(settings: CoreSettings, timeout_s: float = 30.0) -> openai.AsyncOpenAI:
     assert settings.openai_api_key is not None
+    limits = httpx2.Limits(
+        max_connections=1000,
+        max_keepalive_connections=100,
+        keepalive_expiry=settings.openai_keepalive_s,
+    )
     return openai.AsyncOpenAI(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
         max_retries=0,  # the router moves on to the next route instead
         timeout=openai.Timeout(timeout_s, connect=2.0),
+        http_client=openai.DefaultAsyncHttpxClient(limits=limits, http2=settings.openai_http2),
     )
 
 

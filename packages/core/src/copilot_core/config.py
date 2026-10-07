@@ -90,6 +90,19 @@ class CoreSettings(BaseSettings):
     # other than "none" gets this many extra output tokens, so reasoning cannot eat the
     # answer's budget.
     openai_reasoning_headroom_tokens: int = 2048
+    # First-token timeouts for OpenAI's live routes (None: the gateway's first_token_timeout_ms,
+    # like every route). Measured from a desktop in October 2026, warm and cached, OpenAI's
+    # first token came after 0.8 to 2.5 s on the fast pass and 2 to 4.3 s on a deep pass that
+    # reasons first, so the live 1.5 s would give up on most of them.
+    openai_first_token_timeout_ms: int | None = None  # detector and fast pass
+    openai_deep_first_token_timeout_ms: int | None = None
+    # How long idle connections to OpenAI stay open. The SDK default (5 s) makes nearly every
+    # live question pay a new TLS handshake (about 2 s measured from a desktop in October 2026);
+    # the gateway also opens the connection when it starts and when a session starts.
+    openai_keepalive_s: float = 120.0
+    # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
+    # its first-token timeout cancels only its stream, not the connection the retry needs.
+    openai_http2: bool = True
 
     # Prices per million tokens, for answers.cost_usd (copilot_core.pricing). JSON; entries
     # given are merged over the defaults, e.g.
@@ -137,6 +150,14 @@ class CoreSettings(BaseSettings):
         model = self.embed_model if provider == "bedrock" else self.openai_embed_model
         return f"{provider}:{model}@{EMBED_DIMENSIONS}"
 
+    def openai_first_token_timeout_s(self, job: str) -> float | None:
+        """An OpenAI live route's own first-token timeout, if one is set."""
+        if job == "deep":
+            ms = self.openai_deep_first_token_timeout_ms
+        else:
+            ms = self.openai_first_token_timeout_ms
+        return ms / 1000 if ms else None
+
     def openai_route(self, job: str) -> tuple[str, ReasoningEffort | None]:
         """The OpenAI model and reasoning effort for a job; an unset model is an error."""
         if job not in OPENAI_JOBS:
@@ -175,6 +196,8 @@ class CoreSettings(BaseSettings):
         *(f"openai_{job}_{part}" for job in OPENAI_JOBS for part in ("model", "reasoning")),
         "openai_embed_model",
         "openai_base_url",
+        "openai_first_token_timeout_ms",
+        "openai_deep_first_token_timeout_ms",
         mode="before",
     )
     @classmethod

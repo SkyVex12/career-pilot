@@ -194,6 +194,7 @@ class Session:
         self.lost = False
         self.core_task: asyncio.Task[None] | None = None
         self.end_task: asyncio.Task[None] | None = None
+        self._warm: asyncio.Task[None] | None = None
 
     # Messages to the client.
 
@@ -435,6 +436,12 @@ class Session:
         if ok:
             self.flushed_upto = upto
             self.writer.set_state(flushed_upto=upto)
+
+    def warm_models(self) -> None:
+        """Open the model connections while the user gets ready, so the first question does
+        not pay the handshake (OpenAI; see ModelRouter.warm)."""
+        task = asyncio.create_task(self.router.warm())
+        self._warm = task  # keep a reference until it finishes
 
     async def _rebuild_stale_pack(self) -> None:
         """The pack's vectors came from another embedding model (or it has none): matching is
@@ -919,6 +926,7 @@ class SessionManager:
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
         session.start_core()
+        session.warm_models()
         session.emit(
             models.SessionReady,
             session_id=sid,

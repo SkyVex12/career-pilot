@@ -62,9 +62,12 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
         for i, provider in enumerate(providers):
             primary, retry = _model_ids(settings, provider.name, job, family)
             params = job_params(settings, provider.name, job)
-            job_routes.append(Route(provider, primary, params))
+            timeout = None
+            if provider.name == "openai":
+                timeout = settings.openai_first_token_timeout_s(job)
+            job_routes.append(Route(provider, primary, params, first_token_timeout_s=timeout))
             if i == 0:
-                job_routes.append(Route(provider, retry, params))
+                job_routes.append(Route(provider, retry, params, first_token_timeout_s=timeout))
             if job == "deep" and provider.name == "bedrock" and settings.bedrock_refusal_model:
                 # What `fallbacks: "default"` does on the direct API: a refused Sonnet 5.5
                 # request reruns on Sonnet 5 with thinking off.

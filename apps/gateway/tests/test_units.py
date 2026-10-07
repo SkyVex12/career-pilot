@@ -83,6 +83,38 @@ async def test_router_first_token_timeout() -> None:
     assert done.provider == "fast"
 
 
+async def test_route_first_token_timeout_overrides_the_router() -> None:
+    # A model that reasons before its first text gets its own, longer timeout.
+    reasoning, other = Fake("r", "ok", delay=0.3), Fake("o", "ok")
+    router = ModelRouter(
+        {"j": [Route(reasoning, "m", first_token_timeout_s=1.0), Route(other, "m")]},
+        first_token_timeout_s=0.1,
+    )
+    _, done = await router.complete("j", REQ)
+    assert done.provider == "r"
+
+
+async def test_router_warms_each_provider_once() -> None:
+    class Warm(Fake):
+        def __init__(self, name: str, fail: bool = False) -> None:
+            super().__init__(name, "ok")
+            self.warmed = 0
+            self.fail = fail
+
+        async def warm(self) -> None:
+            self.warmed += 1
+            if self.fail:
+                raise ConnectionError("down")
+
+    a, b, cold = Warm("a"), Warm("b", fail=True), Fake("c", "ok")
+    router = ModelRouter(
+        {"fast": [Route(a, "m"), Route(a, "m"), Route(cold, "m")], "deep": [Route(b, "n")]},
+        first_token_timeout_s=1,
+    )
+    await router.warm()  # a failure only costs the head start
+    assert (a.warmed, b.warmed) == (1, 1)
+
+
 async def test_router_error_after_first_token_is_final() -> None:
     a, b = Fake("a", "error_after_first"), Fake("b", "ok")
     router = ModelRouter({"j": [Route(a, "m"), Route(b, "m")]}, first_token_timeout_s=1)

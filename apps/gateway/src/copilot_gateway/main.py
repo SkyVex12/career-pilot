@@ -1,5 +1,6 @@
 """Gateway: live WebSocket sessions (see ARCHITECTURE.md, "Gateway internals")."""
 
+import asyncio
 import logging
 import os
 import sys
@@ -88,9 +89,11 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         svc = services or build_services(Settings())
         app.state.manager = SessionManager(svc)
+        warm = asyncio.create_task(svc.router.warm())
         try:
             yield
         finally:
+            warm.cancel()
             await app.state.manager.shutdown()
 
     app = FastAPI(title="Copilot gateway", version=__version__, lifespan=lifespan)

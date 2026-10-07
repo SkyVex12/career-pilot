@@ -292,6 +292,13 @@ def test_openai_routes_need_their_models() -> None:
     routes = build_routes(openai_settings(), [P()])  # pyright: ignore[reportArgumentType]
     assert [r.label for r in routes["deep"]] == ["openai:gpt-6.1-sol", "openai:gpt-6.1-sol"]
     assert openai_params(openai_settings(openai_fast_reasoning=None), "fast") == {}
+    assert all(r.first_token_timeout_s is None for rs in routes.values() for r in rs)
+    s = openai_settings(openai_deep_first_token_timeout_ms=6000)
+    assert [r.first_token_timeout_s for r in build_routes(s, [P()])["deep"]] == [6.0, 6.0]  # pyright: ignore[reportArgumentType]
+    assert all(r.first_token_timeout_s is None for r in build_routes(s, [P()])["fast"])  # pyright: ignore[reportArgumentType]
+    s = s.model_copy(update={"openai_first_token_timeout_ms": 3000})
+    for job in ("detector", "fast"):
+        assert [r.first_token_timeout_s for r in build_routes(s, [P()])[job]] == [3.0, 3.0]  # pyright: ignore[reportArgumentType]
 
 
 async def test_openai_session_records_model_tokens_and_cost(env) -> None:

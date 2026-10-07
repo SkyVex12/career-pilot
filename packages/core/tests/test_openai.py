@@ -106,6 +106,9 @@ def test_make_embedder_picks_openai_with_only_an_openai_key() -> None:
     embedder = make_embedder(s)
     assert isinstance(embedder, OpenAIEmbedder)
     assert embedder.model_id == s.embedding_model_id == "openai:text-embedding-3-small@1024"
+    # Idle connections stay open past the SDK's 5 s, so live questions skip a TLS handshake.
+    pool = embedder.client._client._transport._pool  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue, reportUnknownMemberType]
+    assert pool._keepalive_expiry == 120.0  # pyright: ignore[reportUnknownMemberType]
     no_key = s.model_copy(update={"openai_api_key": None})
     assert make_embedder(no_key) is None
     assert make_embedder(s.model_copy(update={"embedder": "none"})) is None

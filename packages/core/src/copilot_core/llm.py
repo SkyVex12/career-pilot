@@ -2,8 +2,8 @@
 
 Every model call goes through `ModelRouter`: a job name ("detector", "fast", "deep", ...)
 maps to an ordered list of routes. A route is tried until it yields its first token; an error,
-or no first token within `first_token_timeout_s`, moves on to the next route. Once text has
-streamed, an error is final, since the user has already seen that text.
+or no first token within `first_token_timeout_s` (or the route's own), moves on to the next
+route. Once text has streamed, an error is final, since the user has already seen that text.
 
 Refusals: every response is checked for `stop_reason == "refusal"`. A refusal before any
 text moves on to the next route that runs a different model, with `between_tools` thinking
@@ -103,6 +103,9 @@ class Route:
     # Extra request fields for this route, for example thinking or output_config.effort.
     params: Mapping[str, Any] = field(default_factory=dict[str, Any])
     refusal_only: bool = False  # tried only after another model refused
+    # This route's first-token timeout, for a model that reasons before its first text;
+    # None uses the router's.
+    first_token_timeout_s: float | None = None
 
     @property
     def label(self) -> str:
@@ -279,6 +282,11 @@ class OpenAIProvider:
         self.name = name
         self.client = client
 
+    async def warm(self) -> None:
+        """Open the connection before a question needs it: the TLS handshake costs as much
+        as the first token. A model list is the cheapest authenticated request."""
+        await self.client.models.list()
+
     def request(self, model: str, req: LLMRequest, params: Mapping[str, Any]) -> dict[str, Any]:
         extra = dict(params)
         headroom = int(extra.pop(REASONING_HEADROOM, 0) or 0)
@@ -409,7 +417,8 @@ class ModelRouter:
             started = time.monotonic()
             agen = route.provider.stream(route.model, req, params)
             try:
-                first = await asyncio.wait_for(anext(agen), self.first_token_timeout_s)
+                timeout = route.first_token_timeout_s or self.first_token_timeout_s
+                first = await asyncio.wait_for(anext(agen), timeout)
             except (TimeoutError, StopAsyncIteration, Exception) as e:  # next route on any error
                 await agen.aclose()
                 other_failures += 1
@@ -445,6 +454,19 @@ class ModelRouter:
             finally:
                 await agen.aclose()
         raise AllRoutesFailedError(job, errors, refused=bool(refused) and not other_failures)
+
+    async def warm(self) -> None:
+        """Open each provider's connection ahead of the first question, where the provider
+        supports it (OpenAIProvider). Failures only cost the head start."""
+        providers = {id(r.provider): r.provider for rs in self.routes.values() for r in rs}
+        for provider in providers.values():
+            warm = getattr(provider, "warm", None)
+            if warm is None:
+                continue
+            try:
+                await warm()
+            except Exception as e:
+                log.info("warming %s failed: %s", provider.name, type(e).__name__)
 
     async def complete(self, job: str, req: LLMRequest) -> tuple[str, LLMDone]:
         parts: list[str] = []
