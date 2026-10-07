@@ -54,14 +54,16 @@ async def test_the_api_connects_as_app_api_under_rls(api: Api) -> None:
 
 async def test_patch_settings(api: Api) -> None:
     _, h = api.user()
-    r = await api.client.patch(
-        "/v1/me",
-        headers=h,
-        json={"display_name": "Alex D.", "settings": {"standup_time": "09:30",
-              "timezone": "Europe/Berlin", "consent": {"store_transcript": True}}},
-    )  # fmt: skip
+    r = await api.client.patch("/v1/me", headers=h, json={"display_name": "Alex D."})
     assert r.status_code == 200, r.text
     assert r.json()["display_name"] == "Alex D."
+    r = await api.client.patch(
+        "/v1/me/settings",
+        headers=h,
+        json={"standup_time": "09:30", "timezone": "Europe/Berlin",
+              "consent": {"store_transcript": True}},
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
     r = await api.client.patch("/v1/me/settings", headers=h, json={"retention_days": 30})
     assert r.json()["settings"] == {
         "standup_time": "09:30",
@@ -74,6 +76,14 @@ async def test_patch_settings(api: Api) -> None:
     for bad in ({"timezone": "Mars/Base"}, {"standup_time": "9:30"}, {"retention_days": 0},
                 {"unknown": 1}):  # fmt: skip
         assert (await api.client.patch("/v1/me/settings", headers=h, json=bad)).status_code == 422
+    # Each path takes only its own fields.
+    r = await api.client.patch("/v1/me", headers=h, json={"settings": {"retention_days": 7}})
+    assert r.status_code == 422
+    r = await api.client.patch("/v1/me", headers=h, json={"retention_days": 7})
+    assert r.status_code == 422
+    r = await api.client.patch("/v1/me/settings", headers=h, json={"display_name": "X"})
+    assert r.status_code == 422
+    assert (await api.client.get("/v1/me", headers=h)).json()["display_name"] == "Alex D."
 
 
 async def upload_document(api: Api, h: dict[str, str], body: bytes, kind: str = "resume") -> str:
@@ -113,8 +123,30 @@ async def test_document_upload_and_ingest(api: Api) -> None:
     [job] = api.take("memory.extract")
     assert job["payload"] == {"document_id": doc}
     assert job["user_id"] == str(uid)
-    listed = (await api.client.get("/v1/documents", headers=h)).json()["documents"]
-    assert {d["id"] for d in listed} == {doc, early}
+    listed = (await api.client.get("/v1/documents", headers=h)).json()
+    assert {d["id"]: d["status"] for d in listed["documents"]} == {
+        doc: "ingesting",  # until memory.extract ends
+        early: "uploaded",
+    }
+    assert listed["digest"] is None
+    # Asking again changes nothing and queues nothing.
+    assert (await api.client.post(f"/v1/documents/{doc}/ingest", headers=h)).status_code == 202
+    assert api.take("memory.extract") == []
+    # A document the worker could not read is uploaded again, not re-ingested.
+    await api.admin.execute(
+        "update app.documents set status = 'failed' where id = $1", uuid.UUID(doc)
+    )
+    assert (await api.client.post(f"/v1/documents/{doc}/ingest", headers=h)).status_code == 409
+    # Once the worker wrote the digest, the list says so.
+    await api.svc.valkey.set(
+        keys.digest(uid),
+        json.dumps({"schema": "digest.v1", "version": "sha256:" + "cd" * 32, "text": "x",
+                    "refs": {}, "built_at": "2026-10-06T10:00:00Z"}),
+    )  # fmt: skip
+    listed = (await api.client.get("/v1/documents", headers=h)).json()
+    assert listed["digest"] == {
+        "version": "sha256:" + "cd" * 32, "built_at": "2026-10-06T10:00:00Z", "facts": 0,
+    }  # fmt: skip
     # Another user cannot see or ingest it.
     _, other = api.user()
     assert (await api.client.post(f"/v1/documents/{doc}/ingest", headers=other)).status_code == 404
@@ -187,7 +219,10 @@ async def test_jobs_interviews_and_their_packs(api: Api) -> None:
     [build] = api.take("pack.build")
     assert build["payload"]["context"] == f"interview:{interview['id']}"
     assert build["payload"]["due_at"].startswith(starts[:16].replace("+00:00", ""))
-    assert len((await api.client.get("/v1/interviews", headers=h)).json()["interviews"]) == 1
+    assert (interview["company"], interview["title"]) == (job["company"], job["title"])
+    [listed_interview] = (await api.client.get("/v1/interviews", headers=h)).json()["interviews"]
+    assert listed_interview["company"] == job["company"]
+    assert listed_interview["pack"] is None  # not built yet
     # A job of another user is not found; a naive start time is refused.
     _, other = api.user()
     r = await api.client.post(
@@ -296,6 +331,14 @@ async def test_me_audio_upload_and_complete(api: Api) -> None:
     assert r.status_code == 409
     r = await api.client.post(f"/v1/sessions/{sid}/me-audio/complete", headers=h)
     assert r.status_code == 409  # nothing uploaded yet
+    # While the gateway still holds the session (live, or resumable), the upload waits.
+    state = keys.sess_state(sid)
+    await api.svc.valkey.hset(state, mapping={"user_id": str(uid), "status": "reconnecting"})
+    for path in ("me-audio", "me-audio/complete"):
+        r = await api.client.post(f"/v1/sessions/{sid}/{path}", headers=h, json={})
+        assert r.status_code == 409
+        assert r.json()["detail"].startswith("live:")
+    await api.svc.valkey.hset(state, "status", "ended")
     r = await api.client.post(
         f"/v1/sessions/{sid}/me-audio", headers=h, json={"content_type": "audio/wav"}
     )

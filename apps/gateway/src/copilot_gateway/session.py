@@ -78,6 +78,7 @@ class SessionInfo:
     client_version: str
     store_transcript: bool
     started_at: datetime
+    interview_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -372,6 +373,7 @@ class Session:
             "mode": self.info.mode,
             "status": "active",
             "job_id": str(self.info.job_id) if self.info.job_id else "",
+            "interview_id": str(self.info.interview_id) if self.info.interview_id else "",
             "title": self.info.title or "",
             "platform": self.info.platform,
             "client_version": self.info.client_version,
@@ -867,12 +869,13 @@ class SessionManager:
         if valkey_ok:
             try:
                 digest = await store.get_digest(uid)
-                pack = await store.get_pack(uid, msg.job_id, msg.mode)
+                pack = await store.get_pack(uid, msg.job_id, msg.mode, msg.interview_id)
             except (*UNAVAILABLE, ValidationError, ValueError) as e:
                 log.warning("could not load digest or pack for %s: %s", uid, e)
         info = SessionInfo(
             mode=msg.mode,
             job_id=msg.job_id,
+            interview_id=msg.interview_id,
             title=msg.meeting_title,
             platform=msg.platform,
             client_version=msg.client_version,
@@ -940,6 +943,7 @@ class SessionManager:
         info = SessionInfo(
             mode=state.get("mode", "interview"),
             job_id=UUID(state["job_id"]) if state.get("job_id") else None,
+            interview_id=UUID(state["interview_id"]) if state.get("interview_id") else None,
             title=state.get("title") or None,
             platform=state.get("platform", ""),
             client_version=state.get("client_version", ""),

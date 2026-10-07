@@ -174,6 +174,7 @@ async def test_interview_pack_sets_pack_id_and_lives_past_the_call(stack: Stack)
     assert pack_id is not None
     pack = await pack_for(stack, uid, f"job:{job_id}")
     assert pack.pack_id == pack_id
+    assert (await pack_for(stack, uid, f"interview:{interview}")).pack_id == pack_id
     assert pack.context.round == "system_design"
     _, body = stack.claude.requests[-1]
     assert "system_design round" in body["system"][0]["text"]

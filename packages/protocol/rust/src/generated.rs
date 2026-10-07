@@ -458,6 +458,9 @@ pub struct SessionStart {
     /// UUID (v7 for ids we generate), lowercase hex with dashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<Uuid>,
+    /// The scheduled interview this call is; its session pack is loaded first. Send job_id too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interview_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meeting_title: Option<String>,
     /// Call platform, for example zoom, meet or teams.

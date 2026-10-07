@@ -236,10 +236,16 @@ class GatewayStore:
         raw = await self.client.get(keys.digest(uid))
         return None if raw is None else Digest.model_validate_json(raw)
 
-    async def get_pack(self, uid: UUID, job_id: UUID | None, mode: str) -> SessionPack | None:
+    async def get_pack(
+        self, uid: UUID, job_id: UUID | None, mode: str, interview_id: UUID | None = None
+    ) -> SessionPack | None:
+        """The pack the index names for this call: the interview's, then the job's newest,
+        then the mode's."""
         index_key = keys.pack_index(uid)
         pack_id = None
-        if job_id is not None:
+        if interview_id is not None:
+            pack_id = await self.client.hget(index_key, f"interview:{interview_id}")  # pyright: ignore[reportUnknownMemberType]
+        if pack_id is None and job_id is not None:
             pack_id = await self.client.hget(index_key, f"job:{job_id}")  # pyright: ignore[reportUnknownMemberType]
         if pack_id is None:
             pack_id = await self.client.hget(index_key, f"mode:{mode}")  # pyright: ignore[reportUnknownMemberType]

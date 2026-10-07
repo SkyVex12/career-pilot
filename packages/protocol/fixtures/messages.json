@@ -4,6 +4,7 @@
       "type": "session.start",
       "mode": "interview",
       "job_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
+      "interview_id": "0192f3c1-8a00-7b10-9c41-5d2e8f0a1b40",
       "platform": "zoom",
       "client_version": "1.4.0",
       "consent": { "store_transcript": true },

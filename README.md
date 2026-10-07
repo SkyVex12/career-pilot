@@ -4,7 +4,7 @@ Desktop career copilot: listens to live interviews and meetings, detects questio
 the user, and shows answers grounded in their career memory. The design is in
 [ARCHITECTURE.md](ARCHITECTURE.md), which is the source of truth for everything here.
 
-Status: Stage 0, build step 4a. The gateway serves live sessions: the WebSocket protocol,
+Status: Stage 0, build step 4b. The gateway serves live sessions: the WebSocket protocol,
 Deepgram STT on the "them" channel, turn detection, the Haiku detector, fast and deep answers
 from the hot digest and session pack, session state and logs in Valkey, and jobs on the queue.
 The Windows desktop app captures the call (WASAPI loopback) and the microphone, cancels echo,
@@ -12,8 +12,11 @@ runs Silero VAD, streams to the gateway and shows answers in an always-on-top ov
 Copilot API takes uploads (resume, job description), jobs, interviews and the user's audio,
 and serves sessions with their post-call outputs. The workers turn a resume into the hot digest
 and an interview into its session pack, copy the session log into Aurora with per-user
-encryption, transcribe the user's audio, and write the summary and feedback. Login is a
-Cognito access token, or the dev token locally; Cognito itself comes with Terraform (step 5).
+encryption, transcribe the user's audio, and write the summary and feedback. The desktop app
+works through the API: it uploads documents, lists jobs, schedules interviews, records the
+user's own audio (encrypted, only with transcript consent) and uploads it after the call, and
+shows the post-call outputs and the session history. Login is a Cognito access token, or the
+dev token locally; Cognito itself comes with Terraform (step 5).
 
 ## Layout
 
@@ -22,7 +25,8 @@ apps/
   desktop/      Tauri 2 app (Windows for now)               (pnpm, cargo)
     core/       copilot-client: capture, AEC, VAD, framing, gateway client
     src-tauri/  Tauri shell: windows, commands, hotkey, settings
-    src/        React UI: overlay, start, settings, debug
+    src/        React UI: overlay, session and post-call, documents, jobs, history,
+                settings, debug
   gateway/      FastAPI WebSocket service, port 8081         (uv)
   api/          FastAPI REST service, port 8080              (uv)
   worker/       SQS consumer, health check on port 8082;     (uv)
@@ -34,7 +38,8 @@ packages/
 migrations/     plain SQL migrations and the row-level security test
 evals/          copilot-replay: stream a recorded call through the gateway
 infra/          Terraform (empty)
-scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py
+scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py,
+                desktop_test_stack.py (the backend for the client's API tests)
 ```
 
 ## Prerequisites
@@ -120,7 +125,7 @@ The API (base path `/v1`, bearer token on every request):
 
 | Endpoint | Does |
 | --- | --- |
-| `GET /me`, `PATCH /me`, `PATCH /me/settings` | Profile and settings (retention days, standup time and timezone, consent defaults). The first request creates the user from the token |
+| `GET /me`, `PATCH /me`, `PATCH /me/settings` | Profile and settings. `PATCH /me` takes profile fields (display name), `PATCH /me/settings` the settings (retention days, standup time and timezone, consent defaults); each refuses the other's fields. The first request creates the user from the token |
 | `DELETE /me` | Enqueues `user.delete`: rows, S3 files, Valkey keys and data keys |
 | `POST /documents`, `GET /documents` | A presigned S3 upload (declare kind, content type, size, SHA-256) |
 | `POST /documents/{id}/ingest` | A resume becomes career facts and the hot digest; a job description becomes a job and its session pack |
@@ -176,40 +181,104 @@ One terminal per long-running step.
 2. **`.env`** (from `.env.example`): `COPILOT_ENV=dev`, `COPILOT_AUTH=dev`, a
    `COPILOT_DEV_TOKEN` of 16+ characters, `COPILOT_DEV_MASTER_KEY`, Claude credentials
    (`ANTHROPIC_API_KEY` with `COPILOT_LLM_PROVIDERS=anthropic`, or Bedrock) and
-   `DEEPGRAM_API_KEY`.
-3. **API and worker:** `uv run copilot-api` and `uv run copilot-worker`, each in its own
-   terminal (and `uv run copilot-scheduler` for the timed jobs, optional locally).
-4. **Dev profile:** `uv run python scripts/dev_profile.py --resume resume.pdf --job job.md
-   --round technical`. It uploads both through the API, schedules an interview an hour out,
-   waits for the pack and prints the job id the start screen offers. A pack lives until a day
-   after its interview.
-5. **Gateway:** `uv run copilot-gateway` (`ws://127.0.0.1:8081/v1/session`). Bind
-   `HOST=0.0.0.0` only if the app runs on another machine.
-6. **App:** `pnpm --filter @copilot/desktop tauri dev`. The first build takes a few minutes.
-7. **Settings** (in the app): gateway URL, the dev token (stored in the Windows Credential
-   Manager), the microphone, and "Call audio from": the speakers or headset the call app plays
-   on. Leave echo cancellation on. Save.
-8. **Session:** pick the mode and job, the call app and the transcript consent, then Start
-   session. The overlay opens on top; drag it by its header. The hotkey (Ctrl+Shift+Space by
-   default) answers the last thing said when detection missed it; the box at the bottom of the
-   overlay takes a typed question. Ctrl+Shift+D in the main window shows the debug panel:
-   partial transcripts, detected questions, and latency per question (end of speech to first
-   answer word, on the client, next to the gateway's `latency_ms`).
+   `DEEPGRAM_API_KEY`. Leave `COPILOT_FIXTURES_DIR` unset for real Claude and Deepgram.
+3. **API, worker, gateway:** `uv run copilot-api`, `uv run copilot-worker` and
+   `uv run copilot-gateway`, each in its own terminal (and `uv run copilot-scheduler` for the
+   timed jobs, optional locally). Bind `HOST=0.0.0.0` only if the app runs on another machine.
+4. **App:** `pnpm --filter @copilot/desktop tauri dev`. The first build takes a few minutes.
+5. **Settings** (in the app): the gateway URL (`ws://127.0.0.1:8081/v1/session`), the API URL
+   (`http://127.0.0.1:8080/v1`), the dev token (stored in the Windows Credential Manager; the
+   same token signs in to both), the microphone, and "Call audio from": the speakers or
+   headset the call app plays on. Leave echo cancellation on. Save.
+6. **Documents:** upload your resume and a job description. Each shows Processing, then
+   Processed; the career digest shows Ready once the resume's facts are in, and the job
+   description's job shows its pack.
+7. **Jobs:** schedule an interview for the job (round and start time). It builds a pack for
+   that round. A pack lives until a day after its interview.
+8. **Session:** pick the mode, the interview (or a job) under "Call for", the call app and the
+   transcript consent, then Start session. The overlay opens on top; drag it by its header. The
+   hotkey (Ctrl+Shift+Space by default) answers the last thing said when detection missed it;
+   the box at the bottom of the overlay takes a typed question. Ctrl+Shift+D in the main window
+   shows the debug panel: partial transcripts, detected questions, and latency per question
+   (end of speech to first answer word, on the client, next to the gateway's `latency_ms`).
+9. **After the call:** End session. The post-call screen follows the upload of your own audio
+   and polls the API until the summary, feedback, follow-up email (or standup report) and the
+   transcript are ready, for up to 5 minutes. History lists past sessions, this month's live
+   minutes, and account deletion.
+
+`scripts/dev_profile.py --resume resume.pdf --job job.md --round technical` does steps 6 and 7
+from the command line.
+
+With transcript consent the app records your own audio (the microphone after echo
+cancellation) in `%LOCALAPPDATA%\com.copilot.desktop\me-audio`, encrypted with a key kept in
+the Windows Credential Manager (`com.copilot.desktop`, `me-audio-key`). It uploads it when the
+call ends, retries for about 11 minutes, deletes it once the upload is complete, and retries
+whatever is left at the next start. Without consent nothing is recorded. Post-call work waits
+up to 10 minutes for the upload.
 
 To check the devices without the app, `cargo run -p copilot-client --example capture_check -- 5`
 lists them and reports how much audio each stream delivered (play something meanwhile;
 loopback is silent otherwise).
 
 To work on the UI without provider keys, run the gateway with scripted STT and Claude instead
-of step 5: `uv run python -m copilot_gateway.offline --port 8081 --token <dev token>`. Typed
-questions get canned answers; real audio produces no transcript. With
+of `copilot-gateway`: `uv run python -m copilot_gateway.offline --port 8081 --token <dev token>`.
+Typed questions get canned answers; real audio produces no transcript. With
 `--valkey redis://localhost:6379/0 --sqs` and a worker started with
 `COPILOT_FIXTURES_DIR=apps/worker/tests/fixtures`, the whole flow (packs, session log,
-post-call outputs) runs without any key.
+post-call outputs) runs without any key; documents then come back as the recorded sample's.
 
-After a session the summary is at `GET /v1/sessions/{id}` once its `status` is `ready` (the
-desktop app does not show it yet; that is build step 4b). Post-call work waits up to 10 minutes
-for the user's own audio unless the client completes the upload sooner.
+### End-to-end test with a teammate
+
+A real call from a fresh stack, with real Claude and Deepgram. You need a teammate on a call
+app (Zoom, Meet or Teams) who agrees to be recorded and plays the interviewer; about 30
+minutes. Use your own resume (PDF or Markdown) and a real job description saved as a PDF,
+Markdown or text file.
+
+1. **Fresh stack.** `docker compose down -v`, then `docker compose up -d --wait`,
+   `uv run copilot-migrate`, `uv run copilot-dev-roles`.
+2. **`.env`** as in step 2 above, with `ANTHROPIC_API_KEY`, `COPILOT_LLM_PROVIDERS=anthropic`
+   and `DEEPGRAM_API_KEY`, and without `COPILOT_FIXTURES_DIR`.
+3. **Services**, one terminal each: `uv run copilot-api`, `uv run copilot-worker`,
+   `uv run copilot-gateway`, `uv run copilot-scheduler`. Check
+   `curl http://127.0.0.1:8080/healthz` and the same on ports 8081 and 8082. Keep the worker
+   terminal visible: every job logs a line.
+4. **App.** `pnpm --filter @copilot/desktop tauri dev`. In Settings: gateway URL, API URL, the
+   dev token from `.env`, your microphone, and the output device the call plays on. If you
+   have no headphones, keep echo cancellation on. Save. History is empty after `down -v`: the
+   database is new.
+5. **Upload the resume** under Documents. Expect Processing, then Processed and "Career
+   digest: Ready" within about 1 to 2 minutes (Opus reads the resume; the worker logs
+   `memory.extract`, then `digest.rebuild`).
+6. **Upload the job description.** Expect Processing, then Processed with the company and
+   title read from it, and "Pack ready (N answers)" a minute later (`pack.build`).
+7. **Schedule the interview** under Jobs: the job, the round you will play (technical or
+   system design works best), and a start time about 15 minutes out. Expect "Pack ready" in
+   the Interviews list within about a minute.
+8. **Join the call** with your teammate, on the output device you picked. Under Session: mode
+   interview, "Call for" the interview you scheduled, the call app, and tick the transcript
+   consent (you both agreed). Start session; the overlay opens.
+9. **Run the interview** for 10 to 15 minutes. Ask your teammate for a mix: one behavioral
+   ("Tell me about a time..."), two technical, one system design, plus small talk and a
+   question for someone else ("Sam, what do you think?"), which should not fire. Answer
+   aloud. Expect talking points about a second after each question ends, and a deeper
+   answer below for behavioral, technical and system design ones. Try the hotkey once after
+   a question the overlay missed, and type one question into the overlay. Open the debug
+   panel (Ctrl+Shift+D) to see the latency per question.
+10. **End the session.** The post-call screen shows "Waiting for your audio", then "Your audio
+    is uploaded", then the summary, feedback and follow-up email (Copy puts it on the
+    clipboard), and the transcript with both sides. Expect this within about 3 minutes.
+11. **History.** The session is listed with its minutes; opening it shows the same outputs.
+    The live minutes at the top include it.
+12. **Optional checks.** A short session without transcript consent: no recording appears in
+    the `me-audio` folder, and the summary covers only length and question types. Close the
+    app right after ending a consented session (before the upload): at the next start the
+    recording uploads and the session still gets its transcript, if that start is within 10
+    minutes of the end. Delete a session from History. Delete the account last (type
+    "delete"): History is empty afterwards.
+
+Things worth sending back: the debug panel's latency table, questions the overlay missed or
+answered when it should not have, anything wrong in the outputs, and the worker log around
+any failure.
 
 ### Database roles
 
@@ -245,8 +314,9 @@ tagged enums and the schema's constraints into `Validate` impls; it needs no Rus
 uv run pytest                 # all Python tests, including those that need the stack
 uv run pytest -m "not stack"  # without the local stack
 uv run pytest -m stack        # only the tests against the local stack
-pnpm test                     # TypeScript contract tests and the overlay's reducer (vitest)
+pnpm test                     # TypeScript contract tests and the desktop UI's logic (vitest)
 cargo test --workspace        # Rust: protocol contract, client core, integration tests
+                              # (tests/api.rs needs the local stack)
 cargo clippy --workspace --all-targets && cargo fmt --all --check
 pnpm typecheck                # tsc for protocol and desktop
 pnpm codegen:check            # generated protocol types are current
@@ -274,12 +344,14 @@ uv run pyright
   RSA keys (signature, issuer, expiry, `token_use`, app client, `alg` confusion, JWKS caching
   and rotation), envelope encryption (round trip, row and table bound associated data, a data
   key that opens only for its user; KMS calls checked for the `user_id` encryption context),
-  and monotonic UUIDv7.
+  answer pricing (model names across providers, cache reads, tiers, configured prices), and
+  monotonic UUIDv7.
 - **API tests** (`apps/api/tests/`, marker `stack`): a throwaway database connected as
-  `app_api`, Valkey database 14 and the S3 store. First login, settings, presigned uploads
-  through S3 (and a tampered URL refused), ingest, jobs and interviews with their packs,
-  sessions with decrypted outputs and transcript, cross-user 404s, the user's audio, usage,
-  account deletion, and a Cognito token end to end.
+  `app_api`, Valkey database 14 and the S3 store. First login, profile and settings each on
+  their own path, presigned uploads through S3 (and a tampered URL refused), ingest and its
+  status, the digest in the document list, jobs and interviews with their packs, sessions
+  with decrypted outputs and transcript, cross-user 404s, the user's audio (refused while the
+  session is live), usage, account deletion, and a Cognito token end to end.
 - **Worker tests** (`apps/worker/tests/`, marker `stack`): every job against the stack, with
   Claude and Deepgram replayed from `apps/worker/tests/fixtures` through the real clients
   (see the README there; re-record with `scripts/record_worker_fixtures.py`). Resume to memory
@@ -310,7 +382,16 @@ uv run pyright
 - **Desktop client unit tests** (`apps/desktop/core/src/`): resampling, the tick clock, WebRTC
   AEC on a simulated echo, the VAD segmenter, frame encoding and framing (pre-roll, 100 ms
   frames, the empty speech-end frame), the 10 s ring buffer, the reconnect backoff and the
-  action for every close code.
+  action for every close code. The API client (error details, allowed calls) and the user's
+  audio: the per-install key in the credential store, the encrypted file round trip to WAV,
+  no plaintext on disk, the wrong key and altered or reordered chunks refused, a torn last
+  chunk after a crash, a new session mid-call, nothing recorded without consent, and the
+  upload logic against a fake API: success deletes the local copy, network errors and a live
+  session keep it and the retry succeeds, a failure stays for the next start, final refusals
+  and unreadable files delete it.
+- **Desktop UI tests** (`apps/desktop/tests/`): the overlay's reducer, the post-call polling
+  (ready, the 5-minute limit, errors while polling), the outputs' order per mode, the
+  transcript, and the start screen's interview and job choices.
 - **Audio pipeline test** (`apps/desktop/core/tests/pipeline.rs`): synthesized speech through
   Silero VAD and the framers, and the no-headphones case: the far end leaking into the mic is
   heard as the user without AEC and not with it, while the user's own speech still counts.
@@ -321,3 +402,12 @@ uv run pyright
   ring resend, `4401` with a token refresh, `4409` and ending the other session, `4410`,
   `auth.expiring`, and a gateway restart, with and without Valkey state. The restart-with-state
   test uses the compose stack's Valkey (database 15) and says it skipped when that is down.
+- **Client API integration test** (`apps/desktop/core/tests/api.rs`, needs the local stack):
+  the client against the real API and a real worker consumer (Claude and Deepgram on the
+  recorded fixtures) and the gateway, which `scripts/desktop_test_stack.py` runs on a
+  throwaway database and queue. Documents through the presigned uploads, the digest and
+  packs, an interview and its pack, a call with the user's audio recorded, an upload that
+  fails and is retried as at the next start, the post-call outputs with the interview linked
+  and both sides in the transcript, a call without consent (nothing recorded, a metadata
+  summary), history, usage, and deleting a session and the account. It fails with the reason
+  when the stack is down.

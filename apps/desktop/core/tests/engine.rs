@@ -49,6 +49,7 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
         StartParams {
             mode: Mode::Interview,
             job_id: None,
+            interview_id: None,
             meeting_title: None,
             platform: "test".into(),
             client_version: "test".into(),

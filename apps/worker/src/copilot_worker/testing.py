@@ -169,7 +169,8 @@ class GatewayLog:
             "kind": "answer", "question_id": str(qid), "pass": pass_, "source": "model",
             "provider": "anthropic", "model": "claude-haiku-4-5", "fallback_attempt": 0,
             "tier": "standard", "text": text, "input_tokens": 4200, "cached_tokens": 4000,
-            "output_tokens": 40, "latency_ms": {"first_token_ms": 420, "total_ms": 900},
+            "output_tokens": 40, "cost_usd": 0.0008,
+            "latency_ms": {"first_token_ms": 420, "total_ms": 900},
             "memory_node_ids": [],
         })  # fmt: skip
 

@@ -108,6 +108,8 @@ def _interview(row: Any) -> dict[str, Any]:
         "round": row["round"],
         "starts_at": row["starts_at"].isoformat(),
         "pack_id": str(row["pack_id"]) if row["pack_id"] else None,
+        "company": row.get("company"),
+        "title": row.get("title"),
     }
 
 
@@ -118,8 +120,9 @@ async def create_interview(body: InterviewIn, svc: SvcDep, user: UserDep) -> dic
         if await conn.fetchval("select 1 from app.jobs where id = $1", body.job_id) is None:
             raise HTTPException(404, "no such job")
         row = await conn.fetchrow(
-            "insert into app.interviews (id, user_id, job_id, round, starts_at)"
-            " values ($1, $2, $3, $4, $5) returning id, job_id, round, starts_at, pack_id",
+            "with i as (insert into app.interviews (id, user_id, job_id, round, starts_at)"
+            " values ($1, $2, $3, $4, $5) returning id, job_id, round, starts_at, pack_id)"
+            " select i.*, j.company, j.title from i join app.jobs j on j.id = i.job_id",
             interview_id,
             user.user_id,
             body.job_id,
@@ -139,8 +142,9 @@ async def create_interview(body: InterviewIn, svc: SvcDep, user: UserDep) -> dic
 async def list_interviews(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         rows = await conn.fetch(
-            "select id, job_id, round, starts_at, pack_id from app.interviews"
-            " where user_id = $1 order by starts_at desc",
+            "select i.id, i.job_id, i.round, i.starts_at, i.pack_id, j.company, j.title"
+            " from app.interviews i join app.jobs j on j.id = i.job_id"
+            " where i.user_id = $1 order by i.starts_at desc",
             user.user_id,
         )
     out: list[dict[str, Any]] = []

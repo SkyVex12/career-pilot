@@ -8,6 +8,7 @@ from typing import Any
 from copilot_core import keys
 from copilot_core.ids import uuid7
 from copilot_core.packs import Digest, NodeRef, PreparedAnswer, SessionPack, encode_embedding
+from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, cost_usd
 from copilot_gateway.auth import Principal
 from copilot_gateway.testing import (
     GatewayServer,
@@ -98,6 +99,15 @@ async def test_question_flow_streams_fast_and_deep(env) -> None:
         assert kind in kinds
     question = next(e for e in log if e["kind"] == "question")
     assert question["speculative_kept"] is True
+    # Each answer is priced from its usage, model and tier (answers.cost_usd).
+    for entry in (e for e in log if e["kind"] == "answer"):
+        expected = cost_usd(
+            entry["model"], entry["tier"], entry["input_tokens"], entry["cached_tokens"],
+            entry["output_tokens"], DEFAULT_PRICES, DEFAULT_TIERS,
+        )  # fmt: skip
+        assert entry["tier"] == "standard"
+        assert expected is not None
+        assert entry["cost_usd"] == float(expected) > 0
     # Every server message is in the events stream, with its seq as the stream id.
     events = await vk.xrange(keys.sess_events(c.session_id))
     assert [int(i.split(b"-")[0]) for i, _ in events] == seqs
@@ -538,3 +548,34 @@ async def test_refusal_mid_answer_sends_answer_error(env) -> None:
         err = await c.wait_type("answer.error")
         assert err["code"] == "refused"
         assert not c.of_type("answer.done")
+
+
+async def test_an_interview_loads_its_own_pack(env) -> None:
+    """`interview_id` in session.start picks the interview's pack over the job's newest one."""
+    job, interview = uuid7(), uuid7()
+    job_pack = await seed_memory(env)
+    interview_pack = SessionPack.model_validate(
+        {**job_pack.model_dump(mode="json", by_alias=True), "pack_id": str(uuid7())}
+    )
+    vk = env.client()
+    await vk.set(
+        keys.pack(env.user_a, interview_pack.pack_id), interview_pack.model_dump_json(by_alias=True)
+    )
+    await vk.hset(
+        keys.pack_index(env.user_a),
+        mapping={f"job:{job}": str(job_pack.pack_id),
+                 f"interview:{interview}": str(interview_pack.pack_id)},
+    )  # fmt: skip
+    async with GatewayServer(env.services()) as gw:
+        for extra, expected in (
+            ({"job_id": str(job), "interview_id": str(interview)}, interview_pack.pack_id),
+            ({"job_id": str(job)}, job_pack.pack_id),
+            ({"job_id": str(job), "interview_id": str(uuid7())}, job_pack.pack_id),
+        ):
+            c = ProtocolClient(gw.url)
+            await c.start(**extra)
+            state = await vk.hgetall(keys.sess_state(c.session_id))
+            assert state[b"pack_id"].decode() == str(expected)
+            assert state[b"interview_id"].decode() == extra.get("interview_id", "")
+            await c.send({"type": "session.end"})
+            assert await c.closed() == 1000

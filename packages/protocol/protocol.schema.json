@@ -149,6 +149,10 @@
         "type": { "type": "string", "const": "session.start" },
         "mode": { "$ref": "#/$defs/Mode" },
         "job_id": { "$ref": "#/$defs/Uuid" },
+        "interview_id": {
+          "description": "The scheduled interview this call is; its session pack is loaded first. Send job_id too.",
+          "$ref": "#/$defs/Uuid"
+        },
         "meeting_title": { "type": "string" },
         "platform": {
           "description": "Call platform, for example zoom, meet or teams.",

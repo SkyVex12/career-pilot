@@ -13,7 +13,6 @@ from copilot_core import __version__
 from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import BedrockCohereEmbedder, Embedder
 from copilot_core.jobs import SqsJobQueue
-from copilot_gateway import devroutes
 from copilot_gateway.auth import make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
@@ -84,9 +83,6 @@ def create_app(services: Services | None = None) -> FastAPI:
             await app.state.manager.shutdown()
 
     app = FastAPI(title="Copilot gateway", version=__version__, lifespan=lifespan)
-    env = services.settings.env if services is not None else Settings().env
-    if env in ("dev", "test"):
-        app.include_router(devroutes.router)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]

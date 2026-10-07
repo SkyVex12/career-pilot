@@ -1,8 +1,13 @@
 """`POST /documents` (presigned upload), `GET /documents`, `POST /documents/{id}/ingest`.
 
 The client declares the content type, size and SHA-256 up front; the upload goes straight to
-S3 under `uploads/{user_id}/`. Ingest checks that the object arrived and enqueues
-`memory.extract`, which checks the hash again before reading it.
+S3 under `uploads/{user_id}/`. Ingest checks that the object arrived, marks the document
+`ingesting` and enqueues `memory.extract`, which checks the hash again before reading it and
+ends as `ingested` or `failed`.
+
+`GET /documents` also says what the documents have produced so far: the hot digest (from the
+resume), and for each job description the job it became. The job's session pack is on
+`GET /jobs`.
 """
 
 from typing import Any, Literal
@@ -12,7 +17,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import SvcDep, UserDep
+from copilot_core import keys
 from copilot_core.ids import uuid7
+from copilot_core.packs import Digest
 from copilot_core.storage import document_key
 
 router = APIRouter()
@@ -29,12 +36,14 @@ class DocumentIn(BaseModel):
 
 
 def _doc(row: Any) -> dict[str, Any]:
+    job_id = row.get("job_id")  # asyncpg records have .get too
     return {
         "id": str(row["id"]),
         "kind": row["kind"],
         "content_type": row["content_type"],
         "status": row["status"],
         "created_at": row["created_at"].isoformat(),
+        "job_id": str(job_id) if job_id else None,  # a job description's job, once made
     }
 
 
@@ -63,11 +72,17 @@ async def create_document(body: DocumentIn, svc: SvcDep, user: UserDep) -> dict[
 async def list_documents(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         rows = await conn.fetch(
-            "select id, kind, content_type, status, created_at from app.documents"
-            " where user_id = $1 order by id desc",
+            "select d.id, d.kind, d.content_type, d.status, d.created_at, j.id as job_id"
+            " from app.documents d left join app.jobs j on j.id = d.id"
+            " where d.user_id = $1 order by d.id desc",
             user.user_id,
         )
-    return {"documents": [_doc(r) for r in rows]}
+    raw = await svc.valkey.get(keys.digest(user.user_id))
+    digest = None
+    if raw is not None:
+        d = Digest.model_validate_json(raw)
+        digest = {"version": d.version, "built_at": d.built_at, "facts": len(d.refs)}
+    return {"documents": [_doc(r) for r in rows], "digest": digest}
 
 
 @router.post("/documents/{document_id}/ingest", status_code=202)
@@ -82,8 +97,10 @@ async def ingest(document_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any
         raise HTTPException(404, "no such document")
     if row["kind"] not in INGESTED_KINDS:
         raise HTTPException(422, f"{row['kind']} documents are not ingested yet")
-    if row["status"] == "ingested":
+    if row["status"] in ("ingested", "ingesting"):
         return _doc(row)
+    if row["status"] == "failed":
+        raise HTTPException(409, "this document could not be read; upload it again")
     head = await svc.store.head(row["s3_key"])
     if head is None:
         raise HTTPException(409, "the document has not been uploaded yet")
@@ -92,5 +109,10 @@ async def ingest(document_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any
     # One extraction per uploaded content (the key also names the document: two uploads of
     # the same file are two documents, each ingested once).
     key = f"memory.extract:{user.user_id}:{document_id}:{row['sha256']}"
+    async with svc.tx(user) as conn:
+        await conn.execute(
+            "update app.documents set status = 'ingesting' where id = $1 and status = 'uploaded'",
+            document_id,
+        )
     await svc.enqueue("memory.extract", key, user.user_id, {"document_id": str(document_id)})
     return {**_doc(row), "status": "ingesting"}

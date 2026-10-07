@@ -21,6 +21,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
@@ -112,10 +113,13 @@ async def ensure_session(
     started_at = _when(meta.get("started_at"))
     if not meta or started_at is None:
         return None
-    # The client names a job id from its start screen; keep it only if it is this user's job,
-    # since the reference is a foreign key. The interview is the one whose pack was loaded.
+    # The client names a job and an interview from its start screen; keep them only if they
+    # are this user's, since the references are foreign keys. Without an interview id the
+    # interview is the one whose pack was loaded.
     job_id = await conn.fetchval("select id from app.jobs where id = $1", _uuid(meta.get("job_id")))
     interview_id = await conn.fetchval(
+        "select id from app.interviews where id = $1", _uuid(meta.get("interview_id"))
+    ) or await conn.fetchval(
         "select id from app.interviews where pack_id = $1", _uuid(meta.get("pack_id"))
     )
     mode = (
@@ -257,6 +261,14 @@ async def write_segment(ctx: Ctx, conn: Conn, uid: UUID, sid: UUID, d: dict[str,
     )
 
 
+def _cost(value: Any) -> Decimal | None:
+    """The gateway's price for an answer (a float), as numeric(10,6)."""
+    try:
+        return None if value is None else Decimal(str(value)).quantize(Decimal("0.000001"))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 def answer_id(qid: UUID, pass_: str) -> UUID:
     return uuid7_for(qid.int >> 80, str(qid), pass_)  # the question's time, then its pass
 
@@ -276,8 +288,9 @@ async def write_answer(
     node_ids = [u for u in map(_uuid, d.get("memory_node_ids") or []) if u is not None]
     await conn.execute(
         "insert into app.answers (id, question_id, user_id, pass, model, tier, text_enc,"
-        " key_version, input_tokens, cached_tokens, output_tokens, latency_ms, memory_node_ids,"
-        " expanded) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+        " key_version, input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms,"
+        " memory_node_ids, expanded)"
+        " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         " on conflict (id) do nothing",
         aid,
         qid,
@@ -290,6 +303,7 @@ async def write_answer(
         d.get("input_tokens"),
         d.get("cached_tokens"),
         d.get("output_tokens"),
+        _cost(d.get("cost_usd")),
         d.get("latency_ms") or {},
         node_ids,
         expanded,

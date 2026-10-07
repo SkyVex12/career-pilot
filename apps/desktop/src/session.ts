@@ -35,6 +35,8 @@ export type BadgeState = "ok" | "degraded" | "reconnecting";
 
 export interface SessionView {
   running: boolean;
+  /** The session last live in this run; kept after it stops, for the post-call screen. */
+  sessionId: string | null;
   connection: ConnectionState | null;
   stopped: StopReason | null;
   status: Record<string, { state: BadgeState; message: string }>;
@@ -51,6 +53,7 @@ const emptyPass = (): PassView => ({ text: "", done: false, error: null, source:
 
 export const initial: SessionView = {
   running: false,
+  sessionId: null,
   connection: null,
   stopped: null,
   status: {},
@@ -80,7 +83,7 @@ export function reduce(s: SessionView, a: Action): SessionView {
     case "connection": {
       const next = { ...s, connection: e.state, running: e.state.state !== "stopped" };
       if (e.state.state === "live") {
-        return log({ ...next, stopped: null }, `live ${e.state.resumed ? "(resumed)" : "(new session)"} ${e.state.session_id}`);
+        return log({ ...next, stopped: null, sessionId: e.state.session_id }, `live ${e.state.resumed ? "(resumed)" : "(new session)"} ${e.state.session_id}`);
       }
       if (e.state.state === "reconnecting") return log(next, `reconnecting in ${e.state.in_ms} ms (attempt ${e.state.attempt + 1})`);
       return next;

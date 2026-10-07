@@ -9,6 +9,8 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
+
 
 def split_list(value: object) -> object:
     if isinstance(value, str):
@@ -57,6 +59,11 @@ class CoreSettings(BaseSettings):
     bedrock_haiku_model: str = "anthropic.claude-haiku-4-5"
     bedrock_sonnet_model: str = "anthropic.claude-sonnet-5-5"
     bedrock_opus_model: str = "anthropic.claude-opus-5-5"
+    # Prices per million tokens, for answers.cost_usd (copilot_core.pricing). JSON; entries
+    # given are merged over the defaults, e.g.
+    # {"claude-haiku-4-5": {"input": 1, "cached": 0.1, "output": 5}}.
+    model_prices: dict[str, ModelPrice] = Field(default_factory=lambda: dict(DEFAULT_PRICES))
+    tier_price_multipliers: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_TIERS))
 
     # Embeddings for prepared-answer matching. "auto" uses Bedrock when Bedrock is a Claude
     # provider and turns matching off otherwise (the direct API has no embeddings).
@@ -85,6 +92,16 @@ class CoreSettings(BaseSettings):
             return None
         region = self.cognito_user_pool_id.split("_", 1)[0]
         return f"https://cognito-idp.{region}.amazonaws.com/{self.cognito_user_pool_id}"
+
+    @field_validator("model_prices", mode="after")
+    @classmethod
+    def _merge_prices(cls, value: dict[str, ModelPrice]) -> dict[str, ModelPrice]:
+        return {**DEFAULT_PRICES, **{model_key(k): v for k, v in value.items()}}
+
+    @field_validator("tier_price_multipliers", mode="after")
+    @classmethod
+    def _merge_tiers(cls, value: dict[str, float]) -> dict[str, float]:
+        return {**DEFAULT_TIERS, **value}
 
     @field_validator("llm_providers", "cognito_client_ids", mode="before")
     @classmethod

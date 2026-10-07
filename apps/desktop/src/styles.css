@@ -469,3 +469,159 @@ html[data-window="overlay"] #root {
   background: #111418;
   border-color: #3a414a;
 }
+
+/* Documents, jobs, history and the post-call screen */
+
+.panel + .panel {
+  margin-top: 12px;
+}
+
+.panel h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+}
+
+.value {
+  margin: 0;
+  padding-top: 7px;
+}
+
+table.list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.list td {
+  padding: 7px 8px;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+table.list tr:first-child td {
+  border-top: 0;
+}
+
+table.list.clickable tr {
+  cursor: pointer;
+}
+
+table.list.clickable tr:hover td {
+  background: var(--bg);
+}
+
+tr.muted td {
+  color: var(--muted);
+}
+
+.chip {
+  display: inline-block;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.chip-ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip-busy {
+  color: var(--degraded);
+  border-color: var(--degraded);
+}
+
+.chip-bad {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.chip-off {
+  color: var(--muted);
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.postcall {
+  margin-top: 16px;
+}
+
+.postcall .panel {
+  border: 0;
+  padding: 0;
+}
+
+.detail-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.output {
+  margin-top: 16px;
+}
+
+.output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.output h3 {
+  margin: 0 0 6px;
+}
+
+.output-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.transcript-rows li {
+  padding: 3px 0;
+  line-height: 1.45;
+}
+
+.transcript-rows b.you {
+  color: var(--accent);
+}
+
+.usage {
+  display: flex;
+  gap: 32px;
+}
+
+.usage .big {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.danger-zone h3 {
+  margin-top: 0;
+  color: var(--bad);
+}

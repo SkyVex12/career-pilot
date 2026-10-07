@@ -12,6 +12,8 @@ use uuid::Uuid;
 pub struct Settings {
     /// The gateway's `/v1/session` WebSocket URL.
     pub gateway_url: String,
+    /// The Copilot API's `/v1` root.
+    pub api_url: String,
     /// cpal device ids; None is the system default.
     pub mic_device: Option<String>,
     pub output_device: Option<String>,
@@ -27,6 +29,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             gateway_url: "ws://127.0.0.1:8081/v1/session".into(),
+            api_url: "http://127.0.0.1:8080/v1".into(),
             mic_device: None,
             output_device: None,
             echo_cancellation: true,

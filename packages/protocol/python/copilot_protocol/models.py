@@ -99,6 +99,10 @@ class SessionStart(BaseModel):
     """
     UUID (v7 for ids we generate), lowercase hex with dashes.
     """
+    interview_id: UUID | None = None
+    """
+    The scheduled interview this call is; its session pack is loaded first. Send job_id too.
+    """
     meeting_title: str | None = None
     platform: Annotated[str, Field(min_length=1)]
     """
