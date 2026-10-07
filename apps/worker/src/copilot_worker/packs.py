@@ -64,6 +64,7 @@ async def digest_rebuild(job: Job, ctx: Ctx) -> None:
     digest = render_digest(str(name), nodes)
     if digest is None:
         return
+    digest.built_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     await ctx.valkey.set(keys.digest(uid), digest.model_dump_json(by_alias=True))
     log.info("digest for %s: %s, %d refs", uid, digest.version[:19], len(digest.refs))
 
@@ -123,6 +124,8 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
     fields = {f"mode:{mode}": str(pack.pack_id)}
     if job_id is not None:
         fields[f"job:{job_id}"] = str(pack.pack_id)
+    if interview_id is not None:
+        fields[f"interview:{interview_id}"] = str(pack.pack_id)
     await ctx.valkey.hset(keys.pack_index(uid), mapping=fields)
     if interview_id is not None:
         async with ctx.user(uid) as conn:

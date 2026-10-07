@@ -392,7 +392,7 @@ All messages are JSON objects with a `type` field.
 
 | type | Fields | When |
 | --- | --- | --- |
-| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `meeting_title?`, `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
+| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
 | `session.resume` | `session_id`, `last_seq` | First message after a reconnect |
 | `auth.refresh` | `access_token` | Before the current token expires |
 | `question.force` | `text?` | Hotkey pressed (no text) or a typed question (with text) |
@@ -689,7 +689,8 @@ create table app.documents (
   s3_key     text not null,
   sha256     text not null,
   content_type text,                             -- application/pdf, text/plain, text/markdown (0003)
-  status     text not null default 'uploaded' check (status in ('uploaded','ingested','failed')),
+  status     text not null default 'uploaded'
+             check (status in ('uploaded','ingesting','ingested','failed')),  -- ingesting: 0004
   created_at timestamptz not null default now()
 );
 
@@ -819,7 +820,7 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `user:{uid}:active_session` | string | 2 h | Gateway | Current session id; enforces one live session |
 | `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash, and the map from its short ids to node ids |
 | `pack:{uid}:{pack_id}` | string (JSON) | 24 h after the call's due time (an interview scheduled days ahead keeps its pack), at most 30 days | Worker | Prebuilt session pack |
-| `pack:{uid}:index` | hash | None, fields replaced | Worker | `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (job first, then mode) |
+| `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the job's newest pack, then the mode's) |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
 
@@ -858,10 +859,11 @@ For standups, `prepared_answers` is short and `standup` holds `yesterday`, `toda
 
 ```json
 {"schema": "digest.v1", "version": "sha256:9b1f...", "text": "# Career digest (version 2026-10-05)\n...",
- "refs": {"n:7c1e": {"node_id": "0192f3d0-...", "label": "Senior Backend Engineer, Acme Payments"}}}
+ "refs": {"n:7c1e": {"node_id": "0192f3d0-...", "label": "Senior Backend Engineer, Acme Payments"}},
+ "built_at": "2026-10-05T14:00:00Z"}
 ```
 
-`version` is the SHA-256 of `text`. The gateway puts `text` into prompts unchanged, so it must be byte-identical on every call until the next rebuild.
+`version` is the SHA-256 of `text`; `built_at` is only for display (the desktop app shows when the digest is ready). The gateway puts `text` into prompts unchanged, so it must be byte-identical on every call until the next rebuild.
 
 **Hot digest** (plain text, at most 4,000 tokens, identical bytes on every call so prompt caching hits):
 
@@ -1084,26 +1086,25 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `PATCH /me/settings` | Settings: retention days, standup time and timezone, consent defaults; profile fields are refused |
 | `DELETE /me` | Account deletion; enqueues `user.delete` |
 | `POST /documents` | Returns a presigned S3 upload URL and a document id |
-| `POST /documents/{id}/ingest` | Enqueues `memory.extract` for an uploaded document |
+| `GET /documents` | Documents with their status (`uploaded`, `ingesting`, `ingested`, `failed`), the job each job description became, and the hot digest's version and build time once it exists |
+| `POST /documents/{id}/ingest` | Marks an uploaded document `ingesting` and enqueues `memory.extract`; a `failed` document is uploaded again instead |
 | `POST /memory-interview/turns` | One turn of the onboarding memory interview |
 | `GET /memory?kind=&q=` | Browse and search memory |
 | `GET`, `PATCH`, `DELETE /memory/{id}` | View, edit, archive a memory node |
 | `GET /proposals?status=pending` | Pending memory updates |
 | `POST /proposals/{id}/approve`, `/reject`, `POST /proposals/bulk` | Decide on proposals; approvals trigger a debounced `digest.rebuild` |
 | `POST /jobs`, `GET /jobs` | Save and list job descriptions |
-| `POST /interviews` | Schedule an interview; enqueues `pack.build` |
+| `POST /interviews`, `GET /interviews` | Schedule an interview (enqueues `pack.build`); list interviews with their job and pack |
 | `GET /sessions`, `GET /sessions/{id}` | Session list; one session's status and outputs |
 | `GET /sessions/{id}/transcript` | Decrypted transcript, if stored |
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |
 | `POST /integrations/{provider}/connect`, `GET .../callback`, `DELETE` | Connect and disconnect GitHub, Jira, Slack, calendars |
 | `GET /usage` | Minutes used this period |
 | `POST /billing/checkout`, `POST /billing/webhook` | Stripe checkout and webhook |
-| `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call |
+| `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call. While the gateway still holds the session (live or resumable) it answers 409 with a detail starting `live:`, and the client retries later |
 | `POST /sessions/{id}/me-audio/complete` | The client finished the upload; enqueues `me_audio.transcribe` at once instead of after the 10-minute wait. An S3 event into the queue would do the same without the call; this keeps the local stack free of S3 notifications |
 
 The desktop app polls `GET /sessions/{id}` for up to 5 minutes after a call to show the summary and pending memory updates as soon as they are ready.
-
-Until the API exists (build step 4), the gateway serves one dev-only route with the same bearer token: `GET /v1/dev/jobs` lists the jobs in the caller's `pack:{uid}:index`, for the desktop start screen. It is mounted only with `COPILOT_ENV` dev or test.
 
 ### Workers
 

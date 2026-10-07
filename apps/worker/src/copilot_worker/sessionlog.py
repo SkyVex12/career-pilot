@@ -113,10 +113,13 @@ async def ensure_session(
     started_at = _when(meta.get("started_at"))
     if not meta or started_at is None:
         return None
-    # The client names a job id from its start screen; keep it only if it is this user's job,
-    # since the reference is a foreign key. The interview is the one whose pack was loaded.
+    # The client names a job and an interview from its start screen; keep them only if they
+    # are this user's, since the references are foreign keys. Without an interview id the
+    # interview is the one whose pack was loaded.
     job_id = await conn.fetchval("select id from app.jobs where id = $1", _uuid(meta.get("job_id")))
     interview_id = await conn.fetchval(
+        "select id from app.interviews where id = $1", _uuid(meta.get("interview_id"))
+    ) or await conn.fetchval(
         "select id from app.interviews where pack_id = $1", _uuid(meta.get("pack_id"))
     )
     mode = (

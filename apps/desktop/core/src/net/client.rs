@@ -60,6 +60,8 @@ const END_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct StartParams {
     pub mode: Mode,
     pub job_id: Option<Uuid>,
+    /// A scheduled interview: the gateway loads its pack first (send its job_id too).
+    pub interview_id: Option<Uuid>,
     pub meeting_title: Option<String>,
     pub platform: String,
     pub client_version: String,
@@ -71,6 +73,7 @@ impl StartParams {
         ClientMessage::SessionStart(SessionStart {
             mode: self.mode,
             job_id: self.job_id,
+            interview_id: self.interview_id,
             meeting_title: self.meeting_title.clone().filter(|t| !t.trim().is_empty()),
             platform: self.platform.clone(),
             client_version: self.client_version.clone(),

@@ -34,6 +34,7 @@ class Digest(_Model):
     version: str  # "sha256:<hex>" of text
     text: str
     refs: dict[str, NodeRef] = {}
+    built_at: str | None = None  # when the worker wrote it; not part of the prompt
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

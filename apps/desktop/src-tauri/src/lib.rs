@@ -104,6 +104,7 @@ async fn list_jobs(state: State<'_, AppState>) -> Res<JobList> {
 struct StartRequest {
     mode: Mode,
     job_id: Option<Uuid>,
+    interview_id: Option<Uuid>,
     meeting_title: Option<String>,
     platform: String,
     store_transcript: bool,
@@ -150,6 +151,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
         StartParams {
             mode: request.mode,
             job_id: request.job_id,
+            interview_id: request.interview_id,
             meeting_title: request.meeting_title,
             platform: request.platform,
             client_version: format!("desktop-{}", env!("CARGO_PKG_VERSION")),

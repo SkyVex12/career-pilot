@@ -548,3 +548,34 @@ async def test_refusal_mid_answer_sends_answer_error(env) -> None:
         err = await c.wait_type("answer.error")
         assert err["code"] == "refused"
         assert not c.of_type("answer.done")
+
+
+async def test_an_interview_loads_its_own_pack(env) -> None:
+    """`interview_id` in session.start picks the interview's pack over the job's newest one."""
+    job, interview = uuid7(), uuid7()
+    job_pack = await seed_memory(env)
+    interview_pack = SessionPack.model_validate(
+        {**job_pack.model_dump(mode="json", by_alias=True), "pack_id": str(uuid7())}
+    )
+    vk = env.client()
+    await vk.set(
+        keys.pack(env.user_a, interview_pack.pack_id), interview_pack.model_dump_json(by_alias=True)
+    )
+    await vk.hset(
+        keys.pack_index(env.user_a),
+        mapping={f"job:{job}": str(job_pack.pack_id),
+                 f"interview:{interview}": str(interview_pack.pack_id)},
+    )  # fmt: skip
+    async with GatewayServer(env.services()) as gw:
+        for extra, expected in (
+            ({"job_id": str(job), "interview_id": str(interview)}, interview_pack.pack_id),
+            ({"job_id": str(job)}, job_pack.pack_id),
+            ({"job_id": str(job), "interview_id": str(uuid7())}, job_pack.pack_id),
+        ):
+            c = ProtocolClient(gw.url)
+            await c.start(**extra)
+            state = await vk.hgetall(keys.sess_state(c.session_id))
+            assert state[b"pack_id"].decode() == str(expected)
+            assert state[b"interview_id"].decode() == extra.get("interview_id", "")
+            await c.send({"type": "session.end"})
+            assert await c.closed() == 1000

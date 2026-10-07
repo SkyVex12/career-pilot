@@ -71,6 +71,10 @@ export interface SessionStart {
   type: "session.start";
   mode: Mode;
   job_id?: Uuid;
+  /**
+   * UUID (v7 for ids we generate), lowercase hex with dashes.
+   */
+  interview_id?: string;
   meeting_title?: string;
   /**
    * Call platform, for example zoom, meet or teams.

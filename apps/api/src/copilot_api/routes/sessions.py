@@ -168,14 +168,20 @@ class MeAudioIn(BaseModel):
 
 async def _me_audio_session(svc: Services, user: Principal, sid: UUID) -> dict[str, Any]:
     """The session's consent and audio status, from its row or, before the row exists, from
-    the gateway's state (the call may end before its first flush)."""
+    the gateway's state (the call may end before its first flush).
+
+    The audio is uploaded after the socket closes for good. While the gateway still holds the
+    session (live, or resumable after a dropped socket) this refuses with 409 `live`, so a
+    client retrying an upload at startup cannot start transcription before the call ends."""
+    state = await _live_owner(svc, user, sid)
+    if state is not None and state.get("status") not in (None, "ended"):
+        raise HTTPException(409, "live: the session has not ended yet")
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
             "select store_transcript, me_audio_status from app.sessions where id = $1", sid
         )
     if row is not None:
         return dict(row)
-    state = await _live_owner(svc, user, sid)
     if state is None:
         raise HTTPException(404, "no such session")
     return {"store_transcript": state.get("store_transcript") == "1", "me_audio_status": "pending"}

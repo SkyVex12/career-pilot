@@ -27,6 +27,7 @@ fn start_params() -> StartParams {
     StartParams {
         mode: Mode::Interview,
         job_id: None,
+        interview_id: None,
         meeting_title: None,
         platform: "zoom".into(),
         client_version: "test".into(),

@@ -25,6 +25,7 @@ from copilot_gateway.answer import normalize_question, question_hash
 from copilot_gateway.auth import DevTokenVerifier, bearer_token, make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import parse_detection
+from copilot_gateway.offline import parse_token
 from copilot_protocol.audio import encode_frame
 from copilot_protocol.models import AudioFrameHeader
 
@@ -351,3 +352,10 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     s2 = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert s2.llm_providers == ["anthropic"]
     assert s2.deep_pass_auto_types == ["behavioral", "coding"]
+
+
+def test_offline_token_specs() -> None:
+    assert parse_token("abc") == ("abc", None)
+    token, expires = parse_token("abc:30")
+    assert token == "abc"
+    assert expires is not None
