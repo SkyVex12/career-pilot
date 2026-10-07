@@ -1,11 +1,25 @@
-// The main window: start screen, settings, and the debug panel (hidden unless turned on in
-// the settings, or with Ctrl+Shift+D).
-import { useCallback, useEffect, useState } from "react";
+// The main window: the session (start screen, then the post-call screen), documents, jobs
+// and interviews, history, settings, and the debug panel (hidden unless turned on in the
+// settings, or with Ctrl+Shift+D).
+import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
-import { api, inTauri, type DeviceInfo, type JobList, type LiveStatus, type Settings } from "./api";
+import { api, inTauri, type DeviceInfo, type LiveStatus, type Settings } from "./api";
+import { parseTarget, upcoming } from "./catalog";
+import { Documents, when } from "./Documents";
+import { History } from "./History";
+import { Jobs, roundLabel, useCatalog } from "./Jobs";
+import { SessionDetail } from "./SessionDetail";
 import { badge, useSession, type SessionView } from "./session";
 
-type Tab = "start" | "settings" | "debug";
+type Tab = "start" | "documents" | "jobs" | "history" | "settings" | "debug";
+
+const TABS: [Tab, string][] = [
+  ["start", "Session"],
+  ["documents", "Documents"],
+  ["jobs", "Jobs"],
+  ["history", "History"],
+  ["settings", "Settings"],
+];
 
 export default function App() {
   const [session] = useSession();
@@ -14,16 +28,16 @@ export default function App() {
   const [tokenSet, setTokenSet] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
 
-  const reload = useCallback(() => {
+  const reload = () => {
     api.getSettings().then(([s, t]) => {
       setSettings(s);
       setTokenSet(t);
       setShowDebug(s.show_debug);
     });
-  }, []);
+  };
   useEffect(() => {
     if (inTauri) reload();
-  }, [reload]);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "d") {
@@ -44,15 +58,15 @@ export default function App() {
     );
   }
 
+  const needsToken = !tokenSet && (tab === "documents" || tab === "jobs" || tab === "history");
   return (
     <main className="page">
       <nav className="tabs">
-        <button className={tab === "start" ? "on" : ""} onClick={() => setTab("start")}>
-          Session
-        </button>
-        <button className={tab === "settings" ? "on" : ""} onClick={() => setTab("settings")}>
-          Settings
-        </button>
+        {TABS.map(([t, label]) => (
+          <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+            {label}
+          </button>
+        ))}
         {showDebug && (
           <button className={tab === "debug" ? "on" : ""} onClick={() => setTab("debug")}>
             Debug
@@ -62,6 +76,10 @@ export default function App() {
         <StatusBadge session={session} />
       </nav>
       {tab === "start" && <StartScreen session={session} tokenSet={tokenSet} onSettings={() => setTab("settings")} />}
+      {needsToken && <SetTokenFirst onSettings={() => setTab("settings")} />}
+      {!needsToken && tab === "documents" && <Documents />}
+      {!needsToken && tab === "jobs" && <Jobs />}
+      {!needsToken && tab === "history" && <History />}
       {tab === "settings" && settings && (
         <SettingsScreen settings={settings} tokenSet={tokenSet} running={session.running} onSaved={reload} />
       )}
@@ -80,6 +98,14 @@ function StatusBadge({ session }: { session: SessionView }) {
   );
 }
 
+function SetTokenFirst({ onSettings }: { onSettings: () => void }) {
+  return (
+    <p className="callout">
+      Set the dev token first. <button className="link" onClick={onSettings}>Open settings</button>
+    </p>
+  );
+}
+
 const PLATFORMS = [
   ["zoom", "Zoom"],
   ["meet", "Google Meet"],
@@ -89,36 +115,37 @@ const PLATFORMS = [
 
 function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; tokenSet: boolean; onSettings: () => void }) {
   const [mode, setMode] = useState<Mode>("interview");
-  const [jobs, setJobs] = useState<JobList | null>(null);
-  const [jobsError, setJobsError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string>("");
+  const catalog = useCatalog(tokenSet);
+  const [target, setTarget] = useState("");
   const [title, setTitle] = useState("");
   const [platform, setPlatform] = useState("zoom");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [postCall, setPostCall] = useState<string | null>(null);
 
-  const loadJobs = useCallback(() => {
-    setJobsError(null);
-    api.listJobs().then(
-      (j) => {
-        setJobs(j);
-        setJobId((cur) => cur || j.jobs.find((x) => x.pack_available)?.job_id || "");
-      },
-      (e) => setJobsError(String(e)),
-    );
-  }, []);
+  const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
-    if (tokenSet) loadJobs();
-  }, [tokenSet, loadJobs]);
+    // Default to the next interview, else the newest job.
+    if (target) return;
+    if (interviews.length) setTarget(`interview:${interviews[0].id}`);
+    else if (catalog.jobs?.length) setTarget(`job:${catalog.jobs[0].id}`);
+  }, [catalog.jobs, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The post-call screen for the session that just ended.
+  useEffect(() => {
+    if (session.running) setPostCall(null);
+    else if (session.stopped === "ended" && session.sessionId) setPostCall(session.sessionId);
+  }, [session.stopped, session.sessionId, session.running]);
 
   const start = async () => {
     setBusy(true);
     setMessage(null);
     try {
+      const picked = mode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
       await api.startSession({
         mode,
-        job_id: mode === "interview" && jobId ? jobId : null,
+        ...picked,
         meeting_title: title.trim() || null,
         platform,
         store_transcript: consent,
@@ -142,11 +169,7 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
   const running = session.running;
   return (
     <section className="panel">
-      {!tokenSet && (
-        <p className="callout">
-          Set the gateway dev token first. <button className="link" onClick={onSettings}>Open settings</button>
-        </p>
-      )}
+      {!tokenSet && <SetTokenFirst onSettings={onSettings} />}
       <div className="grid">
         <label>Mode</label>
         <div className="segmented">
@@ -164,22 +187,36 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
           ))}
         </div>
 
-        <label>Job</label>
+        <label>Call for</label>
         <div>
-          <select value={jobId} disabled={running || mode !== "interview"} onChange={(e) => setJobId(e.target.value)}>
-            <option value="">None (the mode's pack, if any)</option>
-            {jobs?.jobs.map((j) => (
-              <option key={j.job_id} value={j.job_id} disabled={!j.pack_available}>
-                {[j.company, j.role_title, j.round].filter(Boolean).join(" · ") || j.job_id}
-                {j.pack_available ? "" : " (pack expired; rerun dev_profile.py)"}
-              </option>
-            ))}
+          <select value={target} disabled={running || mode !== "interview"} onChange={(e) => setTarget(e.target.value)}>
+            <option value="">Nothing specific (the mode's pack, if any)</option>
+            {interviews.length > 0 && (
+              <optgroup label="Interviews">
+                {interviews.map((i) => (
+                  <option key={i.id} value={`interview:${i.id}`}>
+                    {[i.company, i.title, roundLabel(i.round), when(i.starts_at)].filter(Boolean).join(" · ")}
+                    {packNote(i.pack)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {(catalog.jobs?.length ?? 0) > 0 && (
+              <optgroup label="Jobs">
+                {catalog.jobs?.map((j) => (
+                  <option key={j.id} value={`job:${j.id}`}>
+                    {j.company} · {j.title}
+                    {packNote(j.pack)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
-          <button className="link" onClick={loadJobs} disabled={!tokenSet}>
+          <button className="link" onClick={catalog.reload} disabled={!tokenSet}>
             Refresh
           </button>
-          {jobsError && <p className="note warn">{jobsError}</p>}
-          {jobs && jobs.jobs.length === 0 && <p className="note">No jobs yet: run scripts/dev_profile.py.</p>}
+          {catalog.error && <p className="note warn">{catalog.error}</p>}
+          {catalog.jobs?.length === 0 && <p className="note">No jobs yet: upload a job description under Documents.</p>}
         </div>
 
         <label>Meeting title</label>
@@ -195,10 +232,17 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
         </select>
 
         <label>Transcript</label>
-        <label className="check">
-          <input type="checkbox" checked={consent} disabled={running} onChange={(e) => setConsent(e.target.checked)} />
-          Store the transcript after the call (everyone on the call has agreed)
-        </label>
+        <div>
+          <label className="check">
+            <input type="checkbox" checked={consent} disabled={running} onChange={(e) => setConsent(e.target.checked)} />
+            Store the transcript after the call (everyone on the call has agreed)
+          </label>
+          <p className="note">
+            {consent
+              ? "Your own audio is recorded on this computer, encrypted, uploaded after the call for transcription, then deleted."
+              : "Nothing is recorded or stored; the summary covers only the call's length and the questions' types."}
+          </p>
+        </div>
       </div>
 
       <div className="actions">
@@ -221,10 +265,19 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
       )}
       {session.stopped === "no_minutes" && <p className="callout">No minutes left on the plan.</p>}
       {session.stopped === "unauthorized" && <p className="callout">The gateway rejected the dev token. Check it in Settings.</p>}
-      {session.stopped === "ended" && !running && <p className="note">Session ended.</p>}
       {message && <p className="note warn">{message}</p>}
+      {postCall && !running && (
+        <div className="postcall">
+          <SessionDetail sessionId={postCall} onClose={() => setPostCall(null)} />
+        </div>
+      )}
     </section>
   );
+}
+
+function packNote(pack: { available: boolean } | null | undefined): string {
+  if (!pack) return " (pack building)";
+  return pack.available ? "" : " (pack expired)";
 }
 
 function SettingsScreen({
@@ -276,15 +329,21 @@ function SettingsScreen({
         <label>Gateway URL</label>
         <input value={draft.gateway_url} onChange={(e) => set("gateway_url", e.target.value)} />
 
+        <label>API URL</label>
+        <div>
+          <input value={draft.api_url} onChange={(e) => set("api_url", e.target.value)} />
+          <p className="note">The Copilot API's /v1 root, for example http://127.0.0.1:8080/v1. The same token signs in to both.</p>
+        </div>
+
         <label>Dev token</label>
         <div>
           <input
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder={tokenSet ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the gateway's .env"}
+            placeholder={tokenSet ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the .env"}
           />
-          <p className="note">Kept in the Windows Credential Manager, not in the settings file.</p>
+          <p className="note">Kept in the Windows Credential Manager, not in the settings file. Cognito sign-in replaces it in build step 5.</p>
         </div>
 
         <label>Microphone</label>

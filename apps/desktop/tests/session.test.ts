@@ -76,3 +76,11 @@ describe("session reducer", () => {
     expect(s.transcript).toEqual([{ key: "them:0", channel: "them", text: "Tell me about a time.", final: true }]);
   });
 });
+
+describe("session id", () => {
+  it("is kept after the session stops, for the post-call screen", () => {
+    const s = run([live, { kind: "connection", state: { state: "stopped", reason: "ended" } }, { kind: "stopped", reason: "ended" }]);
+    expect(s.running).toBe(false);
+    expect(s.sessionId).toBe(QID);
+  });
+});

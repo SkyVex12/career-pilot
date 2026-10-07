@@ -1,41 +1,66 @@
-//! The Tauri shell: windows, commands, the global hotkey, and settings. All audio and network
-//! work happens in copilot_client (apps/desktop/core); the web UI renders what it emits.
+//! The Tauri shell: windows, commands, the global hotkey, and settings. All audio, network and
+//! storage work happens in copilot_client (apps/desktop/core); the web UI renders what it
+//! emits and what the API returns.
 //!
 //! Every UI event goes to all windows as `copilot://event`, and is kept for the current
-//! session so a window opened mid-call (the overlay) can catch up with `snapshot`.
+//! session so a window opened mid-call (the overlay) can catch up with `snapshot`. Uploads of
+//! the user's own audio report as `copilot://upload`.
 
 mod settings;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use copilot_client::api::ApiClient;
 use copilot_client::audio::aec::{EchoCanceller, NoEchoCancellation, WebRtcAec};
 use copilot_client::audio::capture::{self, DeviceInfo, DeviceSource};
 use copilot_client::audio::pipeline::Levels;
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
-use copilot_client::auth::{DevTokenProvider, OsSecretStore, TokenProvider};
+use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
-use copilot_client::jobs::{JobList, JobsSource};
 use copilot_client::net::client::{self, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::Mode;
-use copilot_client::recording::NoRecording;
+use copilot_client::recording::{self, MeAudioSink, NoRecording, UploadOutcome};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::Settings;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use uuid::Uuid;
 
 const EVENT: &str = "copilot://event";
+const UPLOAD_EVENT: &str = "copilot://upload";
 const HISTORY_MAX: usize = 20_000;
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
+/// Retries after a failed upload: about 11 minutes in all, past the 10 minutes post-call work
+/// waits for the audio. What is still left is tried again at the next app start.
+const RETRY_SCHEDULE: [Duration; 7] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+    Duration::from_secs(120),
+    Duration::from_secs(180),
+    Duration::from_secs(240),
+];
 
 struct AppState {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
+    secrets: Arc<dyn SecretStore>,
     tokens: Arc<DevTokenProvider>,
     engine: Mutex<Option<Arc<Engine>>>,
     history: Arc<Mutex<Vec<serde_json::Value>>>,
+    /// Encrypted recordings of the user's own audio waiting for their upload.
+    recordings_dir: PathBuf,
+    /// The last upload outcome per session, for a post-call screen opened later.
+    uploads: Mutex<HashMap<Uuid, UploadOutcome>>,
+    /// One upload run at a time (after a call, at startup).
+    upload_lock: tokio::sync::Mutex<()>,
 }
 
 impl AppState {
@@ -49,6 +74,12 @@ impl AppState {
         if let Err(e) = s.save(&self.settings_path) {
             tracing::warn!("could not save settings: {e}");
         }
+    }
+
+    fn api(&self) -> Result<ApiClient, String> {
+        let url = self.settings.lock().unwrap().api_url.clone();
+        let tokens: Arc<dyn TokenProvider> = self.tokens.clone();
+        ApiClient::new(&url, tokens).map_err(|e| e.to_string())
     }
 }
 
@@ -66,6 +97,7 @@ fn save_settings(
     settings: Settings,
     dev_token: Option<String>,
 ) -> Res<()> {
+    ApiClient::new(&settings.api_url, state.tokens.clone()).map_err(|e| e.to_string())?;
     if let Some(token) = dev_token {
         state.tokens.save(&token).map_err(|e| e.to_string())?;
     }
@@ -94,10 +126,101 @@ async fn list_devices() -> Devices {
     .unwrap_or(Devices { inputs: vec![], outputs: vec![] })
 }
 
+/// One Copilot API call for the UI's screens (documents, jobs, interviews, sessions, usage).
 #[tauri::command]
-async fn list_jobs(state: State<'_, AppState>) -> Res<JobList> {
-    let url = state.settings.lock().unwrap().gateway_url.clone();
-    JobsSource { session_url: url }.list(state.tokens.as_ref()).await
+async fn api_call(
+    state: State<'_, AppState>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+) -> Res<Value> {
+    state.api()?.call(&method, &path, body.as_ref()).await.map_err(|e| e.to_string())
+}
+
+/// A resume or job description from the UI: the file's bytes as the raw body, its kind and
+/// name in the `x-kind` and `x-file-name` headers (URI-encoded).
+#[tauri::command]
+async fn upload_document(state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the file's bytes".into());
+    };
+    let header = |name: &str| -> Res<String> {
+        let raw =
+            request.headers().get(name).and_then(|v| v.to_str().ok()).ok_or(format!("missing {name}"))?;
+        Ok(percent_decode(raw))
+    };
+    let kind = header("x-kind")?;
+    if !matches!(kind.as_str(), "resume" | "job_description") {
+        return Err(format!("cannot upload a {kind}"));
+    }
+    let file_name = header("x-file-name")?;
+    state.api()?.upload_document(&kind, &file_name, bytes.clone()).await.map_err(|e| e.to_string())
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(b) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `DELETE /me`, then every local recording; the dev token stays (it is the gateway's).
+#[tauri::command]
+async fn delete_account(state: State<'_, AppState>) -> Res<Value> {
+    let result = state.api()?.delete("/me").await.map_err(|e| e.to_string())?;
+    let _guard = state.upload_lock.lock().await;
+    recording::delete_all(&state.recordings_dir);
+    state.uploads.lock().unwrap().clear();
+    state.update_settings(|s| s.last_session_id = None);
+    Ok(result)
+}
+
+/// The last upload outcome of a session's audio, if this run of the app tried one.
+#[tauri::command]
+fn upload_status(state: State<'_, AppState>, session_id: Uuid) -> Option<UploadOutcome> {
+    state.uploads.lock().unwrap().get(&session_id).cloned()
+}
+
+/// Upload the recordings waiting on disk, retrying on the schedule; `at_start` also takes
+/// recordings a crash left open.
+fn spawn_uploads(app: &AppHandle, at_start: bool) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let _guard = state.upload_lock.lock().await;
+        let api = match state.api() {
+            Ok(api) => api,
+            Err(e) => return tracing::warn!("recordings not uploaded: {e}"),
+        };
+        let report = {
+            let app = app.clone();
+            move |sid: Uuid, outcome: &UploadOutcome| {
+                tracing::info!("audio for session {sid}: {outcome:?}");
+                app.state::<AppState>().uploads.lock().unwrap().insert(sid, outcome.clone());
+                let _ = app.emit(UPLOAD_EVENT, serde_json::json!({ "session_id": sid, "outcome": outcome }));
+            }
+        };
+        recording::upload_pending(
+            &api,
+            state.secrets.as_ref(),
+            &state.recordings_dir,
+            at_start,
+            &RETRY_SCHEDULE,
+            &report,
+        )
+        .await;
+    });
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +248,20 @@ fn emit(app: &AppHandle, history: &Mutex<Vec<serde_json::Value>>, event: &UiEven
     let _ = app.emit(EVENT, value);
 }
 
+/// The recording of the user's own audio: only with transcript consent. If it cannot start,
+/// the call goes on without it.
+fn recorder(state: &AppState, store_transcript: bool) -> (Box<dyn MeAudioSink>, Option<String>) {
+    match recording::sink_for_session(store_transcript, &state.recordings_dir, state.secrets.as_ref()) {
+        Ok(sink) => (sink, None),
+        Err(e) => (
+            Box::new(NoRecording),
+            Some(format!(
+                "Your own audio is not recorded ({e}); the transcript will have only the other side."
+            )),
+        ),
+    }
+}
+
 #[tauri::command]
 async fn start_session(app: AppHandle, state: State<'_, AppState>, request: StartRequest) -> Res<()> {
     if state.engine.lock().unwrap().is_some() {
@@ -139,12 +276,13 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
     };
     let aec: Box<dyn EchoCanceller> =
         if settings.echo_cancellation { Box::new(WebRtcAec::new()) } else { Box::new(NoEchoCancellation) };
+    let (me_recorder, warning) = recorder(&state, request.store_transcript);
     let parts = AudioParts {
         source: Box::new(DeviceSource::new(settings.mic_device.clone(), settings.output_device.clone())),
         aec,
         them_vad: vad()?,
         me_vad: vad()?,
-        recorder: Box::new(NoRecording),
+        recorder: me_recorder,
     };
     let config = ClientConfig::new(
         settings.gateway_url.clone(),
@@ -172,19 +310,26 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             emit(&app, &history, &event);
         })
     };
+    if let Some(message) = warning {
+        sink(UiEvent::Warning { message });
+    }
     let tokens: Arc<dyn TokenProvider> = state.tokens.clone();
     let engine = Engine::start(config, tokens, parts, sink).map_err(|e| e.to_string())?;
     *state.engine.lock().unwrap() = Some(engine.clone());
 
-    // When the client stops (ended, replaced, no minutes, ...), stop the audio and clear up.
+    // When the client stops (ended, replaced, no minutes, ...), stop the audio, clear up and
+    // upload the user's own audio: the socket is closed for good.
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         engine.finish().await;
-        let state = app2.state::<AppState>();
-        let mut slot = state.engine.lock().unwrap();
-        if slot.as_ref().is_some_and(|e| Arc::ptr_eq(e, &engine)) {
-            *slot = None;
+        {
+            let state = app2.state::<AppState>();
+            let mut slot = state.engine.lock().unwrap();
+            if slot.as_ref().is_some_and(|e| Arc::ptr_eq(e, &engine)) {
+                *slot = None;
+            }
         }
+        spawn_uploads(&app2, false);
     });
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.show();
@@ -313,16 +458,32 @@ pub fn run() {
             let settings_path = dir.join("settings.json");
             let settings = Settings::load(&settings_path);
             let hotkey = settings.hotkey.clone();
+            let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 settings_path,
-                tokens: Arc::new(DevTokenProvider::new(Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE)))),
+                tokens: Arc::new(DevTokenProvider::new(secrets.clone())),
+                secrets,
                 engine: Mutex::new(None),
                 history: Arc::new(Mutex::new(Vec::new())),
+                recordings_dir: app.path().app_local_data_dir()?.join("me-audio"),
+                uploads: Mutex::new(HashMap::new()),
+                upload_lock: tokio::sync::Mutex::new(()),
             });
             if let Err(e) = register_hotkey(app.handle(), &hotkey) {
                 tracing::warn!("{e}");
             }
+            // GET /me wakes the database (Aurora scales to zero in Stage 0) before the first
+            // call; then any recording a failed upload or a crash left behind goes up.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(api) = handle.state::<AppState>().api()
+                    && let Err(e) = api.get("/me").await
+                {
+                    tracing::info!("GET /me at startup: {e}");
+                }
+                spawn_uploads(&handle, true);
+            });
             WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
                 .title("Copilot overlay")
                 .inner_size(440.0, 620.0)
@@ -338,7 +499,10 @@ pub fn run() {
             get_settings,
             save_settings,
             list_devices,
-            list_jobs,
+            api_call,
+            upload_document,
+            delete_account,
+            upload_status,
             start_session,
             end_session,
             end_other_session,
@@ -352,4 +516,16 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent_decode;
+
+    #[test]
+    fn file_names_are_uri_decoded() {
+        assert_eq!(percent_decode("R%C3%A9sum%C3%A9%20Alex.pdf"), "Résumé Alex.pdf");
+        assert_eq!(percent_decode("plain.md"), "plain.md");
+        assert_eq!(percent_decode("bad%zz.txt"), "bad%zz.txt");
+    }
 }

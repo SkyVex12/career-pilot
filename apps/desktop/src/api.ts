@@ -1,5 +1,6 @@
 // Commands and events of the Rust core (apps/desktop/src-tauri/src/lib.rs). The UI only
-// renders: audio, the gateway connection and settings storage all live in Rust.
+// renders: audio, the gateway connection, the Copilot API client and settings storage all
+// live in Rust. `rest` below is the API (ARCHITECTURE.md, "REST API") through `api_call`.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@copilot/protocol";
@@ -38,6 +39,7 @@ export type UiEvent =
 
 export interface Settings {
   gateway_url: string;
+  api_url: string;
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
@@ -52,21 +54,6 @@ export interface DeviceInfo {
   is_default: boolean;
 }
 
-export interface Job {
-  job_id: string;
-  pack_id: string;
-  pack_available: boolean;
-  company: string | null;
-  role_title: string | null;
-  round: string | null;
-  built_at: string | null;
-}
-
-export interface JobList {
-  user_name: string;
-  jobs: Job[];
-  mode_packs: string[];
-}
 
 export interface Levels {
   them_rms: number;
@@ -99,6 +86,7 @@ export interface LiveStatus {
 export interface StartRequest {
   mode: Mode;
   job_id: string | null;
+  interview_id: string | null;
   meeting_title: string | null;
   platform: string;
   store_transcript: boolean;
@@ -109,7 +97,14 @@ export const api = {
   saveSettings: (settings: Settings, devToken: string | null) =>
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),
-  listJobs: () => invoke<JobList>("list_jobs"),
+  uploadDocument: (kind: DocumentKind, file: File) =>
+    file.arrayBuffer().then((buf) =>
+      invoke<DocumentItem>("upload_document", new Uint8Array(buf), {
+        headers: { "x-kind": kind, "x-file-name": encodeURIComponent(file.name) },
+      }),
+    ),
+  deleteAccount: () => invoke<{ status: string }>("delete_account"),
+  uploadStatus: (sessionId: string) => invoke<UploadOutcome | null>("upload_status", { sessionId }),
   startSession: (request: StartRequest) => invoke<void>("start_session", { request }),
   endSession: () => invoke<void>("end_session"),
   endOtherSession: () => invoke<string>("end_other_session"),
@@ -132,3 +127,129 @@ export interface Numbered {
 export function onEvent(handler: (e: Numbered) => void): Promise<UnlistenFn> {
   return listen<Numbered>("copilot://event", (e) => handler(e.payload));
 }
+
+// The user's own audio after a call (copilot_client::recording::UploadOutcome).
+export type UploadOutcome = { state: "uploaded" } | { state: "discarded"; message: string } | { state: "kept"; message: string };
+
+export function onUpload(handler: (sessionId: string, outcome: UploadOutcome) => void): Promise<UnlistenFn> {
+  return listen<{ session_id: string; outcome: UploadOutcome }>("copilot://upload", (e) => handler(e.payload.session_id, e.payload.outcome));
+}
+
+// The Copilot API's responses (apps/api/src/copilot_api/routes).
+
+export type DocumentKind = "resume" | "job_description";
+
+export interface DocumentItem {
+  id: string;
+  kind: DocumentKind | "linkedin_export" | "other";
+  content_type: string | null;
+  status: "uploaded" | "ingesting" | "ingested" | "failed";
+  created_at: string;
+  job_id: string | null;
+}
+
+export interface DigestInfo {
+  version: string;
+  built_at: string | null;
+  facts: number;
+}
+
+export interface PackInfo {
+  pack_id: string;
+  available: boolean;
+  built_at?: string;
+  round?: string | null;
+  prepared_answers?: number;
+  ranked_stories?: number;
+}
+
+export interface JobItem {
+  id: string;
+  company: string;
+  title: string;
+  url: string | null;
+  created_at: string;
+  pack: PackInfo | null;
+}
+
+export type Round = "phone_screen" | "technical" | "system_design" | "final";
+
+export interface InterviewItem {
+  id: string;
+  job_id: string;
+  round: Round;
+  starts_at: string;
+  pack_id: string | null;
+  company: string | null;
+  title: string | null;
+  pack?: PackInfo | null;
+}
+
+export type SessionStatus = "live" | "processing" | "ready";
+
+export interface SessionItem {
+  id: string;
+  mode: Mode;
+  title: string | null;
+  platform: string | null;
+  job_id: string | null;
+  interview_id: string | null;
+  store_transcript: boolean;
+  started_at: string | null;
+  ended_at: string | null;
+  billed_seconds: number;
+  me_audio_status: "pending" | "uploaded" | "transcribed" | "none";
+  status: SessionStatus;
+}
+
+export type OutputKind = "summary" | "feedback" | "follow_up_email" | "standup_report";
+
+export interface SessionDetail extends Partial<SessionItem> {
+  id: string;
+  status: SessionStatus;
+  outputs: Partial<Record<OutputKind, string>>;
+  questions: number;
+}
+
+export interface Segment {
+  channel: "them" | "me";
+  seg_id: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface Usage {
+  period: string;
+  live_seconds: number;
+  live_minutes: number;
+  sessions: number;
+}
+
+export interface Me {
+  id: string;
+  email: string;
+  display_name: string;
+  plan: string;
+}
+
+const call = <T>(method: string, path: string, body?: unknown) =>
+  invoke<T>("api_call", { method, path, body: body ?? null });
+
+export const rest = {
+  me: () => call<Me>("GET", "/me"),
+  usage: () => call<Usage>("GET", "/usage"),
+  documents: () => call<{ documents: DocumentItem[]; digest: DigestInfo | null }>("GET", "/documents"),
+  jobs: () => call<{ jobs: JobItem[] }>("GET", "/jobs"),
+  interviews: () => call<{ interviews: InterviewItem[] }>("GET", "/interviews"),
+  scheduleInterview: (jobId: string, round: Round, startsAt: string) =>
+    call<InterviewItem>("POST", "/interviews", { job_id: jobId, round, starts_at: startsAt }),
+  sessions: (before?: string | null) =>
+    call<{ sessions: SessionItem[]; next_before: string | null }>(
+      "GET",
+      `/sessions?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}`,
+    ),
+  session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
+  transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
+  deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
+};
