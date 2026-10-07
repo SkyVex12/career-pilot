@@ -344,7 +344,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 - [ ] Claude through Bedrock or the direct Anthropic API? Depends on Priority tier support, prompt caching minimums and pricing for the Claude models we use.
 - [ ] STT provider after the benchmark: Deepgram or AssemblyAI, and which one is the fallback?
 - [ ] Turn-detection model: which one, and does it run on the client or the gateway?
-- [ ] Abandoned sessions: when a gateway task dies and the client never resumes, nothing ends the session until that user starts another one (then the gateway ends it). A periodic sweeper that ends sessions whose lease is gone and whose state is older than the resume window comes with the workers (build step 4).
+- [x] Abandoned sessions: when a gateway task dies and the client never resumes, nothing ended the session until that user started another one. The `sessions.sweep` worker job (every 5 minutes) now ends sessions whose lease is gone and whose state is older than the resume window, and sessions Aurora still has open after Valkey forgot them (build step 4a).
 - [ ] Embeddings: Cohere on Bedrock or Voyage, decided by the eval set?
 - [x] Desktop framework: Tauri 2 (build step 3).
 - [ ] Pricing model for users (per-minute credits or plan tiers) and payment provider?
@@ -480,6 +480,8 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
+Migrations create these roles `NOLOGIN` and hold no passwords. Each environment grants login on its own: Terraform in AWS, and `copilot-dev-roles` on the local stack (fixed local passwords, refused for any host but localhost). Each service connects as its own role. Views over user tables are created `with (security_invoker = true)`, so the caller's privileges and row-level security apply rather than the owner's.
+
 ### Schema DDL
 
 ```sql
@@ -565,7 +567,9 @@ create table app.memory_edges (
 );
 create index memory_edges_dst on app.memory_edges (dst);
 
-create view app.commitments as
+-- security_invoker: the view applies the caller's privileges and row-level security, not
+-- the view owner's (who owns the tables and would otherwise see every user's rows).
+create view app.commitments with (security_invoker = true) as
   select id, user_id, title, body->>'due_date' as due_date, body->>'state' as state,
          body->>'session_id' as session_id
   from app.memory_nodes where kind = 'commitment';
@@ -606,6 +610,11 @@ create table app.sessions (
     on delete set null (interview_id)
 );
 create index sessions_user_started on app.sessions (user_id, started_at desc);
+
+-- A proposal's session is a same-user reference too (migration 0003). Deleting a session
+-- deletes its proposals with the rest of its log; approved facts are memory nodes by then.
+alter table app.memory_proposals
+  add foreign key (session_id, user_id) references app.sessions(id, user_id) on delete cascade;
 
 create table app.transcript_segments (
   session_id  uuid not null,
