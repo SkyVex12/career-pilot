@@ -192,17 +192,13 @@ fn upload_status(state: State<'_, AppState>, session_id: Uuid) -> Option<UploadO
     state.uploads.lock().unwrap().get(&session_id).cloned()
 }
 
-/// Upload the recordings waiting on disk, retrying on the schedule; `at_start` also takes
-/// recordings a crash left open.
-fn spawn_uploads(app: &AppHandle, at_start: bool) {
+/// Upload the recordings waiting on disk, retrying on the schedule. Each pass takes the
+/// upload lock and looks at the folder afresh, so a run that is waiting to retry (the API
+/// was down at startup) never holds up the upload after a call.
+fn spawn_uploads(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
-        let _guard = state.upload_lock.lock().await;
-        let api = match state.api() {
-            Ok(api) => api,
-            Err(e) => return tracing::warn!("recordings not uploaded: {e}"),
-        };
         let report = {
             let app = app.clone();
             move |sid: Uuid, outcome: &UploadOutcome| {
@@ -211,15 +207,21 @@ fn spawn_uploads(app: &AppHandle, at_start: bool) {
                 let _ = app.emit(UPLOAD_EVENT, serde_json::json!({ "session_id": sid, "outcome": outcome }));
             }
         };
-        recording::upload_pending(
-            &api,
-            state.secrets.as_ref(),
-            &state.recordings_dir,
-            at_start,
-            &RETRY_SCHEDULE,
-            &report,
-        )
-        .await;
+        for delay in std::iter::once(Duration::ZERO).chain(RETRY_SCHEDULE) {
+            tokio::time::sleep(delay).await;
+            let outcomes = {
+                let _guard = state.upload_lock.lock().await;
+                let api = match state.api() {
+                    Ok(api) => api,
+                    Err(e) => return tracing::warn!("recordings not uploaded: {e}"),
+                };
+                let (dir, secrets) = (&state.recordings_dir, state.secrets.as_ref());
+                recording::upload_pending(&api, secrets, dir, false, &[], &report).await
+            };
+            if !outcomes.iter().any(|(_, o)| matches!(o, UploadOutcome::Kept(_))) {
+                return;
+            }
+        }
     });
 }
 
@@ -329,7 +331,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
                 *slot = None;
             }
         }
-        spawn_uploads(&app2, false);
+        spawn_uploads(&app2);
     });
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.show();
@@ -459,6 +461,9 @@ pub fn run() {
             let settings = Settings::load(&settings_path);
             let hotkey = settings.hotkey.clone();
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
+            // Nothing records yet: close what a crash left open, so it uploads like the rest.
+            let recordings_dir = app.path().app_local_data_dir()?.join("me-audio");
+            recording::close_abandoned(&recordings_dir);
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 settings_path,
@@ -466,7 +471,7 @@ pub fn run() {
                 secrets,
                 engine: Mutex::new(None),
                 history: Arc::new(Mutex::new(Vec::new())),
-                recordings_dir: app.path().app_local_data_dir()?.join("me-audio"),
+                recordings_dir: recordings_dir.clone(),
                 uploads: Mutex::new(HashMap::new()),
                 upload_lock: tokio::sync::Mutex::new(()),
             });
@@ -482,7 +487,7 @@ pub fn run() {
                 {
                     tracing::info!("GET /me at startup: {e}");
                 }
-                spawn_uploads(&handle, true);
+                spawn_uploads(&handle);
             });
             WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
                 .title("Copilot overlay")

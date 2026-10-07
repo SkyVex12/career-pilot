@@ -522,6 +522,25 @@ pub fn pending(dir: &Path, include_unfinished: bool) -> Vec<PendingRecording> {
     out.into_iter().map(|(_, p)| p).collect()
 }
 
+/// At app start, before anything records: a recording a crash left open is closed with what
+/// reached the disk, and one that never went live is deleted. Afterwards
+/// `pending(dir, false)` offers it like any finished recording.
+pub fn close_abandoned(dir: &Path) {
+    for rec in pending(dir, true) {
+        if rec.finished {
+            continue;
+        }
+        let manifest: Option<Manifest> =
+            fs::read(&rec.manifest_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        if let Some(mut m) = manifest {
+            m.finished = true;
+            if let Err(e) = m.save(&rec.manifest_path) {
+                tracing::warn!("closing an abandoned recording: {e}");
+            }
+        }
+    }
+}
+
 /// Delete every local recording (account deletion).
 pub fn delete_all(dir: &Path) {
     if let Ok(entries) = fs::read_dir(dir) {
@@ -843,7 +862,17 @@ mod tests {
         let [p] = pending(dir.path(), true).try_into().unwrap();
         assert!(!p.finished);
         assert_eq!(WavSource::open(&p.audio_path, &key).unwrap().len(), 44 + 64_000);
-        rec.finish();
+        drop(rec); // the app crashed: nothing closed it
+
+        // Never went live: deleted. Left open by the crash: closed, then offered as usual.
+        let mut orphan = Recorder::start(dir.path(), key.clone()).unwrap();
+        orphan.on_audio(0, &tone(20_000));
+        drop(orphan);
+        close_abandoned(dir.path());
+        let [p] = pending(dir.path(), false).try_into().unwrap();
+        assert!(p.finished);
+        assert_eq!(p.session_id, Uuid::from_u128(3));
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2, "one recording and its manifest");
     }
 
     /// The API, scripted per call.
