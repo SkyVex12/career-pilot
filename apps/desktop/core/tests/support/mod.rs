@@ -71,3 +71,57 @@ impl Drop for Gateway {
         self.kill();
     }
 }
+
+/// `scripts/desktop_test_stack.py`: the real API, a worker on recorded fixtures and the
+/// gateway (scripted STT and Claude), on the compose stack.
+pub struct Stack {
+    child: Child,
+    pub api: String,
+    pub gateway: String,
+    pub token: String,
+}
+
+impl Stack {
+    /// Panics with the reason when the compose stack is down.
+    pub fn start() -> Self {
+        let mut child = Proc::new(python())
+            .current_dir(repo_root())
+            .arg("scripts/desktop_test_stack.py")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("start scripts/desktop_test_stack.py");
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        if line.trim().is_empty() || line.starts_with("unavailable") {
+            let _ = child.wait();
+            panic!(
+                "the API integration tests need the local stack (`docker compose up -d --wait`): {}",
+                line.trim()
+            );
+        }
+        let info: serde_json::Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line:?}"));
+        Self {
+            child,
+            api: info["api"].as_str().unwrap().into(),
+            gateway: info["gateway"].as_str().unwrap().into(),
+            token: info["token"].as_str().unwrap().into(),
+        }
+    }
+}
+
+impl Drop for Stack {
+    /// Closing stdin lets the harness drop its database and queue; kill it if it hangs.
+    fn drop(&mut self) {
+        drop(self.child.stdin.take());
+        for _ in 0..200 {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
