@@ -8,6 +8,7 @@ from typing import Any
 from copilot_core import keys
 from copilot_core.ids import uuid7
 from copilot_core.packs import Digest, NodeRef, PreparedAnswer, SessionPack, encode_embedding
+from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, cost_usd
 from copilot_gateway.auth import Principal
 from copilot_gateway.testing import (
     GatewayServer,
@@ -98,6 +99,15 @@ async def test_question_flow_streams_fast_and_deep(env) -> None:
         assert kind in kinds
     question = next(e for e in log if e["kind"] == "question")
     assert question["speculative_kept"] is True
+    # Each answer is priced from its usage, model and tier (answers.cost_usd).
+    for entry in (e for e in log if e["kind"] == "answer"):
+        expected = cost_usd(
+            entry["model"], entry["tier"], entry["input_tokens"], entry["cached_tokens"],
+            entry["output_tokens"], DEFAULT_PRICES, DEFAULT_TIERS,
+        )  # fmt: skip
+        assert entry["tier"] == "standard"
+        assert expected is not None
+        assert entry["cost_usd"] == float(expected) > 0
     # Every server message is in the events stream, with its seq as the stream id.
     events = await vk.xrange(keys.sess_events(c.session_id))
     assert [int(i.split(b"-")[0]) for i, _ in events] == seqs

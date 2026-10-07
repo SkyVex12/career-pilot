@@ -30,6 +30,7 @@ from copilot_core import prompts
 from copilot_core.embed import Embedder
 from copilot_core.llm import AllRoutesFailedError, LLMDone, LLMRequest, ModelRouter, Route
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
+from copilot_core.pricing import cost_usd
 from copilot_gateway.config import Settings
 from copilot_protocol import models
 
@@ -199,6 +200,19 @@ class AnswerEngine:
         for q in self.questions.values():
             self._cancel_tasks(q)
 
+    def _cost(self, done: LLMDone | None) -> float | None:
+        """The answer's cost in USD for `answers.cost_usd`; None without a model call or a
+        price for the model."""
+        if done is None:
+            return None
+        s = self.host.settings
+        u = done.usage
+        cost = cost_usd(
+            done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
+            s.model_prices, s.tier_price_multipliers,
+        )  # fmt: skip
+        return None if cost is None else float(cost)
+
     def _cancel_tasks(self, q: Question) -> None:
         for task in q.tasks.values():
             if not task.done():
@@ -243,6 +257,7 @@ class AnswerEngine:
             source: str, refs: list[NodeRef], done_info: LLMDone | None, first_token_ms: int | None
         ) -> None:
             usage = done_info.usage if done_info else None
+            tier = done_info.service_tier if done_info else "standard"
             lat = latency(first_token_ms)
             host.emit(
                 models.AnswerDone,
@@ -266,11 +281,12 @@ class AnswerEngine:
                     "provider": done_info.provider if done_info else source,
                     "model": done_info.model if done_info else source,
                     "fallback_attempt": done_info.attempt if done_info else 0,
-                    "tier": "standard",
+                    "tier": tier,
                     **({"text": "".join(state["parts"])} if host.store_text() else {}),
                     "input_tokens": usage.input_tokens if usage else 0,
                     "cached_tokens": usage.cached_tokens if usage else 0,
                     "output_tokens": usage.output_tokens if usage else 0,
+                    "cost_usd": self._cost(done_info),
                     "latency_ms": lat,
                     "memory_node_ids": [str(r.node_id) for r in refs],
                 }

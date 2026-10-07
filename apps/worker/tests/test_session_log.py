@@ -89,7 +89,7 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
     await stack.run(log.flush_job(upto))
     await stack.run(log.flush_job(upto))  # a replayed flush changes nothing
     answers = await stack.admin.fetch(
-        "select id, pass, feedback, expanded, model, input_tokens from app.answers"
+        "select id, pass, feedback, expanded, model, input_tokens, cost_usd from app.answers"
         " where question_id = $1 order by pass",
         q1,
     )
@@ -98,6 +98,7 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
         ("fast", "up", False),
     ]
     assert {a["id"] for a in answers} == {answer_id(q1, "deep"), answer_id(q1, "fast")}
+    assert {str(a["cost_usd"]) for a in answers} == {"0.000800"}  # priced by the gateway
     assert await stack.ctx.valkey.xlen(keys.sess_log(log.sid)) == 0  # trimmed after commit
 
     await log.end(seconds=605)

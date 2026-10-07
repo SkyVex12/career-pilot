@@ -21,6 +21,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
@@ -257,6 +258,14 @@ async def write_segment(ctx: Ctx, conn: Conn, uid: UUID, sid: UUID, d: dict[str,
     )
 
 
+def _cost(value: Any) -> Decimal | None:
+    """The gateway's price for an answer (a float), as numeric(10,6)."""
+    try:
+        return None if value is None else Decimal(str(value)).quantize(Decimal("0.000001"))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 def answer_id(qid: UUID, pass_: str) -> UUID:
     return uuid7_for(qid.int >> 80, str(qid), pass_)  # the question's time, then its pass
 
@@ -276,8 +285,9 @@ async def write_answer(
     node_ids = [u for u in map(_uuid, d.get("memory_node_ids") or []) if u is not None]
     await conn.execute(
         "insert into app.answers (id, question_id, user_id, pass, model, tier, text_enc,"
-        " key_version, input_tokens, cached_tokens, output_tokens, latency_ms, memory_node_ids,"
-        " expanded) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+        " key_version, input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms,"
+        " memory_node_ids, expanded)"
+        " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         " on conflict (id) do nothing",
         aid,
         qid,
@@ -290,6 +300,7 @@ async def write_answer(
         d.get("input_tokens"),
         d.get("cached_tokens"),
         d.get("output_tokens"),
+        _cost(d.get("cost_usd")),
         d.get("latency_ms") or {},
         node_ids,
         expanded,

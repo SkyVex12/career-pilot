@@ -59,6 +59,7 @@ class LLMDone:
     model: str = ""
     attempt: int = 0  # index of the route that answered; above 0 means a fallback ran
     first_token_ms: int = 0
+    service_tier: str = "standard"  # the tier that served it, from the response's usage
 
 
 type LLMChunk = str | LLMDone
@@ -173,6 +174,7 @@ class AnthropicProvider:
             stop_reason=message.stop_reason,
             provider=self.name,
             model=model,
+            service_tier=str(getattr(u, "service_tier", None) or "standard"),
         )
 
 
@@ -242,6 +244,7 @@ class ModelRouter:
                             model=route.model,
                             attempt=attempt,
                             first_token_ms=first_ms,
+                            service_tier=chunk.service_tier,
                         )
                         return
                     yield chunk
