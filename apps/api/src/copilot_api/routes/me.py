@@ -47,9 +47,10 @@ class SettingsPatch(BaseModel):
 
 
 class MePatch(BaseModel):
+    """Profile fields only; settings go through `PATCH /me/settings`."""
+
     model_config = ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, min_length=1, max_length=200)
-    settings: SettingsPatch | None = None
 
 
 def _me(row: Any) -> dict[str, Any]:
@@ -75,8 +76,8 @@ async def get_me(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     return _me(row)
 
 
-async def _patch(svc: SvcDep, user: UserDep, body: MePatch) -> dict[str, Any]:
-    changes = body.settings.model_dump(exclude_unset=True) if body.settings else {}
+@router.patch("/me")
+async def patch_me(body: MePatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         if body.display_name is not None:
             await conn.execute(
@@ -84,6 +85,14 @@ async def _patch(svc: SvcDep, user: UserDep, body: MePatch) -> dict[str, Any]:
                 user.user_id,
                 body.display_name,
             )
+        row = await conn.fetchrow(ME_SQL, user.user_id)
+    return _me(row)
+
+
+@router.patch("/me/settings")
+async def patch_settings(body: SettingsPatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    changes = body.model_dump(exclude_unset=True)
+    async with svc.tx(user) as conn:
         if changes:
             current: dict[str, Any] = dict(
                 await conn.fetchval("select settings from app.users where id = $1", user.user_id)
@@ -101,16 +110,6 @@ async def _patch(svc: SvcDep, user: UserDep, body: MePatch) -> dict[str, Any]:
             )
         row = await conn.fetchrow(ME_SQL, user.user_id)
     return _me(row)
-
-
-@router.patch("/me")
-async def patch_me(body: MePatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
-    return await _patch(svc, user, body)
-
-
-@router.patch("/me/settings")
-async def patch_settings(body: SettingsPatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
-    return await _patch(svc, user, MePatch(settings=body))
 
 
 @router.delete("/me", status_code=202)

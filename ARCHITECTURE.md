@@ -134,7 +134,7 @@ Memory is a per-user career knowledge graph with embeddings, compiled into three
 
 **Write path**
 
-1. **Seed from uploads:** the resume, job descriptions and a LinkedIn export build the first graph at sign-up. Claude reads PDFs directly, so no document parser is needed.
+1. **Seed from uploads:** the resume, job descriptions and a LinkedIn export build the first graph at sign-up. Claude reads PDFs directly, so no document parser is needed. Resume facts go straight into `memory_nodes` with `source.type = resume` (the upload is the user's own statement, so no approval step); a new resume archives the previous resume's nodes. A job description becomes an `app.jobs` row whose id is the document's id, and that job's session pack is built.
 2. **Memory interview at onboarding:** the app asks about each role and project and extracts stories with metrics.
 3. **Connected tools:** GitHub, Jira, Slack and calendar sync daily.
 4. **After each session:** an extraction job proposes new facts and commitments; the user approves them with one tap before they enter memory.
@@ -152,7 +152,8 @@ Each job gets the fastest model that is good enough for it; Opus stays out of th
 | Deep answer | Sonnet 5.5 | Automatic for behavioral, technical and system design questions; otherwise only on tap |
 | Coding from screenshots | Sonnet 5.5 | Vision plus code reasoning |
 | Memory extraction | Opus 5.5 on Flex | Wrong facts in memory get repeated live, so accuracy matters most |
-| Session packs, digest, summaries, feedback | Sonnet 5.5 on Flex (Batch for the weekly digest) | Good enough for these at half the Opus price |
+| Session packs, summaries, feedback | Sonnet 5.5 on Flex | Good enough for these at half the Opus price |
+| Hot digest | No model: rendered deterministically from memory nodes, at most about 3.5k tokens | Byte-identical output for prompt caching; the facts are already extracted (build step 4a) |
 | Embeddings and reranking | Cohere Embed v4 (on demand, 1024 output dimensions) and Rerank 3.5 on Bedrock; Voyage as alternative. Not Embed v3, which Bedrock offers only as provisioned throughput | Stays inside AWS, no extra network hop on the live path |
 | Speech to text | Deepgram or AssemblyAI streaming | Decided by benchmark |
 
@@ -165,7 +166,8 @@ Each job gets the fastest model that is good enough for it; Opus stays out of th
 - **Deep pass thinking:** Sonnet 5.5 rejects `thinking: {type: "disabled"}`, so the live deep pass sends `{type: "between_tools"}` (no extended thinking) at effort `low`. A setting switches it to adaptive thinking at the same effort.
 - **Bedrock service tiers per job:** Standard for both live passes by default. Priority costs 75% more for up to 25% faster output, so it is a flag for the Haiku fast pass only, on the direct API, turned on only if first-token latency misses the SLO; Sonnet 5.5 has no Priority Tier. Flex for background jobs, Batch only where hours of delay are fine.
 - **US geo cross-region inference** (`us.` inference profiles) for more throughput headroom while keeping data in the US.
-- Before launch, confirm on each Claude model card in Bedrock that prompt caching and the Priority and Flex tiers are supported. The direct Anthropic API stays the fallback.
+- **Flex on Bedrock:** workers send `service_tier: "flex"` in the request body (the SDK has no typed field for it). If Bedrock rejects the request, the router runs the next route, Standard on Bedrock, then the direct API.
+- Before launch, confirm on each Claude model card in Bedrock that prompt caching and the Priority and Flex tiers are supported, and the exact Flex request parameter. The direct Anthropic API stays the fallback.
 
 ### Data and storage
 
@@ -195,13 +197,15 @@ Every interview and standup is a session with the same core log; the mode decide
 | `memory_proposals` | session_id, fact, status (pending / approved / rejected) | New facts waiting for one-tap approval |
 | `commitments` | session_id, text, due_date, status | Promises made in meetings, mostly from standups |
 
+**Answer cost:** the gateway prices each answer when it logs it, and the flush writes it to `answers.cost_usd`: uncached input tokens at the model's input price, cached tokens at its cache-read price and output tokens at its output price, times the tier's multiplier (Standard 1, Priority 1.75, Flex and Batch 0.5). Prices per million tokens are configuration (`COPILOT_MODEL_PRICES`, keyed by model name, so `anthropic.claude-haiku-4-5` and `us.anthropic.claude-haiku-4-5` share the `claude-haiku-4-5` price), with Claude API list prices as defaults; cache writes count as plain input, since the usage the gateway keeps does not separate them. A model with no price leaves `cost_usd` null, and so do answers from a prepared answer or the repeat cache, which call no model.
+
 1. **During the call** the gateway never writes to Aurora. It appends final segments and question events to a Valkey stream for the session.
 2. **Every 30 seconds** a flush copies new stream entries to Aurora, so a crash loses almost nothing.
 3. **When the call ends** the gateway puts a `session.ended` job on SQS.
 4. **A worker** writes the remaining segments, transcribes the user's uploaded audio with pre-recorded STT and deletes that audio, then runs post-call jobs on Flex: summary and feedback on Sonnet, memory proposals and commitments on Opus.
 5. **The user** gets a notification with the summary and pending memory updates.
 
-**Transcript consent** (`consent.store_transcript` in `session.start`): without it, the session log holds no text at all: no transcript segments, no question text (the question is the other person's words), no answer text and no feedback reason, and nothing goes into the exact-repeat cache `qa:{uid}:{qhash}`. The metadata stays: question type and timing, tokens, cost, latency, memory node ids, feedback rating. The live state needed for a resume (`sess:{sid}:events` and the transcript tail in `sess:{sid}:state`) still holds text, for at most its 2-hour TTL.
+**Transcript consent** (`consent.store_transcript` in `session.start`): without it, the session log holds no text at all: no transcript segments, no question text (the question is the other person's words), no answer text and no feedback reason, and nothing goes into the exact-repeat cache `qa:{uid}:{qhash}`. The metadata stays: question type and timing, tokens, cost, latency, memory node ids, feedback rating. The client does not record the user's own audio, so nothing is uploaded or transcribed, and post-call work writes only a metadata summary (length, question counts and types, no words) without calling Claude. The live state needed for a resume (`sess:{sid}:events` and the transcript tail in `sess:{sid}:state`) still holds text, for at most its 2-hour TTL.
 
 **Interviews** link to the job and round; outputs are the list of questions asked, a review of how the user answered compared with the suggestion, and a draft follow-up email. **Standups** produce yesterday, today, blockers and dated commitments, which feed the next day's standup pack.
 
@@ -274,7 +278,7 @@ Our own code should stay under 20 to 30 ms at p95; past that is the signal to mo
 
 A live hour costs about $0.74: Claude $0.35, speech to text $0.36, rerank $0.03. A typical user costs $7 to $9 a month. Speech to text is now as large as Claude, so its price is the next lever.
 
-Assumptions: 40 questions per live hour; the other side speaks about 30 minutes of it and the user about 20; an 8k-token cached prefix. Claude per million tokens: Haiku 4.5 $1 / $5, Sonnet $2 / $10 (Sonnet 5 price; confirm Sonnet 5.5), Opus 5.5 $4 / $20, the same on Bedrock as on Anthropic's API. Cache reads 0.1x input; Flex and Batch 50% off; Priority 75% more. Deepgram Nova-3 streaming $0.0077 per minute plus $0.0013 for keyterms; pre-recorded $0.0043 per minute. These are list prices checked in October 2026; confirm on the [Claude pricing page](https://docs.claude.com/en/docs/about-claude/pricing) and the [Bedrock](https://aws.amazon.com/bedrock/pricing/)[ pricing page](https://aws.amazon.com/bedrock/pricing/).
+Assumptions: 40 questions per live hour; the other side speaks about 30 minutes of it and the user about 20; an 8k-token cached prefix. Claude per million tokens: Haiku 4.5 $1 / $5, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20, the same on Bedrock as on Anthropic's API. Cache reads 0.1x input ($0.20 on Opus 5.5); Flex and Batch 50% off; Priority 75% more. Deepgram Nova-3 streaming $0.0077 per minute plus $0.0013 for keyterms; pre-recorded $0.0043 per minute. These are list prices checked in October 2026; confirm on the [Claude pricing page](https://docs.claude.com/en/docs/about-claude/pricing) and the [Bedrock](https://aws.amazon.com/bedrock/pricing/)[ pricing page](https://aws.amazon.com/bedrock/pricing/).
 
 | Item | Rule | Per live hour |
 | --- | --- | --- |
@@ -603,6 +607,7 @@ create table app.sessions (
   billed_seconds   int not null default 0,
   me_audio_status  text not null default 'pending'
                    check (me_audio_status in ('pending','uploaded','transcribed','none')),
+  outputs_ready_at timestamptz,                  -- post-call outputs written (0003)
   unique (id, user_id),
   -- set null on the reference column only; user_id stays
   foreign key (job_id, user_id) references app.jobs(id, user_id) on delete set null (job_id),
@@ -683,6 +688,7 @@ create table app.documents (
   kind       text not null check (kind in ('resume','job_description','linkedin_export','other')),
   s3_key     text not null,
   sha256     text not null,
+  content_type text,                             -- application/pdf, text/plain, text/markdown (0003)
   status     text not null default 'uploaded' check (status in ('uploaded','ingested','failed')),
   created_at timestamptz not null default now()
 );
@@ -812,7 +818,7 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `sess:{sid}:lease` | string | 30 s, renewed every 10 s | Gateway | Id of the task holding the live connection |
 | `user:{uid}:active_session` | string | 2 h | Gateway | Current session id; enforces one live session |
 | `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash, and the map from its short ids to node ids |
-| `pack:{uid}:{pack_id}` | string (JSON) | 24 h | Worker | Prebuilt session pack |
+| `pack:{uid}:{pack_id}` | string (JSON) | 24 h after the call's due time (an interview scheduled days ahead keeps its pack), at most 30 days | Worker | Prebuilt session pack |
 | `pack:{uid}:index` | hash | None, fields replaced | Worker | `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (job first, then mode) |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
@@ -887,16 +893,21 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 | --- | --- | --- | --- | --- |
 | `session.flush` | Gateway, every 30 s per live session | session_id, upto_entry_id | 2 min | `session.flush:{sid}:{upto}` |
 | `session.ended` | Gateway | session_id | 5 min | `session.ended:{sid}` |
-| `me_audio.transcribe` | API, when the upload completes; or `session.ended` with a 10-minute delay, which marks the audio `none` if it never arrived | session_id | 15 min | `me_audio.transcribe:{sid}` |
+| `me_audio.transcribe` | API, on `POST /sessions/{id}/me-audio/complete`; or `session.ended` with a 10-minute delay, which marks the audio `none` if it never arrived | session_id | 15 min | `me_audio.transcribe:{sid}` |
 | `session.postcall` | `me_audio.transcribe` | session_id | 15 min | `session.postcall:{sid}` |
-| `memory.extract` | API (document ingest) | source type and ref | 15 min | `memory.extract:{source hash}` |
-| `pack.build` | API (interview scheduled), scheduler (standups) | mode, context ref, due_at | 10 min | `pack.build:{uid}:{mode}:{due_at}` |
-| `digest.rebuild` | Scheduler weekly; after approvals, debounced 10 min | none | 10 min | `digest.rebuild:{uid}:{memory version}` |
+| `memory.extract` | API (document ingest) | document_id | 15 min | `memory.extract:{uid}:{document_id}:{sha256}` |
+| `pack.build` | API (job saved, interview scheduled), worker (job description ingested, digest rebuilt), scheduler (standups) | mode, context (`interview:{id}`, `job:{id}` or `standup:{date}`), due_at | 10 min | `pack.build:{uid}:{context}:{digest}` |
+| `digest.rebuild` | Scheduler weekly; resume ingested; after approvals, debounced 10 min | none | 10 min | `digest.rebuild:{uid}:{memory version}` |
 | `tools.sync` | Scheduler daily | provider | 15 min | `tools.sync:{uid}:{provider}:{date}` |
 | `usage.report` | Scheduler nightly | day | 15 min | `usage.report:{day}` |
 | `user.delete` | API | none | 30 min | `user.delete:{uid}` |
+| `sessions.sweep` | Scheduler every 5 minutes | none | 2 min | `sessions.sweep:{slot}` |
 
 Post-call work runs in three steps: `session.ended` flushes the log; `me_audio.transcribe` transcribes the user's audio with pre-recorded STT and deletes it from S3 (or skips it); `session.postcall` writes the summary and feedback with Sonnet and memory proposals with Opus. The 10-minute delayed message uses SQS `DelaySeconds`, which allows up to 15 minutes.
+
+Two keys name more than the catalog first had. `memory.extract` names the user and the document as well as the content hash: the hash alone would collide across users and skip a second document with the same content. `pack.build` names the context and the digest (`digest` is the first 16 hex digits of its version, `none` before the first digest): a pack depends on both, so a digest rebuild makes a new key and the pack is rebuilt, while a repeat for the same digest is skipped.
+
+**Scheduler:** the timed jobs come from one small program, `copilot-scheduler`, which enqueues whatever is due (the sweep, the nightly usage report, the weekly digest, standup packs) at most once per slot. Locally it runs in a loop; in AWS, EventBridge Scheduler runs `copilot-scheduler --once` every 5 minutes as a one-off task, rather than one EventBridge schedule per job.
 
 A worker first inserts the idempotency key into `job_runs`; if the row already exists as `done`, it deletes the message and stops. Long Opus calls extend the message's visibility timeout every minute while they run.
 
@@ -1064,9 +1075,13 @@ used, "you" follows something the user just said, or it is the user's turn in a 
 
 Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token, verified against the cached JWKS. Every handler opens a transaction that sets `app.user_id` first.
 
+**First login:** the first request of a new user creates their `app.users` row from the token. Cognito access tokens carry no `email` claim, so the API uses one if a pre-token-generation trigger adds it, otherwise asks the user pool's `/oauth2/userInfo` endpoint, and otherwise refuses with 403.
+
 | Method and path | Purpose |
 | --- | --- |
-| `GET /me`, `PATCH /me/settings` | Profile; retention days, standup time, consent defaults |
+| `GET /me` | Profile and settings |
+| `PATCH /me` | Profile fields (display name); settings fields are refused |
+| `PATCH /me/settings` | Settings: retention days, standup time and timezone, consent defaults; profile fields are refused |
 | `DELETE /me` | Account deletion; enqueues `user.delete` |
 | `POST /documents` | Returns a presigned S3 upload URL and a document id |
 | `POST /documents/{id}/ingest` | Enqueues `memory.extract` for an uploaded document |
@@ -1083,7 +1098,8 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `POST /integrations/{provider}/connect`, `GET .../callback`, `DELETE` | Connect and disconnect GitHub, Jira, Slack, calendars |
 | `GET /usage` | Minutes used this period |
 | `POST /billing/checkout`, `POST /billing/webhook` | Stripe checkout and webhook |
-| `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call; completion enqueues `me_audio.transcribe` |
+| `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call |
+| `POST /sessions/{id}/me-audio/complete` | The client finished the upload; enqueues `me_audio.transcribe` at once instead of after the 10-minute wait. An S3 event into the queue would do the same without the call; this keeps the local stack free of S3 notifications |
 
 The desktop app polls `GET /sessions/{id}` for up to 5 minutes after a call to show the summary and pending memory updates as soon as they are ready.
 
@@ -1118,7 +1134,8 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
 - **Idempotency:** the `job_runs` check from the [Data model](#2-data-model) section runs before every handler.
 - **Spot interruptions:** on SIGTERM (two minutes before a Spot reclaim) the task stops receiving, lets running jobs finish if they can, and leaves the rest to return to the queue after their visibility timeout.
 - **Long calls:** a helper extends the message's visibility timeout every minute while an Opus call runs.
-- **Model calls:** workers use the same router as the gateway: Sonnet for session packs, digest, summaries and feedback; Opus only for memory extraction; Flex first, then Standard.
+- **Model calls:** workers use the same router as the gateway: Sonnet for session packs, summaries and feedback; Opus only for memory extraction; Flex first, then Standard. The digest needs no model.
+- **Not built yet** (agreed after build step 4a): `user.delete` removes the Cognito user with `AdminDeleteUser` from build step 5, when Cognito exists; `tools.sync` comes with phase 3; memory proposals and commitments from post-call work come with phase 2; the gateway has no database connection until phase 2 retrieval.
 
 ## 4. Infrastructure and operations
 

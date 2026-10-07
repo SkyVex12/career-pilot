@@ -54,14 +54,16 @@ async def test_the_api_connects_as_app_api_under_rls(api: Api) -> None:
 
 async def test_patch_settings(api: Api) -> None:
     _, h = api.user()
-    r = await api.client.patch(
-        "/v1/me",
-        headers=h,
-        json={"display_name": "Alex D.", "settings": {"standup_time": "09:30",
-              "timezone": "Europe/Berlin", "consent": {"store_transcript": True}}},
-    )  # fmt: skip
+    r = await api.client.patch("/v1/me", headers=h, json={"display_name": "Alex D."})
     assert r.status_code == 200, r.text
     assert r.json()["display_name"] == "Alex D."
+    r = await api.client.patch(
+        "/v1/me/settings",
+        headers=h,
+        json={"standup_time": "09:30", "timezone": "Europe/Berlin",
+              "consent": {"store_transcript": True}},
+    )  # fmt: skip
+    assert r.status_code == 200, r.text
     r = await api.client.patch("/v1/me/settings", headers=h, json={"retention_days": 30})
     assert r.json()["settings"] == {
         "standup_time": "09:30",
@@ -74,6 +76,14 @@ async def test_patch_settings(api: Api) -> None:
     for bad in ({"timezone": "Mars/Base"}, {"standup_time": "9:30"}, {"retention_days": 0},
                 {"unknown": 1}):  # fmt: skip
         assert (await api.client.patch("/v1/me/settings", headers=h, json=bad)).status_code == 422
+    # Each path takes only its own fields.
+    r = await api.client.patch("/v1/me", headers=h, json={"settings": {"retention_days": 7}})
+    assert r.status_code == 422
+    r = await api.client.patch("/v1/me", headers=h, json={"retention_days": 7})
+    assert r.status_code == 422
+    r = await api.client.patch("/v1/me/settings", headers=h, json={"display_name": "X"})
+    assert r.status_code == 422
+    assert (await api.client.get("/v1/me", headers=h)).json()["display_name"] == "Alex D."
 
 
 async def upload_document(api: Api, h: dict[str, str], body: bytes, kind: str = "resume") -> str:

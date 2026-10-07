@@ -120,7 +120,7 @@ The API (base path `/v1`, bearer token on every request):
 
 | Endpoint | Does |
 | --- | --- |
-| `GET /me`, `PATCH /me`, `PATCH /me/settings` | Profile and settings (retention days, standup time and timezone, consent defaults). The first request creates the user from the token |
+| `GET /me`, `PATCH /me`, `PATCH /me/settings` | Profile and settings. `PATCH /me` takes profile fields (display name), `PATCH /me/settings` the settings (retention days, standup time and timezone, consent defaults); each refuses the other's fields. The first request creates the user from the token |
 | `DELETE /me` | Enqueues `user.delete`: rows, S3 files, Valkey keys and data keys |
 | `POST /documents`, `GET /documents` | A presigned S3 upload (declare kind, content type, size, SHA-256) |
 | `POST /documents/{id}/ingest` | A resume becomes career facts and the hot digest; a job description becomes a job and its session pack |
