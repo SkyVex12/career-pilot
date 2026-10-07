@@ -9,6 +9,7 @@ dependencies = [
   "boto3>=1.40",
   "cryptography>=44",
   "httpx2>=2.13.1",
+  "openai>=3.26.0",
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
   "pyjwt[crypto]>=2.10",

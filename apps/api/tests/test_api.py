@@ -12,7 +12,7 @@ import httpx2
 import pytest
 
 from copilot_api.testing import Api
-from copilot_core import keys
+from copilot_core import jobs, keys
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.storage import me_audio_key
@@ -194,7 +194,8 @@ async def test_jobs_interviews_and_their_packs(api: Api) -> None:
     job = r.json()
     [build] = api.take("pack.build")
     assert build["payload"]["context"] == f"job:{job['id']}"
-    assert build["idempotency_key"] == f"pack.build:{uid}:job:{job['id']}:{'ab' * 8}"
+    tag = jobs.embedding_tag(api.svc.settings.embedding_model_id)
+    assert build["idempotency_key"] == f"pack.build:{uid}:job:{job['id']}:{'ab' * 8}:{tag}"
 
     listed = (await api.client.get("/v1/jobs", headers=h)).json()["jobs"]
     assert [j["pack"] for j in listed] == [None]

@@ -9,10 +9,12 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, WebSocket
 
-from copilot_core import __version__
+from copilot_core import __version__, embed
 from copilot_core.dotenv import load_dotenv
-from copilot_core.embed import BedrockCohereEmbedder, Embedder
+from copilot_core.embed import Embedder
 from copilot_core.jobs import SqsJobQueue
+from copilot_core.llm import ModelRouter
+from copilot_core.pricing import missing_prices
 from copilot_gateway.auth import make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
@@ -45,27 +47,36 @@ def stt_providers(settings: Settings) -> list[tuple[str, STTFactory]]:
 
 
 def make_embedder(settings: Settings) -> Embedder | None:
-    if settings.embeddings_on_bedrock:
-        log.info("prepared-answer matching on: %s embeddings on Bedrock", settings.embed_model)
-        return BedrockCohereEmbedder(settings.embed_model, settings.aws_region)
+    embedder = embed.make_embedder(settings)
+    if embedder is not None:
+        log.info("prepared-answer matching on: %s embeddings", embedder.model_id)
+        return embedder
     log.warning(
         "prepared-answer matching is off: no embeddings provider (COPILOT_EMBEDDER=%s, "
-        "Claude providers %s); every question goes to the fast pass",
+        "model providers %s); every question goes to the fast pass",
         settings.embedder,
         ",".join(settings.llm_providers),
     )
     return None
 
 
+def warn_missing_prices(router: ModelRouter, settings: Settings) -> None:
+    models = [r.model for routes in router.routes.values() for r in routes]
+    if missing := missing_prices(models, settings.model_prices):
+        log.warning("no price for %s; answers.cost_usd stays empty (COPILOT_MODEL_PRICES)", missing)
+
+
 def build_services(settings: Settings) -> Services:
     embedder = make_embedder(settings)
+    router = build_router(settings)
+    warn_missing_prices(router, settings)
     return Services(
         settings=settings,
         store=GatewayStore(make_client(settings), settings),
         jobs=SqsJobQueue(
             settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
-        router=build_router(settings),
+        router=router,
         verifier=make_verifier(settings),
         stt_providers=stt_providers(settings),
         embedder=embedder,

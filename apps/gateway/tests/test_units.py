@@ -203,9 +203,21 @@ def test_embedder_auto_and_startup_log(caplog: pytest.LogCaptureFixture) -> None
         assert make_embedder(direct) is None
     assert "prepared-answer matching is off" in caplog.text
     both = Settings(_env_file=None, llm_providers=["bedrock", "anthropic"])  # pyright: ignore[reportCallIssue]
-    assert both.embeddings_on_bedrock
+    assert both.embedding_provider == "bedrock"
+    assert both.embedding_model_id == "bedrock:cohere.embed-v4:0@1024"
     off = both.model_copy(update={"embedder": "none"})
-    assert not off.embeddings_on_bedrock
+    assert off.embedding_provider is None
+    assert off.embedding_model_id is None
+    # OpenAI only: OpenAI embeddings once a model is named, at the column's 1024 dimensions.
+    openai = Settings(_env_file=None, llm_providers=["openai"])  # pyright: ignore[reportCallIssue]
+    assert openai.embedding_provider is None
+    named = openai.model_copy(update={"openai_embed_model": "text-embedding-3-large"})
+    assert named.embedding_model_id == "openai:text-embedding-3-large@1024"
+    # Bedrock first wins on auto; an explicit choice wins over auto.
+    mixed = named.model_copy(update={"llm_providers": ["openai", "bedrock"]})
+    assert mixed.embedding_provider == "bedrock"
+    chosen = mixed.model_copy(update={"embedder": "openai"})
+    assert chosen.embedding_provider == "openai"
 
 
 def test_parse_detection() -> None:

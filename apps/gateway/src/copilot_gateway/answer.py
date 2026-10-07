@@ -70,14 +70,26 @@ class Question:
 
 
 class PreparedMatcher:
-    """Compares the live question with the ~30 prepared questions of the session pack."""
+    """Compares the live question with the ~30 prepared questions of the session pack.
+
+    Only vectors from the same embedding model compare: when the pack's `embedding_model` is
+    not the gateway embedder's, matching is off for the session (`stale` asks for a rebuild).
+    """
 
     def __init__(
-        self, embedder: Embedder | None, answers: list[PreparedAnswer], min_similarity: float
+        self,
+        embedder: Embedder | None,
+        answers: list[PreparedAnswer],
+        min_similarity: float,
+        embedding_model: str | None = None,
     ) -> None:
         self.embedder = embedder
         self.min_similarity = min_similarity
         self.vectors: list[tuple[PreparedAnswer, list[float]]] = []
+        # The pack's vectors were made by another model, or it has none to match against.
+        self.stale = embedder is not None and bool(answers) and embedding_model != embedder.model_id
+        if embedder is None or self.stale:
+            return
         for a in answers:
             vec = a.embedding()
             if vec:
@@ -342,6 +354,9 @@ class AnswerEngine:
                 task.add_done_callback(self._background.discard)
         except AllRoutesFailedError as e:
             log.warning("%s pass failed for %s: %s", pass_, q.qid, e)
+            if e.refused:  # every model that ran declined: not an outage
+                error("refused")
+                return
             host.llm_status(False)
             error("llm_unavailable")
         except asyncio.CancelledError:

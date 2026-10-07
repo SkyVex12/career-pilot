@@ -7,6 +7,7 @@ from typing import Any
 
 from copilot_core import keys
 from copilot_core.ids import uuid7
+from copilot_core.jobs import embedding_tag
 from copilot_core.packs import Digest, NodeRef, PreparedAnswer, SessionPack, encode_embedding
 from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, cost_usd
 from copilot_gateway.auth import Principal
@@ -22,7 +23,9 @@ NODE = uuid7()
 STORY = uuid7()
 
 
-async def seed_memory(env: Any, prepared: list[PreparedAnswer] | None = None) -> SessionPack:
+async def seed_memory(
+    env: Any, prepared: list[PreparedAnswer] | None = None, embedding_model: str | None = None
+) -> SessionPack:
     vk = env.client()
     digest_text = "# Career digest\n[n:7c1e] Senior Backend Engineer, Acme."
     digest = Digest.model_validate(
@@ -48,6 +51,7 @@ async def seed_memory(env: Any, prepared: list[PreparedAnswer] | None = None) ->
                 }
             ],
             "prepared_answers": [p.model_dump(mode="json") for p in prepared or []],
+            "embedding_model": embedding_model,
         }
     )
     await vk.set(keys.digest(env.user_a), digest.model_dump_json(by_alias=True))
@@ -340,20 +344,27 @@ async def test_question_force_and_rate_limit(env) -> None:
     assert len(forced_log) == 2
 
 
-async def test_prepared_answer_skips_the_model(env) -> None:
-    vec = [1.0] + [0.0] * 7
+VEC = [1.0] + [0.0] * 7
 
-    class FixedEmbedder:
-        async def embed(self, texts: Any) -> list[list[float]]:
-            return [vec for _ in texts]
 
-    prepared = PreparedAnswer(
+class FixedEmbedder:
+    model_id = "test:fixed@8"
+
+    async def embed(self, texts: Any) -> list[list[float]]:
+        return [VEC for _ in texts]
+
+
+def scaled_answer() -> PreparedAnswer:
+    return PreparedAnswer(
         question="Tell me about a system you scaled.",
-        embedding_b64=encode_embedding(vec),
+        embedding_b64=encode_embedding(VEC),
         talking_points=["Scaled the ledger 10x [n:3f2a]", "Zero downtime cutover"],
         node_ids=[STORY],
     )
-    await seed_memory(env, [prepared])
+
+
+async def test_prepared_answer_skips_the_model(env) -> None:
+    await seed_memory(env, [scaled_answer()], embedding_model=FixedEmbedder.model_id)
     provider = env.providers[0]
     async with GatewayServer(env.services(embedder=FixedEmbedder())) as gw:
         c = ProtocolClient(gw.url)
@@ -365,6 +376,23 @@ async def test_prepared_answer_skips_the_model(env) -> None:
         delta = next(m for m in c.of_type("answer.delta") if m["pass"] == "fast")
         assert delta["text"].startswith("- Scaled the ledger 10x")
     assert ("fast", "claude-haiku-4-5") not in provider.calls
+
+
+async def test_vectors_from_another_embedding_model_are_never_compared(env) -> None:
+    # The same vectors, but the pack says another model made them: no match, the model
+    # answers, and the pack is rebuilt for the gateway's embedding model.
+    await seed_memory(env, [scaled_answer()], embedding_model="bedrock:cohere.embed-v4:0@1024")
+    job_id = uuid7()
+    async with GatewayServer(env.services(embedder=FixedEmbedder())) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(job_id=str(job_id))
+        await c.say("How did you scale your system?")
+        done = await c.wait_type("answer.done", pass_="fast")
+        assert done["source"] == "model"
+    rebuilds = [m for m in env.jobs.sent if m["type"] == "pack.build"]
+    assert len(rebuilds) == 1
+    assert rebuilds[0]["payload"]["context"] == f"job:{job_id}"
+    assert rebuilds[0]["idempotency_key"].endswith(":" + embedding_tag(FixedEmbedder.model_id))
 
 
 async def test_exact_repeat_served_from_cache(env) -> None:

@@ -2,15 +2,19 @@
 
 Failure row "Bedrock throttling or errors": retry once through the `us.` cross-region profile,
 then the direct Anthropic API. Generalised: the first configured provider gets two routes (the
-primary model id, then its retry id), each later provider one. Either provider can be used
+primary model id, then its retry id), each later provider one. Any provider can be used
 alone, so Stage 0 can start with only one set of credentials.
+
+OpenAI routes take their model and reasoning effort per job from settings
+(`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); the Claude-only settings (between_tools
+thinking, effort, `fallbacks: "default"`, Priority) never reach them.
 """
 
 from collections.abc import Sequence
 from typing import Any, Literal
 
 from copilot_core.llm import FallbackHook, LLMProvider, ModelRouter, Route
-from copilot_core.providers import make_providers
+from copilot_core.providers import make_providers, openai_params
 from copilot_gateway.config import Settings
 
 Family = Literal["haiku", "sonnet"]
@@ -18,7 +22,10 @@ JOBS: dict[str, Family] = {"detector": "haiku", "fast": "haiku", "deep": "sonnet
 SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
-def _model_ids(settings: Settings, provider: str, family: Family) -> tuple[str, str]:
+def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> tuple[str, str]:
+    if provider == "openai":
+        model, _ = settings.openai_route(job)
+        return model, model
     if provider == "bedrock":
         if family == "haiku":
             primary = settings.bedrock_haiku_model
@@ -30,6 +37,8 @@ def _model_ids(settings: Settings, provider: str, family: Family) -> tuple[str, 
 
 
 def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
+    if provider == "openai":
+        return openai_params(settings, job)
     params: dict[str, Any] = {}
     if job == "deep":
         # Sonnet 5.5 rejects thinking {type: "disabled"}; `between_tools` is its lowest
@@ -51,7 +60,7 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
     for job, family in JOBS.items():
         job_routes: list[Route] = []
         for i, provider in enumerate(providers):
-            primary, retry = _model_ids(settings, provider.name, family)
+            primary, retry = _model_ids(settings, provider.name, job, family)
             params = job_params(settings, provider.name, job)
             job_routes.append(Route(provider, primary, params))
             if i == 0:

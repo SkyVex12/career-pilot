@@ -69,7 +69,14 @@ async def create_job(body: JobIn, svc: SvcDep, user: UserDep) -> dict[str, Any]:
         )
     digest = await svc.digest_version(user.user_id)
     await svc.queue.send(
-        jobs.pack_build(user.user_id, "interview", f"job:{job_id}", datetime.now(UTC), digest)
+        jobs.pack_build(
+            user.user_id,
+            "interview",
+            f"job:{job_id}",
+            datetime.now(UTC),
+            digest,
+            svc.settings.embedding_model_id,
+        )
     )
     return {**_job(row), "pack": None}
 
@@ -132,7 +139,12 @@ async def create_interview(body: InterviewIn, svc: SvcDep, user: UserDep) -> dic
     digest = await svc.digest_version(user.user_id)
     await svc.queue.send(
         jobs.pack_build(
-            user.user_id, "interview", f"interview:{interview_id}", body.starts_at, digest
+            user.user_id,
+            "interview",
+            f"interview:{interview_id}",
+            body.starts_at,
+            digest,
+            svc.settings.embedding_model_id,
         )
     )
     return _interview(row)
