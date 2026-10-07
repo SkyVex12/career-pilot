@@ -7,9 +7,7 @@ import pytest
 
 from copilot_core import jobs, keys
 from copilot_core.storage import me_audio_key, user_prefix
-
-from .conftest import FIXTURES, Stack
-from .test_session_log import GatewayLog
+from copilot_worker.testing import FIXTURES, GatewayLog, Stack
 
 pytestmark = pytest.mark.stack
 

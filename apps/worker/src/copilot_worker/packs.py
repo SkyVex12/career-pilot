@@ -7,8 +7,8 @@ digest's short ids. Standup packs need no model in phase 1 (no tool sync yet): t
 open commitments.
 
 `pack:{uid}:index` points the gateway at the newest pack per job and per mode. A build only
-updates the index while its digest is still the current one; otherwise a rebuild for the new
-digest is already queued and will.
+updates the index while its digest is still the current one; otherwise it queues a rebuild
+for the new digest, which will.
 """
 
 import logging
@@ -114,8 +114,12 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
         keys.pack(uid, pack.pack_id), pack.model_dump_json(by_alias=True, exclude_none=True), ex=ttl
     )
     latest = await current_digest(ctx, uid)
-    if (latest.version if latest else "") != pack.digest_version:
-        log.info("pack %s built from an older digest; leaving the index alone", pack.pack_id)
+    if latest is not None and latest.version != pack.digest_version:
+        # The digest changed while this pack was built. A digest rebuild only rebuilds packs
+        # it can see in the index, and this one is not there yet, so rebuild it from here:
+        # the new digest makes a new key, which runs once.
+        log.info("pack %s built from an older digest; rebuilding it", pack.pack_id)
+        await ctx.queue.send(jobs.pack_build(uid, mode, context, due_at, latest.version))
         return
     fields = {f"mode:{mode}": str(pack.pack_id)}
     if job_id is not None:

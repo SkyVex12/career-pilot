@@ -22,8 +22,7 @@ from copilot_worker.runtime import (
     RetryLater,
     SqsQueue,
 )
-
-from .conftest import Stack
+from copilot_worker.testing import Stack
 
 pytestmark = pytest.mark.stack
 

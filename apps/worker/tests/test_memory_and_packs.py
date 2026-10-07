@@ -8,8 +8,7 @@ import pytest
 from copilot_core import jobs, keys
 from copilot_core.packs import SHORT_ID, Digest, SessionPack, cited_refs, ref_map
 from copilot_worker.memory import render_digest, short_ids
-
-from .conftest import FIXTURES, Stack
+from copilot_worker.testing import FIXTURES, Stack
 
 pytestmark = pytest.mark.stack
 
@@ -207,3 +206,37 @@ async def test_standup_pack_needs_no_model(stack: Stack) -> None:
     assert pack.standup is not None
     assert pack.standup["open_commitments"] == []
     assert len(stack.claude.requests) == calls
+
+
+async def test_pack_built_while_the_digest_changes_rebuilds_itself(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The job description is read while the resume is: its pack starts before the digest
+    exists and finishes after it does, when the digest rebuild could not yet see the pack in
+    the index. The pack queues its own rebuild for the new digest."""
+    from copilot_worker import packs
+
+    uid = await stack.new_user()
+    await ingest_resume(stack, uid)
+    doc = await stack.upload(uid, "job_description", INPUTS / "job.md", "text/markdown")
+    await stack.run(
+        jobs.envelope("memory.extract", "memory.extract:race", uid, {"document_id": str(doc)})
+    )
+    [build] = stack.take("pack.build")
+    real = packs.current_digest
+    reads: list[int] = []
+
+    async def first_read_sees_no_digest(ctx: object, user: UUID) -> object:
+        reads.append(1)
+        return None if len(reads) == 1 else await real(ctx, user)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(packs, "current_digest", first_read_sees_no_digest)
+    await stack.run(build)
+    assert await stack.ctx.valkey.hget(keys.pack_index(uid), f"job:{doc}") is None
+    [again] = stack.take("pack.build")
+    digest = await digest_of(stack, uid)
+    assert again["idempotency_key"].endswith(digest.version.removeprefix("sha256:")[:16])
+    monkeypatch.setattr(packs, "current_digest", real)
+    await stack.run(again)
+    pack = await pack_for(stack, uid, f"job:{doc}")
+    assert pack.digest_version == digest.version

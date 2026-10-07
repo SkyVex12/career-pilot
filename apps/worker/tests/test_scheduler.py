@@ -6,8 +6,7 @@ import pytest
 
 from copilot_core.jobs import MemoryJobQueue
 from copilot_worker.scheduler import Scheduler, next_standup, slots
-
-from .conftest import Stack
+from copilot_worker.testing import Stack
 
 
 def test_slots() -> None:

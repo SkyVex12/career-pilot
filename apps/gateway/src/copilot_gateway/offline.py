@@ -5,9 +5,12 @@ be tested end to end without provider keys or the network.
     uv run python -m copilot_gateway.offline --valkey redis://localhost:6379/15 ...
 
 The first form keeps session state in an in-process fake Valkey, so a session survives a
-dropped socket but not a restart of this process. To resume across a restart, point every
-process at the same real Valkey (the compose stack's) with --valkey. fakeredis's TCP server
-cannot stand in: on Windows it deadlocks on pipelined commands.
+dropped socket but not a restart of this process. With --sqs the session log jobs
+(session.flush, session.ended) go to the compose stack's queue, so a worker turns the call
+into rows and post-call outputs; use it with --valkey pointing at the workers' Valkey.
+To resume across a restart, point every process at the same real Valkey (the compose stack's)
+with --valkey. fakeredis's TCP server cannot stand in: on Windows it deadlocks on pipelined
+commands.
 
 The STT is `TextSTT`: it reads the audio bytes as UTF-8 words, so a client "speaks" by sending
 text padded to pcm16 frames (`testing.text_frame_audio`). Real microphone audio produces no
@@ -25,7 +28,7 @@ import time
 from typing import Any
 from uuid import UUID
 
-from copilot_core.jobs import MemoryJobQueue
+from copilot_core.jobs import JobQueue, MemoryJobQueue, SqsJobQueue
 from copilot_gateway.auth import Principal, StaticVerifier
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
@@ -73,10 +76,15 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         for token, expires in map(parse_token, args.token)
     }
     control = TextSTTControl()
+    queue: JobQueue = MemoryJobQueue()
+    if args.sqs:
+        queue = SqsJobQueue(
+            settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
+        )
     services = Services(
         settings=settings,
         store=GatewayStore(client, settings),
-        jobs=MemoryJobQueue(),
+        jobs=queue,
         router=build_router(settings, [ScriptedProvider("anthropic")]),
         verifier=StaticVerifier(principals),
         stt_providers=[("text", lambda: TextSTT(control, "text"))],
@@ -101,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--valkey", default="fake", help="Valkey URL, or `fake` (in process)")
     parser.add_argument(
         "--fast-timers", action="store_true", help="shorter turn and lease timers, as in tests"
+    )
+    parser.add_argument(
+        "--sqs", action="store_true", help="send jobs to the local SQS queue (default: dropped)"
     )
     args = parser.parse_args(argv)
     if not args.token:

@@ -11,12 +11,11 @@ import asyncpg
 import httpx2
 import pytest
 
+from copilot_api.testing import Api
 from copilot_core import keys
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.storage import me_audio_key
-
-from .conftest import Api
 
 pytestmark = pytest.mark.stack
 

@@ -83,7 +83,8 @@ async def test_model_fallback_on_first_token_timeout(env) -> None:
         elapsed = time.monotonic() - started
     assert done["source"] == "model"
     assert slow.cancelled == 2  # both bedrock attempts abandoned at the timeout
-    assert 0.4 <= elapsed < 2.0
+    # Two 200 ms timeouts; Windows timers can fire a few ms early by time.monotonic().
+    assert 0.35 <= elapsed < 2.0
     assert [m for j, m in direct.calls if j == "fast"] == ["claude-haiku-4-5"]
 
 
