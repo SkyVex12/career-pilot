@@ -16,7 +16,6 @@ from typing import Any
 from uuid import UUID
 
 from copilot_core import jobs
-from copilot_core.llm import LLMRequest, SystemBlock
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import complete_json
@@ -68,15 +67,7 @@ async def memory_extract(job: Job, ctx: Ctx) -> None:
 
 
 async def ingest_resume(ctx: Ctx, uid: UUID, doc_id: UUID, body: bytes, content_type: str) -> None:
-    req = LLMRequest(
-        system=[SystemBlock(prompts.EXTRACT_SYSTEM)],
-        content=[
-            document_block(body, content_type, "Resume"),
-            {"type": "text", "text": "Extract the career facts from this resume as JSON."},
-        ],
-        max_tokens=32000,
-        json_schema=prompts.EXTRACT_SCHEMA,
-    )
+    req = prompts.resume_request(document_block(body, content_type, "Resume"))
     data = await complete_json(ctx.router, "extract", req)
     async with ctx.user(uid) as conn:
         status = await conn.fetchval(
@@ -94,15 +85,7 @@ async def ingest_resume(ctx: Ctx, uid: UUID, doc_id: UUID, body: bytes, content_
 async def ingest_job_description(
     ctx: Ctx, uid: UUID, doc_id: UUID, body: bytes, content_type: str
 ) -> None:
-    req = LLMRequest(
-        system=[SystemBlock(prompts.JOB_SYSTEM)],
-        content=[
-            document_block(body, content_type, "Job description"),
-            {"type": "text", "text": "Read this job description and return the JSON."},
-        ],
-        max_tokens=16000,
-        json_schema=prompts.JOB_SCHEMA,
-    )
+    req = prompts.job_request(document_block(body, content_type, "Job description"))
     data = await complete_json(ctx.router, "job", req)
     # A text file is the description as written; a PDF's text comes from the model.
     description = body.decode("utf-8") if content_type != "application/pdf" else data["description"]

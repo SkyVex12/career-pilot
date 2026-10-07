@@ -19,12 +19,11 @@ from uuid import UUID
 
 from copilot_core import jobs, keys
 from copilot_core.ids import uuid7
-from copilot_core.llm import LLMRequest, SystemBlock
 from copilot_core.packs import SHORT_ID, Digest, NodeRef, SessionPack, encode_embedding, render_pack
 from copilot_core.valkey_client import Valkey, text
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
-from copilot_worker.llm import as_dict, as_list, complete_json, data_block
+from copilot_worker.llm import as_dict, as_list, complete_json
 from copilot_worker.memory import load_digest_nodes, render_digest
 from copilot_worker.runtime import Job, handler
 
@@ -163,20 +162,13 @@ async def build_interview_pack(
             )
         }
     round_ = str(row["round"] or "general")
-    req = LLMRequest(
-        system=[
-            SystemBlock(prompts.PACK_SYSTEM.format(n=ctx.settings.prepared_answers, round=round_))
-        ],
-        content="\n\n".join(
-            [
-                data_block("digest", digest.text if digest else "(no career digest yet)"),
-                f"Company: {row['company']}\nRole: {row['title']}\nRound: {round_}",
-                data_block("job_description", str(row["description"])),
-                "Build the session pack as JSON.",
-            ]
-        ),
-        max_tokens=16000,
-        json_schema=prompts.PACK_SCHEMA,
+    req = prompts.pack_request(
+        digest.text if digest else None,
+        str(row["company"]),
+        str(row["title"]),
+        round_,
+        str(row["description"]),
+        ctx.settings.prepared_answers,
     )
     data = await complete_json(ctx.router, "pack", req)
     refs: dict[str, NodeRef] = dict(digest.refs) if digest else {}

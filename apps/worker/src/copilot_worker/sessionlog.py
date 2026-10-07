@@ -28,12 +28,11 @@ from copilot_core import keys
 from copilot_core.crypto import segment_row_id
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7_for
-from copilot_core.llm import LLMRequest, SystemBlock
 from copilot_core.storage import me_audio_key
 from copilot_core.valkey_client import text
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
-from copilot_worker.llm import as_dict, as_list, complete_json, data_block
+from copilot_worker.llm import as_dict, as_list, complete_json
 from copilot_worker.runtime import Job, RetryLater, handler
 
 log = logging.getLogger(__name__)
@@ -515,13 +514,6 @@ def render_outputs(mode: str, data: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-POSTCALL = {
-    "interview": (prompts.POSTCALL_INTERVIEW_SYSTEM, prompts.POSTCALL_INTERVIEW_SCHEMA),
-    "standup": (prompts.POSTCALL_STANDUP_SYSTEM, prompts.POSTCALL_STANDUP_SCHEMA),
-    "meeting": (prompts.POSTCALL_MEETING_SYSTEM, prompts.POSTCALL_MEETING_SCHEMA),
-}
-
-
 @handler("session.postcall")
 async def session_postcall(job: Job, ctx: Ctx) -> None:
     sid = UUID(job.payload["session_id"])
@@ -544,24 +536,13 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
         outputs = {"summary": metadata_summary(mode, minutes, types)}
     else:
-        system, schema = POSTCALL[mode]
         context = [f"User: {session['display_name']}", f"Mode: {mode}", f"Length: {minutes} min"]
         if session["company"]:
             context.append(f"Company: {session['company']}, role: {session['job_title']}")
         if session["round"]:
             context.append(f"Round: {session['round']}")
-        req = LLMRequest(
-            system=[SystemBlock(system)],
-            content="\n\n".join(
-                [
-                    "\n".join(context),
-                    data_block("transcript", transcript_text(transcript) or "(no segments)"),
-                    data_block("session_log", questions_text(transcript) or "(no questions)"),
-                    "Write the post-call outputs as JSON.",
-                ]
-            ),
-            max_tokens=16000,
-            json_schema=schema,
+        req = prompts.postcall_request(
+            mode, context, transcript_text(transcript), questions_text(transcript)
         )
         outputs = render_outputs(mode, await complete_json(ctx.router, "postcall", req))
     async with ctx.user(uid) as conn:
