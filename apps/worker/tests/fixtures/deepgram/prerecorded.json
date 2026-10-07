@@ -1,0 +1,42 @@
+{
+  "metadata": {
+    "request_id": "fixture-prerecorded",
+    "duration": 95.2,
+    "channels": 1,
+    "models": [
+      "nova-3"
+    ]
+  },
+  "results": {
+    "channels": [
+      {
+        "alternatives": [
+          {
+            "transcript": "",
+            "confidence": 0.98
+          }
+        ]
+      }
+    ],
+    "utterances": [
+      {
+        "start": 12.4,
+        "end": 31.0,
+        "confidence": 0.97,
+        "channel": 0,
+        "speaker": 0,
+        "id": "u1",
+        "transcript": "Sure. At Acme I led the move of our payments ledger from MySQL to PostgreSQL with dual writes and a shadow read path."
+      },
+      {
+        "start": 61.5,
+        "end": 80.2,
+        "confidence": 0.96,
+        "channel": 0,
+        "speaker": 0,
+        "id": "u2",
+        "transcript": "I'd put an idempotency key on every payout request and keep a state machine per payout."
+      }
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_fixture_pack","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"fixture-signature"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\"job_summary\": \"Staff role owning Globex's ledger and payout systems across three teams.\", \"ranked_story_ids\": [\"{{ref:5}}\", \"{{ref:6}}\", \"{{ref:7}}\"], \"prepared_answers\": [{\"question\": \"Tell me about a migration of a critical data store you led.\", \"talking_points\": [\"I moved our payments ledger from MySQL to PostgreSQL live [{{ref:5}}]\", \"Dual writes plus a shadow read path proved parity first ["}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{{ref:5}}]\", \"Cutover had zero downtime; p95 latency fell 40% [{{ref:2}}]\"]}, {\"question\": \"How do you make a payment operation exactly-once?\", \"talking_points\": [\"Idempotency keys on every payout request [{{ref:6}}]\", \"A state machine per payout, persisted in PostgreSQL [{{ref:3}}]\", \"Duplicates went to zero at 2M payouts a day [{{ref:6}}]\"]}, {\"question\": \"How have you improved on-call health fo"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"r a team?\", \"talking_points\": [\"I ran a page review and deleted noisy alerts [{{ref:7}}]\", \"Every alert got an owner and a runbook [{{ref:7}}]\", \"Pages fell from 30 to 8 a week [{{ref:7}}]\"]}, {\"question\": \"Tell me about building a high-throughput event pipeline.\", \"talking_points\": [\"I designed Initech's Kafka pipeline for order events [{{ref:4}}]\", \"It carried 50k events per second at peak [{{ref:4}}"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"]\"]}]}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1200}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

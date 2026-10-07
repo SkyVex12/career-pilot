@@ -7,11 +7,17 @@ dependencies = [
   "anthropic[bedrock]>=1.11",
   "asyncpg>=0.30",
   "boto3>=1.40",
+  "cryptography>=44",
+  "httpx2>=2.13.1",
   "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "pyjwt[crypto]>=2.10",
+  "valkey>=6.1",
 ]
 
 [project.scripts]
 copilot-migrate = "copilot_core.migrate:run"
+copilot-dev-roles = "copilot_core.devroles:run"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.13"]

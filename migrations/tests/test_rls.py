@@ -421,6 +421,7 @@ REFERENCES = [
     ("memory_edges", "src", "memory_nodes"),
     ("memory_edges", "dst", "memory_nodes"),
     ("memory_proposals", "target_node_id", "memory_nodes"),
+    ("memory_proposals", "session_id", "sessions"),
     ("sessions", "job_id", "jobs"),
     ("sessions", "interview_id", "interviews"),
     ("transcript_segments", "session_id", "sessions"),

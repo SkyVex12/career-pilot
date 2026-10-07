@@ -1,19 +1,25 @@
-"""Worker entry point.
+"""Worker entry point: the SQS consumer (copilot_worker.runtime) and ``GET /healthz``.
 
-The SQS consumer comes later. For now the process only serves ``GET /healthz`` so the
-local stack and the ECS container health check have something to probe. The worker has
-no public HTTP API, so this is a minimal stdlib server rather than FastAPI.
+The worker has no public HTTP API, so the health check is a minimal stdlib server rather than
+FastAPI. SIGTERM stops receiving and drains running jobs (see runtime.Consumer).
 """
 
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import signal
 
 from copilot_core import __version__
+from copilot_core.dotenv import load_dotenv
+from copilot_worker import documents, packs, sessionlog, system
+from copilot_worker.config import WorkerSettings
+from copilot_worker.context import build_ctx, close_ctx
+from copilot_worker.runtime import Consumer, JobRuns, SqsQueue
 
 SERVICE = "worker"
+HANDLER_MODULES = (documents, packs, sessionlog, system)  # importing them registers handlers
 
 
 def health_body() -> bytes:
@@ -56,9 +62,34 @@ async def main() -> None:
         # add_signal_handler is not available on Windows; Ctrl+C still raises there.
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-    await serve(os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8082")), stop)
+    settings = WorkerSettings()
+    ctx = await build_ctx(settings)
+    consumer = Consumer(
+        queue=SqsQueue(
+            settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
+        ),
+        runs=JobRuns(ctx.pool),
+        ctx=ctx,
+        concurrency=settings.concurrency,
+        receive_wait_s=settings.receive_wait_s,
+        heartbeat_s=settings.heartbeat_s,
+        shutdown_grace_s=settings.shutdown_grace_s,
+    )
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8082"))
+    health = asyncio.create_task(serve(host, port, stop))
+    try:
+        await consumer.run(stop)
+    finally:
+        stop.set()
+        await health
+        await close_ctx(ctx)
 
 
 def run() -> None:
+    load_dotenv()
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())

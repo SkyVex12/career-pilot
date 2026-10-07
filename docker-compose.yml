@@ -42,5 +42,27 @@ services:
     volumes:
       - ./docker/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
 
+  s3:
+    # S3-compatible object store (SeaweedFS) for uploads and the user's call audio. MinIO no
+    # longer publishes images. Endpoint http://localhost:8333, key `local` / `local-secret`;
+    # the API and the workers create the `copilot-uploads` bucket on start in dev and test.
+    # Every bucket grows its own set of volumes, so the volume cap is generous and each
+    # volume small.
+    image: chrislusf/seaweedfs:3.97
+    command: >-
+      server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+      -dir=/data -volume.max=200 -master.volumeSizeLimitMB=64
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - s3-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
 volumes:
   postgres-data:
+  s3-data:

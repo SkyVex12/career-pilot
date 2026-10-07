@@ -6,31 +6,19 @@ environment (prefix COPILOT_) or a .env file for now; AWS AppConfig replaces tha
 
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import NoDecode
+
+from copilot_core.config import CoreSettings, split_list
 
 QuestionType = Literal[
     "behavioral", "technical", "system_design", "coding", "standup_status", "small_talk", "other"
 ]
 
 
-def _split(value: object) -> object:
-    if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
-    return value
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="COPILOT_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
-
-    # Environment. `dev` is the only one that may use the dev token verifier.
-    env: Literal["dev", "test", "staging", "prod"] = "prod"
-    auth: Literal["dev", "cognito"] = "cognito"
-    dev_token: SecretStr | None = None
-    dev_user_id: str = "0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b"
-    dev_user_name: str = "Dev User"
+class Settings(CoreSettings):
+    """Shared fields (auth, Claude providers and models, Valkey, the queue) are in
+    `CoreSettings`; these are the gateway's own."""
 
     # Live settings (ARCHITECTURE.md "Settings").
     silence_timer_ms: int = 400
@@ -56,19 +44,7 @@ class Settings(BaseSettings):
     # Seconds of "them" transcript a hotkey question.force without text uses.
     force_context_s: int = 20
 
-    # Claude. Providers in fallback order; the first gets one retry before the next.
-    llm_providers: Annotated[list[Literal["bedrock", "anthropic"]], NoDecode] = Field(
-        default_factory=lambda: ["bedrock", "anthropic"]
-    )
-    anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    aws_region: str = Field(default="us-east-1", validation_alias="AWS_REGION")
-    bedrock_api_key: SecretStr | None = Field(
-        default=None, validation_alias="AWS_BEARER_TOKEN_BEDROCK"
-    )
-    haiku_model: str = "claude-haiku-4-5"
-    sonnet_model: str = "claude-sonnet-5-5"
-    bedrock_haiku_model: str = "anthropic.claude-haiku-4-5"
-    bedrock_sonnet_model: str = "anthropic.claude-sonnet-5-5"
+    # Claude routes beyond the shared model ids.
     # The retry route; set to the `us.` cross-region profile if the account uses one.
     bedrock_haiku_retry_model: str | None = None
     bedrock_sonnet_retry_model: str | None = None
@@ -80,27 +56,14 @@ class Settings(BaseSettings):
     # retries this model itself, with thinking off. Empty turns the route off.
     bedrock_refusal_model: str = "anthropic.claude-sonnet-5"
 
-    # Embeddings for prepared-answer matching. "auto" uses Bedrock when Bedrock is a Claude
-    # provider and turns matching off otherwise (the direct API has no embeddings).
-    embedder: Literal["auto", "bedrock", "none"] = "auto"
-    embed_model: str = "cohere.embed-v4:0"
-
     # Speech to text, in fallback order (ARCHITECTURE.md "Failure modes").
     stt_providers: Annotated[list[Literal["deepgram", "assemblyai"]], NoDecode] = Field(
         default_factory=lambda: ["deepgram"]
     )
-    deepgram_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
-    deepgram_model: str = "nova-3"
     deepgram_url: str = "wss://api.deepgram.com/v1/listen"
     stt_stall_s: float = 3.0
     stt_failures_before_switch: int = 2
     stt_keepalive_s: float = 5.0
-
-    # Valkey and the jobs queue.
-    valkey_url: str = "redis://localhost:6379/0"
-    valkey_cluster: bool = False
-    sqs_endpoint: str | None = "http://localhost:9324"  # unset in AWS (empty string)
-    sqs_queue_url: str = "http://localhost:9324/000000000000/jobs"
 
     # Session lifecycle and limits (ARCHITECTURE.md section 1).
     first_message_timeout_s: float = 5.0
@@ -122,13 +85,7 @@ class Settings(BaseSettings):
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
 
-    @property
-    def embeddings_on_bedrock(self) -> bool:
-        if self.embedder == "auto":
-            return "bedrock" in self.llm_providers
-        return self.embedder == "bedrock"
-
-    @field_validator("deep_pass_auto_types", "llm_providers", "stt_providers", mode="before")
+    @field_validator("deep_pass_auto_types", "stt_providers", mode="before")
     @classmethod
-    def _comma_list(cls, value: object) -> object:
-        return _split(value)
+    def _gateway_lists(cls, value: object) -> object:
+        return split_list(value)
