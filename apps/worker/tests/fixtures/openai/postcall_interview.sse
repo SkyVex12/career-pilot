@@ -1,0 +1,1677 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_0306b39549bde8c2016ac678bc957c87d29fff612d8a1b09a9","object":"response","created_at":1791391932,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":18048,"max_tool_calls":null,"model":"gpt-6.1-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"output","schema":{"type":"object","properties":{"summary":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"type":{"type":"string"},"how_it_went":{"type":"string"},"better_answer":{"type":"string"}},"required":["question","type","how_it_went","better_answer"],"additionalProperties":false}},"feedback":{"type":"string"},"strengths":{"type":"array","items":{"type":"string"}},"improvements":{"type":"array","items":{"type":"string"}},"follow_up_email":{"type":"object","properties":{"subject":{"type":"string"},"body":{"type":"string"}},"required":["subject","body"],"additionalProperties":false}},"required":["summary","questions","feedback","strengths","improvements","follow_up_email"],"additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_0306b39549bde8c2016ac678bc957c87d29fff612d8a1b09a9","object":"response","created_at":1791391932,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":18048,"max_tool_calls":null,"model":"gpt-6.1-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"output","schema":{"type":"object","properties":{"summary":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"type":{"type":"string"},"how_it_went":{"type":"string"},"better_answer":{"type":"string"}},"required":["question","type","how_it_went","better_answer"],"additionalProperties":false}},"feedback":{"type":"string"},"strengths":{"type":"array","items":{"type":"string"}},"improvements":{"type":"array","items":{"type":"string"}},"follow_up_email":{"type":"object","properties":{"subject":{"type":"string"},"body":{"type":"string"}},"required":["subject","body"],"additionalProperties":false}},"required":["summary","questions","feedback","strengths","improvements","follow_up_email"],"additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"{\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"N6s8fgip8mRfnB","output_index":0,"sequence_number":4}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"h2b0KvP6vB0wtRq","output_index":0,"sequence_number":5}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Pya0RYFuuzJIhD","output_index":0,"sequence_number":6}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"summary","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rPsf8d1Zd","output_index":0,"sequence_number":7}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Hb9H9SebjAom2E","output_index":0,"sequence_number":8}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2sWBiLFo3DhieB","output_index":0,"sequence_number":9}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pwwxkNz3L58je","output_index":0,"sequence_number":10}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" discussed","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2mGPcP","output_index":0,"sequence_number":11}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2xTvXJ9Q5KbYnM","output_index":0,"sequence_number":12}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payments","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xGb4vxl","output_index":0,"sequence_number":13}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-led","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Jpuub6q3fHtW","output_index":0,"sequence_number":14}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ger","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CmfkR2a6JZdYY","output_index":0,"sequence_number":15}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ob6U7f","output_index":0,"sequence_number":16}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IEyxqtrkaYAO","output_index":0,"sequence_number":17}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" an","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kZH8TDIDGmLHb","output_index":0,"sequence_number":18}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NYQEI6yJIayBi","output_index":0,"sequence_number":19}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DH8n12IJ7Lb","output_index":0,"sequence_number":20}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tOU5KHByUpNwG","output_index":0,"sequence_number":21}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"zuRh1XQ1y","output_index":0,"sequence_number":22}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" API","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6jouHOj4KcPA","output_index":0,"sequence_number":23}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gGqgK2RdhZaU7h7","output_index":0,"sequence_number":24}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CNBEcVIRFBm","output_index":0,"sequence_number":25}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" recorded","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KgB2ddk","output_index":0,"sequence_number":26}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" answers","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7GSZKHx8","output_index":0,"sequence_number":27}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" followed","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"TwRzpg8","output_index":0,"sequence_number":28}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vGbQhc9Dl49d","output_index":0,"sequence_number":29}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" suggestions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ij4G","output_index":0,"sequence_number":30}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"atafiAi2Zuty","output_index":0,"sequence_number":31}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" were","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tYjnnhyIFGi","output_index":0,"sequence_number":32}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" shown","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Qew9VNQ1fk","output_index":0,"sequence_number":33}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fQq6uEJj8afr","output_index":0,"sequence_number":34}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" added","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1fU6WY3S6Y","output_index":0,"sequence_number":35}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" useful","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YptiNVInh","output_index":0,"sequence_number":36}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" technical","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Nyl5cD","output_index":0,"sequence_number":37}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" detail","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"oflwFxpz1","output_index":0,"sequence_number":38}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fk3TUNb5jxHrMXe","output_index":0,"sequence_number":39}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" but","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"SQfCHIjjIXsF","output_index":0,"sequence_number":40}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" were","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0AfdVWgM3N0","output_index":0,"sequence_number":41}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" brief","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FcVMd8t2AL","output_index":0,"sequence_number":42}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UrWeff4iFxuy","output_index":0,"sequence_number":43}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3M3bs5Ret4PdZHu","output_index":0,"sequence_number":44}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Xze1KgIwwouEF6","output_index":0,"sequence_number":45}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"questions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"5Y5Caf6","output_index":0,"sequence_number":46}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"H6mPmVDsKtJrM0","output_index":0,"sequence_number":47}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" [\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qUBKGUDP48R0f","output_index":0,"sequence_number":48}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FQTKWOeNabQBh","output_index":0,"sequence_number":49}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" {\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"A5SrfhTPgVr9U","output_index":0,"sequence_number":50}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pdaeCW9tZXK","output_index":0,"sequence_number":51}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"zgvJw2042HE14c","output_index":0,"sequence_number":52}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"question","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fwRQkmbN","output_index":0,"sequence_number":53}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tzM5LNdnlioHpV","output_index":0,"sequence_number":54}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YwHCyazyrjRGuc","output_index":0,"sequence_number":55}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Tell","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3EkzrrMBSPZO","output_index":0,"sequence_number":56}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" me","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZrEAxd3VBmU2x","output_index":0,"sequence_number":57}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" about","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IS9FXP1tIg","output_index":0,"sequence_number":58}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vThAMU96ptl4Ph","output_index":0,"sequence_number":59}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DoCAf0","output_index":0,"sequence_number":60}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"yFuU4xVd61Tak","output_index":0,"sequence_number":61}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"G2Du0v8amtnYIv","output_index":0,"sequence_number":62}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" critical","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VghrVYp","output_index":0,"sequence_number":63}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" data","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"yvuqnrkZmwS","output_index":0,"sequence_number":64}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" store","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"lInZqjZPx3","output_index":0,"sequence_number":65}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2BK5D6VhSdrl","output_index":0,"sequence_number":66}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" led","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"EMsLkCx1zKbj","output_index":0,"sequence_number":67}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AxjPu3aKQivd","output_index":0,"sequence_number":68}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Hmrx60IrZZG","output_index":0,"sequence_number":69}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Epl7hiMXiKTwkS","output_index":0,"sequence_number":70}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"type","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Ha8QfZYlpqEo","output_index":0,"sequence_number":71}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KS0nTmc1R0EVCG","output_index":0,"sequence_number":72}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"R4s0INE9HxucbA","output_index":0,"sequence_number":73}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"behavior","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"drgd1i9m","output_index":0,"sequence_number":74}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"al","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"j9FZryysSjPyXb","output_index":0,"sequence_number":75}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Qg0NYjGp9olic","output_index":0,"sequence_number":76}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"odI5W0mxxjc","output_index":0,"sequence_number":77}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IifrFVaKGa1ss0","output_index":0,"sequence_number":78}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"how","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hrLviybOGFenA","output_index":0,"sequence_number":79}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_it","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Wsc4jf19EofQn","output_index":0,"sequence_number":80}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_w","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pDHN3KdJ9wSncY","output_index":0,"sequence_number":81}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qUdp4yefAlz1i","output_index":0,"sequence_number":82}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nrXGVVIJCpHP2q","output_index":0,"sequence_number":83}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JraI8DBilxR1xQ","output_index":0,"sequence_number":84}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hTkLjbgD8Tzg3","output_index":0,"sequence_number":85}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" named","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1Ql1FXhOU9","output_index":0,"sequence_number":86}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Ac","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"LWiYpKb8OUe4y","output_index":0,"sequence_number":87}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"me","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0bwj9xCqiHrVPU","output_index":0,"sequence_number":88}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XmQPa6UD0OggieH","output_index":0,"sequence_number":89}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" explained","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KVe3fW","output_index":0,"sequence_number":90}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rPzPsAFrSx42","output_index":0,"sequence_number":91}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" My","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"k9XtaHJkO1b1v","output_index":0,"sequence_number":92}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"SQL","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DyGUIXRvcoDWZ","output_index":0,"sequence_number":93}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-to","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HHWJFuBRCo2VM","output_index":0,"sequence_number":94}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0xC32ox20pIgOlX","output_index":0,"sequence_number":95}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Post","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YnY02q3nyF2b","output_index":0,"sequence_number":96}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"gre","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fn6Ilm9Yr9UAg","output_index":0,"sequence_number":97}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"SQL","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fubuYafNTUvDL","output_index":0,"sequence_number":98}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OseYiX","output_index":0,"sequence_number":99}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nzVomOJ6GYReLH0","output_index":0,"sequence_number":100}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hTTy6zlK4qPH","output_index":0,"sequence_number":101}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" added","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"QMP76r5AFl","output_index":0,"sequence_number":102}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" dual","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2jv42JHFDK6","output_index":0,"sequence_number":103}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" writes","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"X26v1MIgG","output_index":0,"sequence_number":104}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mMuJnlLxwBvB","output_index":0,"sequence_number":105}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"89XjEBcyBg5oDu","output_index":0,"sequence_number":106}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" shadow","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"PlYXXekz9","output_index":0,"sequence_number":107}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" read","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7tp9thQuaHv","output_index":0,"sequence_number":108}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" path","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IDakcOHSoGz","output_index":0,"sequence_number":109}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" beyond","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"lAQiMrZr9","output_index":0,"sequence_number":110}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FECGQhH9ZTK8","output_index":0,"sequence_number":111}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" suggestion","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Fh9I4","output_index":0,"sequence_number":112}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0VgUeY5qGcfLftO","output_index":0,"sequence_number":113}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xyez1rBpWPYv","output_index":0,"sequence_number":114}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" did","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MK8z5h8JxK75","output_index":0,"sequence_number":115}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" not","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Hv2rNAAR1AK3","output_index":0,"sequence_number":116}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" explicitly","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"b0SaE","output_index":0,"sequence_number":117}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" say","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"F7ZhA4z3mh7f","output_index":0,"sequence_number":118}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tDxBWjWCNt7l","output_index":0,"sequence_number":119}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"LRx6RC","output_index":0,"sequence_number":120}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" was","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZIDjJTNwMczS","output_index":0,"sequence_number":121}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" live","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"penSlZehEBF","output_index":0,"sequence_number":122}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" or","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dNjDzEeO4VHt2","output_index":0,"sequence_number":123}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" describe","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ROPsYMW","output_index":0,"sequence_number":124}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HwjuXXUUXT6","output_index":0,"sequence_number":125}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" leadership","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CMUEA","output_index":0,"sequence_number":126}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"BwIdwGSg0JvhlJj","output_index":0,"sequence_number":127}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" validation","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tF6LE","output_index":0,"sequence_number":128}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XloZk2zJ3z0vTRO","output_index":0,"sequence_number":129}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" or","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gUNbnj5hznksT","output_index":0,"sequence_number":130}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" results","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uxnAj5Yx","output_index":0,"sequence_number":131}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GMXHX77RYidW","output_index":0,"sequence_number":132}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IMmEJDfWUbG","output_index":0,"sequence_number":133}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UMkLrdXaQSAH02","output_index":0,"sequence_number":134}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"better","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"A6EPufotDU","output_index":0,"sequence_number":135}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_answer","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gTHnSzqz6","output_index":0,"sequence_number":136}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gZTMXrW1SSIwHi","output_index":0,"sequence_number":137}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"oAgewSibX8UQVB","output_index":0,"sequence_number":138}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"At","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mHAktK4z14fNlp","output_index":0,"sequence_number":139}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Ac","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hq3pFE5ge5Nk0","output_index":0,"sequence_number":140}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"me","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"QKsDKIRrnNTRhF","output_index":0,"sequence_number":141}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"P44MW8RYusoymcy","output_index":0,"sequence_number":142}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" I","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WtaOG83oE2gEcx","output_index":0,"sequence_number":143}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" moved","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"K2EVKYSIjz","output_index":0,"sequence_number":144}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" our","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3QvtoB8JkgZJ","output_index":0,"sequence_number":145}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payments","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"g33q5e4","output_index":0,"sequence_number":146}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ledger","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Zf3Szy3HA","output_index":0,"sequence_number":147}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" from","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dzSrYSWG7sK","output_index":0,"sequence_number":148}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" My","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"geLOj4ZZYZrIT","output_index":0,"sequence_number":149}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"SQL","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3xdLui6Cbfx0A","output_index":0,"sequence_number":150}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" to","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bVH8Y69di6QhX","output_index":0,"sequence_number":151}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Postgre","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"yY5bMgiw","output_index":0,"sequence_number":152}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"SQL","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uqPbWYgeRekf9","output_index":0,"sequence_number":153}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" using","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"O1nfUA5JCh","output_index":0,"sequence_number":154}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" dual","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2GA9TWWs8NV","output_index":0,"sequence_number":155}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" writes","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hwt4NQax8","output_index":0,"sequence_number":156}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"iZklqwr5HGQA","output_index":0,"sequence_number":157}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AAKYTu66T3p6mY","output_index":0,"sequence_number":158}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" shadow","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HcYrJse8M","output_index":0,"sequence_number":159}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" read","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nIPeOZEaVp6","output_index":0,"sequence_number":160}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" path","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"K7pWkMFg4fn","output_index":0,"sequence_number":161}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"5HoWhSCh0tthrFO","output_index":0,"sequence_number":162}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" To","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"h6chpI9QboXiG","output_index":0,"sequence_number":163}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" complete","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Aq9uzi0","output_index":0,"sequence_number":164}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" this","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8W54VR3VD94","output_index":0,"sequence_number":165}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" answer","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YcSF08M4Q","output_index":0,"sequence_number":166}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kEYbsg68s82h8os","output_index":0,"sequence_number":167}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" add","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"joDjjNyjljOQ","output_index":0,"sequence_number":168}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"BJWq1he70B8","output_index":0,"sequence_number":169}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" specific","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VUJKdE0","output_index":0,"sequence_number":170}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" responsibilities","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"s1zxE6mQ3dpmNOX","output_index":0,"sequence_number":171}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"trHRtu4doJ2U6B8","output_index":0,"sequence_number":172}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" how","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mexTFF1g7Qhy","output_index":0,"sequence_number":173}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VYQ12TBJ8HCw","output_index":0,"sequence_number":174}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" verified","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Ri1IpxX","output_index":0,"sequence_number":175}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" correctness","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"a79L","output_index":0,"sequence_number":176}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"T6o9DqGiruJPpaS","output_index":0,"sequence_number":177}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fCKCd9nmL3XL","output_index":0,"sequence_number":178}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nibo9FTBMKmX","output_index":0,"sequence_number":179}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" actual","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Eis2QTRSM","output_index":0,"sequence_number":180}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" outcome","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IlM9y9JT","output_index":0,"sequence_number":181}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\"\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NT5sp41urCI8i","output_index":0,"sequence_number":182}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"sX9pusNP6QTrQ","output_index":0,"sequence_number":183}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" },\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"URk04rb3vw10","output_index":0,"sequence_number":184}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wCY1HnSOYznoe","output_index":0,"sequence_number":185}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" {\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZjtT1yIhIOafu","output_index":0,"sequence_number":186}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NiBoVmIh55q","output_index":0,"sequence_number":187}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Mb4BHhWrZ1ltNz","output_index":0,"sequence_number":188}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"question","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Tkvj0HaX","output_index":0,"sequence_number":189}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"LTEzTb1VwCSa0a","output_index":0,"sequence_number":190}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"EA9Of47f4QUUzD","output_index":0,"sequence_number":191}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"How","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"V4MF1EEw8J6wF","output_index":0,"sequence_number":192}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" would","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rdTnxyyTTN","output_index":0,"sequence_number":193}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"srjxwD81kb9q","output_index":0,"sequence_number":194}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" design","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CIfkuNy9g","output_index":0,"sequence_number":195}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" an","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0NyUYUNacUpkP","output_index":0,"sequence_number":196}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"TNCqMi9hvW2pG","output_index":0,"sequence_number":197}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"PWNFrAKQ8kJ","output_index":0,"sequence_number":198}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VN8irt65G6xaI","output_index":0,"sequence_number":199}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kL51Gnu6B","output_index":0,"sequence_number":200}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" API","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JrrhZlSSHqys","output_index":0,"sequence_number":201}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"?\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6BNrwra536pm","output_index":0,"sequence_number":202}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"II7q5CfN1Xz","output_index":0,"sequence_number":203}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OiU9TEHtLNJSW3","output_index":0,"sequence_number":204}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"type","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"jTXwsGa5UJnH","output_index":0,"sequence_number":205}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DdWOaChtoF1xeB","output_index":0,"sequence_number":206}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Xq44kFbHDg9TQe","output_index":0,"sequence_number":207}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"system","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"BuamFYzZor","output_index":0,"sequence_number":208}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_design","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"500cThOhd","output_index":0,"sequence_number":209}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GvqN2ghCqOQ41","output_index":0,"sequence_number":210}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"t5XPwiIEQia","output_index":0,"sequence_number":211}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hNKiPDQrvs3Fql","output_index":0,"sequence_number":212}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"how","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hbchknLD6TGgs","output_index":0,"sequence_number":213}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_it","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"iT03NmUjhFwov","output_index":0,"sequence_number":214}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_w","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"cjABTcjmptXlKV","output_index":0,"sequence_number":215}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uV6If3ZlpAifA","output_index":0,"sequence_number":216}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"5CB5FKGYGUQEOw","output_index":0,"sequence_number":217}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6DteTNE2Q3yq4S","output_index":0,"sequence_number":218}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uGSlmN4pEFOyC","output_index":0,"sequence_number":219}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" included","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CL4LecM","output_index":0,"sequence_number":220}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Fusbv6vnCpkR","output_index":0,"sequence_number":221}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" suggested","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"p0DYDt","output_index":0,"sequence_number":222}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vAtJ3FuUAZHcm","output_index":0,"sequence_number":223}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fWhbu5nb9JE","output_index":0,"sequence_number":224}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ency","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DBDBvqNcM2zj","output_index":0,"sequence_number":225}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" key","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gCiX7eOUZJRs","output_index":0,"sequence_number":226}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"08ZZ841kWphd","output_index":0,"sequence_number":227}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" added","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1ojFGKd0e1","output_index":0,"sequence_number":228}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wnlB4uZyWIV40F","output_index":0,"sequence_number":229}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" state","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"F48haDO44v","output_index":0,"sequence_number":230}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" machine","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RQoTiK4P","output_index":0,"sequence_number":231}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" per","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wFCvSeuX22kg","output_index":0,"sequence_number":232}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"brsReDjTw","output_index":0,"sequence_number":233}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MKcjiqBg1dTz2wj","output_index":0,"sequence_number":234}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AG75bobh0ZT8","output_index":0,"sequence_number":235}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" did","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pcOt91XddHPX","output_index":0,"sequence_number":236}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" not","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"SL7YKS6kYgsl","output_index":0,"sequence_number":237}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" explain","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7WSv2VlG","output_index":0,"sequence_number":238}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" how","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"12ctjWJ6q2CM","output_index":0,"sequence_number":239}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" duplicate","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VshgoP","output_index":0,"sequence_number":240}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" requests","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"r0wUc8h","output_index":0,"sequence_number":241}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"EO883Ik73BgrHG0","output_index":0,"sequence_number":242}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" concurrent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8a3mt","output_index":0,"sequence_number":243}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" retries","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rRa0YgCo","output_index":0,"sequence_number":244}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8ZUeAyIYoFFsXLu","output_index":0,"sequence_number":245}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" or","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wT3rMG3RhH1MQ","output_index":0,"sequence_number":246}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" failures","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YPzlkHD","output_index":0,"sequence_number":247}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" would","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bybunvxHHZ","output_index":0,"sequence_number":248}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" be","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"27w9Y8e7ifmYo","output_index":0,"sequence_number":249}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" handled","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"QexBllJv","output_index":0,"sequence_number":250}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Zncu0bMhC5wb","output_index":0,"sequence_number":251}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"     ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Tq1vuI763pC","output_index":0,"sequence_number":252}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Mjk5nlwXvCdG3B","output_index":0,"sequence_number":253}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"better","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pOmh5YdmUR","output_index":0,"sequence_number":254}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_answer","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HIkaDgWs7","output_index":0,"sequence_number":255}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"txGymHBA2IZNKe","output_index":0,"sequence_number":256}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HXnzfbiOUtwlRL","output_index":0,"sequence_number":257}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"I","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"PeV8hW22wTIEO8H","output_index":0,"sequence_number":258}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" would","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"cvKaKZ9gPm","output_index":0,"sequence_number":259}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" require","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rpnA8qaA","output_index":0,"sequence_number":260}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" an","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"W6v6Do9qMg6aA","output_index":0,"sequence_number":261}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dMAuz5lLjFNX4","output_index":0,"sequence_number":262}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nmToCwd1rVd","output_index":0,"sequence_number":263}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ency","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GE2TnbgGy50N","output_index":0,"sequence_number":264}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" key","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8MOchdEQ0bHH","output_index":0,"sequence_number":265}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ajMneI487r2Ob0n","output_index":0,"sequence_number":266}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" atom","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xD9fzEaC5fN","output_index":0,"sequence_number":267}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ically","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UHsnGyv9JN","output_index":0,"sequence_number":268}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" store","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VBbYbN4BkI","output_index":0,"sequence_number":269}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" it","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"zpG81mrd9bA6o","output_index":0,"sequence_number":270}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" with","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vHzjaUfiLTw","output_index":0,"sequence_number":271}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AmaNovYssLlY","output_index":0,"sequence_number":272}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" request","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4jw31xuq","output_index":0,"sequence_number":273}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" parameters","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fASpx","output_index":0,"sequence_number":274}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ovlbIc9dYFdi","output_index":0,"sequence_number":275}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"34CeOaPjS","output_index":0,"sequence_number":276}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" record","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"BvYJmGtOL","output_index":0,"sequence_number":277}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"N2Wwk2LhYnJi13h","output_index":0,"sequence_number":278}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GLPZpEdoYmaT","output_index":0,"sequence_number":279}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" return","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vuIDNSyYo","output_index":0,"sequence_number":280}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"X0nFot3EOuWt","output_index":0,"sequence_number":281}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" existing","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0hlQwPE","output_index":0,"sequence_number":282}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZBSQjDtQ6","output_index":0,"sequence_number":283}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RYKRKU1nMKCB","output_index":0,"sequence_number":284}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" matching","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ASKMTvK","output_index":0,"sequence_number":285}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" retries","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2JZfmFfW","output_index":0,"sequence_number":286}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" while","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"d9B2OpEafo","output_index":0,"sequence_number":287}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" rejecting","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"9gQAcu","output_index":0,"sequence_number":288}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" mism","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hP3hoJDiPwD","output_index":0,"sequence_number":289}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"atched","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GYAAG1ZYcY","output_index":0,"sequence_number":290}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" reuse","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"sjFgUu9Nlm","output_index":0,"sequence_number":291}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"h4vpUeJXHjDM06S","output_index":0,"sequence_number":292}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" A","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1KBnpbPiBslmMK","output_index":0,"sequence_number":293}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" durable","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FOoZRIrL","output_index":0,"sequence_number":294}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Uqiavcdv1","output_index":0,"sequence_number":295}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" state","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"s0RXI9Bqzl","output_index":0,"sequence_number":296}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" machine","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CBG4NBcQ","output_index":0,"sequence_number":297}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"yYNt8FmSzawf","output_index":0,"sequence_number":298}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" downstream","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bmHIP","output_index":0,"sequence_number":299}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ded","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uVpqUpBipTNx","output_index":0,"sequence_number":300}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"up","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2xsoFjZk1E6q6u","output_index":0,"sequence_number":301}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"lication","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nhaxV1Su","output_index":0,"sequence_number":302}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" would","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WQiQRwQFl6","output_index":0,"sequence_number":303}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" prevent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bN3zVNrh","output_index":0,"sequence_number":304}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" duplicate","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"omYi6C","output_index":0,"sequence_number":305}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" execution","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Y12suo","output_index":0,"sequence_number":306}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" during","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KFrUpX9vy","output_index":0,"sequence_number":307}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" concurrent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ACcba","output_index":0,"sequence_number":308}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" requests","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ojjRnZ6","output_index":0,"sequence_number":309}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IbsYCk2ux0GX","output_index":0,"sequence_number":310}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" failure","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"LGtL3uoU","output_index":0,"sequence_number":311}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" recovery","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0wjG7aN","output_index":0,"sequence_number":312}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\"\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4eLKIvvtsiewv","output_index":0,"sequence_number":313}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"QdhAc3za0fLwg","output_index":0,"sequence_number":314}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" }\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"aaP3umjzZiQiX","output_index":0,"sequence_number":315}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vJkKCP9hmvprnh8","output_index":0,"sequence_number":316}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ],\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"QtZr9yPVuyc4","output_index":0,"sequence_number":317}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mXis4hgGkiuHrSd","output_index":0,"sequence_number":318}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gRPdoDd5hvjTGr","output_index":0,"sequence_number":319}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"feedback","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dwTX8BUM","output_index":0,"sequence_number":320}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2WDmzM8wadHeB6","output_index":0,"sequence_number":321}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UkS1C3KDk8C4l6","output_index":0,"sequence_number":322}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dOzbe2eSHAUg","output_index":0,"sequence_number":323}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" answers","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JMXb3fQo","output_index":0,"sequence_number":324}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" were","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GGsvaS2OrSO","output_index":0,"sequence_number":325}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" relevant","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IUJKVVS","output_index":0,"sequence_number":326}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HfEVRESXk96J","output_index":0,"sequence_number":327}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" technically","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Gxee","output_index":0,"sequence_number":328}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" focused","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FxT6zwFb","output_index":0,"sequence_number":329}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IcQlaHGUnHJsMvg","output_index":0,"sequence_number":330}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Based","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"g7BaZR3Zns","output_index":0,"sequence_number":331}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" on","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2X9GDOfpXCJ32","output_index":0,"sequence_number":332}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"C9iRLTUZK5cD","output_index":0,"sequence_number":333}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" recorded","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"l1mCBRv","output_index":0,"sequence_number":334}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" exchanges","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"J6SAlf","output_index":0,"sequence_number":335}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MWGwfRQJmiylVda","output_index":0,"sequence_number":336}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WYAIJacGyaF","output_index":0,"sequence_number":337}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" main","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"s9BJPx0Pm70","output_index":0,"sequence_number":338}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" opportunity","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1HQC","output_index":0,"sequence_number":339}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nvmeCyigHxhNR","output_index":0,"sequence_number":340}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" to","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"eAwrngR5eSyyB","output_index":0,"sequence_number":341}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" move","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gZIqUVArooD","output_index":0,"sequence_number":342}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" beyond","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7dL1NF8oZ","output_index":0,"sequence_number":343}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" naming","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UoiQtc249","output_index":0,"sequence_number":344}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" techniques","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"b5BU6","output_index":0,"sequence_number":345}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1jd9D0JqkruRUsF","output_index":0,"sequence_number":346}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" show","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"m1MJ6cBPXcV","output_index":0,"sequence_number":347}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" your","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uZwHDOD5oWU","output_index":0,"sequence_number":348}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ownership","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1TpTzH","output_index":0,"sequence_number":349}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Ql2TKZGjcBAB","output_index":0,"sequence_number":350}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" outcomes","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ahJ01yu","output_index":0,"sequence_number":351}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vEqbleuf7fdO","output_index":0,"sequence_number":352}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" behavioral","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RE1Lz","output_index":0,"sequence_number":353}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" questions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FGnFMN","output_index":0,"sequence_number":354}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bUp7Rc6MtASQbkK","output_index":0,"sequence_number":355}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bMTQLbYJWMl1","output_index":0,"sequence_number":356}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" explain","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Z47ksXMw","output_index":0,"sequence_number":357}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" correctness","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3OWQ","output_index":0,"sequence_number":358}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"iJPXJw1HpN9L","output_index":0,"sequence_number":359}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" failure","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZwI1UwqA","output_index":0,"sequence_number":360}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" handling","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xlVR1Ui","output_index":0,"sequence_number":361}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"dOrqORpONCC5","output_index":0,"sequence_number":362}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" design","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qstqb0wy9","output_index":0,"sequence_number":363}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" questions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"5m7vwe","output_index":0,"sequence_number":364}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qBhzR8y7zWvx","output_index":0,"sequence_number":365}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gFDnOB1ixrRa9lR","output_index":0,"sequence_number":366}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"yEc2TxF4AUbDfP","output_index":0,"sequence_number":367}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"strength","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pa5HFrqu","output_index":0,"sequence_number":368}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"s","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"nkswVrt7pqZqgkd","output_index":0,"sequence_number":369}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WcSpR0cmxYBVy3","output_index":0,"sequence_number":370}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" [\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HvB9R3LZeisnu","output_index":0,"sequence_number":371}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rd2NyRBGSHHXP","output_index":0,"sequence_number":372}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ozb6InoriFzzfZ","output_index":0,"sequence_number":373}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KMFIefOaGDKSn","output_index":0,"sequence_number":374}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" grounded","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XbAf7Kz","output_index":0,"sequence_number":375}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hloGrmqGvf40","output_index":0,"sequence_number":376}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FVUg6l","output_index":0,"sequence_number":377}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" answer","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"oW7yqODSb","output_index":0,"sequence_number":378}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" in","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"jROPkCIeJ5TAv","output_index":0,"sequence_number":379}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" a","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"sAzKYD6ufmid25","output_index":0,"sequence_number":380}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" concrete","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"uPDCFVd","output_index":0,"sequence_number":381}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payments","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Zznyd9U","output_index":0,"sequence_number":382}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-led","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DUREgsutku5u","output_index":0,"sequence_number":383}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ger","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hppeN8Exf37sr","output_index":0,"sequence_number":384}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" example","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"A8lPqhvV","output_index":0,"sequence_number":385}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FHOb54f84lFy","output_index":0,"sequence_number":386}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XVcuFfRQZddAi","output_index":0,"sequence_number":387}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"X1tpmUz25SbD9Q","output_index":0,"sequence_number":388}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7l9UiPfPOCcf7","output_index":0,"sequence_number":389}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" added","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"zOAzOFW7yX","output_index":0,"sequence_number":390}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" technical","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"he8SdS","output_index":0,"sequence_number":391}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" detail","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DWSONcFFj","output_index":0,"sequence_number":392}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" beyond","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8oJRdegI9","output_index":0,"sequence_number":393}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" both","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qcYiGgObNKW","output_index":0,"sequence_number":394}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" suggestions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"PgJp","output_index":0,"sequence_number":395}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RQrZvhVwoBJ4","output_index":0,"sequence_number":396}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GJ3jIUT6NBxfC","output_index":0,"sequence_number":397}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Z9hKShylhyJCRB","output_index":0,"sequence_number":398}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"You","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bMayK8tX0Kvsv","output_index":0,"sequence_number":399}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" answered","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"87awGlF","output_index":0,"sequence_number":400}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" directly","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GTBUJhn","output_index":0,"sequence_number":401}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" without","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6dfdbPmI","output_index":0,"sequence_number":402}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" unrelated","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"sCnWXm","output_index":0,"sequence_number":403}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" background","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MCrYQ","output_index":0,"sequence_number":404}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\"\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0oVYNt6Y1GS8l","output_index":0,"sequence_number":405}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"FhawnFGXuS8Wxaz","output_index":0,"sequence_number":406}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ],\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XJgx1Tn5jvvv","output_index":0,"sequence_number":407}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OXyFMuJSl5KYatP","output_index":0,"sequence_number":408}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DFJhmC5sCDP0cc","output_index":0,"sequence_number":409}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"im","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"n4TMvaxG8axtqq","output_index":0,"sequence_number":410}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"provements","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Xfwfyu","output_index":0,"sequence_number":411}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"n3x1WWyPL7YZVC","output_index":0,"sequence_number":412}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" [\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KOUD81WYLHyLv","output_index":0,"sequence_number":413}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"oFQHLHSLSuSc5","output_index":0,"sequence_number":414}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6nesWpd0uFhulo","output_index":0,"sequence_number":415}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"For","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kLFYeBNWXRI8B","output_index":0,"sequence_number":416}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qgcZrTrBIJKg","output_index":0,"sequence_number":417}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migration","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Dv2K7B","output_index":0,"sequence_number":418}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kXezowKBeP41UQA","output_index":0,"sequence_number":419}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" explain","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"n5W7W55j","output_index":0,"sequence_number":420}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" what","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OSunJLVdt6E","output_index":0,"sequence_number":421}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vF2ZIkpcmAuP","output_index":0,"sequence_number":422}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" personally","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0uNey","output_index":0,"sequence_number":423}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" led","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZBTvrPHvBqZC","output_index":0,"sequence_number":424}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wuowJONanfj7","output_index":0,"sequence_number":425}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" give","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2nARjdHRDU6","output_index":0,"sequence_number":426}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AN2mgHszPaMl","output_index":0,"sequence_number":427}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" actual","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Nz0VWAOdP","output_index":0,"sequence_number":428}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" outcome","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NFKWzcXy","output_index":0,"sequence_number":429}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"6HcQ9sDOOwOe","output_index":0,"sequence_number":430}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"vMuTRsCV6Mvn4","output_index":0,"sequence_number":431}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0k1bzHf4GOgWfl","output_index":0,"sequence_number":432}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Describe","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fSsRV0Q3","output_index":0,"sequence_number":433}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" validation","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NNxLU","output_index":0,"sequence_number":434}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"usonaGBXN71nl1H","output_index":0,"sequence_number":435}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" cut","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"y8FHfcZFhQTv","output_index":0,"sequence_number":436}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"over","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"H361u1qj5xDS","output_index":0,"sequence_number":437}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qw7aJH1z5ZaBBnh","output_index":0,"sequence_number":438}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4DjuunlyCPqq","output_index":0,"sequence_number":439}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" rollback","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Mde1aiG","output_index":0,"sequence_number":440}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" decisions","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HSgoRH","output_index":0,"sequence_number":441}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" when","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"d4fmlRlIo4f","output_index":0,"sequence_number":442}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" discussing","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZvJyv","output_index":0,"sequence_number":443}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" critical","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"LlgrXYK","output_index":0,"sequence_number":444}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" data","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"URWqWfpf8Be","output_index":0,"sequence_number":445}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" migrations","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1apb5","output_index":0,"sequence_number":446}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WVlKBw74LiUt","output_index":0,"sequence_number":447}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"d9oNM6f1JY4AI","output_index":0,"sequence_number":448}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"sHHlO5Yead9RhK","output_index":0,"sequence_number":449}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"For","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4VqOBZRhjMVyr","output_index":0,"sequence_number":450}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KKyP2ft4G6XMV","output_index":0,"sequence_number":451}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2qb9fJkiPcm","output_index":0,"sequence_number":452}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ency","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"SoygzpDvqAme","output_index":0,"sequence_number":453}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"cOqTNq4RXviQXhV","output_index":0,"sequence_number":454}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" cover","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3WMLlqRkBL","output_index":0,"sequence_number":455}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" duplicate","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gEoKdX","output_index":0,"sequence_number":456}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" requests","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"txrOTy1","output_index":0,"sequence_number":457}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pEmj6Km6Lx4Vgjx","output_index":0,"sequence_number":458}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" concurrency","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"K075","output_index":0,"sequence_number":459}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YoZbIRP8206DQZj","output_index":0,"sequence_number":460}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" durable","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"i4PEGBt6","output_index":0,"sequence_number":461}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" state","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RM4mL2tnO8","output_index":0,"sequence_number":462}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4GFSngCZbYKxg04","output_index":0,"sequence_number":463}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"AFIx4b4vCnGa","output_index":0,"sequence_number":464}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" downstream","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1nBPe","output_index":0,"sequence_number":465}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JZ1Ax7Xqm","output_index":0,"sequence_number":466}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" execution","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"q5i49S","output_index":0,"sequence_number":467}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\"\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HtxjMaXbymz0y","output_index":0,"sequence_number":468}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"TbUEwoN0z2td8GM","output_index":0,"sequence_number":469}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ],\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"YnJMsWQ9upq1","output_index":0,"sequence_number":470}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pO7tyBrkP9HssLg","output_index":0,"sequence_number":471}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"DbuWiW1mgkl637","output_index":0,"sequence_number":472}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"follow","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WxvvFe903n","output_index":0,"sequence_number":473}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_up","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mPnsP8pH8jtok","output_index":0,"sequence_number":474}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"_email","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZuQrpEHAvU","output_index":0,"sequence_number":475}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hKQijN3epzgQJX","output_index":0,"sequence_number":476}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" {\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pqDibDiEsu349","output_index":0,"sequence_number":477}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pJIcXbUy1jfSo","output_index":0,"sequence_number":478}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"Mr80gbqrt7WsmH","output_index":0,"sequence_number":479}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"subject","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"h2OHdSPms","output_index":0,"sequence_number":480}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"fK4ZUszCMWkSN0","output_index":0,"sequence_number":481}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"PdnCJ5NXGADS20","output_index":0,"sequence_number":482}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Thank","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tshOGtxuHJQ","output_index":0,"sequence_number":483}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ynM4CoUISQXD","output_index":0,"sequence_number":484}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UjtCqDJHPunB","output_index":0,"sequence_number":485}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MHKUZXYjjF8a","output_index":0,"sequence_number":486}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" conversation","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2nt","output_index":0,"sequence_number":487}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\",\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hUM8W9QX9yXB7","output_index":0,"sequence_number":488}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"   ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZbvexWeZfCu4i","output_index":0,"sequence_number":489}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"XOhifYmRXpaaOJ","output_index":0,"sequence_number":490}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"body","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xaeiCKg0RaR5","output_index":0,"sequence_number":491}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4GIpFgrv2NBsSk","output_index":0,"sequence_number":492}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MiX8zsRRJ8yNdd","output_index":0,"sequence_number":493}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Hi","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"U7YgLWrKZB7V0B","output_index":0,"sequence_number":494}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",\\","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"IrTWlgJB1q5W4B","output_index":0,"sequence_number":495}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"i9vvpB2NkA52JQc","output_index":0,"sequence_number":496}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"NackAvCDOuGe64","output_index":0,"sequence_number":497}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Thank","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UIvIfdfShQA","output_index":0,"sequence_number":498}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" you","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"2OlT1ZMAWS7W","output_index":0,"sequence_number":499}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"eztXuMVFpv3u","output_index":0,"sequence_number":500}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" speaking","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZcsjTAA","output_index":0,"sequence_number":501}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" with","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"WHcO6ZfVPWw","output_index":0,"sequence_number":502}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" me","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"HRs12dZoatOct","output_index":0,"sequence_number":503}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3MIHtu3uQbNdpGB","output_index":0,"sequence_number":504}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" I","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"x2Hz4ipHt4i4K2","output_index":0,"sequence_number":505}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" appreciated","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"xKqF","output_index":0,"sequence_number":506}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"so6AxyFGOwpD","output_index":0,"sequence_number":507}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" discussion","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"UUgjg","output_index":0,"sequence_number":508}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" about","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"kcs0r0cYVm","output_index":0,"sequence_number":509}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" designing","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"s60ye4","output_index":0,"sequence_number":510}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" an","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JyOSHZRV9zMcW","output_index":0,"sequence_number":511}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OVeIGtQayZQ0q","output_index":0,"sequence_number":512}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"GpgcOWs5wIX","output_index":0,"sequence_number":513}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ent","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"L9elpGStMxmud","output_index":0,"sequence_number":514}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"tuWED41T9","output_index":0,"sequence_number":515}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" API","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"b4fZ4iiLFpL4","output_index":0,"sequence_number":516}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"wWpLIwpw5ODBIsK","output_index":0,"sequence_number":517}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" particularly","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"CTS","output_index":0,"sequence_number":518}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"gvxwe2KM6by3","output_index":0,"sequence_number":519}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" role","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hAPsEiQWUIW","output_index":0,"sequence_number":520}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"mLnL9FLnfd2g8","output_index":0,"sequence_number":521}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" id","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"BhoTps1JXDHff","output_index":0,"sequence_number":522}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"empot","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"9jzldMonkCt","output_index":0,"sequence_number":523}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"ency","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"cAjyCZaZGVeO","output_index":0,"sequence_number":524}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" keys","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"evzgyeiDxwC","output_index":0,"sequence_number":525}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"hjJwKJkFGWIS","output_index":0,"sequence_number":526}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" payout","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"MtjC1sHgW","output_index":0,"sequence_number":527}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" state","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"9LYrjMR8jm","output_index":0,"sequence_number":528}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" management","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"7qp7x","output_index":0,"sequence_number":529}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0BzBFVyMonGbt6W","output_index":0,"sequence_number":530}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" I","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"KfIU3MGImkvPMz","output_index":0,"sequence_number":531}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"’m","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"8HxaYWqi8LahGQ","output_index":0,"sequence_number":532}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" interested","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"JnZjH","output_index":0,"sequence_number":533}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" in","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"oz8LFQOO0hfLr","output_index":0,"sequence_number":534}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" continuing","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"1JeHZ","output_index":0,"sequence_number":535}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"RrVdHSe98079","output_index":0,"sequence_number":536}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" conversation","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"VQ4","output_index":0,"sequence_number":537}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"OKHFGWKT4TLi","output_index":0,"sequence_number":538}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" learning","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"bpvg3Fm","output_index":0,"sequence_number":539}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" about","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"qwyy6ful1j","output_index":0,"sequence_number":540}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" next","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"c61bIfrtSEe","output_index":0,"sequence_number":541}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" steps","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ZoE467EC3B","output_index":0,"sequence_number":542}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\\","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"u0ggpVaz0mTF2g","output_index":0,"sequence_number":543}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"rrO7U7dzmE6UYMz","output_index":0,"sequence_number":544}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"4MygTIu9O8R9cy","output_index":0,"sequence_number":545}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Best","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"ISSaUY0omCKM","output_index":0,"sequence_number":546}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":",\\","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"0aLgBX1DJ8znP5","output_index":0,"sequence_number":547}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"t72wySwkFq2Q5Yi","output_index":0,"sequence_number":548}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Alex","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pPt2BuPHFXvC","output_index":0,"sequence_number":549}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Doe","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"jDttXJ0ud2if","output_index":0,"sequence_number":550}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\"\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"L0H49EX3qJjauw","output_index":0,"sequence_number":551}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"pqHwS1HI6zqhfPi","output_index":0,"sequence_number":552}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" }\n","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"3LSv1mObcrjc3","output_index":0,"sequence_number":553}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"}","item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"obfuscation":"l4kSVFpCtkubCQA","output_index":0,"sequence_number":554}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","logprobs":[],"output_index":0,"sequence_number":555,"text":"{\n  \"summary\": \"You discussed a payments-ledger migration and an idempotent payout API. Your recorded answers followed the suggestions you were shown and added useful technical detail, but were brief.\",\n  \"questions\": [\n    {\n      \"question\": \"Tell me about a migration of a critical data store you led.\",\n      \"type\": \"behavioral\",\n      \"how_it_went\": \"You named Acme, explained the MySQL-to-PostgreSQL migration, and added dual writes and a shadow read path beyond the suggestion. You did not explicitly say the migration was live or describe your leadership, validation, or results.\",\n      \"better_answer\": \"At Acme, I moved our payments ledger from MySQL to PostgreSQL using dual writes and a shadow read path. To complete this answer, add your specific responsibilities, how you verified correctness, and the actual outcome.\"\n    },\n    {\n      \"question\": \"How would you design an idempotent payout API?\",\n      \"type\": \"system_design\",\n      \"how_it_went\": \"You included the suggested idempotency key and added a state machine per payout. You did not explain how duplicate requests, concurrent retries, or failures would be handled.\",\n      \"better_answer\": \"I would require an idempotency key, atomically store it with the request parameters and payout record, and return the existing payout for matching retries while rejecting mismatched reuse. A durable payout state machine and downstream deduplication would prevent duplicate execution during concurrent requests and failure recovery.\"\n    }\n  ],\n  \"feedback\": \"Your answers were relevant and technically focused. Based on the recorded exchanges, your main opportunity is to move beyond naming techniques: show your ownership and outcomes for behavioral questions, and explain correctness and failure handling for design questions.\",\n  \"strengths\": [\n    \"You grounded the migration answer in a concrete payments-ledger example.\",\n    \"You added technical detail beyond both suggestions.\",\n    \"You answered directly without unrelated background.\"\n  ],\n  \"improvements\": [\n    \"For the migration, explain what you personally led and give the actual outcome.\",\n    \"Describe validation, cutover, and rollback decisions when discussing critical data migrations.\",\n    \"For idempotency, cover duplicate requests, concurrency, durable state, and downstream payout execution.\"\n  ],\n  \"follow_up_email\": {\n    \"subject\": \"Thank you for the conversation\",\n    \"body\": \"Hi,\\n\\nThank you for speaking with me. I appreciated the discussion about designing an idempotent payout API, particularly the role of idempotency keys and payout state management. I’m interested in continuing the conversation and learning about next steps.\\n\\nBest,\\nAlex Doe\"\n  }\n}"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"{\n  \"summary\": \"You discussed a payments-ledger migration and an idempotent payout API. Your recorded answers followed the suggestions you were shown and added useful technical detail, but were brief.\",\n  \"questions\": [\n    {\n      \"question\": \"Tell me about a migration of a critical data store you led.\",\n      \"type\": \"behavioral\",\n      \"how_it_went\": \"You named Acme, explained the MySQL-to-PostgreSQL migration, and added dual writes and a shadow read path beyond the suggestion. You did not explicitly say the migration was live or describe your leadership, validation, or results.\",\n      \"better_answer\": \"At Acme, I moved our payments ledger from MySQL to PostgreSQL using dual writes and a shadow read path. To complete this answer, add your specific responsibilities, how you verified correctness, and the actual outcome.\"\n    },\n    {\n      \"question\": \"How would you design an idempotent payout API?\",\n      \"type\": \"system_design\",\n      \"how_it_went\": \"You included the suggested idempotency key and added a state machine per payout. You did not explain how duplicate requests, concurrent retries, or failures would be handled.\",\n      \"better_answer\": \"I would require an idempotency key, atomically store it with the request parameters and payout record, and return the existing payout for matching retries while rejecting mismatched reuse. A durable payout state machine and downstream deduplication would prevent duplicate execution during concurrent requests and failure recovery.\"\n    }\n  ],\n  \"feedback\": \"Your answers were relevant and technically focused. Based on the recorded exchanges, your main opportunity is to move beyond naming techniques: show your ownership and outcomes for behavioral questions, and explain correctness and failure handling for design questions.\",\n  \"strengths\": [\n    \"You grounded the migration answer in a concrete payments-ledger example.\",\n    \"You added technical detail beyond both suggestions.\",\n    \"You answered directly without unrelated background.\"\n  ],\n  \"improvements\": [\n    \"For the migration, explain what you personally led and give the actual outcome.\",\n    \"Describe validation, cutover, and rollback decisions when discussing critical data migrations.\",\n    \"For idempotency, cover duplicate requests, concurrency, durable state, and downstream payout execution.\"\n  ],\n  \"follow_up_email\": {\n    \"subject\": \"Thank you for the conversation\",\n    \"body\": \"Hi,\\n\\nThank you for speaking with me. I appreciated the discussion about designing an idempotent payout API, particularly the role of idempotency keys and payout state management. I’m interested in continuing the conversation and learning about next steps.\\n\\nBest,\\nAlex Doe\"\n  }\n}"},"sequence_number":556}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"{\n  \"summary\": \"You discussed a payments-ledger migration and an idempotent payout API. Your recorded answers followed the suggestions you were shown and added useful technical detail, but were brief.\",\n  \"questions\": [\n    {\n      \"question\": \"Tell me about a migration of a critical data store you led.\",\n      \"type\": \"behavioral\",\n      \"how_it_went\": \"You named Acme, explained the MySQL-to-PostgreSQL migration, and added dual writes and a shadow read path beyond the suggestion. You did not explicitly say the migration was live or describe your leadership, validation, or results.\",\n      \"better_answer\": \"At Acme, I moved our payments ledger from MySQL to PostgreSQL using dual writes and a shadow read path. To complete this answer, add your specific responsibilities, how you verified correctness, and the actual outcome.\"\n    },\n    {\n      \"question\": \"How would you design an idempotent payout API?\",\n      \"type\": \"system_design\",\n      \"how_it_went\": \"You included the suggested idempotency key and added a state machine per payout. You did not explain how duplicate requests, concurrent retries, or failures would be handled.\",\n      \"better_answer\": \"I would require an idempotency key, atomically store it with the request parameters and payout record, and return the existing payout for matching retries while rejecting mismatched reuse. A durable payout state machine and downstream deduplication would prevent duplicate execution during concurrent requests and failure recovery.\"\n    }\n  ],\n  \"feedback\": \"Your answers were relevant and technically focused. Based on the recorded exchanges, your main opportunity is to move beyond naming techniques: show your ownership and outcomes for behavioral questions, and explain correctness and failure handling for design questions.\",\n  \"strengths\": [\n    \"You grounded the migration answer in a concrete payments-ledger example.\",\n    \"You added technical detail beyond both suggestions.\",\n    \"You answered directly without unrelated background.\"\n  ],\n  \"improvements\": [\n    \"For the migration, explain what you personally led and give the actual outcome.\",\n    \"Describe validation, cutover, and rollback decisions when discussing critical data migrations.\",\n    \"For idempotency, cover duplicate requests, concurrency, durable state, and downstream payout execution.\"\n  ],\n  \"follow_up_email\": {\n    \"subject\": \"Thank you for the conversation\",\n    \"body\": \"Hi,\\n\\nThank you for speaking with me. I appreciated the discussion about designing an idempotent payout API, particularly the role of idempotency keys and payout state management. I’m interested in continuing the conversation and learning about next steps.\\n\\nBest,\\nAlex Doe\"\n  }\n}"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":557}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_0306b39549bde8c2016ac678bc957c87d29fff612d8a1b09a9","object":"response","created_at":1791391932,"status":"completed","access_programs":null,"background":false,"completed_at":1791391944,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":18048,"max_tool_calls":null,"model":"gpt-6.1-sol","moderation":null,"output":[{"id":"msg_0306b39549bde8c2016ac678be1f5087d29acaf9edb914e513","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"{\n  \"summary\": \"You discussed a payments-ledger migration and an idempotent payout API. Your recorded answers followed the suggestions you were shown and added useful technical detail, but were brief.\",\n  \"questions\": [\n    {\n      \"question\": \"Tell me about a migration of a critical data store you led.\",\n      \"type\": \"behavioral\",\n      \"how_it_went\": \"You named Acme, explained the MySQL-to-PostgreSQL migration, and added dual writes and a shadow read path beyond the suggestion. You did not explicitly say the migration was live or describe your leadership, validation, or results.\",\n      \"better_answer\": \"At Acme, I moved our payments ledger from MySQL to PostgreSQL using dual writes and a shadow read path. To complete this answer, add your specific responsibilities, how you verified correctness, and the actual outcome.\"\n    },\n    {\n      \"question\": \"How would you design an idempotent payout API?\",\n      \"type\": \"system_design\",\n      \"how_it_went\": \"You included the suggested idempotency key and added a state machine per payout. You did not explain how duplicate requests, concurrent retries, or failures would be handled.\",\n      \"better_answer\": \"I would require an idempotency key, atomically store it with the request parameters and payout record, and return the existing payout for matching retries while rejecting mismatched reuse. A durable payout state machine and downstream deduplication would prevent duplicate execution during concurrent requests and failure recovery.\"\n    }\n  ],\n  \"feedback\": \"Your answers were relevant and technically focused. Based on the recorded exchanges, your main opportunity is to move beyond naming techniques: show your ownership and outcomes for behavioral questions, and explain correctness and failure handling for design questions.\",\n  \"strengths\": [\n    \"You grounded the migration answer in a concrete payments-ledger example.\",\n    \"You added technical detail beyond both suggestions.\",\n    \"You answered directly without unrelated background.\"\n  ],\n  \"improvements\": [\n    \"For the migration, explain what you personally led and give the actual outcome.\",\n    \"Describe validation, cutover, and rollback decisions when discussing critical data migrations.\",\n    \"For idempotency, cover duplicate requests, concurrency, durable state, and downstream payout execution.\"\n  ],\n  \"follow_up_email\": {\n    \"subject\": \"Thank you for the conversation\",\n    \"body\": \"Hi,\\n\\nThank you for speaking with me. I appreciated the discussion about designing an idempotent payout API, particularly the role of idempotency keys and payout state management. I’m interested in continuing the conversation and learning about next steps.\\n\\nBest,\\nAlex Doe\"\n  }\n}"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"output","schema":{"type":"object","properties":{"summary":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"type":{"type":"string"},"how_it_went":{"type":"string"},"better_answer":{"type":"string"}},"required":["question","type","how_it_went","better_answer"],"additionalProperties":false}},"feedback":{"type":"string"},"strengths":{"type":"array","items":{"type":"string"}},"improvements":{"type":"array","items":{"type":"string"}},"follow_up_email":{"type":"object","properties":{"subject":{"type":"string"},"body":{"type":"string"}},"required":["subject","body"],"additionalProperties":false}},"required":["summary","questions","feedback","strengths","improvements","follow_up_email"],"additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":547,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":558,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":1105},"user":null,"metadata":{}},"sequence_number":558}
+

@@ -2,12 +2,15 @@
 
     uv run python scripts/record_worker_fixtures.py                    # Claude, every job
     uv run python scripts/record_worker_fixtures.py --only extract pack
+    uv run python scripts/record_worker_fixtures.py --provider openai  # OpenAI, every job
     uv run python scripts/record_worker_fixtures.py --deepgram me.wav  # also Deepgram
 
-Needs ANTHROPIC_API_KEY (the direct API, so recordings carry no Bedrock specifics) and, for
-Deepgram, DEEPGRAM_API_KEY; from the environment or .env.
+Needs ANTHROPIC_API_KEY (the direct API, so recordings carry no Bedrock specifics), or
+OPENAI_API_KEY and the COPILOT_OPENAI_<JOB>_MODEL settings for --provider openai, and, for
+Deepgram, DEEPGRAM_API_KEY; from the environment or .env. Claude recordings go to
+fixtures/claude/, OpenAI recordings to fixtures/openai/ (Responses API events).
 
-Each Claude request is the one the worker sends (copilot_worker.prompts builds both), sent
+Each model request is the one the worker sends (copilot_worker.prompts builds both), sent
 through the official SDK over a transport that keeps the raw response bytes:
 
 - extract, job: the sample resume and job description in fixtures/inputs.
@@ -23,6 +26,7 @@ Recordings hold no secrets, only the sample documents' and transcripts' content.
 import argparse
 import asyncio
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -30,9 +34,10 @@ from typing import Any
 
 import anthropic
 import httpx2
+import openai
 
 from copilot_core.dotenv import load_dotenv
-from copilot_core.llm import AnthropicProvider, LLMDone, LLMRequest
+from copilot_core.llm import AnthropicProvider, LLMDone, LLMProvider, LLMRequest, OpenAIProvider
 from copilot_worker import prompts
 from copilot_worker.config import WorkerSettings
 from copilot_worker.documents import document_block
@@ -43,6 +48,7 @@ from copilot_worker.stt import DeepgramPrerecorded
 
 FIXTURES = Path(__file__).resolve().parent.parent / "apps" / "worker" / "tests" / "fixtures"
 INPUTS = FIXTURES / "inputs"
+SHORT_ID_TEXT = re.compile(r"n:[0-9a-z]{2,8}")
 
 INTERVIEW = "\n".join(
     [
@@ -93,8 +99,48 @@ class Recorder(httpx2.AsyncBaseTransport):
         return httpx2.Response(response.status_code, headers=response.headers, content=self.body)
 
 
+def recorded_text(path: Path) -> str:
+    """The output text of a recorded stream, Claude's or OpenAI's."""
+    out: list[str] = []
+    for line in path.read_text("utf-8").splitlines():
+        if not line.startswith("data: "):
+            continue
+        event = json.loads(line[6:])
+        if event.get("type") == "content_block_delta":
+            out.append(event["delta"].get("text", ""))
+        elif event.get("type") == "response.output_text.delta":
+            out.append(event["delta"])
+    return "".join(out)
+
+
+def keep_short_ids_whole(body: str) -> str:
+    """OpenAI streams a few characters per delta, so a short id (`n:3f2a`) can span several
+    deltas, where the {{ref:N}} replacement cannot find it. Move each delta boundary that
+    falls inside a short id to its end: the same events and text, other boundaries."""
+    lines = body.split("\n")
+    deltas = [
+        (i, json.loads(line[6:]))
+        for i, line in enumerate(lines)
+        if line.startswith("data: ") and '"response.output_text.delta"' in line
+    ]
+    text = "".join(e["delta"] for _, e in deltas)
+    inside = {p for m in SHORT_ID_TEXT.finditer(text) for p in range(m.start() + 1, m.end())}
+    cuts, at = [], 0
+    for _, e in deltas:
+        at += len(e["delta"])
+        while at in inside:
+            at += 1
+        cuts.append(max(at, cuts[-1] if cuts else 0))
+    start = 0
+    for (i, e), end in zip(deltas, cuts, strict=True):
+        e["delta"] = text[start:end]
+        lines[i] = "data: " + json.dumps(e, separators=(",", ":"), ensure_ascii=False)
+        start = end
+    return "\n".join(lines)
+
+
 async def record(
-    provider: AnthropicProvider, recorder: Recorder, model: str, params: dict[str, Any],
+    provider: LLMProvider, recorder: Recorder, model: str, params: dict[str, Any],
     req: LLMRequest, name: str, refs: list[str] | None = None,
 ) -> str:  # fmt: skip
     parts: list[str] = []
@@ -108,10 +154,17 @@ async def record(
     if done.stop_reason != "end_turn":
         sys.exit(f"{name}: stop reason {done.stop_reason}; not saved")
     body = recorder.body.decode("utf-8")
+    if refs and provider.name == "openai":
+        body = keep_short_ids_whole(body)
     for i, short in enumerate(refs or []):
         body = body.replace(short, f"{{{{ref:{i}}}}}")
-    (FIXTURES / "claude" / f"{name}.sse").write_text(body, "utf-8", newline="\n")
-    print(f"wrote claude/{name}.sse ({len(body)} bytes, {done.usage.output_tokens} output tokens)")
+    wire = "openai" if provider.name == "openai" else "claude"
+    (FIXTURES / wire / f"{name}.sse").write_text(body, "utf-8", newline="\n")
+    u = done.usage
+    print(
+        f"wrote {wire}/{name}.sse ({len(body)} bytes, {model}, {u.input_tokens} in, "
+        f"{u.cached_tokens} cached, {u.output_tokens} out, {done.first_token_ms} ms)"
+    )
     return "".join(parts)
 
 
@@ -119,19 +172,34 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="Re-record the worker's provider fixtures.")
     jobs = ["extract", "job", "pack", "postcall_interview", "postcall_standup", "postcall_meeting"]
     parser.add_argument("--only", nargs="+", choices=jobs, default=jobs)
+    parser.add_argument("--provider", choices=["anthropic", "openai"], default="anthropic")
     parser.add_argument("--deepgram", type=Path, help="audio file to send to Deepgram")
     args = parser.parse_args()
     load_dotenv()
-    settings = WorkerSettings(llm_providers=["anthropic"])  # pyright: ignore[reportCallIssue]
-    if not settings.anthropic_api_key or not settings.anthropic_api_key.get_secret_value():
-        sys.exit("ANTHROPIC_API_KEY is not set")
+    settings = WorkerSettings(llm_providers=[args.provider])  # pyright: ignore[reportCallIssue]
     recorder = Recorder()
-    client = anthropic.AsyncAnthropic(
-        api_key=settings.anthropic_api_key.get_secret_value(),
-        http_client=anthropic.DefaultAsyncHttpxClient(transport=recorder),
-        timeout=600,
-    )
-    provider = AnthropicProvider("anthropic", client)
+    provider: LLMProvider
+    if args.provider == "openai":
+        if not settings.openai_api_key or not settings.openai_api_key.get_secret_value():
+            sys.exit("OPENAI_API_KEY is not set")
+        provider = OpenAIProvider(
+            "openai",
+            openai.AsyncOpenAI(
+                api_key=settings.openai_api_key.get_secret_value(),
+                http_client=openai.DefaultAsyncHttpxClient(transport=recorder),
+                timeout=600,
+                max_retries=0,
+            ),
+        )
+    else:
+        if not settings.anthropic_api_key or not settings.anthropic_api_key.get_secret_value():
+            sys.exit("ANTHROPIC_API_KEY is not set")
+        client = anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            http_client=anthropic.DefaultAsyncHttpxClient(transport=recorder),
+            timeout=600,
+        )
+        provider = AnthropicProvider("anthropic", client)
     routes = build_routes(settings, [provider])
 
     def route(job: str) -> tuple[str, dict[str, Any]]:
@@ -140,7 +208,7 @@ async def main() -> int:
 
     resume = document_block((INPUTS / "resume.md").read_bytes(), "text/markdown", "Resume")
     job_md = (INPUTS / "job.md").read_bytes()
-    extract_path = FIXTURES / "claude" / "extract.sse"
+    extract_path = FIXTURES / ("openai" if args.provider == "openai" else "claude") / "extract.sse"
     if "extract" in args.only:
         await record(
             provider, recorder, *route("extract"), prompts.resume_request(resume), "extract"
@@ -150,12 +218,7 @@ async def main() -> int:
         await record(provider, recorder, *route("job"), prompts.job_request(doc), "job")
     if "pack" in args.only:
         # The digest the pack is built from: the recorded extraction, as nodes in order.
-        text = "".join(
-            json.loads(line[6:])["delta"].get("text", "")
-            for line in extract_path.read_text("utf-8").splitlines()
-            if line.startswith("data: ") and '"text_delta"' in line
-        )
-        data = json.loads(text)
+        data = json.loads(recorded_text(extract_path))
         nodes: list[dict[str, Any]] = []
         for kind, items in (("role", data["roles"]), ("project", data["projects"]),
                             ("story", data["stories"]), ("skill", data["skills"])):  # fmt: skip
