@@ -113,7 +113,7 @@ Every live dependency has a fallback, so a failure makes answers slower or thinn
 | Gateway task dies or is replaced | WebSocket closes | Client reconnects and resumes from Valkey | A brief "reconnecting" |
 | Aurora slow or down | Retrieval over 100 ms | Skip full search; answer from hot digest and session pack | Talking points as usual; deep answer marked limited |
 | Valkey unavailable | Connection errors | Gateway keeps the session in memory and buffers logs until Valkey returns | Nothing, unless the gateway also restarts |
-| Model declines (refusal) | `stop_reason: "refusal"` | Direct API: server-side `fallbacks: "default"`. Bedrock has no server-side fallback, so the gateway retries on the next route with another model (Sonnet 5, thinking off; never `between_tools`, which only Sonnet 5.5 accepts). A refusal after text has streamed ends that pass | The fallback model's answer, or `answer.error` with code `refused` |
+| Model declines (refusal) | `stop_reason: "refusal"`; on OpenAI a `refusal` output item, the content filter or a policy failure, mapped to the same stop reason | Direct API: server-side `fallbacks: "default"`. Bedrock has no server-side fallback, so the gateway retries on the next route with another model (Sonnet 5, thinking off; never `between_tools`, which only Sonnet 5.5 accepts). OpenAI: the next route with another model (another provider in the list). A refusal after text has streamed ends that pass | The fallback model's answer, or `answer.error` with code `refused` (also when every route refused) |
 
 ### Memory system
 
@@ -147,6 +147,8 @@ Memory is a per-user career knowledge graph with embeddings, compiled into three
 
 Each job gets the fastest model that is good enough for it; Opus stays out of the live path.
 
+The routing layer is provider-neutral. Claude is the design default, and the table below names Claude models; OpenAI is a supported alternative (see "OpenAI as a provider" below), so the whole system runs with an Anthropic key, Bedrock, an OpenAI key, or several in fallback order.
+
 | Job | Model | Why |
 | --- | --- | --- |
 | Question detector | Local classifier on the gateway, then Haiku 4.5 on likely questions only | Most utterances never reach a model |
@@ -156,10 +158,10 @@ Each job gets the fastest model that is good enough for it; Opus stays out of th
 | Memory extraction | Opus 5.5 on Flex | Wrong facts in memory get repeated live, so accuracy matters most |
 | Session packs, summaries, feedback | Sonnet 5.5 on Flex | Good enough for these at half the Opus price |
 | Hot digest | No model: rendered deterministically from memory nodes, at most about 3.5k tokens | Byte-identical output for prompt caching; the facts are already extracted (build step 4a) |
-| Embeddings and reranking | Cohere Embed v4 (on demand, 1024 output dimensions) and Rerank 3.5 on Bedrock; Voyage as alternative. Not Embed v3, which Bedrock offers only as provisioned throughput | Stays inside AWS, no extra network hop on the live path |
+| Embeddings and reranking | Cohere Embed v4 (on demand, 1024 output dimensions) and Rerank 3.5 on Bedrock; Voyage as alternative. Not Embed v3, which Bedrock offers only as provisioned throughput. OpenAI embeddings at 1024 dimensions when only OpenAI is configured | Stays inside AWS, no extra network hop on the live path |
 | Speech to text | Deepgram or AssemblyAI streaming | Decided by benchmark |
 
-- All calls go through one internal routing layer, so a model can be swapped per job without touching the pipeline.
+- All calls go through one internal routing layer (`copilot_core.llm.ModelRouter`, shared by the gateway and the workers), so a model or a provider can be swapped per job without touching the pipeline. Each provider maps the same request (system blocks, user turn, optional JSON schema) to its wire format, and its stream back to text deltas and one result with usage, stop reason and tier.
 - An eval set of about 100 real questions per mode decides each slot.
 - The hot digest sits first in every prompt, byte-identical, so prompt caching hits. Each model has a minimum prompt length before caching applies; if the digest is shorter than Haiku's minimum on Bedrock, pad the cached prefix with the session pack or accept uncached fast-pass cost.
 - **Untrusted text is marked as data.** Transcripts, tickets and Slack messages go into prompts inside clearly labeled data blocks, never as instructions, and extraction output is validated against a schema before it becomes a memory proposal.
@@ -170,6 +172,16 @@ Each job gets the fastest model that is good enough for it; Opus stays out of th
 - **US geo cross-region inference** (`us.` inference profiles) for more throughput headroom while keeping data in the US.
 - **Flex on Bedrock:** workers send `service_tier: "flex"` in the request body (the SDK has no typed field for it). If Bedrock rejects the request, the router runs the next route, Standard on Bedrock, then the direct API.
 - Before launch, confirm on each Claude model card in Bedrock that prompt caching and the Priority and Flex tiers are supported, and the exact Flex request parameter. The direct Anthropic API stays the fallback.
+
+**OpenAI as a provider.** `COPILOT_LLM_PROVIDERS` takes `openai` alone or in an ordered list (`openai,anthropic`, `bedrock,openai`); the first provider gets one retry, then the next runs.
+
+- **Client:** the official OpenAI SDK's async client on the Responses API, streaming, with `store: false`, over HTTP/2 with idle connections kept for 120 s. The gateway opens the connection at startup and at each session start (`ModelRouter.warm`): a new TLS connection cost about 2 s in the October 2026 measurements, as much as the first token.
+- **Models:** a model and a reasoning effort per job (detector, fast, deep, extraction, job description, pack, post-call), all settings (`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); none is built in. A job with reasoning gets extra output tokens, since OpenAI counts reasoning in the output limit. The Claude-only settings (`between_tools`, effort, `fallbacks: "default"`, Priority, Flex) never reach OpenAI routes; OpenAI runs on its default tier.
+- **Same prompts and block order:** the system blocks go first and unchanged as one developer message, so the stable prefix is byte-identical. OpenAI caches prefixes automatically, without breakpoints; `prompt_cache_key` is a hash of the cached blocks, so requests that share a prefix reach the same cache. Cached tokens are reported in usage like Claude's cache reads. Documents map to OpenAI input parts (a PDF becomes an `input_file`).
+- **Structured output:** a JSON schema becomes a strict `json_schema` text format. The detector's output goes through the same parsing as Claude's, and worker outputs through the same validation.
+- **First token:** the same router timeout and fallback. OpenAI live routes can have their own timeouts (`COPILOT_OPENAI_FIRST_TOKEN_TIMEOUT_MS`, `COPILOT_OPENAI_DEEP_FIRST_TOKEN_TIMEOUT_MS`), because measured first tokens came later than the 1.5 s live default: warm and cached, 0.8 to 2.5 s on the gpt-6-luna fast pass and 2 to 4.3 s on the gpt-6.1-sol deep pass, which reasons first (October 2026, from a desktop). OpenAI as the only provider misses the 0.9 s first-word target.
+- **Cost:** `answers.model`, tier, tokens and `cost_usd` are filled as for Claude, from prices in `COPILOT_MODEL_PRICES` (only Claude prices are built in).
+- **Embeddings:** OpenAI embeddings (`text-embedding-3-large` suggested) shortened to 1024 dimensions, so prepared-answer matching works with only an OpenAI key. Every stored vector names the model that made it (`provider:model@1024`, on session packs and in `memory_nodes.embedding_model`); vectors from different models are never compared, and a pack whose vectors came from another model is rebuilt (by the next digest rebuild, or when the gateway loads it). An OpenAI embedding took 0.5 to 3.5 s in the measurements, far over the 150 ms the fast pass waits for a prepared match, so from outside OpenAI's network prepared answers rarely win the race. OpenAI has no reranker; rerank stays on Bedrock.
 
 ### Data and storage
 
@@ -278,9 +290,9 @@ Our own code should stay under 20 to 30 ms at p95; past that is the signal to mo
 
 ### Cost estimate
 
-A live hour costs about $0.74: Claude $0.35, speech to text $0.36, rerank $0.03. A typical user costs $7 to $9 a month. Speech to text is now as large as Claude, so its price is the next lever.
+A live hour costs about $0.74: Claude $0.35, speech to text $0.36, rerank $0.03. A typical user costs $7 to $9 a month. Speech to text is now as large as Claude, so its price is the next lever. The tables assume Claude, the design default; the model cost on OpenAI follows them.
 
-Assumptions: 40 questions per live hour; the other side speaks about 30 minutes of it and the user about 20; an 8k-token cached prefix. Claude per million tokens: Haiku 4.5 $1 / $5, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20, the same on Bedrock as on Anthropic's API. Cache reads 0.1x input ($0.20 on Opus 5.5); Flex and Batch 50% off; Priority 75% more. Deepgram Nova-3 streaming $0.0077 per minute plus $0.0013 for keyterms; pre-recorded $0.0043 per minute. These are list prices checked in October 2026; confirm on the [Claude pricing page](https://docs.claude.com/en/docs/about-claude/pricing) and the [Bedrock](https://aws.amazon.com/bedrock/pricing/)[ pricing page](https://aws.amazon.com/bedrock/pricing/).
+Assumptions: 40 questions per live hour; the other side speaks about 30 minutes of it and the user about 20; an 8k-token cached prefix. Claude per million tokens: Haiku 4.5 $1 / $5, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20, the same on Bedrock as on Anthropic's API. Cache reads 0.1x input ($0.20 on Opus 5.5); Flex and Batch 50% off; Priority 75% more. Deepgram Nova-3 streaming $0.0077 per minute plus $0.0013 for keyterms; pre-recorded $0.0043 per minute. These are list prices checked in October 2026; confirm on the [Claude pricing page](https://docs.claude.com/en/docs/about-claude/pricing) and the [Bedrock](https://aws.amazon.com/bedrock/pricing/)[ pricing page](https://aws.amazon.com/bedrock/pricing/). OpenAI per million tokens, for the models `.env.example` suggests: gpt-6-luna $0.10 / $0.50 (cached input $0.01), gpt-6.1-sol $2 / $10 (cached $0.10), gpt-6-astra $10 / $50 (cached $1); text-embedding-3-large $0.13 input; reasoning tokens are billed as output ([OpenAI pricing](https://developers.openai.com/api/docs/pricing), October 2026).
 
 | Item | Rule | Per live hour |
 | --- | --- | --- |
@@ -310,6 +322,8 @@ Variable cost assumes 50% job seekers, 40% working professionals and 10% heavy u
 **Credits:** new AWS accounts get up to $200, AWS Activate Founders gives $1,000 that also applies to Bedrock, and Deepgram starts accounts with $200. Together they cover Stage 0 for well over a year.
 
 **Pricing to users:** at about $0.74 per live hour plus Stripe's 2.9% + $0.30 per charge, credits need to sell for about $3 to $4 per live hour to keep a 70 to 80% gross margin.
+
+**On OpenAI**, with the suggested models and the same assumptions, the model part of a live hour is about $0.19 instead of $0.35: the detector on gpt-6-luna about $0.02 on every utterance (Stage 0), the fast pass on gpt-6-luna about $0.01, the deep pass on gpt-6.1-sol at low reasoning about $0.17 (Sonnet 5.5 prices, plus about 100 reasoning tokens a call). Rerank needs Bedrock. Background jobs cost more: extraction on gpt-6-astra costs 2.5 times Opus 5.5 at Standard and 5 times Opus 5.5 on Flex, and packs and post-call outputs on gpt-6.1-sol at the default tier cost about twice Sonnet 5.5 on Flex.
 
 Live passes run on Standard; Priority would add 75% to the fast pass and is held back as a latency flag. Background jobs use Flex or Batch. Fargate on Graviton, Fargate Spot for workers and Valkey keep infrastructure toward the low end of its range.
 
@@ -554,6 +568,7 @@ create table app.memory_nodes (
   search      tsvector generated always as
                 (to_tsvector('english', title || ' ' || summary)) stored,
   embedding   vector(1024),                    -- must match the embedding model's dimension
+  embedding_model text,                        -- provider:model@1024 that made it (0005)
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
   unique (id, user_id)
@@ -763,14 +778,14 @@ async with pool.acquire() as conn, conn.transaction():
 
 ### Hybrid memory search
 
-One query fuses vector and full-text results with reciprocal rank fusion. A user has thousands of nodes, not millions, so the vector part is an exact scan inside that user's rows and needs no vector index in v1. Add an HNSW index with iterative scans only if one user's node count passes about 50,000 or search p95 passes 30 ms.
+One query fuses vector and full-text results with reciprocal rank fusion. Only vectors from the query's embedding model take part (`embedding_model`, migration 0005; a check keeps it set exactly when `embedding` is), so nodes embedded by another model are found by full text until they are embedded again. A user has thousands of nodes, not millions, so the vector part is an exact scan inside that user's rows and needs no vector index in v1. Add an HNSW index with iterative scans only if one user's node count passes about 50,000 or search p95 passes 30 ms.
 
 ```sql
--- $1 query embedding, $2 query text, $3 user id
+-- $1 query embedding, $2 query text, $3 user id, $4 the query embedding's model id
 with vec as (
   select id, row_number() over (order by embedding <=> $1) as r
   from app.memory_nodes
-  where user_id = $3 and status = 'active' and embedding is not null
+  where user_id = $3 and status = 'active' and embedding_model = $4
   order by embedding <=> $1
   limit 40
 ),
@@ -850,12 +865,13 @@ The semantic cache is not a separate store: each session pack carries prepared a
     {"question": "Tell me about a system you scaled.", "embedding_b64": "...",
      "talking_points": ["..."], "node_ids": ["..."]}
   ],
+  "embedding_model": "bedrock:cohere.embed-v4:0@1024",
   "standup": null,
   "token_count": 3400
 }
 ```
 
-For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). Embeddings are base64-encoded float32 arrays to keep the JSON small. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
+For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). Embeddings are base64-encoded float32 arrays to keep the JSON small. `embedding_model` names the model that made them (null without vectors), and the gateway compares them only with question vectors from the same model. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
 
 **Hot digest record** in `digest:{uid}`:
 
@@ -900,7 +916,7 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 | `me_audio.transcribe` | API, on `POST /sessions/{id}/me-audio/complete`; or `session.ended` with a 10-minute delay, which marks the audio `none` if it never arrived | session_id | 15 min | `me_audio.transcribe:{sid}` |
 | `session.postcall` | `me_audio.transcribe` | session_id | 15 min | `session.postcall:{sid}` |
 | `memory.extract` | API (document ingest) | document_id | 15 min | `memory.extract:{uid}:{document_id}:{sha256}` |
-| `pack.build` | API (job saved, interview scheduled), worker (job description ingested, digest rebuilt), scheduler (standups) | mode, context (`interview:{id}`, `job:{id}` or `standup:{date}`), due_at | 10 min | `pack.build:{uid}:{context}:{digest}` |
+| `pack.build` | API (job saved, interview scheduled), worker (job description ingested, digest rebuilt), scheduler (standups) | mode, context (`interview:{id}`, `job:{id}` or `standup:{date}`), due_at | 10 min | `pack.build:{uid}:{context}:{digest}:{embedding}` |
 | `digest.rebuild` | Scheduler weekly; resume ingested; after approvals, debounced 10 min | none | 10 min | `digest.rebuild:{uid}:{memory version}` |
 | `tools.sync` | Scheduler daily | provider | 15 min | `tools.sync:{uid}:{provider}:{date}` |
 | `usage.report` | Scheduler nightly | day | 15 min | `usage.report:{day}` |
@@ -909,7 +925,7 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 
 Post-call work runs in three steps: `session.ended` flushes the log; `me_audio.transcribe` transcribes the user's audio with pre-recorded STT and deletes it from S3 (or skips it); `session.postcall` writes the summary and feedback with Sonnet and memory proposals with Opus. The 10-minute delayed message uses SQS `DelaySeconds`, which allows up to 15 minutes.
 
-Two keys name more than the catalog first had. `memory.extract` names the user and the document as well as the content hash: the hash alone would collide across users and skip a second document with the same content. `pack.build` names the context and the digest (`digest` is the first 16 hex digits of its version, `none` before the first digest): a pack depends on both, so a digest rebuild makes a new key and the pack is rebuilt, while a repeat for the same digest is skipped.
+Two keys name more than the catalog first had. `memory.extract` names the user and the document as well as the content hash: the hash alone would collide across users and skip a second document with the same content. `pack.build` names the context, the digest (`digest` is the first 16 hex digits of its version, `none` before the first digest) and the embedding model of the prepared answers' vectors (`embedding` is 8 hex digits of the SHA-256 of the model id, `none` without one). A pack depends on all three, so a digest rebuild or a new embedding model makes a new key and the pack is rebuilt, while a repeat is skipped.
 
 **Scheduler:** the timed jobs come from one small program, `copilot-scheduler`, which enqueues whatever is due (the sweep, the nightly usage report, the weekly digest, standup packs) at most once per slot. Locally it runs in a loop; in AWS, EventBridge Scheduler runs `copilot-scheduler --once` every 5 minutes as a one-off task, rather than one EventBridge schedule per job.
 
@@ -924,6 +940,7 @@ The open questions in the Architecture section get these defaults, so building c
 | Decision | v1 default | Revisit when |
 | --- | --- | --- |
 | Claude access | Bedrock Standard tier via the `us.` profile, then the direct Anthropic API; Priority only by flag | The Bedrock model card lacks Priority or prompt caching for a model we use |
+| Model provider | Claude, as above. OpenAI is supported through the same router, alone or in the fallback list, with a model per job chosen in configuration | The eval set, latency or cost favors OpenAI for a job |
 | Speech to text | Deepgram streaming, AssemblyAI as fallback | A benchmark on 50 recorded calls favors the other |
 | Embeddings and rerank | Cohere Embed v4 on demand (1024 output dimensions) and Cohere Rerank 3.5 on Bedrock | The retrieval eval shows a gap against Voyage |
 | Turn detection | An open-source turn-detection model (for example Pipecat Smart Turn) on the gateway, plus a 400 ms silence timer | Latency or detection targets are missed |
@@ -998,7 +1015,7 @@ Answers run outside the group, one task per question, so a new question can canc
 
 `question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript. Its type is `other`, so the deep pass waits for expand.
 
-**Prepared answers need embeddings.** With no embeddings provider (the direct Claude API only, since it has none), the gateway logs at startup that prepared-answer matching is off, and every question goes to the fast pass.
+**Prepared answers need embeddings.** With no embeddings provider (the direct Claude API only, since it has none), the gateway logs at startup that prepared-answer matching is off, and every question goes to the fast pass. With only OpenAI, OpenAI embeddings do the matching. A pack whose vectors came from another embedding model than the gateway's is not matched against, and the gateway enqueues its rebuild.
 
 **Settings** (in AWS AppConfig, changeable without a deploy):
 
@@ -1015,7 +1032,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `deep_pass_auto_types` | behavioral, technical, system_design |
 | `rerank_keep` | 6 |
 | `retrieval_budget_ms` | 100 |
-| `first_token_timeout_ms` | 1500, then the next route |
+| `first_token_timeout_ms` | 1500, then the next route (OpenAI live routes may set their own) |
 | `final_wait_max_ms` | 1500 after the silence timer, then confirm on the interim text |
 | `transcript_context_s` | 60 |
 | `sessions_per_task_target` | 60 |
