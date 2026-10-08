@@ -154,6 +154,17 @@ input[type="checkbox"] {
   padding-top: 6px;
 }
 
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.row > input {
+  flex: 1;
+}
+
 .segmented {
   display: flex;
   gap: 4px;

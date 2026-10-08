@@ -39,15 +39,42 @@ export type UiEvent =
   | { kind: "warning"; message: string }
   | { kind: "stopped"; reason: StopReason };
 
+export type Environment = "local" | "aws";
+
+export interface CognitoConfig {
+  domain: string;
+  client_id: string;
+  scopes: string[];
+}
+
 export interface Settings {
+  environment: Environment;
+  /** Local: the gateway's /v1/session WebSocket URL and the API's /v1 root. */
   gateway_url: string;
   api_url: string;
+  /** AWS: the deployed stage's (terraform output gateway_url api_url). */
+  aws_gateway_url: string;
+  aws_api_url: string;
+  /** Set by sign-in from the stage's GET /v1/auth/config. */
+  cognito: CognitoConfig | null;
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
   hotkey: string;
   show_debug: boolean;
   last_session_id: string | null;
+}
+
+// src-tauri get_settings
+export interface SettingsView {
+  settings: Settings;
+  dev_token_set: boolean;
+  /** The AWS environment's signed-in user (their email), if any. */
+  signed_in_as: string | null;
+  /** The current environment can make calls: the dev token is set, or the user signed in. */
+  ready: boolean;
+  /** Plain HTTP or WS to another machine in the current environment. */
+  warnings: string[];
 }
 
 export interface DeviceInfo {
@@ -95,7 +122,9 @@ export interface StartRequest {
 }
 
 export const api = {
-  getSettings: () => invoke<[Settings, boolean]>("get_settings"),
+  getSettings: () => invoke<SettingsView>("get_settings"),
+  signIn: () => invoke<string>("sign_in"),
+  signOut: () => invoke<void>("sign_out"),
   saveSettings: (settings: Settings, devToken: string | null) =>
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),

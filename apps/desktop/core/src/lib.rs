@@ -6,6 +6,7 @@
 pub mod api;
 pub mod audio;
 pub mod auth;
+pub mod cognito;
 pub mod engine;
 pub mod latency;
 pub mod net;
