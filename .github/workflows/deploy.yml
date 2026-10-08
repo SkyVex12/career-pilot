@@ -1,0 +1,84 @@
+# Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4, Stage 0): build the ARM64 images on
+# GitHub's ARM runners (native, no emulation), push them to ECR tagged with the git SHA, run
+# the migrations as a one-off ECS task, then deploy the services (infra/scripts/deploy.py).
+# The instance must be running; a deploy to a stopped stage fails and can be rerun from the
+# Actions tab (or run deploy.py by hand) once it is started.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Deploy an image tag (git SHA) that is already in ECR, e.g. to roll back. Empty: build and deploy this commit."
+        required: false
+
+concurrency:
+  group: deploy-stage0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC into the deploy role: no stored AWS keys
+
+env:
+  AWS_REGION: us-east-1
+  STAGE: copilot-stage0
+
+jobs:
+  images:
+    if: vars.AWS_DEPLOY_ROLE_ARN != '' && (github.event_name == 'push' || inputs.tag == '')
+    name: image (${{ matrix.image }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - { image: gateway, dockerfile: docker/python.Dockerfile, package: copilot-gateway, command: copilot-gateway }
+          - { image: api, dockerfile: docker/python.Dockerfile, package: copilot-api, command: copilot-api }
+          - { image: worker, dockerfile: docker/python.Dockerfile, package: copilot-worker, command: copilot-worker }
+          - { image: proxy, dockerfile: docker/proxy/Dockerfile, package: "", command: "" }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            PACKAGE=${{ matrix.package }}
+            COMMAND=${{ matrix.command }}
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.STAGE }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    if: always() && vars.AWS_DEPLOY_ROLE_ARN != '' && (needs.images.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: stage0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.7"
+      - name: Migrate and deploy
+        run: >-
+          uv run --no-project --with "boto3>=1.40" python infra/scripts/deploy.py
+          --name "$STAGE" --region "$AWS_REGION" --tag "${{ inputs.tag || github.sha }}"
