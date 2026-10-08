@@ -432,3 +432,23 @@ async def test_request_lines_name_the_session_and_user(api: Api, caplog) -> None
     assert (getattr(one, "session_id", None), getattr(one, "user_id", None)) == (str(sid), str(uid))
     listing = lines["GET /v1/sessions 200"]
     assert getattr(listing, "session_id", None) is None
+
+
+async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
+    # No token needed: the desktop app asks before it has one.
+    saved = api.svc.settings
+    try:
+        api.svc.settings = saved.model_copy(update={
+            "auth": "cognito", "cognito_client_ids": ["client123"],
+            "cognito_domain": "https://copilot-x.auth.us-east-1.amazoncognito.com/",
+        })  # fmt: skip
+        body = (await api.client.get("/v1/auth/config")).json()
+        assert body == {
+            "provider": "cognito", "client_id": "client123",
+            "domain": "https://copilot-x.auth.us-east-1.amazoncognito.com",
+            "scopes": ["openid", "email", "profile"],
+        }  # fmt: skip
+        api.svc.settings = saved.model_copy(update={"auth": "dev"})
+        assert (await api.client.get("/v1/auth/config")).json()["provider"] == "dev"
+    finally:
+        api.svc.settings = saved

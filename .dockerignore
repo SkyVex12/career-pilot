@@ -1,0 +1,19 @@
+# Only the Python workspace and migrations go into the service images (docker/python.Dockerfile).
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/tests
+**/fixtures
+.venv
+.git
+.github
+.env
+.env.*
+node_modules
+target
+apps/desktop
+infra
+docs
+evals/recordings
+**/*.wav

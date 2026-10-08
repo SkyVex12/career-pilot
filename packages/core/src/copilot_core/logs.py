@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from copilot_core.auth import aws_runtime
+from copilot_core.config import aws_runtime
 
 FIELDS = ("session_id", "user_id", "job", "request_id")
 

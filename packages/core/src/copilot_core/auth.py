@@ -22,7 +22,7 @@ from uuid import UUID
 import httpx2
 import jwt
 
-from copilot_core.config import CoreSettings
+from copilot_core.config import CoreSettings, aws_runtime
 
 
 class AuthError(Exception):
@@ -41,20 +41,6 @@ class TokenVerifier(Protocol):
     async def verify(self, token: str) -> Principal:
         """Return the token's user, or raise AuthError."""
         ...
-
-
-# Set inside AWS compute; the dev verifier never runs where any of these exist.
-_AWS_RUNTIME_MARKERS = (
-    "AWS_EXECUTION_ENV",
-    "ECS_CONTAINER_METADATA_URI",
-    "ECS_CONTAINER_METADATA_URI_V4",
-    "AWS_LAMBDA_FUNCTION_NAME",
-)
-
-
-def aws_runtime(environ: Mapping[str, str]) -> list[str]:
-    """The AWS compute markers present (ECS on Fargate or EC2, Lambda); empty off AWS."""
-    return [m for m in _AWS_RUNTIME_MARKERS if environ.get(m)]
 
 
 def refuse_outside_dev(settings: CoreSettings, what: str, environ: Mapping[str, str]) -> None:

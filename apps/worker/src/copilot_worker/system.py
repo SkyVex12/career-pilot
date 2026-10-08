@@ -2,9 +2,10 @@
 
 - `usage.report`: fills `usage_daily` from the billed seconds in `sessions` for one day. No
   payment provider yet (Stage 0), so `reported_at` stays empty.
-- `user.delete`: removes everything the user has: the S3 prefix, every Valkey key, the data
-  keys (`user_keys`, which makes any ciphertext left anywhere unreadable), every row (the
-  users row cascades), and the user's `job_runs`.
+- `user.delete`: removes everything the user has: the Cognito user (so no new sign-in can
+  start while the rest goes), the S3 prefix, every Valkey key, the data keys (`user_keys`,
+  which makes any ciphertext left anywhere unreadable), every row (the users row cascades),
+  and the user's `job_runs`.
 - `sessions.sweep`: ends sessions whose gateway task died and that nobody resumed
   (ARCHITECTURE.md, open question "Abandoned sessions"): no lease, not ended, and no state
   update for longer than the resume window. Also ends sessions whose Valkey state expired
@@ -56,7 +57,12 @@ async def _scan_delete(ctx: Ctx, pattern: str) -> int:
 @handler("user.delete")
 async def user_delete(job: Job, ctx: Ctx) -> None:
     uid = job.uid
-    # Objects and live state first: if this run dies halfway, the users row is still there
+    # The sign-in first, so no new session can start while the rest is deleted (an access
+    # token already issued lasts until it expires, an hour at most).
+    signin = "none (dev auth)"
+    if ctx.users is not None:
+        signin = "deleted" if await ctx.users.delete_user(uid) else "already gone"
+    # Objects and live state next: if this run dies halfway, the users row is still there
     # and the retry finds everything it needs.
     removed = await ctx.store.delete_prefix(user_prefix(uid))
     async with ctx.system() as conn:
@@ -81,7 +87,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
         await conn.execute("delete from app.users where id = $1", uid)  # cascades
         await conn.execute("delete from app.job_runs where user_id = $1", uid)
     ctx.crypto.forget(uid)
-    log.info("user %s deleted: %d objects, %d Valkey keys", uid, removed, vk)
+    log.info("user %s deleted: sign-in %s, %d objects, %d Valkey keys", uid, signin, removed, vk)
 
 
 @handler("sessions.sweep")

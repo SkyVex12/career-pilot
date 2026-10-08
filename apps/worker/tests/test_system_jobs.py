@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from copilot_core import jobs, keys
+from copilot_core.identity import CognitoUsers
 from copilot_core.storage import me_audio_key, user_prefix
 from copilot_worker.testing import FIXTURES, GatewayLog, Stack
 
@@ -103,6 +104,43 @@ async def test_user_delete_leaves_nothing_behind(stack: Stack) -> None:
     assert await stack.admin.fetchval("select count(*) from app.users where id = $1", keep) == 1
     assert await stack.ctx.store.list_keys(user_prefix(keep))
     assert await stack.ctx.valkey.get(keys.digest(keep)) is not None
+
+
+class FakeUserPool:
+    """Cognito's AdminDeleteUser as boto3 shapes it: a UserNotFoundException once gone."""
+
+    class exceptions:
+        class UserNotFoundException(Exception):
+            pass
+
+    def __init__(self, users: set[str]) -> None:
+        self.users = users
+        self.calls: list[dict[str, str]] = []
+
+    def admin_delete_user(self, **kwargs: str) -> None:
+        self.calls.append(kwargs)
+        if kwargs["Username"] not in self.users:
+            raise self.exceptions.UserNotFoundException()
+        self.users.discard(kwargs["Username"])
+
+
+async def test_user_delete_removes_the_cognito_user(stack: Stack) -> None:
+    uid = await stack.new_user()
+    pool = FakeUserPool({str(uid)})
+    stack.ctx.users = CognitoUsers("us-east-1_Test", "us-east-1", client=pool)
+    try:
+        message = jobs.envelope("user.delete", f"user.delete:{uid}", uid, {})
+        await stack.run(message)
+        assert pool.users == set()
+        assert pool.calls == [{"UserPoolId": "us-east-1_Test", "Username": str(uid)}]
+        # A retry after a crash (the job_runs row was not marked done) finds the user gone.
+        await stack.admin.execute("delete from app.job_runs where idempotency_key = $1",
+                                  f"user.delete:{uid}")  # fmt: skip
+        await stack.run(message)
+        assert len(pool.calls) == 2
+    finally:
+        stack.ctx.users = None
+    assert await stack.admin.fetchval("select count(*) from app.users where id = $1", uid) == 0
 
 
 async def test_sweeper_ends_abandoned_sessions(stack: Stack) -> None:
