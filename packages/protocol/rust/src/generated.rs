@@ -23,6 +23,8 @@ pub enum ClientMessage {
     AnswerExpand(AnswerExpand),
     #[serde(rename = "answer.feedback")]
     AnswerFeedback(AnswerFeedback),
+    #[serde(rename = "latency.report")]
+    LatencyReport(LatencyReport),
     #[serde(rename = "mode.set")]
     ModeSet(ModeSet),
     #[serde(rename = "session.end")]
@@ -40,6 +42,7 @@ impl ClientMessage {
             Self::Screenshot(_) => "screenshot",
             Self::AnswerExpand(_) => "answer.expand",
             Self::AnswerFeedback(_) => "answer.feedback",
+            Self::LatencyReport(_) => "latency.report",
             Self::ModeSet(_) => "mode.set",
             Self::SessionEnd(_) => "session.end",
         }
@@ -56,6 +59,7 @@ impl Validate for ClientMessage {
             Self::Screenshot(m) => m.validate(),
             Self::AnswerExpand(m) => m.validate(),
             Self::AnswerFeedback(m) => m.validate(),
+            Self::LatencyReport(m) => m.validate(),
             Self::ModeSet(m) => m.validate(),
             Self::SessionEnd(m) => m.validate(),
         }
@@ -101,6 +105,12 @@ impl From<AnswerExpand> for ClientMessage {
 impl From<AnswerFeedback> for ClientMessage {
     fn from(m: AnswerFeedback) -> Self {
         Self::AnswerFeedback(m)
+    }
+}
+
+impl From<LatencyReport> for ClientMessage {
+    fn from(m: LatencyReport) -> Self {
+        Self::LatencyReport(m)
     }
 }
 
@@ -399,10 +409,14 @@ impl Validate for SessionLimits {
     }
 }
 
-/// Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question
-/// confirmed; detector_ms: detector call; first_token_ms: request to first model token;
-/// first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when
-/// they do not apply.
+/// Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force
+/// message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration);
+/// first_token_ms: request to first model token (a duration); first_delta_ms: the first
+/// answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model
+/// request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after
+/// expand; its first word on screen is first_delta_ms minus expand_ms after the tap); prepared_ms:
+/// the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared
+/// answer's cosine similarity, hit or miss. Fields are absent when they do not apply.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencyMs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -415,10 +429,24 @@ pub struct LatencyMs {
     pub first_delta_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expand_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_similarity: Option<f64>,
 }
 
 impl Validate for LatencyMs {
     fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(v) = &self.prepared_similarity {
+            check::min_num("prepared_similarity", *v, -1.0)?;
+            check::max_num("prepared_similarity", *v, 1.0)?;
+        }
         Ok(())
     }
 }
@@ -569,6 +597,33 @@ pub struct AnswerExpand {
 
 impl Validate for AnswerExpand {
     fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// The client's own first-word time for one answer pass, sent once per pass when its first non-
+/// empty answer.delta arrives, so the gateway can store it with the answer
+/// (answers.latency_ms.client_first_word_ms). Measurement only: the gateway drops a report for a
+/// question it does not hold, without an error.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LatencyReport {
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub question_id: Uuid,
+    pub pass: Pass,
+    /// Anchor to the first answer word, measured on the client.
+    pub first_word_ms: u64,
+    /// What first_word_ms counts from: speech_end (the true end of the other side's speech, VAD
+    /// hangover included), forced (the hotkey or a typed question), or expand (the tap that started
+    /// a deep pass).
+    pub anchor: LatencyReportAnchor,
+}
+
+impl Validate for LatencyReport {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.first_word_ms;
+            check::max_int("first_word_ms", u64::from(*v), 600000)?;
+        }
         Ok(())
     }
 }
@@ -970,6 +1025,29 @@ impl Validate for AudioFrameHeader {
             check::max_int("flags", u64::from(*v), 3)?;
         }
         Ok(())
+    }
+}
+
+/// What first_word_ms counts from: speech_end (the true end of the other side's speech, VAD
+/// hangover included), forced (the hotkey or a typed question), or expand (the tap that started a
+/// deep pass).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LatencyReportAnchor {
+    #[serde(rename = "speech_end")]
+    SpeechEnd,
+    #[serde(rename = "forced")]
+    Forced,
+    #[serde(rename = "expand")]
+    Expand,
+}
+
+impl LatencyReportAnchor {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SpeechEnd => "speech_end",
+            Self::Forced => "forced",
+            Self::Expand => "expand",
+        }
     }
 }
 

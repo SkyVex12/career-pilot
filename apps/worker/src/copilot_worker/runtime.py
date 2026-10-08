@@ -28,6 +28,7 @@ from uuid import UUID
 
 import asyncpg
 
+from copilot_core import logs
 from copilot_core.aws import boto3_client
 from copilot_core.db import system_tx
 
@@ -265,6 +266,9 @@ class Consumer:
             # Left on the queue; the dead-letter queue takes it after five receives.
             log.error("unreadable job message (%s): %.200s", e, message.body)
             return
+        # Every line about this job names it, its user and its session (CloudWatch filters on
+        # session_id). process() runs as its own task, so the ids stay with this job.
+        logs.set_ids(job=job.type, user_id=job.user_id, session_id=job.payload.get("session_id"))
         fn = self.handlers.get(job.type)
         if fn is None:
             log.error("no handler for job type %s (%s)", job.type, job.idempotency_key)

@@ -7,11 +7,10 @@ FastAPI. SIGTERM stops receiving and drains running jobs (see runtime.Consumer).
 import asyncio
 import contextlib
 import json
-import logging
 import os
 import signal
 
-from copilot_core import __version__
+from copilot_core import __version__, logs
 from copilot_core.dotenv import load_dotenv
 from copilot_worker import documents, packs, sessionlog, system
 from copilot_worker.config import WorkerSettings
@@ -87,9 +86,6 @@ async def main() -> None:
 
 def run() -> None:
     load_dotenv()
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    logs.configure("worker")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())

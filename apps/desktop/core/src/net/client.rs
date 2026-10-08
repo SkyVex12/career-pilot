@@ -131,6 +131,9 @@ pub enum ConnectionState {
     },
 }
 
+// Nearly every event is a server message, so boxing it would allocate on the common path to
+// save memory on the rare ones.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ClientEvent {

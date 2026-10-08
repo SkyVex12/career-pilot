@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, WebSocket
 
-from copilot_core import __version__, embed
+from copilot_core import __version__, embed, logs
 from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import Embedder
 from copilot_core.jobs import SqsJobQueue
@@ -126,10 +126,11 @@ def uvicorn_options(settings: Settings) -> dict[str, object]:
 
 def run() -> None:
     load_dotenv()
-    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+    logs.configure("gateway")
     uvicorn.run(
         "copilot_gateway.main:app",
         host=os.environ.get("HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "8081")),
+        log_config=None,  # logs.configure owns the handlers
         **uvicorn_options(Settings()),  # pyright: ignore[reportArgumentType]
     )

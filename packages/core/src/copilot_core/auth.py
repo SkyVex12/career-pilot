@@ -52,10 +52,15 @@ _AWS_RUNTIME_MARKERS = (
 )
 
 
+def aws_runtime(environ: Mapping[str, str]) -> list[str]:
+    """The AWS compute markers present (ECS on Fargate or EC2, Lambda); empty off AWS."""
+    return [m for m in _AWS_RUNTIME_MARKERS if environ.get(m)]
+
+
 def refuse_outside_dev(settings: CoreSettings, what: str, environ: Mapping[str, str]) -> None:
     if settings.env != "dev":
         raise RuntimeError(f"{what} needs COPILOT_ENV=dev; this is {settings.env!r}")
-    markers = [m for m in _AWS_RUNTIME_MARKERS if environ.get(m)]
+    markers = aws_runtime(environ)
     if markers:
         raise RuntimeError(f"{what} cannot run on AWS ({', '.join(markers)})")
 

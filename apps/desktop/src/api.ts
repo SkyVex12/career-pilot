@@ -19,10 +19,12 @@ export interface QuestionLatency {
   question_id: string;
   text: string;
   question_type: QuestionType;
-  anchor: "speech_end" | "forced" | "unknown";
+  anchor: "speech_end" | "forced" | "expand" | "unknown";
   detected_ms: number | null;
   fast_first_word_ms: number | null;
   deep_first_word_ms: number | null;
+  /** What deep_first_word_ms counts from: the question's anchor, or the expand tap. */
+  deep_anchor: "speech_end" | "forced" | "expand" | "unknown";
   fast_gateway: LatencyMs | null;
   deep_gateway: LatencyMs | null;
 }

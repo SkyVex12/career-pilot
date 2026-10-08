@@ -123,15 +123,23 @@ impl Engine {
         {
             let latency = latency.clone();
             let session_id = session_id.clone();
+            let client = client.clone();
             tokio::spawn(async move {
                 while let Some(event) = events_rx.recv().await {
                     let now = Instant::now();
                     match event {
                         ClientEvent::Server { message } => {
-                            let record = latency.lock().unwrap().on_message(&message, now);
+                            let (record, reports) = {
+                                let mut l = latency.lock().unwrap();
+                                (l.on_message(&message, now), l.take_reports())
+                            };
                             sink(UiEvent::Server { message });
                             if let Some(question) = record {
                                 sink(UiEvent::Latency { question });
+                            }
+                            // The gateway stores the client's first word with the answer.
+                            for report in reports {
+                                client.send(ClientMessage::LatencyReport(report)).await;
                             }
                         }
                         ClientEvent::Connection(state) => {
@@ -193,6 +201,7 @@ impl Engine {
     }
 
     pub async fn expand(&self, question_id: Uuid) {
+        self.latency.lock().unwrap().on_expand(question_id, Instant::now());
         self.send(ClientMessage::AnswerExpand(AnswerExpand { question_id })).await;
     }
 

@@ -5,6 +5,7 @@
 runs the real gateway instead.
 """
 
+import json
 import uuid
 from datetime import timedelta
 from uuid import UUID
@@ -171,6 +172,42 @@ async def test_expand_on_a_non_auto_type_marks_the_deep_answer(stack: Stack) -> 
         "select expanded from app.answers where question_id = $1 and pass = 'deep'", q
     )
     assert expanded is True
+
+
+async def test_late_latency_is_merged_into_the_answer(stack: Stack) -> None:
+    # The client's first word (latency.report) and a speculative question's confirmation can
+    # come after the answer was logged; the flush merges them into answers.latency_ms, also
+    # across flushes, and a report whose answer is not written yet waits for it.
+    uid = await stack.new_user()
+    log = GatewayLog(stack, uid)
+    await log.start()
+    q = uuid7()
+    await log.question(q, "How did you scale the ledger?")
+    upto = await log.answer(q, "fast", "- Sharded it")
+    await stack.run(log.flush_job(upto))
+    report = {"kind": "latency_report", "question_id": str(q), "pass": "fast",
+              "client_first_word_ms": 1240, "client_anchor": "speech_end",
+              "turn_end_ms": 410, "final_ms": 380, "text": "never stored"}  # fmt: skip
+    await log.add(report)
+    q2 = uuid7()
+    early = await log.add({**report, "question_id": str(q2), "client_first_word_ms": 900})
+    await stack.run(log.flush_job(early))
+    await log.question(q2, "And then?")
+    upto = await log.answer(q2, "fast", "- More")
+    await stack.run(log.flush_job(upto))
+    rows = {
+        r["question_id"]: json.loads(r["latency_ms"])  # the admin connection has no codec
+        for r in await stack.admin.fetch(
+            "select question_id, latency_ms from app.answers where pass = 'fast'"
+            " and question_id = any($1::uuid[])",
+            [q, q2],
+        )
+    }
+    assert rows[q] == {
+        "first_token_ms": 420, "total_ms": 900, "client_first_word_ms": 1240,
+        "client_anchor": "speech_end", "turn_end_ms": 410, "final_ms": 380,
+    }  # fmt: skip
+    assert rows[q2]["client_first_word_ms"] == 900
 
 
 async def test_without_transcript_consent_no_text_is_stored(stack: Stack) -> None:

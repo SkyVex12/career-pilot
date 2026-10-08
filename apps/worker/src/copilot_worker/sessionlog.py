@@ -209,9 +209,29 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
                 await conn.execute(
                     "update app.sessions set mode = $2 where id = $1", sid, e.data["mode"]
                 )
+        # Timings that came after their pass was logged (the client's first word, or the
+        # confirmation of a speculative question), once every answer in the batch is written.
+        # A report whose answer was deferred waits with it.
+        for e in entries:
+            if e.kind != "latency_report" or (qid := _uuid(e.data.get("question_id"))) is None:
+                continue
+            report = {k: e.data[k] for k in LATE_LATENCY_FIELDS if e.data.get(k) is not None}
+            updated = await conn.fetchval(
+                "update app.answers set latency_ms = coalesce(latency_ms, '{}'::jsonb)"
+                " || $3::jsonb where question_id = $1 and pass = $2 returning id",
+                qid,
+                "deep" if e.data.get("pass") == "deep" else "fast",
+                report,
+            )
+            if updated is None and not final:
+                deferred.append(e)
     result.deferred = len(deferred)
     if entries:
-        trim_to = deferred[0].id if deferred else next_id(entries[-1].id)
+        trim_to = (
+            min(deferred, key=lambda e: _stream_id(e.id)).id
+            if deferred
+            else next_id(entries[-1].id)
+        )
         await ctx.valkey.xtrim(keys.sess_log(sid), minid=trim_to, approximate=False)
     if final:
         await ctx.valkey.expire(keys.sess_log(sid), ctx.settings.log_ttl_after_flush_s)
@@ -259,6 +279,15 @@ async def write_segment(ctx: Ctx, conn: Conn, uid: UUID, sid: UUID, d: dict[str,
         enc,
         version,
     )
+
+
+def _stream_id(entry_id: str) -> tuple[int, int]:
+    ms, _, seq = entry_id.partition("-")
+    return int(ms), int(seq or 0)
+
+
+# What a latency_report entry may add to answers.latency_ms.
+LATE_LATENCY_FIELDS = ("client_first_word_ms", "client_anchor", "turn_end_ms", "final_ms")
 
 
 def _cost(value: Any) -> Decimal | None:

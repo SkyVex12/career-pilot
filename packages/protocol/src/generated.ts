@@ -15,6 +15,7 @@ export type ClientMessage =
   | Screenshot
   | AnswerExpand
   | AnswerFeedback
+  | LatencyReport
   | ModeSet
   | SessionEnd;
 /**
@@ -25,6 +26,10 @@ export type Mode = "interview" | "standup" | "meeting";
  * UUID (v7 for ids we generate), lowercase hex with dashes.
  */
 export type Uuid = string;
+/**
+ * Answer pass: fast (Haiku talking points) or deep (Sonnet).
+ */
+export type Pass = "fast" | "deep";
 /**
  * Any JSON message the gateway sends to the client. Every server message carries seq.
  */
@@ -59,10 +64,6 @@ export type QuestionType =
   | "standup_status"
   | "small_talk"
   | "other";
-/**
- * Answer pass: fast (Haiku talking points) or deep (Sonnet).
- */
-export type Pass = "fast" | "deep";
 
 /**
  * First message of a new session.
@@ -148,6 +149,22 @@ export interface AnswerFeedback {
   question_id: Uuid;
   rating: "up" | "down";
   reason?: string;
+}
+/**
+ * The client's own first-word time for one answer pass, sent once per pass when its first non-empty answer.delta arrives, so the gateway can store it with the answer (answers.latency_ms.client_first_word_ms). Measurement only: the gateway drops a report for a question it does not hold, without an error.
+ */
+export interface LatencyReport {
+  type: "latency.report";
+  question_id: Uuid;
+  pass: Pass;
+  /**
+   * Anchor to the first answer word, measured on the client.
+   */
+  first_word_ms: number;
+  /**
+   * What first_word_ms counts from: speech_end (the true end of the other side's speech, VAD hangover included), forced (the hotkey or a typed question), or expand (the tap that started a deep pass).
+   */
+  anchor: "speech_end" | "forced" | "expand";
 }
 /**
  * User switches mode mid-call.
@@ -262,7 +279,7 @@ export interface Usage {
   output_tokens: number;
 }
 /**
- * Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.
+ * Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.
  */
 export interface LatencyMs {
   turn_end_ms?: number;
@@ -270,6 +287,11 @@ export interface LatencyMs {
   first_token_ms?: number;
   first_delta_ms?: number;
   total_ms?: number;
+  final_ms?: number;
+  start_ms?: number;
+  expand_ms?: number;
+  prepared_ms?: number;
+  prepared_similarity?: number;
 }
 /**
  * That pass failed; the other pass may still arrive.
