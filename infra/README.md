@@ -29,7 +29,7 @@ proxy:
 | api | ECR `api` | 8080 | 128 / 384 |
 | worker | ECR `worker` | 8082 (health) | 160 / 640 |
 | postgres | `pgvector/pgvector:0.8.7-pg16` | 5432 | 256 / 512 |
-| valkey | `valkey:8.1-alpine` | 6379 | 64 / 320 |
+| valkey | `public.ecr.aws/valkey/valkey:8.1-alpine` | 6379 | 64 / 320 |
 | migrate (one-off) | ECR `worker` | | 96 / 384 |
 | scheduler (one-off, every 5 min) | ECR `worker` | | 96 / 256 |
 

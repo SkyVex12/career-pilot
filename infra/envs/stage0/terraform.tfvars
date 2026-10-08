@@ -16,7 +16,7 @@ data_volume_gb = 10
 snapshot_days  = 7
 
 postgres_image = "pgvector/pgvector:0.8.7-pg16" # as in docker-compose.yml
-valkey_image   = "public.ecr.aws/docker/library/valkey:8.1-alpine"
+valkey_image   = "public.ecr.aws/valkey/valkey:8.1-alpine"
 
 cognito_domain_prefix = "career-os-copilot-stage0"
 
