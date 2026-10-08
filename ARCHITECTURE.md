@@ -78,9 +78,9 @@ The client is a Tauri app: a React and TypeScript UI on a Rust core, for macOS a
 - **Transport:** 16 kHz PCM frames of about 100 ms over one WebSocket, with automatic reconnect and session resume.
 - **Overlay:** an always-on-top window showing talking points first, then the detailed answer below. A hotkey forces a trigger when detection misses a question.
 - **User's own audio:** recorded only with transcript consent. The echo-cancelled mic stream is written to disk in one-second chunks, each encrypted with AES-256-GCM under a per-install key that lives in the OS credential store (Windows Credential Manager), never in a file. Each chunk's associated data is the file's random id and the chunk's index, so chunks cannot be reordered, dropped from the middle or moved between files; a crash loses at most the second being written. The recording belongs to the session the client goes live with, and is cut where a new session starts mid-call (a resume closed with `4408`). For the upload the chunks are decrypted into a streamed WAV body, so the plaintext never touches the disk.
-- **Screens** (all data through the REST API): documents (upload a resume and job descriptions, their processing, the digest and packs once ready), jobs and interviews (schedule one), the start screen (pick an upcoming interview or a job), the post-call screen, history (past sessions, usage this period, account deletion) and settings (gateway and API URLs, the token, devices). The app calls `GET /me` at launch, which also wakes Aurora.
+- **Screens** (all data through the REST API): documents (upload a resume and job descriptions, their processing, the digest and packs once ready), jobs and interviews (schedule one), the start screen (pick an upcoming interview or a job), the post-call screen, history (past sessions, usage this period, account deletion) and settings (the environment, local or AWS, with its gateway and API URLs; the dev token locally or the Cognito sign-in in AWS; devices). The settings screen warns when a URL to another machine is plain HTTP or WS. The app calls `GET /me` at launch, which checks the sign-in (and would wake Aurora where it scales to zero).
 - **Screenshots:** for coding questions, a captured screen region goes to a vision model.
-- **Login:** Amazon Cognito with OAuth and PKCE in the browser; the token is kept in the OS keychain and refreshed over the open socket during long calls. Career-OS sign-in can be added later as a federated identity provider. Until Cognito exists (build step 5) the client sends the dev token, kept in the Windows Credential Manager, to the gateway and the API alike, behind the same token-provider interface; a `401` from the API gets one token refresh and one retry.
+- **Login:** Amazon Cognito with OAuth and PKCE in the browser (built in step 5). The app reads the user pool's domain and app client from `GET /v1/auth/config`, opens the sign-in page in the default browser and takes the redirect on a fixed loopback port (`http://127.0.0.1:53682/callback`). The refresh token is kept in the OS credential store (Windows Credential Manager), the access token in memory only; the client refreshes it before expiry and sends it over the open socket (`auth.refresh`) during long calls, and a `401` from the API gets one refresh and one retry. A revoked or expired sign-in signs the app out. Career-OS sign-in can be added later as a federated identity provider. On the local stack the client sends the dev token instead, behind the same token-provider interface; the services refuse the dev token on AWS compute.
 - **Distribution:** signed and notarized macOS build, signed Windows build, Tauri updater for auto-updates.
 
 ### Realtime pipeline
@@ -227,7 +227,7 @@ Every interview and standup is a session with the same core log; the mode decide
 
 ### Infrastructure on AWS
 
-The copilot is a standalone app in one AWS account in us-east-1 (N. Virginia), running three ECS services on Graviton with serverless data stores, in two availability zones at launch.
+The copilot is a standalone app in one AWS account in us-east-1 (N. Virginia), running three ECS services on Graviton with serverless data stores, in two availability zones at launch. Stage 0 runs the same containers on a single instance with Postgres and Valkey beside them (see [Stage 0 settings](#stage-0-settings)).
 
 | Service | Runs on | Job |
 | --- | --- | --- |
@@ -267,6 +267,7 @@ The copilot holds resumes, meeting transcripts and employer data, so encryption 
 - **Third-party processors:** audio goes to the STT provider, and error data to Sentry. Each needs a data processing agreement and zero-retention settings; prompt logs stay in a self-hosted Langfuse.
 - **Untrusted input:** transcripts and tool data are treated as data in prompts, and new facts enter memory only after the user approves them.
 - **Secrets and network:** app secrets (STT, Stripe, OAuth client secrets) in Secrets Manager, and per-user tool tokens encrypted with the user's data key in Aurora; Aurora and Valkey in private subnets; VPC endpoints for Bedrock and S3 keep that traffic inside AWS; CloudTrail logs every access to workplace data.
+- **Stage 0 exception: no TLS.** Stage 0 serves the API and the gateway over plain HTTP and WebSocket on the instance's AWS host name, and its security group admits port 80 only from an IP allow-list of the team's addresses (a Terraform variable kept out of git). Cognito's sign-in pages, S3 uploads and every call from the services to AWS, OpenAI and Deepgram still use TLS; the access token and call text between the app and the instance do not. TLS (CloudFront's default domain in front of the instance, or a real domain with ACM) is required before anyone outside the team uses it, and before Stage 1.
 - **Later:** SOC 2 before selling to companies, and a local-first mode, since some employers restrict sending work data to third-party services.
 
 ### Observability and latency budget
@@ -287,6 +288,7 @@ Our own code should stay under 20 to 30 ms at p95; past that is the signal to mo
 - **Model metrics:** Bedrock metrics in CloudWatch (latency, tokens, service tier per call). Invocation logging of request and response bodies stays off, since those hold transcript text.
 - **Errors:** Sentry on client and services.
 - **Prompt logs:** self-hosted Langfuse with redacted, opt-in content, feeding the eval set. CloudWatch and X-Ray carry only ids, timings, token counts and errors, never transcript or answer text.
+- **Service logs:** every service logs JSON lines to CloudWatch Logs (one log group per service), and every line logged for a session, a request under `/v1/sessions/{id}` or a job about a session carries `session_id` (and `user_id`, and the job type in workers), so one query pulls a session's lines from the gateway, the API, the workers and the scheduler. Locally the same lines go to the console as text, and `COPILOT_LOG_DIR` also writes them as JSON to a file per run.
 
 ### Cost estimate
 
@@ -312,7 +314,7 @@ Assumptions: 40 questions per live hour; the other side speaks about 30 minutes 
 
 | Stage | Users | Fixed | Variable | Total per month |
 | --- | --- | --- | --- | --- |
-| Stage 0: internal | 4 | \~$80 | \~$40 | \~$120, covered by credits |
+| Stage 0: internal | 4 | \~$22 (one instance; see Stage 0 settings) | \~$40 | \~$62, covered by credits |
 | Stage 1: beta | \~100 | \~$150 | \~$1,000 | \~$1,150 |
 | Stage 2: production | 1,000 | \~$750 | \~$10,400 | \~$11,200 |
 | Stage 2 at scale | 10,000 | \~$2,500 | \~$95,000 | \~$97,500 |
@@ -334,15 +336,15 @@ Every stage runs the same code, containers, schema, protocol and Terraform modul
 |  | Stage 0: internal team | Stage 1: beta | Stage 2: production |
 | --- | --- | --- | --- |
 | Users | 3 to 4 teammates | Up to about 100 | 1,000 and more |
-| Compute | ECS Fargate ARM: 1 gateway task (0.5 vCPU), 1 small API task, workers scale from zero | 2 gateway tasks, workers from zero | As sized in [Infrastructure and operations](#4-infrastructure-and-operations) |
-| Network | Public subnets with tight security groups; no NAT, no interface endpoints; 2 zones (the load balancer needs two) | Same | Private subnets, NAT per zone, interface endpoints |
-| Database | Aurora Serverless v2 with scale to zero | Aurora with a small minimum | Aurora 1 to 16 ACU, reader and RDS Proxy as load grows |
-| Cache, queue, auth | ElastiCache Serverless Valkey, SQS, Cognito | Same | Same |
+| Compute | One ARM64 instance (t4g.small) running every container through ECS on EC2 | Fargate ARM: 2 gateway tasks, workers from zero | As sized in [Infrastructure and operations](#4-infrastructure-and-operations) |
+| Network | One public subnet; no load balancer, NAT or interface endpoints; port 80 open only to an IP allow-list, no TLS | Public subnets with a load balancer and TLS (CloudFront's domain or a real one) in 2 zones | Private subnets, NAT per zone, interface endpoints |
+| Database | Postgres 16 with pgvector in a container on the instance, data on its own EBS volume, daily snapshots | Aurora with a small minimum | Aurora 1 to 16 ACU, reader and RDS Proxy as load grows |
+| Cache, queue, auth | Valkey in a container on the instance; SQS; Cognito | ElastiCache Serverless Valkey, SQS, Cognito | Same |
 | Environments | One AWS account, one environment; Docker Compose for local development | Separate staging (scales to zero) | Prod, staging and shared accounts |
 | Detector | Haiku on every utterance | Local classifier trained on Stage 0 calls, then Haiku | Same |
-| Deploys | Rolling; the client resumes the session | Blue/green for the gateway | Blue/green |
-| Not yet | Billing, code signing, RDS Proxy, SOC 2 | SOC 2 | Everything in place |
-| Fixed cost | About $80 a month | About $150 a month | About $750 a month |
+| Deploys | Stop, then start, per service; the client resumes the session | Blue/green for the gateway | Blue/green |
+| Not yet | TLS, billing, code signing, RDS Proxy, SOC 2 | SOC 2 | Everything in place |
+| Fixed cost | About $22 a month running all the time, about $10 stopped between tests | About $150 a month | About $750 a month |
 | Move on when | The team uses it daily and at least 50 calls are recorded and labeled | About 30 concurrent sessions or paying customers |  |
 
 Not cut at any stage: row-level security, per-user encryption, session logging, tracing, Terraform, CI/CD and automated backups. These are cheap now and expensive to add later.
@@ -415,6 +417,7 @@ All messages are JSON objects with a `type` field.
 | `screenshot` | `image` (base64 JPEG, at most 1.5 MB), `question_id?` | Coding question from the screen |
 | `answer.expand` | `question_id` | User opens the deep answer |
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
+| `latency.report` | `question_id`, `pass`, `first_word_ms`, `anchor` (`speech_end`, `forced`, `expand`) | The first non-empty `answer.delta` of a pass arrived; the client's own first-word time, stored with the answer (`client_first_word_ms`). A report for a question the gateway does not hold is dropped without an error |
 | `mode.set` | `mode` | User switches mode mid-call |
 | `session.end` | none | User ends the session |
 
@@ -437,7 +440,7 @@ Example:
 | `question.detected` | `question_id`, `text`, `question_type`, `confidence`, `speculative` | A question aimed at the user; `speculative: true` means it may still be cancelled. `question_type` is the detector's type (`type` is taken by the message type) |
 | `question.cancelled` | `question_id` | A speculative question was dropped because the speaker kept talking |
 | `answer.delta` | `question_id`, `pass` (fast, deep), `text` | Next chunk of streamed answer text |
-| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`), `source?` (`model`, `prepared`, `cache`), `latency_ms?` (`turn_end_ms`, `detector_ms`, `first_token_ms`, `first_delta_ms`, `total_ms`) | Answer finished |
+| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`), `source?` (`model`, `prepared`, `cache`), `latency_ms?` (`turn_end_ms`, `detector_ms`, `first_token_ms`, `first_delta_ms`, `total_ms`, `final_ms`, `start_ms`, `expand_ms`, `prepared_ms`, `prepared_similarity`) | Answer finished. Times are from the end of speech (or the force message): `final_ms` when the STT final arrived, `start_ms` when the pass started, `expand_ms` when the user tapped expand; `prepared_ms` is the prepared-answer lookup's duration and `prepared_similarity` the best match's similarity, hit or miss |
 | `answer.error` | `question_id`, `pass`, `code` | That pass stopped; the other pass may still arrive. Codes: `cancelled` (a newer question was confirmed; keep showing what arrived), `refused`, `llm_unavailable`, `internal` |
 | `status` | `component` (stt, llm, memory), `state` (ok, degraded, reconnecting), `message` | Drives the small status badge in the overlay |
 | `auth.expiring` | `expires_in_s` | Ask the client to send `auth.refresh` now |
@@ -500,7 +503,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
-Migrations create these roles `NOLOGIN` and hold no passwords. Each environment grants login on its own: Terraform in AWS, and `copilot-dev-roles` on the local stack (fixed local passwords, refused for any host but localhost). Each service connects as its own role. Views over user tables are created `with (security_invoker = true)`, so the caller's privileges and row-level security apply rather than the owner's.
+Migrations create these roles `NOLOGIN` and hold no passwords. Each environment grants login on its own: in AWS, `copilot-db-logins` runs after the migrations in the same one-off task, with passwords Terraform generates into Secrets Manager (write-only, never in the Terraform state; a role without one stays `NOLOGIN`); on the local stack, `copilot-dev-roles` (fixed local passwords, refused for any host but localhost). Each service connects as its own role. Views over user tables are created `with (security_invoker = true)`, so the caller's privileges and row-level security apply rather than the owner's.
 
 ### Schema DDL
 
@@ -679,7 +682,8 @@ create table app.answers (
   cached_tokens   int,
   output_tokens   int,
   cost_usd        numeric(10,6),
-  latency_ms      jsonb not null,              -- {"turn_end": 410, "retrieval": 38, "first_token": 520}
+  latency_ms      jsonb not null,              -- answer.done's latency_ms, plus provider, fallback_attempt,
+                                               -- client_first_word_ms and client_anchor (latency.report)
   memory_node_ids uuid[] not null default '{}',
   expanded        boolean not null default false,
   feedback        text check (feedback in ('up','down')),
@@ -1100,6 +1104,7 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 
 | Method and path | Purpose |
 | --- | --- |
+| `GET /auth/config` | No token: how the desktop app signs in to this deployment (Cognito's domain and app client, or `dev` on the local stack) |
 | `GET /me` | Profile and settings |
 | `PATCH /me` | Profile fields (display name); settings fields are refused |
 | `PATCH /me/settings` | Settings: retention days, standup time and timezone, consent defaults; profile fields are refused |
@@ -1155,7 +1160,8 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
 - **Spot interruptions:** on SIGTERM (two minutes before a Spot reclaim) the task stops receiving, lets running jobs finish if they can, and leaves the rest to return to the queue after their visibility timeout.
 - **Long calls:** a helper extends the message's visibility timeout every minute while an Opus call runs.
 - **Model calls:** workers use the same router as the gateway: Sonnet for session packs, summaries and feedback; Opus only for memory extraction; Flex first, then Standard. The digest needs no model.
-- **Not built yet** (agreed after build step 4a): `user.delete` removes the Cognito user with `AdminDeleteUser` from build step 5, when Cognito exists; `tools.sync` comes with phase 3; memory proposals and commitments from post-call work come with phase 2; the gateway has no database connection until phase 2 retrieval.
+- **Account deletion:** `user.delete` removes the Cognito user with `AdminDeleteUser` first, so no new session can start, then the S3 prefix, Valkey keys, data keys and rows.
+- **Not built yet:** `tools.sync` comes with phase 3; memory proposals and commitments from post-call work come with phase 2; the gateway has no database connection until phase 2 retrieval.
 
 ## 4. Infrastructure and operations
 
@@ -1198,41 +1204,45 @@ Staging uses the same shapes with Aurora at 0 to 4 ACU (scale to zero) and one t
 
 #### Stage 0 settings
 
-The sizes above are for Stage 2. Stage 0 uses the same modules with this variables file:
+The sizes above are for Stage 2. Stage 0 (decided in build step 5) does not run them scaled down: it runs every container on **one ARM64 instance** and uses managed services only where they cost almost nothing. Aurora's resume after a pause would land on the first call of a test, and ElastiCache Serverless bills a minimum even when idle; at four users neither pays for itself. The containers and their task definitions are the ones Fargate runs in Stage 1, so moving up changes the launch type and the stores, not the code.
 
 ```hcl
-# infra/envs/stage0/terraform.tfvars
-az_count            = 2        # the load balancer needs two zones
-private_subnets     = false    # tasks get public IPs, so no NAT is needed
-nat_gateways        = 0
-interface_endpoints = []
-gateway             = { cpu = 512, memory = 1024, min = 1, max = 2 }
-api                 = { cpu = 256, memory = 512,  min = 1, max = 2 }
-worker              = { cpu = 512, memory = 1024, min = 0, max = 2, spot = true }
-aurora              = { min_acu = 0, max_acu = 2, readers = 0 }
-rds_proxy           = false
-deploy_strategy     = "rolling"   # blue/green from Stage 1
-log_retention_days  = 7
-xray_sampling_rate  = 0.05
+# infra/envs/stage0/terraform.tfvars (abridged)
+az_count       = 1            # one instance, so one zone; a load balancer (Stage 1) needs two
+instance_type  = "t4g.small"  # 2 GiB; the services measured about 1 GiB in all
+data_volume_gb = 10           # Postgres and Valkey; snapshotted daily, 7 kept
+snapshot_days  = 7
+postgres_image = "pgvector/pgvector:0.8.7-pg16"
+valkey_image   = "public.ecr.aws/docker/library/valkey:8.1-alpine"
+log_retention_days = 7
+xray_sampling_rate = 0.05
+budget_monthly_usd = 25       # alerts at 50% and 80% forecast, 100% actual
+scheduler_rate     = "rate(5 minutes)"
+# allowed_cidrs: kept out of git (allowlist.auto.tfvars, or the TF_ALLOWED_CIDRS variable in CI)
 ```
 
-- **Security in public subnets:** task security groups accept traffic only from the load balancer. Tasks reach Bedrock, S3, SQS and the other AWS APIs over their public endpoints, with TLS and IAM, as they would through NAT.
-- **Workers from zero:** step scaling starts one task when the `jobs` queue has a visible message and scales back to zero after 15 empty minutes. Post-call results wait up to about 2 minutes for a cold worker, which is fine for Stage 0.
-- **Aurora from zero:** the desktop app calls `GET /me` at launch, which wakes the database before the first call starts.
-- **One account:** Stage 0 runs in a single AWS account. The prod, staging and shared accounts come with Stage 1.
-
-| Stage 0 fixed item | Per month |
+| Part | Stage 0 |
 | --- | --- |
-| Gateway task (0.5 vCPU, 1 GB) and API task (0.25 vCPU, 0.5 GB), ARM | \~$22 |
-| Workers on Spot, a few hours a month | \~$1 |
-| Load balancer | \~$18 |
-| Public IPv4 addresses (tasks and load balancer) | \~$15 |
-| Aurora Serverless v2, mostly paused, plus storage | \~$11 |
-| ElastiCache Serverless Valkey | \~$6 |
-| KMS, Secrets Manager, CloudWatch, ECR, Route 53, S3 | \~$8 |
-| **Total** | **\~$80** |
+| Compute | One t4g.small in the ECS cluster (ECS on EC2, host networking): gateway, API, worker, an nginx proxy, Postgres with pgvector and Valkey as services; migrations and the scheduler tick as one-off tasks. Each has its own task role and execution role, as in the role table |
+| Edge | nginx on port 80 of the instance's Elastic IP, reached by its AWS host name (`ec2-…compute-1.amazonaws.com`): `/v1/session` to the gateway, everything else to the API, with the 120 s idle timeout the load balancer would have. No TLS (see Security and privacy); the security group admits port 80 only from the allow-list. No SSH: Session Manager and ECS Exec |
+| Data | Postgres and Valkey bind to 127.0.0.1 and keep their files on a separate encrypted EBS volume that survives stops, deploys and an instance replacement; Data Lifecycle Manager snapshots it daily. Valkey runs with `noeviction` and an append-only file |
+| Managed | SQS (`jobs` and its dead-letter queue), S3 (uploads), Cognito (its default `amazoncognito.com` domain), KMS, Secrets Manager, CloudWatch Logs, EventBridge Scheduler, AWS Budgets |
+| Deploys | Per service, the old task stops before the new one starts (they share the host's ports); the desktop client resumes its session meanwhile |
+| Stopping | Stopping the instance stops the whole app; the ECS services start again with it |
 
-Cognito, SQS and EventBridge Scheduler stay within free usage at this size.
+- **Security on one host:** containers share the host's network, so the instance metadata service is closed to every non-root user by a firewall rule, and each task reaches AWS only through its own task role. The services listen on 127.0.0.1; only nginx is reachable, and only from the allow-list.
+- **One account:** Stage 0 runs in a single AWS account, with its Terraform state in the same account. The prod, staging and shared accounts come with Stage 1.
+
+| Stage 0 fixed item (us-east-1 list prices, October 2026) | Running all the time | Stopped between tests |
+| --- | --- | --- |
+| t4g.small instance ($0.0168 an hour) | \~$12.30 | \~$0.70 (40 hours) |
+| EBS: 30 GB root and 10 GB data, gp3 | \~$3.20 | \~$3.20 |
+| Elastic IP (public IPv4 bills idle too) | \~$3.65 | \~$3.65 |
+| KMS key, 3 secrets, snapshots | \~$2.50 | \~$2.50 |
+| CloudWatch Logs, ECR, S3 | \~$0.70 | \~$0.30 |
+| **Total** | **\~$22** | **\~$10** |
+
+Cognito, SQS, EventBridge Scheduler, ECS on EC2, Data Lifecycle Manager and the first two budgets stay within free usage at this size. The earlier plan (Fargate behind a load balancer, Aurora and ElastiCache Serverless) came to about $80. A t4g.medium would add about $12.30 running all the time.
 
 ### Terraform layout and IAM
 
@@ -1246,7 +1256,7 @@ infra/
     prod/      main.tf, terraform.tfvars
 ```
 
-State lives in an S3 bucket in the `shared` account with S3-native locking (`use_lockfile = true`, Terraform 1.10 or later), so no DynamoDB lock table is needed. If the AWS provider version in use has no resource for ECS Express Mode, the API runs as a standard ECS service with its own load balancer rules; nothing else changes.
+State lives in an S3 bucket in the `shared` account with S3-native locking (`use_lockfile = true`, Terraform 1.10 or later), so no DynamoDB lock table is needed. Stage 0 keeps it in its own account, in a bucket made by `infra/bootstrap`. Stage 0's tree is `infra/modules/{network, ecr, ecs-cluster, host, service, sqs, s3, cognito, kms, secrets, observability, ci}` and `infra/envs/stage0`: one `service` module serves every workload on the instance (gateway, API, worker, proxy, Postgres, Valkey, migrations, the scheduler tick), and `host` is the instance with its data volume. If the AWS provider version in use has no resource for ECS Express Mode, the API runs as a standard ECS service with its own load balancer rules; nothing else changes.
 
 | Role | Allowed |
 | --- | --- |
@@ -1254,6 +1264,8 @@ State lives in an S3 bucket in the `shared` account with S3-native locking (`use
 | API task | Presigned S3 uploads under `uploads/{user_id}/`; send to `jobs`; connect as `app_api`; KMS data-key calls with user encryption context; read OAuth client secrets and Stripe keys |
 | Worker task | Invoke Bedrock models; read `uploads/`; receive, delete and change visibility on `jobs`; connect as `app_worker` and `app_system`; KMS data-key calls with user encryption context |
 | CI deploy | Assumed through GitHub OIDC; push to ECR, update ECS services, Terraform plan and apply in staging; prod apply needs the approval step |
+
+In Stage 0 the gateway role sends to `jobs` and reads the OpenAI and Deepgram keys (no Bedrock, no database yet); the API and worker roles are as above, with OpenAI in place of Bedrock, and the worker may also call `AdminDeleteUser` on the user pool. CI has two roles: a read-only plan role for pull requests, which cannot read secret values, and a deploy role for `main`, which pushes images, registers task definitions, runs the migration task and updates the services, but does not change infrastructure. `terraform apply` stays a person's step in Stage 0.
 
 **KMS:** one symmetric key per environment for user data. The key policy requires an encryption context with `user_id` on every GenerateDataKey and Decrypt call, so a data key decrypts only for the user it was made for, and CloudTrail records which user's key was used.
 
@@ -1270,6 +1282,8 @@ GitHub Actions, authenticating to AWS through OIDC roles.
 5. **Staging checks:** smoke tests, then replay 10 recorded calls through the gateway. Fail if first-word p95 passes 1.5 s or detection accuracy drops.
 6. **Approval:** manual approval on the GitHub `prod` environment.
 7. **Prod:** migrations, then deploy the same image digests that passed staging.
+
+**Stage 0:** `.github/workflows/ci.yml` runs on pull requests (Python with Postgres and Valkey as service containers, TypeScript, Rust on Windows, migrations, and `terraform plan` posted on the PR); `.github/workflows/deploy.yml` runs on merge to `main`: ARM64 images built natively on GitHub's ARM runners, pushed to ECR with the git SHA as the tag, then `infra/scripts/deploy.py` runs the migration task and moves each service to the new images. A rollback is a deploy of an older tag (from the Actions tab, or `deploy.py --tag`); migrations are expand then contract, so older code runs against a newer schema. There is no staging step or replay check yet.
 
 **Desktop releases:** a `desktop-v*` tag builds macOS (universal) and Windows, signs and notarizes them, uploads them to the updates bucket, and publishes the Tauri updater manifest.
 

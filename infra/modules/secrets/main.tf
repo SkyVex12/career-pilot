@@ -1,7 +1,7 @@
 # App secrets in Secrets Manager (ARCHITECTURE.md, "Secrets").
 #
 # - openai and deepgram: created without a value. Put the keys in by hand
-#   (infra/README.md, "First-time setup"); the services that need them do not start until then.
+#   (README.md, "Deploying Stage 0"); the services that need them do not start until then.
 # - database: the Postgres superuser's password and one password per app role, as JSON, with
 #   ready-made connection URLs for each service. The passwords are ephemeral and written with
 #   a write-only argument, so they are never in the Terraform state or a plan. They are made

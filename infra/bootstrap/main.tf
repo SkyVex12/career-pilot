@@ -1,5 +1,5 @@
 # The Terraform state bucket, created once per AWS account before anything else
-# (infra/README.md, "First-time setup"). Its own state is local (terraform.tfstate here,
+# (README.md, "Deploying Stage 0"). Its own state is local (terraform.tfstate here,
 # gitignored): it holds only this bucket, and the bucket must exist before any S3 backend can.
 #
 #   terraform -chdir=infra/bootstrap init
@@ -34,6 +34,9 @@ data "aws_caller_identity" "this" {}
 
 resource "aws_s3_bucket" "state" {
   bucket = "copilot-tfstate-${data.aws_caller_identity.this.account_id}"
+  # Destroying this bucket deletes every state version with it; it happens only at the end of
+  # a full teardown (README, "Tearing it all down"), after the stage itself is destroyed.
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_versioning" "state" {

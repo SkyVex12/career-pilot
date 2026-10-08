@@ -1,6 +1,6 @@
 # Stage 0 on AWS (build step 5): every container on one ARM64 instance through ECS on EC2,
 # managed services only where they cost almost nothing (SQS, S3, Cognito, KMS, Secrets
-# Manager, CloudWatch Logs, EventBridge Scheduler). See infra/README.md.
+# Manager, CloudWatch Logs, EventBridge Scheduler). See README.md, "Deploying Stage 0", and infra/README.md.
 
 data "aws_caller_identity" "current" {}
 

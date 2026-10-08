@@ -33,7 +33,7 @@ output "cognito" {
 }
 
 output "secrets" {
-  description = "Fill openai and deepgram by hand (infra/README.md); database is generated"
+  description = "Fill openai and deepgram by hand (README.md: Deploying Stage 0); database is generated"
   value = {
     openai   = module.secrets.openai_arn
     deepgram = module.secrets.deepgram_arn

@@ -76,7 +76,7 @@ class Stage:
         if not arns["containerInstanceArns"]:
             sys.exit(
                 f"no instance in cluster {self.name}: is it stopped? Start it first "
-                "(infra/README.md, 'Stopping between tests')"
+                "(README.md, 'Deploying Stage 0')"
             )
 
     def register(self, workload: str, tag: str) -> str:

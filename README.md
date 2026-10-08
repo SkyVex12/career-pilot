@@ -4,7 +4,7 @@ Desktop career copilot: listens to live interviews and meetings, detects questio
 the user, and shows answers grounded in their career memory. The design is in
 [ARCHITECTURE.md](ARCHITECTURE.md), which is the source of truth for everything here.
 
-Status: Stage 0, build step 4b. The gateway serves live sessions: the WebSocket protocol,
+Status: Stage 0, build step 5. The gateway serves live sessions: the WebSocket protocol,
 Deepgram STT on the "them" channel, turn detection, the Haiku detector, fast and deep answers
 from the hot digest and session pack, session state and logs in Valkey, and jobs on the queue.
 The Windows desktop app captures the call (WASAPI loopback) and the microphone, cancels echo,
@@ -15,8 +15,9 @@ and an interview into its session pack, copy the session log into Aurora with pe
 encryption, transcribe the user's audio, and write the summary and feedback. The desktop app
 works through the API: it uploads documents, lists jobs, schedules interviews, records the
 user's own audio (encrypted, only with transcript consent) and uploads it after the call, and
-shows the post-call outputs and the session history. Login is a Cognito access token, or the
-dev token locally; Cognito itself comes with Terraform (step 5).
+shows the post-call outputs and the session history. Stage 0 deploys to AWS with Terraform and
+GitHub Actions (see "Deploying Stage 0"); there the app signs in through Cognito, and locally it
+uses the dev token. Every service logs JSON lines with the session id to CloudWatch.
 
 ## Layout
 
@@ -37,7 +38,9 @@ packages/
   protocol/     protocol.schema.json + generated Python, TypeScript and Rust types
 migrations/     plain SQL migrations and the row-level security test
 evals/          copilot-replay: stream a recorded call through the gateway
-infra/          Terraform (empty)
+infra/          Terraform for Stage 0 on AWS, and deploy.py (see infra/README.md)
+docker/         the service images (python.Dockerfile, proxy/) and the local stack's config
+.github/        CI on pull requests, deploy on merge to main
 scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py,
                 desktop_test_stack.py (the backend for the client's API tests)
 ```
@@ -102,6 +105,10 @@ pnpm --filter @copilot/desktop tauri dev   # the desktop app (needs Rust; see be
 `HOST` and `PORT` override the bind address. Check a service with
 `curl http://127.0.0.1:8081/healthz`.
 
+Logs go to the console as text, with the session id (and user and job) at the end of each line.
+`COPILOT_LOG_DIR=logs` also writes them as JSON lines to a file per run and service, the format
+CloudWatch gets in AWS (`COPILOT_LOG_FORMAT=json` switches the console too).
+
 ### Running the API and workers locally
 
 Both read the same `.env` as the gateway (start from `.env.example`). Besides the dev auth
@@ -120,7 +127,7 @@ variables below they need:
 every model and Deepgram call from the recorded fixtures, for running the whole flow without
 keys: OpenAI's recordings when `openai` is the first provider, Claude's otherwise. In AWS the API and workers use `COPILOT_AUTH=cognito` with
 `COPILOT_COGNITO_USER_POOL_ID` and `COPILOT_COGNITO_CLIENT_IDS`, and `COPILOT_KEY_PROVIDER=kms`
-with `COPILOT_KMS_KEY_ID` (build step 5).
+with `COPILOT_KMS_KEY_ID` (Terraform sets these; see "Deploying Stage 0").
 
 The API (base path `/v1`, bearer token on every request):
 
@@ -143,7 +150,7 @@ The gateway needs a `.env` (gitignored; start from `.env.example`) with:
 
 | Variable | For |
 | --- | --- |
-| `COPILOT_ENV=dev`, `COPILOT_AUTH=dev`, `COPILOT_DEV_TOKEN` | Dev auth: a static bearer token for `COPILOT_DEV_USER_ID`. It works only with `COPILOT_ENV=dev` and never inside AWS. Cognito comes later |
+| `COPILOT_ENV=dev`, `COPILOT_AUTH=dev`, `COPILOT_DEV_TOKEN` | Dev auth: a static bearer token for `COPILOT_DEV_USER_ID`. It works only with `COPILOT_ENV=dev` and never inside AWS, which signs in through Cognito (see "Deploying Stage 0") |
 | `COPILOT_LLM_PROVIDERS` | `anthropic`, `bedrock`, `openai`, or several in fallback order (`openai,anthropic`) |
 | `ANTHROPIC_API_KEY` | The direct Claude API |
 | AWS credentials or `AWS_BEARER_TOKEN_BEDROCK` | Claude on Bedrock (Mantle), and Cohere embeddings when `COPILOT_EMBEDDER=bedrock` |
@@ -191,9 +198,9 @@ One terminal per long-running step.
    `uv run copilot-gateway`, each in its own terminal (and `uv run copilot-scheduler` for the
    timed jobs, optional locally). Bind `HOST=0.0.0.0` only if the app runs on another machine.
 4. **App:** `pnpm --filter @copilot/desktop tauri dev`. The first build takes a few minutes.
-5. **Settings** (in the app): the gateway URL (`ws://127.0.0.1:8081/v1/session`), the API URL
-   (`http://127.0.0.1:8080/v1`), the dev token (stored in the Windows Credential Manager; the
-   same token signs in to both), the microphone, and "Call audio from": the speakers or
+5. **Settings** (in the app): Environment: Local, the gateway URL
+   (`ws://127.0.0.1:8081/v1/session`), the API URL (`http://127.0.0.1:8080/v1`), the dev token
+   (stored in the Windows Credential Manager; the same token signs in to both), the microphone, and "Call audio from": the speakers or
    headset the call app plays on. Leave echo cancellation on. Save.
 6. **Documents:** upload your resume and a job description. Each shows Processing, then
    Processed; the career digest shows Ready once the resume's facts are in, and the job
@@ -309,6 +316,167 @@ does not connect to Postgres yet (memory retrieval comes in phase 2). Every requ
 `select set_config('app.user_id', $1, true)` in its transaction (`copilot_core.db.user_tx`).
 Without it, queries on user tables raise an error rather than return rows.
 
+## Deploying Stage 0
+
+Stage 0 runs in one AWS account in us-east-1 on a single ARM64 instance: gateway, API, worker,
+an nginx proxy, Postgres with pgvector and Valkey run as containers through ECS on EC2, next
+to SQS, S3, Cognito, KMS, Secrets Manager and CloudWatch Logs (ARCHITECTURE.md, "Stage 0
+settings"; the layout is in `infra/README.md`). It costs about $22 a month running all the time
+and about $10 stopped between tests, plus OpenAI and Deepgram per use.
+
+**No TLS in Stage 0.** The app talks to the instance over plain HTTP and WebSocket on its AWS
+host name, and the instance admits port 80 only from an IP allow-list. Your sign-in token and
+call text cross the internet unencrypted on that hop; the settings screen says so. TLS
+(CloudFront or a real domain) is required before anyone outside the team uses it.
+
+You need the AWS CLI, Terraform 1.11+ (`winget install Amazon.AWSCLI Hashicorp.Terraform`),
+`gh`, and `uv`.
+
+### First-time setup
+
+Done once, by hand, in this order.
+
+1. **Sign in to AWS** in a terminal: `aws login` (or `aws configure sso`), region `us-east-1`.
+   `aws sts get-caller-identity` shows the account. The account must allow EC2, ECS, Cognito,
+   SQS, S3, KMS, Secrets Manager, ECR, EventBridge Scheduler, DLM, X-Ray and IAM (an
+   organization's service control policy can block them).
+2. **State bucket**, once per account:
+
+   ```sh
+   terraform -chdir=infra/bootstrap init
+   terraform -chdir=infra/bootstrap apply          # creates copilot-tfstate-<account id>
+   ```
+
+3. **Allow-list.** In `infra/envs/stage0/allowlist.auto.tfvars` (gitignored), one /32 per
+   teammate who will connect (`curl https://checkip.amazonaws.com` shows yours):
+
+   ```hcl
+   allowed_cidrs = ["203.0.113.7/32", "198.51.100.20/32"]
+   ```
+
+4. **The stage.** Review the plan before applying:
+
+   ```sh
+   cd infra/envs/stage0
+   terraform init -backend-config="bucket=copilot-tfstate-<account id>"
+   terraform plan -out=tfplan
+   terraform apply tfplan
+   terraform output                                   # URLs, Cognito, secrets, roles
+   ```
+
+   The app services wait at zero tasks until the first deploy; Postgres and Valkey start
+   right away.
+5. **Secrets.** Put the two API keys in (never in a file or a commit; the prompt keeps them out
+   of your shell history):
+
+   ```sh
+   aws secretsmanager put-secret-value --secret-id copilot-stage0/openai-api-key --secret-string "$(read -rsp 'OpenAI key: ' k; echo "$k")"
+   aws secretsmanager put-secret-value --secret-id copilot-stage0/deepgram-api-key --secret-string "$(read -rsp 'Deepgram key: ' k; echo "$k")"
+   ```
+
+   That is Git Bash; in PowerShell 7 use `--secret-string (Read-Host -MaskInput 'OpenAI key')`.
+   The database passwords are generated by Terraform straight into
+   `copilot-stage0/database`; they are not in the Terraform state.
+6. **Users.** Sign-up is closed; create each teammate (Cognito emails them a temporary password,
+   and they choose their own at the first sign-in):
+
+   ```sh
+   aws cognito-idp admin-create-user --user-pool-id <cognito.user_pool_id> \
+     --username alex@example.com --user-attributes Name=email,Value=alex@example.com Name=email_verified,Value=true
+   ```
+
+7. **CI.** Repository variables for the workflows (Settings → Secrets and variables → Actions →
+   Variables, or `gh variable set`), from `terraform output`:
+
+   | Variable | Value |
+   | --- | --- |
+   | `AWS_PLAN_ROLE_ARN` | `ci_roles.plan` |
+   | `AWS_DEPLOY_ROLE_ARN` | `ci_roles.deploy` |
+   | `TF_STATE_BUCKET` | `copilot-tfstate-<account id>` |
+   | `TF_ALLOWED_CIDRS` | the allow-list as JSON, e.g. `["203.0.113.7/32"]` (for the PR plan) |
+
+   No AWS keys are stored in GitHub: both workflows assume their role through GitHub's OIDC
+   provider. The deploy role trusts pushes to `main` only.
+8. **First deploy.** Run the `deploy` workflow from the Actions tab (on `main`), or merge a PR.
+   It builds the images on GitHub's ARM runners, pushes them, runs the migrations and starts
+   the services. Then `terraform apply` once more, so Terraform records the deployed images.
+9. **DNS: nothing to do.** Stage 0 uses the Elastic IP's AWS host name (`terraform output
+   public_dns`); Cognito uses its own `amazoncognito.com` domain.
+10. **The desktop app.** Settings → Environment: AWS. Paste `public_dns` into "AWS host" and
+    press Fill URLs (or paste `api_url` and `gateway_url`), Save, then Sign in: the browser
+    opens Cognito's page, and the app keeps the sign-in in the Windows Credential Manager.
+
+### Deploy
+
+Merging to `main` deploys (`.github/workflows/deploy.yml`): ARM64 images tagged with the git
+SHA, the migration task, then each service. On the one instance each service's old task stops
+before the new one starts, so a call in progress reconnects and resumes in a few seconds. The
+instance must be running; a deploy to a stopped stage fails and can be rerun once it is up.
+
+By hand, with images already in ECR:
+
+```sh
+uv run --no-project --with boto3 python infra/scripts/deploy.py --tag <git sha>
+uv run --no-project --with boto3 python infra/scripts/deploy.py --status
+```
+
+Infrastructure changes are not deployed by CI: each PR shows its `terraform plan` as a comment,
+and someone runs `terraform apply` after merging.
+
+### Rollback
+
+Deploy the previous tag; `deploy.py` prints it at the end of every deploy (`rollback: --tag
+…`), and ECR keeps the last 15 images:
+
+```sh
+uv run --no-project --with boto3 python infra/scripts/deploy.py --tag <previous sha>
+```
+
+or run the `deploy` workflow with that tag. Migrations follow expand then contract, so the
+older code runs against the newer schema. A failed deploy that never got healthy rolls itself
+back (the ECS deployment circuit breaker).
+
+### Logs
+
+Every service logs to CloudWatch Logs, one group per service (`/copilot-stage0/gateway`, `api`,
+`worker`, `scheduler`, `migrate`, `proxy`, `postgres`, `valkey`, kept 7 days). The Python
+services write JSON lines, and every line about a session carries its `session_id`.
+
+- **One session, every service:** CloudWatch → Logs Insights → Saved queries →
+  `copilot-stage0/one session`; put the session id in the filter and run it over the session's
+  time range. The id is in the app's history and in `answers`/`sessions`.
+- **Follow a service live:** `aws logs tail /copilot-stage0/gateway --follow`
+  (`--filter-pattern '{ $.session_id = "<id>" }'` for one session).
+- **Errors:** the saved query `copilot-stage0/errors`.
+- **A shell on the instance:** `aws ssm start-session --target <instance_id>` (no SSH);
+  inside a task: `aws ecs execute-command --cluster copilot-stage0 --task <task id> --container
+  api --interactive --command sh`.
+
+### Stopping between tests
+
+Stopping the instance stops the whole app; only the volumes, the Elastic IP and the small fixed
+items keep billing (about $10 a month).
+
+```sh
+aws ec2 stop-instances  --instance-ids <instance_id>
+aws ec2 start-instances --instance-ids <instance_id>   # the services start again in 2-3 minutes
+```
+
+While it is stopped, the scheduler's 5-minute runs fail and are dropped, and deploys fail.
+
+### Tearing it all down
+
+```sh
+terraform -chdir=infra/envs/stage0 destroy
+terraform -chdir=infra/bootstrap destroy        # the state bucket, last
+```
+
+This deletes the instance, the data, the images, the uploads, the user pool and the secrets.
+Two things are left on purpose: a final snapshot of the data volume (delete it in EC2 →
+Snapshots when you no longer want the data; a few cents a month) and the KMS key, which AWS
+deletes after its 7-day waiting period. Remove the repository variables so the workflows skip
+the AWS steps again.
+
 ## Protocol codegen
 
 `packages/protocol/protocol.schema.json` is the realtime protocol contract. After editing it,
@@ -357,6 +525,16 @@ uv run pyright
 - **Local stack smoke tests** (`tests/test_local_stack.py`, marker `stack`): a set and get
   with TTL on Valkey; on ElasticMQ, the `jobs` queue's dead-letter policy and a create,
   send, receive and delete with a `MessageGroupId`.
+- **Logs and measurements:** `packages/core/tests/test_logs.py` (JSON lines with the bound ids,
+  ids carried into asyncio tasks, the file per run, JSON inside AWS),
+  `apps/gateway/tests/test_measurements.py` (every `latency_ms` stage, the route kept with the
+  answer, prepared-answer similarity on a miss, the expand tap, `latency.report` before and after
+  the answer is logged, and the session id on every gateway line), the flush merging late
+  timings (`apps/worker/tests/test_session_log.py`), and the API's request lines.
+- **AWS pieces:** `copilot-db-logins` against the stack (`packages/core/tests/test_dblogins.py`),
+  `user.delete` deleting the Cognito user, `GET /v1/auth/config`, the settings refusing dev and
+  test on AWS compute, and the desktop's Cognito sign-in (`apps/desktop/core/src/cognito.rs`:
+  PKCE, the loopback redirect, refresh, and a revoked sign-in) against a fake token endpoint.
 - **Core unit tests** (`packages/core/tests/`): the Cognito verifier with locally generated
   RSA keys (signature, issuer, expiry, `token_use`, app client, `alg` confusion, JWKS caching
   and rotation), envelope encryption (round trip, row and table bound associated data, a data

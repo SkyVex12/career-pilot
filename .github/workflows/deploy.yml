@@ -67,8 +67,9 @@ jobs:
     if: always() && vars.AWS_DEPLOY_ROLE_ARN != '' && (needs.images.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
     needs: images
     runs-on: ubuntu-24.04
+    # No `environment:` here: it would change the OIDC subject the deploy role trusts
+    # (repo:<owner>/<repo>:ref:refs/heads/main).
     timeout-minutes: 30
-    environment: stage0
     steps:
       - uses: actions/checkout@v5
       - uses: aws-actions/configure-aws-credentials@v5
