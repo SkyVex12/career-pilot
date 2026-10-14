@@ -261,7 +261,7 @@ async def probe(calls: int = 5) -> dict[str, Any] | None:
         "Alex Rivera", "", "Tell me about a time you had to deal with a production incident.", 80
     )
     with contextlib.suppress(Exception):
-        await provider.warm()
+        await provider.warm(model)
     totals: list[float] = []
     for _ in range(calls):
         started = time.monotonic()
