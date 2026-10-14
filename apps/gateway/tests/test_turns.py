@@ -11,6 +11,8 @@ from copilot_gateway.testing import GatewayServer, ProtocolClient, Reply, Script
 from copilot_gateway.testing import default_reply as scripted_reply
 from copilot_gateway.turn import likely_question
 
+from .test_session_flow import VEC, scaled_answer, seed_memory
+
 DETECTOR_S = 0.6  # the scripted detector's latency
 
 
@@ -216,3 +218,59 @@ async def test_a_new_utterance_after_a_full_pause_starts_fresh(env) -> None:
         assert q["text"] == "How did you scale the ledger?"
         session = next(iter(gw.manager.sessions.values()))
         assert session.turns.detached_turns == 1
+
+
+class SlowEmbedder:
+    """The OpenAI embedding took 0.45 to 1.8 s in the live test; this one takes `delay_s`."""
+
+    model_id = "test:fixed@8"
+
+    def __init__(self, delay_s: float) -> None:
+        self.delay_s = delay_s
+
+    async def embed(self, texts: Any) -> list[list[float]]:
+        await asyncio.sleep(self.delay_s)
+        return [VEC for _ in texts]
+
+
+def model_first_token_after(delay_s: float) -> Any:
+    def reply(job: str, req: Any) -> Reply:
+        r = scripted_reply(job, req)
+        if job == "fast":
+            r.first_delay_s = delay_s
+        return r
+
+    return reply
+
+
+async def test_forced_question_does_not_wait_for_the_prepared_match(env) -> None:
+    """Issue 4: forced and rechecked questions waited a fixed 150 ms for a prepared match
+    that had only just started. The model now starts at once."""
+    await seed_memory(env, [scaled_answer()], embedding_model=SlowEmbedder.model_id)
+    use(env, model_first_token_after(0.05))
+    async with GatewayServer(env.services(embedder=SlowEmbedder(0.5))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "How did you scale your system?"})
+        fast = await c.wait_type("answer.done", pass_="fast")
+    assert fast["source"] == "model"
+    assert fast["latency_ms"]["start_ms"] < 100, fast["latency_ms"]
+
+
+async def test_a_prepared_hit_before_the_first_token_takes_the_slot(env) -> None:
+    await seed_memory(env, [scaled_answer()], embedding_model=SlowEmbedder.model_id)
+    provider = use(env, model_first_token_after(0.8))
+    async with GatewayServer(env.services(embedder=SlowEmbedder(0.3))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "How did you scale your system?"})
+        fast = await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert fast["source"] == "prepared"
+    assert fast["latency_ms"]["first_delta_ms"] < 700, fast["latency_ms"]
+    deltas = [m["text"] for m in c.of_type("answer.delta") if m["pass"] == "fast"]
+    assert deltas == ["- Scaled the ledger 10x [n:3f2a]\n- Zero downtime cutover\n"]
+    assert provider.cancelled >= 1  # the model call it replaced was stopped
+    log = await session_log(env, c.session_id)
+    assert [e["reason"] for e in log if e["kind"] == "pass_cancelled"] == ["prepared"]

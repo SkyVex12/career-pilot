@@ -43,7 +43,6 @@ from copilot_protocol import models
 
 log = logging.getLogger(__name__)
 
-PREPARED_WAIT_S = 0.15  # extra wait for an in-flight match before calling the model anyway
 CACHE_READ_TIMEOUT_S = 0.1
 
 
@@ -332,7 +331,9 @@ class AnswerEngine:
     async def _run_pass(self, q: Question, pass_: str) -> None:
         host = self.host
         started = time.monotonic()
-        state: dict[str, Any] = {"first_delta_at": None, "parts": [], "start_at": None}
+        state: dict[str, Any] = {
+            "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
+        }  # fmt: skip
 
         def delta(text: str) -> None:
             if state["first_delta_at"] is None:
@@ -341,6 +342,7 @@ class AnswerEngine:
             if q.held:  # nothing leaves the gateway before the detector confirms
                 q.held_text.append(text)
                 return
+            state["emitted"] = True
             host.emit(models.AnswerDelta, question_id=q.qid, **{"pass": pass_}, text=text)
 
         def latency(first_token_ms: int | None) -> dict[str, int]:
@@ -437,15 +439,18 @@ class AnswerEngine:
                 {"kind": "answer_error", "question_id": str(q.qid), "pass": pass_, "code": code}
             )
 
+        async def prepared(answer: PreparedAnswer) -> None:
+            self.stats["prepared_hits"] += 1
+            delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
+            await shown()
+            done("prepared", self._refs_for_nodes(answer), None, None)
+
         try:
             if pass_ == "fast":
                 state["start_at"] = time.monotonic()
-                answer = await self._prepared(q)
-                if answer is not None:
-                    self.stats["prepared_hits"] += 1
-                    delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
-                    await shown()
-                    done("prepared", self._refs_for_nodes(answer), None, None)
+                answer = self._prepared(q)
+                if answer is not None:  # the match is already in: no model call
+                    await prepared(answer)
                     return
             qhash = question_hash(q.text)
             cached = await self._cached(qhash, pass_)
@@ -458,7 +463,6 @@ class AnswerEngine:
                 return
             self.stats["model_passes"] += 1
             state["start_at"] = time.monotonic()
-            done_info: LLMDone | None = None
             job = pass_
             req = self._request(q, pass_)
             state["req"] = req
@@ -466,13 +470,38 @@ class AnswerEngine:
             def on_fallback(job: str, route: Route, reason: str) -> None:
                 host.llm_status(False)
 
-            async for chunk in host.router.stream(job, req, on_fallback):
-                if isinstance(chunk, LLMDone):
-                    done_info = chunk
-                    state["done"] = chunk
-                else:
-                    delta(chunk)
-            assert done_info is not None
+            async def stream() -> LLMDone:
+                finished: LLMDone | None = None
+                async for chunk in host.router.stream(job, req, on_fallback):
+                    if isinstance(chunk, LLMDone):
+                        finished = chunk
+                        state["done"] = chunk
+                    else:
+                        delta(chunk)
+                assert finished is not None
+                return finished
+
+            model = asyncio.ensure_future(stream())
+            state["model"] = model
+            match = q.match
+            if pass_ == "fast" and match is not None and not match.done():
+                # The model does not wait for the prepared match (a forced question's match
+                # starts with it; an OpenAI embedding takes 0.5 s or more). A hit that comes
+                # before any of the model's text reached the client takes the slot over.
+                await asyncio.wait({match, model}, return_when=asyncio.FIRST_COMPLETED)
+                answer = self._prepared(q)
+                if answer is not None and not state["emitted"]:
+                    model.cancel()
+                    await asyncio.gather(model, return_exceptions=True)
+                    self._log_cancelled(q, pass_, state, reason="prepared")
+                    state.update(first_delta_at=None, parts=[])
+                    for key in ("req", "done", "model"):
+                        state.pop(key, None)
+                    q.held_text.clear()
+                    self.stats["model_passes"] -= 1
+                    await prepared(answer)
+                    return
+            done_info = await model
             await shown()
             if done_info.attempt == 0:
                 host.llm_status(True)
@@ -495,6 +524,8 @@ class AnswerEngine:
             host.llm_status(False)
             error("llm_unavailable")
         except asyncio.CancelledError:
+            if (model_task := state.get("model")) is not None:
+                model_task.cancel()
             if q.superseded:
                 error("cancelled")
             self._log_cancelled(q, pass_, state)
@@ -507,11 +538,15 @@ class AnswerEngine:
                 "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
             )
 
-    def _log_cancelled(self, q: Question, pass_: str, state: Mapping[str, Any]) -> None:
+    def _log_cancelled(
+        self, q: Question, pass_: str, state: Mapping[str, Any], reason: str | None = None
+    ) -> None:
         """A pass stopped before its end still costs what the provider read and wrote, but the
         stream ends without usage: logged with an estimate (about 4 characters a token, the
         system blocks counted as cached), so speculative waste and its cost can be measured."""
-        if q.superseded:
+        if reason is not None:
+            pass  # the caller knows: a prepared answer took the slot over
+        elif q.superseded:
             reason = "superseded"
         elif q.discarded:
             reason = "held_discarded"
@@ -569,11 +604,8 @@ class AnswerEngine:
             return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens)
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens)
 
-    async def _prepared(self, q: Question) -> PreparedAnswer | None:
-        match = q.match
-        if match is None:
-            return None
-        await asyncio.wait({match}, timeout=PREPARED_WAIT_S)
+    def _prepared(self, q: Question) -> PreparedAnswer | None:
+        """The prepared answer, if the question's match has finished with a hit."""
         result = self._match_result(q)
         return result.answer if result is not None else None
 
