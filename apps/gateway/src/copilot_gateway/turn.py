@@ -78,7 +78,9 @@ class TurnHost(Protocol):
         match: "asyncio.Task[object] | None",
     ) -> UUID: ...
 
-    def confirm_question(self, qid: UUID, text: str, turn_end_ms: int) -> None: ...
+    def confirm_question(
+        self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
+    ) -> None: ...
 
     def cancel_question(self, qid: UUID) -> None: ...
 
@@ -103,6 +105,7 @@ class TurnDetector:
         self.finals: list[str] = []
         self.interim = ""
         self.flushed = asyncio.Event()
+        self.flushed_at: float | None = None  # when the STT final after the speech end arrived
         self.task: asyncio.Task[None] | None = None
         self.speculative_qid: UUID | None = None
         # Counters for metrics and tests.
@@ -125,6 +128,7 @@ class TurnDetector:
         else:
             self.interim = r.text
         if r.flushed:
+            self.flushed_at = time.monotonic()
             self.flushed.set()
 
     def on_speech_start(self) -> None:
@@ -135,6 +139,7 @@ class TurnDetector:
     def on_speech_end(self) -> None:
         self.on_speech_start()
         self.flushed.clear()
+        self.flushed_at = None
         self.task = asyncio.create_task(self._turn(time.monotonic()))
 
     def cancel(self) -> None:
@@ -164,6 +169,12 @@ class TurnDetector:
             model.cancel()
         await self._wait_final(t0 + self.silence_s + self.final_wait_s)
 
+    def _final_ms(self, t0: float) -> int | None:
+        """t0 to the STT final, for latency_ms; None if it has not arrived."""
+        if self.flushed_at is None or not self.flushed.is_set():
+            return None
+        return max(0, int((self.flushed_at - t0) * 1000))
+
     async def _turn(self, t0: float) -> None:
         text = self.utterance()
         if not text:  # the interim has not arrived yet; wait for the flushed final
@@ -192,7 +203,7 @@ class TurnDetector:
                         qid = self.host.begin_question(
                             final_text, detection, speculative=False, t0=t0, match=match
                         )
-                        self.host.confirm_question(qid, final_text, turn_end_ms)
+                        self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
                 self.reset()  # step 5: the text stays in the transcript tail only
                 return
             qid: UUID | None = None
@@ -211,7 +222,7 @@ class TurnDetector:
                     final_text, detection, speculative=False, t0=t0, match=match
                 )
             self.speculative_qid = None
-            self.host.confirm_question(qid, final_text, turn_end_ms)
+            self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
             self.reset()
         except asyncio.CancelledError:
             detection_task.cancel()

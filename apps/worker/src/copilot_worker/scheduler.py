@@ -21,7 +21,6 @@ import argparse
 import asyncio
 import contextlib
 import logging
-import os
 import signal
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -32,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
-from copilot_core import jobs
+from copilot_core import jobs, logs
 from copilot_core.db import create_pool, system_tx
 from copilot_core.dotenv import load_dotenv
 from copilot_core.valkey_client import Valkey, make_valkey
@@ -166,7 +165,7 @@ async def main(once: bool, interval_s: float) -> None:
 
 def run() -> None:
     load_dotenv()
-    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+    logs.configure("scheduler")
     parser = argparse.ArgumentParser(description="Enqueue the timed jobs.")
     parser.add_argument("--once", action="store_true", help="one tick, then exit")
     parser.add_argument("--interval", type=float, default=60.0, help="seconds between ticks")

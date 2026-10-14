@@ -26,3 +26,17 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+backend_override.tf
+*_override.tf
+allowlist.auto.tfvars
+
+# Local log files (COPILOT_LOG_DIR)
+logs/

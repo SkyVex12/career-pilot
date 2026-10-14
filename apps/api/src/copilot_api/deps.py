@@ -18,7 +18,7 @@ import httpx2
 from fastapi import Depends, Header, HTTPException, Request
 
 from copilot_api.config import ApiSettings
-from copilot_core import jobs, keys
+from copilot_core import jobs, keys, logs
 from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.crypto import UserCrypto
 from copilot_core.db import Conn, user_tx
@@ -83,6 +83,7 @@ async def current_user(
         principal = await svc.verifier.verify(token)
     except AuthError as e:
         raise HTTPException(401, str(e), headers={"WWW-Authenticate": "Bearer"}) from e
+    logs.set_ids(user_id=principal.user_id)
     async with svc.tx(principal) as conn:
         known = await conn.fetchval("select 1 from app.users where id = $1", principal.user_id)
     if known is None:

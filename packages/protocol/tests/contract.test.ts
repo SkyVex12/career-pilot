@@ -58,6 +58,8 @@ function clientSummary(m: ClientMessage): string {
       return m.question_id;
     case "answer.feedback":
       return `${m.question_id} ${m.rating} ${m.reason ?? ""}`;
+    case "latency.report":
+      return `${m.question_id} ${m.pass} ${m.first_word_ms} ${m.anchor}`;
     case "mode.set":
       return m.mode;
     case "session.end":

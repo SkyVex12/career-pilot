@@ -26,6 +26,11 @@ class TextSTTControl:
     stall: bool = False  # swallow audio, emit nothing
     drop_after_chunks: int | None = None  # close the connection after N audio chunks
     final_suffix: str = ""  # appended to finals only: an interim that missed the last words
+    # A real STT's final comes back over the network some time after the speech-end frame.
+    # Emitting it inside finalize() instead makes the turn detector's view at t0 depend on
+    # how the event loop batches socket reads: on Linux the STT reader drains the interim and
+    # the final before the turn task first runs, on Windows it does not.
+    final_delay_s: float = 0.02
     sent_text: list[str] = field(default_factory=list[str])
     names: list[str] = field(default_factory=list[str])
 
@@ -39,6 +44,7 @@ class TextSTT:
         self.ms = 0
         self.seg_start = 0
         self.chunks = 0
+        self.pending: list[tuple[asyncio.TimerHandle, STTResult]] = []
 
     async def connect(self) -> None:
         self.control.connects += 1
@@ -70,8 +76,18 @@ class TextSTT:
             return
         text = " ".join(self.words) + (self.control.final_suffix if self.words else "")
         self.words = []
-        self.queue.put_nowait(STTResult(text, True, self.seg_start, self.ms, flushed=True))
+        result = STTResult(text, True, self.seg_start, self.ms, flushed=True)
         self.seg_start = self.ms
+        if self.control.final_delay_s <= 0:
+            self.queue.put_nowait(result)
+            return
+
+        def deliver() -> None:
+            self.pending = [p for p in self.pending if p[1] is not result]
+            self.queue.put_nowait(result)
+
+        handle = asyncio.get_running_loop().call_later(self.control.final_delay_s, deliver)
+        self.pending.append((handle, result))
 
     async def keepalive(self) -> None:
         return None
@@ -84,6 +100,11 @@ class TextSTT:
             yield item
 
     async def close(self) -> None:
+        # Like a real STT closing its stream: finals still in flight arrive first.
+        for handle, result in self.pending:
+            handle.cancel()
+            self.queue.put_nowait(result)
+        self.pending = []
         self.queue.put_nowait(None)
 
 

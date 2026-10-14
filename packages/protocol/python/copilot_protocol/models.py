@@ -41,7 +41,7 @@ class SessionLimits(BaseModel):
 
 class LatencyMs(BaseModel):
     """
-    Server-side timings for one answer pass, in milliseconds. turn_end_ms: speech end to question confirmed; detector_ms: detector call; first_token_ms: request to first model token; first_delta_ms: speech end (or force) to the first answer.delta sent. Fields are absent when they do not apply.
+    Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.
     """
 
     model_config = ConfigDict(
@@ -52,6 +52,11 @@ class LatencyMs(BaseModel):
     first_token_ms: Annotated[int | None, Field(ge=0)] = None
     first_delta_ms: Annotated[int | None, Field(ge=0)] = None
     total_ms: Annotated[int | None, Field(ge=0)] = None
+    final_ms: Annotated[int | None, Field(ge=0)] = None
+    start_ms: Annotated[int | None, Field(ge=0)] = None
+    expand_ms: Annotated[int | None, Field(ge=0)] = None
+    prepared_ms: Annotated[int | None, Field(ge=0)] = None
+    prepared_similarity: Annotated[float | None, Field(ge=-1.0, le=1.0)] = None
 
 
 class MemoryRef(BaseModel):
@@ -197,6 +202,33 @@ class AnswerExpand(BaseModel):
     question_id: UUID
     """
     UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+
+
+class LatencyReport(BaseModel):
+    """
+    The client's own first-word time for one answer pass, sent once per pass when its first non-empty answer.delta arrives, so the gateway can store it with the answer (answers.latency_ms.client_first_word_ms). Measurement only: the gateway drops a report for a question it does not hold, without an error.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["latency.report"]
+    question_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    pass_: Annotated[Literal["fast", "deep"], Field(alias="pass")]
+    """
+    Answer pass: fast (Haiku talking points) or deep (Sonnet).
+    """
+    first_word_ms: Annotated[int, Field(ge=0, le=600000)]
+    """
+    Anchor to the first answer word, measured on the client.
+    """
+    anchor: Literal["speech_end", "forced", "expand"]
+    """
+    What first_word_ms counts from: speech_end (the true end of the other side's speech, VAD hangover included), forced (the hotkey or a typed question), or expand (the tap that started a deep pass).
     """
 
 
@@ -536,6 +568,7 @@ class ClientMessage(
         | Screenshot
         | AnswerExpand
         | AnswerFeedback
+        | LatencyReport
         | ModeSet
         | SessionEnd
     ]
@@ -548,6 +581,7 @@ class ClientMessage(
         | Screenshot
         | AnswerExpand
         | AnswerFeedback
+        | LatencyReport
         | ModeSet
         | SessionEnd,
         Field(discriminator="type"),

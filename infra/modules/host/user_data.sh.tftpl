@@ -1,0 +1,75 @@
+#!/bin/bash
+# First boot of the Stage 0 instance (infra/modules/host). Everything here is also safe on
+# a rerun. Later boots need none of it: the data volume mounts from /etc/fstab, the IMDS guard
+# is a systemd unit, and the ECS agent reads /etc/ecs/ecs.config.
+set -euo pipefail
+
+# --- ECS agent ---------------------------------------------------------------------------
+cat > /etc/ecs/ecs.config <<'EOF'
+ECS_CLUSTER=${cluster}
+ECS_ENABLE_TASK_IAM_ROLE=true
+ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true
+ECS_RESERVED_MEMORY=256
+ECS_CONTAINER_STOP_TIMEOUT=120s
+ECS_ENABLE_CONTAINER_METADATA=true
+ECS_LOGLEVEL=warn
+EOF
+
+# --- Tasks reach AWS only through their task roles ------------------------------------------
+# Containers run with host networking, so they could reach the instance metadata service and
+# borrow the instance role. Only root (the ECS agent, dockerd's log driver, the SSM agent) may;
+# the app containers run as uid 10001, Postgres and Valkey as their own users.
+dnf install -y -q iptables-nft >/dev/null 2>&1 || true
+cat > /etc/systemd/system/copilot-imds-guard.service <<'EOF'
+[Unit]
+Description=Keep non-root processes away from the instance metadata service
+Before=docker.service ecs.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'iptables -C OUTPUT -d 169.254.169.254/32 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null || iptables -I OUTPUT 1 -d 169.254.169.254/32 -m owner ! --uid-owner 0 -j REJECT'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now copilot-imds-guard.service
+
+# --- Swap, so a memory spike slows the instance down instead of killing Postgres ------------
+if ! swapon --show | grep -q /swapfile; then
+  if [ ! -f /swapfile ]; then
+    dd if=/dev/zero of=/swapfile bs=1M count=${swap_mb} status=none
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null
+  fi
+  swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+sysctl -w vm.swappiness=10 >/dev/null
+echo 'vm.swappiness=10' > /etc/sysctl.d/90-copilot.conf
+# Valkey's recommendation for background saves.
+sysctl -w vm.overcommit_memory=1 >/dev/null
+echo 'vm.overcommit_memory=1' >> /etc/sysctl.d/90-copilot.conf
+
+# --- The data volume: Postgres and Valkey keep their files here ------------------------------
+# On Nitro instances the volume shows up as an NVMe device named after its volume id. It is
+# attached right after the instance starts, so wait for it.
+dev=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${replace(data_volume_id, "-", "")}
+for _ in $(seq 1 120); do
+  [ -e "$dev" ] && break
+  sleep 5
+done
+[ -e "$dev" ] || { echo "data volume ${data_volume_id} never appeared" >&2; exit 1; }
+if ! blkid "$dev" >/dev/null 2>&1; then
+  mkfs.xfs -q -L copilot-data "$dev"
+fi
+mkdir -p /data
+grep -q 'LABEL=copilot-data' /etc/fstab || echo 'LABEL=copilot-data /data xfs defaults,nofail 0 2' >> /etc/fstab
+mountpoint -q /data || mount /data
+mkdir -p /data/postgres /data/valkey
+# The data services refuse to start without this file in their directory, so they never
+# write to the root volume if the data volume is missing (Docker would create an empty
+# directory for the bind mount).
+touch /data/postgres/.copilot-data-volume /data/valkey/.copilot-data-volume

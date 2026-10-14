@@ -3,6 +3,7 @@ interviews, sessions with decrypted outputs, the user's audio, usage and account
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,6 +16,7 @@ from copilot_api.testing import Api
 from copilot_core import jobs, keys
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
+from copilot_core.logs import ContextFilter
 from copilot_core.storage import me_audio_key
 
 pytestmark = pytest.mark.stack
@@ -413,3 +415,40 @@ async def test_cognito_tokens_end_to_end(api: Api) -> None:
         assert "expired" in r.json()["detail"]
     finally:
         api.svc.verifier = previous
+
+
+async def test_request_lines_name_the_session_and_user(api: Api, caplog) -> None:
+    # CloudWatch filters on session_id: requests under /v1/sessions/{id} carry it, and every
+    # authenticated request carries the user id.
+    uid, h = api.user()
+    await api.client.get("/v1/me", headers=h)
+    sid = await seed_session(api, uid)
+    caplog.set_level(logging.INFO, logger="copilot_api")
+    caplog.handler.addFilter(ContextFilter())
+    await api.client.get(f"/v1/sessions/{sid}", headers=h)
+    await api.client.get("/v1/sessions", headers=h)
+    lines = {r.getMessage().rsplit(" ", 1)[0]: r for r in caplog.records}
+    one = lines[f"GET /v1/sessions/{sid} 200"]
+    assert (getattr(one, "session_id", None), getattr(one, "user_id", None)) == (str(sid), str(uid))
+    listing = lines["GET /v1/sessions 200"]
+    assert getattr(listing, "session_id", None) is None
+
+
+async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
+    # No token needed: the desktop app asks before it has one.
+    saved = api.svc.settings
+    try:
+        api.svc.settings = saved.model_copy(update={
+            "auth": "cognito", "cognito_client_ids": ["client123"],
+            "cognito_domain": "https://copilot-x.auth.us-east-1.amazoncognito.com/",
+        })  # fmt: skip
+        body = (await api.client.get("/v1/auth/config")).json()
+        assert body == {
+            "provider": "cognito", "client_id": "client123",
+            "domain": "https://copilot-x.auth.us-east-1.amazoncognito.com",
+            "scopes": ["openid", "email", "profile"],
+        }  # fmt: skip
+        api.svc.settings = saved.model_copy(update={"auth": "dev"})
+        assert (await api.client.get("/v1/auth/config")).json()["provider"] == "dev"
+    finally:
+        api.svc.settings = saved

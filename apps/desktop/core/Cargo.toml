@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 aes-gcm = "0.10"
+base64 = "0.22"
 copilot-protocol = { path = "../../../packages/protocol/rust" }
 cpal = "0.18"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

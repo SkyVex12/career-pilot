@@ -345,7 +345,7 @@ def test_uuid7_is_time_ordered_v7() -> None:
     assert [i.int >> 80 for i in ids] == sorted(i.int >> 80 for i in ids)
 
 
-def test_dev_verifier_only_in_dev() -> None:
+def test_dev_verifier_only_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
     dev = Settings(_env_file=None, env="dev", auth="dev", dev_token="x" * 20)  # pyright: ignore[reportCallIssue]
     DevTokenVerifier(dev, environ={})
     for env in ("prod", "staging", "test"):
@@ -355,6 +355,13 @@ def test_dev_verifier_only_in_dev() -> None:
         DevTokenVerifier(dev, environ={"ECS_CONTAINER_METADATA_URI_V4": "http://169.254.170.2"})
     with pytest.raises(RuntimeError, match="at least 16"):
         DevTokenVerifier(dev.model_copy(update={"dev_token": None}), environ={})
+    # On AWS compute the settings themselves refuse dev and test, so neither the dev token,
+    # the dev keys nor recorded fixtures can be switched on there by any combination.
+    for env in ("dev", "test"):
+        monkeypatch.setenv("AWS_EXECUTION_ENV", "AWS_ECS_EC2")
+        with pytest.raises(ValueError, match="cannot run on AWS"):
+            Settings(_env_file=None, env=env, auth="dev", dev_token="x" * 20)  # pyright: ignore[reportCallIssue]
+        monkeypatch.delenv("AWS_EXECUTION_ENV")
     # The default configuration is not dev and has no working verifier yet.
     with pytest.raises(RuntimeError, match="cognito"):
         make_verifier(Settings(_env_file=None))  # pyright: ignore[reportCallIssue]

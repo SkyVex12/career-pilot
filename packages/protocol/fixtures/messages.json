@@ -31,6 +31,20 @@
       "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"
     },
     { "type": "answer.expand", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" },
+    {
+      "type": "latency.report",
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "fast",
+      "first_word_ms": 1240,
+      "anchor": "speech_end"
+    },
+    {
+      "type": "latency.report",
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "deep",
+      "first_word_ms": 2310,
+      "anchor": "expand"
+    },
     { "type": "answer.feedback", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210", "rating": "up" },
     {
       "type": "answer.feedback",
@@ -103,6 +117,26 @@
       "latency_ms": { "turn_end_ms": 412, "detector_ms": 280, "first_token_ms": 390, "first_delta_ms": 705, "total_ms": 1460 }
     },
     {
+      "type": "answer.done",
+      "seq": 415,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "pass": "fast",
+      "memory_refs": [],
+      "usage": { "input_tokens": 4410, "cached_tokens": 4096, "output_tokens": 61 },
+      "source": "model",
+      "latency_ms": {
+        "turn_end_ms": 1219,
+        "detector_ms": 1219,
+        "first_token_ms": 797,
+        "first_delta_ms": 2032,
+        "total_ms": 2900,
+        "final_ms": 610,
+        "start_ms": 1235,
+        "prepared_ms": 640,
+        "prepared_similarity": 0.7351
+      }
+    },
+    {
       "type": "answer.error",
       "seq": 415,
       "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
@@ -117,6 +151,28 @@
   "invalid": [
     { "side": "client", "why": "unknown type", "message": { "type": "session.pause" } },
     { "side": "client", "why": "missing type", "message": { "mode": "meeting" } },
+    {
+      "side": "client",
+      "why": "latency.report anchor not in enum",
+      "message": {
+        "type": "latency.report",
+        "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+        "pass": "fast",
+        "first_word_ms": 900,
+        "anchor": "render"
+      }
+    },
+    {
+      "side": "client",
+      "why": "latency.report first_word_ms negative",
+      "message": {
+        "type": "latency.report",
+        "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+        "pass": "fast",
+        "first_word_ms": -1,
+        "anchor": "forced"
+      }
+    },
     {
       "side": "client",
       "why": "mode not in enum",

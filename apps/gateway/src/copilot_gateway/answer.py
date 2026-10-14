@@ -63,10 +63,26 @@ class Question:
     match: "asyncio.Task[object] | None"
     detected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     turn_end_ms: int | None = None
+    final_ms: int | None = None  # t0 to the STT final (None: no final, or a forced question)
+    expanded_at: float | None = None  # monotonic time of the expand tap
     was_speculative: bool = False
     tasks: dict[str, "asyncio.Task[None]"] = field(default_factory=dict[str, "asyncio.Task[None]"])
     superseded: bool = False
     cancelled: bool = False
+    # Timings that come late (the client's latency.report), per pass, merged into the
+    # answer's log entry when they arrive first; `logged` holds the passes already logged.
+    client: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    logged: set[str] = field(default_factory=set[str])
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    """A prepared-answer lookup: the best match over the threshold, if any, plus the best
+    similarity and the time the lookup took (both logged, hit or miss)."""
+
+    answer: PreparedAnswer | None
+    similarity: float | None
+    ms: int
 
 
 class PreparedMatcher:
@@ -99,9 +115,10 @@ class PreparedMatcher:
     def enabled(self) -> bool:
         return self.embedder is not None and bool(self.vectors)
 
-    async def match(self, text: str) -> tuple[PreparedAnswer, float] | None:
+    async def match(self, text: str) -> MatchResult | None:
         if self.embedder is None or not self.vectors:
             return None
+        started = time.monotonic()
         try:
             [query] = await self.embedder.embed([text])
         except Exception as e:
@@ -112,9 +129,11 @@ class PreparedMatcher:
             sim = cosine(query, vec)
             if best is None or sim > best[1]:
                 best = (answer, sim)
-        if best is not None and best[1] >= self.min_similarity:
-            return best
-        return None
+        ms = int((time.monotonic() - started) * 1000)
+        if best is None:
+            return MatchResult(None, None, ms)
+        hit = best[0] if best[1] >= self.min_similarity else None
+        return MatchResult(hit, best[1], ms)
 
 
 class AnswerHost(Protocol):
@@ -160,10 +179,13 @@ class AnswerEngine:
             self._cancel_tasks(old)
         self.start_pass(q, "fast")
 
-    def confirm(self, qid: UUID, text: str, turn_end_ms: int | None) -> None:
+    def confirm(
+        self, qid: UUID, text: str, turn_end_ms: int | None, final_ms: int | None = None
+    ) -> None:
         q = self.questions.get(qid)
         if q is None:
             return
+        q.final_ms = final_ms
         if q.speculative:
             q.speculative = False
             q.was_speculative = True
@@ -177,6 +199,11 @@ class AnswerEngine:
                 speculative=False,
             )
         q.turn_end_ms = turn_end_ms
+        # A speculative fast pass can finish before its question is confirmed; its stored
+        # latency gets the confirmation's timings afterwards.
+        late = {"turn_end_ms": turn_end_ms, "final_ms": final_ms}
+        for pass_ in q.logged:
+            self._late_latency(q, pass_, {k: v for k, v in late.items() if v is not None})
         self.supersede(keep=qid)
         self._log_question(q, kept=True)
         if q.qtype in self.host.settings.deep_pass_auto_types:
@@ -205,8 +232,31 @@ class AnswerEngine:
             return False
         self.host.log_entry({"kind": "expand", "question_id": str(qid)})
         if "deep" not in q.tasks:
+            q.expanded_at = time.monotonic()
             self.start_pass(q, "deep")
         return True
+
+    def client_latency(self, qid: UUID, pass_: str, first_word_ms: int, anchor: str) -> bool:
+        """latency.report: the client's first word for a pass, stored with the answer."""
+        q = self.questions.get(qid)
+        if q is None:
+            return False
+        self._late_latency(
+            q, pass_, {"client_first_word_ms": first_word_ms, "client_anchor": anchor}
+        )
+        return True
+
+    def _late_latency(self, q: Question, pass_: str, fields: dict[str, Any]) -> None:
+        """Timings that arrive after a pass may already be logged: merged into its entry if
+        it is not, else logged as a `latency_report` entry the flush merges into the row."""
+        if not fields:
+            return
+        if pass_ in q.logged:
+            self.host.log_entry(
+                {"kind": "latency_report", "question_id": str(q.qid), "pass": pass_, **fields}
+            )
+        else:
+            q.client.setdefault(pass_, {}).update(fields)
 
     def cancel_all(self) -> None:
         for q in self.questions.values():
@@ -244,7 +294,7 @@ class AnswerEngine:
     async def _run_pass(self, q: Question, pass_: str) -> None:
         host = self.host
         started = time.monotonic()
-        state: dict[str, Any] = {"first_delta_at": None, "parts": []}
+        state: dict[str, Any] = {"first_delta_at": None, "parts": [], "start_at": None}
 
         def delta(text: str) -> None:
             if state["first_delta_at"] is None:
@@ -263,6 +313,14 @@ class AnswerEngine:
             if state["first_delta_at"] is not None:
                 out["first_delta_ms"] = max(0, int((state["first_delta_at"] - q.t0) * 1000))
             out["total_ms"] = max(0, int((time.monotonic() - q.t0) * 1000))
+            if q.final_ms is not None:
+                out["final_ms"] = q.final_ms
+            if state["start_at"] is not None:
+                out["start_ms"] = max(0, int((state["start_at"] - q.t0) * 1000))
+            if pass_ == "deep" and q.expanded_at is not None:
+                out["expand_ms"] = max(0, int((q.expanded_at - q.t0) * 1000))
+            if pass_ == "fast" and (m := self._match_result(q)) is not None:
+                out["prepared_ms"] = m.ms
             return out
 
         def done(
@@ -270,7 +328,10 @@ class AnswerEngine:
         ) -> None:
             usage = done_info.usage if done_info else None
             tier = done_info.service_tier if done_info else "standard"
-            lat = latency(first_token_ms)
+            lat: dict[str, Any] = latency(first_token_ms)
+            m = self._match_result(q) if pass_ == "fast" else None
+            if m is not None and m.similarity is not None:
+                lat["prepared_similarity"] = round(m.similarity, 4)
             host.emit(
                 models.AnswerDone,
                 question_id=q.qid,
@@ -284,6 +345,21 @@ class AnswerEngine:
                 source=source,
                 latency_ms=lat,
             )
+            # Stored with the answer only: which route answered, and the client's first word
+            # if its latency.report came before this.
+            stored = {
+                **lat,
+                "provider": done_info.provider if done_info else source,
+                "fallback_attempt": done_info.attempt if done_info else 0,
+                **q.client.pop(pass_, {}),
+            }
+            q.logged.add(pass_)
+            log.info(
+                "answer %s %s: source=%s model=%s tokens=%s/%s/%s latency=%s",
+                q.qid, pass_, source, done_info.model if done_info else source,
+                usage.input_tokens if usage else 0, usage.cached_tokens if usage else 0,
+                usage.output_tokens if usage else 0, stored,
+            )  # fmt: skip
             host.log_entry(
                 {
                     "kind": "answer",
@@ -299,7 +375,7 @@ class AnswerEngine:
                     "cached_tokens": usage.cached_tokens if usage else 0,
                     "output_tokens": usage.output_tokens if usage else 0,
                     "cost_usd": self._cost(done_info),
-                    "latency_ms": lat,
+                    "latency_ms": stored,
                     "memory_node_ids": [str(r.node_id) for r in refs],
                 }
             )
@@ -312,9 +388,9 @@ class AnswerEngine:
 
         try:
             if pass_ == "fast":
-                prepared = await self._prepared(q)
-                if prepared is not None:
-                    answer, _sim = prepared
+                state["start_at"] = time.monotonic()
+                answer = await self._prepared(q)
+                if answer is not None:
                     self.stats["prepared_hits"] += 1
                     delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
                     done("prepared", self._refs_for_nodes(answer), None, None)
@@ -328,6 +404,7 @@ class AnswerEngine:
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
+            state["start_at"] = time.monotonic()
             done_info: LLMDone | None = None
             job = pass_
 
@@ -379,15 +456,22 @@ class AnswerEngine:
             return prompts.fast_pass(ctx, transcript, q.text, q.qtype, s.fast_pass_max_tokens)
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens)
 
-    async def _prepared(self, q: Question) -> tuple[PreparedAnswer, float] | None:
+    async def _prepared(self, q: Question) -> PreparedAnswer | None:
         match = q.match
         if match is None:
             return None
-        done, _ = await asyncio.wait({match}, timeout=PREPARED_WAIT_S)
-        if match not in done or match.cancelled() or match.exception() is not None:
+        await asyncio.wait({match}, timeout=PREPARED_WAIT_S)
+        result = self._match_result(q)
+        return result.answer if result is not None else None
+
+    @staticmethod
+    def _match_result(q: Question) -> MatchResult | None:
+        """The question's prepared-answer lookup, once it has finished."""
+        match = q.match
+        if match is None or not match.done() or match.cancelled() or match.exception():
             return None
         result = match.result()
-        return result if isinstance(result, tuple) else None  # pyright: ignore[reportUnknownVariableType]
+        return result if isinstance(result, MatchResult) else None
 
     def _refs_for_nodes(self, answer: PreparedAnswer) -> list[NodeRef]:
         by_id = {r.node_id: r for r in self.host.refs().values()}

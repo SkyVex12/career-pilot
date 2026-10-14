@@ -14,6 +14,7 @@ from copilot_core import jobs
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import Conn, create_pool, system_tx, user_tx
 from copilot_core.embed import Embedder, make_embedder
+from copilot_core.identity import CognitoUsers, UserDirectory
 from copilot_core.llm import ModelRouter
 from copilot_core.providers import make_providers
 from copilot_core.storage import ObjectStore, S3Store
@@ -39,6 +40,8 @@ class Ctx:
     router: ModelRouter
     stt: PrerecordedSTT | None = None
     embedder: Embedder | None = None
+    # The Cognito user pool (user.delete); None with the dev token, which has no sign-in.
+    users: UserDirectory | None = None
 
     @asynccontextmanager
     async def user(self, user_id: UUID) -> AsyncGenerator[Conn]:
@@ -92,6 +95,9 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
     store = S3Store(settings)
     if settings.env in ("dev", "test"):
         await store.ensure_bucket()
+    users: UserDirectory | None = None
+    if settings.auth == "cognito" and settings.cognito_user_pool_id:
+        users = CognitoUsers(settings.cognito_user_pool_id, settings.aws_region)
     pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
     system_pool = await create_pool(settings.system_database_url, 1, 2)
     return Ctx(
@@ -107,6 +113,7 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         router=router,
         stt=stt,
         embedder=embedder,
+        users=users,
     )
 
 

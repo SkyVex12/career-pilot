@@ -4,9 +4,11 @@ Each service subclasses `CoreSettings` with its own fields. Values come from the
 (prefix COPILOT_, except the providers' own variable names) or a local .env file.
 """
 
-from typing import Annotated, Literal
+import os
+from collections.abc import Mapping
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
@@ -16,6 +18,20 @@ ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "
 # Model routes, one per job: the gateway's live jobs and the workers' background jobs.
 OPENAI_JOBS = ("detector", "fast", "deep", "extract", "job", "pack", "postcall")
 EMBED_DIMENSIONS = 1024  # memory_nodes.embedding is vector(1024)
+
+
+# Set inside AWS compute (ECS on Fargate or EC2, Lambda).
+AWS_RUNTIME_MARKERS = (
+    "AWS_EXECUTION_ENV",
+    "ECS_CONTAINER_METADATA_URI",
+    "ECS_CONTAINER_METADATA_URI_V4",
+    "AWS_LAMBDA_FUNCTION_NAME",
+)
+
+
+def aws_runtime(environ: Mapping[str, str]) -> list[str]:
+    """The AWS compute markers present; empty off AWS."""
+    return [m for m in AWS_RUNTIME_MARKERS if environ.get(m)]
 
 
 def split_list(value: object) -> object:
@@ -176,6 +192,17 @@ class CoreSettings(BaseSettings):
             return None
         region = self.cognito_user_pool_id.split("_", 1)[0]
         return f"https://cognito-idp.{region}.amazonaws.com/{self.cognito_user_pool_id}"
+
+    @model_validator(mode="after")
+    def _no_dev_or_test_on_aws(self) -> Self:
+        # dev and test unlock the dev token, the dev key provider and recorded fixtures; none
+        # of them may ever run on AWS compute, whatever else is configured.
+        if self.env in ("dev", "test") and (markers := aws_runtime(os.environ)):
+            raise ValueError(
+                f"COPILOT_ENV={self.env} cannot run on AWS ({', '.join(markers)}); "
+                "AWS deployments use staging or prod"
+            )
+        return self
 
     @field_validator("model_prices", mode="after")
     @classmethod

@@ -25,7 +25,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, prompts
+from copilot_core import jobs, logs, prompts
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
 from copilot_core.llm import ModelRouter
@@ -314,8 +314,10 @@ class Session:
         self.answers.add(q)
         return q.qid
 
-    def confirm_question(self, qid: UUID, text: str, turn_end_ms: int) -> None:
-        self.answers.confirm(qid, text, turn_end_ms)
+    def confirm_question(
+        self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
+    ) -> None:
+        self.answers.confirm(qid, text, turn_end_ms, final_ms)
 
     def cancel_question(self, qid: UUID) -> None:
         self.answers.cancel_speculative(qid)
@@ -530,6 +532,11 @@ class Session:
         self.turns.cancel()
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
+        log.info(
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s",
+            reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
+            len(self.answers.questions), self.answers.stats,
+        )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
             log.error("session %s ended with unwritten log entries (valkey down)", self.sid)
@@ -712,6 +719,15 @@ class Session:
             case models.AnswerExpand():
                 if not self.answers.expand(message.question_id):
                     self.error("unknown_question", f"no question {message.question_id}")
+            case models.LatencyReport():
+                # Measurement only: a report for a question this task no longer holds (after
+                # a resume on another task) is dropped without an error.
+                self.answers.client_latency(
+                    message.question_id,
+                    message.pass_,
+                    message.first_word_ms,
+                    message.anchor,
+                )
             case models.AnswerFeedback():
                 self.log_entry(
                     {
@@ -832,6 +848,7 @@ class SessionManager:
         except AuthError as e:
             await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", str(e))
             return
+        logs.set_ids(user_id=principal.user_id)
         try:
             raw = await asyncio.wait_for(ws.receive(), s.first_message_timeout_s)
         except TimeoutError:
@@ -883,6 +900,8 @@ class SessionManager:
             )
             return
         sid = uuid7()
+        # Every line logged for this session from here on (and in the tasks it starts) names it.
+        logs.set_ids(session_id=sid)
         valkey_ok = True
         try:
             other = await store.claim_active(uid, sid)
@@ -925,6 +944,11 @@ class SessionManager:
             await store.take_lease(sid, self.svc.task_id)
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
+        log.info(
+            "session started: mode=%s platform=%s client=%s consent=%s digest=%s pack=%s",
+            info.mode, info.platform, info.client_version, info.store_transcript,
+            digest is not None, pack is not None,
+        )  # fmt: skip
         session.start_core()
         session.warm_models()
         session.emit(
@@ -941,6 +965,8 @@ class SessionManager:
         store = self.svc.store
         uid = principal.user_id
         sid = msg.session_id
+        logs.set_ids(session_id=sid)
+        log.info("session resume from seq %d", msg.last_seq)
         local = self.sessions.get(sid)
         if local is not None and local.principal.user_id == uid and not local.ending:
             local.principal = principal

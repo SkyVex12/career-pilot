@@ -22,7 +22,7 @@ from uuid import UUID
 import httpx2
 import jwt
 
-from copilot_core.config import CoreSettings
+from copilot_core.config import CoreSettings, aws_runtime
 
 
 class AuthError(Exception):
@@ -43,19 +43,10 @@ class TokenVerifier(Protocol):
         ...
 
 
-# Set inside AWS compute; the dev verifier never runs where any of these exist.
-_AWS_RUNTIME_MARKERS = (
-    "AWS_EXECUTION_ENV",
-    "ECS_CONTAINER_METADATA_URI",
-    "ECS_CONTAINER_METADATA_URI_V4",
-    "AWS_LAMBDA_FUNCTION_NAME",
-)
-
-
 def refuse_outside_dev(settings: CoreSettings, what: str, environ: Mapping[str, str]) -> None:
     if settings.env != "dev":
         raise RuntimeError(f"{what} needs COPILOT_ENV=dev; this is {settings.env!r}")
-    markers = [m for m in _AWS_RUNTIME_MARKERS if environ.get(m)]
+    markers = aws_runtime(environ)
     if markers:
         raise RuntimeError(f"{what} cannot run on AWS ({', '.join(markers)})")
 

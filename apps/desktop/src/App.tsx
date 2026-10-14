@@ -3,7 +3,8 @@
 // settings, or with Ctrl+Shift+D).
 import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
-import { api, inTauri, type DeviceInfo, type LiveStatus, type Settings } from "./api";
+import { api, inTauri, type DeviceInfo, type LiveStatus, type Settings, type SettingsView } from "./api";
+import { awsUrlsFor } from "./urls";
 import { parseTarget, upcoming } from "./catalog";
 import { Documents, when } from "./Documents";
 import { History } from "./History";
@@ -24,15 +25,16 @@ const TABS: [Tab, string][] = [
 export default function App() {
   const [session] = useSession();
   const [tab, setTab] = useState<Tab>("start");
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [tokenSet, setTokenSet] = useState(false);
+  const [view, setView] = useState<SettingsView | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  // The current environment can make calls: the dev token is set (local) or signed in (AWS).
+  const tokenSet = view?.ready ?? false;
+  const environment = view?.settings.environment ?? "local";
 
   const reload = () => {
-    api.getSettings().then(([s, t]) => {
-      setSettings(s);
-      setTokenSet(t);
-      setShowDebug(s.show_debug);
+    api.getSettings().then((v) => {
+      setView(v);
+      setShowDebug(v.settings.show_debug);
     });
   };
   useEffect(() => {
@@ -75,14 +77,14 @@ export default function App() {
         <span className="spacer" />
         <StatusBadge session={session} />
       </nav>
-      {tab === "start" && <StartScreen session={session} tokenSet={tokenSet} onSettings={() => setTab("settings")} />}
-      {needsToken && <SetTokenFirst onSettings={() => setTab("settings")} />}
+      {tab === "start" && (
+        <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
+      )}
+      {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
       {!needsToken && tab === "documents" && <Documents />}
       {!needsToken && tab === "jobs" && <Jobs />}
       {!needsToken && tab === "history" && <History />}
-      {tab === "settings" && settings && (
-        <SettingsScreen settings={settings} tokenSet={tokenSet} running={session.running} onSaved={reload} />
-      )}
+      {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
     </main>
   );
@@ -98,10 +100,13 @@ function StatusBadge({ session }: { session: SessionView }) {
   );
 }
 
-function SetTokenFirst({ onSettings }: { onSettings: () => void }) {
+function SetTokenFirst({ environment, onSettings }: { environment: string; onSettings: () => void }) {
   return (
     <p className="callout">
-      Set the dev token first. <button className="link" onClick={onSettings}>Open settings</button>
+      {environment === "aws" ? "Sign in first." : "Set the dev token first."}{" "}
+      <button className="link" onClick={onSettings}>
+        Open settings
+      </button>
     </p>
   );
 }
@@ -113,7 +118,17 @@ const PLATFORMS = [
   ["other", "Other"],
 ];
 
-function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; tokenSet: boolean; onSettings: () => void }) {
+function StartScreen({
+  session,
+  tokenSet,
+  environment,
+  onSettings,
+}: {
+  session: SessionView;
+  tokenSet: boolean;
+  environment: string;
+  onSettings: () => void;
+}) {
   const [mode, setMode] = useState<Mode>("interview");
   const catalog = useCatalog(tokenSet);
   const [target, setTarget] = useState("");
@@ -169,7 +184,7 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
   const running = session.running;
   return (
     <section className="panel">
-      {!tokenSet && <SetTokenFirst onSettings={onSettings} />}
+      {!tokenSet && <SetTokenFirst environment={environment} onSettings={onSettings} />}
       <div className="grid">
         <label>Mode</label>
         <div className="segmented">
@@ -264,7 +279,13 @@ function StartScreen({ session, tokenSet, onSettings }: { session: SessionView; 
         </p>
       )}
       {session.stopped === "no_minutes" && <p className="callout">No minutes left on the plan.</p>}
-      {session.stopped === "unauthorized" && <p className="callout">The gateway rejected the dev token. Check it in Settings.</p>}
+      {session.stopped === "unauthorized" && (
+        <p className="callout">
+          {environment === "aws"
+            ? "The gateway rejected the sign-in. Sign in again under Settings."
+            : "The gateway rejected the dev token. Check it in Settings."}
+        </p>
+      )}
       {message && <p className="note warn">{message}</p>}
       {postCall && !running && (
         <div className="postcall">
@@ -280,19 +301,13 @@ function packNote(pack: { available: boolean } | null | undefined): string {
   return pack.available ? "" : " (pack expired)";
 }
 
-function SettingsScreen({
-  settings,
-  tokenSet,
-  running,
-  onSaved,
-}: {
-  settings: Settings;
-  tokenSet: boolean;
-  running: boolean;
-  onSaved: () => void;
-}) {
+function SettingsScreen({ view, running, onSaved }: { view: SettingsView; running: boolean; onSaved: () => void }) {
+  const settings = view.settings;
+  const tokenSet = view.dev_token_set;
   const [draft, setDraft] = useState(settings);
   const [token, setToken] = useState("");
+  const [host, setHost] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
   const [devices, setDevices] = useState<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => {
@@ -311,6 +326,30 @@ function SettingsScreen({
     }
   };
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setDraft({ ...draft, [k]: v });
+  const unsaved = JSON.stringify(draft) !== JSON.stringify(settings);
+  const signIn = async () => {
+    setMessage(null);
+    setSigningIn(true);
+    try {
+      const email = await api.signIn();
+      setMessage(`Signed in${email ? ` as ${email}` : ""}.`);
+      onSaved();
+    } catch (e) {
+      setMessage(String(e));
+    } finally {
+      setSigningIn(false);
+    }
+  };
+  const signOut = async () => {
+    setMessage(null);
+    try {
+      await api.signOut();
+      setMessage("Signed out.");
+      onSaved();
+    } catch (e) {
+      setMessage(String(e));
+    }
+  };
   const deviceSelect = (list: DeviceInfo[] | undefined, value: string | null, key: "mic_device" | "output_device") => (
     <select value={value ?? ""} onChange={(e) => set(key, e.target.value || null)}>
       <option value="">System default</option>
@@ -326,25 +365,101 @@ function SettingsScreen({
   return (
     <section className="panel">
       <div className="grid">
-        <label>Gateway URL</label>
-        <input value={draft.gateway_url} onChange={(e) => set("gateway_url", e.target.value)} />
-
-        <label>API URL</label>
-        <div>
-          <input value={draft.api_url} onChange={(e) => set("api_url", e.target.value)} />
-          <p className="note">The Copilot API's /v1 root, for example http://127.0.0.1:8080/v1. The same token signs in to both.</p>
+        <label>Environment</label>
+        <div className="row">
+          <label className="check">
+            <input type="radio" checked={draft.environment === "local"} onChange={() => set("environment", "local")} />
+            Local (this machine, dev token)
+          </label>
+          <label className="check">
+            <input type="radio" checked={draft.environment === "aws"} onChange={() => set("environment", "aws")} />
+            AWS (Cognito sign-in)
+          </label>
         </div>
 
-        <label>Dev token</label>
-        <div>
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder={tokenSet ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the .env"}
-          />
-          <p className="note">Kept in the Windows Credential Manager, not in the settings file. Cognito sign-in replaces it in build step 5.</p>
-        </div>
+        {draft.environment === "local" ? (
+          <>
+            <label>Gateway URL</label>
+            <input value={draft.gateway_url} onChange={(e) => set("gateway_url", e.target.value)} />
+
+            <label>API URL</label>
+            <div>
+              <input value={draft.api_url} onChange={(e) => set("api_url", e.target.value)} />
+              <p className="note">The Copilot API's /v1 root, for example http://127.0.0.1:8080/v1. The same token signs in to both.</p>
+            </div>
+
+            <label>Dev token</label>
+            <div>
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder={tokenSet ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the .env"}
+              />
+              <p className="note">
+                Kept in the Windows Credential Manager, not in the settings file. Local only: the services refuse it in AWS.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <label>AWS host</label>
+            <div className="row">
+              <input
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="ec2-…compute-1.amazonaws.com (terraform output public_dns)"
+              />
+              <button
+                onClick={() => {
+                  const urls = awsUrlsFor(host);
+                  if (urls) setDraft({ ...draft, ...urls });
+                }}
+              >
+                Fill URLs
+              </button>
+            </div>
+
+            <label>Gateway URL</label>
+            <input value={draft.aws_gateway_url} onChange={(e) => set("aws_gateway_url", e.target.value)} />
+
+            <label>API URL</label>
+            <input value={draft.aws_api_url} onChange={(e) => set("aws_api_url", e.target.value)} />
+
+            <label>Account</label>
+            <div>
+              {view.signed_in_as !== null ? (
+                <div className="row">
+                  <span>Signed in{view.signed_in_as ? ` as ${view.signed_in_as}` : ""}.</span>
+                  <button onClick={signOut}>Sign out</button>
+                </div>
+              ) : (
+                <div className="row">
+                  <button className="primary" onClick={signIn} disabled={signingIn || unsaved || !settings.aws_api_url}>
+                    {signingIn ? "Waiting for the browser…" : "Sign in"}
+                  </button>
+                  {unsaved && <span className="note">Save first.</span>}
+                </div>
+              )}
+              <p className="note">
+                Opens your browser at the stage's sign-in page. The sign-in stays in the Windows Credential Manager and renews
+                itself, also during a call.
+              </p>
+            </div>
+          </>
+        )}
+        {draft.environment === settings.environment && view.warnings.length > 0 && (
+          <>
+            <label>Not encrypted</label>
+            <div>
+              {view.warnings.map((w) => (
+                <p key={w} className="note warn">
+                  {w}
+                </p>
+              ))}
+            </div>
+          </>
+        )}
 
         <label>Microphone</label>
         {deviceSelect(devices?.inputs, draft.mic_device, "mic_device")}

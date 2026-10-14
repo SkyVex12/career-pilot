@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { InterviewItem } from "../src/api";
 import { parseTarget, upcoming } from "../src/catalog";
+import { awsUrlsFor } from "../src/urls";
 
 const interview = (id: string, startsAt: string): InterviewItem => ({
   id,
@@ -25,5 +26,23 @@ describe("start screen", () => {
     expect(parseTarget("interview:i1", list)).toEqual({ interview_id: "i1", job_id: "job-i1" });
     expect(parseTarget("job:j9", list)).toEqual({ job_id: "j9", interview_id: null });
     expect(parseTarget("", list)).toEqual({ job_id: null, interview_id: null });
+  });
+});
+
+describe("awsUrlsFor", () => {
+  it("builds both AWS URLs from the stage's host name", () => {
+    expect(awsUrlsFor(" ec2-3-90-1-2.compute-1.amazonaws.com ")).toEqual({
+      aws_api_url: "http://ec2-3-90-1-2.compute-1.amazonaws.com/v1",
+      aws_gateway_url: "ws://ec2-3-90-1-2.compute-1.amazonaws.com/v1/session",
+    });
+  });
+  it("keeps TLS when given an https URL", () => {
+    expect(awsUrlsFor("https://api.example.com/v1")).toEqual({
+      aws_api_url: "https://api.example.com/v1",
+      aws_gateway_url: "wss://api.example.com/v1/session",
+    });
+  });
+  it("needs a host", () => {
+    expect(awsUrlsFor("   ")).toBeNull();
   });
 });
