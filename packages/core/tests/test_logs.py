@@ -23,7 +23,11 @@ def capture():
     handler.addFilter(logs.ContextFilter())
     root.handlers = [handler]
     root.setLevel(logging.INFO)
-    yield lambda: [json.loads(line) for line in buf.getvalue().splitlines()]
+    # Only this module's logger "t": background tasks left by other tests share the session's
+    # event loop and may log to the root logger meanwhile.
+    yield lambda: [
+        d for line in buf.getvalue().splitlines() if (d := json.loads(line))["logger"] == "t"
+    ]
     root.handlers, root.level = saved
 
 

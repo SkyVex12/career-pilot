@@ -25,7 +25,13 @@ QUESTIONS = ["How did you scale the ledger?", "Tell me about a time you failed?"
 
 
 class ScriptSTT:
-    """Each finalize() turns the audio since the last one into the next scripted question."""
+    """Each finalize() turns the audio since the last one into the next scripted question.
+
+    The final arrives a little after the speech-end frame, as from a real STT; emitted inside
+    finalize() it would race the turn detector (see copilot_gateway.testing.TextSTTControl).
+    """
+
+    final_delay_s = 0.02
 
     name = "script"
     index = 0
@@ -45,7 +51,8 @@ class ScriptSTT:
     async def finalize(self) -> None:
         text = QUESTIONS[ScriptSTT.index % len(QUESTIONS)]
         ScriptSTT.index += 1
-        self.queue.put_nowait(STTResult(text, True, self.start, self.ms, flushed=True))
+        final = STTResult(text, True, self.start, self.ms, flushed=True)
+        asyncio.get_running_loop().call_later(self.final_delay_s, self.queue.put_nowait, final)
         self.start = self.ms
 
     async def keepalive(self) -> None:
