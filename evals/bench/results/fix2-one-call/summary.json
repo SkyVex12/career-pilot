@@ -1,0 +1,103 @@
+{
+  "runs": 2,
+  "stages": {
+    "detector_ms": {
+      "p50": 1827,
+      "p95": 4123,
+      "n": 15
+    },
+    "final_ms": {
+      "p50": 686,
+      "p95": 1526,
+      "n": 15
+    },
+    "turn_end_ms": {
+      "p50": 2562,
+      "p95": 5861,
+      "n": 15
+    },
+    "start_ms": {
+      "p50": 827,
+      "p95": 1688,
+      "n": 15
+    },
+    "first_token_ms": {
+      "p50": 1359,
+      "p95": 2382,
+      "n": 15
+    },
+    "server_first_word_ms": {
+      "p50": 2562,
+      "p95": 5861,
+      "n": 15
+    },
+    "first_word_ms": {
+      "p50": 2791,
+      "p95": 6087,
+      "n": 15
+    },
+    "deep_first_word_ms": {
+      "p50": 5269,
+      "p95": 10244,
+      "n": 15
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 1868,
+    "p95": 2634,
+    "n": 2
+  },
+  "first_word_p50_per_run_ms": [
+    2645,
+    3165
+  ],
+  "detection": {
+    "precision": 0.938,
+    "recall": 0.625,
+    "false_fires_per_run": 0.5,
+    "false_fire_utterances": {
+      "what_is_that": 1
+    },
+    "missed": {
+      "do_differently": 1,
+      "index": 1,
+      "manager": 2,
+      "questions_for_us": 2,
+      "incident": 1,
+      "rate_limiter": 1,
+      "url": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 0.5,
+    "detector_calls_per_run": 58.5
+  },
+  "speculative": {
+    "fast_starts_per_run": 38.0,
+    "waste_rate": 0.763,
+    "waste_cost_per_run_usd": 0.001178
+  },
+  "prepared": {
+    "opportunities": 5,
+    "hits": 0,
+    "correct": 0,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0384,
+    "model_per_run_usd": 0.0264,
+    "per_live_hour_usd": 0.541,
+    "model_per_live_hour_usd": 0.372,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.022305,
+      "answer:fast": 0.000712,
+      "detector": 0.002167,
+      "pass_cancelled:fast": 0.001178
+    }
+  },
+  "provider_probe_ms": 1632,
+  "label": "fix2-one-call",
+  "env": {},
+  "interleaved_with": [],
+  "at": "2026-10-14T22:52:34.326117+00:00"
+}

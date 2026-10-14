@@ -82,3 +82,18 @@ prepared-answer hits (right and wrong), detector calls, and cost: every model ca
 logged (answers, detector calls, cancelled passes with an estimate, cache prewarms) plus Deepgram
 for the audio streamed ($0.0077 per minute list price; `--stt-price`), per run and per live hour.
 A run costs about $0.03 to $0.10, mostly the deep pass.
+
+## Prepared-answer calibration
+
+`prepared/calibration.toml` holds paraphrases of the benchmark profile's 12 prepared questions
+(should match) and 30 questions that must not match, many on the same topics. The script embeds
+them with the configured model and scores every threshold and margin over the runner-up:
+
+```sh
+uv run copilot-calibrate-prepared --json prepared/<model>.json
+```
+
+It recommends the pair with the best recall among those with no wrong match, plus 0.03 on the
+threshold, since a wrong match shows points for a different question. The result goes into the
+gateway's `prepared_answer_thresholds` default for that model id.
+`prepared/openai-text-embedding-3-large.json` is the October 2026 run.

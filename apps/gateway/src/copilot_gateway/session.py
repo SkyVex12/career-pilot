@@ -166,7 +166,7 @@ class Session:
         self.matcher = PreparedMatcher(
             svc.embedder,
             pack.prepared_answers if pack else [],
-            self.settings.prepared_answer_min_similarity,
+            self.settings.prepared_threshold(svc.embedder.model_id if svc.embedder else None),
             pack.embedding_model if pack else None,
         )
         self.turns = TurnDetector(

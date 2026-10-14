@@ -1,0 +1,108 @@
+# Calibration set for prepared-answer matching (copilot-calibrate-prepared).
+#
+# The gateway shows a prepared answer's talking points when the live question's embedding is
+# close enough to a prepared question's. A wrong match shows points for a different question,
+# so the threshold is set conservatively: no negative may match, at the cost of some recall.
+#
+# Prepared questions come from evals/bench/profile.toml. Positives are other ways an
+# interviewer asks the same question; negatives are questions that must not match any of them,
+# many on the same topics (near misses). None of the latency benchmark's own wording is
+# reused here, so the benchmark stays an independent check.
+
+[positives]
+background = [
+  "Could you give me a quick overview of your career so far?",
+  "Start by telling me a bit about who you are and what you do now.",
+  "Walk me through your resume.",
+]
+incident = [
+  "Tell me about a time production went down on your watch.",
+  "What's the worst outage you've had to handle, and how did you deal with it?",
+  "Describe a high-pressure incident you were responsible for resolving.",
+]
+disagree_manager = [
+  "Tell me about a time you pushed back on your boss.",
+  "Have you ever had a strong disagreement with someone more senior than you?",
+  "Describe a situation where you didn't agree with your manager's call.",
+]
+why_leave = [
+  "What's making you look for a new job right now?",
+  "Why are you thinking about moving on from your current company?",
+  "What's prompting the job search?",
+]
+questions_for_us = [
+  "Is there anything you'd like to ask me?",
+  "What would you like to know about the role or the team?",
+  "Before we wrap up, any questions on your side?",
+]
+failure = [
+  "Tell me about something you shipped that didn't go well.",
+  "Describe a project that failed and what you learned from it.",
+  "What's a mistake at work you learned the most from?",
+]
+mentoring = [
+  "Tell me about a time you mentored someone.",
+  "How do you help junior engineers on your team improve?",
+  "Have you coached anyone through a hard first project?",
+]
+cost = [
+  "Tell me about a time you saved your company money.",
+  "Have you ever cut infrastructure spend significantly?",
+  "Describe a cost optimization you led.",
+]
+proud_project = [
+  "What's the piece of work you're proudest of?",
+  "Which project are you most excited to talk about?",
+  "Tell me about your favorite thing you've built.",
+]
+strengths = [
+  "What would you say you're best at?",
+  "What do your colleagues rely on you for?",
+  "What's your biggest professional strength?",
+]
+weakness = [
+  "What's an area you're working to improve?",
+  "Where do you think you could get better as an engineer?",
+  "What feedback do you hear most often?",
+]
+conflict_peer = [
+  "Describe a disagreement with a teammate and how it ended.",
+  "Tell me about a time you had friction with another engineer.",
+  "How did you handle a conflict with a peer on another team?",
+]
+
+[negatives]
+questions = [
+  # Near misses: same topics, different question.
+  "How do you run a postmortem after an incident?",
+  "What monitoring would you put in place for a new service?",
+  "How do you decide when to rewrite a service versus refactor it?",
+  "How do you give feedback to your manager?",
+  "What do you look for in a manager?",
+  "How do you prioritize your work when everything is urgent?",
+  "Tell me about a time you led a team through a big deadline.",
+  "How do you estimate how long a project will take?",
+  "What does your current team's on-call rotation look like?",
+  "How would you design a system to reconcile payments in real time?",
+  "What's your experience with Kafka consumer groups?",
+  "How do you handle schema changes in an event-driven system?",
+  "How do you onboard yourself onto a new codebase?",
+  "What questions do you ask when a requirement is unclear?",
+  "Tell me about a time you had to learn a new technology quickly.",
+  "How do you decide which tests to write?",
+  "Why do you want to work at this company specifically?",
+  "Where do you see yourself in five years?",
+  "What salary range are you looking for?",
+  "When could you start?",
+  # Unrelated: technical and small talk.
+  "What's the difference between a process and a thread?",
+  "How does a hash map handle collisions?",
+  "Explain how TCP's three-way handshake works.",
+  "What happens when you type a URL into a browser?",
+  "How would you design a URL shortener?",
+  "What's the CAP theorem?",
+  "How does garbage collection work in Go?",
+  "Can you share your screen?",
+  "How's the weather where you are?",
+  "Did you find the office okay?",
+]

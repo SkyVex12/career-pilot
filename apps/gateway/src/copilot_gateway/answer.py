@@ -2,8 +2,9 @@
 
 ARCHITECTURE.md, "Realtime pipeline" steps 5 and 6:
 - The fast pass (Haiku) starts at the speculative point. If the question matches a prepared
-  answer in the session pack (similarity 0.85 or more), those points are sent at once and no
-  model is called. An exact repeat of a normalized question is served from `qa:{uid}:{qhash}`.
+  answer in the session pack (a similarity and a margin over the runner-up calibrated per
+  embedding model, `Settings.prepared_answer_thresholds`), those points are sent at once and
+  no model is called. An exact repeat of a normalized question is served from `qa:{uid}:{qhash}`.
 - The deep pass (Sonnet) starts at confirmation for the auto types, otherwise on expand.
 - A new confirmed question stops generation for the old one; the old answer stays on screen
   (the client keeps what it has; the server sends answer.error with code `cancelled`).
@@ -38,7 +39,7 @@ from copilot_core.llm import (
 )
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
 from copilot_core.pricing import cost_usd
-from copilot_gateway.config import Settings
+from copilot_gateway.config import PreparedThreshold, Settings
 from copilot_protocol import models
 
 log = logging.getLogger(__name__)
@@ -109,11 +110,14 @@ class PreparedMatcher:
         self,
         embedder: Embedder | None,
         answers: list[PreparedAnswer],
-        min_similarity: float,
+        threshold: PreparedThreshold,
         embedding_model: str | None = None,
     ) -> None:
         self.embedder = embedder
-        self.min_similarity = min_similarity
+        self.min_similarity = threshold.min_similarity
+        # A wrong match shows points for another question: the best must also clearly beat
+        # the runner-up, or two prepared questions are too alike to choose between.
+        self.min_margin = threshold.min_margin
         self.vectors: list[tuple[PreparedAnswer, list[float]]] = []
         # The pack's vectors were made by another model, or it has none to match against.
         self.stale = embedder is not None and bool(answers) and embedding_model != embedder.model_id
@@ -137,16 +141,16 @@ class PreparedMatcher:
         except Exception as e:
             log.warning("prepared-answer embedding failed: %s", e)
             return None
-        best: tuple[PreparedAnswer, float] | None = None
-        for answer, vec in self.vectors:
-            sim = cosine(query, vec)
-            if best is None or sim > best[1]:
-                best = (answer, sim)
+        scored = sorted(
+            ((cosine(query, vec), i) for i, (_, vec) in enumerate(self.vectors)), reverse=True
+        )
         ms = int((time.monotonic() - started) * 1000)
-        if best is None:
+        if not scored:
             return MatchResult(None, None, ms)
-        hit = best[0] if best[1] >= self.min_similarity else None
-        return MatchResult(hit, best[1], ms)
+        best_sim, best_i = scored[0]
+        runner_up = scored[1][0] if len(scored) > 1 else -1.0
+        ok = best_sim >= self.min_similarity and best_sim - runner_up >= self.min_margin
+        return MatchResult(self.vectors[best_i][0] if ok else None, best_sim, ms)
 
 
 class AnswerHost(Protocol):

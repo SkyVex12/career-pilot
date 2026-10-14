@@ -1,0 +1,539 @@
+{
+  "model": "openai:text-embedding-3-large@1024",
+  "recommended": {
+    "min_similarity": 0.63,
+    "min_margin": 0.0,
+    "recall": 0.556,
+    "lowest_safe_threshold": 0.6
+  },
+  "probes": [
+    {
+      "text": "Could you give me a quick overview of your career so far?",
+      "expected": "background",
+      "best": "background",
+      "best_sim": 0.5657010221989525,
+      "runner_up": 0.37758594460037626,
+      "margin": 0.1881150775985762
+    },
+    {
+      "text": "Start by telling me a bit about who you are and what you do now.",
+      "expected": "background",
+      "best": "background",
+      "best_sim": 0.6939829214025813,
+      "runner_up": 0.3514745753278559,
+      "margin": 0.3425083460747254
+    },
+    {
+      "text": "Walk me through your resume.",
+      "expected": "background",
+      "best": "background",
+      "best_sim": 0.46502037576249416,
+      "runner_up": 0.363993093740399,
+      "margin": 0.10102728202209516
+    },
+    {
+      "text": "Tell me about a time production went down on your watch.",
+      "expected": "incident",
+      "best": "incident",
+      "best_sim": 0.6718105822151403,
+      "runner_up": 0.541058026812501,
+      "margin": 0.1307525554026393
+    },
+    {
+      "text": "What's the worst outage you've had to handle, and how did you deal with it?",
+      "expected": "incident",
+      "best": "incident",
+      "best_sim": 0.6633272894332815,
+      "runner_up": 0.462969286156139,
+      "margin": 0.20035800327714243
+    },
+    {
+      "text": "Describe a high-pressure incident you were responsible for resolving.",
+      "expected": "incident",
+      "best": "incident",
+      "best_sim": 0.755702367586322,
+      "runner_up": 0.5792782275824301,
+      "margin": 0.17642414000389195
+    },
+    {
+      "text": "Tell me about a time you pushed back on your boss.",
+      "expected": "disagree_manager",
+      "best": "disagree_manager",
+      "best_sim": 0.7766643508686081,
+      "runner_up": 0.6080094118898076,
+      "margin": 0.16865493897880046
+    },
+    {
+      "text": "Have you ever had a strong disagreement with someone more senior than you?",
+      "expected": "disagree_manager",
+      "best": "disagree_manager",
+      "best_sim": 0.6931801166773024,
+      "runner_up": 0.5385223054163933,
+      "margin": 0.15465781126090905
+    },
+    {
+      "text": "Describe a situation where you didn't agree with your manager's call.",
+      "expected": "disagree_manager",
+      "best": "disagree_manager",
+      "best_sim": 0.8829733214234938,
+      "runner_up": 0.545637374048395,
+      "margin": 0.33733594737509887
+    },
+    {
+      "text": "What's making you look for a new job right now?",
+      "expected": "why_leave",
+      "best": "why_leave",
+      "best_sim": 0.7175594022759368,
+      "runner_up": 0.3656100968080457,
+      "margin": 0.35194930546789116
+    },
+    {
+      "text": "Why are you thinking about moving on from your current company?",
+      "expected": "why_leave",
+      "best": "why_leave",
+      "best_sim": 0.7858868636336983,
+      "runner_up": 0.3572840040203715,
+      "margin": 0.4286028596133268
+    },
+    {
+      "text": "What's prompting the job search?",
+      "expected": "why_leave",
+      "best": "why_leave",
+      "best_sim": 0.6056365402782867,
+      "runner_up": 0.31989255453402354,
+      "margin": 0.2857439857442632
+    },
+    {
+      "text": "Is there anything you'd like to ask me?",
+      "expected": "questions_for_us",
+      "best": "questions_for_us",
+      "best_sim": 0.5636978120611812,
+      "runner_up": 0.34286731972139206,
+      "margin": 0.22083049233978913
+    },
+    {
+      "text": "What would you like to know about the role or the team?",
+      "expected": "questions_for_us",
+      "best": "background",
+      "best_sim": 0.5983902457797624,
+      "runner_up": 0.49914421809000914,
+      "margin": 0.09924602768975327
+    },
+    {
+      "text": "Before we wrap up, any questions on your side?",
+      "expected": "questions_for_us",
+      "best": "questions_for_us",
+      "best_sim": 0.571470494603172,
+      "runner_up": 0.33215645184739234,
+      "margin": 0.23931404275577967
+    },
+    {
+      "text": "Tell me about something you shipped that didn't go well.",
+      "expected": "failure",
+      "best": "failure",
+      "best_sim": 0.6880767919647118,
+      "runner_up": 0.5033721921124235,
+      "margin": 0.18470459985228838
+    },
+    {
+      "text": "Describe a project that failed and what you learned from it.",
+      "expected": "failure",
+      "best": "failure",
+      "best_sim": 0.8693584551564106,
+      "runner_up": 0.5089168825422711,
+      "margin": 0.36044157261413956
+    },
+    {
+      "text": "What's a mistake at work you learned the most from?",
+      "expected": "failure",
+      "best": "incident",
+      "best_sim": 0.47910238888615725,
+      "runner_up": 0.4741100924411348,
+      "margin": 0.0049922964450224705
+    },
+    {
+      "text": "Tell me about a time you mentored someone.",
+      "expected": "mentoring",
+      "best": "mentoring",
+      "best_sim": 0.5666972853744815,
+      "runner_up": 0.5199832249772972,
+      "margin": 0.04671406039718429
+    },
+    {
+      "text": "How do you help junior engineers on your team improve?",
+      "expected": "mentoring",
+      "best": "mentoring",
+      "best_sim": 0.7390416928554009,
+      "runner_up": 0.3019867196621036,
+      "margin": 0.4370549731932973
+    },
+    {
+      "text": "Have you coached anyone through a hard first project?",
+      "expected": "mentoring",
+      "best": "mentoring",
+      "best_sim": 0.5129548845199892,
+      "runner_up": 0.4601879680835521,
+      "margin": 0.05276691643643705
+    },
+    {
+      "text": "Tell me about a time you saved your company money.",
+      "expected": "cost",
+      "best": "cost",
+      "best_sim": 0.8558417698796669,
+      "runner_up": 0.4988868517229522,
+      "margin": 0.35695491815671465
+    },
+    {
+      "text": "Have you ever cut infrastructure spend significantly?",
+      "expected": "cost",
+      "best": "cost",
+      "best_sim": 0.5364218706962065,
+      "runner_up": 0.3619856424009912,
+      "margin": 0.17443622829521532
+    },
+    {
+      "text": "Describe a cost optimization you led.",
+      "expected": "cost",
+      "best": "cost",
+      "best_sim": 0.7632526068926008,
+      "runner_up": 0.42481975302019964,
+      "margin": 0.33843285387240113
+    },
+    {
+      "text": "What's the piece of work you're proudest of?",
+      "expected": "proud_project",
+      "best": "proud_project",
+      "best_sim": 0.7718340648222366,
+      "runner_up": 0.42419437384286024,
+      "margin": 0.34763969097937636
+    },
+    {
+      "text": "Which project are you most excited to talk about?",
+      "expected": "proud_project",
+      "best": "proud_project",
+      "best_sim": 0.7498918086610774,
+      "runner_up": 0.46215388633781584,
+      "margin": 0.28773792232326156
+    },
+    {
+      "text": "Tell me about your favorite thing you've built.",
+      "expected": "proud_project",
+      "best": "proud_project",
+      "best_sim": 0.5996773082441269,
+      "runner_up": 0.5217340744214953,
+      "margin": 0.07794323382263157
+    },
+    {
+      "text": "What would you say you're best at?",
+      "expected": "strengths",
+      "best": "strengths",
+      "best_sim": 0.5515374007419807,
+      "runner_up": 0.49133426049094353,
+      "margin": 0.060203140251037124
+    },
+    {
+      "text": "What do your colleagues rely on you for?",
+      "expected": "strengths",
+      "best": "mentoring",
+      "best_sim": 0.4621217097737137,
+      "runner_up": 0.4441489411786689,
+      "margin": 0.01797276859504482
+    },
+    {
+      "text": "What's your biggest professional strength?",
+      "expected": "strengths",
+      "best": "strengths",
+      "best_sim": 0.743768368778088,
+      "runner_up": 0.6505496442107692,
+      "margin": 0.09321872456731883
+    },
+    {
+      "text": "What's an area you're working to improve?",
+      "expected": "weakness",
+      "best": "weakness",
+      "best_sim": 0.4952093274919639,
+      "runner_up": 0.45019082218130685,
+      "margin": 0.04501850531065704
+    },
+    {
+      "text": "Where do you think you could get better as an engineer?",
+      "expected": "weakness",
+      "best": "mentoring",
+      "best_sim": 0.5575192664387112,
+      "runner_up": 0.3561836485172092,
+      "margin": 0.201335617921502
+    },
+    {
+      "text": "What feedback do you hear most often?",
+      "expected": "weakness",
+      "best": "proud_project",
+      "best_sim": 0.39836252383968473,
+      "runner_up": 0.38570824550855004,
+      "margin": 0.012654278331134694
+    },
+    {
+      "text": "Describe a disagreement with a teammate and how it ended.",
+      "expected": "conflict_peer",
+      "best": "conflict_peer",
+      "best_sim": 0.6798461791989268,
+      "runner_up": 0.6678586840931698,
+      "margin": 0.011987495105756918
+    },
+    {
+      "text": "Tell me about a time you had friction with another engineer.",
+      "expected": "conflict_peer",
+      "best": "conflict_peer",
+      "best_sim": 0.6765377201527627,
+      "runner_up": 0.6668719846414294,
+      "margin": 0.009665735511333318
+    },
+    {
+      "text": "How did you handle a conflict with a peer on another team?",
+      "expected": "conflict_peer",
+      "best": "conflict_peer",
+      "best_sim": 0.7484028291199326,
+      "runner_up": 0.5850799205062589,
+      "margin": 0.1633229086136737
+    },
+    {
+      "text": "How do you run a postmortem after an incident?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.4387669999537281,
+      "runner_up": 0.28092088626909417,
+      "margin": 0.15784611368463392
+    },
+    {
+      "text": "What monitoring would you put in place for a new service?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.31619745976315783,
+      "runner_up": 0.23807605804781895,
+      "margin": 0.07812140171533888
+    },
+    {
+      "text": "How do you decide when to rewrite a service versus refactor it?",
+      "expected": null,
+      "best": "cost",
+      "best_sim": 0.26452733399080364,
+      "runner_up": 0.2553769331126244,
+      "margin": 0.009150400878179255
+    },
+    {
+      "text": "How do you give feedback to your manager?",
+      "expected": null,
+      "best": "disagree_manager",
+      "best_sim": 0.548191367021314,
+      "runner_up": 0.358819950377063,
+      "margin": 0.189371416644251
+    },
+    {
+      "text": "What do you look for in a manager?",
+      "expected": null,
+      "best": "disagree_manager",
+      "best_sim": 0.4422731747098604,
+      "runner_up": 0.33272709837768616,
+      "margin": 0.10954607633217422
+    },
+    {
+      "text": "How do you prioritize your work when everything is urgent?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.3862959073016312,
+      "runner_up": 0.3133522917763048,
+      "margin": 0.07294361552532641
+    },
+    {
+      "text": "Tell me about a time you led a team through a big deadline.",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.5742768254145861,
+      "runner_up": 0.521088533676031,
+      "margin": 0.053188291738555105
+    },
+    {
+      "text": "How do you estimate how long a project will take?",
+      "expected": null,
+      "best": "proud_project",
+      "best_sim": 0.28556469599038997,
+      "runner_up": 0.27382626262318177,
+      "margin": 0.0117384333672082
+    },
+    {
+      "text": "What does your current team's on-call rotation look like?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.41064070079926407,
+      "runner_up": 0.3684945457063844,
+      "margin": 0.04214615509287967
+    },
+    {
+      "text": "How would you design a system to reconcile payments in real time?",
+      "expected": null,
+      "best": "cost",
+      "best_sim": 0.2683892154401369,
+      "runner_up": 0.23786775643590596,
+      "margin": 0.030521459004230922
+    },
+    {
+      "text": "What's your experience with Kafka consumer groups?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.2920144034849254,
+      "runner_up": 0.2754831193626416,
+      "margin": 0.01653128412228383
+    },
+    {
+      "text": "How do you handle schema changes in an event-driven system?",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.250262307301146,
+      "runner_up": 0.1802375054127153,
+      "margin": 0.07002480188843072
+    },
+    {
+      "text": "How do you onboard yourself onto a new codebase?",
+      "expected": null,
+      "best": "background",
+      "best_sim": 0.3561531122952057,
+      "runner_up": 0.34960308675454277,
+      "margin": 0.006550025540662918
+    },
+    {
+      "text": "What questions do you ask when a requirement is unclear?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.4263109718471128,
+      "runner_up": 0.33501858032315973,
+      "margin": 0.09129239152395308
+    },
+    {
+      "text": "Tell me about a time you had to learn a new technology quickly.",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.5241238571437553,
+      "runner_up": 0.48725215262152377,
+      "margin": 0.03687170452223154
+    },
+    {
+      "text": "How do you decide which tests to write?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.3071453707563329,
+      "runner_up": 0.2844839723269386,
+      "margin": 0.022661398429394297
+    },
+    {
+      "text": "Why do you want to work at this company specifically?",
+      "expected": null,
+      "best": "why_leave",
+      "best_sim": 0.5378229236442499,
+      "runner_up": 0.33951655896612626,
+      "margin": 0.19830636467812363
+    },
+    {
+      "text": "Where do you see yourself in five years?",
+      "expected": null,
+      "best": "background",
+      "best_sim": 0.3747288856286853,
+      "runner_up": 0.363464090022388,
+      "margin": 0.011264795606297284
+    },
+    {
+      "text": "What salary range are you looking for?",
+      "expected": null,
+      "best": "why_leave",
+      "best_sim": 0.3609800576270237,
+      "runner_up": 0.3298126351520056,
+      "margin": 0.03116742247501808
+    },
+    {
+      "text": "When could you start?",
+      "expected": null,
+      "best": "why_leave",
+      "best_sim": 0.28884745572443093,
+      "runner_up": 0.28081964051118796,
+      "margin": 0.008027815213242973
+    },
+    {
+      "text": "What's the difference between a process and a thread?",
+      "expected": null,
+      "best": "background",
+      "best_sim": 0.17913198950793088,
+      "runner_up": 0.1457120336914691,
+      "margin": 0.03341995581646179
+    },
+    {
+      "text": "How does a hash map handle collisions?",
+      "expected": null,
+      "best": "conflict_peer",
+      "best_sim": 0.187439228018787,
+      "runner_up": 0.08588283296026722,
+      "margin": 0.1015563950585198
+    },
+    {
+      "text": "Explain how TCP's three-way handshake works.",
+      "expected": null,
+      "best": "incident",
+      "best_sim": 0.19576650079301136,
+      "runner_up": 0.18967847922036718,
+      "margin": 0.006088021572644181
+    },
+    {
+      "text": "What happens when you type a URL into a browser?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.14544131163141272,
+      "runner_up": 0.10685589314119912,
+      "margin": 0.0385854184902136
+    },
+    {
+      "text": "How would you design a URL shortener?",
+      "expected": null,
+      "best": "proud_project",
+      "best_sim": 0.20561261495812527,
+      "runner_up": 0.19733984472612773,
+      "margin": 0.008272770231997545
+    },
+    {
+      "text": "What's the CAP theorem?",
+      "expected": null,
+      "best": "failure",
+      "best_sim": 0.19033957768967047,
+      "runner_up": 0.15533188970577433,
+      "margin": 0.03500768798389614
+    },
+    {
+      "text": "How does garbage collection work in Go?",
+      "expected": null,
+      "best": "mentoring",
+      "best_sim": 0.12044407152324782,
+      "runner_up": 0.11876021660685121,
+      "margin": 0.0016838549163966099
+    },
+    {
+      "text": "Can you share your screen?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.33953180667252914,
+      "runner_up": 0.319988276355468,
+      "margin": 0.01954353031706113
+    },
+    {
+      "text": "How's the weather where you are?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.26675967277684765,
+      "runner_up": 0.241478384340681,
+      "margin": 0.025281288436166643
+    },
+    {
+      "text": "Did you find the office okay?",
+      "expected": null,
+      "best": "questions_for_us",
+      "best_sim": 0.25693033093951706,
+      "runner_up": 0.2481813248390857,
+      "margin": 0.008749006100431361
+    }
+  ]
+}
