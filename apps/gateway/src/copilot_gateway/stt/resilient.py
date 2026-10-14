@@ -112,12 +112,14 @@ class ResilientSTT:
     async def send(self, pcm: bytes, capture_ms: int) -> None:
         if not pcm:
             return
-        self.pending.append((capture_ms, pcm))
-        self.pending_ms += len(pcm) // BYTES_PER_MS
-        while self.pending_ms > REPLAY_MAX_MS and len(self.pending) > 1:
-            _, old = self.pending.popleft()
-            self.pending_ms -= len(old) // BYTES_PER_MS
+        # Under the lock: a reconnect replays `pending` while holding it, and awaits between
+        # chunks, so audio arriving meanwhile must wait rather than change the deque.
         async with self._lock:
+            self.pending.append((capture_ms, pcm))
+            self.pending_ms += len(pcm) // BYTES_PER_MS
+            while self.pending_ms > REPLAY_MAX_MS and len(self.pending) > 1:
+                _, old = self.pending.popleft()
+                self.pending_ms -= len(old) // BYTES_PER_MS
             stream = self.stream
             if stream is None:
                 return  # replayed on connect
