@@ -348,6 +348,46 @@ def pct(values: list[float], p: float) -> float:
     return float(np.percentile(np.array(values), p))
 
 
+def stored_latencies(log: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Each pass's answers.latency_ms as the flush builds it: the answer entry's, plus the
+    latency_report entries logged after it (a fast pass that ended before its question was
+    confirmed gets turn_end_ms and final_ms that way)."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in log:
+        key = (str(e.get("question_id")), str(e.get("pass")))
+        if e.get("kind") == "answer":
+            out[key] = dict(cast(dict[str, Any], e.get("latency_ms", {})))
+        elif e.get("kind") == "latency_report" and key in out:
+            skip = {"kind", "question_id", "pass", "at"}
+            out[key].update({k: v for k, v in e.items() if k not in skip})
+    return out
+
+
+def rescore(label: str) -> dict[str, Any]:
+    """Recompute a label's summary from its saved runs, refilling the confirmation timings a
+    question's fast answer did not carry (see `stored_latencies`)."""
+    out_dir = RESULTS / label
+    runs: list[dict[str, Any]] = []
+    for path in sorted(out_dir.glob("run-*.json")):
+        run = cast(dict[str, Any], json.loads(path.read_text("utf-8")))
+        latency = stored_latencies(run["log"])
+        for row in run["questions"]:
+            stored = latency.get((row["question_id"], "fast"), {})
+            for key in ("turn_end_ms", "final_ms"):
+                if row.get(key) is None and stored.get(key) is not None:
+                    row[key] = stored[key]
+        runs.append(run)
+    old = cast(dict[str, Any], json.loads((out_dir / "summary.json").read_text("utf-8")))
+    summary = summarize(runs)
+    probes = [r["probe"]["median_ms"] for r in runs if r.get("probe")]
+    summary["provider_probe_ms"] = round(statistics.median(probes)) if probes else None
+    for key in ("label", "env", "interleaved_with", "at"):
+        if key in old:
+            summary[key] = old[key]
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), "utf-8")
+    return summary
+
+
 def score_run(
     replay: rp.Replay,
     log: list[dict[str, Any]],
@@ -363,7 +403,7 @@ def score_run(
         if m.get("type") == "question.detected":
             confidences[m["question_id"]] = float(m["confidence"])
     force_times = [t for t, m in replay.sent_actions if m.get("type") == "question.force"]
-    answers = {(e["question_id"], e["pass"]): e for e in log if e.get("kind") == "answer"}
+    stored_latency = stored_latencies(log)
 
     rows: list[dict[str, Any]] = []
     for q in replay.questions.values():
@@ -388,9 +428,7 @@ def score_run(
             span = span_for(spans, seg.start_edge / SAMPLE_RATE, seg.end_edge / SAMPLE_RATE)
         fast = q.done.get("fast", {})
         lat = cast(dict[str, Any], fast.get("latency_ms", {}))
-        stored = cast(
-            dict[str, Any], answers.get((q.question_id, "fast"), {}).get("latency_ms", {})
-        )
+        stored = stored_latency.get((q.question_id, "fast"), {})
         first_delta = q.first_delta_at.get("fast")
         anchor = forced_at if forced_at is not None else q.speech_end_at
         deep_delta = q.first_delta_at.get("deep")
@@ -846,7 +884,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--no-probe", action="store_true", help="skip the provider latency probe")
     c = sub.add_parser("compare", help="markdown table over result labels")
     c.add_argument("labels", nargs="+")
+    rs = sub.add_parser("rescore", help="recompute summaries from the saved runs")
+    rs.add_argument("labels", nargs="+")
     args = p.parse_args(argv)
+    if args.cmd == "rescore":
+        for label in args.labels:
+            print_summary(label, rescore(label))
+        return 0
     if args.cmd == "compare":
         print(compare(args.labels))
         return 0

@@ -388,7 +388,13 @@ def summarize(r: Replay) -> dict[str, Any]:
         if q.cancelled and not q.confirmed_at:
             continue
         fast = q.done.get("fast", {})
-        lat = fast.get("latency_ms", {})
+        lat = dict(fast.get("latency_ms", {}))
+        # A fast pass that ends before its question is confirmed (it starts with the detector)
+        # carries no confirmation timings; the deep pass, started at confirmation, does.
+        deep_lat = q.done.get("deep", {}).get("latency_ms", {})
+        for key in ("turn_end_ms", "final_ms"):
+            if key not in lat and key in deep_lat:
+                lat[key] = deep_lat[key]
         fw = q.first_word_s()
         rows.append(
             {
