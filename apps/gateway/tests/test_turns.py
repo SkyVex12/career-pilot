@@ -115,7 +115,8 @@ async def test_a_false_start_never_shows(env) -> None:
 
 async def test_held_pass_is_dropped_silently_when_the_speaker_continues(env) -> None:
     use(env)
-    async with GatewayServer(env.services()) as gw:
+    # The speaker resumes well inside the silence timer: the same utterance goes on.
+    async with GatewayServer(env.services(env.settings(silence_timer_ms=700))) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
         await c.say("How would you design a rate limiter", capture_ms=0)
@@ -195,3 +196,23 @@ def test_material_change() -> None:
     assert materially_changed("How did you scale it", "How did you scale it?")
     assert materially_changed("How did you scale the", "How did you scale the ledger?")
     assert not materially_changed("What's next?", "what's next?")
+
+
+async def test_a_new_utterance_after_a_full_pause_starts_fresh(env) -> None:
+    """Benchmark, 2026-10-14: with the detector slower than the gap between two utterances,
+    the next speech start cancelled the turn and its text was kept, so a question went out
+    glued to the sentences before it ("Okay, so I'll start by telling you about the team.
+    ... can you walk me through your background?"). After a pause longer than the silence
+    timer, with the final in, the speaker had finished: the new utterance starts empty."""
+    use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(0.4)  # past the 250 ms silence timer; the detector is still busy
+        await c.say("How did you scale the ledger?", capture_ms=2000)
+        q = await c.wait_type("question.detected", speculative=False)
+        assert q["text"] == "How did you scale the ledger?"
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.detached_turns == 1
