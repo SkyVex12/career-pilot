@@ -1,0 +1,202 @@
+# Fictional candidate for the latency benchmark: the hot digest and interview session pack the
+# benchmark writes to Valkey for its own user id (never the dev user's). Nothing here is a real
+# person. Prepared answers are embedded with the gateway's embedding model when seeded.
+
+user_name = "Alex Rivera"
+company = "Northwind Payments"
+role_title = "Senior Backend Engineer"
+round = "technical"
+job_summary = "Payments platform team moving batch settlement jobs to streaming; Go and Python services on AWS, PostgreSQL and Kafka."
+
+digest = """
+# Career digest (version 2026-10-12)
+## Roles
+[n:a1] Senior Backend Engineer, Larkspur Commerce, 2022 to now. Team: Checkout Platform, 9 engineers. Owns the order pipeline and the payments adapter layer.
+[n:a2] Backend Engineer, Tidewater Logistics, 2018 to 2022. Built shipment tracking APIs and the event ingestion service.
+[n:a3] Software Engineer intern, Brightfield Labs, summer 2017. Data tooling in Python.
+## Top stories
+[n:s1] Checkout outage on Black Friday: the payments adapter exhausted its connection pool at 6x normal traffic; led the incident, shed load with a feature flag in 12 minutes, then added pool limits per provider and load tests in CI. Revenue loss held under 0.3% of the day. Competencies: ownership, calm under pressure, incident response.
+[n:s2] Order pipeline to Kafka: replaced nightly batch reconciliation with a streaming pipeline (Kafka, Go consumers, PostgreSQL); reconciliation lag went from 24 hours to under 2 minutes; ran old and new side by side for 6 weeks before cutover. Competencies: technical depth, migration planning.
+[n:s3] Schema evolution: introduced a schema registry with backward-compatible Avro schemas and a CI check that blocks breaking changes; zero consumer breakages in 18 months after 140 schema changes. Competencies: technical depth, reliability.
+[n:s4] Disagreed with manager on a rewrite: manager wanted to rewrite the tracking service in a new language; proposed a two-week spike with measurable criteria instead; the spike showed the bottleneck was the database, fixed with two indexes and a cache, p95 down 70%; manager agreed and the rewrite was dropped. Competencies: influence, data-driven decisions.
+[n:s5] Mentoring: mentored three junior engineers through their first on-call rotations; wrote the team's incident runbook template, now used by four teams. Competencies: leadership, mentoring.
+[n:s6] Rate limiting for partner APIs at Tidewater: token bucket per API key in Redis with a Lua script, local in-process buckets as a fallback during Redis failover; handled 15k requests per second. Competencies: system design, reliability.
+[n:s7] Cost cut: rightsized the event ingestion cluster and moved cold data to S3 with lifecycle rules; saved 38% of the team's AWS bill. Competencies: ownership, cost awareness.
+[n:s8] Failed launch: shipped a shipment-ETA feature without enough real-world validation; predictions were off by hours for rural routes; rolled back, added a shadow mode and per-region accuracy dashboards, relaunched 5 weeks later at 92% within 30 minutes. Competencies: learning from failure, accountability.
+## Skills
+Go (5 y), Python (8 y), PostgreSQL (7 y), Kafka (4 y), AWS (6 y: ECS, RDS, S3, SQS), Redis (5 y), Terraform (3 y), gRPC, OpenTelemetry
+## Education
+B.S. Computer Science, State University, 2018
+## Preferences and goals
+Looking for a larger-scale payments or fintech platform role with more system design ownership; current team's roadmap is shifting to frontend work.
+"""
+
+[refs]
+"n:a1" = "Senior Backend Engineer, Larkspur Commerce"
+"n:a2" = "Backend Engineer, Tidewater Logistics"
+"n:a3" = "Software Engineer intern, Brightfield Labs"
+"n:s1" = "Checkout outage on Black Friday"
+"n:s2" = "Order pipeline to Kafka"
+"n:s3" = "Schema evolution"
+"n:s4" = "Disagreed with manager on a rewrite"
+"n:s5" = "Mentoring"
+"n:s6" = "Rate limiting for partner APIs"
+"n:s7" = "Cost cut"
+"n:s8" = "Failed launch"
+
+[[story]]
+short_id = "n:s1"
+title = "Checkout outage on Black Friday"
+one_liner = "Led the incident, shed load in 12 minutes, then pool limits and load tests in CI."
+competencies = ["ownership", "incident response"]
+
+[[story]]
+short_id = "n:s2"
+title = "Order pipeline to Kafka"
+one_liner = "Nightly batch reconciliation to streaming; lag from 24 hours to under 2 minutes."
+competencies = ["technical depth", "migration planning"]
+
+[[story]]
+short_id = "n:s3"
+title = "Schema evolution"
+one_liner = "Schema registry and CI compatibility check; zero consumer breakages in 18 months."
+competencies = ["technical depth", "reliability"]
+
+[[story]]
+short_id = "n:s4"
+title = "Disagreed with manager on a rewrite"
+one_liner = "Proposed a measured spike instead of a rewrite; fixed the real bottleneck, p95 down 70%."
+competencies = ["influence", "data-driven decisions"]
+
+[[story]]
+short_id = "n:s6"
+title = "Rate limiting for partner APIs"
+one_liner = "Token bucket per key in Redis with Lua, local fallback buckets; 15k requests per second."
+competencies = ["system design"]
+
+[[story]]
+short_id = "n:s8"
+title = "Failed launch"
+one_liner = "ETA feature rolled back, relaunched with shadow mode and per-region accuracy dashboards."
+competencies = ["learning from failure"]
+
+[[prepared]]
+id = "background"
+question = "Tell me about yourself and your current role."
+points = [
+  "Eight years backend, now senior on Larkspur's checkout platform [n:a1]",
+  "Own the order pipeline; moved reconciliation from batch to Kafka streaming [n:s2]",
+  "Before that, tracking APIs and event ingestion at Tidewater [n:a2]",
+  "Looking for bigger payments scale and more system design ownership",
+]
+nodes = ["n:a1", "n:s2", "n:a2"]
+
+[[prepared]]
+id = "incident"
+question = "Describe a stressful production incident you handled."
+points = [
+  "Black Friday: payments adapter ran out of connections at 6x traffic [n:s1]",
+  "I led the incident and shed load with a feature flag in 12 minutes",
+  "Loss held under 0.3% of the day's revenue",
+  "Afterwards: per-provider pool limits and load tests in CI",
+]
+nodes = ["n:s1"]
+
+[[prepared]]
+id = "disagree_manager"
+question = "Tell me about a time you disagreed with your manager."
+points = [
+  "Manager wanted to rewrite the tracking service in a new language [n:s4]",
+  "I proposed a two-week spike with clear success criteria instead",
+  "Spike showed the database was the bottleneck; two indexes and a cache",
+  "p95 dropped 70%, and we dropped the rewrite together",
+]
+nodes = ["n:s4"]
+
+[[prepared]]
+id = "why_leave"
+question = "Why do you want to leave your current job?"
+points = [
+  "Our roadmap is shifting to frontend; I want to stay deep in backend",
+  "I want payments at larger scale, like your streaming settlement work [n:s2]",
+  "Looking for more system design ownership",
+]
+nodes = ["n:s2"]
+
+[[prepared]]
+id = "questions_for_us"
+question = "What questions do you have for us?"
+points = [
+  "How far along is the batch-to-streaming move, and what is hardest so far?",
+  "How do squads split ownership of shared payment services?",
+  "What does on-call look like, and how are incidents reviewed?",
+]
+nodes = []
+
+[[prepared]]
+id = "failure"
+question = "Tell me about a project that failed."
+points = [
+  "Shipped a shipment-ETA feature without enough real-world validation [n:s8]",
+  "Rural predictions were off by hours; we rolled back",
+  "Added shadow mode and per-region accuracy dashboards",
+  "Relaunched five weeks later at 92% within 30 minutes",
+]
+nodes = ["n:s8"]
+
+[[prepared]]
+id = "mentoring"
+question = "How have you helped other engineers grow?"
+points = [
+  "Mentored three juniors through their first on-call rotations [n:s5]",
+  "Wrote the incident runbook template, now used by four teams",
+]
+nodes = ["n:s5"]
+
+[[prepared]]
+id = "cost"
+question = "Tell me about a time you reduced costs."
+points = [
+  "Rightsized the event ingestion cluster at Tidewater [n:s7]",
+  "Moved cold data to S3 with lifecycle rules",
+  "Saved 38% of the team's AWS bill",
+]
+nodes = ["n:s7"]
+
+[[prepared]]
+id = "proud_project"
+question = "What project are you most proud of?"
+points = [
+  "Moving order reconciliation from nightly batch to Kafka streaming [n:s2]",
+  "Lag went from 24 hours to under 2 minutes",
+  "Ran both side by side for six weeks before cutover, no incidents",
+]
+nodes = ["n:s2"]
+
+[[prepared]]
+id = "strengths"
+question = "What is your greatest strength?"
+points = [
+  "Staying calm and structured under pressure, like the Black Friday outage [n:s1]",
+  "Turning debates into measurable experiments [n:s4]",
+]
+nodes = ["n:s1", "n:s4"]
+
+[[prepared]]
+id = "weakness"
+question = "What is your biggest weakness?"
+points = [
+  "I used to ship before validating with real data [n:s8]",
+  "Now I plan a shadow mode or canary for anything user-facing",
+]
+nodes = ["n:s8"]
+
+[[prepared]]
+id = "conflict_peer"
+question = "Tell me about a conflict with a coworker and how you resolved it."
+points = [
+  "Disagreement over schema ownership between two teams [n:s3]",
+  "Proposed a schema registry with a CI compatibility check",
+  "Both teams kept autonomy; zero consumer breakages since",
+]
+nodes = ["n:s3"]

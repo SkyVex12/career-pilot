@@ -28,7 +28,14 @@ from uuid import UUID
 
 from copilot_core import prompts
 from copilot_core.embed import Embedder
-from copilot_core.llm import AllRoutesFailedError, LLMDone, LLMRequest, ModelRouter, Route
+from copilot_core.llm import (
+    AllRoutesFailedError,
+    LLMDone,
+    LLMRequest,
+    LLMUsage,
+    ModelRouter,
+    Route,
+)
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
 from copilot_core.pricing import cost_usd
 from copilot_gateway.config import Settings
@@ -407,11 +414,13 @@ class AnswerEngine:
             state["start_at"] = time.monotonic()
             done_info: LLMDone | None = None
             job = pass_
+            req = self._request(q, pass_)
+            state["req"] = req
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
                 host.llm_status(False)
 
-            async for chunk in host.router.stream(job, self._request(q, pass_), on_fallback):
+            async for chunk in host.router.stream(job, req, on_fallback):
                 if isinstance(chunk, LLMDone):
                     done_info = chunk
                 else:
@@ -439,6 +448,7 @@ class AnswerEngine:
         except asyncio.CancelledError:
             if q.superseded:
                 error("cancelled")
+            self._log_cancelled(q, pass_, state)
             raise
         except Exception:
             log.exception("%s pass crashed for %s", pass_, q.qid)
@@ -447,6 +457,45 @@ class AnswerEngine:
             log.debug(
                 "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
             )
+
+    def _log_cancelled(self, q: Question, pass_: str, state: Mapping[str, Any]) -> None:
+        """A pass stopped before its end still costs what the provider read and wrote, but the
+        stream ends without usage: logged with an estimate (about 4 characters a token, the
+        system blocks counted as cached), so speculative waste and its cost can be measured."""
+        if q.superseded:
+            reason = "superseded"
+        elif q.cancelled:
+            reason = "speculative"
+        else:
+            reason = "stopped"
+        entry: dict[str, Any] = {
+            "kind": "pass_cancelled",
+            "question_id": str(q.qid),
+            "pass": pass_,
+            "reason": reason,
+            "model_started": "req" in state,
+            "streamed_chars": sum(len(p) for p in state["parts"]),
+        }
+        req = cast(LLMRequest | None, state.get("req"))
+        routes = self.host.router.routes.get(pass_) or []
+        if req is not None and routes:
+            system = sum(len(b.text) for b in req.system) // 4
+            user = len(str(req.content)) // 4
+            output = entry["streamed_chars"] // 4
+            done = LLMDone(
+                usage=LLMUsage(
+                    input_tokens=system + user, cached_tokens=system, output_tokens=output
+                ),
+                stop_reason=None,
+                model=routes[0].model,
+            )
+            entry.update(
+                model=routes[0].model,
+                input_tokens_est=system + user,
+                output_tokens_est=output,
+                cost_usd_est=self._cost(done),
+            )
+        self.host.log_entry(entry)
 
     def _request(self, q: Question, pass_: str) -> LLMRequest:
         s = self.host.settings

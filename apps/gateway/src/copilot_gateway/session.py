@@ -28,8 +28,9 @@ from starlette.websockets import WebSocket, WebSocketState
 from copilot_core import jobs, logs, prompts
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
-from copilot_core.llm import ModelRouter
+from copilot_core.llm import LLMDone, ModelRouter
 from copilot_core.packs import Digest, NodeRef, SessionPack, ref_map, render_pack
+from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
 from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
@@ -156,7 +157,11 @@ class Session:
                 keepalive_s=self.settings.stt_keepalive_s,
             )
         self.detector = Detector(
-            svc.router, principal.display_name, self.settings.detector_max_tokens
+            svc.router,
+            principal.display_name,
+            self.settings.detector_max_tokens,
+            on_decision=self._log_detection,
+            cost=self._cost,
         )
         self.matcher = PreparedMatcher(
             svc.embedder,
@@ -270,6 +275,27 @@ class Session:
 
     async def qa_put(self, qhash: str, value: Mapping[str, Any]) -> None:
         await self.svc.store.qa_put(self.principal.user_id, qhash, value)
+
+    def _cost(self, done: LLMDone) -> float | None:
+        s = self.settings
+        u = done.usage
+        cost = cost_usd(
+            done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
+            s.model_prices, s.tier_price_multipliers,
+        )  # fmt: skip
+        return None if cost is None else float(cost)
+
+    def _log_detection(self, entry: dict[str, Any], utterance: str) -> None:
+        """Every detector decision, so misses and false fires can be explained afterwards;
+        the text only with transcript consent."""
+        log.info(
+            "detector %s: question=%s complete=%s addressed=%s type=%s confidence=%.2f "
+            "latency=%sms cached=%s%s",
+            entry["text_hash"][:12], entry["is_question"], entry["complete"],
+            entry["addressed_to_user"], entry["type"], entry["confidence"], entry["latency_ms"],
+            entry["cached"], " cancelled" if entry.get("cancelled") else "",
+        )  # fmt: skip
+        self.log_entry({**entry, **({"text": utterance} if self.store_text() else {})})
 
     # TurnHost.
 

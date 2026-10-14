@@ -40,3 +40,8 @@ allowlist.auto.tfvars
 
 # Local log files (COPILOT_LOG_DIR)
 logs/
+
+# Latency benchmark: generated TTS audio, raw runs and gateway logs (summaries are kept)
+evals/bench/audio/
+evals/bench/results/*/run-*.json
+evals/bench/results/*/logs/
