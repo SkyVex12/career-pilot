@@ -303,3 +303,44 @@ async def test_the_prompt_cache_is_written_at_session_start(env) -> None:
     prewarms = [e for e in log if e["kind"] == "prewarm"]
     assert len(prewarms) == 2
     assert prewarms[0]["cost_usd"] > 0
+
+
+def test_the_detector_prompt_knows_the_call_type() -> None:
+    """Benchmark, 2026-10-14: told nothing about the call, the detector applied the group-call
+    addressee rule in a one-on-one interview and set addressed_to_user false at random (most
+    misses), and it took a request to share the screen for a question (the live test's Q2)."""
+    from copilot_core import prompts
+
+    interview = prompts.detector("Alex", "", "Could you share your screen?", 80).system[0].text
+    assert "in an interview" in interview
+    assert "in a one-on-one call" in interview
+    assert "share your screen" in interview  # a request for an action is not a question
+    assert '"what is that?"' in interview  # nor a short reaction
+    standup = prompts.detector("Alex", "", "x", 80, mode="standup").system[0].text
+    assert "in a standup" in standup
+
+
+async def test_the_detector_follows_the_session_mode(env) -> None:
+    seen: list[str] = []
+
+    def reply(job: str, req: Any) -> Reply:
+        if job == "detector":
+            seen.append(req.system[0].text)
+        return scripted_reply(job, req)
+
+    use(env, reply)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(0.3)
+        await c.send({"type": "mode.set", "mode": "meeting"})
+        await asyncio.sleep(0.1)
+        # The same words again: a new mode is a new prompt, not a cached decision.
+        await c.say("Thanks for joining today.", capture_ms=5000)
+        await c.wait(lambda m: len(c.of_type("transcript.final")) == 2)
+        await asyncio.sleep(0.3)
+    assert len(seen) == 2
+    assert "in an interview" in seen[0]
+    assert "in a meeting" in seen[1]

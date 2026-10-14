@@ -303,7 +303,7 @@ class Session:
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
         transcript = self.transcript(self.settings.transcript_context_s)
-        return asyncio.ensure_future(self.detector.detect(utterance, transcript))
+        return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if not self.matcher.enabled:
