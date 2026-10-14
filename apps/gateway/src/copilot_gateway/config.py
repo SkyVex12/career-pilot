@@ -49,6 +49,11 @@ class Settings(CoreSettings):
     final_wait_max_ms: int = 1500
     # Seconds of "them" transcript a hotkey question.force without text uses.
     force_context_s: int = 20
+    # Passes whose prompt cache is written at session start (and on a mode change), so the
+    # first question is not cold. Only the fast pass by default: the first word waits on it.
+    prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(
+        default_factory=lambda: ["fast"]
+    )
 
     # Claude routes beyond the shared model ids.
     # The retry route; set to the `us.` cross-region profile if the account uses one.
@@ -91,7 +96,7 @@ class Settings(CoreSettings):
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
 
-    @field_validator("deep_pass_auto_types", "stt_providers", mode="before")
+    @field_validator("deep_pass_auto_types", "stt_providers", "prewarm_jobs", mode="before")
     @classmethod
     def _gateway_lists(cls, value: object) -> object:
         return split_list(value)

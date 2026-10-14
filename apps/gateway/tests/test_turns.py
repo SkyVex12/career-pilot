@@ -274,3 +274,32 @@ async def test_a_prepared_hit_before_the_first_token_takes_the_slot(env) -> None
     assert provider.cancelled >= 1  # the model call it replaced was stopped
     log = await session_log(env, c.session_id)
     assert [e["reason"] for e in log if e["kind"] == "pass_cancelled"] == ["prepared"]
+
+
+async def test_the_prompt_cache_is_written_at_session_start(env) -> None:
+    """Issue 5: the first question of a session ran with a cold prompt cache (fast pass 1.6 s
+    to its first token against 1.0 s). The session now writes it before any question."""
+    await seed_memory(env)
+    provider = use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await asyncio.sleep(0.3)  # the prewarm runs right after session.ready
+        assert len(provider.prewarms) == 1
+        await c.send({"type": "mode.set", "mode": "standup"})
+        await asyncio.sleep(0.3)
+        assert len(provider.prewarms) == 2
+        await c.say("How did you scale the ledger?")
+        await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    (model, warm), (_, after_mode) = provider.prewarms
+    assert model == "claude-haiku-4-5"
+    # The same cached prefix as the real fast pass: rules, digest and pack.
+    assert [b.cache for b in warm.system] == [False, True, True]
+    assert "<digest>" in warm.system[1].text
+    assert "a standup" in after_mode.system[0].text  # the new mode is a new prefix
+    log = await session_log(env, c.session_id)
+    prewarms = [e for e in log if e["kind"] == "prewarm"]
+    assert len(prewarms) == 2
+    assert prewarms[0]["cost_usd"] > 0

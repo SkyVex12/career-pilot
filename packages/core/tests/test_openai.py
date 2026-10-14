@@ -140,3 +140,80 @@ def test_openai_settings_need_models_and_drop_empty_values() -> None:
     assert s.openai_route("fast") == ("gpt-6-luna", None)
     with pytest.raises(ValueError, match="COPILOT_OPENAI_DEEP_MODEL"):
         s.openai_route("deep")
+
+
+def test_cache_breakpoints_only_on_models_that_take_them() -> None:
+    from typing import Any
+
+    from copilot_core.llm import LLMRequest, OpenAIProvider
+
+    provider = OpenAIProvider("openai", None)  # type: ignore[arg-type]
+    req = LLMRequest(
+        system=[
+            SystemBlock("rules"),
+            SystemBlock("<digest>d</digest>", cache=True),
+            SystemBlock("<session_pack>p</session_pack>", cache=True),
+        ],
+        content="q",
+        max_tokens=10,
+    )
+    new = provider.request("gpt-6-luna", req, {})
+    parts: list[dict[str, Any]] = new["input"][0]["content"]
+    assert ["prompt_cache_breakpoint" in p for p in parts] == [False, True, True]
+    assert parts[1]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert new["extra_body"] == {"prompt_cache_options": {"mode": "explicit"}}
+    # gpt-5.4-mini answers 400 to either field (checked October 2026).
+    old = provider.request("gpt-5.4-mini", req, {})
+    assert all("prompt_cache_breakpoint" not in p for p in old["input"][0]["content"])
+    assert "extra_body" not in old
+    uncached = LLMRequest(system=[SystemBlock("rules")], content="q", max_tokens=10)
+    assert "extra_body" not in provider.request("gpt-6-luna", uncached, {})
+
+
+async def test_prewarm_writes_the_cache_on_the_first_route() -> None:
+    from typing import Any
+
+    from copilot_core.llm import AnthropicProvider, LLMRequest, ModelRouter, Route
+
+    class Messages:
+        def __init__(self) -> None:
+            self.kwargs: list[dict[str, Any]] = []
+
+        async def create(self, **kwargs: Any) -> Any:
+            from types import SimpleNamespace
+
+            self.kwargs.append(kwargs)
+            usage = SimpleNamespace(
+                input_tokens=5,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=1500,
+                service_tier="standard",
+            )
+            return SimpleNamespace(usage=usage, stop_reason="max_tokens")
+
+    class Client:
+        def __init__(self) -> None:
+            self.messages = Messages()
+
+    first, second = AnthropicProvider("bedrock", Client()), AnthropicProvider("anthropic", Client())  # type: ignore[arg-type]
+    router = ModelRouter(
+        {
+            "fast": [
+                Route(first, "anthropic.claude-haiku-4-5", {"service_tier": "standard_only"}),
+                Route(second, "claude-haiku-4-5"),
+            ]
+        },
+        first_token_timeout_s=1,
+    )
+    req = LLMRequest(
+        system=[SystemBlock("r"), SystemBlock("d", cache=True)], content="q", max_tokens=9
+    )
+    done = await router.prewarm("fast", req)
+    assert done is not None
+    assert done.usage.input_tokens == 1505
+    [sent] = first.client.messages.kwargs  # type: ignore[attr-defined]
+    assert sent["max_tokens"] == 0  # prefill only: the cache is written, nothing generated
+    assert sent["system"][1]["cache_control"] == {"type": "ephemeral"}
+    assert sent["service_tier"] == "standard_only"  # the route's own settings
+    assert second.client.messages.kwargs == []  # type: ignore[attr-defined]
+    assert await router.prewarm("deep", req) is None

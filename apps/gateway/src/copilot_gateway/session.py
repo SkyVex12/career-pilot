@@ -512,9 +512,52 @@ class Session:
 
     def warm_models(self) -> None:
         """Open the model connections while the user gets ready, so the first question does
-        not pay the handshake (OpenAI; see ModelRouter.warm)."""
-        task = asyncio.create_task(self.router.warm())
+        not pay the handshake (see ModelRouter.warm), then write the prompt cache."""
+
+        async def warm() -> None:
+            await self.router.warm()
+            await self.prewarm_prompts()
+
+        task = asyncio.create_task(warm())
         self._warm = task  # keep a reference until it finishes
+
+    async def prewarm_prompts(self) -> None:
+        """Write the prompt cache for the session's prefix (rules, digest, pack) before the
+        first question, so it is not answered cold: in the October 2026 live test the first
+        question's fast pass was the only uncached one, 1.6 s to its first token against
+        1.0 s, and a cold gpt-6-luna first token measured up to 5 s. Once per session and per
+        mode change; the default cache lives 30 minutes on OpenAI and 5 on Claude, and the
+        questions that follow keep it warm."""
+        ctx = self._prompt_ctx
+        for job in self.settings.prewarm_jobs:
+            req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
+            if job == "deep":
+                req = prompts.deep_pass(
+                    ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+                )
+            started = time.monotonic()
+            done = await self.router.prewarm(job, req)
+            if done is None:
+                continue
+            ms = int((time.monotonic() - started) * 1000)
+            log.info(
+                "prewarmed %s on %s: %s tokens in %s ms",
+                job,
+                done.model,
+                done.usage.input_tokens,
+                ms,
+            )
+            self.log_entry(
+                {
+                    "kind": "prewarm",
+                    "pass": job,
+                    "model": done.model,
+                    "input_tokens": done.usage.input_tokens,
+                    "cached_tokens": done.usage.cached_tokens,
+                    "cost_usd": self._cost(done),
+                    "latency_ms": ms,
+                }
+            )
 
     async def _rebuild_stale_pack(self) -> None:
         """The pack's vectors came from another embedding model (or it has none): matching is
@@ -812,6 +855,7 @@ class Session:
                 self.info.mode = message.mode
                 self._prompt_ctx = self._build_prompt_ctx()
                 self.writer.set_state(mode=message.mode)
+                self._warm = asyncio.create_task(self.prewarm_prompts())  # a new prefix
                 self.log_entry({"kind": "mode", "mode": message.mode})
             case models.SessionEnd():
                 self.request_end("user", CLOSE_NORMAL)
