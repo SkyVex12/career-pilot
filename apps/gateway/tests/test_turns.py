@@ -149,3 +149,49 @@ async def test_holding_can_be_turned_off(env) -> None:
         await c.say("How did you scale the ledger?")
         fast = await c.wait_type("answer.done", pass_="fast")
     assert fast["latency_ms"]["start_ms"] >= fast["latency_ms"]["detector_ms"]
+
+
+async def test_a_cut_short_interim_costs_one_detector_wait_not_two(env) -> None:
+    """Issue 2: the interim lacked the last words, the detector said "incomplete", and only then
+    did the gateway check the final with a second call: 1.3 to 2.1 s extra on 3 of 8
+    questions, the p95. The final now replaces the interim's call the moment it arrives."""
+    use(env)
+    env.stt.final_suffix = " ledger?"  # the interim stops before the last word and the "?"
+    env.stt.final_delay_s = 0.25  # the final lands while the interim's call is running
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the")
+        q = await c.wait_type("question.detected")
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert q["text"] == "How did you scale the ledger?"
+    # Final arrival + one detector call, not two calls back to back.
+    assert fast["latency_ms"]["turn_end_ms"] < 2 * DETECTOR_S * 1000 - 100, fast["latency_ms"]
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert [bool(e.get("cancelled")) for e in decisions] == [True, False]
+
+
+async def test_a_final_that_changes_nothing_reuses_the_interim_decision(env) -> None:
+    use(env)
+    env.stt.final_delay_s = 0.25
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        q = await c.wait_type("question.detected")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert len(decisions) == 1
+
+
+def test_material_change() -> None:
+    from copilot_gateway.turn import materially_changed
+
+    assert not materially_changed("How did you scale it", "how did you scale it.")
+    assert materially_changed("How did you scale it", "How did you scale it?")
+    assert materially_changed("How did you scale the", "How did you scale the ledger?")
+    assert not materially_changed("What's next?", "what's next?")

@@ -15,9 +15,13 @@ On a speech-end frame on the "them" channel, at t0:
 4. at t0 + silence_timer_ms (or earlier, if the turn model says the turn is complete), once
    the STT final has arrived, the same question_id is confirmed with speculative: false;
 5. not a question for the user: nothing is shown and the text stays in the transcript.
-   If the interim did not look like a question but the final text differs, the final is
-   checked once more (an interim often lacks the last words), with a held pass of its own,
-   and a question found then is sent confirmed straight away.
+
+One detector call per turn: the decision on the interim text is reused unless the STT final
+changes it materially (`materially_changed`: other words, or a "?" the interim lacked; an
+interim often lacks the last words and the question mark). Then the detector, the prepared
+match and the held pass restart on the final the moment it arrives, and the call on the
+interim is cancelled, so a turn never waits for two detector calls in a row. When no text has
+arrived by the speech end, the turn starts on the first interim or final that does.
 
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
@@ -81,6 +85,32 @@ def likely_question(text: str, min_words: int = 3) -> bool:
         return True
     joined = " ".join(words)
     return any(cue in joined for cue in REQUEST_CUES)
+
+
+def _words(text: str) -> list[str]:
+    return re.sub(r"[^\w\s']", " ", text.lower()).split()
+
+
+def materially_changed(checked: str, final: str) -> bool:
+    """Does the final text need its own detector call, or does the decision on `checked` hold?
+    Case and punctuation do not matter, except a "?" that appears only in the final."""
+    if _words(checked) != _words(final):
+        return True
+    return "?" in final and "?" not in checked
+
+
+@dataclass
+class _Candidate:
+    """The text the detector is deciding on, with its call and its prepared-answer match."""
+
+    text: str
+    detection: "asyncio.Future[Detection]"
+    match: "asyncio.Task[object] | None"
+
+    def cancel(self) -> None:
+        self.detection.cancel()
+        if self.match is not None:
+            self.match.cancel()
 
 
 class TurnModel(Protocol):
@@ -159,6 +189,7 @@ class TurnDetector:
         self.interim = ""
         self.flushed = asyncio.Event()
         self.flushed_at: float | None = None  # when the STT final after the speech end arrived
+        self.text_arrived = asyncio.Event()  # any STT text since the last speech end
         self.task: asyncio.Task[None] | None = None
         self.speculative_qid: UUID | None = None
         self.held_qid: UUID | None = None  # a held fast pass not released yet
@@ -184,6 +215,8 @@ class TurnDetector:
             self.interim = ""
         else:
             self.interim = r.text
+        if r.text:
+            self.text_arrived.set()
         if r.flushed:
             self.flushed_at = time.monotonic()
             self.flushed.set()
@@ -197,6 +230,7 @@ class TurnDetector:
         self.on_speech_start()
         self.flushed.clear()
         self.flushed_at = None
+        self.text_arrived.clear()
         self.task = asyncio.create_task(self._turn(time.monotonic()))
 
     def cancel(self) -> None:
@@ -265,60 +299,84 @@ class TurnDetector:
             text, detection, speculative=speculative, t0=t0, match=match
         )
 
-    async def _turn(self, t0: float) -> None:
-        text = self.utterance()
-        if not text:  # the interim has not arrived yet; wait for the flushed final
-            await self._wait_final(t0 + self.final_wait_s)
-            text = self.utterance()
-            if not text:
-                return
-        detection_task = asyncio.ensure_future(self.host.detect(text))
+    def _start(self, text: str, t0: float) -> _Candidate:
+        """Step 1 on this text: the detector, the prepared match and a held fast pass."""
+        detection = asyncio.ensure_future(self.host.detect(text))
         match = self.host.start_match(text)
+        self._hold(text, t0, match)
+        return _Candidate(text, detection, match)
+
+    async def _wait_text(self, deadline: float) -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.text_arrived.wait(), max(0.0, deadline - time.monotonic()))
+
+    def _changed(self, cand: _Candidate) -> bool:
+        """The STT final has arrived and its text needs a decision of its own."""
+        if not self.flushed.is_set():
+            return False
+        final = self.utterance()
+        return bool(final) and materially_changed(cand.text, final)
+
+    async def _decide(self, cand: _Candidate, t0: float) -> tuple[_Candidate, Detection]:
+        """The detector's decision for the turn's newest text, with at most one call in flight:
+        a final that changes the text replaces the candidate at once (cancelling the call on
+        the interim); a final that does not keeps the interim's decision."""
+        deadline = t0 + self.silence_s + self.final_wait_s
+        while True:
+            if not cand.detection.done() and not self.flushed.is_set():
+                final = asyncio.ensure_future(self.flushed.wait())
+                try:
+                    await asyncio.wait({cand.detection, final}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    final.cancel()
+            elif not cand.detection.done():
+                await asyncio.wait({cand.detection})
+            if self._changed(cand):
+                cand.cancel()
+                self.final_rechecks += 1
+                cand = self._start(self.utterance(), t0)
+                continue
+            if not cand.detection.done():
+                continue  # the final came and changed nothing: the decision is still coming
+            detection = cand.detection.result()
+            if detection.fires(self.min_confidence) or self.flushed.is_set():
+                return cand, detection
+            # No question in the interim, which may lack the last words: the final decides.
+            await self._wait_final(deadline)
+            if not self._changed(cand):
+                return cand, detection
+
+    async def _turn(self, t0: float) -> None:
+        if not self.utterance():  # no text yet: start on the first interim or final
+            await self._wait_text(t0 + self.final_wait_s)
+            if not self.utterance():
+                return
+        cand: _Candidate | None = None
         try:
-            self._hold(text, t0, match)
-            await self._sleep_until(t0 + self.speculative_s)
-            detection = await detection_task
+            cand = self._start(self.utterance(), t0)
+            cand, detection = await self._decide(cand, t0)
             if not detection.fires(self.min_confidence):
                 self._discard_held()
-                await self._turn_end(t0)
-                final_text = self.utterance()
-                if final_text and final_text != text:
-                    # The interim was cut short (often the last words and the "?"); check
-                    # the final once more before deciding it was not a question.
-                    if match is not None:
-                        match.cancel()
-                    match = self.host.start_match(final_text)
-                    self._hold(final_text, t0, match)
-                    detection = await self.host.detect(final_text)
-                    if detection.fires(self.min_confidence):
-                        self.final_rechecks += 1
-                        turn_end_ms = int((time.monotonic() - t0) * 1000)
-                        qid = self._show(
-                            final_text, detection, speculative=False, t0=t0, match=match
-                        )
-                        self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
-                    else:
-                        self._discard_held()
                 self.reset()  # step 5: the text stays in the transcript tail only
                 return
+            await self._sleep_until(t0 + self.speculative_s)
             qid: UUID | None = None
             silence_over = time.monotonic() >= t0 + self.silence_s
             if not (silence_over and self.flushed.is_set()):
-                qid = self._show(text, detection, speculative=True, t0=t0, match=match)
+                qid = self._show(cand.text, detection, speculative=True, t0=t0, match=cand.match)
                 self.speculative_qid = qid
                 self.speculative_starts += 1
             await self._turn_end(t0)
-            final_text = self.utterance() or text
+            final_text = self.utterance() or cand.text
             turn_end_ms = int((time.monotonic() - t0) * 1000)
             if qid is None:
-                qid = self._show(final_text, detection, speculative=False, t0=t0, match=match)
+                qid = self._show(final_text, detection, speculative=False, t0=t0, match=cand.match)
             self.speculative_qid = None
             self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
             self.reset()
         except asyncio.CancelledError:
-            detection_task.cancel()
-            if match is not None:
-                match.cancel()
+            if cand is not None:
+                cand.cancel()
             self._discard_held()
             if self.speculative_qid is not None:
                 self.speculative_cancels += 1
