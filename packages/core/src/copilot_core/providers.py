@@ -19,13 +19,20 @@ from copilot_core.llm import REASONING_HEADROOM, AnthropicProvider, LLMProvider,
 log = logging.getLogger(__name__)
 
 
-def openai_client(settings: CoreSettings, timeout_s: float = 30.0) -> openai.AsyncOpenAI:
-    assert settings.openai_api_key is not None
-    limits = httpx2.Limits(
+def keepalive_limits(settings: CoreSettings) -> httpx2.Limits:
+    """Connection limits for every provider client: idle connections stay open
+    `llm_keepalive_s`, not the SDKs' 5 s, so a question after a quiet minute does not pay a
+    new TLS handshake."""
+    return httpx2.Limits(
         max_connections=1000,
         max_keepalive_connections=100,
-        keepalive_expiry=settings.openai_keepalive_s,
+        keepalive_expiry=settings.llm_keepalive_s,
     )
+
+
+def openai_client(settings: CoreSettings, timeout_s: float = 30.0) -> openai.AsyncOpenAI:
+    assert settings.openai_api_key is not None
+    limits = keepalive_limits(settings)
     return openai.AsyncOpenAI(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
@@ -54,7 +61,11 @@ def make_providers(settings: CoreSettings, timeout_s: float = 30.0) -> list[LLMP
         if name == "bedrock":
             key = settings.bedrock_api_key.get_secret_value() if settings.bedrock_api_key else None
             client = AsyncAnthropicBedrockMantle(
-                aws_region=settings.aws_region, api_key=key, max_retries=0, timeout=timeout
+                aws_region=settings.aws_region,
+                api_key=key,
+                max_retries=0,
+                timeout=timeout,
+                http_client=anthropic.DefaultAsyncHttpxClient(limits=keepalive_limits(settings)),
             )
             providers.append(AnthropicProvider("bedrock", client))
         elif name == "openai":
@@ -69,6 +80,7 @@ def make_providers(settings: CoreSettings, timeout_s: float = 30.0) -> list[LLMP
                 api_key=settings.anthropic_api_key.get_secret_value(),
                 max_retries=0,
                 timeout=timeout,
+                http_client=anthropic.DefaultAsyncHttpxClient(limits=keepalive_limits(settings)),
             )
             providers.append(AnthropicProvider("anthropic", client))
     return providers

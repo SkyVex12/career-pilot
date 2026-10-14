@@ -8,7 +8,7 @@ import os
 from collections.abc import Mapping
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
@@ -112,10 +112,17 @@ class CoreSettings(BaseSettings):
     # reasons first, so the live 1.5 s would give up on most of them.
     openai_first_token_timeout_ms: int | None = None  # detector and fast pass
     openai_deep_first_token_timeout_ms: int | None = None
-    # How long idle connections to OpenAI stay open. The SDK default (5 s) makes nearly every
-    # live question pay a new TLS handshake (about 2 s measured from a desktop in October 2026);
-    # the gateway also opens the connection when it starts and when a session starts.
-    openai_keepalive_s: float = 120.0
+    # How long idle connections to every model provider (OpenAI, the Claude API, Bedrock)
+    # stay open. The SDKs' default (5 s) makes nearly every live question pay a new TLS
+    # handshake (about 2 s to OpenAI and 4.6 s to the Claude API measured from a desktop in
+    # October 2026); the gateway also opens the connections when it starts and when a session
+    # starts. COPILOT_OPENAI_KEEPALIVE_S is the old name.
+    llm_keepalive_s: float = Field(
+        default=120.0,
+        validation_alias=AliasChoices(
+            "llm_keepalive_s", "COPILOT_LLM_KEEPALIVE_S", "COPILOT_OPENAI_KEEPALIVE_S"
+        ),
+    )
     # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
     # its first-token timeout cancels only its stream, not the connection the retry needs.
     openai_http2: bool = True

@@ -101,8 +101,9 @@ async def test_router_warms_each_provider_once() -> None:
             self.warmed = 0
             self.fail = fail
 
-        async def warm(self) -> None:
+        async def warm(self, model: str) -> None:
             self.warmed += 1
+            self.model = model
             if self.fail:
                 raise ConnectionError("down")
 
@@ -113,6 +114,7 @@ async def test_router_warms_each_provider_once() -> None:
     )
     await router.warm()  # a failure only costs the head start
     assert (a.warmed, b.warmed) == (1, 1)
+    assert (a.model, b.model) == ("m", "n")
 
 
 async def test_router_error_after_first_token_is_final() -> None:

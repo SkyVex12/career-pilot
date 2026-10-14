@@ -217,3 +217,47 @@ async def test_prewarm_writes_the_cache_on_the_first_route() -> None:
     assert sent["service_tier"] == "standard_only"  # the route's own settings
     assert second.client.messages.kwargs == []  # type: ignore[attr-defined]
     assert await router.prewarm("deep", req) is None
+
+
+def test_claude_clients_keep_idle_connections_open(monkeypatch: Any) -> None:
+    """Live test analysis, issue 7: the Anthropic and Bedrock clients kept the SDK default of
+    5 s, so every question after a quiet moment paid a new TLS handshake on Claude routes."""
+    from copilot_core.config import CoreSettings
+    from copilot_core.providers import make_providers
+
+    monkeypatch.setenv("COPILOT_OPENAI_KEEPALIVE_S", "90")  # the old name still works
+    s = CoreSettings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        llm_providers=["bedrock", "anthropic"],
+        ANTHROPIC_API_KEY="sk-test",
+        AWS_BEARER_TOKEN_BEDROCK="bedrock-test",
+    )
+    assert s.llm_keepalive_s == 90
+    for provider in make_providers(s):
+        pool = provider.client._client._transport._pool  # type: ignore[attr-defined]
+        assert pool._keepalive_expiry == 90, provider.name
+
+
+async def test_claude_providers_warm_their_connection() -> None:
+    from types import SimpleNamespace
+
+    import anthropic
+    from anthropic.lib.bedrock import AsyncAnthropicBedrockMantle
+
+    from copilot_core.llm import AnthropicProvider
+
+    calls: list[tuple[str, Any]] = []
+
+    async def models_list(**kw: Any) -> None:
+        calls.append(("models.list", kw))
+
+    async def count_tokens(**kw: Any) -> None:
+        calls.append(("count_tokens", kw["model"]))
+
+    direct = anthropic.AsyncAnthropic(api_key="x")
+    direct.models = SimpleNamespace(list=models_list)  # type: ignore[assignment]
+    mantle = AsyncAnthropicBedrockMantle(aws_region="us-east-1", api_key="x")
+    mantle.messages = SimpleNamespace(count_tokens=count_tokens)  # type: ignore[assignment]
+    await AnthropicProvider("anthropic", direct).warm("claude-haiku-4-5")
+    await AnthropicProvider("bedrock", mantle).warm("anthropic.claude-haiku-4-5")
+    assert calls == [("models.list", {"limit": 1}), ("count_tokens", "anthropic.claude-haiku-4-5")]

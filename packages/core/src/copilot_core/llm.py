@@ -172,6 +172,18 @@ class AnthropicProvider:
         self.name = name
         self.client = client
 
+    async def warm(self, model: str) -> None:
+        """Open the connection before a question needs it: a cold connection to the Claude API
+        took 4.6 s in October 2026 against 0.45 s warm. The direct API lists models; Bedrock
+        Mantle has no models endpoint, so it counts the tokens of a one-word message, which
+        costs nothing."""
+        if isinstance(self.client, anthropic.AsyncAnthropic):
+            await self.client.models.list(limit=1)
+        else:
+            await self.client.messages.count_tokens(
+                model=model, messages=[{"role": "user", "content": "warm-up"}]
+            )
+
     async def prewarm(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> "LLMDone | None":
@@ -318,7 +330,7 @@ class OpenAIProvider:
         self.name = name
         self.client = client
 
-    async def warm(self) -> None:
+    async def warm(self, model: str) -> None:
         """Open the connection before a question needs it: the TLS handshake costs as much
         as the first token. A model list is the cheapest authenticated request."""
         await self.client.models.list()
@@ -523,17 +535,21 @@ class ModelRouter:
         raise AllRoutesFailedError(job, errors, refused=bool(refused) and not other_failures)
 
     async def warm(self) -> None:
-        """Open each provider's connection ahead of the first question, where the provider
-        supports it (OpenAIProvider). Failures only cost the head start."""
-        providers = {id(r.provider): r.provider for rs in self.routes.values() for r in rs}
-        for provider in providers.values():
-            warm = getattr(provider, "warm", None)
+        """Open each provider's connection ahead of the first question (every provider here
+        has `warm(model)`, given the model of its first route). Failures only cost the head
+        start."""
+        first: dict[int, Route] = {}
+        for routes in self.routes.values():
+            for r in routes:
+                first.setdefault(id(r.provider), r)
+        for route in first.values():
+            warm = getattr(route.provider, "warm", None)
             if warm is None:
                 continue
             try:
-                await warm()
+                await warm(route.model)
             except Exception as e:
-                log.info("warming %s failed: %s", provider.name, type(e).__name__)
+                log.info("warming %s failed: %s", route.provider.name, type(e).__name__)
 
     async def prewarm(self, job: str, req: LLMRequest) -> LLMDone | None:
         """Write the prompt cache for a job's first route, where its provider and model support
