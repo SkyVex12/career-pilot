@@ -176,6 +176,8 @@ class Session:
             final_wait_max_ms=self.settings.final_wait_max_ms,
             min_confidence=self.settings.detector_min_confidence,
             turn_model=svc.turn_model,
+            hold=self.settings.speculative_hold,
+            hold_min_words=self.settings.speculative_min_words,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -347,6 +349,49 @@ class Session:
 
     def cancel_question(self, qid: UUID) -> None:
         self.answers.cancel_speculative(qid)
+
+    def start_held(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> UUID:
+        q = Question(
+            qid=uuid7(),
+            text=text,
+            qtype="other",
+            confidence=0.0,
+            addressed=False,
+            speculative=True,
+            forced=False,
+            t0=t0,
+            detector_ms=None,
+            match=match,
+            held=True,
+        )
+        self.answers.add(q)
+        return q.qid
+
+    def release_question(
+        self, qid: UUID, text: str, detection: Detection, *, speculative: bool
+    ) -> None:
+        q = self.answers.questions.get(qid)
+        if q is None:
+            return
+        q.text = text
+        q.qtype = detection.qtype
+        q.confidence = detection.confidence
+        q.addressed = detection.addressed_to_user
+        q.detector_ms = detection.latency_ms
+        q.speculative = speculative
+        q.detected_at = datetime.now(UTC)
+        self.emit(
+            models.QuestionDetected,
+            question_id=q.qid,
+            text=text,
+            question_type=q.qtype,
+            confidence=q.confidence,
+            speculative=speculative,
+        )
+        self.answers.release(qid)
+
+    def discard_question(self, qid: UUID) -> None:
+        self.answers.discard(qid)
 
     # STT callbacks.
 

@@ -80,6 +80,13 @@ class Question:
     # answer's log entry when they arrive first; `logged` holds the passes already logged.
     client: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     logged: set[str] = field(default_factory=set[str])
+    # A held question (speculative fast pass started before the detector decided): its fast
+    # pass's text is buffered here and nothing is sent until `release`; `discard` drops it.
+    held: bool = False
+    held_text: list[str] = field(default_factory=list[str])
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+    released_at: float | None = None
+    discarded: bool = False
 
 
 @dataclass(frozen=True)
@@ -216,6 +223,30 @@ class AnswerEngine:
         if q.qtype in self.host.settings.deep_pass_auto_types:
             self.start_pass(q, "deep")
 
+    def release(self, qid: UUID) -> None:
+        """The detector confirmed a held question (the session has just sent it): what its
+        fast pass buffered goes out now, the rest streams as it comes."""
+        q = self.questions.get(qid)
+        if q is None or not q.held:
+            return
+        q.held = False
+        q.released_at = time.monotonic()
+        if q.held_text:
+            self.host.emit(
+                models.AnswerDelta, question_id=q.qid, **{"pass": "fast"}, text="".join(q.held_text)
+            )
+            q.held_text.clear()
+        q.released.set()
+
+    def discard(self, qid: UUID) -> None:
+        """A held question the detector did not confirm, or whose speaker kept talking: its
+        pass stops and nothing is sent, so the user never sees a false start."""
+        q = self.questions.pop(qid, None)
+        if q is None:
+            return
+        q.discarded = True
+        self._cancel_tasks(q)
+
     def cancel_speculative(self, qid: UUID) -> None:
         q = self.questions.pop(qid, None)
         if q is None:
@@ -307,6 +338,9 @@ class AnswerEngine:
             if state["first_delta_at"] is None:
                 state["first_delta_at"] = time.monotonic()
             state["parts"].append(text)
+            if q.held:  # nothing leaves the gateway before the detector confirms
+                q.held_text.append(text)
+                return
             host.emit(models.AnswerDelta, question_id=q.qid, **{"pass": pass_}, text=text)
 
         def latency(first_token_ms: int | None) -> dict[str, int]:
@@ -318,7 +352,11 @@ class AnswerEngine:
             if first_token_ms is not None:
                 out["first_token_ms"] = first_token_ms
             if state["first_delta_at"] is not None:
-                out["first_delta_ms"] = max(0, int((state["first_delta_at"] - q.t0) * 1000))
+                # A held pass's first words reach the client at its release, not earlier.
+                shown = max(state["first_delta_at"], q.released_at or 0.0)
+                out["first_delta_ms"] = max(0, int((shown - q.t0) * 1000))
+            if q.released_at is not None:
+                out["release_ms"] = max(0, int((q.released_at - q.t0) * 1000))
             out["total_ms"] = max(0, int((time.monotonic() - q.t0) * 1000))
             if q.final_ms is not None:
                 out["final_ms"] = q.final_ms
@@ -387,6 +425,12 @@ class AnswerEngine:
                 }
             )
 
+        async def shown() -> None:
+            """A held pass waits here for the detector before it ends; if the detector says
+            no, `discard` cancels it here and it ends unseen."""
+            if q.held:
+                await q.released.wait()
+
         def error(code: str) -> None:
             host.emit(models.AnswerError, question_id=q.qid, **{"pass": pass_}, code=code)
             host.log_entry(
@@ -400,6 +444,7 @@ class AnswerEngine:
                 if answer is not None:
                     self.stats["prepared_hits"] += 1
                     delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
+                    await shown()
                     done("prepared", self._refs_for_nodes(answer), None, None)
                     return
             qhash = question_hash(q.text)
@@ -408,6 +453,7 @@ class AnswerEngine:
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
                 refs = [NodeRef.model_validate(r) for r in cached.get("refs", [])]
+                await shown()
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
@@ -423,9 +469,11 @@ class AnswerEngine:
             async for chunk in host.router.stream(job, req, on_fallback):
                 if isinstance(chunk, LLMDone):
                     done_info = chunk
+                    state["done"] = chunk
                 else:
                     delta(chunk)
             assert done_info is not None
+            await shown()
             if done_info.attempt == 0:
                 host.llm_status(True)
             if done_info.stop_reason == "refusal":
@@ -440,6 +488,7 @@ class AnswerEngine:
                 task.add_done_callback(self._background.discard)
         except AllRoutesFailedError as e:
             log.warning("%s pass failed for %s: %s", pass_, q.qid, e)
+            await shown()
             if e.refused:  # every model that ran declined: not an outage
                 error("refused")
                 return
@@ -464,6 +513,8 @@ class AnswerEngine:
         system blocks counted as cached), so speculative waste and its cost can be measured."""
         if q.superseded:
             reason = "superseded"
+        elif q.discarded:
+            reason = "held_discarded"
         elif q.cancelled:
             reason = "speculative"
         else:
@@ -478,7 +529,18 @@ class AnswerEngine:
         }
         req = cast(LLMRequest | None, state.get("req"))
         routes = self.host.router.routes.get(pass_) or []
-        if req is not None and routes:
+        finished = cast(LLMDone | None, state.get("done"))
+        if finished is not None:
+            # The pass ran to its end while held, so its real usage is known.
+            u = finished.usage
+            entry.update(
+                model=finished.model,
+                input_tokens=u.input_tokens,
+                cached_tokens=u.cached_tokens,
+                output_tokens=u.output_tokens,
+                cost_usd=self._cost(finished),
+            )
+        elif req is not None and routes:
             system = sum(len(b.text) for b in req.system) // 4
             user = len(str(req.content)) // 4
             output = entry["streamed_chars"] // 4
@@ -502,7 +564,9 @@ class AnswerEngine:
         ctx = self.host.prompt_context()
         transcript = self.host.transcript(s.transcript_context_s)
         if pass_ == "fast":
-            return prompts.fast_pass(ctx, transcript, q.text, q.qtype, s.fast_pass_max_tokens)
+            # A held pass starts before the detector has typed the question.
+            qtype = None if q.held else q.qtype
+            return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens)
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens)
 
     async def _prepared(self, q: Question) -> PreparedAnswer | None:

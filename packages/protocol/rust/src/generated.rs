@@ -414,9 +414,11 @@ impl Validate for SessionLimits {
 /// first_token_ms: request to first model token (a duration); first_delta_ms: the first
 /// answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model
 /// request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after
-/// expand; its first word on screen is first_delta_ms minus expand_ms after the tap); prepared_ms:
-/// the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared
-/// answer's cosine similarity, hit or miss. Fields are absent when they do not apply.
+/// expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a
+/// fast pass started speculatively before the detector decided was released to the client (its
+/// first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a
+/// duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss.
+/// Fields are absent when they do not apply.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencyMs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -435,6 +437,8 @@ pub struct LatencyMs {
     pub start_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expand_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -114,14 +114,11 @@ def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
 
 
 def fast_pass(
-    ctx: PromptContext, transcript: str, question: str, qtype: str, max_tokens: int
+    ctx: PromptContext, transcript: str, question: str, qtype: str | None, max_tokens: int
 ) -> LLMRequest:
-    user = "\n\n".join(
-        [
-            _data("transcript", transcript or "(empty)"),
-            f"Question ({qtype}): {question}",
-        ]
-    )
+    """`qtype` is None for a speculative pass started before the detector typed the question."""
+    asked = f"Question ({qtype}): {question}" if qtype else f"Question: {question}"
+    user = "\n\n".join([_data("transcript", transcript or "(empty)"), asked])
     return LLMRequest(system=_system(FAST_SYSTEM, ctx), content=user, max_tokens=max_tokens)
 
 

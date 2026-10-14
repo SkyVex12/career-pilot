@@ -1,17 +1,23 @@
 """Turn detection (ARCHITECTURE.md, "Turn detection, step by step").
 
 On a speech-end frame on the "them" channel, at t0:
-1. the detector (Haiku) runs on the utterance so far, and prepared-answer matching starts;
-2. at t0 + speculative_start_ms, a question for the user is sent with speculative: true and the
-   fast pass starts;
-3. speech starting again before confirmation cancels that work (question.cancelled) and the
-   text keeps accumulating;
+1. the detector (Haiku) runs on the utterance so far, and prepared-answer matching starts. If
+   the text looks like a question (`likely_question`: a question word, a "?" or a request such
+   as "tell me", and at least `speculative_min_words` words), the fast pass starts at once too,
+   held: its output stays on the gateway and nothing is sent;
+2. once the detector finds a question for the user (and not before t0 +
+   speculative_start_ms), it is sent with speculative: true and the held pass is released:
+   what it buffered goes out at once and the rest streams. When the detector finds no
+   question, the held pass is cancelled and the client never hears of it, so a false start
+   never shows. Without a held pass the fast pass starts here;
+3. speech starting again before confirmation cancels that work (question.cancelled, or nothing
+   for a pass still held) and the text keeps accumulating;
 4. at t0 + silence_timer_ms (or earlier, if the turn model says the turn is complete), once
    the STT final has arrived, the same question_id is confirmed with speculative: false;
 5. not a question for the user: nothing is shown and the text stays in the transcript.
    If the interim did not look like a question but the final text differs, the final is
-   checked once more (an interim often lacks the last words), and a question found then is
-   sent confirmed straight away.
+   checked once more (an interim often lacks the last words), with a held pass of its own,
+   and a question found then is sent confirmed straight away.
 
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
@@ -19,6 +25,7 @@ silence timer decides.
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
@@ -46,6 +53,34 @@ class Detection:
             and self.confidence >= min_confidence
             and self.qtype != "small_talk"
         )
+
+
+QUESTION_WORDS = frozenset(
+    {"what", "whats", "how", "hows", "why", "when", "where", "which", "who", "whose", "whom"}
+)
+REQUEST_CUES = (
+    "can you", "could you", "would you", "will you", "do you", "did you", "have you",
+    "are you", "were you", "is there", "is it", "should you", "tell me", "tell us",
+    "walk me", "walk us", "describe", "explain", "talk me through", "give me", "give us",
+    "curious", "wondering",
+)  # fmt: skip
+
+
+def likely_question(text: str, min_words: int = 3) -> bool:
+    """A cheap local check on the text, before any model call: is a held fast pass worth it?
+
+    Too short (greetings, acknowledgements) is no; a "?" from the STT's punctuation, a question
+    word anywhere, or a request cue is yes. It only gates the speculative start: a question it
+    lets through by mistake costs one discarded fast pass, and one it misses still gets its
+    fast pass once the detector fires, only later.
+    """
+    words = re.sub(r"[^\w\s]", "", text.lower()).split()
+    if len(words) < min_words:
+        return False
+    if "?" in text or QUESTION_WORDS.intersection(words):
+        return True
+    joined = " ".join(words)
+    return any(cue in joined for cue in REQUEST_CUES)
 
 
 class TurnModel(Protocol):
@@ -84,6 +119,20 @@ class TurnHost(Protocol):
 
     def cancel_question(self, qid: UUID) -> None: ...
 
+    def start_held(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> UUID:
+        """Start a fast pass whose output stays on the gateway until it is released."""
+        ...
+
+    def release_question(
+        self, qid: UUID, text: str, detection: Detection, *, speculative: bool
+    ) -> None:
+        """The detector found a question: send it, then the held pass's output."""
+        ...
+
+    def discard_question(self, qid: UUID) -> None:
+        """Cancel a held pass that was never shown; nothing is sent."""
+        ...
+
 
 class TurnDetector:
     def __init__(
@@ -95,6 +144,8 @@ class TurnDetector:
         final_wait_max_ms: int,
         min_confidence: float,
         turn_model: TurnModel | None = None,
+        hold: bool = True,
+        hold_min_words: int = 3,
     ) -> None:
         self.host = host
         self.silence_s = silence_timer_ms / 1000
@@ -102,16 +153,22 @@ class TurnDetector:
         self.final_wait_s = final_wait_max_ms / 1000
         self.min_confidence = min_confidence
         self.turn_model = turn_model or NoTurnModel()
+        self.hold = hold
+        self.hold_min_words = hold_min_words
         self.finals: list[str] = []
         self.interim = ""
         self.flushed = asyncio.Event()
         self.flushed_at: float | None = None  # when the STT final after the speech end arrived
         self.task: asyncio.Task[None] | None = None
         self.speculative_qid: UUID | None = None
+        self.held_qid: UUID | None = None  # a held fast pass not released yet
         # Counters for metrics and tests.
         self.speculative_starts = 0
         self.speculative_cancels = 0
         self.final_rechecks = 0
+        self.held_starts = 0
+        self.held_released = 0
+        self.held_discarded = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -175,6 +232,39 @@ class TurnDetector:
             return None
         return max(0, int((self.flushed_at - t0) * 1000))
 
+    def _hold(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> None:
+        """Step 1: a held fast pass alongside the detector, if the text looks like a question."""
+        self._discard_held()
+        if self.hold and likely_question(text, self.hold_min_words):
+            self.held_starts += 1
+            self.held_qid = self.host.start_held(text, t0, match)
+
+    def _discard_held(self) -> None:
+        if self.held_qid is not None:
+            self.held_discarded += 1
+            self.host.discard_question(self.held_qid)
+            self.held_qid = None
+
+    def _show(
+        self,
+        text: str,
+        detection: Detection,
+        *,
+        speculative: bool,
+        t0: float,
+        match: "asyncio.Task[object] | None",
+    ) -> UUID:
+        """Send the question: release the held pass if there is one, else start the fast pass
+        now (the local check held none, or holding is off)."""
+        held, self.held_qid = self.held_qid, None
+        if held is not None:
+            self.held_released += 1
+            self.host.release_question(held, text, detection, speculative=speculative)
+            return held
+        return self.host.begin_question(
+            text, detection, speculative=speculative, t0=t0, match=match
+        )
+
     async def _turn(self, t0: float) -> None:
         text = self.utterance()
         if not text:  # the interim has not arrived yet; wait for the flushed final
@@ -185,9 +275,11 @@ class TurnDetector:
         detection_task = asyncio.ensure_future(self.host.detect(text))
         match = self.host.start_match(text)
         try:
+            self._hold(text, t0, match)
             await self._sleep_until(t0 + self.speculative_s)
             detection = await detection_task
             if not detection.fires(self.min_confidence):
+                self._discard_held()
                 await self._turn_end(t0)
                 final_text = self.utterance()
                 if final_text and final_text != text:
@@ -196,31 +288,30 @@ class TurnDetector:
                     if match is not None:
                         match.cancel()
                     match = self.host.start_match(final_text)
+                    self._hold(final_text, t0, match)
                     detection = await self.host.detect(final_text)
                     if detection.fires(self.min_confidence):
                         self.final_rechecks += 1
                         turn_end_ms = int((time.monotonic() - t0) * 1000)
-                        qid = self.host.begin_question(
+                        qid = self._show(
                             final_text, detection, speculative=False, t0=t0, match=match
                         )
                         self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
+                    else:
+                        self._discard_held()
                 self.reset()  # step 5: the text stays in the transcript tail only
                 return
             qid: UUID | None = None
             silence_over = time.monotonic() >= t0 + self.silence_s
             if not (silence_over and self.flushed.is_set()):
-                qid = self.host.begin_question(
-                    text, detection, speculative=True, t0=t0, match=match
-                )
+                qid = self._show(text, detection, speculative=True, t0=t0, match=match)
                 self.speculative_qid = qid
                 self.speculative_starts += 1
             await self._turn_end(t0)
             final_text = self.utterance() or text
             turn_end_ms = int((time.monotonic() - t0) * 1000)
             if qid is None:
-                qid = self.host.begin_question(
-                    final_text, detection, speculative=False, t0=t0, match=match
-                )
+                qid = self._show(final_text, detection, speculative=False, t0=t0, match=match)
             self.speculative_qid = None
             self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(t0))
             self.reset()
@@ -228,6 +319,7 @@ class TurnDetector:
             detection_task.cancel()
             if match is not None:
                 match.cancel()
+            self._discard_held()
             if self.speculative_qid is not None:
                 self.speculative_cancels += 1
                 self.host.cancel_question(self.speculative_qid)

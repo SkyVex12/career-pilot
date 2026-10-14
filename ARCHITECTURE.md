@@ -91,7 +91,7 @@ Each live call is one gateway session running four concurrent tasks: read audio,
 2. **Turn detection:** a turn-detection model plus a 300 to 500 ms silence timer decides the speaker is done, instead of a fixed 500 to 800 ms wait.
 3. **Question and addressee check:** during the silence window, a small local classifier on the gateway filters the interim transcript, and a Haiku 4.5 call on likely questions (about 30% of utterances) decides whether this is a complete question, its type (behavioral, technical, coding, system design, standup status, small talk), and whether it is aimed at the user. In group meetings it looks for the user's name, "you" and turn order, so a question to a teammate does not fire.
 4. **Speculative retrieval:** the query embedding and memory search start on the interim transcript.
-5. **Speculative fast pass:** the fast pass (Haiku 4.5) starts at about 300 ms of silence with the hot digest and session pack, and is thrown away if the speaker keeps talking. If the question matches a prepared answer in the session pack (similarity 0.85 or more), those points are shown instead and the fast pass is skipped. The deep pass (Sonnet) starts once the turn is confirmed, automatically for behavioral, technical and system design questions and otherwise only when the user taps expand. It adds full memory search, reranked to the top 6 nodes, and the last 60 seconds of transcript.
+5. **Speculative fast pass:** the fast pass (Haiku 4.5) starts at the speech end, alongside the detector, with the hot digest and session pack, whenever a cheap local check on the interim text says it may be a question. Its output is held on the gateway: nothing reaches the client until the detector confirms a question for the user, when the buffered text goes out at once and the rest streams. If the detector says no, or the speaker keeps talking, the held pass is cancelled and the client never hears of it, so a false start never shows. This keeps the first word at about the slower of the detector and the fast pass's first token, instead of their sum (the October 2026 live test measured a 1.3 s OpenAI detector in front of every answer). If the question matches a prepared answer in the session pack (similarity 0.85 or more), those points are shown instead and the fast pass is skipped. The deep pass (Sonnet) starts once the turn is confirmed, automatically for behavioral, technical and system design questions and otherwise only when the user taps expand. It adds full memory search, reranked to the top 6 nodes, and the last 60 seconds of transcript.
 6. **Cancellation:** a new question stops generation for the old one when it is confirmed, but the old answer stays visible, so a quick follow-up does not wipe what the user is reading.
 
 **Gateway language:** Python (FastAPI, fully async, with uvloop and orjson) for v1, to match the team's FastAPI experience. The gateway stays small with a clear contract, so it can move to Go if our own code passes 20 to 30 ms at p95 or connection cost grows.
@@ -279,7 +279,7 @@ The target is the first visible word 0.7 to 1.2 seconds after the question ends.
 | Turn end detected | 300 to 500 ms | Turn-detection model plus a short silence timer; the STT final arrives inside this window |
 | Question and addressee check | 0 ms | Runs on the interim transcript during the silence window |
 | Query embedding and retrieval | 0 ms (under 100 ms total) | Starts on the interim transcript |
-| First token, fast pass | 300 to 600 ms | Speculative start at about 300 ms of silence, discarded if the speaker continues |
+| First token, fast pass | 300 to 600 ms | Speculative start at the speech end, held on the gateway until the detector confirms, discarded silently otherwise |
 | Overlay render | Under 50 ms | Tokens stream straight into the overlay |
 
 Our own code should stay under 20 to 30 ms at p95; past that is the signal to move the gateway to Go.
@@ -1012,8 +1012,9 @@ Answers run outside the group, one task per question, so a new question can canc
 **Turn detection, step by step**
 
 1. On a speech-end frame on the "them" channel, record `t0`. Run the local classifier on the current interim text; if it scores 0.3 or higher, call the Haiku detector (results cached by text hash) and start retrieval on the same text.
-2. At `t0 + 300 ms`: if the detector says complete question, addressed to the user, confidence at least 0.7, send `question.detected` with `speculative: true` and start the fast pass, unless the question matches a prepared answer in the session pack with similarity 0.85 or more; then those points are sent at once and no model is called.
-3. If speech starts again before confirmation, cancel the speculative work, send `question.cancelled`, and keep accumulating text. The next speech-end starts again at step 1.
+   At the same time, if the text passes a cheap local check (`likely_question`: at least 3 words, and a "?" from the STT's punctuation, a question word anywhere, or a request such as "tell me", "walk me through", "could you"), the fast pass starts **held**: it streams into a buffer on the gateway and sends nothing. The check only limits wasted calls; a question it misses gets its fast pass at step 2, later. The prompt has no question type yet (`Question: ...`), since the detector has not typed it.
+2. Once the detector says complete question, addressed to the user, confidence at least 0.7 (and not before `t0 + 300 ms`): send `question.detected` with `speculative: true`, then release the held pass: what it buffered goes out as one `answer.delta`, and the rest streams. With no held pass, the fast pass starts now, unless the question matches a prepared answer in the session pack with similarity 0.85 or more; then those points are sent at once and no model is called. If the detector says no, the held pass is cancelled without any message; the session log records it as `pass_cancelled` with reason `held_discarded` and its cost, so speculative waste can be measured.
+3. If speech starts again before confirmation, cancel the speculative work (a held pass silently; a released one with `question.cancelled`) and keep accumulating text. The next speech-end starts again at step 1.
 4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`, and start the deep pass with the retrieval results if the type is behavioral, technical or system design. For other types the deep pass waits until the user taps expand. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
 5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context. If the final text differs from the interim it checked (an interim often lacks the last words and the question mark), the detector checks the final once more, and a question found then is sent with `speculative: false` straight away.
 
@@ -1026,7 +1027,9 @@ Answers run outside the group, one task per question, so a new question can canc
 | Setting | Default |
 | --- | --- |
 | `silence_timer_ms` | 400 |
-| `speculative_start_ms` | 300 |
+| `speculative_start_ms` | 300 (the earliest a question is shown) |
+| `speculative_hold` | on: the fast pass starts at the speech end, held until the detector confirms |
+| `speculative_min_words` | 3 (shorter text never starts a held pass) |
 | `stage1_min_score` | 0.3 |
 | `detector_min_confidence` | 0.7 |
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |

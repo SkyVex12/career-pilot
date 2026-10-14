@@ -23,6 +23,12 @@ class Settings(CoreSettings):
     # Live settings (ARCHITECTURE.md "Settings").
     silence_timer_ms: int = 400
     speculative_start_ms: int = 300
+    # Start the fast pass at the speech end, alongside the detector, holding its output on the
+    # gateway until the detector confirms (turn.py). Only for text that passes the local check
+    # (`likely_question`) with at least this many words. Off: the fast pass waits for the
+    # detector, as before.
+    speculative_hold: bool = True
+    speculative_min_words: int = 3
     stage1_min_score: float = 0.3
     detector_min_confidence: float = 0.7
     detector_max_tokens: int = 80

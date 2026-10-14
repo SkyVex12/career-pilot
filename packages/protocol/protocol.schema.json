@@ -113,7 +113,7 @@
       "required": ["max_minutes"]
     },
     "LatencyMs": {
-      "description": "Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.",
+      "description": "Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a fast pass started speculatively before the detector decided was released to the client (its first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.",
       "type": "object",
       "properties": {
         "turn_end_ms": { "type": "integer", "minimum": 0 },
@@ -124,6 +124,7 @@
         "final_ms": { "type": "integer", "minimum": 0 },
         "start_ms": { "type": "integer", "minimum": 0 },
         "expand_ms": { "type": "integer", "minimum": 0 },
+        "release_ms": { "type": "integer", "minimum": 0 },
         "prepared_ms": { "type": "integer", "minimum": 0 },
         "prepared_similarity": { "type": "number", "minimum": -1, "maximum": 1 }
       }
