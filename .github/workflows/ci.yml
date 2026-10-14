@@ -79,17 +79,29 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
-  rust:
-    name: rust (desktop, Windows)
-    # The desktop app is Windows-only for now (WASAPI capture), so it builds and tests there.
-    runs-on: windows-2025
-    timeout-minutes: 45
+  rust-linux:
+    name: rust (protocol and client core, Linux)
+    # The protocol crate and the client core (audio pipeline, VAD, AEC, framing, the gateway
+    # and API clients, Cognito sign-in) have no Windows-only code, so their tests run on Linux,
+    # which builds faster and costs a third of a Windows runner's minutes.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      # No debug info in CI builds: smaller caches, faster links. Local builds are unchanged.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v5
+      - name: System libraries (ALSA for cpal, D-Bus for keyring)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-linux
+          cache-on-failure: true
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.7"
@@ -97,14 +109,35 @@ jobs:
       # The client's integration tests start the real gateway code (copilot_gateway.offline).
       - run: uv sync --frozen
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      # tests/api.rs needs the compose stack, which Windows runners cannot host (no Linux
-      # containers); it runs locally and the Python jobs cover the API itself.
+      - run: cargo clippy -p copilot-protocol -p copilot-client --all-targets -- -D warnings
+      # One invocation, so the dependencies build once. tests/api.rs needs the compose stack
+      # and runs locally; the Python job covers the API itself.
       - name: Tests
         run: >-
-          cargo test --workspace --lib --bins
-          && cargo test -p copilot-protocol --tests
-          && cargo test -p copilot-client --test gateway --test engine --test pipeline
+          cargo test -p copilot-protocol -p copilot-client
+          --lib --test contract --test pipeline --test gateway --test engine
+
+  rust-windows:
+    name: rust (desktop shell, Windows)
+    # The Tauri shell (WASAPI capture devices, the Credential Manager, WebView2) is
+    # Windows-only for now, so it is linted and tested here; the shared crates run on Linux.
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-windows
+          cache-on-failure: true
+      - run: cargo clippy -p copilot-desktop --all-targets -- -D warnings
+      - run: cargo test -p copilot-desktop
 
   terraform:
     name: terraform (fmt, validate, plan for Stage 0)
