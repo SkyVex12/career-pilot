@@ -114,8 +114,10 @@ def node_id(short_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"copilot-bench:{short_id}"))
 
 
-async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
-    from copilot_core import keys
+def build_profile(
+    profile: Profile, nonce: str | None, model_id: str | None, vectors: dict[str, str]
+) -> tuple[Any, Any]:
+    """The fictional profile as the gateway reads it: (Digest, SessionPack)."""
     from copilot_core.packs import (
         Digest,
         NodeRef,
@@ -132,7 +134,6 @@ async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
     refs = {k: NodeRef(node_id=uuid.UUID(node_id(k)), label=v) for k, v in profile.refs.items()}
     version = Digest.version_of(text)
     digest = Digest(schema="digest.v1", version=version, text=text, refs=refs, built_at=None)
-    model_id, vectors = await embed_prepared(profile)
     pack = SessionPack(
         schema="session_pack.v1",
         pack_id=uuid.UUID(BENCH_PACK_ID),
@@ -167,6 +168,14 @@ async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
         ],
         embedding_model=model_id,
     )
+    return digest, pack
+
+
+async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
+    from copilot_core import keys
+
+    model_id, vectors = await embed_prepared(profile)
+    digest, pack = build_profile(profile, nonce, model_id, vectors)
     uid = BENCH_USER_ID
     await valkey.set(keys.digest(uid), digest.model_dump_json(by_alias=True))
     await valkey.set(keys.pack(uid, BENCH_PACK_ID), pack.model_dump_json(by_alias=True))
