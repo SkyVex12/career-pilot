@@ -284,6 +284,7 @@ mod tests {
                 final_ms: None,
                 start_ms: None,
                 expand_ms: None,
+                release_ms: None,
                 prepared_ms: None,
                 prepared_similarity: None,
             }),

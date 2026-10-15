@@ -479,8 +479,8 @@ async def test_a_prepared_match_needs_a_clear_winner() -> None:
 
 
 def test_prepared_thresholds_from_the_environment_merge_over_the_defaults() -> None:
-    s = Settings(  # pyright: ignore[reportCallIssue]
-        _env_file=None,
+    s = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
         prepared_answer_thresholds={"voyage:voyage-3@1024": {"min_similarity": 0.7}},
     )
     assert s.prepared_threshold("voyage:voyage-3@1024").min_similarity == 0.7
