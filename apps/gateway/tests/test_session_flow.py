@@ -489,8 +489,10 @@ async def test_final_text_is_rechecked_when_the_interim_was_cut_short(env) -> No
         await c.start()
         await c.say("How did you scale the")
         q = await c.wait_type("question.detected")
-        assert q["speculative"] is False
+        # The final restarted the check as soon as it arrived, so the question can go out
+        # before the silence timer, speculatively; the interim's words were never shown.
         assert q["text"] == "How did you scale the ledger?"
+        await c.wait_type("question.detected", question_id=q["question_id"], speculative=False)
         await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
         session = next(iter(gw.manager.sessions.values()))
         assert session.turns.final_rechecks == 1

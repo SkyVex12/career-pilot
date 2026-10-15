@@ -156,6 +156,8 @@ class Replay:
         tail_s: float = 8.0,
         drop_at_s: float | None = None,
         quiet: bool = False,
+        consent: bool = True,
+        actions: list[tuple[float, dict[str, Any]]] | None = None,
     ) -> None:
         self.url = url
         self.token = token
@@ -166,6 +168,10 @@ class Replay:
         self.speed = speed
         self.tail_s = tail_s
         self.drop_at_s = drop_at_s
+        self.consent = consent
+        # Client messages to send at a point in the audio (seconds), e.g. a hotkey press.
+        self.actions = sorted(actions or [], key=lambda a: a[0])
+        self.sent_actions: list[tuple[float, dict[str, Any]]] = []  # (wall time, message)
         self.out = Printer(quiet)
         self.ws: Any = None
         self.connected = asyncio.Event()
@@ -201,7 +207,7 @@ class Replay:
                     "mode": self.mode,
                     "platform": "replay",
                     "client_version": "copilot-replay",
-                    "consent": {"store_transcript": True},
+                    "consent": {"store_transcript": self.consent},
                     "audio": {"sample_rate": SAMPLE_RATE, "encoding": "pcm16"},
                 }
             )
@@ -211,6 +217,7 @@ class Replay:
         self.connected.set()
         self.t0 = time.monotonic()
         dropper = asyncio.create_task(self._drop_later()) if self.drop_at_s is not None else None
+        actor = asyncio.create_task(self._send_actions())
         try:
             await self._send_all()
             await asyncio.sleep(self.tail_s)
@@ -220,6 +227,7 @@ class Replay:
         finally:
             if dropper is not None:
                 dropper.cancel()
+            actor.cancel()
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
             with contextlib.suppress(Exception):
@@ -256,6 +264,14 @@ class Replay:
                 await self.ws.send(data)
             except Exception:
                 continue
+
+    async def _send_actions(self) -> None:
+        for at_s, message in self.actions:
+            delay = self.t0 + at_s / self.speed - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await self._send_json(message)
+            self.sent_actions.append((time.monotonic(), message))
 
     async def _drop_later(self) -> None:
         assert self.drop_at_s is not None
@@ -372,7 +388,13 @@ def summarize(r: Replay) -> dict[str, Any]:
         if q.cancelled and not q.confirmed_at:
             continue
         fast = q.done.get("fast", {})
-        lat = fast.get("latency_ms", {})
+        lat = dict(fast.get("latency_ms", {}))
+        # A fast pass that ends before its question is confirmed (it starts with the detector)
+        # carries no confirmation timings; the deep pass, started at confirmation, does.
+        deep_lat = q.done.get("deep", {}).get("latency_ms", {})
+        for key in ("turn_end_ms", "final_ms"):
+            if key not in lat and key in deep_lat:
+                lat[key] = deep_lat[key]
         fw = q.first_word_s()
         rows.append(
             {

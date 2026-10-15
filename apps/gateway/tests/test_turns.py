@@ -1,0 +1,346 @@
+"""Turn handling against the problems the 2026-10-07 live test found (docs/analysis): the fast
+pass waiting for the detector, the detector running twice in a row on a turn, the fixed wait
+for a prepared match. A slow scripted detector stands in for the 1.3 s OpenAI one."""
+
+import asyncio
+import json
+from typing import Any
+
+from copilot_core import keys
+from copilot_gateway.testing import GatewayServer, ProtocolClient, Reply, ScriptedProvider
+from copilot_gateway.testing import default_reply as scripted_reply
+from copilot_gateway.turn import likely_question
+
+from .test_session_flow import VEC, scaled_answer, seed_memory
+
+DETECTOR_S = 0.6  # the scripted detector's latency
+
+
+def slow_detector(job: str, req: Any) -> Reply:
+    reply = scripted_reply(job, req)
+    if job == "detector":
+        reply.first_delay_s = DETECTOR_S
+        content = str(req.content)
+        if "share your screen" in content.split("<utterance>")[-1]:
+            # A request for an action: not a question that needs talking points.
+            reply.chunks = [
+                json.dumps(
+                    {
+                        "is_question": False,
+                        "complete": True,
+                        "addressed_to_user": True,
+                        "type": "other",
+                        "confidence": 0.9,
+                    }
+                )
+            ]
+    return reply
+
+
+def use(env: Any, reply: Any = slow_detector) -> ScriptedProvider:
+    provider = ScriptedProvider("anthropic", reply)
+    env.providers = [provider]
+    return provider
+
+
+async def session_log(env: Any, sid: str) -> list[dict[str, Any]]:
+    return [json.loads(f[b"e"]) for _, f in await env.client().xrange(keys.sess_log(sid))]
+
+
+def test_likely_question_gates_the_speculative_start() -> None:
+    for text in (
+        "How does a database index actually speed up a query?",
+        "Tell me about a time you had to deal with a production incident",
+        "I'm curious how you handled schema changes in that pipeline",
+        "What would you do differently if you built it again",
+        "Walk me through what happens when you type a URL into the browser",
+        "Have you ever disagreed with a decision your manager made",
+        "Could you share your screen for a second?",  # held, then discarded by the detector
+    ):
+        assert likely_question(text), text
+    for text in (
+        "Thanks for joining today.",
+        "Great.",
+        "Okay, that makes sense. Let me just make a quick note of that.",
+        "We run the payments platform, about 40 engineers across four squads.",
+        "Why?",  # too short to be worth a pass
+    ):
+        assert not likely_question(text), text
+
+
+async def test_fast_pass_starts_before_the_detector_returns(env) -> None:
+    """Issue 1: the fast pass waited for the detector, so the first word was detector + TTFT.
+    Now it starts at the speech end, held, and its first words go out as the detector fires."""
+    use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        # The detector outlasts the 250 ms silence timer, so the question goes out confirmed.
+        q = await c.wait_type("question.detected", speculative=False)
+        first = await c.wait_type("answer.delta", question_id=q["question_id"], pass_="fast")
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+    lat = fast["latency_ms"]
+    assert lat["detector_ms"] >= DETECTOR_S * 1000 - 50
+    assert lat["start_ms"] < 100, lat  # started with the detector, not after it
+    # The buffered text went out right behind the question, at the release.
+    assert first["seq"] == q["seq"] + 1
+    assert lat["first_delta_ms"] >= lat["release_ms"] >= lat["detector_ms"]
+    # The answer comes back typed: the type reached the deep pass and the log.
+    assert q["question_type"] == "technical"
+
+
+async def test_a_false_start_never_shows(env) -> None:
+    """A held pass the detector rejects is cancelled without a message, and its cost is logged."""
+    provider = use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Could you share your screen for a second?")
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(DETECTOR_S + 0.5)
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.held_starts == 1
+        assert session.turns.held_discarded == 1
+        await c.send({"type": "session.end"})
+        await c.closed()
+    for kind in ("question.detected", "question.cancelled", "answer.delta", "answer.done"):
+        assert c.of_type(kind) == [], kind
+    assert ("fast", "claude-haiku-4-5") in provider.calls  # it did start
+    log = await session_log(env, c.session_id)
+    [discarded] = [e for e in log if e["kind"] == "pass_cancelled"]
+    assert discarded["reason"] == "held_discarded"
+    # The scripted pass finished while held, so its real usage and cost are known.
+    assert discarded["cost_usd"] > 0
+    assert discarded["output_tokens"] > 0
+
+
+async def test_held_pass_is_dropped_silently_when_the_speaker_continues(env) -> None:
+    use(env)
+    # The speaker resumes well inside the silence timer: the same utterance goes on.
+    async with GatewayServer(env.services(env.settings(silence_timer_ms=700))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How would you design a rate limiter", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(0.2)  # before the detector returns
+        await c.frame(0, 0b01, b" for a public API?".ljust(3200, b"\0"), 1000)
+        await c.frame(0, 0b10, b"", 1200)
+        q = await c.wait_type("question.detected", speculative=False, timeout=5)
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+    assert c.of_type("question.cancelled") == []
+    assert len({m["question_id"] for m in c.of_type("question.detected")}) == 1
+    assert q["text"] == "How would you design a rate limiter for a public API?"
+
+
+async def test_text_that_fails_the_local_check_waits_for_the_detector(env) -> None:
+    provider = use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.")
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(DETECTOR_S + 0.3)
+    assert [job for job, _ in provider.calls] == ["detector"]
+
+
+async def test_holding_can_be_turned_off(env) -> None:
+    use(env)
+    async with GatewayServer(env.services(env.settings(speculative_hold=False))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        fast = await c.wait_type("answer.done", pass_="fast")
+    assert fast["latency_ms"]["start_ms"] >= fast["latency_ms"]["detector_ms"]
+
+
+async def test_a_cut_short_interim_costs_one_detector_wait_not_two(env) -> None:
+    """Issue 2: the interim lacked the last words, the detector said "incomplete", and only then
+    did the gateway check the final with a second call: 1.3 to 2.1 s extra on 3 of 8
+    questions, the p95. The final now replaces the interim's call the moment it arrives."""
+    use(env)
+    env.stt.final_suffix = " ledger?"  # the interim stops before the last word and the "?"
+    env.stt.final_delay_s = 0.25  # the final lands while the interim's call is running
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the")
+        q = await c.wait_type("question.detected")
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert q["text"] == "How did you scale the ledger?"
+    # Final arrival + one detector call, not two calls back to back.
+    assert fast["latency_ms"]["turn_end_ms"] < 2 * DETECTOR_S * 1000 - 100, fast["latency_ms"]
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert [bool(e.get("cancelled")) for e in decisions] == [True, False]
+
+
+async def test_a_final_that_changes_nothing_reuses_the_interim_decision(env) -> None:
+    use(env)
+    env.stt.final_delay_s = 0.25
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        q = await c.wait_type("question.detected")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert len(decisions) == 1
+
+
+def test_material_change() -> None:
+    from copilot_gateway.turn import materially_changed
+
+    assert not materially_changed("How did you scale it", "how did you scale it.")
+    assert materially_changed("How did you scale it", "How did you scale it?")
+    assert materially_changed("How did you scale the", "How did you scale the ledger?")
+    assert not materially_changed("What's next?", "what's next?")
+
+
+async def test_a_new_utterance_after_a_full_pause_starts_fresh(env) -> None:
+    """Benchmark, 2026-10-14: with the detector slower than the gap between two utterances,
+    the next speech start cancelled the turn and its text was kept, so a question went out
+    glued to the sentences before it ("Okay, so I'll start by telling you about the team.
+    ... can you walk me through your background?"). After a pause longer than the silence
+    timer, with the final in, the speaker had finished: the new utterance starts empty."""
+    use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(0.4)  # past the 250 ms silence timer; the detector is still busy
+        await c.say("How did you scale the ledger?", capture_ms=2000)
+        q = await c.wait_type("question.detected", speculative=False)
+        assert q["text"] == "How did you scale the ledger?"
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.detached_turns == 1
+
+
+class SlowEmbedder:
+    """The OpenAI embedding took 0.45 to 1.8 s in the live test; this one takes `delay_s`."""
+
+    model_id = "test:fixed@8"
+
+    def __init__(self, delay_s: float) -> None:
+        self.delay_s = delay_s
+
+    async def embed(self, texts: Any) -> list[list[float]]:
+        await asyncio.sleep(self.delay_s)
+        return [VEC for _ in texts]
+
+
+def model_first_token_after(delay_s: float) -> Any:
+    def reply(job: str, req: Any) -> Reply:
+        r = scripted_reply(job, req)
+        if job == "fast":
+            r.first_delay_s = delay_s
+        return r
+
+    return reply
+
+
+async def test_forced_question_does_not_wait_for_the_prepared_match(env) -> None:
+    """Issue 4: forced and rechecked questions waited a fixed 150 ms for a prepared match
+    that had only just started. The model now starts at once."""
+    await seed_memory(env, [scaled_answer()], embedding_model=SlowEmbedder.model_id)
+    use(env, model_first_token_after(0.05))
+    async with GatewayServer(env.services(embedder=SlowEmbedder(0.5))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "How did you scale your system?"})
+        fast = await c.wait_type("answer.done", pass_="fast")
+    assert fast["source"] == "model"
+    assert fast["latency_ms"]["start_ms"] < 100, fast["latency_ms"]
+
+
+async def test_a_prepared_hit_before_the_first_token_takes_the_slot(env) -> None:
+    await seed_memory(env, [scaled_answer()], embedding_model=SlowEmbedder.model_id)
+    provider = use(env, model_first_token_after(0.8))
+    async with GatewayServer(env.services(embedder=SlowEmbedder(0.3))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "How did you scale your system?"})
+        fast = await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert fast["source"] == "prepared"
+    assert fast["latency_ms"]["first_delta_ms"] < 700, fast["latency_ms"]
+    deltas = [m["text"] for m in c.of_type("answer.delta") if m["pass"] == "fast"]
+    assert deltas == ["- Scaled the ledger 10x [n:3f2a]\n- Zero downtime cutover\n"]
+    assert provider.cancelled >= 1  # the model call it replaced was stopped
+    log = await session_log(env, c.session_id)
+    assert [e["reason"] for e in log if e["kind"] == "pass_cancelled"] == ["prepared"]
+
+
+async def test_the_prompt_cache_is_written_at_session_start(env) -> None:
+    """Issue 5: the first question of a session ran with a cold prompt cache (fast pass 1.6 s
+    to its first token against 1.0 s). The session now writes it before any question."""
+    await seed_memory(env)
+    provider = use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await asyncio.sleep(0.3)  # the prewarm runs right after session.ready
+        assert len(provider.prewarms) == 1
+        await c.send({"type": "mode.set", "mode": "standup"})
+        await asyncio.sleep(0.3)
+        assert len(provider.prewarms) == 2
+        await c.say("How did you scale the ledger?")
+        await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    (model, warm), (_, after_mode) = provider.prewarms
+    assert model == "claude-haiku-4-5"
+    # The same cached prefix as the real fast pass: rules, digest and pack.
+    assert [b.cache for b in warm.system] == [False, True, True]
+    assert "<digest>" in warm.system[1].text
+    assert "a standup" in after_mode.system[0].text  # the new mode is a new prefix
+    log = await session_log(env, c.session_id)
+    prewarms = [e for e in log if e["kind"] == "prewarm"]
+    assert len(prewarms) == 2
+    assert prewarms[0]["cost_usd"] > 0
+
+
+def test_the_detector_prompt_knows_the_call_type() -> None:
+    """Benchmark, 2026-10-14: told nothing about the call, the detector applied the group-call
+    addressee rule in a one-on-one interview and set addressed_to_user false at random (most
+    misses), and it took a request to share the screen for a question (the live test's Q2)."""
+    from copilot_core import prompts
+
+    interview = prompts.detector("Alex", "", "Could you share your screen?", 80).system[0].text
+    assert "in an interview" in interview
+    assert "in a one-on-one call" in interview
+    assert "share your screen" in interview  # a request for an action is not a question
+    assert '"what is that?"' in interview  # nor a short reaction
+    standup = prompts.detector("Alex", "", "x", 80, mode="standup").system[0].text
+    assert "in a standup" in standup
+
+
+async def test_the_detector_follows_the_session_mode(env) -> None:
+    seen: list[str] = []
+
+    def reply(job: str, req: Any) -> Reply:
+        if job == "detector":
+            seen.append(req.system[0].text)
+        return scripted_reply(job, req)
+
+    use(env, reply)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(0.3)
+        await c.send({"type": "mode.set", "mode": "meeting"})
+        await asyncio.sleep(0.1)
+        # The same words again: a new mode is a new prompt, not a cached decision.
+        await c.say("Thanks for joining today.", capture_ms=5000)
+        await c.wait(lambda m: len(c.of_type("transcript.final")) == 2)
+        await asyncio.sleep(0.3)
+    assert len(seen) == 2
+    assert "in an interview" in seen[0]
+    assert "in a meeting" in seen[1]

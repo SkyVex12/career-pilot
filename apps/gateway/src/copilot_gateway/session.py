@@ -28,8 +28,9 @@ from starlette.websockets import WebSocket, WebSocketState
 from copilot_core import jobs, logs, prompts
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
-from copilot_core.llm import ModelRouter
+from copilot_core.llm import LLMDone, ModelRouter
 from copilot_core.packs import Digest, NodeRef, SessionPack, ref_map, render_pack
+from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
 from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
@@ -156,12 +157,16 @@ class Session:
                 keepalive_s=self.settings.stt_keepalive_s,
             )
         self.detector = Detector(
-            svc.router, principal.display_name, self.settings.detector_max_tokens
+            svc.router,
+            principal.display_name,
+            self.settings.detector_max_tokens,
+            on_decision=self._log_detection,
+            cost=self._cost,
         )
         self.matcher = PreparedMatcher(
             svc.embedder,
             pack.prepared_answers if pack else [],
-            self.settings.prepared_answer_min_similarity,
+            self.settings.prepared_threshold(svc.embedder.model_id if svc.embedder else None),
             pack.embedding_model if pack else None,
         )
         self.turns = TurnDetector(
@@ -171,6 +176,8 @@ class Session:
             final_wait_max_ms=self.settings.final_wait_max_ms,
             min_confidence=self.settings.detector_min_confidence,
             turn_model=svc.turn_model,
+            hold=self.settings.speculative_hold,
+            hold_min_words=self.settings.speculative_min_words,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -271,11 +278,32 @@ class Session:
     async def qa_put(self, qhash: str, value: Mapping[str, Any]) -> None:
         await self.svc.store.qa_put(self.principal.user_id, qhash, value)
 
+    def _cost(self, done: LLMDone) -> float | None:
+        s = self.settings
+        u = done.usage
+        cost = cost_usd(
+            done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
+            s.model_prices, s.tier_price_multipliers,
+        )  # fmt: skip
+        return None if cost is None else float(cost)
+
+    def _log_detection(self, entry: dict[str, Any], utterance: str) -> None:
+        """Every detector decision, so misses and false fires can be explained afterwards;
+        the text only with transcript consent."""
+        log.info(
+            "detector %s: question=%s complete=%s addressed=%s type=%s confidence=%.2f "
+            "latency=%sms cached=%s%s",
+            entry["text_hash"][:12], entry["is_question"], entry["complete"],
+            entry["addressed_to_user"], entry["type"], entry["confidence"], entry["latency_ms"],
+            entry["cached"], " cancelled" if entry.get("cancelled") else "",
+        )  # fmt: skip
+        self.log_entry({**entry, **({"text": utterance} if self.store_text() else {})})
+
     # TurnHost.
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
         transcript = self.transcript(self.settings.transcript_context_s)
-        return asyncio.ensure_future(self.detector.detect(utterance, transcript))
+        return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if not self.matcher.enabled:
@@ -321,6 +349,49 @@ class Session:
 
     def cancel_question(self, qid: UUID) -> None:
         self.answers.cancel_speculative(qid)
+
+    def start_held(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> UUID:
+        q = Question(
+            qid=uuid7(),
+            text=text,
+            qtype="other",
+            confidence=0.0,
+            addressed=False,
+            speculative=True,
+            forced=False,
+            t0=t0,
+            detector_ms=None,
+            match=match,
+            held=True,
+        )
+        self.answers.add(q)
+        return q.qid
+
+    def release_question(
+        self, qid: UUID, text: str, detection: Detection, *, speculative: bool
+    ) -> None:
+        q = self.answers.questions.get(qid)
+        if q is None:
+            return
+        q.text = text
+        q.qtype = detection.qtype
+        q.confidence = detection.confidence
+        q.addressed = detection.addressed_to_user
+        q.detector_ms = detection.latency_ms
+        q.speculative = speculative
+        q.detected_at = datetime.now(UTC)
+        self.emit(
+            models.QuestionDetected,
+            question_id=q.qid,
+            text=text,
+            question_type=q.qtype,
+            confidence=q.confidence,
+            speculative=speculative,
+        )
+        self.answers.release(qid)
+
+    def discard_question(self, qid: UUID) -> None:
+        self.answers.discard(qid)
 
     # STT callbacks.
 
@@ -441,9 +512,52 @@ class Session:
 
     def warm_models(self) -> None:
         """Open the model connections while the user gets ready, so the first question does
-        not pay the handshake (OpenAI; see ModelRouter.warm)."""
-        task = asyncio.create_task(self.router.warm())
+        not pay the handshake (see ModelRouter.warm), then write the prompt cache."""
+
+        async def warm() -> None:
+            await self.router.warm()
+            await self.prewarm_prompts()
+
+        task = asyncio.create_task(warm())
         self._warm = task  # keep a reference until it finishes
+
+    async def prewarm_prompts(self) -> None:
+        """Write the prompt cache for the session's prefix (rules, digest, pack) before the
+        first question, so it is not answered cold: in the October 2026 live test the first
+        question's fast pass was the only uncached one, 1.6 s to its first token against
+        1.0 s, and a cold gpt-6-luna first token measured up to 5 s. Once per session and per
+        mode change; the default cache lives 30 minutes on OpenAI and 5 on Claude, and the
+        questions that follow keep it warm."""
+        ctx = self._prompt_ctx
+        for job in self.settings.prewarm_jobs:
+            req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
+            if job == "deep":
+                req = prompts.deep_pass(
+                    ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+                )
+            started = time.monotonic()
+            done = await self.router.prewarm(job, req)
+            if done is None:
+                continue
+            ms = int((time.monotonic() - started) * 1000)
+            log.info(
+                "prewarmed %s on %s: %s tokens in %s ms",
+                job,
+                done.model,
+                done.usage.input_tokens,
+                ms,
+            )
+            self.log_entry(
+                {
+                    "kind": "prewarm",
+                    "pass": job,
+                    "model": done.model,
+                    "input_tokens": done.usage.input_tokens,
+                    "cached_tokens": done.usage.cached_tokens,
+                    "cost_usd": self._cost(done),
+                    "latency_ms": ms,
+                }
+            )
 
     async def _rebuild_stale_pack(self) -> None:
         """The pack's vectors came from another embedding model (or it has none): matching is
@@ -741,6 +855,7 @@ class Session:
                 self.info.mode = message.mode
                 self._prompt_ctx = self._build_prompt_ctx()
                 self.writer.set_state(mode=message.mode)
+                self._warm = asyncio.create_task(self.prewarm_prompts())  # a new prefix
                 self.log_entry({"kind": "mode", "mode": message.mode})
             case models.SessionEnd():
                 self.request_end("user", CLOSE_NORMAL)

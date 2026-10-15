@@ -101,8 +101,9 @@ async def test_router_warms_each_provider_once() -> None:
             self.warmed = 0
             self.fail = fail
 
-        async def warm(self) -> None:
+        async def warm(self, model: str) -> None:
             self.warmed += 1
+            self.model = model
             if self.fail:
                 raise ConnectionError("down")
 
@@ -113,6 +114,7 @@ async def test_router_warms_each_provider_once() -> None:
     )
     await router.warm()  # a failure only costs the head start
     assert (a.warmed, b.warmed) == (1, 1)
+    assert (a.model, b.model) == ("m", "n")
 
 
 async def test_router_error_after_first_token_is_final() -> None:
@@ -410,3 +412,76 @@ def test_offline_token_specs() -> None:
     token, expires = parse_token("abc:30")
     assert token == "abc"
     assert expires is not None
+
+
+class _Embedder:
+    model_id = "openai:text-embedding-3-large@1024"
+
+    def __init__(self, vector: list[float]) -> None:
+        self.vector = vector
+
+    async def embed(self, texts: Any) -> list[list[float]]:
+        return [self.vector for _ in texts]
+
+
+def _at(similarity: float, axis: int = 0, dims: int = 4) -> list[float]:
+    """A unit vector at `similarity` to the unit vector on `axis` (and orthogonal to the rest)."""
+    import math
+
+    v = [0.0] * dims
+    v[axis] = similarity
+    v[dims - 1] = math.sqrt(1 - similarity**2)
+    return v
+
+
+def _prepared(axis: int, dims: int = 4) -> PreparedAnswer:
+    v = [0.0] * dims
+    v[axis] = 1.0
+    return PreparedAnswer(
+        question=f"q{axis}", embedding_b64=encode_embedding(v), talking_points=[f"p{axis}"]
+    )
+
+
+async def test_prepared_thresholds_are_per_embedding_model() -> None:
+    """Live test, 2026-10-07: the two questions with a prepared answer scored 0.735 and 0.639 on
+    text-embedding-3-large and missed the single 0.85 gate, tuned for Cohere. The calibrated
+    OpenAI threshold takes both and still refuses the worst negative of the calibration set."""
+    from copilot_gateway.answer import PreparedMatcher
+
+    s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+    model = _Embedder.model_id
+    threshold = s.prepared_threshold(model)
+    assert (threshold.min_similarity, threshold.min_margin) == (0.63, 0.05)
+    assert s.prepared_threshold("bedrock:cohere.embed-v4:0@1024").min_similarity == 0.85
+    assert s.prepared_threshold("test:unknown@8").min_similarity == 0.85  # the fallback
+    answers = [_prepared(0), _prepared(1)]
+    for similarity, hit in ((0.735, True), (0.639, True), (0.574, False)):
+        matcher = PreparedMatcher(_Embedder(_at(similarity)), answers, threshold, model)
+        result = await matcher.match("live question")
+        assert result is not None
+        assert (result.answer is not None) == hit, similarity
+        assert round(result.similarity or 0, 3) == similarity
+
+
+async def test_a_prepared_match_needs_a_clear_winner() -> None:
+    import math
+
+    from copilot_gateway.answer import PreparedMatcher
+
+    threshold = Settings(_env_file=None).prepared_threshold(_Embedder.model_id)  # pyright: ignore[reportCallIssue]
+    # Close to two prepared questions at once (0.70 and 0.68): too alike to choose between.
+    tie = [0.70, 0.68, 0.0, math.sqrt(1 - 0.70**2 - 0.68**2)]
+    answers = [_prepared(0), _prepared(1)]
+    matcher = PreparedMatcher(_Embedder(tie), answers, threshold, _Embedder.model_id)
+    result = await matcher.match("q")
+    assert result is not None
+    assert result.answer is None
+
+
+def test_prepared_thresholds_from_the_environment_merge_over_the_defaults() -> None:
+    s = Settings(  # pyright: ignore[reportCallIssue]
+        _env_file=None,
+        prepared_answer_thresholds={"voyage:voyage-3@1024": {"min_similarity": 0.7}},
+    )
+    assert s.prepared_threshold("voyage:voyage-3@1024").min_similarity == 0.7
+    assert s.prepared_threshold(_Embedder.model_id).min_similarity == 0.63

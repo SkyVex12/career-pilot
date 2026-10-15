@@ -1,0 +1,103 @@
+{
+  "runs": 2,
+  "stages": {
+    "detector_ms": {
+      "p50": 1500,
+      "p95": 2366,
+      "n": 17
+    },
+    "final_ms": {
+      "p50": 390,
+      "p95": 1178,
+      "n": 17
+    },
+    "turn_end_ms": {
+      "p50": 2047,
+      "p95": 2990,
+      "n": 17
+    },
+    "start_ms": {
+      "p50": 562,
+      "p95": 1555,
+      "n": 17
+    },
+    "first_token_ms": {
+      "p50": 1156,
+      "p95": 1562,
+      "n": 17
+    },
+    "server_first_word_ms": {
+      "p50": 2047,
+      "p95": 2999,
+      "n": 17
+    },
+    "first_word_ms": {
+      "p50": 2276,
+      "p95": 3221,
+      "n": 17
+    },
+    "deep_first_word_ms": {
+      "p50": 4343,
+      "p95": 8796,
+      "n": 16
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 1304,
+    "p95": 1326,
+    "n": 2
+  },
+  "first_word_p50_per_run_ms": [
+    2302,
+    2276
+  ],
+  "detection": {
+    "precision": 0.895,
+    "recall": 0.708,
+    "false_fires_per_run": 1.0,
+    "false_fire_utterances": {
+      "share_screen": 1,
+      "what_is_that": 1
+    },
+    "missed": {
+      "do_differently": 1,
+      "manager": 2,
+      "questions_for_us": 2,
+      "url": 1,
+      "schema_changes": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 1.0,
+    "detector_calls_per_run": 59.5
+  },
+  "speculative": {
+    "fast_starts_per_run": 35.0,
+    "waste_rate": 0.7,
+    "waste_cost_per_run_usd": 0.000909
+  },
+  "prepared": {
+    "opportunities": 6,
+    "hits": 0,
+    "correct": 0,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0396,
+    "model_per_run_usd": 0.0276,
+    "per_live_hour_usd": 0.559,
+    "model_per_live_hour_usd": 0.39,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.022555,
+      "answer:fast": 0.000829,
+      "detector": 0.002409,
+      "pass_cancelled:deep": 0.00092,
+      "pass_cancelled:fast": 0.000909
+    }
+  },
+  "provider_probe_ms": 1266,
+  "label": "fix2b-no-glue",
+  "env": {},
+  "interleaved_with": [],
+  "at": "2026-10-14T23:01:40.674462+00:00"
+}

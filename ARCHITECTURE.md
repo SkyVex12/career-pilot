@@ -91,7 +91,7 @@ Each live call is one gateway session running four concurrent tasks: read audio,
 2. **Turn detection:** a turn-detection model plus a 300 to 500 ms silence timer decides the speaker is done, instead of a fixed 500 to 800 ms wait.
 3. **Question and addressee check:** during the silence window, a small local classifier on the gateway filters the interim transcript, and a Haiku 4.5 call on likely questions (about 30% of utterances) decides whether this is a complete question, its type (behavioral, technical, coding, system design, standup status, small talk), and whether it is aimed at the user. In group meetings it looks for the user's name, "you" and turn order, so a question to a teammate does not fire.
 4. **Speculative retrieval:** the query embedding and memory search start on the interim transcript.
-5. **Speculative fast pass:** the fast pass (Haiku 4.5) starts at about 300 ms of silence with the hot digest and session pack, and is thrown away if the speaker keeps talking. If the question matches a prepared answer in the session pack (similarity 0.85 or more), those points are shown instead and the fast pass is skipped. The deep pass (Sonnet) starts once the turn is confirmed, automatically for behavioral, technical and system design questions and otherwise only when the user taps expand. It adds full memory search, reranked to the top 6 nodes, and the last 60 seconds of transcript.
+5. **Speculative fast pass:** the fast pass (Haiku 4.5) starts at the speech end, alongside the detector, with the hot digest and session pack, whenever a cheap local check on the interim text says it may be a question. Its output is held on the gateway: nothing reaches the client until the detector confirms a question for the user, when the buffered text goes out at once and the rest streams. If the detector says no, or the speaker keeps talking, the held pass is cancelled and the client never hears of it, so a false start never shows. This keeps the first word at about the slower of the detector and the fast pass's first token, instead of their sum (the October 2026 live test measured a 1.3 s OpenAI detector in front of every answer). If the question matches a prepared answer in the session pack (a similarity threshold and a margin over the runner-up, calibrated per embedding model; see Settings), those points are shown instead and the fast pass is skipped. The deep pass (Sonnet) starts once the turn is confirmed, automatically for behavioral, technical and system design questions and otherwise only when the user taps expand. It adds full memory search, reranked to the top 6 nodes, and the last 60 seconds of transcript.
 6. **Cancellation:** a new question stops generation for the old one when it is confirmed, but the old answer stays visible, so a quick follow-up does not wipe what the user is reading.
 
 **Gateway language:** Python (FastAPI, fully async, with uvloop and orjson) for v1, to match the team's FastAPI experience. The gateway stays small with a clear contract, so it can move to Go if our own code passes 20 to 30 ms at p95 or connection cost grows.
@@ -176,12 +176,14 @@ The routing layer is provider-neutral. Claude is the design default, and the tab
 **OpenAI as a provider.** `COPILOT_LLM_PROVIDERS` takes `openai` alone or in an ordered list (`openai,anthropic`, `bedrock,openai`); the first provider gets one retry, then the next runs.
 
 - **Client:** the official OpenAI SDK's async client on the Responses API, streaming, with `store: false`, over HTTP/2 with idle connections kept for 120 s. The gateway opens the connection at startup and at each session start (`ModelRouter.warm`): a new TLS connection cost about 2 s in the October 2026 measurements, as much as the first token.
+- **Claude clients alike:** the Claude API and Bedrock (Mantle) clients keep idle connections for the same 120 s (`llm_keepalive_s`; the SDK default is 5 s, so a question after a quiet moment paid a new handshake: 4.6 s to the Claude API from a desktop in October 2026, 0.45 s warm) and are warmed the same way, the Claude API with a one-item models list and Bedrock, which has no models endpoint, with a free `count_tokens` call on the route's model.
 - **Models:** a model and a reasoning effort per job (detector, fast, deep, extraction, job description, pack, post-call), all settings (`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); none is built in. A job with reasoning gets extra output tokens, since OpenAI counts reasoning in the output limit. The Claude-only settings (`between_tools`, effort, `fallbacks: "default"`, Priority, Flex) never reach OpenAI routes; OpenAI runs on its default tier.
-- **Same prompts and block order:** the system blocks go first and unchanged as one developer message, so the stable prefix is byte-identical. OpenAI caches prefixes automatically, without breakpoints; `prompt_cache_key` is a hash of the cached blocks, so requests that share a prefix reach the same cache. Cached tokens are reported in usage like Claude's cache reads. Documents map to OpenAI input parts (a PDF becomes an `input_file`).
+- **Same prompts and block order:** the system blocks go first and unchanged as one developer message, so the stable prefix is byte-identical. From GPT-5.6 on, OpenAI writes its cache at breakpoints: the gateway puts `prompt_cache_breakpoint: {mode: explicit}` on each block it marks for caching (the same blocks that get Claude's `cache_control`: digest and pack) and sends `prompt_cache_options.mode: explicit`, so each request's unique tail (transcript and question) is not written as a cache entry too (writes cost 1.25x the input rate). Entries live 30 minutes after their last use (`prompt_cache_options.ttl`, whose only value, `30m`, is the default); `prompt_cache_retention` no longer applies. Older models reject both fields with a 400, so they get neither and fall back to OpenAI's automatic prefix caching. `prompt_cache_key` (a hash of the cached blocks) is still sent; on these models it only separates cache accounting. Cached tokens are reported in usage like Claude's cache reads.
+- **Cache prewarm at session start:** once the digest and pack are loaded (and again after `mode.set`, which changes the prefix), the gateway writes the fast pass's prompt cache before the first question (`ModelRouter.prewarm`, on the job's first route): on OpenAI a `prompt_cache_options.prewarm: true` request, which writes the cache without generating output; on Claude a `max_tokens: 0` request with the route's own settings, which runs prefill only. In October 2026 a cold gpt-6-luna fast pass took 4 to 5 s to its first token against about 1 s cached, and the live test's first question was its only uncached one. It costs one cache write per session (about $0.0002 on gpt-6-luna) and is logged as a `prewarm` entry with its cost. Setting `prewarm_jobs` (default: fast only). Claude Haiku 4.5 caches only prefixes of 4,096 tokens or more, so a shorter digest and pack never cache on it, prewarm or not. Documents map to OpenAI input parts (a PDF becomes an `input_file`).
 - **Structured output:** a JSON schema becomes a strict `json_schema` text format. The detector's output goes through the same parsing as Claude's, and worker outputs through the same validation.
 - **First token:** the same router timeout and fallback. OpenAI live routes can have their own timeouts (`COPILOT_OPENAI_FIRST_TOKEN_TIMEOUT_MS`, `COPILOT_OPENAI_DEEP_FIRST_TOKEN_TIMEOUT_MS`), because measured first tokens came later than the 1.5 s live default: warm and cached, 0.8 to 2.5 s on the gpt-6-luna fast pass and 2 to 4.3 s on the gpt-6.1-sol deep pass, which reasons first (October 2026, from a desktop). OpenAI as the only provider misses the 0.9 s first-word target.
 - **Cost:** `answers.model`, tier, tokens and `cost_usd` are filled as for Claude, from prices in `COPILOT_MODEL_PRICES` (only Claude prices are built in).
-- **Embeddings:** OpenAI embeddings (`text-embedding-3-large` suggested) shortened to 1024 dimensions, so prepared-answer matching works with only an OpenAI key. Every stored vector names the model that made it (`provider:model@1024`, on session packs and in `memory_nodes.embedding_model`); vectors from different models are never compared, and a pack whose vectors came from another model is rebuilt (by the next digest rebuild, or when the gateway loads it). An OpenAI embedding took 0.5 to 3.5 s in the measurements, far over the 150 ms the fast pass waits for a prepared match, so from outside OpenAI's network prepared answers rarely win the race. OpenAI has no reranker; rerank stays on Bedrock.
+- **Embeddings:** OpenAI embeddings (`text-embedding-3-large` suggested) shortened to 1024 dimensions, so prepared-answer matching works with only an OpenAI key. Every stored vector names the model that made it (`provider:model@1024`, on session packs and in `memory_nodes.embedding_model`); vectors from different models are never compared, and a pack whose vectors came from another model is rebuilt (by the next digest rebuild, or when the gateway loads it). An OpenAI embedding took 0.5 to 3.5 s in the measurements; the fast pass does not wait for it, and a match that arrives before the model's first text takes over (see Turn detection, step 2). OpenAI embeddings score paraphrases much lower than Cohere's: `text-embedding-3-large` put paraphrases of a prepared question at 0.40 to 0.88 and unrelated interview questions at up to 0.57, so the match threshold is set per embedding model from a calibration set (`evals/prepared/`). OpenAI has no reranker; rerank stays on Bedrock.
 
 ### Data and storage
 
@@ -279,7 +281,7 @@ The target is the first visible word 0.7 to 1.2 seconds after the question ends.
 | Turn end detected | 300 to 500 ms | Turn-detection model plus a short silence timer; the STT final arrives inside this window |
 | Question and addressee check | 0 ms | Runs on the interim transcript during the silence window |
 | Query embedding and retrieval | 0 ms (under 100 ms total) | Starts on the interim transcript |
-| First token, fast pass | 300 to 600 ms | Speculative start at about 300 ms of silence, discarded if the speaker continues |
+| First token, fast pass | 300 to 600 ms | Speculative start at the speech end, held on the gateway until the detector confirms, discarded silently otherwise |
 | Overlay render | Under 50 ms | Tokens stream straight into the overlay |
 
 Our own code should stay under 20 to 30 ms at p95; past that is the signal to move the gateway to Go.
@@ -1012,10 +1014,13 @@ Answers run outside the group, one task per question, so a new question can canc
 **Turn detection, step by step**
 
 1. On a speech-end frame on the "them" channel, record `t0`. Run the local classifier on the current interim text; if it scores 0.3 or higher, call the Haiku detector (results cached by text hash) and start retrieval on the same text.
-2. At `t0 + 300 ms`: if the detector says complete question, addressed to the user, confidence at least 0.7, send `question.detected` with `speculative: true` and start the fast pass, unless the question matches a prepared answer in the session pack with similarity 0.85 or more; then those points are sent at once and no model is called.
-3. If speech starts again before confirmation, cancel the speculative work, send `question.cancelled`, and keep accumulating text. The next speech-end starts again at step 1.
+   At the same time, if the text passes a cheap local check (`likely_question`: at least 3 words, and a "?" from the STT's punctuation, a question word anywhere, or a request such as "tell me", "walk me through", "could you"), the fast pass starts **held**: it streams into a buffer on the gateway and sends nothing. The check only limits wasted calls; a question it misses gets its fast pass at step 2, later. The prompt has no question type yet (`Question: ...`), since the detector has not typed it.
+2. Once the detector says complete question, addressed to the user, confidence at least 0.7 (and not before `t0 + 300 ms`): send `question.detected` with `speculative: true`, then release the held pass: what it buffered goes out as one `answer.delta`, and the rest streams. With no held pass, the fast pass starts now. Prepared answers: if the question's match (started with the detector) has already found a prepared answer in the session pack (best similarity at least the embedding model's threshold, and ahead of the runner-up by its margin), those points are sent at once and no model is called. If the match is still running, the model does not wait for it: both run, and a hit that arrives before any of the model's text has reached the client takes the slot over (the model call is cancelled and logged as `pass_cancelled`, reason `prepared`); a later hit is dropped. The same holds for forced questions, whose match starts with the fast pass. If the detector says no, the held pass is cancelled without any message; the session log records it as `pass_cancelled` with reason `held_discarded` and its cost, so speculative waste can be measured.
+3. If speech starts again before confirmation, cancel the speculative work (a held pass silently; a released one with `question.cancelled`) and keep accumulating text. The next speech-end starts again at step 1. This holds only while the speaker could still be mid-sentence: when speech starts after a pause longer than the silence timer and the STT final is in, the speaker had finished, so the turn keeps deciding on its own text and the new speech starts a new utterance (otherwise a detector slower than the gap between two sentences glues them into one question).
 4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`, and start the deep pass with the retrieval results if the type is behavioral, technical or system design. For other types the deep pass waits until the user taps expand. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
-5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context. If the final text differs from the interim it checked (an interim often lacks the last words and the question mark), the detector checks the final once more, and a question found then is sent with `speculative: false` straight away.
+5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context.
+
+**One detector call per turn.** The decision on the interim text stands unless the STT final changes it materially: other words, or a "?" the interim lacked (an interim often lacks the last words and the question mark; case and other punctuation do not count). When the final does, the detector, the prepared match and the held fast pass restart on the final the moment it arrives, and the call on the interim is cancelled; the turn then goes on from step 2 with the final's decision. So a turn never waits for two detector calls in a row (in the October 2026 live test that double call was the p95: 1.3 to 2.1 s extra on 3 of 8 questions). When no text has arrived by the speech end, the turn starts on the first interim or final that does, rather than waiting for the final.
 
 `question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript. Its type is `other`, so the deep pass waits for expand.
 
@@ -1026,11 +1031,14 @@ Answers run outside the group, one task per question, so a new question can canc
 | Setting | Default |
 | --- | --- |
 | `silence_timer_ms` | 400 |
-| `speculative_start_ms` | 300 |
+| `speculative_start_ms` | 300 (the earliest a question is shown) |
+| `speculative_hold` | on: the fast pass starts at the speech end, held until the detector confirms |
+| `speculative_min_words` | 3 (shorter text never starts a held pass) |
 | `stage1_min_score` | 0.3 |
 | `detector_min_confidence` | 0.7 |
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |
-| `prepared_answer_min_similarity` | 0.85 |
+| `prepared_answer_thresholds` | per embedding model: `openai:text-embedding-3-large@1024` 0.63 with a 0.05 margin over the runner-up; `bedrock:cohere.embed-v4:0@1024` 0.85 (not yet calibrated). Set from `copilot-calibrate-prepared` on `evals/prepared/calibration.toml`: the lowest threshold with no wrong match, plus 0.03, since a wrong match shows points for another question |
+| `prepared_answer_min_similarity` | 0.85 (embedding models without a calibrated entry) |
 | `fast_pass` | Haiku 4.5, Standard tier (Priority by flag), max_tokens 250 |
 | `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800, thinking `between_tools` (or `adaptive`) at effort `low` |
 | `deep_pass_auto_types` | behavioral, technical, system_design |
@@ -1082,17 +1090,31 @@ Rules:
 | standup_status | Yesterday, today and blockers from the standup pack; under 60 words |
 | small_talk | No answer |
 
-**Detector prompt:**
+**Detector prompt** (`{mode}` is "an interview", "a standup" or "a meeting"):
 
 ```
-Decide whether the latest utterance is a question for {user_name} that needs an answer.
+Decide whether the latest utterance in {mode} is a question for {user_name} that needs an
+answer: something {user_name} should now reply to with substance (experience, knowledge, an
+opinion, a plan).
 Return JSON only:
 {"is_question": bool, "complete": bool, "addressed_to_user": bool,
  "type": "behavioral|technical|system_design|coding|standup_status|small_talk|other",
  "confidence": number from 0 to 1}
-With several people in the call, addressed_to_user is true only if the user's name is
-used, "you" follows something the user just said, or it is the user's turn in a round.
+- is_question is false for a request to do something right now (share your screen, wait a
+  moment, unmute), an audio check ("can you hear me?"), and a short reaction to something on
+  screen or just said ("what is that?", "oh really?"). None of these needs talking points. A
+  question can be phrased as a statement or a request ("I'm curious how you handled X", "walk
+  me through Y") and still be a question.
+- complete is false when the utterance stops mid-sentence or mid-thought.
+- small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
+  questions for us?" is other.
+- addressed_to_user: in a one-on-one call, such as most interviews, a question from the other
+  side is for {user_name} unless it names someone else. With several people in the call, it
+  is true only if the user's name is used, "you" follows something the user just said, or it
+  is the user's turn in a round.
 ```
+
+Measured with `copilot-detector-eval` on the latency benchmark's labels (October 2026, gpt-6-luna, 3 repetitions): the earlier prompt, which named no call type, scored 79%. It set `addressed_to_user` false at random in a one-on-one interview (most misses) and took a request to share the screen for a question (the live test's false fire). This one scored 100% on the 20 scored utterances. Every decision is logged (`detector` entries: text hash, decision, type, confidence, latency, tokens, cost; the text only with consent), so misses in a live call can be explained afterwards.
 
 **Memory extraction** (Opus, in workers): the source goes in a labeled data block. The output is a JSON array of proposals, validated with one Pydantic model per node kind; anything that fails validation is dropped. Each proposal carries `evidence`, a quote of at most 25 words from the source, shown to the user at approval time. If a proposed node has cosine similarity of at least 0.9 with an existing node of the same kind, it becomes an `update` or `merge` proposal instead of a new node.
 

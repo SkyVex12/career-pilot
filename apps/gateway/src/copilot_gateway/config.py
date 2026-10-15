@@ -6,10 +6,29 @@ environment (prefix COPILOT_) or a .env file for now; AWS AppConfig replaces tha
 
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import NoDecode
 
 from copilot_core.config import CoreSettings, split_list
+
+
+class PreparedThreshold(BaseModel):
+    """When a live question matches a prepared answer, for one embedding model: its best
+    cosine similarity reaches `min_similarity` and beats the runner-up by `min_margin`."""
+
+    model_config = ConfigDict(extra="forbid")
+    min_similarity: float
+    min_margin: float = 0.0
+
+
+# Calibrated with copilot-calibrate-prepared on evals/prepared/calibration.toml (October 2026):
+# text-embedding-3-large scores paraphrases 0.40 to 0.88 and unrelated questions up to 0.57,
+# so 0.85 matched 3 of 36 paraphrases; 0.63 with a 0.05 margin matches about half with no
+# wrong match. Cohere Embed v4 keeps the design value until it is calibrated the same way.
+DEFAULT_PREPARED_THRESHOLDS: dict[str, PreparedThreshold] = {
+    "openai:text-embedding-3-large@1024": PreparedThreshold(min_similarity=0.63, min_margin=0.05),
+    "bedrock:cohere.embed-v4:0@1024": PreparedThreshold(min_similarity=0.85),
+}
 
 QuestionType = Literal[
     "behavioral", "technical", "system_design", "coding", "standup_status", "small_talk", "other"
@@ -23,9 +42,21 @@ class Settings(CoreSettings):
     # Live settings (ARCHITECTURE.md "Settings").
     silence_timer_ms: int = 400
     speculative_start_ms: int = 300
+    # Start the fast pass at the speech end, alongside the detector, holding its output on the
+    # gateway until the detector confirms (turn.py). Only for text that passes the local check
+    # (`likely_question`) with at least this many words. Off: the fast pass waits for the
+    # detector, as before.
+    speculative_hold: bool = True
+    speculative_min_words: int = 3
     stage1_min_score: float = 0.3
     detector_min_confidence: float = 0.7
     detector_max_tokens: int = 80
+    # Per embedding model id (`provider:model@dimensions`); entries given (JSON) are merged
+    # over the calibrated defaults. A model without an entry uses
+    # prepared_answer_min_similarity and no margin.
+    prepared_answer_thresholds: dict[str, PreparedThreshold] = Field(
+        default_factory=lambda: dict(DEFAULT_PREPARED_THRESHOLDS)
+    )
     prepared_answer_min_similarity: float = 0.85
     fast_pass_max_tokens: int = 250
     fast_pass_priority: bool = False
@@ -43,6 +74,11 @@ class Settings(CoreSettings):
     final_wait_max_ms: int = 1500
     # Seconds of "them" transcript a hotkey question.force without text uses.
     force_context_s: int = 20
+    # Passes whose prompt cache is written at session start (and on a mode change), so the
+    # first question is not cold. Only the fast pass by default: the first word waits on it.
+    prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(
+        default_factory=lambda: ["fast"]
+    )
 
     # Claude routes beyond the shared model ids.
     # The retry route; set to the `us.` cross-region profile if the account uses one.
@@ -85,7 +121,16 @@ class Settings(CoreSettings):
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
 
-    @field_validator("deep_pass_auto_types", "stt_providers", mode="before")
+    def prepared_threshold(self, model_id: str | None) -> PreparedThreshold:
+        found = self.prepared_answer_thresholds.get(model_id or "")
+        return found or PreparedThreshold(min_similarity=self.prepared_answer_min_similarity)
+
+    @field_validator("prepared_answer_thresholds", mode="after")
+    @classmethod
+    def _merge_thresholds(cls, value: dict[str, PreparedThreshold]) -> dict[str, PreparedThreshold]:
+        return {**DEFAULT_PREPARED_THRESHOLDS, **value}
+
+    @field_validator("deep_pass_auto_types", "stt_providers", "prewarm_jobs", mode="before")
     @classmethod
     def _gateway_lists(cls, value: object) -> object:
         return split_list(value)

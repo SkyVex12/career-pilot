@@ -128,3 +128,78 @@ async def test_every_log_line_of_a_session_names_it(env, caplog) -> None:
         assert any(m.startswith(prefix) for m in messages), prefix
     assert {getattr(r, "session_id", None) for r in lines} == {c.session_id}
     assert {getattr(r, "user_id", None) for r in lines} == {str(env.user_a)}
+
+
+async def session_log(env: Any, sid: str) -> list[dict[str, Any]]:
+    return [json.loads(f[b"e"]) for _, f in await env.client().xrange(keys.sess_log(sid))]
+
+
+async def test_every_detector_decision_is_logged(env) -> None:
+    """The live test could not explain its misses: only the detection that fired was visible
+    (docs/analysis, section 1). Every decision is now logged, the text only with consent."""
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(consent={"store_transcript": False})
+        await c.say("Thanks for joining today.", capture_ms=0)
+        await c.wait_type("transcript.final")
+        await c.say("How did you scale the ledger?", capture_ms=3000)
+        await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        assert await c.closed() == 1000
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert [e["is_question"] for e in decisions] == [False, True]
+    for e in decisions:
+        assert "text" not in e
+        assert len(e["text_hash"]) == 32
+        assert e["model"] == "claude-haiku-4-5"
+        assert e["cost_usd"] > 0
+        assert e["latency_ms"] >= 0
+        for field in ("complete", "addressed_to_user", "type", "confidence", "input_tokens"):
+            assert field in e, field
+    assert decisions[1]["type"] == "technical"
+
+
+async def test_detector_decision_keeps_the_text_with_consent(env) -> None:
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Thanks for joining today.")
+        await c.wait_type("transcript.final")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert decisions[0]["text"] == "Thanks for joining today."
+
+
+async def test_a_cancelled_pass_is_logged_with_its_estimated_cost(env) -> None:
+    """A pass thrown away mid-stream still costs money; without an entry, speculative waste
+    and its cost could not be measured."""
+    from copilot_gateway.testing import Reply, ScriptedProvider, default_reply
+
+    provider = ScriptedProvider("anthropic")
+
+    def slow_fast(job: str, req: Any) -> Reply:
+        reply = default_reply(job, req)
+        if job == "fast":
+            reply.chunk_delay_s = 0.3
+        return reply
+
+    provider.reply = slow_fast
+    env.providers = [provider]
+    settings = env.settings(speculative_start_ms=50, silence_timer_ms=600)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("What is your biggest strength?", capture_ms=0)
+        await c.wait_type("answer.delta", pass_="fast")
+        await c.frame(0, 0b01, b" and how do you use it?".ljust(3200, b"\0"), 1000)
+        await c.wait_type("question.cancelled")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    cancelled = [e for e in await session_log(env, c.session_id) if e["kind"] == "pass_cancelled"]
+    assert len(cancelled) == 1
+    e = cancelled[0]
+    assert (e["pass"], e["reason"], e["model_started"]) == ("fast", "speculative", True)
+    assert e["streamed_chars"] > 0
+    assert e["input_tokens_est"] > 0
+    assert e["cost_usd_est"] > 0

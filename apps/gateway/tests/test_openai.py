@@ -331,7 +331,18 @@ async def test_openai_session_records_model_tokens_and_cost(env) -> None:
             if m["question_id"] == q["question_id"] and m["pass"] == done["pass"]
         ]
         assert "".join(deltas) == want["text"]
-    assert [b["json"]["model"] for b in captured] == ["gpt-6-luna", "gpt-6.1-sol"]
+
+    def prewarm(body: dict[str, Any]) -> bool:
+        return bool(body["json"].get("prompt_cache_options", {}).get("prewarm"))
+
+    # The session wrote the fast pass's prompt cache first, then the two passes ran.
+    [warm] = [b["json"] for b in captured if prewarm(b)]
+    assert warm["model"] == "gpt-6-luna"
+    assert any("prompt_cache_breakpoint" in p for p in warm["input"][0]["content"])
+    streamed = [b["json"] for b in captured if not prewarm(b)]
+    assert [b["model"] for b in streamed] == ["gpt-6-luna", "gpt-6.1-sol"]
+    # Both requests mark the end of the cached prefix the same way the prewarm did.
+    assert streamed[0]["input"][0] == warm["input"][0]
     log = [json.loads(f[b"e"]) for _, f in await env.client().xrange(keys.sess_log(c.session_id))]
     answers = {e["pass"]: e for e in log if e["kind"] == "answer"}
     assert answers["fast"]["provider"] == "openai"

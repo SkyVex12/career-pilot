@@ -2,8 +2,9 @@
 
 ARCHITECTURE.md, "Realtime pipeline" steps 5 and 6:
 - The fast pass (Haiku) starts at the speculative point. If the question matches a prepared
-  answer in the session pack (similarity 0.85 or more), those points are sent at once and no
-  model is called. An exact repeat of a normalized question is served from `qa:{uid}:{qhash}`.
+  answer in the session pack (a similarity and a margin over the runner-up calibrated per
+  embedding model, `Settings.prepared_answer_thresholds`), those points are sent at once and
+  no model is called. An exact repeat of a normalized question is served from `qa:{uid}:{qhash}`.
 - The deep pass (Sonnet) starts at confirmation for the auto types, otherwise on expand.
 - A new confirmed question stops generation for the old one; the old answer stays on screen
   (the client keeps what it has; the server sends answer.error with code `cancelled`).
@@ -28,15 +29,21 @@ from uuid import UUID
 
 from copilot_core import prompts
 from copilot_core.embed import Embedder
-from copilot_core.llm import AllRoutesFailedError, LLMDone, LLMRequest, ModelRouter, Route
+from copilot_core.llm import (
+    AllRoutesFailedError,
+    LLMDone,
+    LLMRequest,
+    LLMUsage,
+    ModelRouter,
+    Route,
+)
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
 from copilot_core.pricing import cost_usd
-from copilot_gateway.config import Settings
+from copilot_gateway.config import PreparedThreshold, Settings
 from copilot_protocol import models
 
 log = logging.getLogger(__name__)
 
-PREPARED_WAIT_S = 0.15  # extra wait for an in-flight match before calling the model anyway
 CACHE_READ_TIMEOUT_S = 0.1
 
 
@@ -73,6 +80,13 @@ class Question:
     # answer's log entry when they arrive first; `logged` holds the passes already logged.
     client: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     logged: set[str] = field(default_factory=set[str])
+    # A held question (speculative fast pass started before the detector decided): its fast
+    # pass's text is buffered here and nothing is sent until `release`; `discard` drops it.
+    held: bool = False
+    held_text: list[str] = field(default_factory=list[str])
+    released: asyncio.Event = field(default_factory=asyncio.Event)
+    released_at: float | None = None
+    discarded: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,11 +110,14 @@ class PreparedMatcher:
         self,
         embedder: Embedder | None,
         answers: list[PreparedAnswer],
-        min_similarity: float,
+        threshold: PreparedThreshold,
         embedding_model: str | None = None,
     ) -> None:
         self.embedder = embedder
-        self.min_similarity = min_similarity
+        self.min_similarity = threshold.min_similarity
+        # A wrong match shows points for another question: the best must also clearly beat
+        # the runner-up, or two prepared questions are too alike to choose between.
+        self.min_margin = threshold.min_margin
         self.vectors: list[tuple[PreparedAnswer, list[float]]] = []
         # The pack's vectors were made by another model, or it has none to match against.
         self.stale = embedder is not None and bool(answers) and embedding_model != embedder.model_id
@@ -124,16 +141,16 @@ class PreparedMatcher:
         except Exception as e:
             log.warning("prepared-answer embedding failed: %s", e)
             return None
-        best: tuple[PreparedAnswer, float] | None = None
-        for answer, vec in self.vectors:
-            sim = cosine(query, vec)
-            if best is None or sim > best[1]:
-                best = (answer, sim)
+        scored = sorted(
+            ((cosine(query, vec), i) for i, (_, vec) in enumerate(self.vectors)), reverse=True
+        )
         ms = int((time.monotonic() - started) * 1000)
-        if best is None:
+        if not scored:
             return MatchResult(None, None, ms)
-        hit = best[0] if best[1] >= self.min_similarity else None
-        return MatchResult(hit, best[1], ms)
+        best_sim, best_i = scored[0]
+        runner_up = scored[1][0] if len(scored) > 1 else -1.0
+        ok = best_sim >= self.min_similarity and best_sim - runner_up >= self.min_margin
+        return MatchResult(self.vectors[best_i][0] if ok else None, best_sim, ms)
 
 
 class AnswerHost(Protocol):
@@ -208,6 +225,30 @@ class AnswerEngine:
         self._log_question(q, kept=True)
         if q.qtype in self.host.settings.deep_pass_auto_types:
             self.start_pass(q, "deep")
+
+    def release(self, qid: UUID) -> None:
+        """The detector confirmed a held question (the session has just sent it): what its
+        fast pass buffered goes out now, the rest streams as it comes."""
+        q = self.questions.get(qid)
+        if q is None or not q.held:
+            return
+        q.held = False
+        q.released_at = time.monotonic()
+        if q.held_text:
+            self.host.emit(
+                models.AnswerDelta, question_id=q.qid, **{"pass": "fast"}, text="".join(q.held_text)
+            )
+            q.held_text.clear()
+        q.released.set()
+
+    def discard(self, qid: UUID) -> None:
+        """A held question the detector did not confirm, or whose speaker kept talking: its
+        pass stops and nothing is sent, so the user never sees a false start."""
+        q = self.questions.pop(qid, None)
+        if q is None:
+            return
+        q.discarded = True
+        self._cancel_tasks(q)
 
     def cancel_speculative(self, qid: UUID) -> None:
         q = self.questions.pop(qid, None)
@@ -294,12 +335,18 @@ class AnswerEngine:
     async def _run_pass(self, q: Question, pass_: str) -> None:
         host = self.host
         started = time.monotonic()
-        state: dict[str, Any] = {"first_delta_at": None, "parts": [], "start_at": None}
+        state: dict[str, Any] = {
+            "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
+        }  # fmt: skip
 
         def delta(text: str) -> None:
             if state["first_delta_at"] is None:
                 state["first_delta_at"] = time.monotonic()
             state["parts"].append(text)
+            if q.held:  # nothing leaves the gateway before the detector confirms
+                q.held_text.append(text)
+                return
+            state["emitted"] = True
             host.emit(models.AnswerDelta, question_id=q.qid, **{"pass": pass_}, text=text)
 
         def latency(first_token_ms: int | None) -> dict[str, int]:
@@ -311,7 +358,11 @@ class AnswerEngine:
             if first_token_ms is not None:
                 out["first_token_ms"] = first_token_ms
             if state["first_delta_at"] is not None:
-                out["first_delta_ms"] = max(0, int((state["first_delta_at"] - q.t0) * 1000))
+                # A held pass's first words reach the client at its release, not earlier.
+                shown = max(state["first_delta_at"], q.released_at or 0.0)
+                out["first_delta_ms"] = max(0, int((shown - q.t0) * 1000))
+            if q.released_at is not None:
+                out["release_ms"] = max(0, int((q.released_at - q.t0) * 1000))
             out["total_ms"] = max(0, int((time.monotonic() - q.t0) * 1000))
             if q.final_ms is not None:
                 out["final_ms"] = q.final_ms
@@ -380,20 +431,30 @@ class AnswerEngine:
                 }
             )
 
+        async def shown() -> None:
+            """A held pass waits here for the detector before it ends; if the detector says
+            no, `discard` cancels it here and it ends unseen."""
+            if q.held:
+                await q.released.wait()
+
         def error(code: str) -> None:
             host.emit(models.AnswerError, question_id=q.qid, **{"pass": pass_}, code=code)
             host.log_entry(
                 {"kind": "answer_error", "question_id": str(q.qid), "pass": pass_, "code": code}
             )
 
+        async def prepared(answer: PreparedAnswer) -> None:
+            self.stats["prepared_hits"] += 1
+            delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
+            await shown()
+            done("prepared", self._refs_for_nodes(answer), None, None)
+
         try:
             if pass_ == "fast":
                 state["start_at"] = time.monotonic()
-                answer = await self._prepared(q)
-                if answer is not None:
-                    self.stats["prepared_hits"] += 1
-                    delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
-                    done("prepared", self._refs_for_nodes(answer), None, None)
+                answer = self._prepared(q)
+                if answer is not None:  # the match is already in: no model call
+                    await prepared(answer)
                     return
             qhash = question_hash(q.text)
             cached = await self._cached(qhash, pass_)
@@ -401,22 +462,51 @@ class AnswerEngine:
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
                 refs = [NodeRef.model_validate(r) for r in cached.get("refs", [])]
+                await shown()
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
             state["start_at"] = time.monotonic()
-            done_info: LLMDone | None = None
             job = pass_
+            req = self._request(q, pass_)
+            state["req"] = req
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
                 host.llm_status(False)
 
-            async for chunk in host.router.stream(job, self._request(q, pass_), on_fallback):
-                if isinstance(chunk, LLMDone):
-                    done_info = chunk
-                else:
-                    delta(chunk)
-            assert done_info is not None
+            async def stream() -> LLMDone:
+                finished: LLMDone | None = None
+                async for chunk in host.router.stream(job, req, on_fallback):
+                    if isinstance(chunk, LLMDone):
+                        finished = chunk
+                        state["done"] = chunk
+                    else:
+                        delta(chunk)
+                assert finished is not None
+                return finished
+
+            model = asyncio.ensure_future(stream())
+            state["model"] = model
+            match = q.match
+            if pass_ == "fast" and match is not None and not match.done():
+                # The model does not wait for the prepared match (a forced question's match
+                # starts with it; an OpenAI embedding takes 0.5 s or more). A hit that comes
+                # before any of the model's text reached the client takes the slot over.
+                await asyncio.wait({match, model}, return_when=asyncio.FIRST_COMPLETED)
+                answer = self._prepared(q)
+                if answer is not None and not state["emitted"]:
+                    model.cancel()
+                    await asyncio.gather(model, return_exceptions=True)
+                    self._log_cancelled(q, pass_, state, reason="prepared")
+                    state.update(first_delta_at=None, parts=[])
+                    for key in ("req", "done", "model"):
+                        state.pop(key, None)
+                    q.held_text.clear()
+                    self.stats["model_passes"] -= 1
+                    await prepared(answer)
+                    return
+            done_info = await model
+            await shown()
             if done_info.attempt == 0:
                 host.llm_status(True)
             if done_info.stop_reason == "refusal":
@@ -431,14 +521,18 @@ class AnswerEngine:
                 task.add_done_callback(self._background.discard)
         except AllRoutesFailedError as e:
             log.warning("%s pass failed for %s: %s", pass_, q.qid, e)
+            await shown()
             if e.refused:  # every model that ran declined: not an outage
                 error("refused")
                 return
             host.llm_status(False)
             error("llm_unavailable")
         except asyncio.CancelledError:
+            if (model_task := state.get("model")) is not None:
+                model_task.cancel()
             if q.superseded:
                 error("cancelled")
+            self._log_cancelled(q, pass_, state)
             raise
         except Exception:
             log.exception("%s pass crashed for %s", pass_, q.qid)
@@ -448,19 +542,74 @@ class AnswerEngine:
                 "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
             )
 
+    def _log_cancelled(
+        self, q: Question, pass_: str, state: Mapping[str, Any], reason: str | None = None
+    ) -> None:
+        """A pass stopped before its end still costs what the provider read and wrote, but the
+        stream ends without usage: logged with an estimate (about 4 characters a token, the
+        system blocks counted as cached), so speculative waste and its cost can be measured."""
+        if reason is not None:
+            pass  # the caller knows: a prepared answer took the slot over
+        elif q.superseded:
+            reason = "superseded"
+        elif q.discarded:
+            reason = "held_discarded"
+        elif q.cancelled:
+            reason = "speculative"
+        else:
+            reason = "stopped"
+        entry: dict[str, Any] = {
+            "kind": "pass_cancelled",
+            "question_id": str(q.qid),
+            "pass": pass_,
+            "reason": reason,
+            "model_started": "req" in state,
+            "streamed_chars": sum(len(p) for p in state["parts"]),
+        }
+        req = cast(LLMRequest | None, state.get("req"))
+        routes = self.host.router.routes.get(pass_) or []
+        finished = cast(LLMDone | None, state.get("done"))
+        if finished is not None:
+            # The pass ran to its end while held, so its real usage is known.
+            u = finished.usage
+            entry.update(
+                model=finished.model,
+                input_tokens=u.input_tokens,
+                cached_tokens=u.cached_tokens,
+                output_tokens=u.output_tokens,
+                cost_usd=self._cost(finished),
+            )
+        elif req is not None and routes:
+            system = sum(len(b.text) for b in req.system) // 4
+            user = len(str(req.content)) // 4
+            output = entry["streamed_chars"] // 4
+            done = LLMDone(
+                usage=LLMUsage(
+                    input_tokens=system + user, cached_tokens=system, output_tokens=output
+                ),
+                stop_reason=None,
+                model=routes[0].model,
+            )
+            entry.update(
+                model=routes[0].model,
+                input_tokens_est=system + user,
+                output_tokens_est=output,
+                cost_usd_est=self._cost(done),
+            )
+        self.host.log_entry(entry)
+
     def _request(self, q: Question, pass_: str) -> LLMRequest:
         s = self.host.settings
         ctx = self.host.prompt_context()
         transcript = self.host.transcript(s.transcript_context_s)
         if pass_ == "fast":
-            return prompts.fast_pass(ctx, transcript, q.text, q.qtype, s.fast_pass_max_tokens)
+            # A held pass starts before the detector has typed the question.
+            qtype = None if q.held else q.qtype
+            return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens)
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens)
 
-    async def _prepared(self, q: Question) -> PreparedAnswer | None:
-        match = q.match
-        if match is None:
-            return None
-        await asyncio.wait({match}, timeout=PREPARED_WAIT_S)
+    def _prepared(self, q: Question) -> PreparedAnswer | None:
+        """The prepared answer, if the question's match has finished with a hit."""
         result = self._match_result(q)
         return result.answer if result is not None else None
 

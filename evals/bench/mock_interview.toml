@@ -1,0 +1,194 @@
+# Scripted mock interview for the latency benchmark (evals/README.md, "Latency benchmark").
+#
+# Every line is spoken by a synthetic text-to-speech voice as the "them" channel, so no real
+# person's voice is involved. The candidate is fictional (profile.toml). Gaps stand for the
+# candidate answering: the user's own audio is not sent, as in a live call.
+#
+# Fields per utterance:
+#   id        stable name, used in reports
+#   parts     the spoken text; more than one part means a pause of `pause_s` between them
+#             inside one utterance (the speaker hesitates mid-sentence)
+#   gap_s     silence before this utterance
+#   voice     TTS voice; `style` is the delivery instruction given to the TTS model
+#   expect    "answer": a question for the user that needs talking points (should fire)
+#             "none":   no answer wanted (small talk, statements, requests, reactions)
+#             "either": not scored for detection (an unfinished question the user forces)
+#   type      expected question type when expect = "answer"
+#   prepared  id of the prepared answer in profile.toml this question paraphrases, if any
+#   force_after_s  the user presses the hotkey this long after the utterance ends
+#   case      what the utterance tests
+
+[defaults]
+voice = "cedar"
+style = "A friendly, professional interviewer on a video call. Natural pace."
+pause_s = 0.0
+
+[[utterance]]
+id = "greet"
+parts = ["Hi Alex, thanks for joining today. Can you hear me okay?"]
+gap_s = 1.5
+expect = "none"
+case = "small talk"
+
+[[utterance]]
+id = "week"
+parts = ["Great. How's your week been so far?"]
+gap_s = 3.0
+expect = "none"
+case = "small talk"
+
+[[utterance]]
+id = "team_intro"
+parts = [
+  "Okay, so I'll start by telling you a little about the team. We run the payments platform, about forty engineers across four squads, and this year we're moving a lot of our batch jobs over to streaming.",
+]
+gap_s = 4.0
+expect = "none"
+case = "statement"
+
+[[utterance]]
+id = "background"
+parts = ["So to kick things off, can you walk me through your background and what you're working on right now?"]
+gap_s = 1.2
+expect = "answer"
+type = "behavioral"
+prepared = "background"
+case = "opening question, paraphrase of a prepared answer"
+
+[[utterance]]
+id = "incident"
+parts = ["Tell me about a time you had to deal with a production incident while you were under a lot of pressure."]
+gap_s = 12.0
+expect = "answer"
+type = "behavioral"
+prepared = "incident"
+case = "behavioral, paraphrase of a prepared answer"
+
+[[utterance]]
+id = "incident_followup"
+parts = ["And what did you change afterwards so it wouldn't happen again?"]
+gap_s = 3.0
+expect = "answer"
+type = "behavioral"
+case = "quick follow-up while the previous answer is still streaming"
+
+[[utterance]]
+id = "rate_limiter"
+parts = ["How would you design a rate limiter for a public API", "that has to work across several regions?"]
+pause_s = 0.9
+gap_s = 12.0
+expect = "answer"
+type = "system_design"
+case = "question with a mid-sentence pause"
+
+[[utterance]]
+id = "share_screen"
+parts = ["Actually, could you share your screen for a second?"]
+gap_s = 12.0
+expect = "none"
+case = "request for an action (fired in the live test)"
+
+[[utterance]]
+id = "what_is_that"
+parts = ["Hmm, what is that?"]
+gap_s = 4.0
+expect = "none"
+case = "short reaction to something on screen (fired in the live test)"
+
+[[utterance]]
+id = "seen_it"
+parts = ["Oh okay, got it, that's the dashboard. You can stop sharing now."]
+gap_s = 3.0
+expect = "none"
+case = "statement"
+
+[[utterance]]
+id = "schema_changes"
+parts = ["I'm curious how you handled schema changes in that pipeline"]
+gap_s = 3.0
+expect = "answer"
+type = "technical"
+style = "Flat, even delivery with falling intonation at the end, like a statement, no rising pitch."
+case = "flat indirect question, no question syntax or rising intonation"
+
+[[utterance]]
+id = "process_thread"
+parts = ["What's the difference between a process and a thread, and when would you pick one over the other?"]
+gap_s = 12.0
+expect = "answer"
+type = "technical"
+case = "technical"
+
+[[utterance]]
+id = "do_differently"
+parts = ["What would you do differently if you built it again"]
+gap_s = 12.0
+expect = "answer"
+type = "behavioral"
+style = "Flat, tired monotone with falling intonation at the end, no rising pitch."
+case = "flat question without rising intonation"
+
+[[utterance]]
+id = "index"
+parts = ["How does a database index actually speed up a query?"]
+gap_s = 12.0
+expect = "answer"
+type = "technical"
+case = "technical"
+
+[[utterance]]
+id = "note"
+parts = ["Okay, that makes sense. Let me just make a quick note of that."]
+gap_s = 12.0
+expect = "none"
+case = "statement"
+
+[[utterance]]
+id = "manager"
+parts = ["Have you ever disagreed with a decision your manager made? What happened?"]
+gap_s = 4.0
+expect = "answer"
+type = "behavioral"
+prepared = "disagree_manager"
+case = "behavioral, paraphrase of a prepared answer"
+
+[[utterance]]
+id = "url"
+parts = ["Walk me through what happens when you type a URL into the browser and hit enter."]
+gap_s = 12.0
+expect = "answer"
+type = "technical"
+case = "imperative technical question"
+
+[[utterance]]
+id = "unfinished"
+parts = ["And the last thing I wanted to ask about was your experience with"]
+gap_s = 12.0
+expect = "either"
+force_after_s = 2.0
+case = "question that stops mid-sentence; the user presses the hotkey"
+
+[[utterance]]
+id = "leaving"
+parts = ["Sorry, I lost my train of thought. Why are you looking to leave your current role?"]
+gap_s = 9.0
+expect = "answer"
+type = "behavioral"
+prepared = "why_leave"
+case = "behavioral, close to a prepared answer"
+
+[[utterance]]
+id = "questions_for_us"
+parts = ["We're nearly out of time. Do you have any questions for us?"]
+gap_s = 10.0
+expect = "answer"
+type = "other"
+prepared = "questions_for_us"
+case = "closing question, paraphrase of a prepared answer"
+
+[[utterance]]
+id = "bye"
+parts = ["Great, thanks so much Alex. We'll be in touch with next steps soon."]
+gap_s = 10.0
+expect = "none"
+case = "statement"

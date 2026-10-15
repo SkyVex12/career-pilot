@@ -31,3 +31,69 @@ table per question and the p50/p95 of each stage:
 First-word p50/p95 is compared with the 0.9 s / 1.5 s target. `--drop-at SECONDS` aborts the
 socket mid-call and resumes with the 10 s ring buffer, as the desktop client does. This is the
 replay tool for the recorded call corpus.
+
+## Latency benchmark
+
+A scripted mock interview replayed through the real gateway with real providers (OpenAI and
+Deepgram, from `.env`), to measure live-answer latency and detection before and after a change.
+Everything in it is synthetic: the interviewer is a text-to-speech voice and the candidate is
+fictional, so no recording consent is involved.
+
+| File | What it is |
+| --- | --- |
+| `bench/mock_interview.toml` | The script and its labels: each utterance's text, the silence before it, the TTS voice and delivery (a flat, falling delivery for the "no rising intonation" questions), and what should happen (`answer`, `none`, or `either`), the question type and the prepared answer it paraphrases. It covers small talk, behavioral and technical questions, a question with a mid-sentence pause, a quick follow-up, flat questions, and the non-questions that fired in the 2026-10-07 live test (a request to share the screen, "what is that?") |
+| `bench/profile.toml` | The fictional candidate: hot digest, ranked stories and 12 prepared answers |
+| `bench/audio/` | Generated audio and timeline (gitignored; `copilot-bench-audio` rebuilds it) |
+| `bench/results/<label>/summary.json` | Each benchmark's summary (raw runs and gateway logs stay local) |
+
+```sh
+uv run copilot-bench-audio                     # once, a few cents of TTS; cached per line
+uv run copilot-bench run --label baseline --runs 3
+uv run copilot-bench run --label fix --runs 3 --also base=../base-checkout/.venv/Scripts/python.exe
+uv run copilot-bench compare baseline fix      # markdown table
+```
+
+`run` starts the gateway from this checkout on port 8091 with its own user id (`BENCH_USER_ID`),
+writes the profile's digest and pack to Valkey for that user (prepared answers embedded with the
+configured model), and replays the audio with consent off, so the exact-repeat cache cannot
+answer from an earlier run. Each run gets a new digest build line, so its first question sees a
+cold prompt cache as a new session would (`--warm-cache` keeps it). `--env KEY=VALUE` passes a
+setting to the gateway; `--also LABEL=PYTHON` runs another checkout's gateway too, alternating
+run by run, so both see the same provider conditions. Before each run a probe times five raw
+detector calls: provider latency drifts by the minute, so every result carries it.
+
+What a run reports, per stage (p50/p95 over the automatic questions, pooled across runs):
+
+| Stage | Meaning |
+| --- | --- |
+| `detector_ms` | The detector call that decided |
+| `final_ms` | Speech-end frame to the STT final |
+| `turn_end_ms` | Speech-end frame to the question being confirmed |
+| `start_ms` | Speech-end frame to the fast pass starting |
+| `first_token_ms` | Fast-pass request to its first token |
+| `server_first_word_ms` | Speech-end frame to the first answer text sent |
+| `first_word_ms` | True end of speech in the audio to the first answer text received by the client: what the user waits for, less the overlay render (under 50 ms, not measured) |
+| `deep_first_word_ms` | The same for the deep pass |
+
+It also reports detection precision and recall over the labeled utterances (an `answer`
+utterance counts once however many speech-end frames it has), questions shown and then cancelled,
+false answers shown, speculative waste (fast passes started and thrown away, and their cost),
+prepared-answer hits (right and wrong), detector calls, and cost: every model call the session
+logged (answers, detector calls, cancelled passes with an estimate, cache prewarms) plus Deepgram
+for the audio streamed ($0.0077 per minute list price; `--stt-price`), per run and per live hour.
+A run costs about $0.03 to $0.10, mostly the deep pass.
+
+## Prepared-answer calibration
+
+`prepared/calibration.toml` holds paraphrases of the benchmark profile's 12 prepared questions
+(should match) and 30 questions that must not match, many on the same topics. The script embeds
+them with the configured model and scores every threshold and margin over the runner-up:
+
+```sh
+uv run copilot-calibrate-prepared --json prepared/<model>.json
+```
+
+It recommends the pair with the best recall among those with no wrong match, plus 0.03 on the
+threshold, since a wrong match shows points for a different question. The result goes into the
+gateway's `prepared_answer_thresholds` default for that model id.
+`prepared/openai-text-embedding-3-large.json` is the October 2026 run.

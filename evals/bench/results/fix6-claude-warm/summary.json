@@ -1,0 +1,106 @@
+{
+  "runs": 2,
+  "stages": {
+    "detector_ms": {
+      "p50": 2116,
+      "p95": 2971,
+      "n": 12
+    },
+    "final_ms": {
+      "p50": 460,
+      "p95": 1553,
+      "n": 12
+    },
+    "turn_end_ms": {
+      "p50": 2725,
+      "p95": 8096,
+      "n": 12
+    },
+    "start_ms": {
+      "p50": 508,
+      "p95": 5161,
+      "n": 12
+    },
+    "first_token_ms": {
+      "p50": 1500,
+      "p95": 2465,
+      "n": 9
+    },
+    "server_first_word_ms": {
+      "p50": 2725,
+      "p95": 8096,
+      "n": 12
+    },
+    "first_word_ms": {
+      "p50": 2958,
+      "p95": 8320,
+      "n": 12
+    },
+    "deep_first_word_ms": {
+      "p50": 5886,
+      "p95": 11665,
+      "n": 12
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 2929,
+    "p95": 4384,
+    "n": 2
+  },
+  "first_word_p50_per_run_ms": [
+    2834,
+    3232
+  ],
+  "detection": {
+    "precision": 0.857,
+    "recall": 0.5,
+    "false_fires_per_run": 1.0,
+    "false_fire_utterances": {
+      "share_screen": 2
+    },
+    "missed": {
+      "manager": 1,
+      "process_thread": 2,
+      "questions_for_us": 2,
+      "schema_changes": 2,
+      "background": 1,
+      "incident": 1,
+      "incident_followup": 1,
+      "index": 1,
+      "rate_limiter": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 1.0,
+    "detector_calls_per_run": 52
+  },
+  "speculative": {
+    "fast_starts_per_run": 35.0,
+    "waste_rate": 0.771,
+    "waste_cost_per_run_usd": 0.000969
+  },
+  "prepared": {
+    "opportunities": 5,
+    "hits": 3,
+    "correct": 3,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0376,
+    "model_per_run_usd": 0.0256,
+    "per_live_hour_usd": 0.53,
+    "model_per_live_hour_usd": 0.361,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.021865,
+      "answer:fast": 0.000527,
+      "detector": 0.002022,
+      "pass_cancelled:fast": 0.000969,
+      "prewarm": 0.000182
+    }
+  },
+  "provider_probe_ms": 1218,
+  "label": "fix6-claude-warm",
+  "env": {},
+  "interleaved_with": [],
+  "at": "2026-10-14T23:40:12.398921+00:00"
+}

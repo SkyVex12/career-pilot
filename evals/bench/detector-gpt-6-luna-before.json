@@ -1,0 +1,28 @@
+{
+  "cases": 22,
+  "results": [
+    {
+      "model": "gpt-6-luna",
+      "reasoning": "none",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 0.794,
+      "false_fires": {
+        "share_screen": 3,
+        "rate_limiter:first_half": 1
+      },
+      "misses": {
+        "rate_limiter": 1,
+        "process_thread": 3,
+        "questions_for_us": 2,
+        "manager": 1,
+        "url": 1,
+        "schema_changes": 1
+      },
+      "type_accuracy": 1.0,
+      "latency_p50_ms": 1320,
+      "latency_p95_ms": 1933,
+      "latency_mean_ms": 1370
+    }
+  ]
+}

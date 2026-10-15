@@ -172,7 +172,12 @@ class ScriptedProvider:
         self.name = name
         self.reply = reply
         self.calls: list[tuple[str, str]] = []  # (job, model)
+        self.prewarms: list[tuple[str, LLMRequest]] = []  # (model, request)
         self.cancelled = 0
+
+    async def prewarm(self, model: str, req: LLMRequest, params: Mapping[str, Any]) -> LLMDone:
+        self.prewarms.append((model, req))
+        return LLMDone(LLMUsage(1000, 0, 0), "max_tokens", self.name, model)
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]

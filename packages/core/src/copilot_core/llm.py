@@ -30,11 +30,12 @@ import re
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import anthropic
 import openai
 from anthropic.lib.bedrock import AsyncAnthropicBedrockMantle
+from anthropic.types import Message
 from openai.types.responses import (
     Response,
     ResponseCompletedEvent,
@@ -171,6 +172,43 @@ class AnthropicProvider:
         self.name = name
         self.client = client
 
+    async def warm(self, model: str) -> None:
+        """Open the connection before a question needs it: a cold connection to the Claude API
+        took 4.6 s in October 2026 against 0.45 s warm. The direct API lists models; Bedrock
+        Mantle has no models endpoint, so it counts the tokens of a one-word message, which
+        costs nothing."""
+        if isinstance(self.client, anthropic.AsyncAnthropic):
+            await self.client.models.list(limit=1)
+        else:
+            await self.client.messages.count_tokens(
+                model=model, messages=[{"role": "user", "content": "warm-up"}]
+            )
+
+    async def prewarm(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> "LLMDone | None":
+        """Write the prompt cache for `req`'s system blocks before the first real request: a
+        `max_tokens: 0` request runs prefill only (cache write at the breakpoints, no output),
+        with the route's own settings so the entry matches real traffic. The user turn is a
+        placeholder, after the last breakpoint."""
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 0,
+            "system": _system_param(req.system),
+            "messages": [{"role": "user", "content": "warm-up"}],
+        }
+        message = cast(Message, await self.client.messages.create(**_merge(kwargs, params)))
+        u = message.usage
+        cached = u.cache_read_input_tokens or 0
+        created = u.cache_creation_input_tokens or 0
+        return LLMDone(
+            usage=LLMUsage(input_tokens=u.input_tokens + cached + created, cached_tokens=cached),
+            stop_reason=message.stop_reason,
+            provider=self.name,
+            model=model,
+            service_tier=str(getattr(u, "service_tier", None) or "standard"),
+        )
+
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> AsyncGenerator[LLMChunk]:
@@ -256,6 +294,16 @@ def openai_content(content: str | Sequence[Mapping[str, Any]]) -> list[dict[str,
     return out
 
 
+_CACHE_OPTIONS_MODEL = re.compile(r"^gpt-(?:5\.(?:[6-9]|\d{2,})|[6-9]|\d{2,})(?:[.\-]|$)")
+
+
+def supports_cache_options(model: str) -> bool:
+    """`prompt_cache_breakpoint` and `prompt_cache_options` exist from GPT-5.6 on; older models
+    reject both with a 400 (checked October 2026: gpt-5.4-mini rejects them, gpt-6-luna and
+    gpt-6.1-sol accept them)."""
+    return bool(_CACHE_OPTIONS_MODEL.match(model))
+
+
 def prompt_cache_key(blocks: Sequence[SystemBlock]) -> str | None:
     """A key for the cacheable prefix (every block up to the last cache breakpoint), so
     requests sharing it reach the same OpenAI cache. A hash: no prompt text leaves in it."""
@@ -282,7 +330,7 @@ class OpenAIProvider:
         self.name = name
         self.client = client
 
-    async def warm(self) -> None:
+    async def warm(self, model: str) -> None:
         """Open the connection before a question needs it: the TLS handshake costs as much
         as the first token. A model list is the cheapest authenticated request."""
         await self.client.models.list()
@@ -290,13 +338,20 @@ class OpenAIProvider:
     def request(self, model: str, req: LLMRequest, params: Mapping[str, Any]) -> dict[str, Any]:
         extra = dict(params)
         headroom = int(extra.pop(REASONING_HEADROOM, 0) or 0)
+        # From GPT-5.6 on, the cache is written at breakpoints: one after each block marked for
+        # caching (as Claude's cache_control), in explicit mode, so each request's unique tail
+        # (transcript and question) is not written as a cache entry too.
+        breakpoints = supports_cache_options(model) and any(b.cache for b in req.system)
+        developer: list[dict[str, Any]] = []
+        for b in req.system:
+            part: dict[str, Any] = {"type": "input_text", "text": b.text}
+            if breakpoints and b.cache:
+                part["prompt_cache_breakpoint"] = {"mode": "explicit"}
+            developer.append(part)
         kwargs: dict[str, Any] = {
             "model": model,
             "input": [
-                {
-                    "role": "developer",
-                    "content": [{"type": "input_text", "text": b.text} for b in req.system],
-                },
+                {"role": "developer", "content": developer},
                 {"role": "user", "content": openai_content(req.content)},
             ],
             "max_output_tokens": req.max_tokens + headroom,
@@ -306,6 +361,8 @@ class OpenAIProvider:
             kwargs["input"] = kwargs["input"][1:]
         if (key := prompt_cache_key(req.system)) is not None:
             kwargs["prompt_cache_key"] = key
+        if breakpoints:
+            kwargs["extra_body"] = {"prompt_cache_options": {"mode": "explicit"}}
         if req.json_schema is not None:
             kwargs["text"] = {
                 "format": {
@@ -316,6 +373,28 @@ class OpenAIProvider:
                 }
             }
         return _merge(kwargs, extra)
+
+    async def prewarm(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> "LLMDone | None":
+        """Write the prompt cache for `req`'s system blocks without generating output
+        (`prompt_cache_options.prewarm`, GPT-5.6 and later; None on older models, which lack
+        it). Cache writes are billed at 1.25x the input rate."""
+        if not supports_cache_options(model) or not any(b.cache for b in req.system):
+            return None
+        kwargs = self.request(model, req, params)
+        kwargs["extra_body"] = {"prompt_cache_options": {"mode": "explicit", "prewarm": True}}
+        response = cast(Response, await self.client.responses.create(**kwargs))
+        u = response.usage
+        return LLMDone(
+            usage=LLMUsage(
+                input_tokens=u.input_tokens if u else 0,
+                cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
+            ),
+            stop_reason="prewarm",
+            provider=self.name,
+            model=model,
+        )
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
@@ -456,17 +535,36 @@ class ModelRouter:
         raise AllRoutesFailedError(job, errors, refused=bool(refused) and not other_failures)
 
     async def warm(self) -> None:
-        """Open each provider's connection ahead of the first question, where the provider
-        supports it (OpenAIProvider). Failures only cost the head start."""
-        providers = {id(r.provider): r.provider for rs in self.routes.values() for r in rs}
-        for provider in providers.values():
-            warm = getattr(provider, "warm", None)
+        """Open each provider's connection ahead of the first question (every provider here
+        has `warm(model)`, given the model of its first route). Failures only cost the head
+        start."""
+        first: dict[int, Route] = {}
+        for routes in self.routes.values():
+            for r in routes:
+                first.setdefault(id(r.provider), r)
+        for route in first.values():
+            warm = getattr(route.provider, "warm", None)
             if warm is None:
                 continue
             try:
-                await warm()
+                await warm(route.model)
             except Exception as e:
-                log.info("warming %s failed: %s", provider.name, type(e).__name__)
+                log.info("warming %s failed: %s", route.provider.name, type(e).__name__)
+
+    async def prewarm(self, job: str, req: LLMRequest) -> LLMDone | None:
+        """Write the prompt cache for a job's first route, where its provider and model support
+        it, so the first real request is not cold. None when nothing was written; failures
+        only cost the head start."""
+        route = next((r for r in self.routes.get(job, ()) if not r.refusal_only), None)
+        prewarm = getattr(route.provider, "prewarm", None) if route is not None else None
+        if route is None or prewarm is None:
+            return None
+        try:
+            done: LLMDone | None = await prewarm(route.model, req, route.params)
+        except Exception as e:
+            log.info("prewarming %s failed: %s: %s", route.label, type(e).__name__, e)
+            return None
+        return done
 
     async def complete(self, job: str, req: LLMRequest) -> tuple[str, LLMDone]:
         parts: list[str] = []

@@ -11,12 +11,14 @@
 import asyncio
 import contextlib
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import anthropic
 import httpx2
 
 from copilot_core import keys
+from copilot_gateway.stt import ResilientSTT, STTResult
 from copilot_gateway.testing import (
     GatewayServer,
     ProtocolClient,
@@ -235,3 +237,71 @@ async def test_valkey_down_at_session_start(env) -> None:
         )
         assert await second.closed() == 4409
         env.valkey_server.connected = True
+
+
+class SlowReplaySTT:
+    """A stream whose connect succeeds and whose send yields to the event loop, as a real
+    socket send does; the first connection drops at once, so its audio is replayed."""
+
+    name = "slow"
+    connections = 0
+
+    def __init__(self, received: list[bytes]) -> None:
+        self.received = received
+        SlowReplaySTT.connections += 1
+        self.first = SlowReplaySTT.connections == 1
+        self.closed = asyncio.Event()
+
+    async def connect(self) -> None:
+        pass
+
+    async def send_audio(self, pcm: bytes) -> None:
+        await asyncio.sleep(0.005)
+        if not self.first:
+            self.received.append(pcm)
+
+    async def finalize(self) -> None:
+        pass
+
+    async def keepalive(self) -> None:
+        pass
+
+    async def results(self) -> AsyncIterator[STTResult]:
+        if self.first:
+            await asyncio.sleep(0.05)
+            raise ConnectionError("dropped")
+        await self.closed.wait()
+        if False:  # pragma: no cover - an async generator that yields nothing
+            yield STTResult("", False, 0, 0)
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+async def test_stt_reconnect_replays_while_audio_keeps_arriving() -> None:
+    """Benchmark run, 2026-10-14: a Deepgram reconnect during speech crashed the session
+    ("deque mutated during iteration"), because audio arriving while the pending audio was
+    being replayed changed the deque under the replay. Every chunk must arrive once, in order."""
+    SlowReplaySTT.connections = 0
+    received: list[bytes] = []
+
+    async def on_result(r: Any) -> None:
+        pass
+
+    stt = ResilientSTT(
+        [("slow", lambda: SlowReplaySTT(received))],
+        on_result=on_result,
+        on_status=lambda state, message: None,
+        stall_s=10.0,
+    )
+    runner = asyncio.create_task(stt.run())
+    chunks = [bytes([i]) * 3200 for i in range(40)]  # 100 ms each, more than one replay holds
+    for i, chunk in enumerate(chunks):
+        await stt.send(chunk, i * 100)
+        await asyncio.sleep(0.004)
+    await asyncio.sleep(0.5)  # the replay and the live sends finish
+    assert not runner.done(), runner.exception() if runner.done() else None
+    runner.cancel()
+    await asyncio.gather(runner, return_exceptions=True)
+    assert SlowReplaySTT.connections >= 2
+    assert received == chunks
