@@ -1,0 +1,102 @@
+{
+  "runs": 2,
+  "stages": {
+    "detector_ms": {
+      "p50": 1514,
+      "p95": 2487,
+      "n": 17
+    },
+    "final_ms": {
+      "p50": 483,
+      "p95": 865,
+      "n": 17
+    },
+    "turn_end_ms": {
+      "p50": 2108,
+      "p95": 2954,
+      "n": 17
+    },
+    "start_ms": {
+      "p50": 483,
+      "p95": 882,
+      "n": 17
+    },
+    "first_token_ms": {
+      "p50": 1178,
+      "p95": 1776,
+      "n": 16
+    },
+    "server_first_word_ms": {
+      "p50": 2108,
+      "p95": 2954,
+      "n": 17
+    },
+    "first_word_ms": {
+      "p50": 2345,
+      "p95": 3184,
+      "n": 17
+    },
+    "deep_first_word_ms": {
+      "p50": 4495,
+      "p95": 13282,
+      "n": 16
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 812,
+    "p95": 841,
+    "n": 2
+  },
+  "first_word_p50_per_run_ms": [
+    2555,
+    2146
+  ],
+  "detection": {
+    "precision": 0.895,
+    "recall": 0.708,
+    "false_fires_per_run": 1.0,
+    "false_fire_utterances": {
+      "share_screen": 2
+    },
+    "missed": {
+      "process_thread": 1,
+      "questions_for_us": 2,
+      "url": 2,
+      "leaving": 1,
+      "manager": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 1.0,
+    "detector_calls_per_run": 60.5
+  },
+  "speculative": {
+    "fast_starts_per_run": 36.5,
+    "waste_rate": 0.712,
+    "waste_cost_per_run_usd": 0.00111
+  },
+  "prepared": {
+    "opportunities": 6,
+    "hits": 1,
+    "correct": 1,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0391,
+    "model_per_run_usd": 0.0271,
+    "per_live_hour_usd": 0.551,
+    "model_per_live_hour_usd": 0.382,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.021658,
+      "answer:fast": 0.000776,
+      "detector": 0.002407,
+      "pass_cancelled:deep": 0.001123,
+      "pass_cancelled:fast": 0.00111
+    }
+  },
+  "provider_probe_ms": 1516,
+  "label": "fix3-no-wait",
+  "env": {},
+  "interleaved_with": [],
+  "at": "2026-10-14T23:10:52.325523+00:00"
+}

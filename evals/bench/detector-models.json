@@ -1,0 +1,123 @@
+{
+  "cases": 22,
+  "results": [
+    {
+      "model": "gpt-6-luna",
+      "reasoning": "none",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 1.0,
+      "false_fires": {},
+      "misses": {},
+      "type_accuracy": 0.944,
+      "latency_p50_ms": 1508,
+      "latency_p95_ms": 3164,
+      "latency_mean_ms": 1744
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "reasoning": "none",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 1.0,
+      "false_fires": {},
+      "misses": {},
+      "type_accuracy": 1.0,
+      "latency_p50_ms": 1680,
+      "latency_p95_ms": 3250,
+      "latency_mean_ms": 2018
+    },
+    {
+      "model": "gpt-5.4-nano",
+      "reasoning": "none",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 0.95,
+      "false_fires": {},
+      "misses": {
+        "questions_for_us": 2,
+        "do_differently": 1
+      },
+      "type_accuracy": 0.939,
+      "latency_p50_ms": 2461,
+      "latency_p95_ms": 5652,
+      "latency_mean_ms": 3264
+    },
+    {
+      "model": "gpt-5.4-mini",
+      "reasoning": "none",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 1.0,
+      "false_fires": {},
+      "misses": {},
+      "type_accuracy": 1.0,
+      "latency_p50_ms": 1688,
+      "latency_p95_ms": 4582,
+      "latency_mean_ms": 2185
+    },
+    {
+      "model": "gpt-4.1-nano",
+      "reasoning": null,
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 0.75,
+      "false_fires": {},
+      "misses": {
+        "do_differently": 3,
+        "url": 3,
+        "leaving": 1,
+        "questions_for_us": 1,
+        "rate_limiter": 2,
+        "index": 2,
+        "manager": 1,
+        "incident_followup": 1,
+        "process_thread": 1
+      },
+      "type_accuracy": 1.0,
+      "latency_p50_ms": 1601,
+      "latency_p95_ms": 2995,
+      "latency_mean_ms": 1767
+    },
+    {
+      "model": "gpt-4.1-mini",
+      "reasoning": null,
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 1.0,
+      "false_fires": {},
+      "misses": {},
+      "type_accuracy": 0.917,
+      "latency_p50_ms": 1969,
+      "latency_p95_ms": 4453,
+      "latency_mean_ms": 2327
+    },
+    {
+      "model": "gpt-5-nano",
+      "reasoning": "minimal",
+      "calls": 66,
+      "errors": 0,
+      "accuracy": 0.567,
+      "false_fires": {
+        "greet": 1
+      },
+      "misses": {
+        "incident_followup": 2,
+        "rate_limiter": 3,
+        "schema_changes": 3,
+        "process_thread": 1,
+        "do_differently": 3,
+        "leaving": 3,
+        "questions_for_us": 3,
+        "incident": 2,
+        "index": 1,
+        "manager": 2,
+        "url": 2
+      },
+      "type_accuracy": 0.727,
+      "latency_p50_ms": 1329,
+      "latency_p95_ms": 6254,
+      "latency_mean_ms": 2128
+    }
+  ]
+}
