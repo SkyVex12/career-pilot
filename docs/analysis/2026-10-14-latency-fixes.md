@@ -9,26 +9,23 @@ text-embedding-3-large, Deepgram Nova-3).
 
 ## Summary
 
-On the benchmark, from this desktop and with OpenAI only, the first word went from **5.0 s
-p50 / 9.2 s p95** (baseline) to **2.3 s p50 / 3.2 to 4.3 s p95** after fixes 1 to 5 (2 runs
-each). The largest steps were the held fast pass (fix 1), one detector call per turn (fix 2) and a
-bug the benchmark found, utterances glued together when the detector is slower than the gap
-between sentences (2b), which was most of the p95. Prepared answers went from 0 hits to 5 of 8
-with none wrong. The detector prompt change took the detector from 79% to 100% on the labeled
-utterances, and no false fire shows: a speculative fast pass the detector rejects is never sent.
-Model cost per live hour stayed between $0.31 and $0.40 (about $0.50 with Deepgram); the held
-passes add about $0.02 per live hour.
+Interleaved with the old code under the same provider conditions (section 3), the branch took
+the first word from **7.0 s to 3.3 s at p50** and 9.5 s to 7.7 s at p95, detection from
+precision 0.92 / recall 0.61 to **1.00 / 0.94** with no false fire and nothing shown then
+cancelled, and prepared answers from 0 hits to 6 of 13, none wrong. That evening's provider was
+slow (first-token timeouts set the p95). Under normal conditions earlier in the day, the per-fix
+runs (section 2) went from 5.0 s / 9.2 s to **2.3 s p50 / 3.2 to 4.3 s p95** after fixes 1 to 5.
+The largest steps were the held fast pass (fix 1), one detector call per turn (fix 2), and a bug
+the benchmark found: utterances glued together when the detector is slower than the gap between
+sentences (2b), which was most of the p95. The detector prompt change (fix 7) took the detector
+from 79% to 100% on the labeled utterances and is what lifts recall to 0.94. Model cost per live
+hour rose from $0.31 to $0.47, mostly because more questions get answered; held passes add about
+$0.013 per live hour.
 
-The 0.9 s / 1.5 s target is still missed. What is left is mostly the detector call itself
-(about 1.5 s p50 from here, 1.2 s of it the model) and the ~260 ms round trip from this desk to
-the US endpoints, which every call pays. No faster OpenAI model is as accurate (section 4).
-
-**Not done: the interleaved before/after run and the benchmark run of fix 7.** OpenAI timed out
-from this machine for over an hour in the evening of 2026-10-14 (first-token timeouts on most
-detector and fast-pass calls), so both attempts measured the outage and were discarded. Command
-to rerun, once the provider probe is back near 1.5 s:
-`uv run copilot-bench run --label final --runs 3 --python <head-checkout>/.venv/Scripts/python.exe
---also baseline-interleaved=<checkout of 6a5ca6b>/.venv/Scripts/python.exe`.
+The 0.9 s / 1.5 s target is still missed. What is left is mostly the detector call itself (about
+1.5 s p50 from here on a normal day, 1.2 s of it the model) and the ~260 ms round trip from this
+desk to the US endpoints, which every call pays. No faster OpenAI model is as accurate
+(section 4).
 
 ## 1. The benchmark
 
@@ -100,13 +97,51 @@ fix6-claude-warm: run 2 hit a network outage (12 failed Deepgram handshakes, Ope
 | 4. Prompt cache warmed at session start | 774a184 | OpenAI `prompt_cache_breakpoint` (explicit mode) and `prompt_cache_options.prewarm` on GPT-5.6+; Claude `max_tokens: 0` | Not visible on this script: since fix 1 the held passes on the opening small talk already warm the cache. Measured directly: a cold gpt-6-luna fast pass took 5.3 s to its first token, warm 1.0 s. Costs $0.00018 a session |
 | 5. Prepared thresholds per embedding model | dd9052f | Calibration set in `evals/prepared/`; text-embedding-3-large: 0.63 with a 0.05 margin (0.85 kept for Cohere) | **Prepared hits 5 of 8, none wrong** (0 of 7 at baseline); model cost per live hour $0.38 to $0.31 |
 | 6. Claude clients: keep-alive and warm-up | 7b318a3 | 120 s keep-alive and a warm-up on the Claude API and Bedrock clients | Not exercised (OpenAI only). Measured directly: a cold Claude API connection took 4.6 s, warm 0.45 s. Run 2 of this label hit a network outage |
-| 7. Detector prompt | 1bbe65c | The prompt names the call type; in a one-on-one call a question from the other side is for the user; requests, audio checks and short reactions need no answer | Detector eval: 79% to 100% (3 repetitions). See section 3 for the benchmark |
+| 7. Detector prompt | 1bbe65c | The prompt names the call type; in a one-on-one call a question from the other side is for the user; requests, audio checks and short reactions need no answer | Detector eval: 79% to 100% (3 repetitions). On the benchmark (section 3, with all fixes): recall 0.94, no false fire |
 
 ## 3. Before and after, interleaved
 
-Pending (see the summary): two attempts on 2026-10-14 ran into an OpenAI outage from this
-machine and were discarded. The per-fix table above is the before/after until then; fix 7's effect
-is measured on the detector eval (79% to 100%), not yet on the full benchmark.
+Baseline (6a5ca6b: the benchmark and the STT crash fix, none of the latency fixes) and the
+branch head (1bbe65c, fixes 1 to 7) as two gateways, alternating run by run, 3 runs each, so
+both saw the same provider conditions. Conditions were slower than in section 2 (probe about
+2 s; the new code's gateway still logged 34 first-token timeouts over its 3 runs), so the
+absolute numbers are higher than the per-fix ones; the comparison is the point.
+
+| | baseline-interleaved | final |
+|---|---|---|
+| Runs | 3 | 3 |
+| Provider probe, detector model (ms) | 2391 | 1954 |
+| First word p50 (ms) | 7030 | 3346 |
+| First word p95 (ms) | 9522 | 7722 |
+| Server first word p50 / p95 | 6804 / 9285 | 3108 / 7500 |
+| Detector p50 / p95 | 2578 / 3707 | 1952 / 3656 |
+| Turn confirmed p50 / p95 | 4914 / 7630 | 2811 / 7500 |
+| Fast start p50 / p95 | 4922 / 7646 | 609 / 3110 |
+| Fast TTFT p50 / p95 | 1617 / 2640 | 1563 / 2903 |
+| Deep first word p50 / p95 | 8274 / 10519 | 5786 / 10606 |
+| Forced first word p50 | 2359 | 1094 |
+| Precision / recall | 0.917 / 0.611 | 1.0 / 0.944 |
+| False fires per run | 0.67 | 0.0 |
+| Shown then cancelled per run | 0.0 | 0.0 |
+| Detector calls per run | 52 | 58.3 |
+| Speculative waste | 0.0 | 0.669 |
+| Prepared hits (correct / chances, wrong) | 0 / 6, 0 | 6 / 13, 0 |
+| Model cost per live hour | $0.31 | $0.47 |
+| Total cost per live hour (with STT) | $0.48 | $0.65 |
+
+- **First word p50 7.0 s to 3.3 s** (−52%), p95 9.5 s to 7.7 s. The p95 is set by the
+  first-token timeouts of that evening (a detector call that times out twice costs 6 s); under
+  normal conditions (section 2) the p95 after fix 2b was 3.2 to 4.3 s.
+- **Detection: precision 0.92 to 1.00, recall 0.61 to 0.94**, no false fire in 3 runs (the
+  baseline fired on the screen-share request and on a statement), and nothing was shown and
+  then cancelled.
+- **Prepared answers: 6 of 13 hit, none wrong** (baseline 0 of 6).
+- **Forced (hotkey) first word: 2.4 s to 1.1 s.**
+- **Cost per live hour $0.31 to $0.47 for models ($0.48 to $0.65 with Deepgram).** Mostly because
+  more questions get answered (31 against 20 over 3 runs; each behavioral or technical one also
+  gets a deep pass): per answered question the cost is about the same. Held passes the detector
+  rejected cost $0.0009 a run (about $0.013 per live hour), the prewarm $0.0002 a session, and the
+  longer detector prompt about $0.02 per live hour.
 
 ## 4. The remaining floor: the detector call
 
@@ -152,5 +187,5 @@ not reach 0.9 s from here.
 
 ## 5. Spend
 
-About $1 in total on OpenAI and Deepgram for this work (TTS $0.03; about 0.03 to
-0.04 USD per benchmark run, 24 runs including the ones discarded in outages; detector evals and probes under $0.10), against the $5 cap.
+About $1.20 in total on OpenAI and Deepgram for this work (TTS $0.03; about 0.03 to
+0.04 USD per benchmark run, 30 runs including the ones discarded in outages; detector evals and probes under $0.10), against the $5 cap.

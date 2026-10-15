@@ -1,0 +1,100 @@
+{
+  "runs": 3,
+  "stages": {
+    "detector_ms": {
+      "p50": 1952,
+      "p95": 3656,
+      "n": 31
+    },
+    "final_ms": {
+      "p50": 577,
+      "p95": 1476,
+      "n": 31
+    },
+    "turn_end_ms": {
+      "p50": 2811,
+      "p95": 7500,
+      "n": 31
+    },
+    "start_ms": {
+      "p50": 609,
+      "p95": 3110,
+      "n": 31
+    },
+    "first_token_ms": {
+      "p50": 1563,
+      "p95": 2903,
+      "n": 25
+    },
+    "server_first_word_ms": {
+      "p50": 3108,
+      "p95": 7500,
+      "n": 31
+    },
+    "first_word_ms": {
+      "p50": 3346,
+      "p95": 7722,
+      "n": 31
+    },
+    "deep_first_word_ms": {
+      "p50": 5786,
+      "p95": 10606,
+      "n": 30
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 1094,
+    "p95": 1544,
+    "n": 3
+  },
+  "first_word_p50_per_run_ms": [
+    3368,
+    5417,
+    2846
+  ],
+  "detection": {
+    "precision": 1.0,
+    "recall": 0.944,
+    "false_fires_per_run": 0.0,
+    "false_fire_utterances": {},
+    "missed": {
+      "leaving": 2
+    },
+    "duplicate_fires_per_run": 0.33,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 0.0,
+    "detector_calls_per_run": 58.3
+  },
+  "speculative": {
+    "fast_starts_per_run": 39.3,
+    "waste_rate": 0.669,
+    "waste_cost_per_run_usd": 0.000903
+  },
+  "prepared": {
+    "opportunities": 13,
+    "hits": 6,
+    "correct": 6,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0457,
+    "model_per_run_usd": 0.0337,
+    "per_live_hour_usd": 0.645,
+    "model_per_live_hour_usd": 0.475,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.027277,
+      "answer:fast": 0.000738,
+      "detector": 0.00353,
+      "pass_cancelled:deep": 0.001064,
+      "pass_cancelled:fast": 0.000916,
+      "prewarm": 0.000181
+    }
+  },
+  "provider_probe_ms": 1954,
+  "label": "final",
+  "env": {},
+  "interleaved_with": [
+    "baseline-interleaved"
+  ],
+  "at": "2026-10-15T01:30:01.958011+00:00"
+}
