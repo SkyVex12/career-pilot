@@ -94,6 +94,79 @@ async def test_route_first_token_timeout_overrides_the_router() -> None:
     assert done.provider == "r"
 
 
+async def test_router_hedges_a_stalled_request() -> None:
+    """Benchmark, October 2026: 5% of detector calls stalled until the first-token timeout and
+    its retry (5 to 6 s). With a hedge, the retry starts alongside the stalled request, and the
+    first to answer wins."""
+
+    class Stalls(Fake):
+        closed = 0
+
+        async def stream(
+            self, model: str, req: LLMRequest, params: Mapping[str, Any]
+        ) -> AsyncGenerator[LLMChunk]:
+            self.calls += 1
+            try:
+                await asyncio.sleep(0.05 if self.calls > 1 else 10)
+                yield "hello"
+                yield LLMDone(LLMUsage(10, 0, 1), "end_turn")
+            finally:
+                Stalls.closed += 1
+
+    p = Stalls("a", "ok")
+    router = ModelRouter(
+        {"detector": [Route(p, "m"), Route(p, "m")]},
+        first_token_timeout_s=3,
+        hedge_after_s={"detector": 0.1},
+    )
+    started = asyncio.get_running_loop().time()
+    text, done = await router.complete("detector", REQ)
+    assert asyncio.get_running_loop().time() - started < 1  # not the 3 s timeout
+    assert (text, done.attempt, done.hedged, p.calls) == ("hello", 1, True, 2)
+    assert Stalls.closed == 2  # the stalled request is cancelled, not left running
+
+
+async def test_router_does_not_hedge_a_prompt_answer_or_other_jobs() -> None:
+    a = Fake("a", "ok", delay=0.01)
+    router = ModelRouter(
+        {"detector": [Route(a, "m"), Route(a, "m")], "fast": [Route(a, "m"), Route(a, "m")]},
+        first_token_timeout_s=1,
+        hedge_after_s={"detector": 0.5},
+    )
+    _, done = await router.complete("detector", REQ)
+    assert (done.attempt, done.hedged, a.calls) == (0, False, 1)
+    slow = Fake("s", "ok", delay=0.2)
+    router.routes = {"fast": [Route(slow, "m"), Route(slow, "m")]}
+    _, done = await router.complete("fast", REQ)
+    assert (done.hedged, slow.calls) == (False, 1)
+
+
+async def test_router_hedge_survives_the_first_request_failing() -> None:
+    class FailsLate(Fake):
+        async def stream(
+            self, model: str, req: LLMRequest, params: Mapping[str, Any]
+        ) -> AsyncGenerator[LLMChunk]:
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(0.2)
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.3)
+            yield "ok"
+            yield LLMDone(LLMUsage(10, 0, 1), "end_turn")
+
+    p = FailsLate("a", "ok")
+    reasons: list[str] = []
+    router = ModelRouter(
+        {"detector": [Route(p, "m"), Route(p, "m"), Route(Fake("b", "ok"), "m")]},
+        first_token_timeout_s=1,
+        on_fallback=lambda job, route, reason: reasons.append(reason),
+        hedge_after_s={"detector": 0.1},
+    )
+    text, done = await router.complete("detector", REQ)
+    assert (text, done.provider, done.attempt) == ("ok", "a", 1)
+    assert reasons == ["RuntimeError: boom"]
+
+
 async def test_router_warms_each_provider_once() -> None:
     class Warm(Fake):
         def __init__(self, name: str, fail: bool = False) -> None:

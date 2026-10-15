@@ -101,7 +101,17 @@ class Detector:
                 cached_tokens=done.usage.cached_tokens,
                 output_tokens=done.usage.output_tokens,
                 cost_usd=self.cost(done) if self.cost else None,
+                first_token_ms=done.first_token_ms,
+                attempt=done.attempt,
             )
+            if done.hedged:
+                # The losing request is billed for at least its input.
+                loser = LLMDone(
+                    LLMUsage(input_tokens=done.usage.input_tokens), None, model=done.model
+                )
+                entry.update(
+                    hedged=True, hedge_cost_usd_est=self.cost(loser) if self.cost else None
+                )
         entry.update(extra)
         self.on_decision(entry, utterance)
 

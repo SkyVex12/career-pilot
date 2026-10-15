@@ -488,7 +488,8 @@ def score_run(
 
     def cost_of(e: dict[str, Any]) -> float:
         v = e.get("cost_usd", e.get("cost_usd_est"))
-        return float(v) if isinstance(v, int | float) else 0.0
+        hedge = e.get("hedge_cost_usd_est")  # a hedged detector call's losing request
+        return sum(float(x) for x in (v, hedge) if isinstance(x, int | float))
 
     by_kind: dict[str, float] = {}
     for e in log:
