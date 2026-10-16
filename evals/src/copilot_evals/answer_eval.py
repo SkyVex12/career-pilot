@@ -60,7 +60,8 @@ Return JSON only:
 
 - grounded: true when every point that states something about the candidate (experience,
   projects, numbers, employers, tools) cites a short id like [n:s1] whose entry in <digest> or
-  <session_pack> supports it. General advice or a clarifying question needs no citation.
+  <session_pack> supports it. General knowledge, advice, a clarifying question, and a fact
+  from a digest section that has no short id (such as skills or preferences) need none.
 - invented: each fact about the candidate that <digest> and <session_pack> do not hold
   (a number, employer, tool, date, team size, event or outcome that is not there, or one
   changed). Rounding the same number or naming it differently is not invented. Empty if none.
@@ -325,6 +326,52 @@ async def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_regrade(args: argparse.Namespace) -> int:
+    """The saved answers graded again, so labels compare under the same rubric."""
+    from copilot_core.dotenv import load_dotenv
+    from copilot_core.llm import OpenAIProvider
+    from copilot_core.packs import render_pack
+    from copilot_core.providers import openai_client
+    from copilot_evals.bench import build_profile
+    from copilot_gateway.config import Settings
+
+    load_dotenv()
+    grader = OpenAIProvider("openai", openai_client(Settings(), timeout_s=120))
+    digest, pack = build_profile(load_profile(), None, None, {})
+    pack_text = render_pack(pack)
+    by_id = {i.id: i for i in items()}
+    sem = asyncio.Semaphore(args.concurrency)
+
+    async def one(row: dict[str, Any]) -> None:
+        if not row.get("answer"):
+            return
+        async with sem:
+            for attempt in range(2):
+                try:
+                    row["grade"] = await grade(
+                        grader, args.grader, digest.text, pack_text, by_id[row["id"]],
+                        row["pass"], row["answer"],
+                    )  # fmt: skip
+                    return
+                except Exception as e:
+                    row["grade_error"] = f"{type(e).__name__}: {e}"
+                    if attempt:
+                        return
+
+    for label in args.labels:
+        out = RESULTS / label
+        rows = cast(list[dict[str, Any]], json.loads((out / "answers.json").read_text("utf-8")))
+        await asyncio.gather(*(one(r) for r in rows))
+        summary = summarize(rows)
+        summary["grader"] = args.grader
+        summary["reps"] = max(r["rep"] for r in rows) + 1
+        (out / "answers.json").write_text(json.dumps(rows, indent=1), "utf-8")
+        (out / "summary.json").write_text(json.dumps(summary, indent=2), "utf-8")
+        (out / "samples.md").write_text(samples_md(label, rows, summary), "utf-8")
+        print(summary_table({label: summary}))
+    return 0
+
+
 def cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", "<br>")
 
@@ -366,11 +413,17 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--reps", type=int, default=2, help="answers per question and pass")
     r.add_argument("--grader", default=DEFAULT_GRADER, help="OpenAI model that grades")
     r.add_argument("--concurrency", type=int, default=4)
+    g = sub.add_parser("regrade", help="grade a label's saved answers again (a new rubric)")
+    g.add_argument("labels", nargs="+")
+    g.add_argument("--grader", default=DEFAULT_GRADER)
+    g.add_argument("--concurrency", type=int, default=4)
     c = sub.add_parser("compare", help="summaries and examples side by side, as markdown")
     c.add_argument("before")
     c.add_argument("after")
     c.add_argument("--example", action="append", help="utterance id (repeatable)")
     args = p.parse_args(argv)
+    if args.cmd == "regrade":
+        return asyncio.run(cmd_regrade(args))
     if args.cmd == "compare":
         print(compare(args.before, args.after, tuple(args.example or EXAMPLES)))
         return 0

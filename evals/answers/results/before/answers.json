@@ -1,0 +1,1106 @@
+[
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "- I\u2019ve spent eight years in backend engineering, and I\u2019m now a senior engineer on Larkspur\u2019s checkout platform. [n:a1]\n- I own the order pipeline and payments adapter layer. [n:a1]\n- I moved reconciliation from nightly batches to Kafka streaming, cutting lag from 24 hours to under two minutes. [n:s2]\n- Before that, I built shipment tracking APIs and event ingestion at Tidewater Logistics. [n:a2]",
+  "metrics": {
+   "words": 57,
+   "lines": 4,
+   "words_per_line": 14.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good four-point fit, though full sentences feel slightly more scripted than glanceable cues."
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "I started in backend engineering at Tidewater Logistics, building shipment tracking APIs and an event ingestion service. Now I\u2019m a Senior Backend Engineer on Larkspur Commerce\u2019s nine-engineer Checkout Platform team. I own the order pipeline and payments adapter layer. [n:a2] [n:a1]\n\nOne major project was replacing nightly batch reconciliation with streaming. My task was to make reconciliation much faster while managing the migration safely. I built the pipeline with Kafka, Go consumers, and PostgreSQL, and ran the old and new systems side by side for six weeks before cutover. Reconciliation lag dropped from 24 hours to under two minutes. That\u2019s a good example of the backend platform work I focus on today. [n:s2]",
+  "metrics": {
+   "words": 110,
+   "lines": 2,
+   "words_per_line": 55,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 2
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Supported facts, but roughly 115 words in two prose paragraphs exceed the requested 4\u20136 cue lines under 70 words."
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "- On Black Friday, our payments adapter exhausted its connection pool at six times normal traffic. [n:s1]\n- I led the incident and shed load with a feature flag in 12 minutes. [n:s1]\n- We kept revenue loss under 0.3% of the day. [n:s1]\n- Afterwards, I added provider-specific pool limits and load tests in CI. [n:s1]",
+  "metrics": {
+   "words": 49,
+   "lines": 4,
+   "words_per_line": 12.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Accurate and well sized, though full sentences read more like a script than glanceable cues."
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "**Situation:** On Black Friday, our payments adapter exhausted its connection pool at six times normal traffic. Checkout was affected during a critical sales day. [n:s1]\n\n**Task:** I led the incident. My immediate priority was to stabilize checkout and limit the revenue impact. [n:s1]\n\n**Action:** I used a feature flag to shed load within 12 minutes. Afterward, I added connection pool limits per payment provider and load tests in CI to catch the same failure mode before production. [n:s1]\n\n**Result:** We held the revenue loss to under 0.3% of the day\u2019s revenue. My approach was to focus first on mitigation, then on preventing a repeat. [n:s1]",
+  "metrics": {
+   "words": 101,
+   "lines": 4,
+   "words_per_line": 25.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Grounded, but the roughly 110-word STAR prose exceeds the 70-word limit and reads like a script rather than glanceable cues."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "- I added connection-pool limits per payment provider to prevent pool exhaustion. [n:s1]\n- I added load tests to CI so we\u2019d catch traffic-related issues earlier. [n:s1]\n- I also used a feature flag to shed load during the incident. [n:s1]",
+  "metrics": {
+   "words": 35,
+   "lines": 3,
+   "words_per_line": 11.7,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 4,
+   "notes": "The feature-flag point describes the incident response, not a change made afterwards to prevent recurrence."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "During that Black Friday incident, our payments adapter exhausted its connection pool at six times normal traffic. I led the response, and we shed load with a feature flag in 12 minutes. [n:s1]\n\nAfter stabilizing it, my priority was to address the pool exhaustion, not just the immediate symptoms. I added connection pool limits per provider and load tests in CI. Those changes targeted the failure mode and made load testing part of our development process. [n:s1]\n\nWe held the incident\u2019s revenue loss below 0.3% of the day. I wouldn\u2019t claim it could never happen again, but we had concrete safeguards against the same problem. [n:s1]",
+  "metrics": {
+   "words": 103,
+   "lines": 3,
+   "words_per_line": 34.3,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Grounded, but exceeds 70 words, uses prose paragraphs instead of 4\u20136 cue lines, and spends too much time recapping rather than focusing on prevention."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "- I\u2019d use a token bucket per API key, with Redis for shared limits across service instances. [n:s6]\n- I\u2019d partition keys by region and define whether quotas are regional or globally shared.\n- For Redis failures, I\u2019ve used local in-process buckets as a fallback. [n:s6]\n- I\u2019d test failover and cross-region behavior, especially how limits stay consistent.",
+  "metrics": {
+   "words": 52,
+   "lines": 4,
+   "words_per_line": 13,
+   "cited_share": 0.5,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Good short cues, but leaves the main multi-region tradeoff unresolved: enforcing a global quota versus allocating regional quotas."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "**Clarifying questions**\n- Do I need to enforce one strict global limit per API key, or can each region have a budget with some temporary overshoot? [n:s6]\n- If the rate-limit store is unavailable, should I prioritize API availability or strict enforcement? [n:s6]\n\n**Components**\n- I\u2019d start with a token bucket per API key. At Tidewater, I used Redis with a Lua script and local in-process buckets as a fallback. That handled 15,000 requests per second. [n:s6]\n- For several regions, I\u2019d consider regional Redis stores with a share of each key\u2019s global budget. I\u2019d treat that as a design choice to validate, not something I\u2019ve already run across regions. [n:s6]\n\n**Data flow**\n- I\u2019d check the key\u2019s bucket before forwarding the request. I\u2019d use a Lua script to make the refill and token deduction atomic. If there\u2019s a token, I\u2019d admit the request. Otherwise, I\u2019d reject it with a retry delay. [n:s6]\n- If Redis is unavailable, I\u2019d use a bounded local bucket if availability is the priority. That follows the fallback approach I used at Tidewater. [n:s6]\n\n**Scaling**\n- I\u2019d partition buckets by API key. Regional budgets would keep the normal request path local, without a cross-region call for every request. I\u2019d validate the budget split against the expected traffic pattern. [n:s6]\n- I\u2019d load-test bursts and store failures before launch. Adding load tests after a production connection-pool incident reinforced that approach for me. [n:s1]\n\n**Tradeoffs**\n- I\u2019d choose regional budgets when low latency matters more than perfect global utilization. One region could reject requests while another still has unused capacity. Local fallback buckets can also allow overshoot. [n:s6]\n- If the global cap must be strict, I\u2019d favor coordinated decisions and accept the extra latency and availability cost. I\u2019d make that requirement explicit before choosing the architecture. [n:s6]",
+  "metrics": {
+   "words": 281,
+   "lines": 15,
+   "words_per_line": 18.7,
+   "cited_share": 0.67,
+   "stock_phrases": [],
+   "sentence_lines": 8
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Technically relevant and grounded, but far over 100 words, with multiple full-sentence bullets per section instead of one short cue line each."
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "- I introduced a schema registry using backward-compatible Avro schemas [n:s3].\n- I added a CI check to block breaking changes before they reached consumers [n:s3].\n- That let teams evolve schemas while keeping consumers compatible [n:s3].\n- We had zero consumer breakages across 140 schema changes in 18 months [n:s3].",
+  "metrics": {
+   "words": 47,
+   "lines": 4,
+   "words_per_line": 11.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Accurate and well-sized, though full sentences are slightly more scripted than glanceable cues."
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "I introduced a schema registry with backward-compatible Avro schemas and a CI check that blocked breaking changes; we made 140 schema changes over 18 months with zero consumer breakages. [n:s3] The tradeoff was less freedom to change schemas, but I chose that constraint to protect consumers. [n:s3]",
+  "metrics": {
+   "words": 45,
+   "lines": 1,
+   "words_per_line": 45,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 1
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Dense paragraph rather than 4\u20136 glanceable lines, with little explanation of how the compatibility check works."
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "- I\u2019d explain that processes have separate memory, while threads share a process\u2019s memory.\n- I\u2019d choose processes for stronger isolation or separate applications; threads for concurrent work sharing state.\n- Threads need care around shared data; processes need communication between them.\n- I\u2019d weigh isolation, coordination, and workload needs before choosing.",
+  "metrics": {
+   "words": 48,
+   "lines": 4,
+   "words_per_line": 12,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good concise technical cues, though the 'I\u2019d explain' framing and final point add mild filler."
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "I\u2019d approach that choice by asking whether the work needs to run independently or share state. I\u2019d also ask what should happen to the rest of the service if one worker fails.\n\nFor a concrete example, I\u2019d use my order reconciliation pipeline, which used Kafka, Go consumers, and PostgreSQL, and evaluate the worker model around those questions. [n:s2]\n\nThe tradeoff I\u2019d focus on is isolation versus the cost of coordinating the workers.",
+  "metrics": {
+   "words": 71,
+   "lines": 3,
+   "words_per_line": 23.7,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Discusses selection criteria but never explains process versus thread memory sharing and isolation, and uses paragraphs instead of the requested 4\u20136 concise lines."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What would you do differently if you built it again",
+  "answer": "- I\u2019d plan shadow mode and per-region accuracy checks before launch; our first ETA release missed rural accuracy [n:s8]\n- I\u2019d use real-world validation before exposing predictions to users [n:s8]\n- I\u2019d keep the rollback path ready, then relaunch only after the checks passed [n:s8]",
+  "metrics": {
+   "words": 39,
+   "lines": 3,
+   "words_per_line": 13,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What would you do differently if you built it again",
+  "answer": "**Situation:** I moved our order reconciliation from nightly batches to a streaming pipeline using Kafka, Go consumers, and PostgreSQL. [n:s2]\n\n**Task:** I needed to reduce the lag while keeping the migration safe for existing consumers. [n:s2]\n\n**Action:** If I built it again, I\u2019d make schema compatibility an explicit requirement from the start. I\u2019d use backward-compatible Avro schemas and a CI check to block breaking changes. I\u2019d also keep the side-by-side rollout we used for six weeks. [n:s3] [n:s2]\n\n**Result:** The original migration reduced lag from 24 hours to under two minutes. Our schema checks also supported 140 changes with zero consumer breakages over 18 months. [n:s2] [n:s3]",
+  "metrics": {
+   "words": 101,
+   "lines": 4,
+   "words_per_line": 25.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Exceeds 70 words and uses scripted STAR prose rather than short cues headed by the story name, though the proposed change answers the question."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "- I think of an index like a lookup structure that avoids scanning every row.\n- The database uses the indexed value to find matching rows, then fetches their data.\n- This helps most when queries filter or join on indexed columns [n:s4].\n- Indexes also cost storage and slow writes, so I\u2019d add them based on query patterns.",
+  "metrics": {
+   "words": 55,
+   "lines": 4,
+   "words_per_line": 13.8,
+   "cited_share": 0.25,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "I think of an index as a shortcut: it lets the database find matching rows without scanning the whole table. For a typical B-tree index, the database searches an ordered structure to locate the relevant entries, then retrieves the rows it needs. [n:s4]\n\nAt Tidewater, I helped identify the database as the tracking service\u2019s bottleneck. We added two indexes and a cache, and together those changes reduced p95 latency by 70%, without a rewrite. [n:s4]\n\nThe tradeoff I\u2019d consider is write overhead: inserts, updates, and deletes also have to maintain the indexes, so I\u2019d choose them around the queries that matter. [n:s4]",
+  "metrics": {
+   "words": 99,
+   "lines": 3,
+   "words_per_line": 33,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Accurate and grounded, but uses full prose paragraphs and exceeds 70 words instead of giving 4\u20136 short cue lines."
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "- My manager wanted to rewrite the tracking service in a new language; I thought we should test first. [n:s4]\n- I proposed a two-week spike with measurable success criteria. [n:s4]\n- It showed the database was the bottleneck, so we fixed it with two indexes and a cache. [n:s4]\n- P95 improved 70%, and we dropped the rewrite. [n:s4]",
+  "metrics": {
+   "words": 52,
+   "lines": 4,
+   "words_per_line": 13,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "At Tidewater, my manager wanted to rewrite our tracking service in a new language. I disagreed because I wanted to verify what was actually causing the performance problem before committing to a rewrite. [n:s4]\n\nMy goal was to help us choose a fix based on evidence. I proposed a two-week spike with measurable criteria instead. [n:s4]\n\nThe spike showed that the database was the bottleneck. We addressed it with two indexes and a cache. [n:s4]\n\nThat brought p95 latency down by 70%. My manager agreed with the findings, and we dropped the rewrite. For me, the key was making it a shared experiment rather than an argument about whose opinion was right. [n:s4]",
+  "metrics": {
+   "words": 109,
+   "lines": 4,
+   "words_per_line": 27.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Supported story, but exceeds 70 words and uses read-aloud paragraphs and reflective filler instead of 4\u20136 short cues starting with the story name."
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "- I\u2019d start by checking browser cache, then resolve the hostname through DNS if needed.\n- The browser opens a connection, typically TCP with TLS, or QUIC for HTTP/3.\n- It sends an HTTP request; the server processes it and returns a response.\n- The browser parses the response, fetches dependent assets, and renders the page.",
+  "metrics": {
+   "words": 52,
+   "lines": 4,
+   "words_per_line": 13,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "I\u2019d break it into a few steps: the browser parses the URL, resolves the hostname through DNS if needed, and establishes a connection, including TLS for HTTPS. It then sends an HTTP request, receives the response, and loads any additional resources needed to render the page.\n\nIn my work, I\u2019ve dealt with the backend part of that path: a tracking service was slow because of database access, and adding two indexes and a cache brought p95 latency down 70%. [n:s4]\n\nOne tradeoff I\u2019d highlight is latency versus freshness: caching can make requests faster, but I\u2019d need to decide how much stale data is acceptable. [n:s4]",
+  "metrics": {
+   "words": 103,
+   "lines": 3,
+   "words_per_line": 34.3,
+   "cited_share": 0.67,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Technically sound and grounded, but written as read-aloud paragraphs rather than 4\u20136 short cue lines, and exceeds 70 words."
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "- My team\u2019s roadmap is shifting toward frontend work, and I want to stay focused on backend systems.\n- I\u2019m looking for larger-scale payments work and more system design ownership.\n- Your streaming settlement work is especially relevant to my experience moving reconciliation to Kafka. [n:s2]",
+  "metrics": {
+   "words": 42,
+   "lines": 3,
+   "words_per_line": 14,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "My current team at Larkspur is shifting its roadmap toward frontend work. I want to stay focused on backend systems and take on more system design ownership. [n:a1]\n\nI\u2019ve owned the order pipeline and payments adapter layer. One project I\u2019m proud of was moving reconciliation from nightly batch jobs to Kafka streaming. That brought lag down from 24 hours to under 2 minutes. [n:a1] [n:s2]\n\nNow I\u2019m looking for a larger-scale payments role where I can build on that experience. Your move from batch settlement to streaming is a strong match for the work I want to do next. [n:s2]",
+  "metrics": {
+   "words": 96,
+   "lines": 3,
+   "words_per_line": 32,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Grounded and relevant, but full prose paragraphs exceed the 70-word limit and replace the requested 4\u20136 short cue lines."
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "- How far along is the move from batch settlement to streaming, and what\u2019s been hardest? [n:s2]\n- How do teams divide ownership of shared payment services?\n- What does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 34,
+   "lines": 3,
+   "words_per_line": 11.3,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "Yes. I\u2019d love to understand how far along you are in the move from batch to streaming settlement, and what the hardest problem has been so far. [n:s2]\n\nI\u2019d also like to hear how senior engineers shape system design decisions and own shared payment services. I own the order pipeline and payments adapter layer today, so that\u2019s especially relevant to me. [n:a1]",
+  "metrics": {
+   "words": 60,
+   "lines": 2,
+   "words_per_line": 30,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 2
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Relevant questions, but at 68 words it exceeds the under-40-word limit and reads as full sentences rather than quick cues."
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "- I\u2019ve been building backend systems for about eight years, and I\u2019m now a senior engineer on Larkspur\u2019s checkout platform. [n:a1]\n- I own the order pipeline and payments adapter layer. [n:a1]\n- I moved reconciliation from nightly batches to Kafka streaming, cutting lag from 24 hours to under two minutes. [n:s2]\n- Before that, I built shipment-tracking APIs and event ingestion at Tidewater Logistics. [n:a2]",
+  "metrics": {
+   "words": 58,
+   "lines": 4,
+   "words_per_line": 14.5,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good coverage in four short points, though full sentences read more like a script than glanceable cues."
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "I started in backend at Tidewater Logistics, building shipment tracking APIs and an event ingestion service. Now I\u2019m a Senior Backend Engineer on Larkspur Commerce\u2019s nine-engineer Checkout Platform team. [n:a2][n:a1]\n\nI own the order pipeline and payments adapter layer. One major project was replacing nightly batch reconciliation with streaming. [n:a1][n:s2]\n\nI built the pipeline with Kafka, Go consumers, and PostgreSQL. I ran the old and new systems side by side for six weeks before cutting over. That brought reconciliation lag from 24 hours to under two minutes. That batch-to-streaming work is the closest match between my recent experience and this role. [n:s2]",
+  "metrics": {
+   "words": 99,
+   "lines": 3,
+   "words_per_line": 33,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Grounded and relevant, but over 100 words in three prose paragraphs rather than 4\u20136 short cue lines under 70 words."
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "- On Black Friday, our payments adapter ran out of connections at six times normal traffic. [n:s1]\n- I led the incident and shed load with a feature flag in 12 minutes. [n:s1]\n- We kept revenue loss under 0.3% for the day. [n:s1]\n- Afterward, I added provider-specific pool limits and load tests in CI. [n:s1]",
+  "metrics": {
+   "words": 49,
+   "lines": 4,
+   "words_per_line": 12.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "**Situation:** On Black Friday, our payments adapter exhausted its connection pool at six times normal traffic. Checkout was affected during a critical sales day. [n:s1]\n\n**Task:** I led the incident. My immediate priority was to stabilize checkout and limit revenue loss. [n:s1]\n\n**Action:** I shed load using a feature flag within 12 minutes. After the incident, I added connection pool limits per payment provider and load tests in CI to catch the same failure before production. [n:s1]\n\n**Result:** We held revenue loss below 0.3% of the day\u2019s revenue. We also put concrete safeguards in place against the same failure mode. [n:s1]",
+  "metrics": {
+   "words": 97,
+   "lines": 4,
+   "words_per_line": 24.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 3,
+   "notes": "Grounded story, but exceeds 70 words and uses full STAR prose rather than short cues starting with the story name."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "- I added connection-pool limits per payment provider to prevent pool exhaustion [n:s1]\n- I also added load tests in CI to catch capacity issues earlier [n:s1]\n- I\u2019d focus on validating the fix under realistic traffic and monitoring it closely [n:s1]",
+  "metrics": {
+   "words": 36,
+   "lines": 3,
+   "words_per_line": 12,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 4,
+   "notes": "The last point is hypothetical advice rather than a concrete change made after the incident."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "During the Black Friday outage, our payments adapter exhausted its connection pool at six times normal traffic. I led the response, and we shed load with a feature flag in 12 minutes. [n:s1]\n\nAfter stabilizing things, I needed to address the failure mode, not just the immediate outage. I added connection pool limits per payment provider and load tests in CI. Those changes addressed how we allocated connections and gave us a way to test under load before shipping. [n:s1]\n\nWe held revenue loss below 0.3% of the day. I wouldn\u2019t claim it could never happen again, but we put concrete safeguards around the cause. [n:s1]",
+  "metrics": {
+   "words": 103,
+   "lines": 3,
+   "words_per_line": 34.3,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Grounded, but written as long paragraphs rather than 4\u20136 short cue lines under 70 words, with unnecessary incident recap and filler."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "- I\u2019d use a distributed token bucket per API key, backed by Redis for shared limits. [n:s6]\n- I\u2019d use atomic Redis operations, such as Lua, to avoid races between requests. [n:s6]\n- If Redis were unavailable, I\u2019d fall back to local buckets, while recognizing limits may drift across regions. [n:s6]\n- I\u2019d clarify whether strict global limits or regional availability matter more, then tune coordination accordingly. [n:s6]",
+  "metrics": {
+   "words": 60,
+   "lines": 4,
+   "words_per_line": 15,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Good short cues, but the multi-region design needs a concrete coordination or quota-allocation strategy."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "**Clarifying questions**\n- Do we need one strict global limit per API key, or can each region enforce a share of the limit? I\u2019d clarify that before extending the per-key design I used at Tidewater. [n:s6]\n- If the shared limiter is unavailable, should we reject requests or allow limited traffic through a local fallback? I used local fallback buckets during Redis failover at Tidewater. [n:s6]\n\n**Components**\n- I\u2019d start with a token bucket per API key in Redis. I used that approach at Tidewater, with a Lua script to make the token check and update atomic. [n:s6]\n- I\u2019d keep an in-process bucket as a fallback. That gives each API instance a way to limit traffic when Redis is unavailable. [n:s6]\n\n**Data flow**\n- For each request, I\u2019d identify the API key and check its bucket. The Lua script would update the available tokens and decide whether to allow the request. That builds on the Redis-and-Lua design I used before. [n:s6]\n- During Redis failover, I\u2019d switch to the local bucket rather than let requests through without any limit. That was our fallback at Tidewater. [n:s6]\n\n**Scaling and tradeoffs**\n- My previous implementation handled 15,000 requests per second. I\u2019d use that as relevant experience, not as proof that the same design meets a multi-region requirement. [n:s6]\n- I\u2019d make the regional consistency requirement explicit before choosing how to coordinate buckets. My experience here is with per-key Redis buckets and local fallback, not a proven strict global limiter. [n:s6]\n- I\u2019d treat fallback behavior as a deliberate tradeoff. Local buckets preserve some availability, but I wouldn\u2019t claim they enforce one exact limit across all instances and regions. [n:s6]",
+  "metrics": {
+   "words": 260,
+   "lines": 13,
+   "words_per_line": 20,
+   "cited_share": 0.69,
+   "stock_phrases": [],
+   "sentence_lines": 9
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Far over 100 words, with repeated experience recaps instead of concise components, flow, and concrete multi-region scaling tradeoffs."
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "- I introduced a schema registry with backward-compatible Avro schemas. [n:s3]\n- I added a CI check to block breaking schema changes. [n:s3]\n- That let teams evolve schemas while protecting downstream consumers. [n:s3]\n- We had zero consumer breakages across 140 schema changes in 18 months. [n:s3]",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good fit; slightly full-sentence phrasing rather than glanceable cues."
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "I handled schema changes in the Kafka order pipeline with a schema registry, backward-compatible Avro schemas, and a CI check that blocked breaking changes; we made 140 schema changes with zero consumer breakages over 18 months. [n:s2] [n:s3] The tradeoff was less freedom to change schemas, but I valued keeping existing consumers working. [n:s3]",
+  "metrics": {
+   "words": 51,
+   "lines": 1,
+   "words_per_line": 51,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 1
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Accurate, but packed into a paragraph rather than 4\u20136 glanceable lines, with little explanation of how compatibility checks work."
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "- I think of a process as an isolated program with its own memory; threads share memory within a process.\n- I\u2019d choose processes when isolation or independent failure boundaries matter.\n- I\u2019d choose threads for concurrent work that benefits from shared memory and lower coordination overhead.\n- For either, I\u2019d weigh workload, communication needs, and failure risks; I haven\u2019t described a specific example from my experience. [n:a1]",
+  "metrics": {
+   "words": 63,
+   "lines": 4,
+   "words_per_line": 15.8,
+   "cited_share": 0.25,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 4,
+   "notes": "The first three points work, but the final disclaimer and irrelevant citation are awkward to say and add no technical value."
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "I think of a process as an independent running program with its own memory space, and a thread as an execution path within a process that shares its memory. I would pick processes for stronger isolation, and threads when I need concurrent work with shared state.\n\nIn my Kafka pipeline work, I used Go consumers and PostgreSQL to bring reconciliation lag from 24 hours to under two minutes; in Go, I would also distinguish goroutines from operating-system threads. [n:s2]\n\nThe tradeoff I would weigh is isolation versus coordination cost: processes need explicit communication, while threads make sharing easier but require careful synchronization.",
+  "metrics": {
+   "words": 101,
+   "lines": 3,
+   "words_per_line": 33.7,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Accurate and grounded, but exceeds 70 words, uses prose instead of 4\u20136 cue lines, and the work example does not illustrate choosing processes versus threads."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What would you do differently if you built it again",
+  "answer": "- I\u2019d keep batch and streaming running together long enough to validate behavior before cutover [n:s2].\n- I\u2019d make schema compatibility checks part of CI from the start [n:s3].\n- I\u2019d add shadow-mode testing to catch real-world issues before launch [n:s8].\n- I\u2019d focus the comparison on measurable outcomes like lag and reliability [n:s2].",
+  "metrics": {
+   "words": 50,
+   "lines": 4,
+   "words_per_line": 12.5,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The cues mix three projects and describe parallel running that already happened, rather than clearly stating what would change on a rebuild."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What would you do differently if you built it again",
+  "answer": "**Situation:** I moved order reconciliation from nightly batch jobs to Kafka streaming, with Go consumers and PostgreSQL. [n:s2]\n\n**Task:** I needed to reduce reconciliation lag while keeping the migration safe. [n:s2]\n\n**Action:** If I built it again, I\u2019d make schema compatibility a requirement from the start. I\u2019d bring the schema registry and backward-compatible Avro checks into the initial design. Those are protections I introduced for schema evolution. I\u2019d keep the six-week side-by-side rollout. [n:s3] [n:s2]\n\n**Result:** The pipeline reduced lag from 24 hours to under two minutes. The schema checks supported 140 changes with zero consumer breakages over 18 months. I\u2019d aim to preserve both outcomes. [n:s2] [n:s3]",
+  "metrics": {
+   "words": 102,
+   "lines": 4,
+   "words_per_line": 25.5,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Grounded, but exceeds 70 words, lacks the story-name opener, and uses read-out STAR prose rather than glanceable cues."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "- I think of an index as a lookup structure that avoids scanning every row.\n- The database follows the index to find matching rows, then fetches their data.\n- It helps most when the query filters or sorts on indexed columns.\n- Indexes use storage and slow writes, so I\u2019d add them based on query patterns.",
+  "metrics": {
+   "words": 53,
+   "lines": 4,
+   "words_per_line": 13.2,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "I think of an index as a separate lookup structure that lets the database find matching rows without scanning the whole table. It speeds up queries when the database can use that structure to narrow down the rows it needs to read.\n\nAt Tidewater, I used two indexes and a cache to address a database bottleneck in our tracking service. Together, those changes brought p95 latency down 70%. [n:s4]\n\nThe tradeoff I would consider is write overhead: the database has to maintain the indexes as data changes.",
+  "metrics": {
+   "words": 86,
+   "lines": 3,
+   "words_per_line": 28.7,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Accurate and grounded, but exceeds 70 words, uses paragraphs rather than 4\u20136 cue lines, and barely explains the lookup mechanism."
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "- My manager wanted to rewrite our tracking service in a new language; I proposed a two-week spike instead. [n:s4]\n- We agreed on measurable criteria before choosing a direction. [n:s4]\n- The spike showed the database was the bottleneck, so we added two indexes and a cache. [n:s4]\n- P95 latency dropped 70%, and we decided not to rewrite. [n:s4]",
+  "metrics": {
+   "words": 53,
+   "lines": 4,
+   "words_per_line": 13.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good four-point structure, though full sentences make it slightly more scripted than glanceable cues."
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "At Tidewater, my manager wanted to rewrite our tracking service in a new language. I disagreed because I wanted to identify the actual bottleneck before committing to a rewrite. [n:s4]\n\nMy goal was to turn that disagreement into something we could measure. I proposed a two-week spike with clear criteria instead. [n:s4]\n\nThe spike showed that the database was the bottleneck. We addressed it with two indexes and a cache, rather than changing languages. [n:s4]\n\nThat brought p95 latency down by 70%. My manager agreed with the findings, and we dropped the rewrite. [n:s4]",
+  "metrics": {
+   "words": 90,
+   "lines": 4,
+   "words_per_line": 22.5,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Supported story, but full-sentence paragraphs exceed 70 words and omit the requested story-name opening."
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "- I\u2019d first check for a cached DNS result; otherwise the browser resolves the domain to an IP.\n- It opens a connection to the server, typically using TCP and TLS for HTTPS.\n- The browser sends an HTTP request, and the server returns a response.\n- The browser parses the response, fetches needed resources, then renders the page. [n:a1]",
+  "metrics": {
+   "words": 55,
+   "lines": 4,
+   "words_per_line": 13.8,
+   "cited_share": 0.25,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise technical cues; the candidate-role citation on the final point is unnecessary."
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "I\u2019d break it into stages: how the browser reaches the service, how the backend handles the request, and how the response gets back. My strongest experience is on the backend side, especially APIs, payments adapters, and database performance. [n:a1] [n:a2]\n\nFor example, on our tracking service, a two-week investigation showed that the database was the bottleneck. We added two indexes and a cache, which brought p95 latency down 70%. [n:s4]\n\nThe tradeoff we considered was rewriting the service in a new language versus making targeted changes. I proposed measuring the bottleneck first, and the results let us drop the rewrite. [n:s4]",
+  "metrics": {
+   "words": 97,
+   "lines": 3,
+   "words_per_line": 32.3,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 1,
+   "notes": "Overlong paragraphs substitute a backend story for the requested DNS, connection, HTTP, and browser-rendering walkthrough."
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "- My team\u2019s roadmap is shifting toward frontend work, and I want to stay focused on backend systems.\n- I\u2019m looking for larger-scale payments work, especially streaming settlement challenges. [n:s2]\n- I\u2019d also like more ownership of system design decisions.",
+  "metrics": {
+   "words": 36,
+   "lines": 3,
+   "words_per_line": 12,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 4,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "I\u2019m a senior backend engineer on Larkspur\u2019s Checkout Platform team. I own the order pipeline and payments adapter layer. Our roadmap is shifting toward frontend work, and I want to stay focused on backend systems and take on more system design ownership. [n:a1]\n\nOne project I really enjoyed was moving order reconciliation from nightly batch to Kafka streaming. I ran the old and new pipelines side by side for six weeks before cutover. We reduced reconciliation lag from 24 hours to under two minutes. [n:s2]\n\nI\u2019m looking for more work like that at a larger payments scale. That\u2019s why your move toward streaming settlement interests me. [n:s2]",
+  "metrics": {
+   "words": 104,
+   "lines": 3,
+   "words_per_line": 34.7,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Answers the question accurately, but uses full scripted paragraphs and exceeds 70 words instead of giving 4\u20136 concise cue lines."
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "- How far along is the move from batch settlement to streaming, and what\u2019s been hardest? [n:s2]\n- How do teams share ownership of payment services?\n- What does on-call look like, and how do you review incidents? [n:s1]",
+  "metrics": {
+   "words": 34,
+   "lines": 3,
+   "words_per_line": 11.3,
+   "cited_share": 0.67,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "Yes. I\u2019d love to hear how far along you are in the move from batch settlement to streaming, and what has been hardest so far. [n:s2]\n\nI\u2019d also like to understand how engineers split ownership of shared payment services, and how much system design ownership this role would have. I currently own the order pipeline and payments adapter layer, so that\u2019s especially relevant to me. [n:a1]",
+  "metrics": {
+   "words": 64,
+   "lines": 2,
+   "words_per_line": 32,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 2
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Relevant questions, but at roughly 77 words it exceeds the 40-word limit and uses full scripted sentences rather than quick cues."
+  }
+ }
+]

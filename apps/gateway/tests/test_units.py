@@ -551,3 +551,19 @@ def test_prepared_thresholds_from_the_environment_merge_over_the_defaults() -> N
     )
     assert s.prepared_threshold("voyage:voyage-3@1024").min_similarity == 0.7
     assert s.prepared_threshold(_Embedder.model_id).min_similarity == 0.63
+
+
+def test_live_prompts_ask_for_spoken_cues() -> None:
+    """Live test, 2026-10-07: the answers sounded AI-generated, full sentences and paragraphs
+    to read out. The passes now ask for cues in the user's own wording, and a general
+    technical question gets its answer, not a story or advice on how to approach it."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    deep = prompts.deep_pass(ctx, "", "q?", "behavioral", 800)
+    for system in (fast, deep.system[0].text):
+        assert "not sentences to read out" in system
+        assert "Reuse the wording, story names and exact numbers" in system
+        assert "may have a misheard word" in system
+        assert "the points are the\n  answer itself" in system
+    assert "fragment of 3 to 10 words" in fast
+    assert "under 70 words" in str(deep.content)
