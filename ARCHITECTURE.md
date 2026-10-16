@@ -1016,7 +1016,7 @@ Answers run outside the group, one task per question, so a new question can canc
 
 1. On a speech-end frame on the "them" channel, record `t0`. Run the local classifier on the current interim text; if it scores 0.3 or higher, call the Haiku detector (results cached by text hash) and start retrieval on the same text.
    At the same time, if the text passes a cheap local check (`likely_question`: at least 3 words, and a "?" from the STT's punctuation, a question word anywhere, or a request such as "tell me", "walk me through", "could you"), the fast pass starts **held**: it streams into a buffer on the gateway and sends nothing. The check only limits wasted calls; a question it misses gets its fast pass at step 2, later. The prompt has no question type yet (`Question: ...`), since the detector has not typed it.
-2. Once the detector says complete question, addressed to the user, confidence at least 0.7 (and not before `t0 + 300 ms`): send `question.detected` with `speculative: true`, then release the held pass: what it buffered goes out as one `answer.delta`, and the rest streams. With no held pass, the fast pass starts now. Prepared answers: if the question's match (started with the detector) has already found a prepared answer in the session pack (best similarity at least the embedding model's threshold, and ahead of the runner-up by its margin), those points are sent at once and no model is called. If the match is still running, the model does not wait for it: both run, and a hit that arrives before any of the model's text has reached the client takes the slot over (the model call is cancelled and logged as `pass_cancelled`, reason `prepared`); a later hit is dropped. The same holds for forced questions, whose match starts with the fast pass. If the detector says no, the held pass is cancelled without any message; the session log records it as `pass_cancelled` with reason `held_discarded` and its cost, so speculative waste can be measured.
+2. Once the detector says `answer` (and not before `t0 + 300 ms`): send `question.detected` with `speculative: true`, then release the held pass: what it buffered goes out as one `answer.delta`, and the rest streams. With no held pass, the fast pass starts now. Prepared answers: if the question's match (started with the detector) has already found a prepared answer in the session pack (best similarity at least the embedding model's threshold, and ahead of the runner-up by its margin), those points are sent at once and no model is called. If the match is still running, the model does not wait for it: both run, and a hit that arrives before any of the model's text has reached the client takes the slot over (the model call is cancelled and logged as `pass_cancelled`, reason `prepared`); a later hit is dropped. The same holds for forced questions, whose match starts with the fast pass. If the detector says no, the held pass is cancelled without any message; the session log records it as `pass_cancelled` with reason `held_discarded` and its cost, so speculative waste can be measured.
 3. If speech starts again before confirmation, cancel the speculative work (a held pass silently; a released one with `question.cancelled`) and keep accumulating text. The next speech-end starts again at step 1. This holds only while the speaker could still be mid-sentence: when speech starts after a pause longer than the silence timer and the STT final is in, the speaker had finished, so the turn keeps deciding on its own text and the new speech starts a new utterance (otherwise a detector slower than the gap between two sentences glues them into one question).
 4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`, and start the deep pass with the retrieval results if the type is behavioral, technical or system design. For other types the deep pass waits until the user taps expand. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
 5. If the detector says it is not a question for the user, nothing is shown; the text stays in the transcript tail as context.
@@ -1036,7 +1036,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `speculative_hold` | on: the fast pass starts at the speech end, held until the detector confirms |
 | `speculative_min_words` | 3 (shorter text never starts a held pass) |
 | `stage1_min_score` | 0.3 |
-| `detector_min_confidence` | 0.7 |
+| `detector_hedge_ms` | 2000 (a detector request with no first token by then gets its retry route alongside it; the first to answer wins) |
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |
 | `prepared_answer_thresholds` | per embedding model: `openai:text-embedding-3-large@1024` 0.63 with a 0.05 margin over the runner-up; `bedrock:cohere.embed-v4:0@1024` 0.85 (not yet calibrated). Set from `copilot-calibrate-prepared` on `evals/prepared/calibration.toml`: the lowest threshold with no wrong match, plus 0.03, since a wrong match shows points for another question |
 | `prepared_answer_min_similarity` | 0.85 (embedding models without a calibrated entry) |
@@ -1098,24 +1098,23 @@ Decide whether the latest utterance in {mode} is a question for {user_name} that
 answer: something {user_name} should now reply to with substance (experience, knowledge, an
 opinion, a plan).
 Return JSON only:
-{"is_question": bool, "complete": bool, "addressed_to_user": bool,
- "type": "behavioral|technical|system_design|coding|standup_status|small_talk|other",
- "confidence": number from 0 to 1}
-- is_question is false for a request to do something right now (share your screen, wait a
+{"answer": "behavioral|technical|system_design|coding|standup_status|small_talk|other|wait|none"}
+- The question type when it is a complete question for {user_name} that needs an answer now.
+  small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
+  questions for us?" is other.
+- wait: it would be one, but the utterance stops mid-sentence or mid-thought.
+- none: anything else. A request to do something right now (share your screen, wait a
   moment, unmute), an audio check ("can you hear me?"), and a short reaction to something on
-  screen or just said ("what is that?", "oh really?"). None of these needs talking points. A
+  screen or just said ("what is that?", "oh really?") are none: they need no talking points. A
   question can be phrased as a statement or a request ("I'm curious how you handled X", "walk
   me through Y") and still be a question.
-- complete is false when the utterance stops mid-sentence or mid-thought.
-- small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
-  questions for us?" is other.
-- addressed_to_user: in a one-on-one call, such as most interviews, a question from the other
-  side is for {user_name} unless it names someone else. With several people in the call, it
-  is true only if the user's name is used, "you" follows something the user just said, or it
-  is the user's turn in a round.
+- In a one-on-one call, such as most interviews, a question from the other side is for
+  {user_name} unless it names someone else. With several people in the call, it is for
+  {user_name} only if their name is used, "you" follows something {user_name} just said, or it
+  is {user_name}'s turn in a round.
 ```
 
-Measured with `copilot-detector-eval` on the latency benchmark's labels (October 2026, gpt-6-luna, 3 repetitions): the earlier prompt, which named no call type, scored 79%. It set `addressed_to_user` false at random in a one-on-one interview (most misses) and took a request to share the screen for a question (the live test's false fire). This one scored 100% on the 20 scored utterances. Every decision is logged (`detector` entries: text hash, decision, type, confidence, latency, tokens, cost; the text only with consent), so misses in a live call can be explained afterwards.
+A question fires when `answer` is a question type other than `small_talk`. Measured with `copilot-detector-eval` on the latency benchmark's labels (October 2026, gpt-6-luna): the earlier prompt, which named no call type, scored 79%; it set the addressee flag false at random in a one-on-one interview (most misses) and took a request to share the screen for a question (the live test's false fire). Naming the call type took it to 100% on the 20 scored utterances. The output is one short field because every output token sits on the critical path of every answer. On the same labels, interleaved (4 repetitions, October 2026), the earlier five fields (three flags, type, confidence) took 34 output tokens and finished 351 ms after the first token; a decision-and-type pair took 16 tokens and 218 ms; this single field takes 12 tokens and 203 ms. All three scored 100%. The confidence never kept a question from firing in 546 benchmark decisions, so there is no confidence gate; `question.detected` carries 0.9 for a detector decision and 1.0 for the hotkey. Every decision is logged (`detector` entries: text hash, decision, type, latency, first token, tokens, cost; the text only with consent), so misses in a live call can be explained afterwards.
 
 **Memory extraction** (Opus, in workers): the source goes in a labeled data block. The output is a JSON array of proposals, validated with one Pydantic model per node kind; anything that fails validation is dropped. Each proposal carries `evidence`, a quote of at most 25 words from the source, shown to the user at approval time. If a proposed node has cosine similarity of at least 0.9 with an existing node of the same kind, it becomes an `update` or `merge` proposal instead of a new node.
 

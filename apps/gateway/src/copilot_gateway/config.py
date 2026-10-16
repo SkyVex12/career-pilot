@@ -49,7 +49,6 @@ class Settings(CoreSettings):
     speculative_hold: bool = True
     speculative_min_words: int = 3
     stage1_min_score: float = 0.3
-    detector_min_confidence: float = 0.7
     detector_max_tokens: int = 80
     # A detector request with no first token after this long gets a second one alongside it
     # (the job's retry route), and the first to answer is used. Benchmark, October 2026: 5% of

@@ -23,7 +23,7 @@ from copilot_gateway.turn import Detection
 
 log = logging.getLogger(__name__)
 
-NO_QUESTION = Detection(False, False, False, "other", 0.0)
+NO_QUESTION = Detection("none", "other")
 
 
 def parse_detection(text: str) -> Detection:
@@ -31,17 +31,10 @@ def parse_detection(text: str) -> Detection:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError(f"no JSON object in detector output: {text!r}")
-    data = json.loads(text[start : end + 1])
-    qtype = str(data.get("type", "other"))
-    if qtype not in prompts.QUESTION_TYPES:
-        qtype = "other"
-    return Detection(
-        is_question=bool(data.get("is_question")),
-        complete=bool(data.get("complete")),
-        addressed_to_user=bool(data.get("addressed_to_user")),
-        qtype=qtype,
-        confidence=max(0.0, min(1.0, float(data.get("confidence", 0.0)))),
-    )
+    answer = str(json.loads(text[start : end + 1]).get("answer", "none"))
+    if answer in prompts.QUESTION_TYPES:
+        return Detection(decision="answer", qtype=answer)
+    return Detection(decision="wait" if answer == "wait" else "none", qtype="other")
 
 
 # The log entry and the utterance (the session stores the text only with consent).
@@ -84,11 +77,8 @@ class Detector:
         entry: dict[str, Any] = {
             "kind": "detector",
             "text_hash": key[:32],
-            "is_question": detection.is_question,
-            "complete": detection.complete,
-            "addressed_to_user": detection.addressed_to_user,
+            "decision": detection.decision,
             "type": detection.qtype,
-            "confidence": detection.confidence,
             "latency_ms": detection.latency_ms,
             "cached": cached,
         }

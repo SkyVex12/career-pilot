@@ -273,7 +273,7 @@ async def test_detector_treats_a_refusal_as_no_question() -> None:
         {"detector": [Route(Fake("a", "refuse_after_text"), "m")]}, first_token_timeout_s=1
     )
     d = await Detector(late, "Alex", 80).detect("How did you do it?", "")
-    assert not d.fires(0.0)
+    assert not d.fires()
     assert d.error is not None
 
 
@@ -328,21 +328,14 @@ def test_embedder_auto_and_startup_log(caplog: pytest.LogCaptureFixture) -> None
 
 
 def test_parse_detection() -> None:
-    d = parse_detection(
-        '{"is_question": true, "complete": true, "addressed_to_user": true,'
-        ' "type": "behavioral", "confidence": 0.92}'
-    )
-    assert d.fires(0.7)
-    assert not d.fires(0.95)
-    weird = parse_detection('{"is_question": true, "type": "nonsense", "confidence": 3}')
-    assert weird.qtype == "other"
-    assert weird.confidence == 1.0
-    assert not weird.fires(0.7)
-    small_talk = parse_detection(
-        '{"is_question": true, "complete": true, "addressed_to_user": true,'
-        ' "type": "small_talk", "confidence": 0.9}'
-    )
-    assert not small_talk.fires(0.7)
+    d = parse_detection('{"answer": "behavioral"}')
+    assert (d.decision, d.qtype, d.fires()) == ("answer", "behavioral", True)
+    wait = parse_detection('{"answer": "wait"}')
+    assert (wait.decision, wait.fires()) == ("wait", False)
+    assert not parse_detection('{"answer": "none"}').fires()
+    weird = parse_detection('{"answer": "nonsense"}')
+    assert (weird.decision, weird.qtype) == ("none", "other")
+    assert not parse_detection('{"answer": "small_talk"}').fires()
     with pytest.raises(ValueError, match="no JSON"):
         parse_detection("no json here")
 
@@ -465,7 +458,7 @@ def test_bearer_token() -> None:
 def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert (s.silence_timer_ms, s.speculative_start_ms) == (400, 300)
-    assert (s.stage1_min_score, s.detector_min_confidence) == (0.3, 0.7)
+    assert (s.stage1_min_score, s.detector_hedge_ms) == (0.3, 2000)
     assert (s.detector_max_tokens, s.fast_pass_max_tokens, s.deep_pass_max_tokens) == (80, 250, 800)
     assert s.prepared_answer_min_similarity == 0.85
     assert s.deep_pass_auto_types == ["behavioral", "technical", "system_design"]

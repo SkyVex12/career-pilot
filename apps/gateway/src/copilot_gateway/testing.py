@@ -139,13 +139,7 @@ def default_reply(job: str, req: LLMRequest) -> Reply:
             if "how" in lower or "what" in lower
             else "other"
         )
-        body = {
-            "is_question": is_q,
-            "complete": is_q,
-            "addressed_to_user": is_q,
-            "type": qtype,
-            "confidence": 0.95 if is_q else 0.1,
-        }
+        body = {"answer": qtype if is_q else "none"}
         return Reply([json.dumps(body)])
     if job == "fast":
         return Reply(
