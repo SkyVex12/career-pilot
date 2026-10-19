@@ -15,9 +15,10 @@ and an interview into its session pack, copy the session log into Aurora with pe
 encryption, transcribe the user's audio, and write the summary and feedback. The desktop app
 works through the API: it uploads documents, lists jobs, schedules interviews, records the
 user's own audio (encrypted, only with transcript consent) and uploads it after the call, and
-shows the post-call outputs and the session history. Stage 0 deploys to AWS with Terraform and
-GitHub Actions (see "Deploying Stage 0"); there the app signs in through Cognito, and locally it
-uses the dev token. Every service logs JSON lines with the session id to CloudWatch.
+shows the post-call outputs and the session history. Stage 0 deploys to Google Cloud with
+Terraform and GitHub Actions (see "Deploying Stage 0"; the AWS version is kept, unused); there
+the app signs in with Google, and locally it uses the dev token. Every service logs JSON lines
+with the session id to Cloud Logging.
 
 ## Layout
 
@@ -38,7 +39,8 @@ packages/
   protocol/     protocol.schema.json + generated Python, TypeScript and Rust types
 migrations/     plain SQL migrations and the row-level security test
 evals/          copilot-replay: stream a recorded call through the gateway
-infra/          Terraform for Stage 0 on AWS, and deploy.py (see infra/README.md)
+infra/gcp/      Terraform for Stage 0 on GCP, and stage.py (see infra/gcp/README.md)
+infra/          Terraform for Stage 0 on AWS (unused), and deploy.py (see infra/README.md)
 docker/         the service images (python.Dockerfile, proxy/) and the local stack's config
 .github/        CI on pull requests, deploy on merge to main
 scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py,
@@ -318,164 +320,194 @@ Without it, queries on user tables raise an error rather than return rows.
 
 ## Deploying Stage 0
 
-Stage 0 runs in one AWS account in us-east-1 on a single ARM64 instance: gateway, API, worker,
-an nginx proxy, Postgres with pgvector and Valkey run as containers through ECS on EC2, next
-to SQS, S3, Cognito, KMS, Secrets Manager and CloudWatch Logs (ARCHITECTURE.md, "Stage 0
-settings"; the layout is in `infra/README.md`). It costs about $22 a month running all the time
-and about $10 stopped between tests, plus OpenAI and Deepgram per use.
+Stage 0 runs on Google Cloud, in project `career-pilot-512115` (us-central1), on a single
+Compute Engine VM: gateway, API, worker, an nginx proxy, Postgres with pgvector, Valkey and
+ElasticMQ (the SQS-compatible jobs queue) run as containers on Container-Optimized OS, with
+their data on a separate persistent disk, next to Cloud Storage, Cloud KMS, Secret Manager and
+Cloud Logging (ARCHITECTURE.md, "Stage 0 on GCP"; the layout is in `infra/gcp/README.md`). It
+costs about $15 a month running all the time and about $10 stopped between tests, plus OpenAI
+and Deepgram per use. The AWS version (`infra/envs/stage0`) is kept but unused: the AWS
+account's organization policy blocks it (`infra/README.md`).
 
-**No TLS in Stage 0.** The app talks to the instance over plain HTTP and WebSocket on its AWS
-host name, and the instance admits port 80 only from an IP allow-list. Your sign-in token and
-call text cross the internet unencrypted on that hop; the settings screen says so. TLS
-(CloudFront or a real domain) is required before anyone outside the team uses it.
+**No TLS in Stage 0.** The app talks to the VM over plain HTTP and WebSocket on its IP. Your
+sign-in token and call text cross the internet unencrypted on that hop; the settings screen
+says so. Port 80 can be limited to an IP allow-list (`stage.py allow`); it is open to every
+address at the moment, so the Google sign-in allow-list is what keeps strangers out. Document
+and audio uploads go straight to Cloud Storage over HTTPS. TLS (a domain and a certificate) is
+required before anyone outside the team uses it.
 
-You need the AWS CLI, Terraform 1.11+ (`winget install Amazon.AWSCLI Hashicorp.Terraform`),
-`gh`, and `uv`.
+You need the Google Cloud CLI (`winget install Google.CloudSDK`), Terraform 1.11+, `gh` and
+`uv`. Every command below runs from the repository root; `stage.py` is
+`uv run infra/gcp/scripts/stage.py`.
 
 ### First-time setup
 
 Done once, by hand, in this order.
 
-1. **Sign in to AWS** in a terminal: `aws login` (or `aws configure sso`), region `us-east-1`.
-   `aws sts get-caller-identity` shows the account. The account must allow EC2, ECS, Cognito,
-   SQS, S3, KMS, Secrets Manager, ECR, EventBridge Scheduler, DLM, X-Ray and IAM (an
-   organization's service control policy can block them).
-2. **State bucket**, once per account:
+1. **Sign in to Google Cloud.** `gcloud auth login`, then `gcloud auth application-default
+   login` (tick every permission on the consent page) and `gcloud auth application-default
+   set-quota-project career-pilot-512115`. Terraform uses the second; the third lets the
+   Billing Budgets API run.
+2. **APIs Terraform needs first:** `gcloud services enable cloudresourcemanager.googleapis.com
+   --project career-pilot-512115` (Terraform turns on the rest).
+3. **State bucket**, once per project:
 
    ```sh
-   terraform -chdir=infra/bootstrap init
-   terraform -chdir=infra/bootstrap apply          # creates copilot-tfstate-<account id>
+   terraform -chdir=infra/gcp/bootstrap init
+   terraform -chdir=infra/gcp/bootstrap apply     # copilot-tfstate-career-pilot-512115
    ```
 
-3. **Allow-list.** In `infra/envs/stage0/allowlist.auto.tfvars` (gitignored), one /32 per
-   teammate who will connect (`curl https://checkip.amazonaws.com` shows yours):
+4. **Google sign-in client** (Terraform cannot make it; there is no API for desktop OAuth
+   clients). In the Console for the project: Google Auth Platform → Branding (an app name and
+   your email), Audience → External, then **Publish app** (while it is in Testing, Google
+   expires refresh tokens after 7 days; openid, email and profile need no verification) →
+   Clients → Create client → **Desktop app**. Put its client ID in
+   `infra/gcp/envs/stage0/terraform.tfvars` (`google_oauth_client_id`); keep the secret for
+   step 7.
+5. **Allow-lists.** In `infra/gcp/envs/stage0/allowlist.auto.tfvars` (gitignored): the Google
+   accounts that may sign in, and the addresses that may reach port 80 (or
+   `open_to_internet = true`):
 
    ```hcl
-   allowed_cidrs = ["203.0.113.7/32", "198.51.100.20/32"]
+   allowed_emails   = ["you@gmail.com", "alex@gmail.com"]
+   allowed_cidrs    = ["203.0.113.7/32", "198.51.100.20/32"]
+   open_to_internet = false
    ```
 
-4. **The stage.** Review the plan before applying:
+6. **The stage.** Review the plan before applying:
 
    ```sh
-   cd infra/envs/stage0
-   terraform init -backend-config="bucket=copilot-tfstate-<account id>"
-   terraform plan -out=tfplan
-   terraform apply tfplan
-   terraform output                                   # URLs, Cognito, secrets, roles
+   terraform -chdir=infra/gcp/envs/stage0 init -backend-config="bucket=copilot-tfstate-career-pilot-512115"
+   terraform -chdir=infra/gcp/envs/stage0 plan -out=tfplan
+   terraform -chdir=infra/gcp/envs/stage0 apply tfplan
+   terraform -chdir=infra/gcp/envs/stage0 output      # IP, URLs, CI variables
    ```
 
-   The app services wait at zero tasks until the first deploy; Postgres and Valkey start
-   right away.
-5. **Secrets.** Put the two API keys in (never in a file or a commit; the prompt keeps them out
-   of your shell history):
+   The VM boots, mounts the data disk and starts Postgres, Valkey and ElasticMQ; the app
+   waits for the first deploy.
+7. **Secrets** (created empty). Generated ones first: the database passwords and the uploads
+   HMAC key go straight into Secret Manager, never to the screen. The organization forbids
+   service account keys, HMAC keys included, so `--lift-key-policy` lifts that policy for this
+   project around the one call and puts it back (it needs Organization Administrator; see
+   `infra/gcp/README.md`). Then the three only you have, with a hidden prompt:
 
    ```sh
-   aws secretsmanager put-secret-value --secret-id copilot-stage0/openai-api-key --secret-string "$(read -rsp 'OpenAI key: ' k; echo "$k")"
-   aws secretsmanager put-secret-value --secret-id copilot-stage0/deepgram-api-key --secret-string "$(read -rsp 'Deepgram key: ' k; echo "$k")"
+   uv run infra/gcp/scripts/stage.py secrets generate --lift-key-policy
+   uv run infra/gcp/scripts/stage.py secrets set openai-api-key
+   uv run infra/gcp/scripts/stage.py secrets set deepgram-api-key
+   uv run infra/gcp/scripts/stage.py secrets set google-oauth-client-secret
+   uv run infra/gcp/scripts/stage.py secrets status
    ```
 
-   That is Git Bash; in PowerShell 7 use `--secret-string (Read-Host -MaskInput 'OpenAI key')`.
-   The database passwords are generated by Terraform straight into
-   `copilot-stage0/database`; they are not in the Terraform state.
-6. **Users.** Sign-up is closed; create each teammate (Cognito emails them a temporary password,
-   and they choose their own at the first sign-in):
-
-   ```sh
-   aws cognito-idp admin-create-user --user-pool-id <cognito.user_pool_id> \
-     --username alex@example.com --user-attributes Name=email,Value=alex@example.com Name=email_verified,Value=true
-   ```
-
-7. **CI.** Repository variables for the workflows (Settings → Secrets and variables → Actions →
-   Variables, or `gh variable set`), from `terraform output`:
-
-   | Variable | Value |
-   | --- | --- |
-   | `AWS_PLAN_ROLE_ARN` | `ci_roles.plan` |
-   | `AWS_DEPLOY_ROLE_ARN` | `ci_roles.deploy` |
-   | `TF_STATE_BUCKET` | `copilot-tfstate-<account id>` |
-   | `TF_ALLOWED_CIDRS` | the allow-list as JSON, e.g. `["203.0.113.7/32"]` (for the PR plan) |
-
-   No AWS keys are stored in GitHub: both workflows assume their role through GitHub's OIDC
-   provider. The deploy role trusts pushes to `main` only.
-8. **First deploy.** Run the `deploy` workflow from the Actions tab (on `main`), or merge a PR.
-   It builds the images on GitHub's ARM runners, pushes them, runs the migrations and starts
-   the services. Then `terraform apply` once more, so Terraform records the deployed images.
-9. **DNS: nothing to do.** Stage 0 uses the Elastic IP's AWS host name (`terraform output
-   public_dns`); Cognito uses its own `amazoncognito.com` domain.
-10. **The desktop app.** Settings → Environment: AWS. Paste `public_dns` into "AWS host" and
-    press Fill URLs (or paste `api_url` and `gateway_url`), Save, then Sign in: the browser
-    opens Cognito's page, and the app keeps the sign-in in the Windows Credential Manager.
+8. **CI.** Repository variables (Settings → Secrets and variables → Actions → Variables, or
+   `gh variable set`) from `terraform output ci`: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
+   `GCP_CI_SERVICE_ACCOUNT` and `GCP_REGISTRY`. No key is stored in GitHub: workflow runs on
+   `main` sign in through Workload Identity Federation and may only push images.
+9. **First deploy:** merge to `main` (CI builds the images), then `stage.py deploy`.
+10. **The desktop app.** Settings → Environment: Cloud. Paste the VM's IP (`terraform output
+    external_ip`) into "Cloud host" and press Fill URLs, Save, then Sign in: the browser opens
+    Google's sign-in, and the app keeps the sign-in in the Windows Credential Manager.
 
 ### Deploy
 
-Merging to `main` deploys (`.github/workflows/deploy.yml`): ARM64 images tagged with the git
-SHA, the migration task, then each service. On the one instance each service's old task stops
-before the new one starts, so a call in progress reconnects and resumes in a few seconds. The
-instance must be running; a deploy to a stopped stage fails and can be rerun once it is up.
-
-By hand, with images already in ECR:
+Merging to `main` builds the images (`.github/workflows/deploy.yml`: linux/amd64 for the VM and
+linux/arm64, one tag, the git SHA) and pushes them to Artifact Registry. Deploying is a command:
 
 ```sh
-uv run --no-project --with boto3 python infra/scripts/deploy.py --tag <git sha>
-uv run --no-project --with boto3 python infra/scripts/deploy.py --status
+uv run infra/gcp/scripts/stage.py deploy                 # the commit at origin/main
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> # any tag in the registry
+uv run infra/gcp/scripts/stage.py status
 ```
 
-Infrastructure changes are not deployed by CI: each PR shows its `terraform plan` as a comment,
-and someone runs `terraform apply` after merging.
+On the VM (over IAP SSH) it pulls the images, runs the migrations and the database logins as
+a one-off container, then replaces the API, the worker, the gateway and the proxy one at a
+time; each must report healthy, or the deploy rolls everything back to the previous tag. A call
+in progress reconnects and resumes in a few seconds. The VM must be running.
+
+Infrastructure changes are not deployed by CI: run `terraform plan` and `apply` after merging.
+A change to a service's configuration (`copilot-env` in the VM's metadata) or to a secret is
+live after an apply and `stage.py restart` (each container reads both when it starts).
 
 ### Rollback
 
-Deploy the previous tag; `deploy.py` prints it at the end of every deploy (`rollback: --tag
-…`), and ECR keeps the last 15 images:
-
 ```sh
-uv run --no-project --with boto3 python infra/scripts/deploy.py --tag <previous sha>
+uv run infra/gcp/scripts/stage.py rollback               # the tag deployed before this one
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> # or any older tag still kept
 ```
 
-or run the `deploy` workflow with that tag. Migrations follow expand then contract, so the
-older code runs against the newer schema. A failed deploy that never got healthy rolls itself
-back (the ECS deployment circuit breaker).
+The registry keeps about the last ten tags. Migrations follow expand then contract, so older
+code runs against the newer schema.
 
 ### Logs
 
-Every service logs to CloudWatch Logs, one group per service (`/copilot-stage0/gateway`, `api`,
-`worker`, `scheduler`, `migrate`, `proxy`, `postgres`, `valkey`, kept 7 days). The Python
-services write JSON lines, and every line about a session carries its `session_id`.
+Every container logs to Cloud Logging (log `cos_containers` of the VM, kept 30 days). The
+Python services write JSON lines, and every line about a session carries its `session_id`, so
+Cloud Logging indexes it as `jsonPayload.session_id`.
 
-- **One session, every service:** CloudWatch → Logs Insights → Saved queries →
-  `copilot-stage0/one session`; put the session id in the filter and run it over the session's
-  time range. The id is in the app's history and in `answers`/`sessions`.
-- **Follow a service live:** `aws logs tail /copilot-stage0/gateway --follow`
-  (`--filter-pattern '{ $.session_id = "<id>" }'` for one session).
-- **Errors:** the saved query `copilot-stage0/errors`.
-- **A shell on the instance:** `aws ssm start-session --target <instance_id>` (no SSH);
-  inside a task: `aws ecs execute-command --cluster copilot-stage0 --task <task id> --container
-  api --interactive --command sh`.
+```sh
+uv run infra/gcp/scripts/stage.py logs --session <session id> --since 1d   # every service
+uv run infra/gcp/scripts/stage.py logs --service gateway --since 30m
+uv run infra/gcp/scripts/stage.py logs --errors --since 1d
+```
+
+In the Console: Logging → Logs Explorer, with
+`logName="projects/career-pilot-512115/logs/cos_containers" AND jsonPayload.session_id="<id>"`.
+A shell on the VM: `stage.py ssh` (IAP and OS Login; no SSH port is open), then
+`sudo docker logs copilot-gateway` or `sudo bash /var/lib/copilot/copilotctl.sh status`.
 
 ### Stopping between tests
 
-Stopping the instance stops the whole app; only the volumes, the Elastic IP and the small fixed
-items keep billing (about $10 a month).
+Stopping the VM stops the whole app; the disks, the reserved IP and the small fixed items keep
+billing (about $10 a month, $7 of it the IP while it is not in use).
 
 ```sh
-aws ec2 stop-instances  --instance-ids <instance_id>
-aws ec2 start-instances --instance-ids <instance_id>   # the services start again in 2-3 minutes
+uv run infra/gcp/scripts/stage.py stop
+uv run infra/gcp/scripts/stage.py start     # the services are up again in 2 to 3 minutes
 ```
 
-While it is stopped, the scheduler's 5-minute runs fail and are dropped, and deploys fail.
+While it is stopped, the scheduler and the nightly backup do not run, and deploys fail.
+
+### Backups and restore
+
+`copilotctl backup` runs every night at 08:30 UTC: a `pg_dump` of the database to the backups
+bucket, kept 7 days (uploads are in Cloud Storage already; Valkey and the queue are live state).
+
+```sh
+uv run infra/gcp/scripts/stage.py backup                 # one now
+uv run infra/gcp/scripts/stage.py backups                # what the bucket has
+uv run infra/gcp/scripts/stage.py restore postgres/copilot-20261020T083000Z.dump
+```
+
+A restore stops the app, runs the migrations (so the roles exist on a new disk), restores the
+dump over the database with `pg_restore --clean`, sets the roles' logins again and starts the
+app. Restoring onto a new VM or disk: apply, `secrets` as before (the database passwords stay
+in Secret Manager), deploy, then restore.
+
+### The allow-list
+
+```sh
+uv run infra/gcp/scripts/stage.py allow --show
+uv run infra/gcp/scripts/stage.py allow --me 198.51.100.20/32   # replace: this machine and one more
+uv run infra/gcp/scripts/stage.py allow --any                   # every address (no TLS!)
+```
+
+It changes the firewall rule at once; Terraform sets it only when it creates the rule. Who may
+sign in is `allowed_emails` in `allowlist.auto.tfvars`: change it, then `terraform apply` and
+`stage.py restart`.
 
 ### Tearing it all down
 
 ```sh
-terraform -chdir=infra/envs/stage0 destroy
-terraform -chdir=infra/bootstrap destroy        # the state bucket, last
+uv run infra/gcp/scripts/stage.py backup && gcloud storage cp "gs://copilot-stage0-backups-career-pilot-512115/postgres/*" .   # optional
+terraform -chdir=infra/gcp/envs/stage0 destroy
+terraform -chdir=infra/gcp/bootstrap destroy        # the state bucket, last
 ```
 
-This deletes the instance, the data, the images, the uploads, the user pool and the secrets.
-Two things are left on purpose: a final snapshot of the data volume (delete it in EC2 →
-Snapshots when you no longer want the data; a few cents a month) and the KMS key, which AWS
-deletes after its 7-day waiting period. Remove the repository variables so the workflows skip
-the AWS steps again.
+This deletes the VM and its disks, the uploads and backups buckets, the images, the secrets
+and CI's access. The KMS key's versions are destroyed a day later; the empty key ring stays,
+since Google never deletes key rings (it costs nothing, and a new apply needs
+`terraform import` of it or another `name`). Delete the repository variables so the workflow
+skips the GCP jobs again.
 
 ## Protocol codegen
 

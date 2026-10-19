@@ -162,12 +162,14 @@ mount_data() {
 firewall() {
   # COS drops inbound traffic except SSH; the VPC firewall decides who reaches port 80.
   iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-  # Metadata server: root, the API and the workers only (see the uids above). OS Login users
-  # (large uids) keep it for their name lookups.
+  # Metadata server tokens: root, the API and the workers only (see the uids above). OS Login
+  # users (large uids) keep it for their name lookups. Only its HTTP port is closed: the same
+  # address is the VM's DNS resolver (port 53), which every container needs.
   local rule
   for rule in "-m owner --uid-owner 100-999 -j REJECT" "-m owner --uid-owner 10003-10099 -j REJECT"; do
     # shellcheck disable=SC2086
-    iptables -C OUTPUT -d 169.254.169.254/32 $rule 2>/dev/null || iptables -I OUTPUT 1 -d 169.254.169.254/32 $rule
+    iptables -C OUTPUT -d 169.254.169.254/32 -p tcp --dport 80 $rule 2>/dev/null ||
+      iptables -I OUTPUT 1 -d 169.254.169.254/32 -p tcp --dport 80 $rule
   done
 }
 

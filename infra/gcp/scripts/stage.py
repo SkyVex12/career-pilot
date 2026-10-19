@@ -11,6 +11,8 @@ or generated here, piped straight into Secret Manager, and never printed.
                            (default: the commit at origin/main, which CI built)
     rollback               the tag deployed before the current one
     status                 the deployed tag, the containers and their health, disk and memory
+    restart [NAME ...]     restart services, which reread their config and secrets
+                           (default: proxy, gateway, api, worker)
     start | stop           start or stop the VM (the app starts with it in 2 to 3 minutes)
     logs                   Cloud Logging: --session ID, --service NAME, --errors, --since 1h
     backup | backups       a pg_dump now | the dumps in the bucket (kept 7 days)
@@ -357,6 +359,8 @@ def main() -> None:
     p.add_argument("--tag")
     for name in ("rollback", "status", "start", "stop", "backup", "backups", "ssh", "latency"):
         sub.add_parser(name)
+    p = sub.add_parser("restart")
+    p.add_argument("names", nargs="*", help="proxy gateway api worker postgres valkey elasticmq")
     p = sub.add_parser("logs")
     p.add_argument("--session")
     p.add_argument(
@@ -390,6 +394,11 @@ def main() -> None:
             ctl("rollback")
         case "status":
             ctl("status")
+        case "restart":
+            known = {*IMAGES, "postgres", "valkey", "elasticmq"}
+            if unknown := set(a.names) - known:
+                sys.exit(f"unknown service {', '.join(sorted(unknown))}; one of {sorted(known)}")
+            ctl("restart", *(a.names or ["api", "worker", "gateway", "proxy"]))
         case "start":
             gcloud("compute", "instances", "start", NAME, f"--zone={ZONE}")
             print("starting; the services are up in 2 to 3 minutes (stage.py status)")
