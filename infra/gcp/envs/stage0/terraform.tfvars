@@ -30,12 +30,13 @@ elasticmq_image = "softwaremill/elasticmq-native:1.7.1"
 # goes into Secret Manager, not here.
 google_oauth_client_id = "869820620165-h5j6m5ietjjb2d3ipfvfj7kft4mkei14.apps.googleusercontent.com"
 
-# The same models as the 2026-10-07 live test (.env.example).
+# The models of the team's local .env (October 2026): the 2026-10-07 live test's, with memory
+# extraction on gpt-6-sol and low reasoning for the background jobs.
 openai_models = {
   detector = "gpt-6-luna"
   fast     = "gpt-6-luna"
   deep     = "gpt-6.1-sol"
-  extract  = "gpt-6-astra"
+  extract  = "gpt-6-sol"
   job      = "gpt-6.1-sol"
   pack     = "gpt-6.1-sol"
   postcall = "gpt-6.1-sol"
@@ -45,10 +46,10 @@ openai_reasoning = {
   detector = "none"
   fast     = "none"
   deep     = "low"
-  extract  = "medium"
+  extract  = "low"
   job      = "low"
-  pack     = "medium"
-  postcall = "medium"
+  pack     = "low"
+  postcall = "low"
 }
 openai_first_token_timeout_ms      = 3000
 openai_deep_first_token_timeout_ms = 6000
