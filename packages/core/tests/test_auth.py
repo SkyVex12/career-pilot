@@ -11,7 +11,15 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-from copilot_core.auth import AuthError, CognitoVerifier, JwksCache, make_verifier
+from copilot_core.auth import (
+    GOOGLE_JWKS_URL,
+    AuthError,
+    CognitoVerifier,
+    GoogleVerifier,
+    JwksCache,
+    google_user_id,
+    make_verifier,
+)
 from copilot_core.config import CoreSettings
 
 POOL = "us-east-1_TestPool1"
@@ -152,3 +160,80 @@ def test_make_verifier_needs_pool_and_clients() -> None:
     assert isinstance(v, CognitoVerifier)
     assert v.issuer == ISSUER
     assert v.client_ids == {"a", "b"}
+
+
+# --- Google ID tokens (Stage 0 on GCP) ------------------------------------------------------
+
+GOOGLE_CLIENT = "123-abc.apps.googleusercontent.com"
+
+
+def google_claims(**over: Any) -> dict[str, Any]:
+    now = int(time.time())
+    base: dict[str, Any] = {
+        "iss": "https://accounts.google.com",
+        "aud": GOOGLE_CLIENT,
+        "azp": GOOGLE_CLIENT,
+        "sub": "109876543210987654321",
+        "email": "Alex@Example.com",
+        "email_verified": True,
+        "name": "Alex",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    base.update(over)
+    return {k: v for k, v in base.items() if v is not None}
+
+
+def google_verifier(key: KeyPair) -> GoogleVerifier:
+    async def fetch(url: str) -> Mapping[str, Any]:
+        assert url == GOOGLE_JWKS_URL
+        return {"keys": [key.jwk()]}
+
+    return GoogleVerifier(
+        [GOOGLE_CLIENT], ["alex@example.com"], JwksCache(GOOGLE_JWKS_URL, fetch=fetch)
+    )
+
+
+async def test_google_id_token_for_an_allowed_email() -> None:
+    key = KeyPair("g1")
+    p = await google_verifier(key).verify(key.sign(google_claims()))
+    assert p.email == "alex@example.com"
+    assert p.display_name == "Alex"
+    # A stable UUID from the Google subject, the same on every service and every sign-in.
+    assert p.user_id == google_user_id("109876543210987654321")
+    assert p.user_id.version == 5
+    other = await google_verifier(key).verify(key.sign(google_claims(iss="accounts.google.com")))
+    assert other.user_id == p.user_id
+
+
+@pytest.mark.parametrize(
+    ("over", "message"),
+    [
+        ({"email": "mallory@example.com"}, "allow-list"),
+        ({"email_verified": False}, "verified email"),
+        ({"email": None}, "verified email"),
+        ({"aud": "someone-elses-client"}, "another app client"),
+        ({"iss": "https://evil.example.com"}, "not from Google"),
+        ({"exp": int(time.time()) - 120}, "expired"),
+    ],
+)
+async def test_google_rejects(over: dict[str, Any], message: str) -> None:
+    key = KeyPair("g1")
+    with pytest.raises(AuthError, match=message):
+        await google_verifier(key).verify(key.sign(google_claims(**over)))
+
+
+async def test_google_rejects_a_key_google_did_not_publish() -> None:
+    key, forged = KeyPair("g1"), KeyPair("g1")
+    with pytest.raises(AuthError, match="invalid token"):
+        await google_verifier(key).verify(forged.sign(google_claims()))
+
+
+def test_make_verifier_for_google_needs_a_client_and_an_allow_list() -> None:
+    base = {"env": "staging", "auth": "google", "google_client_ids": GOOGLE_CLIENT}
+    with pytest.raises(RuntimeError, match="ALLOWED_EMAILS"):
+        make_verifier(CoreSettings(_env_file=None, **base))  # pyright: ignore[reportCallIssue]
+    s = CoreSettings(_env_file=None, **base, google_allowed_emails="a@x.io, b@y.io")  # pyright: ignore[reportCallIssue]
+    v = make_verifier(s)
+    assert isinstance(v, GoogleVerifier)
+    assert v.allowed == {"a@x.io", "b@y.io"}

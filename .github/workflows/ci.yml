@@ -162,6 +162,18 @@ jobs:
       - run: terraform fmt -check -recursive ../..
       - name: Validate
         run: terraform init -backend=false -input=false && terraform validate
+      # Stage 0 on GCP (infra/gcp): validate both roots and lint the VM's control script. Its
+      # plan is run by a person before an apply (README.md, "Deploying Stage 0").
+      - name: Validate (GCP)
+        working-directory: infra/gcp
+        run: |
+          for root in envs/stage0 bootstrap; do
+            terraform -chdir=$root init -backend=false -input=false >/dev/null
+            terraform -chdir=$root validate
+          done
+      - name: Shellcheck the VM's copilotctl
+        working-directory: infra/gcp/host
+        run: shellcheck -S warning copilotctl.sh
       # The plan needs the stage to exist (README.md, "Deploying Stage 0") and the repository
       # variables AWS_PLAN_ROLE_ARN and TF_STATE_BUCKET; until then it is skipped.
       - name: AWS credentials (plan role)

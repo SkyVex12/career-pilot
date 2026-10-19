@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { InterviewItem } from "../src/api";
 import { parseTarget, upcoming } from "../src/catalog";
-import { awsUrlsFor } from "../src/urls";
+import { cloudUrlsFor } from "../src/urls";
 
 const interview = (id: string, startsAt: string): InterviewItem => ({
   id,
@@ -29,20 +29,26 @@ describe("start screen", () => {
   });
 });
 
-describe("awsUrlsFor", () => {
+describe("cloudUrlsFor", () => {
+  it("takes the VM's IP", () => {
+    expect(cloudUrlsFor("34.170.1.2")).toEqual({
+      cloud_api_url: "http://34.170.1.2/v1",
+      cloud_gateway_url: "ws://34.170.1.2/v1/session",
+    });
+  });
   it("builds both AWS URLs from the stage's host name", () => {
-    expect(awsUrlsFor(" ec2-3-90-1-2.compute-1.amazonaws.com ")).toEqual({
-      aws_api_url: "http://ec2-3-90-1-2.compute-1.amazonaws.com/v1",
-      aws_gateway_url: "ws://ec2-3-90-1-2.compute-1.amazonaws.com/v1/session",
+    expect(cloudUrlsFor(" ec2-3-90-1-2.compute-1.amazonaws.com ")).toEqual({
+      cloud_api_url: "http://ec2-3-90-1-2.compute-1.amazonaws.com/v1",
+      cloud_gateway_url: "ws://ec2-3-90-1-2.compute-1.amazonaws.com/v1/session",
     });
   });
   it("keeps TLS when given an https URL", () => {
-    expect(awsUrlsFor("https://api.example.com/v1")).toEqual({
-      aws_api_url: "https://api.example.com/v1",
-      aws_gateway_url: "wss://api.example.com/v1/session",
+    expect(cloudUrlsFor("https://api.example.com/v1")).toEqual({
+      cloud_api_url: "https://api.example.com/v1",
+      cloud_gateway_url: "wss://api.example.com/v1/session",
     });
   });
   it("needs a host", () => {
-    expect(awsUrlsFor("   ")).toBeNull();
+    expect(cloudUrlsFor("   ")).toBeNull();
   });
 });

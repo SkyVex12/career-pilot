@@ -11,6 +11,7 @@ from typing import Any
 import asyncpg
 import httpx2
 import pytest
+from pydantic import SecretStr
 
 from copilot_api.testing import Api
 from copilot_core import jobs, keys
@@ -448,7 +449,22 @@ async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
             "domain": "https://copilot-x.auth.us-east-1.amazoncognito.com",
             "scopes": ["openid", "email", "profile"],
         }  # fmt: skip
+        api.svc.settings = saved.model_copy(update={
+            "auth": "google", "google_client_ids": ["123-abc.apps.googleusercontent.com"],
+            "google_client_secret": SecretStr("GOCSPX-desktop"), "google_allowed_emails": ["a@b.c"],
+        })  # fmt: skip
+        body = (await api.client.get("/v1/auth/config")).json()
+        assert body == {
+            "provider": "google", "client_id": "123-abc.apps.googleusercontent.com",
+            "client_secret": "GOCSPX-desktop", "scopes": ["openid", "email", "profile"],
+            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_url": "https://oauth2.googleapis.com/token",
+            "revoke_url": "https://oauth2.googleapis.com/revoke",
+            "bearer": "id_token",
+            "authorize_params": {"access_type": "offline", "prompt": "consent"},
+        }  # fmt: skip
+        assert "a@b.c" not in str(body)  # the allow-list stays on the server
         api.svc.settings = saved.model_copy(update={"auth": "dev"})
-        assert (await api.client.get("/v1/auth/config")).json()["provider"] == "dev"
+        assert (await api.client.get("/v1/auth/config")).json() == {"provider": "dev"}
     finally:
         api.svc.settings = saved

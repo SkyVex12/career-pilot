@@ -226,11 +226,11 @@ def test_claude_clients_keep_idle_connections_open(monkeypatch: Any) -> None:
     from copilot_core.providers import make_providers
 
     monkeypatch.setenv("COPILOT_OPENAI_KEEPALIVE_S", "90")  # the old name still works
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-test")
     s = CoreSettings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
         llm_providers=["bedrock", "anthropic"],
-        ANTHROPIC_API_KEY="sk-test",
-        AWS_BEARER_TOKEN_BEDROCK="bedrock-test",
     )
     assert s.llm_keepalive_s == 90
     for provider in make_providers(s):

@@ -19,10 +19,10 @@ use copilot_client::audio::capture::{self, DeviceInfo, DeviceSource};
 use copilot_client::audio::pipeline::Levels;
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
-use copilot_client::cognito::{self, CognitoTokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
+use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::Mode;
 use copilot_client::recording::{self, MeAudioSink, NoRecording, UploadOutcome};
 use serde::{Deserialize, Serialize};
@@ -54,10 +54,10 @@ struct AppState {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
     secrets: Arc<dyn SecretStore>,
-    /// The local stack's dev token. Never used in the AWS environment.
+    /// The local stack's dev token. Never used in the cloud environment.
     dev_tokens: Arc<DevTokenProvider>,
-    /// The deployed stage's Cognito sign-in, made from `settings.cognito`.
-    cognito: Mutex<Option<Arc<CognitoTokenProvider>>>,
+    /// The deployed stage's browser sign-in (Google or Cognito), made from `settings.oauth`.
+    oauth: Mutex<Option<Arc<OAuthTokenProvider>>>,
     engine: Mutex<Option<Arc<Engine>>>,
     history: Arc<Mutex<Vec<serde_json::Value>>>,
     /// Encrypted recordings of the user's own audio waiting for their upload.
@@ -81,26 +81,27 @@ impl AppState {
         }
     }
 
-    /// The Cognito provider for the configured stage, if the app has signed in to one.
-    fn cognito(&self) -> Option<Arc<CognitoTokenProvider>> {
-        let cfg = self.settings.lock().unwrap().cognito.clone()?;
-        let mut slot = self.cognito.lock().unwrap();
+    /// The sign-in provider for the configured stage, if the app has signed in to one.
+    fn oauth(&self) -> Option<Arc<OAuthTokenProvider>> {
+        let cfg = self.settings.lock().unwrap().oauth.clone()?;
+        let mut slot = self.oauth.lock().unwrap();
         if let Some(p) = slot.as_ref().filter(|p| *p.config() == cfg) {
             return Some(p.clone());
         }
-        let p = Arc::new(CognitoTokenProvider::new(cfg, self.secrets.clone()));
+        let p = Arc::new(OAuthTokenProvider::new(cfg, self.secrets.clone()));
         *slot = Some(p.clone());
         Some(p)
     }
 
-    /// The token source for the current environment: the dev token locally, Cognito in AWS.
+    /// The token source for the current environment: the dev token locally, the sign-in in the
+    /// cloud.
     fn tokens(&self) -> Res<Arc<dyn TokenProvider>> {
         let env = self.settings.lock().unwrap().environment;
         match env {
             Environment::Local => Ok(self.dev_tokens.clone()),
-            Environment::Aws => match self.cognito() {
+            Environment::Cloud => match self.oauth() {
                 Some(p) => Ok(p),
-                None => Err("Sign in to AWS under Settings first.".into()),
+                None => Err("Sign in under Settings first.".into()),
             },
         }
     }
@@ -117,7 +118,7 @@ type Res<T> = Result<T, String>;
 struct SettingsView {
     settings: Settings,
     dev_token_set: bool,
-    /// The AWS environment's signed-in user (their email), if any.
+    /// The cloud environment's signed-in user (their email), if any.
     signed_in_as: Option<String>,
     /// Whether the current environment can make calls: the dev token set, or signed in.
     ready: bool,
@@ -129,10 +130,10 @@ struct SettingsView {
 fn get_settings(state: State<'_, AppState>) -> SettingsView {
     let settings = state.settings.lock().unwrap().clone();
     let dev_token_set = state.dev_tokens.is_set();
-    let signed_in_as = state.cognito().and_then(|p| p.signed_in_as());
+    let signed_in_as = state.oauth().and_then(|p| p.signed_in_as());
     let ready = match settings.environment {
         Environment::Local => dev_token_set,
-        Environment::Aws => signed_in_as.is_some(),
+        Environment::Cloud => signed_in_as.is_some(),
     };
     let (gateway, api) = settings.active_urls();
     let warnings = [gateway, api].into_iter().filter_map(insecure_url_warning).collect();
@@ -162,14 +163,14 @@ fn save_settings(
         state.dev_tokens.save(&token).map_err(|e| e.to_string())?;
     }
     let hotkey_changed = state.settings.lock().unwrap().hotkey != settings.hotkey;
-    let (last, cognito, aws_api) = {
+    let (last, oauth, cloud_api) = {
         let s = state.settings.lock().unwrap();
-        (s.last_session_id, s.cognito.clone(), s.aws_api_url.clone())
+        (s.last_session_id, s.oauth.clone(), s.cloud_api_url.clone())
     };
-    // The sign-in settings belong to the stage they came from: a new AWS API URL needs a new
+    // The sign-in settings belong to the stage they came from: a new cloud API URL needs a new
     // sign-in.
-    let cognito = if settings.aws_api_url.trim() == aws_api.trim() { cognito } else { None };
-    state.update_settings(|s| *s = Settings { last_session_id: last, cognito, ..settings.clone() });
+    let oauth = if settings.cloud_api_url.trim() == cloud_api.trim() { oauth } else { None };
+    state.update_settings(|s| *s = Settings { last_session_id: last, oauth, ..settings.clone() });
     if hotkey_changed {
         register_hotkey(&app, &settings.hotkey)?;
     }
@@ -241,18 +242,17 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The AWS environment's browser sign-in: the stage's Cognito settings from
+/// The cloud environment's browser sign-in: the stage's sign-in settings from
 /// `GET /v1/auth/config`, then OAuth with PKCE in the default browser. Returns the email.
 #[tauri::command]
 async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
-    let api_url = state.settings.lock().unwrap().aws_api_url.trim().to_string();
+    let api_url = state.settings.lock().unwrap().cloud_api_url.trim().to_string();
     if api_url.is_empty() {
-        return Err("Set the AWS API URL and save first.".into());
+        return Err("Set the cloud API URL and save first.".into());
     }
-    let cfg =
-        cognito::fetch_auth_config(&api_url).await.and_then(|c| c.cognito()).map_err(|e| e.to_string())?;
-    state.update_settings(|s| s.cognito = Some(cfg));
-    let provider = state.cognito().ok_or("no sign-in settings")?;
+    let cfg = oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()).map_err(|e| e.to_string())?;
+    state.update_settings(|s| s.oauth = Some(cfg));
+    let provider = state.oauth().ok_or("no sign-in settings")?;
     let opener = app.clone();
     provider
         .sign_in(move |url| {
@@ -267,14 +267,14 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
 
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
-    if let Some(p) = state.cognito() {
+    if let Some(p) = state.oauth() {
         p.sign_out().await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-/// `DELETE /me`, then every local recording. In AWS the sign-in goes too (the account
-/// deletion removes the Cognito user); the dev token stays (it is the local gateway's).
+/// `DELETE /me`, then every local recording. In the cloud the sign-in goes too (on AWS the account
+/// deletion also removes the Cognito user); the dev token stays (it is the local gateway's).
 #[tauri::command]
 async fn delete_account(state: State<'_, AppState>) -> Res<Value> {
     let result = state.api()?.delete("/me").await.map_err(|e| e.to_string())?;
@@ -282,8 +282,8 @@ async fn delete_account(state: State<'_, AppState>) -> Res<Value> {
     recording::delete_all(&state.recordings_dir);
     state.uploads.lock().unwrap().clear();
     state.update_settings(|s| s.last_session_id = None);
-    if state.settings.lock().unwrap().environment == Environment::Aws
-        && let Some(p) = state.cognito()
+    if state.settings.lock().unwrap().environment == Environment::Cloud
+        && let Some(p) = state.oauth()
     {
         let _ = p.sign_out().await;
     }
@@ -574,7 +574,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 settings_path,
                 dev_tokens: Arc::new(DevTokenProvider::new(secrets.clone())),
-                cognito: Mutex::new(None),
+                oauth: Mutex::new(None),
                 secrets,
                 engine: Mutex::new(None),
                 history: Arc::new(Mutex::new(Vec::new())),

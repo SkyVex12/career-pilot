@@ -1,0 +1,84 @@
+#cloud-config
+# The Stage 0 VM's boot (infra/gcp/modules/host). Container-Optimized OS runs write_files and
+# runcmd on every boot and keeps /etc in memory, so the units are written and started each
+# time; `copilotctl boot` mounts the data disk, sets the host firewall and starts the stack.
+# Configuration and secrets are not here: copilotctl reads them from instance metadata and
+# Secret Manager when each container starts.
+
+write_files:
+  - path: /var/lib/copilot/copilotctl.sh
+    permissions: "0700"
+    owner: root
+    encoding: b64
+    content: ${copilotctl}
+  - path: /var/lib/copilot/elasticmq.conf
+    permissions: "0644"
+    owner: root
+    encoding: b64
+    content: ${elasticmq_conf}
+%{ for name, stop_s in services ~}
+  - path: /etc/systemd/system/copilot-${name}.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot ${name} (container)
+      Requires=docker.service
+      After=docker.service network-online.target
+      StartLimitIntervalSec=0
+
+      [Service]
+      ExecStart=/bin/bash /var/lib/copilot/copilotctl.sh run ${name}
+      ExecStop=/usr/bin/docker stop -t ${stop_s} copilot-${name}
+      TimeoutStopSec=${stop_s + 20}
+      Restart=always
+      RestartSec=10
+%{ endfor ~}
+  - path: /etc/systemd/system/copilot-scheduler.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot scheduler tick (copilot-scheduler --once)
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash /var/lib/copilot/copilotctl.sh scheduler
+  - path: /etc/systemd/system/copilot-scheduler.timer
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot scheduler tick every ${scheduler_minutes} minutes
+
+      [Timer]
+      OnCalendar=*:0/${scheduler_minutes}
+      AccuracySec=10s
+  - path: /etc/systemd/system/copilot-backup.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot nightly pg_dump to Cloud Storage
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash /var/lib/copilot/copilotctl.sh backup
+  - path: /etc/systemd/system/copilot-backup.timer
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot nightly backup
+
+      [Timer]
+      OnCalendar=*-*-* ${backup_time_utc} UTC
+      Persistent=true
+
+runcmd:
+  - systemctl daemon-reload
+  - /bin/bash /var/lib/copilot/copilotctl.sh boot

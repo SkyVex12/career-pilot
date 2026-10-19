@@ -59,7 +59,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     # The sign-in first, so no new session can start while the rest is deleted (an access
     # token already issued lasts until it expires, an hour at most).
-    signin = "none (dev auth)"
+    signin = "none (dev auth)" if ctx.settings.auth == "dev" else f"kept ({ctx.settings.auth})"
     if ctx.users is not None:
         signin = "deleted" if await ctx.users.delete_user(uid) else "already gone"
     # Objects and live state next: if this run dies halfway, the users row is still there

@@ -10,10 +10,14 @@ and 16-byte tag).
 
 Key providers:
 - `KmsKeyProvider`: AWS KMS GenerateDataKey and Decrypt with the encryption context.
+- `GcpKmsKeyProvider`: Cloud KMS on GCP. Cloud KMS has no GenerateDataKey and no encryption
+  context: the DEK is made here and wrapped with Encrypt, with the user id as additional
+  authenticated data, so Decrypt opens it only when given the same user id (the encryption
+  context's guarantee).
 - `DevKeyProvider`: local stand-in. A 32-byte master key from settings wraps each DEK with
   AES-256-GCM, with the user id as associated data: the same guarantee as the KMS encryption
   context (a wrapped key opens only for its user), with no container to run. It refuses to
-  start outside COPILOT_ENV=dev and on AWS compute.
+  start outside COPILOT_ENV=dev and on cloud compute.
 """
 
 import asyncio
@@ -24,6 +28,7 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 from uuid import UUID
 
+import httpx2
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -31,10 +36,13 @@ from copilot_core.auth import refuse_outside_dev
 from copilot_core.aws import boto3_client
 from copilot_core.config import DataSettings
 from copilot_core.db import Conn
+from copilot_core.gcp import MetadataTokenSource, TokenSource
 
 FORMAT_V1 = b"\x01"
 NONCE_BYTES = 12
 DEV_WRAP_PREFIX = b"dev1"
+GCP_WRAP_PREFIX = b"gkms1"
+CLOUD_KMS_URL = "https://cloudkms.googleapis.com/v1"
 
 
 class DecryptError(Exception):
@@ -82,6 +90,64 @@ class KmsKeyProvider:
         return bytes(response["Plaintext"])
 
 
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+class GcpKmsKeyProvider:
+    """Cloud KMS through its REST API, with the VM service account's token."""
+
+    def __init__(
+        self,
+        key_name: str,
+        tokens: TokenSource | None = None,
+        http: httpx2.AsyncClient | None = None,
+    ) -> None:
+        if not key_name.startswith("projects/") or "/cryptoKeys/" not in key_name:
+            raise RuntimeError(
+                "COPILOT_GCP_KMS_KEY must be projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>"
+            )
+        self.key_name = key_name
+        self.tokens: TokenSource = tokens or MetadataTokenSource()
+        self.http = http or httpx2.AsyncClient(timeout=10.0)
+
+    async def _call(self, verb: str, body: dict[str, str]) -> dict[str, Any]:
+        token = await self.tokens.token()
+        response = await self.http.post(
+            f"{CLOUD_KMS_URL}/{self.key_name}:{verb}",
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if response.status_code != 200:
+            # The body names the reason (wrong AAD reads as INVALID_ARGUMENT); never the key.
+            raise DecryptError(f"Cloud KMS {verb} failed: HTTP {response.status_code}")
+        data: dict[str, Any] = response.json()
+        return data
+
+    async def generate_data_key(self, user_id: UUID) -> tuple[bytes, bytes]:
+        dek = os.urandom(32)
+        data = await self._call(
+            "encrypt",
+            {"plaintext": _b64(dek), "additionalAuthenticatedData": _b64(str(user_id).encode())},
+        )
+        return dek, GCP_WRAP_PREFIX + base64.b64decode(data["ciphertext"])
+
+    async def decrypt_data_key(self, wrapped: bytes, user_id: UUID) -> bytes:
+        if not wrapped.startswith(GCP_WRAP_PREFIX):
+            raise DecryptError("not a Cloud KMS-wrapped data key")
+        data = await self._call(
+            "decrypt",
+            {
+                "ciphertext": _b64(wrapped[len(GCP_WRAP_PREFIX) :]),
+                "additionalAuthenticatedData": _b64(str(user_id).encode()),
+            },
+        )
+        dek = base64.b64decode(data["plaintext"])
+        if len(dek) != 32:
+            raise DecryptError("Cloud KMS returned a data key of the wrong size")
+        return dek
+
+
 class DevKeyProvider:
     def __init__(self, master_key: bytes) -> None:
         if len(master_key) != 32:
@@ -123,6 +189,10 @@ class DevKeyProvider:
 def make_key_provider(settings: DataSettings) -> KeyProvider:
     if settings.key_provider == "dev":
         return DevKeyProvider.from_settings(settings)
+    if settings.key_provider == "gcp_kms":
+        if not settings.gcp_kms_key:
+            raise RuntimeError("COPILOT_KEY_PROVIDER=gcp_kms needs COPILOT_GCP_KMS_KEY")
+        return GcpKmsKeyProvider(settings.gcp_kms_key)
     if not settings.kms_key_id:
         raise RuntimeError("COPILOT_KEY_PROVIDER=kms needs COPILOT_KMS_KEY_ID")
     return KmsKeyProvider(settings.kms_key_id, settings.aws_region)
