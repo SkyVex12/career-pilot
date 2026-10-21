@@ -147,7 +147,13 @@ class S3Store:
         )
 
     async def delete(self, key: str) -> None:
-        await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+        # S3 answers a delete of a missing key with 204; Cloud Storage answers 404. Either way
+        # the object is gone, which is all callers need.
+        try:
+            await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+        except Exception as e:
+            if not _not_found(e):
+                raise
 
     async def list_keys(self, prefix: str) -> list[str]:
         keys: list[str] = []

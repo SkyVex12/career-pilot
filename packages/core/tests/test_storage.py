@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from copilot_core.config import DataSettings
 from copilot_core.storage import S3Store, is_gcs
 
@@ -68,3 +70,20 @@ def test_the_client_signs_for_the_s3_region_and_skips_optional_checksums() -> No
     assert "%2Fauto%2Fs3%2Faws4_request" in url
     assert "x-amz-checksum" not in url.lower()
 
+
+async def test_deleting_a_missing_object_is_not_an_error() -> None:
+    # Cloud Storage's XML API answers 404 NoSuchKey where S3 answers 204.
+    from botocore.exceptions import ClientError
+
+    class Gcs(FakeS3):
+        def delete_object(self, Bucket: str, Key: str) -> None:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "DeleteObject")
+
+    await S3Store(settings("https://storage.googleapis.com"), client=Gcs([])).delete("uploads/x")
+
+    class Denied(FakeS3):
+        def delete_object(self, Bucket: str, Key: str) -> None:
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteObject")
+
+    with pytest.raises(ClientError):
+        await S3Store(settings("https://storage.googleapis.com"), client=Denied([])).delete("k")
