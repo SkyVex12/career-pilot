@@ -94,6 +94,79 @@ async def test_route_first_token_timeout_overrides_the_router() -> None:
     assert done.provider == "r"
 
 
+async def test_router_hedges_a_stalled_request() -> None:
+    """Benchmark, October 2026: 5% of detector calls stalled until the first-token timeout and
+    its retry (5 to 6 s). With a hedge, the retry starts alongside the stalled request, and the
+    first to answer wins."""
+
+    class Stalls(Fake):
+        closed = 0
+
+        async def stream(
+            self, model: str, req: LLMRequest, params: Mapping[str, Any]
+        ) -> AsyncGenerator[LLMChunk]:
+            self.calls += 1
+            try:
+                await asyncio.sleep(0.05 if self.calls > 1 else 10)
+                yield "hello"
+                yield LLMDone(LLMUsage(10, 0, 1), "end_turn")
+            finally:
+                Stalls.closed += 1
+
+    p = Stalls("a", "ok")
+    router = ModelRouter(
+        {"detector": [Route(p, "m"), Route(p, "m")]},
+        first_token_timeout_s=3,
+        hedge_after_s={"detector": 0.1},
+    )
+    started = asyncio.get_running_loop().time()
+    text, done = await router.complete("detector", REQ)
+    assert asyncio.get_running_loop().time() - started < 1  # not the 3 s timeout
+    assert (text, done.attempt, done.hedged, p.calls) == ("hello", 1, True, 2)
+    assert Stalls.closed == 2  # the stalled request is cancelled, not left running
+
+
+async def test_router_does_not_hedge_a_prompt_answer_or_other_jobs() -> None:
+    a = Fake("a", "ok", delay=0.01)
+    router = ModelRouter(
+        {"detector": [Route(a, "m"), Route(a, "m")], "fast": [Route(a, "m"), Route(a, "m")]},
+        first_token_timeout_s=1,
+        hedge_after_s={"detector": 0.5},
+    )
+    _, done = await router.complete("detector", REQ)
+    assert (done.attempt, done.hedged, a.calls) == (0, False, 1)
+    slow = Fake("s", "ok", delay=0.2)
+    router.routes = {"fast": [Route(slow, "m"), Route(slow, "m")]}
+    _, done = await router.complete("fast", REQ)
+    assert (done.hedged, slow.calls) == (False, 1)
+
+
+async def test_router_hedge_survives_the_first_request_failing() -> None:
+    class FailsLate(Fake):
+        async def stream(
+            self, model: str, req: LLMRequest, params: Mapping[str, Any]
+        ) -> AsyncGenerator[LLMChunk]:
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(0.2)
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.3)
+            yield "ok"
+            yield LLMDone(LLMUsage(10, 0, 1), "end_turn")
+
+    p = FailsLate("a", "ok")
+    reasons: list[str] = []
+    router = ModelRouter(
+        {"detector": [Route(p, "m"), Route(p, "m"), Route(Fake("b", "ok"), "m")]},
+        first_token_timeout_s=1,
+        on_fallback=lambda job, route, reason: reasons.append(reason),
+        hedge_after_s={"detector": 0.1},
+    )
+    text, done = await router.complete("detector", REQ)
+    assert (text, done.provider, done.attempt) == ("ok", "a", 1)
+    assert reasons == ["RuntimeError: boom"]
+
+
 async def test_router_warms_each_provider_once() -> None:
     class Warm(Fake):
         def __init__(self, name: str, fail: bool = False) -> None:
@@ -200,7 +273,7 @@ async def test_detector_treats_a_refusal_as_no_question() -> None:
         {"detector": [Route(Fake("a", "refuse_after_text"), "m")]}, first_token_timeout_s=1
     )
     d = await Detector(late, "Alex", 80).detect("How did you do it?", "")
-    assert not d.fires(0.0)
+    assert not d.fires()
     assert d.error is not None
 
 
@@ -255,21 +328,14 @@ def test_embedder_auto_and_startup_log(caplog: pytest.LogCaptureFixture) -> None
 
 
 def test_parse_detection() -> None:
-    d = parse_detection(
-        '{"is_question": true, "complete": true, "addressed_to_user": true,'
-        ' "type": "behavioral", "confidence": 0.92}'
-    )
-    assert d.fires(0.7)
-    assert not d.fires(0.95)
-    weird = parse_detection('{"is_question": true, "type": "nonsense", "confidence": 3}')
-    assert weird.qtype == "other"
-    assert weird.confidence == 1.0
-    assert not weird.fires(0.7)
-    small_talk = parse_detection(
-        '{"is_question": true, "complete": true, "addressed_to_user": true,'
-        ' "type": "small_talk", "confidence": 0.9}'
-    )
-    assert not small_talk.fires(0.7)
+    d = parse_detection('{"answer": "behavioral"}')
+    assert (d.decision, d.qtype, d.fires()) == ("answer", "behavioral", True)
+    wait = parse_detection('{"answer": "wait"}')
+    assert (wait.decision, wait.fires()) == ("wait", False)
+    assert not parse_detection('{"answer": "none"}').fires()
+    weird = parse_detection('{"answer": "nonsense"}')
+    assert (weird.decision, weird.qtype) == ("none", "other")
+    assert not parse_detection('{"answer": "small_talk"}').fires()
     with pytest.raises(ValueError, match="no JSON"):
         parse_detection("no json here")
 
@@ -392,7 +458,7 @@ def test_bearer_token() -> None:
 def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert (s.silence_timer_ms, s.speculative_start_ms) == (400, 300)
-    assert (s.stage1_min_score, s.detector_min_confidence) == (0.3, 0.7)
+    assert (s.stage1_min_score, s.detector_hedge_ms) == (0.3, 2000)
     assert (s.detector_max_tokens, s.fast_pass_max_tokens, s.deep_pass_max_tokens) == (80, 250, 800)
     assert s.prepared_answer_min_similarity == 0.85
     assert s.deep_pass_auto_types == ["behavioral", "technical", "system_design"]
@@ -485,3 +551,19 @@ def test_prepared_thresholds_from_the_environment_merge_over_the_defaults() -> N
     )
     assert s.prepared_threshold("voyage:voyage-3@1024").min_similarity == 0.7
     assert s.prepared_threshold(_Embedder.model_id).min_similarity == 0.63
+
+
+def test_live_prompts_ask_for_spoken_cues() -> None:
+    """Live test, 2026-10-07: the answers sounded AI-generated, full sentences and paragraphs
+    to read out. The passes now ask for cues in the user's own wording, and a general
+    technical question gets its answer, not a story or advice on how to approach it."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    deep = prompts.deep_pass(ctx, "", "q?", "behavioral", 800)
+    for system in (fast, deep.system[0].text):
+        assert "not sentences to read out" in system
+        assert "Reuse the wording, story names and exact numbers" in system
+        assert "may have a misheard word" in system
+        assert "the points are the\n  answer itself" in system
+    assert "fragment of 3 to 10 words" in fast
+    assert "under 70 words" in str(deep.content)

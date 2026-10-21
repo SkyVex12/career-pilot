@@ -44,6 +44,12 @@ from copilot_protocol import models
 log = logging.getLogger(__name__)
 
 # Close codes (ARCHITECTURE.md, "Close codes, reconnect policy and limits").
+# question.detected carries a confidence. The detector no longer returns one (it never kept a
+# question from firing in 546 benchmark decisions, and cost output tokens on every call): a
+# detector decision is sent as 0.9, a hotkey question as 1.0, which the client uses to tell
+# them apart.
+DETECTED_CONFIDENCE = 0.9
+
 CLOSE_NORMAL = 1000
 CLOSE_GOING_AWAY = 1001
 CLOSE_UNAUTHORIZED = 4401
@@ -174,7 +180,6 @@ class Session:
             silence_timer_ms=self.settings.silence_timer_ms,
             speculative_start_ms=self.settings.speculative_start_ms,
             final_wait_max_ms=self.settings.final_wait_max_ms,
-            min_confidence=self.settings.detector_min_confidence,
             turn_model=svc.turn_model,
             hold=self.settings.speculative_hold,
             hold_min_words=self.settings.speculative_min_words,
@@ -291,10 +296,8 @@ class Session:
         """Every detector decision, so misses and false fires can be explained afterwards;
         the text only with transcript consent."""
         log.info(
-            "detector %s: question=%s complete=%s addressed=%s type=%s confidence=%.2f "
-            "latency=%sms cached=%s%s",
-            entry["text_hash"][:12], entry["is_question"], entry["complete"],
-            entry["addressed_to_user"], entry["type"], entry["confidence"], entry["latency_ms"],
+            "detector %s: decision=%s type=%s latency=%sms cached=%s%s",
+            entry["text_hash"][:12], entry["decision"], entry["type"], entry["latency_ms"],
             entry["cached"], " cancelled" if entry.get("cancelled") else "",
         )  # fmt: skip
         self.log_entry({**entry, **({"text": utterance} if self.store_text() else {})})
@@ -323,8 +326,8 @@ class Session:
             qid=uuid7(),
             text=text,
             qtype=detection.qtype,
-            confidence=detection.confidence,
-            addressed=detection.addressed_to_user,
+            confidence=DETECTED_CONFIDENCE,
+            addressed=True,
             speculative=speculative,
             forced=False,
             t0=t0,
@@ -375,8 +378,8 @@ class Session:
             return
         q.text = text
         q.qtype = detection.qtype
-        q.confidence = detection.confidence
-        q.addressed = detection.addressed_to_user
+        q.confidence = DETECTED_CONFIDENCE
+        q.addressed = True
         q.detector_ms = detection.latency_ms
         q.speculative = speculative
         q.detected_at = datetime.now(UTC)

@@ -147,14 +147,14 @@ async def test_every_detector_decision_is_logged(env) -> None:
         await c.send({"type": "session.end"})
         assert await c.closed() == 1000
     decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
-    assert [e["is_question"] for e in decisions] == [False, True]
+    assert [e["decision"] for e in decisions] == ["none", "answer"]
     for e in decisions:
         assert "text" not in e
         assert len(e["text_hash"]) == 32
         assert e["model"] == "claude-haiku-4-5"
         assert e["cost_usd"] > 0
         assert e["latency_ms"] >= 0
-        for field in ("complete", "addressed_to_user", "type", "confidence", "input_tokens"):
+        for field in ("type", "first_token_ms", "input_tokens"):
             assert field in e, field
     assert decisions[1]["type"] == "technical"
 

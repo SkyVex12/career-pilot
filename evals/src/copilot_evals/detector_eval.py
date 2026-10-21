@@ -9,7 +9,7 @@ the detector prompt, the transcript of the 60 s before it (the interviewer's lin
 candidate's answers as "(Alex Rivera spoke for N s)"), and the utterance. A question with a
 mid-sentence pause is also checked on its first half alone, which must not fire (the speaker
 is not done). An utterance fires when the parsed detection passes the gateway's rule
-(`Detection.fires` at detector_min_confidence). Reported per model: false fires, misses, type
+(`Detection.fires`). Reported per model: false fires, misses, type
 accuracy on the fired questions, and latency (request to the whole JSON) p50 and p95.
 
 Every call runs through `OpenAIProvider` with the model's own reasoning setting, so latency is
@@ -112,7 +112,7 @@ async def detect_once(
 
 async def eval_model(
     provider: Any, model: str, all_cases: list[Case], reps: int, user_name: str,
-    system: str | None, min_confidence: float,
+    system: str | None,
 ) -> dict[str, Any]:  # fmt: skip
     latencies: list[float] = []
     false_fires: dict[str, int] = {}
@@ -131,7 +131,7 @@ async def eval_model(
             if case.should_fire is None:
                 continue
             scored += 1
-            fired = detection.fires(min_confidence)
+            fired = detection.fires()
             if fired and not case.should_fire:
                 false_fires[case.id] = false_fires.get(case.id, 0) + 1
             elif case.should_fire and not fired:
@@ -180,14 +180,9 @@ async def main(argv: list[str] | None = None) -> int:
     system = args.system.read_text("utf-8") if args.system else None
     profile = load_profile()
     all_cases = cases(load_script(), profile.user_name)
-    from copilot_gateway.config import Settings
-
-    min_conf = Settings().detector_min_confidence
     results: list[dict[str, Any]] = []
     for model in models:
-        r = await eval_model(
-            provider, model, all_cases, args.reps, profile.user_name, system, min_conf
-        )
+        r = await eval_model(provider, model, all_cases, args.reps, profile.user_name, system)
         results.append(r)
         print(json.dumps(r))
     print(f"\n{'model':<14} {'reason':<8} {'acc':>5} {'type':>5} {'p50':>6} {'p95':>6}  wrong")

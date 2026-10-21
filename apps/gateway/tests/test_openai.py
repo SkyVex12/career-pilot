@@ -181,7 +181,7 @@ async def test_openai_detector_structured_output() -> None:
     parsed = parse_detection(expected("openai_detector.sse")["text"])
     assert detection == replace(parsed, latency_ms=detection.latency_ms)
     assert detection.error is None
-    assert detection.is_question
+    assert detection.fires()
     fmt = captured[0]["json"]["text"]["format"]
     assert fmt == {
         "type": "json_schema",

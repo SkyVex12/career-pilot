@@ -82,6 +82,7 @@ class LLMDone:
     attempt: int = 0  # index of the route that answered; above 0 means a fallback ran
     first_token_ms: int = 0
     service_tier: str = "standard"  # the tier that served it, from the response's usage
+    hedged: bool = False  # a second route ran alongside (ModelRouter.hedge_after_s)
 
 
 type LLMChunk = str | LLMDone
@@ -465,10 +466,30 @@ class ModelRouter:
         routes: Mapping[str, Sequence[Route]],
         first_token_timeout_s: float,
         on_fallback: FallbackHook | None = None,
+        hedge_after_s: Mapping[str, float] | None = None,
     ) -> None:
         self.routes = routes
         self.first_token_timeout_s = first_token_timeout_s
         self.on_fallback = on_fallback
+        # Per job: when the first route has no first token after this long, the next route
+        # starts alongside it and whichever answers first is used (a hedged request), instead
+        # of waiting out the first-token timeout before retrying.
+        self.hedge_after_s = dict(hedge_after_s or {})
+        self.hedges = 0
+
+    async def _open(
+        self, route: Route, req: LLMRequest, params: Mapping[str, Any]
+    ) -> tuple[AsyncGenerator[LLMChunk], LLMChunk, int]:
+        """A route's stream and its first chunk, within the route's first-token timeout."""
+        started = time.monotonic()
+        agen = route.provider.stream(route.model, req, params)
+        try:
+            timeout = route.first_token_timeout_s or self.first_token_timeout_s
+            first = await asyncio.wait_for(anext(agen), timeout)
+        except BaseException:
+            await agen.aclose()
+            raise
+        return agen, first, int((time.monotonic() - started) * 1000)
 
     async def stream(
         self, job: str, req: LLMRequest, on_fallback: FallbackHook | None = None
@@ -480,6 +501,7 @@ class ModelRouter:
         errors: list[str] = []
         refused: set[str] = set()  # model families that refused this request
         other_failures = 0
+        hedge_after = self.hedge_after_s.get(job)
 
         def failed(route: Route, reason: str) -> None:
             log.warning("%s route %s failed: %s", job, route.label, reason)
@@ -487,33 +509,65 @@ class ModelRouter:
             for hook in hooks:
                 hook(job, route, reason)
 
-        for attempt, route in enumerate(routes):
+        def eligible(route: Route) -> bool:
             if route.refusal_only and not refused:
-                continue
-            if model_family(route.model) in refused:
-                continue
+                return False
+            return model_family(route.model) not in refused
+
+        def start(route: Route) -> "asyncio.Task[tuple[AsyncGenerator[LLMChunk], LLMChunk, int]]":
             params = without_between_tools(route.params) if refused else route.params
-            started = time.monotonic()
-            agen = route.provider.stream(route.model, req, params)
+            return asyncio.ensure_future(self._open(route, req, params))
+
+        pending = list(enumerate(routes))
+        while pending:
+            attempt, route = pending.pop(0)
+            if not eligible(route):
+                continue
+            racing = {start(route): (attempt, route)}
+            won: tuple[int, Route, AsyncGenerator[LLMChunk], LLMChunk, int] | None = None
+            hedged = False
             try:
-                timeout = route.first_token_timeout_s or self.first_token_timeout_s
-                first = await asyncio.wait_for(anext(agen), timeout)
-            except (TimeoutError, StopAsyncIteration, Exception) as e:  # next route on any error
-                await agen.aclose()
-                other_failures += 1
-                failed(
-                    route,
-                    "first token timeout"
-                    if isinstance(e, TimeoutError)
-                    else f"{type(e).__name__}: {e}",
-                )
+                if hedge_after is not None:
+                    await asyncio.wait(racing, timeout=hedge_after)
+                    nxt = next((p for p in pending if eligible(p[1])), None)
+                    if nxt is not None and not any(t.done() for t in racing):
+                        pending.remove(nxt)
+                        self.hedges += 1
+                        hedged = True
+                        log.info("%s: no first token after %.1f s, hedging", job, hedge_after)
+                        racing[start(nxt[1])] = nxt
+                while racing and won is None:
+                    done, _ = await asyncio.wait(racing, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        a, r = racing.pop(task)
+                        try:
+                            agen, first, first_ms = task.result()
+                        except Exception as e:  # next route on any error
+                            other_failures += 1
+                            timed_out = isinstance(e, TimeoutError)
+                            failed(
+                                r,
+                                "first token timeout" if timed_out else f"{type(e).__name__}: {e}",
+                            )
+                            continue
+                        if isinstance(first, LLMDone) and first.stop_reason == "refusal":
+                            await agen.aclose()
+                            refused.add(model_family(r.model))
+                            failed(r, "refusal")
+                            continue
+                        if won is None:
+                            won = (a, r, agen, first, first_ms)
+                        else:
+                            await agen.aclose()
+            finally:
+                for task in racing:  # the slower half of a hedge
+                    task.cancel()
+                for opened in await asyncio.gather(*racing, return_exceptions=True):
+                    if isinstance(opened, tuple):  # it opened before the cancel landed
+                        await opened[0].aclose()
+            if won is None:
                 continue
-            if isinstance(first, LLMDone) and first.stop_reason == "refusal":
-                await agen.aclose()
-                refused.add(model_family(route.model))
-                failed(route, "refusal")
-                continue
-            first_ms = int((time.monotonic() - started) * 1000)
+            attempt, route, agen, first, first_ms = won
             try:
                 chunk: LLMChunk = first
                 while True:
@@ -526,6 +580,7 @@ class ModelRouter:
                             attempt=attempt,
                             first_token_ms=first_ms,
                             service_tier=chunk.service_tier,
+                            hedged=hedged,
                         )
                         return
                     yield chunk

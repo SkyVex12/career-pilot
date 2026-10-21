@@ -114,8 +114,10 @@ def node_id(short_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"copilot-bench:{short_id}"))
 
 
-async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
-    from copilot_core import keys
+def build_profile(
+    profile: Profile, nonce: str | None, model_id: str | None, vectors: dict[str, str]
+) -> tuple[Any, Any]:
+    """The fictional profile as the gateway reads it: (Digest, SessionPack)."""
     from copilot_core.packs import (
         Digest,
         NodeRef,
@@ -132,7 +134,6 @@ async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
     refs = {k: NodeRef(node_id=uuid.UUID(node_id(k)), label=v) for k, v in profile.refs.items()}
     version = Digest.version_of(text)
     digest = Digest(schema="digest.v1", version=version, text=text, refs=refs, built_at=None)
-    model_id, vectors = await embed_prepared(profile)
     pack = SessionPack(
         schema="session_pack.v1",
         pack_id=uuid.UUID(BENCH_PACK_ID),
@@ -167,6 +168,14 @@ async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
         ],
         embedding_model=model_id,
     )
+    return digest, pack
+
+
+async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
+    from copilot_core import keys
+
+    model_id, vectors = await embed_prepared(profile)
+    digest, pack = build_profile(profile, nonce, model_id, vectors)
     uid = BENCH_USER_ID
     await valkey.set(keys.digest(uid), digest.model_dump_json(by_alias=True))
     await valkey.set(keys.pack(uid, BENCH_PACK_ID), pack.model_dump_json(by_alias=True))
@@ -388,6 +397,19 @@ def rescore(label: str) -> dict[str, Any]:
     return summary
 
 
+def stt_lag_ms(replay: rp.Replay, spans: list[Span]) -> list[int]:
+    """Per utterance, the true end of speech to the first STT final received after it. The
+    STT is a provider too: on 2026-10-15 its finals came a median 2.5 s late (up to 12 s)
+    against 0.7 s the day before, and every variant missed questions for that reason alone."""
+    finals = [t for t, m in replay.events if m.get("type") == "transcript.final"]
+    out: list[int] = []
+    for s in spans:
+        after = [t for t in finals if s.end_s - 0.5 <= t <= s.end_s + 30]
+        if after:
+            out.append(round((after[0] - s.end_s) * 1000))
+    return out
+
+
 def score_run(
     replay: rp.Replay,
     log: list[dict[str, Any]],
@@ -488,7 +510,8 @@ def score_run(
 
     def cost_of(e: dict[str, Any]) -> float:
         v = e.get("cost_usd", e.get("cost_usd_est"))
-        return float(v) if isinstance(v, int | float) else 0.0
+        hedge = e.get("hedge_cost_usd_est")  # a hedged detector call's losing request
+        return sum(float(x) for x in (v, hedge) if isinstance(x, int | float))
 
     by_kind: dict[str, float] = {}
     for e in log:
@@ -507,8 +530,12 @@ def score_run(
     ]
     detector_entries = [e for e in log if e.get("kind") == "detector"]
 
+    lag = stt_lag_ms(replay, spans)
     return {
         "session_id": replay.session_id,
+        "stt_lag_ms": {"p50": round(pct([float(x) for x in lag], 50)), "max": max(lag)}
+        if lag
+        else None,
         "questions": rows,
         "detection": {
             "answer_utterances": len(answer_utts),
@@ -594,8 +621,10 @@ def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
         if any(r["first_word_ms"] is not None for r in run["questions"])
     ]
     calls = [d["detector_calls"] for d in det if d["detector_calls"] is not None]
+    lags = [run["stt_lag_ms"]["p50"] for run in runs if run.get("stt_lag_ms")]
     return {
         "runs": len(runs),
+        "stt_lag_p50_per_run_ms": lags,
         "stages": {k: stage(auto, k) for k in STAGES},
         "forced_first_word_ms": stage(forced, "first_word_ms"),
         "first_word_p50_per_run_ms": [round(v) for v in per_run_fw],
@@ -665,8 +694,12 @@ def print_run(i: int, run: dict[str, Any]) -> None:
         f"precision {d['precision']} recall {d['recall']} false fires {d['false_fire_utterances']} "
         f"missed {d['missed']} | waste {s['wasted']}/{s['fast_starts']} | "
         f"prepared {p['correct']}/{p['opportunities']} (wrong {p['wrong']}) | "
-        f"cost ${cost['total_usd']:.4f} (${cost['per_live_hour_usd']:.2f}/live h)"
+        f"cost ${cost['total_usd']:.4f} (${cost['per_live_hour_usd']:.2f}/live h) | "
+        f"stt lag {run.get('stt_lag_ms')}"
     )
+    lag = run.get("stt_lag_ms")
+    if lag and lag["p50"] > 1500:
+        print(f"WARNING: STT finals {lag['p50']} ms late at p50; this run measures the STT")
 
 
 def print_summary(label: str, s: dict[str, Any]) -> None:
@@ -788,6 +821,10 @@ def compare(labels: list[str]) -> str:
     rows: list[tuple[str, list[str]]] = [
         ("Runs", [str(s["runs"]) for s in sums]),
         ("Provider probe, detector model (ms)", [_cell(s.get("provider_probe_ms")) for s in sums]),
+        (
+            "STT final lag p50, per run (ms)",
+            [", ".join(str(x) for x in s.get("stt_lag_p50_per_run_ms", [])) or "-" for s in sums],
+        ),
         ("First word p50 (ms)", [st(s, "first_word_ms", "p50") for s in sums]),
         ("First word p95 (ms)", [st(s, "first_word_ms", "p95") for s in sums]),
         (
