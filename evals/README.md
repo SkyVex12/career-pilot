@@ -101,26 +101,40 @@ gateway's `prepared_answer_thresholds` default for that model id.
 ## Answer quality
 
 `copilot-answer-eval` runs the gateway's own fast and deep prompt builders and model routes
-(`.env`) on the benchmark's 12 questions that need an answer, with the fictional profile of
-`bench/profile.toml` as digest and pack and the 60 s of transcript before each question. The
+(`.env`) on 26 questions, with the fictional profile of `bench/profile.toml` as digest and pack:
+
+- the benchmark's 12 questions that need an answer, each with the 60 s of transcript before it;
+- the 14 of `answers/questions.toml`, which the profile does not cover: general technical
+  (idempotent payments, Kubernetes probes, isolation levels, Kafka exactly-once), system design
+  (a ledger, notifications at scale), behavioral with no matching story (learning on a
+  deadline, bad news, time zones), "other" (why this company, salary, culture, five years) and
+  coding. Each lists the key points of a complete, correct answer and the personal facts the
+  profile does not hold, for the grader.
+
+Three of the benchmark's questions (process vs thread, database index, typing a URL) are
+general knowledge too; with the 14 they form the "not covered" group, summarized apart. The
 fast pass gets no question type, as a held pass does; the deep pass gets the labeled type and
 no memory block, as in Stage 0. A model (`--grader`, default gpt-6.1-sol) grades each answer
 without knowing which prompt wrote it:
 
 | Criterion | Meaning |
 | --- | --- |
-| grounded | Every point about the candidate cites a short id whose entry supports it (general knowledge and facts from a section without an id need none) |
-| invented | Facts about the candidate that the digest and pack do not hold |
+| grounded | Every point about the candidate cites a short id whose entry supports it (general knowledge, a plan, and facts from a section without an id need none) |
+| invented | Personal facts the digest and pack do not hold, general knowledge passed off as the candidate's own experience ("at Larkspur we ran Kubernetes"), a salary figure given as theirs, and facts about the company beyond the job summary and transcript |
+| complete (1 to 5) | The notes carry a full answer to the question asked, against its key points when it has them; 1 is thin or evasive ("not in my notes", only how one might approach it) |
+| correct (1 to 5) | The general knowledge in it (technical facts, design, advice) is right |
 | spoken (1 to 5) | Short cues in the candidate's own wording to speak from, against polished prose, filler and stock phrases |
 | shape (1 to 5) | The right length and shape for the pass and question type (the deep shapes of `prompts.DEEP_SHAPES`) |
 
-Plain counts need no model: words, words per line, lines with a citation, stock phrases from a
-fixed list, and full written sentences.
+Plain counts need no model: words, words per line, lines with a citation, citations of short
+ids the profile does not have, stock phrases from a fixed list, and full written sentences.
+Each run adds up its cost (answers and grades, at `COPILOT_MODEL_PRICES`).
 
 ```sh
-uv run copilot-answer-eval run --label before --reps 2    # about $0.35: 48 answers, graded
+uv run copilot-answer-eval run --label before --reps 2    # about $0.80: 104 answers, graded
+uv run copilot-answer-eval run --label try --reps 1 --only salary --only ledger   # a few
 uv run copilot-answer-eval regrade before after           # the same rubric over saved answers
-uv run copilot-answer-eval compare before after           # summaries and 5 examples side by side
+uv run copilot-answer-eval compare before after           # summaries and 6 examples side by side
 ```
 
 Results go to `answers/results/<label>/`: `answers.json`, `summary.json` and `samples.md`, the
