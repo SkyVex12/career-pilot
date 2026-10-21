@@ -1,0 +1,177 @@
+# Questions the benchmark profile (evals/bench/profile.toml) does not cover, for the
+# answer-quality eval (evals/README.md, "Answer quality"). They sit next to the benchmark's own
+# questions: general technical and system design questions with no matching story, behavioral
+# questions with no matching story, and the "other" questions (why this company, salary,
+# culture, the future) that the job summary and company should shape.
+#
+# Fields per question:
+#   id          stable name, used in reports
+#   question    what the interviewer says
+#   type        the question type the detector would give it
+#   key_points  what a complete, correct answer covers: the grader checks completeness and
+#               technical correctness against them (it may accept other correct points too)
+#   trap        what an answer must not claim about the candidate (personal facts the profile
+#               does not hold), checked by the grader as invented facts
+#
+# The transcript before each question is the benchmark's opening (greeting and team intro),
+# and the candidate's first answer.
+
+transcript = """[00:01] Them: Hi Alex, thanks for joining today. Can you hear me okay?
+[00:06] Them: Great. How's your week been so far?
+[00:12] Them: Okay, so I'll start by telling you a little about the team. We run the payments platform, about forty engineers across four squads, and this year we're moving a lot of our batch jobs over to streaming.
+[00:28] (Alex Rivera spoke for 40 s)"""
+
+[[question]]
+id = "idempotency"
+question = "How would you make a payment API idempotent, so a retried request never charges the customer twice?"
+type = "technical"
+key_points = [
+  "client sends an idempotency key per logical request",
+  "server stores key with request fingerprint and the response, under a unique constraint",
+  "a retry with the same key returns the stored response; same key with a different body is rejected",
+  "handle a concurrent in-flight duplicate (lock or insert-first) and set a retention window",
+  "the call to the payment provider also needs its own idempotency key",
+]
+trap = "no idempotency-key or payments-API story is in the profile"
+
+[[question]]
+id = "k8s_probes"
+question = "What's the difference between a liveness probe and a readiness probe in Kubernetes?"
+type = "technical"
+key_points = [
+  "liveness failing makes the kubelet restart the container",
+  "readiness failing takes the pod out of service endpoints, no restart",
+  "readiness covers warm-up and dependencies; liveness should only catch a stuck process",
+  "pitfall: a liveness check on a dependency causes restart storms; startup probe for slow starts",
+]
+trap = "the profile has no Kubernetes experience (it lists ECS)"
+
+[[question]]
+id = "isolation"
+question = "Can you walk me through transaction isolation levels and what each one protects you from?"
+type = "technical"
+key_points = [
+  "read uncommitted, read committed, repeatable read, serializable",
+  "anomalies: dirty read, non-repeatable read, phantom read, and write skew or lost update",
+  "higher levels cost concurrency: more locking, or serialization failures to retry",
+  "PostgreSQL defaults to read committed; its repeatable read is snapshot isolation",
+]
+trap = "no isolation-level incident or story is in the profile"
+
+[[question]]
+id = "exactly_once"
+question = "Kafka says it supports exactly-once. What does that actually mean, and where does it break down?"
+type = "technical"
+key_points = [
+  "idempotent producer plus transactions: atomic writes across partitions and offset commits",
+  "consumers read with read_committed",
+  "it holds only within Kafka (read-process-write); external side effects need idempotent consumers or an outbox",
+  "costs latency and throughput; zombie producers fenced by transactional id",
+]
+trap = "the profile uses Kafka but says nothing about exactly-once or transactions"
+
+[[question]]
+id = "ledger"
+question = "How would you design a ledger service for a payments platform that never loses or double-counts money?"
+type = "system_design"
+key_points = [
+  "clarify scale, currencies, consistency and audit requirements",
+  "double-entry: every transaction is balanced debit and credit entries",
+  "append-only, immutable entries; corrections as new reversing entries",
+  "idempotency keys on writes; strong consistency (one ACID database, serializable or locking per account)",
+  "balances derived from entries or snapshots; reconciliation with external providers",
+]
+trap = "the profile has no ledger project"
+
+[[question]]
+id = "notifications"
+question = "Design a system that sends email and push notifications to fifty million users."
+type = "system_design"
+key_points = [
+  "clarify volume, latency needs, transactional vs marketing, user preferences",
+  "API accepts requests, queue (e.g. Kafka) fans out to per-channel workers",
+  "templates and user preferences/opt-out, rate limits per provider, retries with backoff and dead-letter",
+  "dedup with idempotency keys; scale workers horizontally; track delivery status",
+]
+trap = "the profile has no notification system"
+
+[[question]]
+id = "learn_fast"
+question = "Tell me about a time you had to learn a new technology quickly to hit a deadline."
+type = "behavioral"
+key_points = [
+  "a real story if one fits (the Kafka pipeline only loosely); otherwise say so and give the approach",
+  "approach: scope what you need, docs and a small spike, ask experts, ship behind a flag",
+]
+trap = "no story about learning a technology on a deadline is in the profile; inventing one (a technology, a deadline, a result) is an invented fact"
+
+[[question]]
+id = "bad_news"
+question = "Tell me about a time you had to deliver bad news to a customer or a stakeholder."
+type = "behavioral"
+key_points = [
+  "a real story if one fits (the failed ETA launch or the Black Friday outage are the closest); else the approach",
+  "approach: tell early, facts and impact, what you are doing and when they hear next",
+]
+trap = "no story about telling a customer or stakeholder is in the profile; inventing the conversation or its outcome is an invented fact"
+
+[[question]]
+id = "time_zones"
+question = "How have you handled working with a team spread across several time zones?"
+type = "behavioral"
+key_points = [
+  "honest: the profile has no distributed-team story",
+  "approach: async written updates and decisions, overlap hours, clear owners, handoff notes, recorded demos",
+]
+trap = "the profile says nothing about time zones or remote teams"
+
+[[question]]
+id = "why_company"
+question = "Why do you want to work at Northwind Payments specifically?"
+type = "other"
+key_points = [
+  "ties the job summary (batch settlement to streaming, Go and Python, PostgreSQL, Kafka, AWS) to the candidate's real goals and experience",
+  "payments at larger scale and more system design ownership, from the profile's goals",
+]
+trap = "no facts about Northwind beyond the job summary and the team intro in the transcript"
+
+[[question]]
+id = "salary"
+question = "What are your salary expectations for this role?"
+type = "other"
+key_points = [
+  "no figure stated, since the profile has none",
+  "ask for the role's budgeted range, look at total compensation, stay flexible for the right scope",
+]
+trap = "the profile has no current salary or target number; any figure presented as the candidate's is invented"
+
+[[question]]
+id = "culture"
+question = "What kind of team culture do you do your best work in?"
+type = "other"
+key_points = [
+  "a clear view of working style: ownership, blameless incident reviews, data over opinions, written design",
+  "backed by real stories where they fit (runbook template, measured spike)",
+]
+trap = "no facts beyond the profile"
+
+[[question]]
+id = "five_years"
+question = "Where do you see yourself in five years?"
+type = "other"
+key_points = [
+  "deeper system design ownership on a larger payments platform, from the profile's goals",
+  "growing others (mentoring) and owning reliability",
+]
+trap = "no titles, promotions or plans that the profile does not state as the candidate's"
+
+[[question]]
+id = "first_unique"
+question = "How would you find the first non-repeating character in a string?"
+type = "coding"
+key_points = [
+  "two passes: count characters in a hash map, then scan for the first count of 1",
+  "O(n) time, O(k) space for the alphabet",
+  "edge cases: empty string, none unique, Unicode and case",
+]
+trap = "no facts about the candidate needed"

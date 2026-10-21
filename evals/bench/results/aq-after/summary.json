@@ -1,0 +1,105 @@
+{
+  "runs": 3,
+  "stt_lag_p50_per_run_ms": [
+    600,
+    551,
+    644
+  ],
+  "stages": {
+    "detector_ms": {
+      "p50": 1688,
+      "p95": 2643,
+      "n": 34
+    },
+    "final_ms": {
+      "p50": 453,
+      "p95": 1386,
+      "n": 34
+    },
+    "turn_end_ms": {
+      "p50": 2398,
+      "p95": 3290,
+      "n": 34
+    },
+    "start_ms": {
+      "p50": 469,
+      "p95": 1402,
+      "n": 34
+    },
+    "first_token_ms": {
+      "p50": 1297,
+      "p95": 1912,
+      "n": 27
+    },
+    "server_first_word_ms": {
+      "p50": 2406,
+      "p95": 3290,
+      "n": 34
+    },
+    "first_word_ms": {
+      "p50": 2642,
+      "p95": 3521,
+      "n": 34
+    },
+    "deep_first_word_ms": {
+      "p50": 4714,
+      "p95": 7161,
+      "n": 31
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 1093,
+    "p95": 1136,
+    "n": 3
+  },
+  "first_word_p50_per_run_ms": [
+    2320,
+    2721,
+    2649
+  ],
+  "detection": {
+    "precision": 1.0,
+    "recall": 0.944,
+    "false_fires_per_run": 0.0,
+    "false_fire_utterances": {},
+    "missed": {
+      "schema_changes": 1,
+      "process_thread": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 0.0,
+    "detector_calls_per_run": 59.3
+  },
+  "speculative": {
+    "fast_starts_per_run": 38.0,
+    "waste_rate": 0.675,
+    "waste_cost_per_run_usd": 0.001086
+  },
+  "prepared": {
+    "opportunities": 15,
+    "hits": 7,
+    "correct": 7,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0405,
+    "model_per_run_usd": 0.0285,
+    "per_live_hour_usd": 0.571,
+    "model_per_live_hour_usd": 0.402,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.023109,
+      "answer:fast": 0.000745,
+      "detector": 0.003308,
+      "pass_cancelled:fast": 0.001086,
+      "prewarm": 0.000246
+    }
+  },
+  "provider_probe_ms": 1516,
+  "label": "aq-after",
+  "env": {},
+  "interleaved_with": [
+    "aq-before"
+  ],
+  "at": "2026-10-21T15:17:10.006896+00:00"
+}

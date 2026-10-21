@@ -1,0 +1,106 @@
+{
+  "runs": 3,
+  "stt_lag_p50_per_run_ms": [
+    577,
+    793,
+    630
+  ],
+  "stages": {
+    "detector_ms": {
+      "p50": 1586,
+      "p95": 2426,
+      "n": 34
+    },
+    "final_ms": {
+      "p50": 468,
+      "p95": 1151,
+      "n": 34
+    },
+    "turn_end_ms": {
+      "p50": 2163,
+      "p95": 3338,
+      "n": 34
+    },
+    "start_ms": {
+      "p50": 468,
+      "p95": 1157,
+      "n": 34
+    },
+    "first_token_ms": {
+      "p50": 1110,
+      "p95": 1897,
+      "n": 23
+    },
+    "server_first_word_ms": {
+      "p50": 2163,
+      "p95": 3683,
+      "n": 34
+    },
+    "first_word_ms": {
+      "p50": 2356,
+      "p95": 3911,
+      "n": 34
+    },
+    "deep_first_word_ms": {
+      "p50": 4688,
+      "p95": 7918,
+      "n": 30
+    }
+  },
+  "forced_first_word_ms": {
+    "p50": 891,
+    "p95": 1186,
+    "n": 3
+  },
+  "first_word_p50_per_run_ms": [
+    2243,
+    2456,
+    2462
+  ],
+  "detection": {
+    "precision": 1.0,
+    "recall": 0.944,
+    "false_fires_per_run": 0.0,
+    "false_fire_utterances": {},
+    "missed": {
+      "schema_changes": 1,
+      "questions_for_us": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.0,
+    "false_answers_shown_per_run": 0.0,
+    "detector_calls_per_run": 58
+  },
+  "speculative": {
+    "fast_starts_per_run": 38.3,
+    "waste_rate": 0.678,
+    "waste_cost_per_run_usd": 0.000997
+  },
+  "prepared": {
+    "opportunities": 14,
+    "hits": 11,
+    "correct": 11,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0374,
+    "model_per_run_usd": 0.0254,
+    "per_live_hour_usd": 0.527,
+    "model_per_live_hour_usd": 0.358,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.019969,
+      "answer:fast": 0.000605,
+      "detector": 0.00337,
+      "pass_cancelled:deep": 0.000232,
+      "pass_cancelled:fast": 0.000997,
+      "prewarm": 0.000212
+    }
+  },
+  "provider_probe_ms": 1625,
+  "label": "aq-before",
+  "env": {},
+  "interleaved_with": [
+    "aq-after"
+  ],
+  "at": "2026-10-21T15:17:10.010553+00:00"
+}

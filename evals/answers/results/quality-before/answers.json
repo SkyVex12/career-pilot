@@ -1,0 +1,2926 @@
+[
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "cost_usd": 0.011889,
+  "answer": "- Eight years backend; senior on Larkspur\u2019s checkout platform [n:a1]\n- Own the order pipeline; moved reconciliation from batch to Kafka streaming [n:s2]\n- Before that, tracking APIs and event ingestion at Tidewater [n:a2]\n- Looking for bigger payments scale and more system design ownership",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "cost_usd": 0.013306,
+  "answer": "Senior Backend Engineer, Larkspur Commerce, Checkout Platform [n:a1]\nBefore that, tracking APIs and event ingestion at Tidewater [n:a2]\nNow own the order pipeline and payments adapter layer [n:a1]\nOrder pipeline to Kafka: replaced nightly batch reconciliation [n:s2]\nKafka, Go consumers, PostgreSQL; side by side for 6 weeks [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 51,
+   "lines": 6,
+   "words_per_line": 8.5,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "cost_usd": 0.011727999999999999,
+  "answer": "- Black Friday: payments adapter exhausted connections at 6x normal traffic [n:s1]\n- Led the incident; shed load with a feature flag in 12 minutes [n:s1]\n- Revenue loss held under 0.3% of the day [n:s1]\n- Added per-provider pool limits and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 39,
+   "lines": 4,
+   "words_per_line": 9.8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "cost_usd": 0.013256,
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nLed the incident; shed load with a feature flag [n:s1]\nLoad shed in 12 minutes; revenue loss under 0.3% of the day [n:s1]\nThen added pool limits per provider and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 47,
+   "lines": 5,
+   "words_per_line": 9.4,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "cost_usd": 0.012409,
+  "answer": "- Black Friday checkout outage: per-provider pool limits [n:s1]\n- Load tests in CI after the incident [n:s1]\n- Feature flag shed load in 12 minutes [n:s1]",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Covers both preventive changes, but the third cue repeats incident mitigation rather than explaining how the changes prevent recurrence."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "cost_usd": 0.013172,
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nAdded pool limits per provider to contain connection exhaustion [n:s1]\nAdded load tests in CI for traffic spikes [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]",
+  "metrics": {
+   "words": 40,
+   "lines": 5,
+   "words_per_line": 8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "cost_usd": 0.013333,
+  "answer": "- Token bucket per API key, Redis with atomic Lua updates\n- Key by API key and region; shared global quota needs coordinated state\n- Local in-process buckets during Redis failover [n:s6]\n- Set limits, refill rate, and fail-open or fail-closed by endpoint",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.25,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear cues, but the multi-region core is missing: explain how to enforce a global quota and trade off coordination latency against overshoot."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "cost_usd": 0.014401999999999998,
+  "answer": "Is the limit global per API key, or per region?\nHow much overshoot is acceptable, and what latency budget?\nComponents: gateway, regional Redis token buckets, global quota allocator.\nData flow: allocate regional quotas; atomically consume tokens; reject with Retry-After.\nScaling: shard by API key; rebalance regional quotas with demand.\nTradeoffs: regional quotas reduce latency; strict global limits need coordination.",
+  "metrics": {
+   "words": 59,
+   "lines": 6,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise design, but missing how regional quotas and limiter behavior handle outages or network partitions."
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "cost_usd": 0.011609999999999999,
+  "answer": "- Schema evolution: backward-compatible Avro schemas [n:s3]\n- Schema registry, CI blocks breaking changes [n:s3]\n- Zero consumer breakages across 140 changes in 18 months [n:s3]",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "cost_usd": 0.013618,
+  "answer": "Schema registry with backward-compatible Avro schemas [n:s3]\nCI check blocks breaking changes before deployment [n:s3]\nKeep new fields optional or defaulted for older records\nZero consumer breakages in 18 months, after 140 schema changes [n:s3]\nTradeoff: breaking changes need staged migrations, not immediate replacement",
+  "metrics": {
+   "words": 41,
+   "lines": 5,
+   "words_per_line": 8.2,
+   "cited_share": 0.6,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "cost_usd": 0.011635,
+  "answer": "- Processes: separate address spaces, stronger isolation, higher communication cost\n- Threads: shared memory within a process, cheaper communication, need synchronization\n- Pick processes for isolation or independent services\n- Pick threads for concurrent work sharing state in one program",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "cost_usd": 0.015449999999999998,
+  "answer": "Process: separate memory; thread: shared memory within a process.\nOS schedules both; threads share resources, each keeping its stack.\nProcesses communicate through IPC; threads need synchronization around shared state.\nGo consumers in order pipeline to Kafka used goroutines, not threads. [n:s2]\nPick processes for isolation; threads for cheaper shared-memory concurrency.\nTradeoff: process overhead versus thread races and shared failures.",
+  "metrics": {
+   "words": 58,
+   "lines": 6,
+   "words_per_line": 9.7,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "The Kafka pipeline's Go consumers used goroutines, not threads; [n:s2] establishes Go consumers but not their concurrency implementation."
+   ],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong, concise comparison, but the cited story does not support the claimed use of goroutines."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "What would you do differently if you built it again",
+  "cost_usd": 0.012899,
+  "answer": "- Shipment-ETA launch: more real-world validation first [n:s8]\n- Rural routes: shadow mode before release [n:s8]\n- Per-region accuracy dashboards before relaunch [n:s8]",
+  "metrics": {
+   "words": 17,
+   "lines": 3,
+   "words_per_line": 5.7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 2,
+   "notes": "The cues switch to the ETA launch instead of addressing what to change when rebuilding the pipeline discussed in the call."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "What would you do differently if you built it again",
+  "cost_usd": 0.014567999999999998,
+  "answer": "Order pipeline to Kafka [n:s2]\nReplaced nightly batch reconciliation with a streaming pipeline [n:s2]\nRan old and new side by side for 6 weeks [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]\nBuild again: backward-compatible Avro schemas from the start [n:s3]\nAdd the CI check that blocks breaking changes earlier [n:s3]",
+  "metrics": {
+   "words": 47,
+   "lines": 6,
+   "words_per_line": 7.8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear, grounded cues, but the proposed changes would be stronger with a brief explanation of why introducing them earlier matters."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How does a database index actually speed up a query?",
+  "cost_usd": 0.011585999999999999,
+  "answer": "- B-tree index, jump to matching keys instead of scanning every row\n- Narrow row IDs first, then fetch the matching rows\n- Extra storage and slower writes; most useful for selective filters\n- Composite indexes help when query filters match the leftmost columns",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How does a database index actually speed up a query?",
+  "cost_usd": 0.013032,
+  "answer": "An index finds matching rows without scanning the whole table.\nUsually a B-tree: sorted keys, pointing to matching rows.\nTraverse the tree, then fetch only the needed rows.\nTracking service: two indexes and a cache; p95 down 70%. [n:s4]\nTradeoff: extra storage and slower writes to maintain indexes.",
+  "metrics": {
+   "words": 47,
+   "lines": 5,
+   "words_per_line": 9.4,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "cost_usd": 0.011666,
+  "answer": "- Tracking-service rewrite disagreement: manager wanted a new language [n:s4]\n- Proposed a two-week spike with measurable criteria [n:s4]\n- Database bottleneck; two indexes and a cache, p95 down 70% [n:s4]\n- Manager agreed, and we dropped the rewrite [n:s4]",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "cost_usd": 0.013112,
+  "answer": "Disagreed with manager on a rewrite [n:s4]\nManager wanted tracking service rewritten in a new language [n:s4]\nProposed a two-week spike with measurable criteria instead [n:s4]\nDatabase bottleneck; fixed with two indexes and a cache [n:s4]\np95 down 70%; manager agreed, rewrite dropped [n:s4]",
+  "metrics": {
+   "words": 39,
+   "lines": 5,
+   "words_per_line": 7.8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "cost_usd": 0.011621,
+  "answer": "- Browser parses URL, checks cache, resolves host through DNS\n- Opens TCP connection; TLS handshake for HTTPS\n- Sends HTTP request; server processes it and returns a response\n- Browser parses HTML, fetches assets, builds page and renders it",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "cost_usd": 0.014164000000000001,
+  "answer": "Browser turns the URL into a request, then renders the response\nDNS resolves hostname; TCP connects, TLS encrypts for HTTPS\nHTTP request reaches server; HTML returns, browser fetches assets and renders\nCheckout backend example: order pipeline and payments adapter layer [n:a1]\nCaching cuts latency, but stale content needs invalidation",
+  "metrics": {
+   "words": 48,
+   "lines": 5,
+   "words_per_line": 9.6,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise sequence, but the work example merely names backend responsibilities rather than connecting them to the request flow."
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "cost_usd": 0.011975,
+  "answer": "- Roadmap shifting to frontend; want to stay deep in backend\n- Payments at larger scale, like your streaming settlement work [n:s2]\n- More system design ownership",
+  "metrics": {
+   "words": 23,
+   "lines": 3,
+   "words_per_line": 7.7,
+   "cited_share": 0.33,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "cost_usd": 0.013812000000000001,
+  "answer": "Current role \u2014 Larkspur Commerce, Checkout Platform [n:a1]\nOur roadmap is shifting to frontend work\nMoved order reconciliation from nightly batch to Kafka streaming [n:s2]\nLag went from 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership\nYour batch-to-streaming settlement work fits that direction",
+  "metrics": {
+   "words": 48,
+   "lines": 6,
+   "words_per_line": 8,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": true,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "cost_usd": 0.011557000000000001,
+  "answer": "- How far along is the batch-to-streaming move, and what\u2019s hardest so far?\n- How do squads split ownership of shared payment services?\n- What does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 3,
+   "words_per_line": 10.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": true,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "cost_usd": 0.0125,
+  "answer": "How far along is the batch-to-streaming move?\nWhat is hardest so far?\nHow do squads split ownership of shared payment services?\nWhat does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "idempotency",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you make a payment API idempotent, so a retried request never charges the customer twice?",
+  "cost_usd": 0.013113,
+  "answer": "- Idempotency key per payment request; scope it to the customer\n- Store key, request hash, and payment result durably\n- Atomically claim the key before charging; duplicates return the stored result\n- Keep the claim through retries and timeouts; reconcile uncertain outcomes before retrying the charge",
+  "metrics": {
+   "words": 43,
+   "lines": 4,
+   "words_per_line": 10.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues, but missing provider-side idempotency, rejection of same-key requests with different bodies, and a retention window."
+  }
+ },
+ {
+  "id": "idempotency",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you make a payment API idempotent, so a retried request never charges the customer twice?",
+  "cost_usd": 0.015375999999999999,
+  "answer": "Require an idempotency key for each logical payment.\nAtomically claim merchant-plus-key; store request hash and payment status.\nReject changed payloads; retries return saved results or pending.\nReuse that key with provider; reconcile timeouts before retrying.\nMy payments adapter layer: same boundary to protect. [n:a1]\nTradeoff: durable state and reconciliation; guarantees depend on provider support.",
+  "metrics": {
+   "words": 53,
+   "lines": 6,
+   "words_per_line": 8.8,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise design, but omits a retention window and leaves durable storage of the original response implicit."
+  }
+ },
+ {
+  "id": "k8s_probes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "What's the difference between a liveness probe and a readiness probe in Kubernetes?",
+  "cost_usd": 0.012191,
+  "answer": "- Liveness: is the process stuck or dead\n- Failed liveness check, Kubernetes restarts the container\n- Readiness: can this pod handle traffic now\n- Failed readiness check, pod stays running but leaves service endpoints",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear core distinction, but omits dependency-check pitfalls and startup probes for slow starts."
+  }
+ },
+ {
+  "id": "k8s_probes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "What's the difference between a liveness probe and a readiness probe in Kubernetes?",
+  "cost_usd": 0.014754,
+  "answer": "Liveness: restart unhealthy containers; readiness: stop routing traffic.\nRepeated liveness failures trigger container restarts, after configured thresholds.\nReadiness failures remove Pods from Service endpoints; no restart.\nFor my payments adapter: readiness could flag exhausted connections. [n:s1]\nTradeoff: dependency-based liveness risks restart loops during downstream outages.",
+  "metrics": {
+   "words": 44,
+   "lines": 5,
+   "words_per_line": 8.8,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear and well-shaped; add that liveness targets stuck processes and startup probes protect slow starts."
+  }
+ },
+ {
+  "id": "isolation",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Can you walk me through transaction isolation levels and what each one protects you from?",
+  "cost_usd": 0.012525999999999999,
+  "answer": "- **Read uncommitted** \u2014 may see uncommitted writes; dirty reads\n- **Read committed** \u2014 committed data only; dirty reads prevented, but non-repeatable reads can happen\n- **Repeatable read** \u2014 same row reads stay consistent; phantom rows may still appear, depending on the database\n- **Serializable** \u2014 transactions behave as if run one at a time; prevents anomalies, with more blocking or retries",
+  "metrics": {
+   "words": 58,
+   "lines": 4,
+   "words_per_line": 14.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear fast-pass overview, but omits write skew or lost updates and PostgreSQL's default and snapshot-isolation behavior."
+  }
+ },
+ {
+  "id": "isolation",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Can you walk me through transaction isolation levels and what each one protects you from?",
+  "cost_usd": 0.016356000000000002,
+  "answer": "Read uncommitted: dirty reads possible; read committed: prevents dirty reads.\nRepeatable read: also prevents nonrepeatable reads; phantoms still possible.\nSerializable: prevents phantoms and serialization anomalies; equivalent to serial execution.\nImplemented through locks, snapshots, and conflict checks; database behavior varies.\nOrder pipeline: PostgreSQL; isolation choice depends on reconciliation invariants. [n:s2]\nTradeoff: stronger isolation can mean blocking or transaction retries.",
+  "metrics": {
+   "words": 57,
+   "lines": 6,
+   "words_per_line": 9.5,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Clear standard-level overview, but omits write skew or lost updates and PostgreSQL\u2019s read-committed default and snapshot-based repeatable read."
+  }
+ },
+ {
+  "id": "exactly_once",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Kafka says it supports exactly-once. What does that actually mean, and where does it break down?",
+  "cost_usd": 0.013599,
+  "answer": "- Kafka transactions: atomic reads and writes within Kafka, including consumed offsets\n- `read_committed` consumers skip aborted transactional records\n- Outside Kafka, side effects like database writes aren\u2019t covered; retries can duplicate them\n- Use idempotency or an outbox pattern for end-to-end effects",
+  "metrics": {
+   "words": 39,
+   "lines": 4,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [
+    "end-to-end"
+   ],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 3,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good boundary and side-effect cues, but transactions make writes and offset commits atomic\u2014not reads\u2014and the answer omits producer idempotence, fencing, and performance costs."
+  }
+ },
+ {
+  "id": "exactly_once",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Kafka says it supports exactly-once. What does that actually mean, and where does it break down?",
+  "cost_usd": 0.01532,
+  "answer": "Exactly-once: committed effects once, within Kafka\u2019s transactional boundary\nIdempotent producers deduplicate retries; transactions commit output and offsets together\nConsumers use read_committed to hide aborted or uncommitted records\nOrder pipeline to Kafka: Go consumers, PostgreSQL reconciliation [n:s2]\nPostgreSQL writes or payment calls: need separate deduplication, not Kafka guarantees\nTradeoff: transaction overhead, added latency; retries and reprocessing still happen",
+  "metrics": {
+   "words": 56,
+   "lines": 6,
+   "words_per_line": 9.3,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise answer, but omits cross-partition atomicity and fencing zombie producers with transactional IDs."
+  }
+ },
+ {
+  "id": "ledger",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you design a ledger service for a payments platform that never loses or double-counts money?",
+  "cost_usd": 0.012782,
+  "answer": "- Immutable, balanced double-entry transactions; never update posted entries\n- Idempotency keys and unique constraints prevent duplicate postings\n- PostgreSQL transaction for atomic debit and credit; outbox to Kafka\n- Reconcile ledger against payment and settlement records; alert on mismatches",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong fast-pass cues; add account-level concurrency control and clarify requirements as the answer develops."
+  }
+ },
+ {
+  "id": "ledger",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you design a ledger service for a payments platform that never loses or double-counts money?",
+  "cost_usd": 0.016312,
+  "answer": "Single currency or multiple currencies, including foreign exchange?\nExpected throughput, and must balances be immediately consistent?\nComponents: PostgreSQL, immutable double-entry journal, unique idempotency keys, transactional outbox.\nFlow: atomically deduplicate, validate balanced entries, lock balances, append, enqueue.\nScaling: partition by account; cross-partition transfers need coordination, not independent writes.\nTradeoffs: correctness over availability; durable replication, reconciliation, reversals instead of edits.",
+  "metrics": {
+   "words": 58,
+   "lines": 6,
+   "words_per_line": 9.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong design cues, but clarify how balances derive from journal entries and explicitly reconcile against external providers."
+  }
+ },
+ {
+  "id": "notifications",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Design a system that sends email and push notifications to fifty million users.",
+  "cost_usd": 0.012335,
+  "answer": "- Durable notification queue; user and channel preferences; dedupe by notification ID\n- Partition Kafka by user ID; consumers batch and scale out\n- Separate email and push providers; rate limits, retries with backoff, dead-letter queue\n- Track delivery status; idempotency keys and per-channel metrics",
+  "metrics": {
+   "words": 41,
+   "lines": 4,
+   "words_per_line": 10.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong architecture cues, but missing clarification of send volume, latency, and transactional versus marketing needs."
+  }
+ },
+ {
+  "id": "notifications",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Design a system that sends email and push notifications to fifty million users.",
+  "cost_usd": 0.015279999999999998,
+  "answer": "Fifty million users total, or notifications within what delivery window?\nTransactional or marketing; what ordering, consent, and delivery guarantees?\nComponents: API, scheduler, preference store, queues, email and push workers.\nData flow: check consent, enqueue, deduplicate, send, record provider status.\nScaling: partition queues, autoscale workers, respect provider limits, retry with backoff.\nTradeoffs: at-least-once delivery risks duplicates; provider acceptance isn't confirmed delivery.",
+  "metrics": {
+   "words": 60,
+   "lines": 6,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise design; add templates, explicit idempotency keys, and a dead-letter queue for exhausted retries."
+  }
+ },
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.012663,
+  "answer": "- Order pipeline to Kafka: learned Go consumers quickly [n:s2]\n- Replaced nightly batch reconciliation with streaming\n- Ran old and new side by side for six weeks\n- Reconciliation lag: 24 hours to under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Learned Go consumers quickly for the Kafka pipeline project."
+   ],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Short, usable cues, but they invent rapid learning and give migration results rather than explaining how the candidate learned under a deadline."
+  }
+ },
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.014496,
+  "answer": "Order pipeline to Kafka [n:s2]\nNightly batch reconciliation; lag of 24 hours [n:s2]\nReplaced batch with Kafka, Go consumers, PostgreSQL [n:s2]\nRan old and new side by side for 6 weeks [n:s2]\nAfter cutover: reconciliation lag under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 35,
+   "lines": 5,
+   "words_per_line": 7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Accurate Kafka story, but it neither acknowledges the loose fit nor explains learning quickly or handling a deadline."
+  }
+ },
+ {
+  "id": "bad_news",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to deliver bad news to a customer or a stakeholder.",
+  "cost_usd": 0.013593,
+  "answer": "- Shipment-ETA launch: rural predictions off by hours [n:s8]\n- Rolled it back; shared the issue with stakeholders\n- Added shadow mode and per-region accuracy dashboards\n- Relaunched five weeks later, 92% within 30 minutes [n:s8]",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Shared the shipment-ETA issue with stakeholders; no such communication is documented."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "The cues invent stakeholder communication and omit how to tell early, explain impact, and set the next update; the middle factual bullets also lack citations."
+  }
+ },
+ {
+  "id": "bad_news",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to deliver bad news to a customer or a stakeholder.",
+  "cost_usd": 0.014292000000000001,
+  "answer": "Failed launch: shipment-ETA feature [n:s8]\nShipped without enough real-world validation [n:s8]\nRural predictions off by hours; rolled back [n:s8]\nAdded shadow mode and per-region accuracy dashboards [n:s8]\nRelaunched 5 weeks later; 92% within 30 minutes [n:s8]",
+  "metrics": {
+   "words": 31,
+   "lines": 5,
+   "words_per_line": 6.2,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Accurate, concise failed-launch cues, but they omit delivering the bad news: early disclosure, impact, recovery actions, and the next update."
+  }
+ },
+ {
+  "id": "time_zones",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How have you handled working with a team spread across several time zones?",
+  "cost_usd": 0.012129000000000001,
+  "answer": "- I don\u2019t have a specific time-zone story in my notes\n- Agree on clear owners and handoffs\n- Keep decisions and updates written down\n- Use overlap time for discussions; async for routine work",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Strong honest approach, though referring to 'my notes' sounds like preparation commentary rather than a natural interview answer."
+  }
+ },
+ {
+  "id": "time_zones",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How have you handled working with a team spread across several time zones?",
+  "cost_usd": 0.013544,
+  "answer": "No specific multi-time-zone story to point to\nMy approach: written decisions, clear owners, explicit handoffs\nShared overlap for blockers and live discussions\nRotate meeting times; track delays between handoffs",
+  "metrics": {
+   "words": 29,
+   "lines": 4,
+   "words_per_line": 7.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.014365,
+  "answer": "- Batch-to-streaming payments work, like my Kafka reconciliation project [n:s2]\n- Bigger payments scale and more backend system design ownership\n- Go, PostgreSQL, and Kafka match my platform experience [n:a1]",
+  "metrics": {
+   "words": 25,
+   "lines": 3,
+   "words_per_line": 8.3,
+   "cited_share": 0.67,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "The stack match is supported by the skills section and [n:s2], but the cited [n:a1] does not establish those tools."
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.013522,
+  "answer": "Your batch-to-streaming move matches my order pipeline to Kafka work [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership\nCurrent team's roadmap shifting to frontend work",
+  "metrics": {
+   "words": 34,
+   "lines": 4,
+   "words_per_line": 8.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong fit and goals, though mentioning Northwind's matching stack would make the company-specific connection fuller."
+  }
+ },
+ {
+  "id": "salary",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "What are your salary expectations for this role?",
+  "cost_usd": 0.012152,
+  "answer": "- No salary range in my notes\n- Could you share the range budgeted for the role?\n- I\u2019d compare it with the scope and total compensation",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 4,
+   "notes": "The first cue exposes the notes rather than answering naturally, and flexibility for the right scope is only implied."
+  }
+ },
+ {
+  "id": "salary",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "What are your salary expectations for this role?",
+  "cost_usd": 0.012508,
+  "answer": "Looking at the full package, not just base salary\nWhat range have you budgeted for this role?\nHappy to discuss within that range, depending on scope",
+  "metrics": {
+   "words": 26,
+   "lines": 3,
+   "words_per_line": 8.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "culture",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "What kind of team culture do you do your best work in?",
+  "cost_usd": 0.013203,
+  "answer": "- Clear ownership across the team\n- Open debate, decisions based on measurable tests [n:s4]\n- Teams keep autonomy with shared schema checks [n:s3]\n- Calm incident reviews and useful runbooks [n:s5]",
+  "metrics": {
+   "words": 25,
+   "lines": 4,
+   "words_per_line": 6.2,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong, grounded cues; written design and explicitly blameless incident reviews would round out the working-style answer."
+  }
+ },
+ {
+  "id": "culture",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "What kind of team culture do you do your best work in?",
+  "cost_usd": 0.013000000000000001,
+  "answer": "Clear ownership, room for system design decisions\nDisagreements settled through measurable experiments, not opinions [n:s4]\nShared learning through mentoring and incident runbooks [n:s5]",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 0.67,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong, grounded cues on ownership, evidence and shared learning; blameless reviews and written design are not explicit."
+  }
+ },
+ {
+  "id": "five_years",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Where do you see yourself in five years?",
+  "cost_usd": 0.01358,
+  "answer": "- Senior backend, bigger-scale payments platform role [n:a1]\n- More system design ownership\n- Deep in backend, not frontend work\n- Helping move batch settlement to streaming [n:s2]",
+  "metrics": {
+   "words": 22,
+   "lines": 4,
+   "words_per_line": 5.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Clear short cues, but they describe the next role more than five-year growth and omit mentoring others and owning reliability."
+  }
+ },
+ {
+  "id": "five_years",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Where do you see yourself in five years?",
+  "cost_usd": 0.01281,
+  "answer": "More system design ownership on a larger-scale payments platform\nStaying deep in backend, close to the technical decisions\nHelping other engineers grow, building on mentoring three juniors [n:s5]",
+  "metrics": {
+   "words": 27,
+   "lines": 3,
+   "words_per_line": 9,
+   "cited_share": 0.33,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong, concise goals and mentoring cues, but misses owning reliability."
+  }
+ },
+ {
+  "id": "first_unique",
+  "qtype": "coding",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you find the first non-repeating character in a string?",
+  "cost_usd": 0.012063999999999998,
+  "answer": "- Count each character in one pass\n- Scan again, return the first count of one\n- Hash map: O(n) time, O(k) space\n- No unique character: return none",
+  "metrics": {
+   "words": 25,
+   "lines": 4,
+   "words_per_line": 6.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong fast-pass algorithm cues; empty input, Unicode, and case handling are not explicit."
+  }
+ },
+ {
+  "id": "first_unique",
+  "qtype": "coding",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How would you find the first non-repeating character in a string?",
+  "cost_usd": 0.013042,
+  "answer": "Approach: count characters, then scan for the first count-one character\nComplexity: O(n) time; O(k) space for distinct characters\nEdge cases: empty string, all repeating; return agreed sentinel",
+  "metrics": {
+   "words": 27,
+   "lines": 3,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear two-pass solution, but omits Unicode handling and case sensitivity."
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "cost_usd": 0.012009,
+  "answer": "- Eight years backend; senior on Larkspur\u2019s checkout platform [n:a1]\n- Own the order pipeline; moved reconciliation from batch to Kafka streaming [n:s2]\n- Before that, tracking APIs and event ingestion at Tidewater [n:a2]\n- Looking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 37,
+   "lines": 4,
+   "words_per_line": 9.2,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "cost_usd": 0.0028439999999999997,
+  "answer": "Senior Backend Engineer, Larkspur Commerce, Checkout Platform [n:a1]\nBefore that, tracking APIs and event ingestion at Tidewater [n:a2]\nNow own the order pipeline and payments adapter layer [n:a1]\nOrder pipeline to Kafka: replaced nightly batch reconciliation [n:s2]\nKafka, Go consumers, PostgreSQL; side by side for 6 weeks [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 51,
+   "lines": 6,
+   "words_per_line": 8.5,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "cost_usd": 0.011733,
+  "answer": "- Black Friday: payments adapter exhausted its pool at 6x normal traffic [n:s1]\n- Led the incident; shed load with a feature flag in 12 minutes [n:s1]\n- Revenue loss held under 0.3% of the day [n:s1]\n- Added per-provider pool limits and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "cost_usd": 0.013172,
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted connection pool at 6x normal traffic [n:s1]\nLed incident; shed load with feature flag in 12 minutes [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]\nAdded pool limits per provider and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 42,
+   "lines": 5,
+   "words_per_line": 8.4,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "cost_usd": 0.013359,
+  "answer": "- Black Friday outage: payments adapter exhausted connections at 6x traffic [n:s1]\n- Added per-provider pool limits\n- Added load tests in CI\n- Revenue loss held under 0.3% of the day [n:s1]",
+  "metrics": {
+   "words": 27,
+   "lines": 4,
+   "words_per_line": 6.8,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "The two preventive changes answer the question, but need citations; outage context and revenue loss add little to this follow-up."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "cost_usd": 0.013686,
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nAfterwards: added pool limits per provider [n:s1]\nAdded load tests in CI [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]",
+  "metrics": {
+   "words": 34,
+   "lines": 5,
+   "words_per_line": 6.8,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Directly answers the follow-up, though the revenue-loss figure reflects incident mitigation rather than the effectiveness of the preventive changes."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "cost_usd": 0.013392999999999999,
+  "answer": "- Token bucket per API key, stored in Redis [n:s6]\n- Lua script for atomic refill and consume [n:s6]\n- Multi-region: partition each key to a home region; avoid cross-region writes\n- Local in-process buckets during Redis failover [n:s6]",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good core cues, but the multi-region design needs routing to each key's home region and an explicit failure policy that bounds overshoot from local fallback buckets."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "cost_usd": 0.014076000000000002,
+  "answer": "Strict global limits, or acceptable overshoot during regional failures?\nLimits per API key, IP, or endpoint?\nComponents: regional gateways, Redis token buckets, global quota allocator.\nData flow: authenticate, atomically consume regional tokens; reject with Retry-After.\nScaling: shard by key; lease regional quotas within global budget.\nTradeoffs: regional leases reduce latency; strict global checks sacrifice availability.",
+  "metrics": {
+   "words": 55,
+   "lines": 6,
+   "words_per_line": 9.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "cost_usd": 0.011614,
+  "answer": "- Schema evolution [n:s3]: backward-compatible Avro schemas\n- Schema registry, CI blocks breaking changes [n:s3]\n- Zero consumer breakages across 140 schema changes in 18 months [n:s3]",
+  "metrics": {
+   "words": 22,
+   "lines": 3,
+   "words_per_line": 7.3,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "cost_usd": 0.013232,
+  "answer": "Schema registry with backward-compatible Avro schemas [n:s3]\nCI check blocks breaking changes before deployment [n:s3]\nAdd optional fields with defaults; keep existing fields compatible\nSchema evolution: zero consumer breakages in 18 months [n:s3]\nAcross 140 schema changes [n:s3]\nTradeoff: breaking changes need staged migrations, more coordination",
+  "metrics": {
+   "words": 42,
+   "lines": 6,
+   "words_per_line": 7,
+   "cited_share": 0.67,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "cost_usd": 0.011599,
+  "answer": "- Process: separate address space, stronger isolation\n- Thread: shared memory, lower overhead, needs synchronization\n- Processes for fault isolation or separate security boundaries\n- Threads for shared-data concurrency within one app",
+  "metrics": {
+   "words": 28,
+   "lines": 4,
+   "words_per_line": 7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "cost_usd": 0.013260000000000001,
+  "answer": "Process: separate memory; thread: shared memory within a process.\nOS schedules both; threads share heap, each has its own stack.\nProcesses for isolation; threads for concurrent work sharing state.\nGo consumers in order pipeline to Kafka [n:s2]\nGo goroutines aren't OS threads; runtime schedules them onto threads.\nTradeoff: processes cost more memory; threads need careful synchronization.",
+  "metrics": {
+   "words": 55,
+   "lines": 6,
+   "words_per_line": 9.2,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "What would you do differently if you built it again",
+  "cost_usd": 0.012326,
+  "answer": "- Order pipeline to Kafka: keep old and new running side by side for six weeks [n:s2]\n- Add schema registry with backward-compatible Avro schemas [n:s3]\n- CI check blocks breaking changes; zero consumer breakages in 18 months [n:s3]",
+  "metrics": {
+   "words": 33,
+   "lines": 3,
+   "words_per_line": 11,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Short, grounded cues, but they recap existing work rather than explain what to change and why when rebuilding."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "What would you do differently if you built it again",
+  "cost_usd": 0.014270000000000001,
+  "answer": "Order pipeline to Kafka [n:s2]\nReplaced nightly batch reconciliation with a streaming pipeline [n:s2]\nRan old and new side by side for 6 weeks [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]\nBuilding again: schema registry and CI compatibility checks from day one",
+  "metrics": {
+   "words": 41,
+   "lines": 5,
+   "words_per_line": 8.2,
+   "cited_share": 0.8,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Most cues recap the project; the answer needs more substance on why earlier schema checks would help and what would change."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "How does a database index actually speed up a query?",
+  "cost_usd": 0.011737000000000001,
+  "answer": "- B-tree index: narrows the search to matching keys\n- Avoids scanning every row in the table\n- Then fetches matching rows from the table\n- Can slow writes and use extra storage",
+  "metrics": {
+   "words": 29,
+   "lines": 4,
+   "words_per_line": 7.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues; mentioning the ordered tree and fewer page reads would better explain how the speedup works."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "How does a database index actually speed up a query?",
+  "cost_usd": 0.013059999999999999,
+  "answer": "An index finds matching rows without scanning the whole table.\nA B-tree keeps keys sorted for quick lookups and ranges.\nIndex entries point to rows; covering indexes avoid row lookups.\nTracking service: two indexes and a cache, p95 down 70% [n:s4]\nTradeoff: extra storage and slower writes to maintain indexes.",
+  "metrics": {
+   "words": 49,
+   "lines": 5,
+   "words_per_line": 9.8,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "cost_usd": 0.01163,
+  "answer": "- Tracking-service rewrite: manager wanted a new language [n:s4]\n- Proposed a two-week spike with clear criteria [n:s4]\n- Database bottleneck; two indexes and a cache [n:s4]\n- p95 down 70%; rewrite dropped [n:s4]",
+  "metrics": {
+   "words": 26,
+   "lines": 4,
+   "words_per_line": 6.5,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "cost_usd": 0.013139999999999999,
+  "answer": "Disagreed with manager on a rewrite [n:s4]\nManager wanted tracking service rewritten in a new language [n:s4]\nProposed a two-week spike with measurable criteria instead [n:s4]\nSpike showed database bottleneck; fixed with two indexes and a cache [n:s4]\np95 down 70%; manager agreed, rewrite dropped [n:s4]",
+  "metrics": {
+   "words": 41,
+   "lines": 5,
+   "words_per_line": 8.2,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "cost_usd": 0.011621,
+  "answer": "- Browser checks cache, parses URL, resolves the hostname with DNS\n- Opens TCP connection; TLS handshake for HTTPS\n- Sends HTTP request; server returns response, often HTML\n- Browser parses HTML, fetches assets, builds page and paints it",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "cost_usd": 0.014762,
+  "answer": "Browser finds the server, connects, requests, then renders the page.\nDNS resolves hostname; HTTPS uses TLS over TCP or QUIC.\nHTTP response arrives; browser parses HTML, fetches assets, runs JavaScript.\nCheckout requests reach the order pipeline and payments adapter layer. [n:a1]\nCaching reduces latency, but risks serving stale content.",
+  "metrics": {
+   "words": 48,
+   "lines": 5,
+   "words_per_line": 9.6,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "cost_usd": 0.01226,
+  "answer": "- Roadmap shifting to frontend; I want to stay deep in backend\n- Larger-scale payments, like streaming settlement work [n:s2]\n- More system design ownership",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 0.33,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "cost_usd": 0.013562000000000001,
+  "answer": "Order pipeline to Kafka \u2014 work I want more of [n:s2]\nCurrent team's roadmap shifting to frontend work\nMoved nightly batch reconciliation to streaming [n:s2]\nLag from 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 40,
+   "lines": 5,
+   "words_per_line": 8,
+   "cited_share": 0.6,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "covered": true,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "cost_usd": 0.001351,
+  "answer": "- How far along is the batch-to-streaming move, and what\u2019s hardest so far?\n- How do squads split ownership of shared payment services?\n- What does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 3,
+   "words_per_line": 10.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "covered": true,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "cost_usd": 0.002286,
+  "answer": "How far along is the batch-to-streaming move?\nWhat is hardest so far?\nHow do squads split ownership of shared payment services?\nWhat does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "idempotency",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you make a payment API idempotent, so a retried request never charges the customer twice?",
+  "cost_usd": 0.012737,
+  "answer": "- Require a client idempotency key per payment attempt\n- Store key, request fingerprint, and payment result durably\n- Same key and request returns the saved result; reject mismatched payloads\n- Enforce uniqueness atomically; keep retries from creating a second charge",
+  "metrics": {
+   "words": 37,
+   "lines": 4,
+   "words_per_line": 9.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 4,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but missing provider-side idempotency, explicit handling of in-flight duplicates, and a retention window; the key should identify a logical payment, not each retry attempt."
+  }
+ },
+ {
+  "id": "idempotency",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you make a payment API idempotent, so a retried request never charges the customer twice?",
+  "cost_usd": 0.015421999999999998,
+  "answer": "Require an idempotency key; deduplicate locally and at payment provider.\nAtomically claim key in PostgreSQL; store request hash and result.\nReject changed payloads; replay results; reconcile timeouts using same provider key.\nMy payments adapter layer ownership fits this boundary. [n:a1]\nTradeoff: providers without idempotency need reconciliation before uncertain retries.",
+  "metrics": {
+   "words": 48,
+   "lines": 5,
+   "words_per_line": 9.6,
+   "cited_share": 0.2,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise answer; add a retention window and make the unique constraint and in-flight duplicate handling explicit."
+  }
+ },
+ {
+  "id": "k8s_probes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "What's the difference between a liveness probe and a readiness probe in Kubernetes?",
+  "cost_usd": 0.012181,
+  "answer": "- Liveness: is the process stuck or unhealthy?\n- Failed liveness check: Kubernetes restarts the container\n- Readiness: can it take traffic right now?\n- Failed readiness check: removed from service endpoints, not restarted",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear core distinction, but misses dependency-check restart storms and startup probes for slow starts."
+  }
+ },
+ {
+  "id": "k8s_probes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "What's the difference between a liveness probe and a readiness probe in Kubernetes?",
+  "cost_usd": 0.014422,
+  "answer": "Liveness: restart unhealthy containers; readiness: stop routing traffic\nKubelet checks endpoints; repeated liveness failures trigger container restarts\nReadiness failures remove pods from Service endpoints, without restarting\nBlack Friday: payments adapter exhausted its connection pool [n:s1]\nReadiness could stop traffic; liveness should avoid restart loops\nTradeoff: dependency-based readiness can remove every pod during outages",
+  "metrics": {
+   "words": 52,
+   "lines": 6,
+   "words_per_line": 8.7,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear distinction and grounded hypothetical example; misses startup probes for slow starts and explicit guidance to reserve liveness for stuck processes."
+  }
+ },
+ {
+  "id": "isolation",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Can you walk me through transaction isolation levels and what each one protects you from?",
+  "cost_usd": 0.013208,
+  "answer": "- **Read uncommitted** \u2014 can see uncommitted writes; dirty reads\n- **Read committed** \u2014 committed data only; dirty reads prevented, non-repeatable reads possible\n- **Repeatable read** \u2014 same row stays consistent within a transaction; phantom behavior depends on the database\n- **Serializable** \u2014 transactions behave as if run one at a time; prevents anomalies, with more blocking or retries",
+  "metrics": {
+   "words": 55,
+   "lines": 4,
+   "words_per_line": 13.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear, accurate cues for all four levels, but missing PostgreSQL's default and snapshot behavior, plus write skew or lost updates."
+  }
+ },
+ {
+  "id": "isolation",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Can you walk me through transaction isolation levels and what each one protects you from?",
+  "cost_usd": 0.01565,
+  "answer": "Read uncommitted: dirty reads possible; no protection from concurrent changes.\nRead committed: prevents dirty reads; nonrepeatable reads and phantoms remain.\nRepeatable read: prevents nonrepeatable reads; standard still allows phantoms.\nSerializable: equivalent to serial execution; prevents phantoms and serialization anomalies.\nOrder pipeline used PostgreSQL; isolation choice not documented. [n:s2]\nTradeoff: stronger isolation can mean blocking or retries; implementation matters.",
+  "metrics": {
+   "words": 57,
+   "lines": 6,
+   "words_per_line": 9.5,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 4,
+   "notes": "Accurate overview, but misses PostgreSQL\u2019s default and snapshot-isolation behavior plus write skew or lost updates; the documentation caveat is not a useful spoken example."
+  }
+ },
+ {
+  "id": "exactly_once",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Kafka says it supports exactly-once. What does that actually mean, and where does it break down?",
+  "cost_usd": 0.013963,
+  "answer": "- Kafka exactly-once: transactional reads and writes, no duplicate outputs on retry\n- Within Kafka; offsets and produced records commit in one transaction\n- External database or API effects need their own idempotency or coordination\n- Retried work, side effects, and misconfigured consumers can still duplicate effects",
+  "metrics": {
+   "words": 43,
+   "lines": 4,
+   "words_per_line": 10.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 4,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but 'transactional reads' is imprecise; name read_committed, idempotent producers, fencing, and the latency/throughput costs."
+  }
+ },
+ {
+  "id": "exactly_once",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Kafka says it supports exactly-once. What does that actually mean, and where does it break down?",
+  "cost_usd": 0.015546,
+  "answer": "Exactly-once: committed Kafka outputs once, not execution once\nIdempotent producers deduplicate retries; transactions commit outputs and offsets together\nConsumers need read_committed to hide aborted transaction writes\nOrder pipeline to Kafka: Go consumers, PostgreSQL; external-write boundary [n:s2]\nPostgreSQL writes need idempotency; Kafka transactions cannot cover them\nTradeoff: transaction overhead and latency; external side effects stay separate",
+  "metrics": {
+   "words": 54,
+   "lines": 6,
+   "words_per_line": 9,
+   "cited_share": 0.17,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise answer, but omits cross-partition atomicity and fencing zombie producers via transactional IDs."
+  }
+ },
+ {
+  "id": "ledger",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you design a ledger service for a payments platform that never loses or double-counts money?",
+  "cost_usd": 0.013345,
+  "answer": "- Append-only, double-entry ledger; every transaction debits and credits equally\n- Idempotency key per request; unique constraint blocks duplicate postings\n- PostgreSQL transaction for both entries; commit atomically or roll back\n- Kafka for downstream events via transactional outbox; reconcile balances against entries",
+  "metrics": {
+   "words": 39,
+   "lines": 4,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong fast-pass core; add account-level concurrency control and external-provider reconciliation to strengthen the money-safety guarantees."
+  }
+ },
+ {
+  "id": "ledger",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you design a ledger service for a payments platform that never loses or double-counts money?",
+  "cost_usd": 0.015652,
+  "answer": "Single currency or multiple currencies, and what transaction volume?\nMust balances update immediately, and which external providers need reconciliation?\nComponents: ledger API, PostgreSQL, immutable double-entry journal, balances, transactional outbox.\nFlow: unique idempotency key; atomically commit balanced entries, balances, outbox.\nScaling: partition by account; serialize writes; deduplicate retried events.\nTradeoffs: consistency over availability; cross-shard transfers harder; reconcile provider statements.",
+  "metrics": {
+   "words": 58,
+   "lines": 6,
+   "words_per_line": 9.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong design cues; add reversing entries for corrections and explain that balances are derived from the journal or snapshots."
+  }
+ },
+ {
+  "id": "notifications",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Design a system that sends email and push notifications to fifty million users.",
+  "cost_usd": 0.014113,
+  "answer": "- Kafka notification queue; workers scale by channel and provider\n- User preferences, templates, and idempotency keys in PostgreSQL\n- Rate limits per provider; retries with backoff, dead-letter queue\n- Push in-app; email provider delivery and bounce feedback loops",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 3,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good architecture cues, but missing volume and latency clarification; push notifications are not the same as in-app notifications."
+  }
+ },
+ {
+  "id": "notifications",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Design a system that sends email and push notifications to fifty million users.",
+  "cost_usd": 0.014804000000000001,
+  "answer": "All fifty million simultaneously, or spread out; what delivery deadline?\nTransactional, marketing, or both; what consent and regional requirements?\nComponents: ingestion API, preferences store, scheduler, queues, channel workers, providers.\nData flow: accept, deduplicate, check consent, enqueue, send, record provider callbacks.\nScaling: partition queues, autoscale workers, batch campaigns, respect provider rate limits.\nTradeoffs: at-least-once delivery risks duplicates; bounded retries, dead-letter queues, higher cost.",
+  "metrics": {
+   "words": 62,
+   "lines": 6,
+   "words_per_line": 10.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong concise design; add templates, explicit idempotency keys, and retry backoff."
+  }
+ },
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.012906,
+  "answer": "- Order pipeline to Kafka: learned Go consumers and Kafka for streaming [n:s2]\n- Replaced nightly batch reconciliation; lag from 24 hours to under 2 minutes [n:s2]\n- Ran old and new side by side for six weeks before cutover [n:s2]",
+  "metrics": {
+   "words": 35,
+   "lines": 3,
+   "words_per_line": 11.7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Learned Go consumers and Kafka for the order-pipeline migration; the profile documents using them, not learning them for that project."
+   ],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Concise cues, but they invent the learning claim and omit both deadline context and how the candidate would learn quickly."
+  }
+ },
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.014468,
+  "answer": "Order pipeline to Kafka \u2014 closest example [n:s2]\nNightly batch reconciliation; lag of 24 hours [n:s2]\nReplaced batch with Kafka, Go consumers, PostgreSQL [n:s2]\nRan old and new side by side for 6 weeks [n:s2]\nAfter cutover, reconciliation lag under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 38,
+   "lines": 5,
+   "words_per_line": 7.6,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Grounded closest story, but misses how to learn quickly for a deadline or explicitly acknowledge that gap and give an approach."
+  }
+ },
+ {
+  "id": "bad_news",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Tell me about a time you had to deliver bad news to a customer or a stakeholder.",
+  "cost_usd": 0.012666,
+  "answer": "- Failed shipment-ETA launch: rural predictions off by hours [n:s8]\n- Rolled it back and explained the issue\n- Added shadow mode and per-region accuracy dashboards [n:s8]\n- Relaunched five weeks later, 92% within 30 minutes [n:s8]",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Explained the failed ETA launch issue to a customer or stakeholder."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Invents explaining the issue and misses early disclosure, stakeholder impact, and when they would hear next."
+  }
+ },
+ {
+  "id": "bad_news",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Tell me about a time you had to deliver bad news to a customer or a stakeholder.",
+  "cost_usd": 0.014242000000000001,
+  "answer": "Failed launch: shipment-ETA feature [n:s8]\nShipped without enough real-world validation; rural predictions off by hours [n:s8]\nOwned the mistake; rolled back the feature [n:s8]\nAdded shadow mode and per-region accuracy dashboards [n:s8]\nRelaunched 5 weeks later at 92% within 30 minutes [n:s8]",
+  "metrics": {
+   "words": 37,
+   "lines": 5,
+   "words_per_line": 7.4,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Grounded failed-launch story, but missing how to deliver the bad news: tell early, explain impact and next steps, and set the next update."
+  }
+ },
+ {
+  "id": "time_zones",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "How have you handled working with a team spread across several time zones?",
+  "cost_usd": 0.011729,
+  "answer": "- I don\u2019t have a specific time-zone example to draw on\n- I\u2019d make decisions and handoffs clear in writing\n- Agree on overlap hours for live discussions\n- Keep ownership and next steps explicit",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "time_zones",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "How have you handled working with a team spread across several time zones?",
+  "cost_usd": 0.013516,
+  "answer": "No specific time-zone story or measured result to share\nMy approach: written decisions, clear owners, explicit handoffs\nOverlap time for blockers; routine updates kept async\nRotate meeting times so nobody always takes late calls",
+  "metrics": {
+   "words": 34,
+   "lines": 4,
+   "words_per_line": 8.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.012365,
+  "answer": "- Batch-to-streaming settlement work matches my Kafka experience [n:s2]\n- Bigger payments scale and more system design ownership\n- Payments platform, forty engineers across four squads\n- How squads split ownership of shared payment services?",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.25,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Good fit and goals, but the team-size cue and closing question could be replaced with a stronger explanation of why Northwind specifically."
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.01277,
+  "answer": "Your batch-to-streaming move matches my order pipeline to Kafka [n:s2]\nReconciliation lag went from 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 28,
+   "lines": 3,
+   "words_per_line": 9.3,
+   "cited_share": 0.67,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "salary",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "What are your salary expectations for this role?",
+  "cost_usd": 0.01219,
+  "answer": "- Target salary range not in my notes\n- Ask for the role\u2019s approved range\n- Compare total compensation and level\n- Keep it open until scope is clear",
+  "metrics": {
+   "words": 25,
+   "lines": 4,
+   "words_per_line": 6.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 5,
+   "notes": "Covers the compensation approach, but \u201cnot in my notes\u201d is backstage commentary rather than something to say to the interviewer."
+  }
+ },
+ {
+  "id": "salary",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "What are your salary expectations for this role?",
+  "cost_usd": 0.012494,
+  "answer": "Looking at total compensation and the role\u2019s scope\nWhat range have you budgeted for this role?\nOpen to discussing base, equity, and bonus together",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "culture",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "What kind of team culture do you do your best work in?",
+  "cost_usd": 0.012149,
+  "answer": "- Backend-focused, with room for system design ownership\n- Clear ownership across shared payment services\n- Measurable decisions, like the two-week spike [n:s4]\n- Teams sharing practical incident habits [n:s5]",
+  "metrics": {
+   "words": 24,
+   "lines": 4,
+   "words_per_line": 6,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues with real story anchors, though blameless reviews and written design would make the culture preferences clearer."
+  }
+ },
+ {
+  "id": "culture",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "What kind of team culture do you do your best work in?",
+  "cost_usd": 0.013049999999999999,
+  "answer": "Clear ownership, room for more system design ownership\nDebates settled through measurable experiments, not job titles [n:s4]\nEngineers helping each other through on-call and sharing runbooks [n:s5]",
+  "metrics": {
+   "words": 25,
+   "lines": 3,
+   "words_per_line": 8.3,
+   "cited_share": 0.67,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Strong, concise culture cues backed by real stories; blameless reviews and written design would round out the answer."
+  }
+ },
+ {
+  "id": "five_years",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "Where do you see yourself in five years?",
+  "cost_usd": 0.013033,
+  "answer": "- Larger-scale payments platform work, with more system design ownership\n- Still deep in backend, not shifting to frontend\n- Owning streaming systems and their reliability\n- Growing impact across teams and shared services [n:a1]",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.25,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear, concise future goals, but growing others through mentoring is missing; cross-team impact is not a substitute."
+  }
+ },
+ {
+  "id": "five_years",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "Where do you see yourself in five years?",
+  "cost_usd": 0.013316000000000001,
+  "answer": "Deeper in larger-scale payments, with more system design ownership\nOwning longer-term backend direction, staying close to the code\nHelping more engineers grow through mentoring [n:s5]",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.33,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear, concise goals aligned with the profile, but missing explicit ownership of reliability."
+  }
+ },
+ {
+  "id": "first_unique",
+  "qtype": "coding",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you find the first non-repeating character in a string?",
+  "cost_usd": 0.012112999999999999,
+  "answer": "- Count each character in one pass with a frequency map\n- Scan again; return the first character with count one\n- O(n) time, O(k) space for k distinct characters\n- Define whether characters mean bytes, code points, or graphemes",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear algorithm and complexity; omits empty/no-unique behavior and case sensitivity."
+  }
+ },
+ {
+  "id": "first_unique",
+  "qtype": "coding",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "How would you find the first non-repeating character in a string?",
+  "cost_usd": 0.013072,
+  "answer": "Approach: count characters, then scan for first count of one\nComplexity: O(n) time, O(k) space for distinct characters\nEdge cases: empty string, no unique character, Unicode character handling",
+  "metrics": {
+   "words": 28,
+   "lines": 3,
+   "words_per_line": 9.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear and correctly shaped; explicitly mention hash-map counting and case sensitivity for full coverage."
+  }
+ }
+]

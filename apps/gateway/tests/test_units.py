@@ -564,6 +564,28 @@ def test_live_prompts_ask_for_spoken_cues() -> None:
         assert "not sentences to read out" in system
         assert "Reuse the wording, story names and exact numbers" in system
         assert "may have a misheard word" in system
-        assert "the points are the\n  answer itself" in system
     assert "fragment of 3 to 10 words" in fast
     assert "under 70 words" in str(deep.content)
+
+
+def test_live_prompts_split_personal_facts_from_knowledge() -> None:
+    """October 2026: "use only facts from the data" left questions the data does not cover
+    with thin or evasive answers, or a story forced onto them. Personal facts still come only
+    from the data, cited; knowledge and reasoning come from the model as the user's thinking,
+    and the answer comes first."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    deep = prompts.deep_pass(ctx, "", "q?", "other", 800)
+    for system in (fast, deep.system[0].text):
+        assert "come only from <digest>, <session_pack> or <memory>" in system
+        assert "never embellish" in system
+        assert "phrased as Alex's thinking" in system
+        assert "never as something Alex did, built or used" in system
+        assert "Answer the question that was asked, fully and correctly, first" in system
+        assert "Never make up a situation, an action or an outcome" in system
+        assert "Name no pay\n  figure unless" in system
+    # "Other" questions build on the job and company context, never a made-up salary.
+    assert "Pay: no figure unless the data has one" in str(deep.content)
+    for qtype in prompts.QUESTION_TYPES:
+        if qtype != "small_talk":
+            assert qtype in prompts.DEEP_SHAPES
