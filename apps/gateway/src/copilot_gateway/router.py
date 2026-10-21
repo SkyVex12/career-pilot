@@ -92,4 +92,7 @@ def build_router(
         build_routes(settings, providers),
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
         on_fallback=on_fallback,
+        hedge_after_s={"detector": settings.detector_hedge_ms / 1000}
+        if settings.detector_hedge_ms
+        else None,
     )

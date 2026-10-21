@@ -41,22 +41,16 @@ from copilot_gateway.stt import TimedResult
 
 @dataclass(frozen=True)
 class Detection:
-    is_question: bool
-    complete: bool
-    addressed_to_user: bool
+    """The detector's decision: "answer" (a complete question for the user that needs an
+    answer now), "wait" (it would be one, but stops mid-sentence) or "none"."""
+
+    decision: str
     qtype: str
-    confidence: float
     latency_ms: int = 0
     error: str | None = None
 
-    def fires(self, min_confidence: float) -> bool:
-        return (
-            self.is_question
-            and self.complete
-            and self.addressed_to_user
-            and self.confidence >= min_confidence
-            and self.qtype != "small_talk"
-        )
+    def fires(self) -> bool:
+        return self.decision == "answer" and self.qtype != "small_talk"
 
 
 QUESTION_WORDS = frozenset(
@@ -185,7 +179,6 @@ class TurnDetector:
         silence_timer_ms: int,
         speculative_start_ms: int,
         final_wait_max_ms: int,
-        min_confidence: float,
         turn_model: TurnModel | None = None,
         hold: bool = True,
         hold_min_words: int = 3,
@@ -194,7 +187,6 @@ class TurnDetector:
         self.silence_s = silence_timer_ms / 1000
         self.speculative_s = speculative_start_ms / 1000
         self.final_wait_s = final_wait_max_ms / 1000
-        self.min_confidence = min_confidence
         self.turn_model = turn_model or NoTurnModel()
         self.hold = hold
         self.hold_min_words = hold_min_words
@@ -379,7 +371,7 @@ class TurnDetector:
             if not cand.detection.done():
                 continue  # the final came and changed nothing: the decision is still coming
             detection = cand.detection.result()
-            if detection.fires(self.min_confidence) or turn.flushed.is_set():
+            if detection.fires() or turn.flushed.is_set():
                 return cand, detection
             # No question in the interim, which may lack the last words: the final decides.
             await self._wait_final(turn, deadline)
@@ -396,7 +388,7 @@ class TurnDetector:
         try:
             cand = self._start(turn, self.utterance())
             cand, detection = await self._decide(turn, cand)
-            if not detection.fires(self.min_confidence):
+            if not detection.fires():
                 self._discard_held(turn)
                 self._done(turn)  # step 5
                 return

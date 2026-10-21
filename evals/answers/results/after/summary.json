@@ -1,0 +1,28 @@
+{
+  "fast": {
+    "answers": 24,
+    "grounded": 0.96,
+    "no_invented_facts": 1.0,
+    "spoken_mean": 5,
+    "shape_mean": 4.75,
+    "words_mean": 31.4,
+    "words_per_line_mean": 8.5,
+    "cited_share_mean": 0.52,
+    "stock_phrases_per_answer": 0,
+    "sentence_lines_per_answer": 0
+  },
+  "deep": {
+    "answers": 24,
+    "grounded": 1.0,
+    "no_invented_facts": 1.0,
+    "spoken_mean": 5,
+    "shape_mean": 4.92,
+    "words_mean": 45.6,
+    "words_per_line_mean": 8.5,
+    "cited_share_mean": 0.52,
+    "stock_phrases_per_answer": 0,
+    "sentence_lines_per_answer": 1.08
+  },
+  "grader": "gpt-6.1-sol",
+  "reps": 2
+}

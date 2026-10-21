@@ -1,0 +1,1106 @@
+[
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "- Eight years backend; senior on Larkspur\u2019s checkout platform [n:a1]\n- Own the order pipeline; moved reconciliation to Kafka streaming [n:s2]\n- Before that, tracking APIs and event ingestion at Tidewater [n:a2]\n- Looking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.75,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "Current role: Senior Backend Engineer, Larkspur Commerce [n:a1]\nBefore that: tracking APIs and event ingestion at Tidewater [n:a2]\nNow own the order pipeline and payments adapter layer [n:a1]\nOrder pipeline to Kafka: replaced nightly batch reconciliation [n:s2]\nBuilt streaming pipeline: Kafka, Go consumers, PostgreSQL [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 48,
+   "lines": 6,
+   "words_per_line": 8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "- Black Friday: payments adapter out of connections at 6x traffic [n:s1]\n- Led the incident; shed load with a feature flag in 12 minutes [n:s1]\n- Revenue loss held under 0.3% of the day's revenue [n:s1]\n- Added per-provider pool limits and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nLed the incident; shed load with a feature flag in 12 minutes [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]\nThen added pool limits per provider and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 46,
+   "lines": 5,
+   "words_per_line": 9.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "- Black Friday: per-provider pool limits [n:s1]\n- Load tests added in CI [n:s1]\n- Feature flag shed load in 12 minutes [n:s1]",
+  "metrics": {
+   "words": 17,
+   "lines": 3,
+   "words_per_line": 5.7,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "The feature-flag point describes incident mitigation, not a change made afterwards to prevent recurrence."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "Black Friday checkout outage [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nAdded pool limits per provider to contain connection exhaustion [n:s1]\nAdded load tests in CI for traffic spikes [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]",
+  "metrics": {
+   "words": 39,
+   "lines": 5,
+   "words_per_line": 7.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "- Token bucket per API key, atomic Redis updates with Lua\n- Regional Redis, local in-process buckets during failover [n:s6]\n- Set global limits with coordinated quota allocation across regions\n- Handle clock skew, retries, and Redis outages; return 429 with retry guidance",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.25,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "- Clarify: strict global limit, or some regional overshoot acceptable?\n- Clarify: limits per API key, endpoint, or both?\n- Components: regional gateways, Redis token buckets, global quota allocator.\n- Data flow: authenticate key; atomic Lua check; allow or 429.\n- Scaling: shard by key; lease regional quotas within global budget.\n- Tradeoffs: leases reduce latency; strict global checks add coordination.\n- Failures: bounded local fallback; accept overshoot or reject requests.",
+  "metrics": {
+   "words": 64,
+   "lines": 7,
+   "words_per_line": 9.1,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "- Schema evolution: backward-compatible Avro schemas [n:s3]\n- Schema registry with a CI check blocking breaking changes [n:s3]\n- Zero consumer breakages across 140 schema changes in 18 months [n:s3]",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "Schema registry with backward-compatible Avro schemas [n:s3]\nCI check blocks breaking changes before they ship [n:s3]\nAdd optional fields with defaults; keep existing readers working\nZero consumer breakages in 18 months after 140 schema changes [n:s3]\nTradeoff: breaking changes need staged migrations, not immediate replacement",
+  "metrics": {
+   "words": 42,
+   "lines": 5,
+   "words_per_line": 8.4,
+   "cited_share": 0.6,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "- Process: separate memory space; stronger isolation\n- Thread: shared memory within one process; cheaper communication\n- Pick processes for isolation or independent failure boundaries\n- Pick threads for shared-state work with low communication overhead",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "Process: separate memory; thread: shared memory within one process.\nOS schedules both; threads share heap, keep separate stacks.\nProcesses communicate through messages; threads need synchronization around shared data.\nFor Kafka Go consumers, goroutines\u2014not OS threads directly. [n:s2]\nPick processes for isolation; threads for shared-memory concurrency.\nTradeoff: process overhead versus thread races and shared crashes.",
+  "metrics": {
+   "words": 53,
+   "lines": 6,
+   "words_per_line": 8.8,
+   "cited_share": 0.17,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What would you do differently if you built it again",
+  "answer": "- Order pipeline to Kafka: run old and new side by side for six weeks [n:s2]\n- Keep that migration plan; reconciliation lag under two minutes [n:s2]\n- Add schema registry and CI compatibility checks early [n:s3]\n- Zero consumer breakages after 140 schema changes [n:s3]",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Short, grounded cues, but mostly recap results and what to keep rather than explaining what to do differently and why."
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What would you do differently if you built it again",
+  "answer": "Order pipeline to Kafka \u2014 schema evolution [n:s2] [n:s3]\nReplaced nightly batch reconciliation with a streaming pipeline [n:s2]\nIntroduced schema registry, backward-compatible Avro schemas, CI compatibility check [n:s3]\nZero consumer breakages in 18 months after 140 schema changes [n:s3]\nBuilding again: define compatibility rules before moving producers\nAdd consumer replay tests before the first cutover",
+  "metrics": {
+   "words": 50,
+   "lines": 6,
+   "words_per_line": 8.3,
+   "cited_share": 0.67,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Clear cues, but blends two stories and gives little explanation of why the proposed changes would help."
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "- B-tree index, sorted keys and row pointers\n- Find matches without scanning every row\n- Fewer page reads; tradeoff is write and storage cost\n- Composite indexes help when filters match the leading columns",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "An index finds matching rows without scanning the whole table.\nB-tree indexes keep keys sorted, pointing to matching rows.\nThe database follows tree branches, then fetches those rows.\nTracking service: two indexes and a cache; p95 down 70%. [n:s4]\nTradeoff: extra storage, slower writes from maintaining the index.",
+  "metrics": {
+   "words": 47,
+   "lines": 5,
+   "words_per_line": 9.4,
+   "cited_share": 0.2,
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "- Manager wanted a tracking-service rewrite in a new language [n:s4]\n- Proposed a two-week spike with measurable criteria [n:s4]\n- Database was the bottleneck; two indexes and a cache [n:s4]\n- p95 down 70%, and we dropped the rewrite [n:s4]",
+  "metrics": {
+   "words": 33,
+   "lines": 4,
+   "words_per_line": 8.2,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "Disagreed with manager on a rewrite [n:s4]\nManager wanted tracking service rewritten in a new language [n:s4]\nProposed a two-week spike with measurable criteria instead [n:s4]\nDatabase bottleneck; fixed with two indexes and a cache [n:s4]\np95 down 70%; manager agreed, rewrite dropped [n:s4]",
+  "metrics": {
+   "words": 39,
+   "lines": 5,
+   "words_per_line": 7.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "- Browser parses URL; checks cache and service worker\n- DNS resolves hostname to an IP\n- TCP connection, then TLS handshake for HTTPS\n- Sends HTTP request; server responds, browser parses HTML and loads resources",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "Browser finds the server, requests content, then renders the page.\nDNS resolves hostname; browser connects using TCP/TLS or QUIC.\nHTTP response arrives; browser parses HTML, fetches resources, runs JavaScript.\nLayout and paint turn those resources into visible pixels.\nFor checkout API requests: payments adapter connection pool matters. [n:s1]\nCaching cuts latency, but risks serving stale content.",
+  "metrics": {
+   "words": 55,
+   "lines": 6,
+   "words_per_line": 9.2,
+   "cited_share": 0.17,
+   "stock_phrases": [],
+   "sentence_lines": 5
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "- Roadmap shifting to frontend; want to stay deep in backend\n- Larger-scale payments, like streaming settlement work [n:s2]\n- More system design ownership",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "Current role: Larkspur Commerce, Checkout Platform [n:a1]\nOur roadmap is shifting to frontend work\nI want to stay deep in backend\nMoved reconciliation from batch to Kafka streaming [n:s2]\nLag: 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 43,
+   "lines": 6,
+   "words_per_line": 7.2,
+   "cited_share": 0.5,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Clear, grounded cues, but the opening names the role rather than the story and the migration result slightly distracts from the reason for leaving."
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "- How far along is the batch-to-streaming move, and what\u2019s hardest so far?\n- How do squads split ownership of shared payment services?\n- What does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 3,
+   "words_per_line": 10.3,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "How far along is the batch-to-streaming move?\nWhat is hardest so far?\nHow do squads split ownership of shared payment services?\nWhat does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "- Eight years backend; senior on Larkspur\u2019s checkout platform [n:a1]\n- Own the order pipeline; moved reconciliation from batch to Kafka streaming [n:s2]\n- Before that, tracking APIs and event ingestion at Tidewater [n:a2]\n- Looking for bigger payments scale and more system design ownership",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.75,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "background",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "So to kick things off, can you walk me through your background and what you're working on right now?",
+  "answer": "Senior Backend Engineer, Larkspur Commerce, Checkout Platform [n:a1]\nBefore that, tracking APIs and event ingestion at Tidewater [n:a2]\nNow own the order pipeline and payments adapter layer [n:a1]\nOrder pipeline to Kafka: replaced nightly batch reconciliation with streaming [n:s2]\nRan old and new side by side for 6 weeks [n:s2]\nReconciliation lag: 24 hours to under 2 minutes [n:s2]",
+  "metrics": {
+   "words": 53,
+   "lines": 6,
+   "words_per_line": 8.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "- Black Friday checkout outage: payments adapter exhausted its connection pool at 6x normal traffic [n:s1]\n- Led the incident; shed load with a feature flag in 12 minutes [n:s1]\n- Revenue loss held under 0.3% of the day [n:s1]\n- Added per-provider pool limits and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 43,
+   "lines": 4,
+   "words_per_line": 10.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Tell me about a time you had to deal with a production incident while you were under a lot of pressure.",
+  "answer": "Checkout outage on Black Friday [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nLed the incident; shed load with a feature flag [n:s1]\nLoad shedding in 12 minutes; revenue loss held under 0.3% [n:s1]\nThen added pool limits per provider and load tests in CI [n:s1]",
+  "metrics": {
+   "words": 45,
+   "lines": 5,
+   "words_per_line": 9,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "- Black Friday checkout outage: payments adapter exhausted its connection pool at 6x normal traffic [n:s1]\n- Added pool limits per provider\n- Added load tests in CI\n- Loss held under 0.3% of the day\u2019s revenue [n:s1]",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 0.5,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "spoken": 5,
+   "shape": 3,
+   "notes": "The two prevention steps need citations; the outage recap and revenue figure distract from the follow-up about what changed afterwards."
+  }
+ },
+ {
+  "id": "incident_followup",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "And what did you change afterwards so it wouldn't happen again?",
+  "answer": "Black Friday checkout outage [n:s1]\nPayments adapter exhausted its connection pool at 6x normal traffic [n:s1]\nAfterwards: added pool limits per provider [n:s1]\nAdded load tests in CI [n:s1]\nRevenue loss held under 0.3% of the day [n:s1]",
+  "metrics": {
+   "words": 33,
+   "lines": 5,
+   "words_per_line": 6.6,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "- Token bucket per API key, shared Redis with Lua [n:s6]\n- Local in-process buckets as fallback during Redis failover [n:s6]\n- Across regions, use a shared low-latency store or regional quota allocation\n- Define fail-open or fail-closed behavior for store outages, based on API risk",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 0.5,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Good short cues, but the cross-region quota and consistency strategy is left vague."
+  }
+ },
+ {
+  "id": "rate_limiter",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How would you design a rate limiter for a public API that has to work across several regions?",
+  "answer": "Limit per API key, user, or IP address?\nStrict global limits, or some temporary overshoot acceptable?\nComponents: regional gateways, Redis token buckets, global quota allocator\nData flow: assign regional quotas; atomically check tokens using Lua\nScaling: shard by API key; batch regional quota renewals\nTradeoffs: regional quotas reduce latency; strict global limits need coordination\nFailure handling: bounded local buckets; fail closed for sensitive endpoints",
+  "metrics": {
+   "words": 64,
+   "lines": 7,
+   "words_per_line": 9.1,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "- Schema evolution: introduced a registry with backward-compatible Avro schemas [n:s3]\n- CI check blocks breaking changes before they reach consumers [n:s3]\n- Zero consumer breakages across 140 schema changes in 18 months [n:s3]",
+  "metrics": {
+   "words": 28,
+   "lines": 3,
+   "words_per_line": 9.3,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "schema_changes",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "I'm curious how you handled schema changes in that pipeline",
+  "answer": "Introduced a schema registry with backward-compatible Avro schemas. [n:s3]\nCI check blocks breaking changes before they ship. [n:s3]\nNew fields need defaults; old consumers ignore added fields.\nZero consumer breakages in 18 months after 140 schema changes. [n:s3]\nTradeoff: incompatible changes need staged migrations, keeping both versions temporarily.",
+  "metrics": {
+   "words": 45,
+   "lines": 5,
+   "words_per_line": 9,
+   "cited_share": 0.6,
+   "stock_phrases": [],
+   "sentence_lines": 3
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "- Processes: separate address spaces; stronger isolation\n- Threads: shared memory; lighter communication, shared-state risks\n- Processes for fault isolation or independent services\n- Threads for parallel work within one program\u2019s shared state",
+  "metrics": {
+   "words": 29,
+   "lines": 4,
+   "words_per_line": 7.2,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "process_thread",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What's the difference between a process and a thread, and when would you pick one over the other?",
+  "answer": "Processes isolate memory; threads share memory within a process.\nProcesses communicate through IPC; threads need synchronization around shared state.\nPick processes for isolation; threads for shared-memory concurrency.\nGo consumers in the Kafka pipeline: concurrency example, not threads. [n:s2]\nTradeoff: processes cost more memory; threads risk races and shared crashes.",
+  "metrics": {
+   "words": 48,
+   "lines": 5,
+   "words_per_line": 9.6,
+   "cited_share": 0.2,
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What would you do differently if you built it again",
+  "answer": "- ETA launch: validate rural routes with real data first [n:s8]\n- Shadow mode before exposing predictions to users [n:s8]\n- Per-region accuracy dashboards before relaunch [n:s8]",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "do_differently",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What would you do differently if you built it again",
+  "answer": "Order pipeline to Kafka [n:s2]\nNightly batch reconciliation; lag was 24 hours [n:s2]\nKafka, Go consumers, PostgreSQL; side by side for 6 weeks [n:s2]\nReconciliation lag dropped to under 2 minutes [n:s2]\nBuilding again: define reconciliation checks before writing consumers\nCompare missing orders, duplicates, and totals from day one",
+  "metrics": {
+   "words": 45,
+   "lines": 6,
+   "words_per_line": 7.5,
+   "cited_share": 0.67,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "- B-tree index: find matching keys without scanning every row\n- Keep the indexed column\u2019s values in sorted order\n- Follow tree nodes to the matching rows; fewer disk reads\n- Tradeoff: extra storage and slower writes due to index updates",
+  "metrics": {
+   "words": 37,
+   "lines": 4,
+   "words_per_line": 9.2,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "index",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How does a database index actually speed up a query?",
+  "answer": "Index: find matching rows without scanning the whole table\nB-tree: sorted keys and row references, arranged in pages\nTraverse tree pages; fetch matching rows through those references\nTracking service: two indexes and a cache; p95 down 70% [n:s4]\nTradeoff: extra storage and slower writes maintaining the index",
+  "metrics": {
+   "words": 46,
+   "lines": 5,
+   "words_per_line": 9.2,
+   "cited_share": 0.2,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "- Rewrite disagreement: manager wanted a new language for tracking [n:s4]\n- Proposed a two-week spike with measurable criteria [n:s4]\n- Database bottleneck; two indexes and a cache, p95 down 70% [n:s4]\n- Dropped the rewrite after the spike [n:s4]",
+  "metrics": {
+   "words": 32,
+   "lines": 4,
+   "words_per_line": 8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "manager",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Have you ever disagreed with a decision your manager made? What happened?",
+  "answer": "Disagreed with manager on a rewrite [n:s4]\nManager wanted tracking service rewritten in a new language [n:s4]\nProposed a two-week spike with measurable criteria instead [n:s4]\nDatabase bottleneck; fixed with two indexes and a cache [n:s4]\np95 down 70%; manager agreed, rewrite dropped [n:s4]",
+  "metrics": {
+   "words": 39,
+   "lines": 5,
+   "words_per_line": 7.8,
+   "cited_share": 1.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "- Browser parses URL; checks cache and HSTS\n- DNS resolves hostname to an IP\n- TCP connection, then TLS handshake for HTTPS\n- Sends HTTP request; server responds, browser parses HTML and fetches assets",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "url",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Walk me through what happens when you type a URL into the browser and hit enter.",
+  "answer": "Browser resolves the address, connects, requests content, renders the page\nDNS finds the IP; HTTPS uses TLS for encryption\nHTTP returns content; browser parses HTML, fetches assets, runs JavaScript\nTracking APIs at Tidewater: the server-side request handling piece [n:a2]\nCaching saves network trips, but risks serving stale content",
+  "metrics": {
+   "words": 47,
+   "lines": 5,
+   "words_per_line": 9.4,
+   "cited_share": 0.2,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "- Roadmap shifting to frontend; want to stay deep in backend\n- Larger-scale payments, like streaming settlement work [n:s2]\n- More system design ownership",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 0.33,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "leaving",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Sorry, I lost my train of thought. Why are you looking to leave your current role?",
+  "answer": "Larkspur Commerce \u2014 Senior Backend Engineer, Checkout Platform [n:a1]\nOur roadmap is shifting to frontend work\nI want to stay deep in backend\nMoved reconciliation lag from 24 hours to under 2 minutes [n:s2]\nLooking for larger-scale payments and more system design ownership",
+  "metrics": {
+   "words": 41,
+   "lines": 5,
+   "words_per_line": 8.2,
+   "cited_share": 0.4,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "- How far along is the batch-to-streaming move, and what is hardest so far?\n- How do squads split ownership of shared payment services?\n- What does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 32,
+   "lines": 3,
+   "words_per_line": 10.7,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ },
+ {
+  "id": "questions_for_us",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "We're nearly out of time. Do you have any questions for us?",
+  "answer": "How far along is the batch-to-streaming move?\nWhat is hardest so far?\nHow do squads split ownership of shared payment services?\nWhat does on-call look like, and how are incidents reviewed?",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ }
+]

@@ -305,3 +305,71 @@ async def test_stt_reconnect_replays_while_audio_keeps_arriving() -> None:
     await asyncio.gather(runner, return_exceptions=True)
     assert SlowReplaySTT.connections >= 2
     assert received == chunks
+
+
+class LateFinalizeSTT:
+    """A stream that answers each Finalize with a final covering the audio sent before it,
+    released by the test, so a reply can arrive after the next speech end."""
+
+    name = "late"
+
+    def __init__(self) -> None:
+        self.sent_ms = 0
+        self.replies: asyncio.Queue[STTResult] = asyncio.Queue()
+        self.finalized: list[int] = []
+
+    async def connect(self) -> None:
+        pass
+
+    async def send_audio(self, pcm: bytes) -> None:
+        self.sent_ms += len(pcm) // 32
+
+    async def finalize(self) -> None:
+        self.finalized.append(self.sent_ms)
+
+    async def keepalive(self) -> None:
+        pass
+
+    async def results(self) -> AsyncIterator[STTResult]:
+        while True:
+            yield await self.replies.get()
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_a_late_reply_to_an_earlier_finalize_does_not_flush_the_new_turn() -> None:
+    """Benchmark, October 2026: "Have you ever disagreed with a decision your manager made?
+    What happened?" has a pause after the first sentence, so two speech ends sent two Finalize
+    messages. The reply to the first (the first sentence only) arrived after the second speech
+    end and counted as the new turn's flush, so the detector decided on half the question and
+    the rest waited for that call (one run: 9.7 s to the first word)."""
+    stream = LateFinalizeSTT()
+    results: list[Any] = []
+
+    async def on_result(r: Any) -> None:
+        results.append(r)
+
+    stt = ResilientSTT(
+        [("late", lambda: stream)],
+        on_result=on_result,
+        on_status=lambda state, message: None,
+        stall_s=10.0,
+    )
+    runner = asyncio.create_task(stt.run())
+    await asyncio.sleep(0.01)
+    await stt.send(b"\0" * 32 * 2800, 0)  # first sentence: 2.8 s
+    await stt.finalize()  # speech end 1
+    await stt.send(b"\0" * 32 * 800, 3100)  # pre-roll and "What happened?"
+    await stt.finalize()  # speech end 2
+    assert stream.finalized == [2800, 3600]
+    first = STTResult("Have you ever disagreed with a decision your manager made?", True, 0, 2800)
+    stream.replies.put_nowait(STTResult(first.text, True, 0, 2800, flushed=True))
+    stream.replies.put_nowait(STTResult("What happened?", True, 2800, 3600, flushed=True))
+    await asyncio.sleep(0.05)
+    runner.cancel()
+    await asyncio.gather(runner, return_exceptions=True)
+    assert [(r.text, r.flushed) for r in results] == [
+        (first.text, False),
+        ("What happened?", True),
+    ]

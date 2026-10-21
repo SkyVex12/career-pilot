@@ -23,17 +23,7 @@ def slow_detector(job: str, req: Any) -> Reply:
         content = str(req.content)
         if "share your screen" in content.split("<utterance>")[-1]:
             # A request for an action: not a question that needs talking points.
-            reply.chunks = [
-                json.dumps(
-                    {
-                        "is_question": False,
-                        "complete": True,
-                        "addressed_to_user": True,
-                        "type": "other",
-                        "confidence": 0.9,
-                    }
-                )
-            ]
+            reply.chunks = [json.dumps({"answer": "none"})]
     return reply
 
 
@@ -313,7 +303,7 @@ def test_the_detector_prompt_knows_the_call_type() -> None:
 
     interview = prompts.detector("Alex", "", "Could you share your screen?", 80).system[0].text
     assert "in an interview" in interview
-    assert "in a one-on-one call" in interview
+    assert "one-on-one call" in interview
     assert "share your screen" in interview  # a request for an action is not a question
     assert '"what is that?"' in interview  # nor a short reaction
     standup = prompts.detector("Alex", "", "x", 80, mode="standup").system[0].text

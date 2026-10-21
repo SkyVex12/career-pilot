@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 
 BYTES_PER_MS = 32  # 16 kHz * 2 bytes
 REPLAY_MAX_MS = 10_000
+# Rounding in the provider's result times. A reply to the latest Finalize covers at least the
+# client's 200 ms pre-roll more than the one before it.
+FINALIZE_SLACK_MS = 100
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,8 @@ class ResilientSTT:
         self.pending_ms = 0
         self.in_speech = False
         self.flush_pending = False
+        # The stream's audio end (provider ms) at the last two Finalize requests; see _handle.
+        self.finalized_at: tuple[int | None, int | None] = (None, None)
         self.awaiting_since: float | None = None  # first audio sent after the last result
         self.last_audio_at = 0.0
         self.connected_at = 0.0
@@ -131,6 +136,7 @@ class ResilientSTT:
 
     async def finalize(self) -> None:
         self.flush_pending = True
+        self.finalized_at = (self.finalized_at[1], self.timeline.stream_ms)
         async with self._lock:
             if self.stream is not None:
                 await self._send(self.stream, self.stream.finalize())
@@ -162,6 +168,7 @@ class ResilientSTT:
             return
         async with self._lock:
             self.timeline = _Timeline()
+            self.finalized_at = (None, None)  # a new stream answers only the replayed Finalize
             for capture_ms, pcm in self.pending:  # replay audio not covered by a final
                 self.timeline.add(capture_ms, len(pcm))
                 await self._send(stream, stream.send_audio(pcm))
@@ -220,12 +227,22 @@ class ResilientSTT:
         timed = TimedResult(
             text=r.text,
             is_final=r.is_final,
-            flushed=r.flushed,
+            flushed=r.flushed and not self._answers_earlier_finalize(r),
             start_ms=self.timeline.to_capture(r.start_ms),
             end_ms=self.timeline.to_capture(r.end_ms),
             provider=stream.name,
         )
         await self.on_result(timed)
+
+    def _answers_earlier_finalize(self, r: STTResult) -> bool:
+        """A Finalize reply covers only the audio sent before that Finalize. When a question is
+        split by a pause, two speech ends send two Finalize messages; the first reply can
+        arrive after the second speech end, and taken as the latest turn's flush it made the
+        detector decide on the first half alone (benchmark, October 2026: 7 of 106 questions,
+        most of the first-word p95). A reply that ends no later than the audio at the Finalize
+        before the latest one answers that earlier Finalize."""
+        earlier = self.finalized_at[0]
+        return earlier is not None and r.end_ms <= earlier + FINALIZE_SLACK_MS
 
     def _drop_covered(self, stream_end_ms: int) -> None:
         """Forget pending audio a final has covered, so a reconnect does not resend it."""

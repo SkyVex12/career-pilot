@@ -18,6 +18,7 @@ copilot-bench = "copilot_evals.bench:run"
 copilot-bench-audio = "copilot_evals.bench_audio:run"
 copilot-calibrate-prepared = "copilot_evals.calibrate:run"
 copilot-detector-eval = "copilot_evals.detector_eval:run"
+copilot-answer-eval = "copilot_evals.answer_eval:run"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.13"]

@@ -49,8 +49,13 @@ class Settings(CoreSettings):
     speculative_hold: bool = True
     speculative_min_words: int = 3
     stage1_min_score: float = 0.3
-    detector_min_confidence: float = 0.7
     detector_max_tokens: int = 80
+    # A detector request with no first token after this long gets a second one alongside it
+    # (the job's retry route), and the first to answer is used. Benchmark, October 2026: 5% of
+    # detector calls stalled until the 3 s first-token timeout and its retry (5 to 6 s), while
+    # 90% finished within 3.3 s. A hedge costs one more detector call (about $0.0001). None:
+    # retry only after the timeout.
+    detector_hedge_ms: int | None = 2000
     # Per embedding model id (`provider:model@dimensions`); entries given (JSON) are merged
     # over the calibrated defaults. A model without an entry uses
     # prepared_answer_min_similarity and no margin.
