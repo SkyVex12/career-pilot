@@ -1,4 +1,6 @@
-# Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4, Stage 0): build the ARM64 images on
+# Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4, Stage 0). On GCP (the gcp-* jobs at
+# the end): multi-arch images to Artifact Registry; deploying is a person's command. On AWS
+# (unused while the account's organization policy blocks it): build the ARM64 images on
 # GitHub's ARM runners (native, no emulation), push them to ECR tagged with the git SHA, run
 # the migrations as a one-off ECS task, then deploy the services (infra/scripts/deploy.py).
 # The instance must be running; a deploy to a stopped stage fails and can be rerun from the
@@ -83,3 +85,80 @@ jobs:
         run: >-
           uv run --no-project --with "boto3>=1.40" python infra/scripts/deploy.py
           --name "$STAGE" --region "$AWS_REGION" --tag "${{ inputs.tag || github.sha }}"
+
+  # --- Stage 0 on GCP (infra/gcp) -----------------------------------------------------------
+  # Images to Artifact Registry through Workload Identity Federation (no service account key):
+  # each image built natively for linux/amd64 (the e2-small VM) and linux/arm64, then joined
+  # into one multi-arch tag, the git SHA. Deploying stays a person's command
+  # (`infra/gcp/scripts/stage.py deploy`, README.md "Deploying Stage 0"). Skipped until the
+  # repository variables from `terraform output ci` are set.
+  gcp-images:
+    if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && (github.event_name == 'push' || inputs.tag == '')
+    name: gcp image (${{ matrix.image }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        image: [gateway, api, worker, proxy]
+        include:
+          - { image: gateway, dockerfile: docker/python.Dockerfile, package: copilot-gateway, command: copilot-gateway }
+          - { image: api, dockerfile: docker/python.Dockerfile, package: copilot-api, command: copilot-api }
+          - { image: worker, dockerfile: docker/python.Dockerfile, package: copilot-worker, command: copilot-worker }
+          - { image: proxy, dockerfile: docker/proxy/Dockerfile, package: "", command: "" }
+    steps:
+      - uses: actions/checkout@v5
+      - id: gcp
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.GCP_REGISTRY_HOST || 'us-central1-docker.pkg.dev' }}
+          username: oauth2accesstoken
+          password: ${{ steps.gcp.outputs.access_token }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          build-args: |
+            PACKAGE=${{ matrix.package }}
+            COMMAND=${{ matrix.command }}
+          tags: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
+
+  gcp-manifests:
+    needs: gcp-images
+    name: gcp image (${{ matrix.image }}, multi-arch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        image: [gateway, api, worker, proxy]
+    steps:
+      - id: gcp
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.GCP_REGISTRY_HOST || 'us-central1-docker.pkg.dev' }}
+          username: oauth2accesstoken
+          password: ${{ steps.gcp.outputs.access_token }}
+      - uses: docker/setup-buildx-action@v3
+      - name: One tag for both architectures
+        env:
+          REPO: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}
+        run: |
+          docker buildx imagetools create -t "$REPO:$GITHUB_SHA" "$REPO:$GITHUB_SHA-amd64" "$REPO:$GITHUB_SHA-arm64"
+          docker buildx imagetools inspect "$REPO:$GITHUB_SHA" | grep -E "Platform|Name"

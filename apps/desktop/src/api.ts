@@ -39,9 +39,11 @@ export type UiEvent =
   | { kind: "warning"; message: string }
   | { kind: "stopped"; reason: StopReason };
 
-export type Environment = "local" | "aws";
+export type Environment = "local" | "cloud";
 
-export interface CognitoConfig {
+/** The stage's browser sign-in (Google on GCP, Cognito on AWS), from GET /v1/auth/config. */
+export interface OAuthConfig {
+  provider: string;
   domain: string;
   client_id: string;
   scopes: string[];
@@ -52,11 +54,11 @@ export interface Settings {
   /** Local: the gateway's /v1/session WebSocket URL and the API's /v1 root. */
   gateway_url: string;
   api_url: string;
-  /** AWS: the deployed stage's (terraform output gateway_url api_url). */
-  aws_gateway_url: string;
-  aws_api_url: string;
+  /** Cloud: the deployed stage's (terraform output gateway_url api_url). */
+  cloud_gateway_url: string;
+  cloud_api_url: string;
   /** Set by sign-in from the stage's GET /v1/auth/config. */
-  cognito: CognitoConfig | null;
+  oauth: OAuthConfig | null;
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
@@ -69,7 +71,7 @@ export interface Settings {
 export interface SettingsView {
   settings: Settings;
   dev_token_set: boolean;
-  /** The AWS environment's signed-in user (their email), if any. */
+  /** The cloud environment's signed-in user (their email), if any. */
   signed_in_as: string | null;
   /** The current environment can make calls: the dev token is set, or the user signed in. */
   ready: boolean;

@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
 import { api, inTauri, type DeviceInfo, type LiveStatus, type Settings, type SettingsView } from "./api";
-import { awsUrlsFor } from "./urls";
+import { cloudUrlsFor } from "./urls";
 import { parseTarget, upcoming } from "./catalog";
 import { Documents, when } from "./Documents";
 import { History } from "./History";
@@ -27,7 +27,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("start");
   const [view, setView] = useState<SettingsView | null>(null);
   const [showDebug, setShowDebug] = useState(false);
-  // The current environment can make calls: the dev token is set (local) or signed in (AWS).
+  // The current environment can make calls: the dev token is set (local) or signed in (cloud).
   const tokenSet = view?.ready ?? false;
   const environment = view?.settings.environment ?? "local";
 
@@ -103,7 +103,7 @@ function StatusBadge({ session }: { session: SessionView }) {
 function SetTokenFirst({ environment, onSettings }: { environment: string; onSettings: () => void }) {
   return (
     <p className="callout">
-      {environment === "aws" ? "Sign in first." : "Set the dev token first."}{" "}
+      {environment === "cloud" ? "Sign in first." : "Set the dev token first."}{" "}
       <button className="link" onClick={onSettings}>
         Open settings
       </button>
@@ -281,7 +281,7 @@ function StartScreen({
       {session.stopped === "no_minutes" && <p className="callout">No minutes left on the plan.</p>}
       {session.stopped === "unauthorized" && (
         <p className="callout">
-          {environment === "aws"
+          {environment === "cloud"
             ? "The gateway rejected the sign-in. Sign in again under Settings."
             : "The gateway rejected the dev token. Check it in Settings."}
         </p>
@@ -372,8 +372,8 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
             Local (this machine, dev token)
           </label>
           <label className="check">
-            <input type="radio" checked={draft.environment === "aws"} onChange={() => set("environment", "aws")} />
-            AWS (Cognito sign-in)
+            <input type="radio" checked={draft.environment === "cloud"} onChange={() => set("environment", "cloud")} />
+            Cloud (Google sign-in)
           </label>
         </div>
 
@@ -397,22 +397,22 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
                 placeholder={tokenSet ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the .env"}
               />
               <p className="note">
-                Kept in the Windows Credential Manager, not in the settings file. Local only: the services refuse it in AWS.
+                Kept in the Windows Credential Manager, not in the settings file. Local only: the services refuse it in the cloud.
               </p>
             </div>
           </>
         ) : (
           <>
-            <label>AWS host</label>
+            <label>Cloud host</label>
             <div className="row">
               <input
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder="ec2-…compute-1.amazonaws.com (terraform output public_dns)"
+                placeholder="The VM's IP (terraform output external_ip)"
               />
               <button
                 onClick={() => {
-                  const urls = awsUrlsFor(host);
+                  const urls = cloudUrlsFor(host);
                   if (urls) setDraft({ ...draft, ...urls });
                 }}
               >
@@ -421,10 +421,10 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
             </div>
 
             <label>Gateway URL</label>
-            <input value={draft.aws_gateway_url} onChange={(e) => set("aws_gateway_url", e.target.value)} />
+            <input value={draft.cloud_gateway_url} onChange={(e) => set("cloud_gateway_url", e.target.value)} />
 
             <label>API URL</label>
-            <input value={draft.aws_api_url} onChange={(e) => set("aws_api_url", e.target.value)} />
+            <input value={draft.cloud_api_url} onChange={(e) => set("cloud_api_url", e.target.value)} />
 
             <label>Account</label>
             <div>
@@ -435,7 +435,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
                 </div>
               ) : (
                 <div className="row">
-                  <button className="primary" onClick={signIn} disabled={signingIn || unsaved || !settings.aws_api_url}>
+                  <button className="primary" onClick={signIn} disabled={signingIn || unsaved || !settings.cloud_api_url}>
                     {signingIn ? "Waiting for the browser…" : "Sign in"}
                   </button>
                   {unsaved && <span className="note">Save first.</span>}

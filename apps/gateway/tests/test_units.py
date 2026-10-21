@@ -353,7 +353,7 @@ def test_dev_verifier_only_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
     for env in ("prod", "staging", "test"):
         with pytest.raises(RuntimeError, match="COPILOT_ENV=dev"):
             DevTokenVerifier(dev.model_copy(update={"env": env}), environ={})
-    with pytest.raises(RuntimeError, match="cannot run on AWS"):
+    with pytest.raises(RuntimeError, match="cannot run in the cloud"):
         DevTokenVerifier(dev, environ={"ECS_CONTAINER_METADATA_URI_V4": "http://169.254.170.2"})
     with pytest.raises(RuntimeError, match="at least 16"):
         DevTokenVerifier(dev.model_copy(update={"dev_token": None}), environ={})
@@ -361,7 +361,7 @@ def test_dev_verifier_only_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
     # the dev keys nor recorded fixtures can be switched on there by any combination.
     for env in ("dev", "test"):
         monkeypatch.setenv("AWS_EXECUTION_ENV", "AWS_ECS_EC2")
-        with pytest.raises(ValueError, match="cannot run on AWS"):
+        with pytest.raises(ValueError, match="cannot run in the cloud"):
             Settings(_env_file=None, env=env, auth="dev", dev_token="x" * 20)  # pyright: ignore[reportCallIssue]
         monkeypatch.delenv("AWS_EXECUTION_ENV")
     # The default configuration is not dev and has no working verifier yet.
@@ -479,8 +479,8 @@ async def test_a_prepared_match_needs_a_clear_winner() -> None:
 
 
 def test_prepared_thresholds_from_the_environment_merge_over_the_defaults() -> None:
-    s = Settings(  # pyright: ignore[reportCallIssue]
-        _env_file=None,
+    s = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
         prepared_answer_thresholds={"voyage:voyage-3@1024": {"min_similarity": 0.7}},
     )
     assert s.prepared_threshold("voyage:voyage-3@1024").min_similarity == 0.7

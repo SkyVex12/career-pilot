@@ -10,7 +10,7 @@ Design for the career copilot: a desktop app that listens to live interviews and
 - [1. Realtime protocol](#1-realtime-protocol): WebSocket messages and audio frames
 - [2. Data model](#2-data-model): SQL, Valkey keys, job payloads
 - [3. Services and prompts](#3-services-and-prompts): code layout, gateway logic, prompts, REST endpoints
-- [4. Infrastructure and operations](#4-infrastructure-and-operations): AWS setup, CI/CD, SLOs, testing, runbooks
+- [4. Infrastructure and operations](#4-infrastructure-and-operations): AWS setup (Stage 0 on GCP), CI/CD, SLOs, testing, runbooks
 
 ## Architecture
 
@@ -80,7 +80,7 @@ The client is a Tauri app: a React and TypeScript UI on a Rust core, for macOS a
 - **User's own audio:** recorded only with transcript consent. The echo-cancelled mic stream is written to disk in one-second chunks, each encrypted with AES-256-GCM under a per-install key that lives in the OS credential store (Windows Credential Manager), never in a file. Each chunk's associated data is the file's random id and the chunk's index, so chunks cannot be reordered, dropped from the middle or moved between files; a crash loses at most the second being written. The recording belongs to the session the client goes live with, and is cut where a new session starts mid-call (a resume closed with `4408`). For the upload the chunks are decrypted into a streamed WAV body, so the plaintext never touches the disk.
 - **Screens** (all data through the REST API): documents (upload a resume and job descriptions, their processing, the digest and packs once ready), jobs and interviews (schedule one), the start screen (pick an upcoming interview or a job), the post-call screen, history (past sessions, usage this period, account deletion) and settings (the environment, local or AWS, with its gateway and API URLs; the dev token locally or the Cognito sign-in in AWS; devices). The settings screen warns when a URL to another machine is plain HTTP or WS. The app calls `GET /me` at launch, which checks the sign-in (and would wake Aurora where it scales to zero).
 - **Screenshots:** for coding questions, a captured screen region goes to a vision model.
-- **Login:** Amazon Cognito with OAuth and PKCE in the browser (built in step 5). The app reads the user pool's domain and app client from `GET /v1/auth/config`, opens the sign-in page in the default browser and takes the redirect on a fixed loopback port (`http://127.0.0.1:53682/callback`). The refresh token is kept in the OS credential store (Windows Credential Manager), the access token in memory only; the client refreshes it before expiry and sends it over the open socket (`auth.refresh`) during long calls, and a `401` from the API gets one refresh and one retry. A revoked or expired sign-in signs the app out. Career-OS sign-in can be added later as a federated identity provider. On the local stack the client sends the dev token instead, behind the same token-provider interface; the services refuse the dev token on AWS compute.
+- **Login:** Amazon Cognito with OAuth and PKCE in the browser (built in step 5). The app reads the user pool's domain and app client from `GET /v1/auth/config`, opens the sign-in page in the default browser and takes the redirect on a fixed loopback port (`http://127.0.0.1:53682/callback`). The refresh token is kept in the OS credential store (Windows Credential Manager), the access token in memory only; the client refreshes it before expiry and sends it over the open socket (`auth.refresh`) during long calls, and a `401` from the API gets one refresh and one retry. A revoked or expired sign-in signs the app out. Career-OS sign-in can be added later as a federated identity provider. On the local stack the client sends the dev token instead, behind the same token-provider interface; the services refuse the dev token on AWS compute and on Compute Engine. **Stage 0 on GCP** signs in with Google instead of Cognito, through the same flow and interfaces: the app runs Google's OAuth with PKCE in the browser (a Desktop app client, whose secret Google does not treat as confidential, from `GET /v1/auth/config`), keeps the refresh token in the credential store, and sends Google's ID token as the bearer, since Google's access tokens are opaque; the services check it against Google's keys and an allow-list of the team's emails, and derive the user id as a UUIDv5 of Google's `sub` (see [Stage 0 on GCP](#stage-0-on-gcp)).
 - **Distribution:** signed and notarized macOS build, signed Windows build, Tauri updater for auto-updates.
 
 ### Realtime pipeline
@@ -229,7 +229,7 @@ Every interview and standup is a session with the same core log; the mode decide
 
 ### Infrastructure on AWS
 
-The copilot is a standalone app in one AWS account in us-east-1 (N. Virginia), running three ECS services on Graviton with serverless data stores, in two availability zones at launch. Stage 0 runs the same containers on a single instance with Postgres and Valkey beside them (see [Stage 0 settings](#stage-0-settings)).
+The copilot is a standalone app in one AWS account in us-east-1 (N. Virginia), running three ECS services on Graviton with serverless data stores, in two availability zones at launch. Stage 0 runs the same containers on a single instance with Postgres and Valkey beside them (see [Stage 0 settings](#stage-0-settings)); since October 2026 that instance is a Compute Engine VM on Google Cloud, because the AWS account's organization policy blocks EC2, SQS and Cognito (see [Stage 0 on GCP](#stage-0-on-gcp)). The AWS design below is unchanged for Stage 1 and later.
 
 | Service | Runs on | Job |
 | --- | --- | --- |
@@ -269,7 +269,7 @@ The copilot holds resumes, meeting transcripts and employer data, so encryption 
 - **Third-party processors:** audio goes to the STT provider, and error data to Sentry. Each needs a data processing agreement and zero-retention settings; prompt logs stay in a self-hosted Langfuse.
 - **Untrusted input:** transcripts and tool data are treated as data in prompts, and new facts enter memory only after the user approves them.
 - **Secrets and network:** app secrets (STT, Stripe, OAuth client secrets) in Secrets Manager, and per-user tool tokens encrypted with the user's data key in Aurora; Aurora and Valkey in private subnets; VPC endpoints for Bedrock and S3 keep that traffic inside AWS; CloudTrail logs every access to workplace data.
-- **Stage 0 exception: no TLS.** Stage 0 serves the API and the gateway over plain HTTP and WebSocket on the instance's AWS host name, and its security group admits port 80 only from an IP allow-list of the team's addresses (a Terraform variable kept out of git). Cognito's sign-in pages, S3 uploads and every call from the services to AWS, OpenAI and Deepgram still use TLS; the access token and call text between the app and the instance do not. TLS (CloudFront's default domain in front of the instance, or a real domain with ACM) is required before anyone outside the team uses it, and before Stage 1.
+- **Stage 0 exception: no TLS.** Stage 0 runs on a single GCP VM ([Stage 0 on GCP](#stage-0-on-gcp)) and serves the API and the gateway over plain HTTP and WebSocket on the VM's static IP, behind a VPC firewall rule meant to admit port 80 only from an IP allow-list of the team's addresses (a Terraform variable kept out of git, changed with one command). At the owner's choice the allow-list is currently open to every address, so the Google sign-in allow-list (verified emails) is the only gate. Google's sign-in, the presigned uploads to Cloud Storage and every call from the services to Google Cloud, OpenAI and Deepgram still use TLS; the ID token and call text between the app and the VM do not. TLS (a domain with a certificate, or a load balancer with a managed certificate) is required before anyone outside the team uses it, and before Stage 1. (On AWS the same exception held: the instance's AWS host name, a security group allow-list.)
 - **Later:** SOC 2 before selling to companies, and a local-first mode, since some employers restrict sending work data to third-party services.
 
 ### Observability and latency budget
@@ -316,7 +316,7 @@ Assumptions: 40 questions per live hour; the other side speaks about 30 minutes 
 
 | Stage | Users | Fixed | Variable | Total per month |
 | --- | --- | --- | --- | --- |
-| Stage 0: internal | 4 | \~$22 (one instance; see Stage 0 settings) | \~$40 | \~$62, covered by credits |
+| Stage 0: internal | 4 | \~$15 (one GCP VM; see Stage 0 on GCP) | \~$40 | \~$55 |
 | Stage 1: beta | \~100 | \~$150 | \~$1,000 | \~$1,150 |
 | Stage 2: production | 1,000 | \~$750 | \~$10,400 | \~$11,200 |
 | Stage 2 at scale | 10,000 | \~$2,500 | \~$95,000 | \~$97,500 |
@@ -338,15 +338,15 @@ Every stage runs the same code, containers, schema, protocol and Terraform modul
 |  | Stage 0: internal team | Stage 1: beta | Stage 2: production |
 | --- | --- | --- | --- |
 | Users | 3 to 4 teammates | Up to about 100 | 1,000 and more |
-| Compute | One ARM64 instance (t4g.small) running every container through ECS on EC2 | Fargate ARM: 2 gateway tasks, workers from zero | As sized in [Infrastructure and operations](#4-infrastructure-and-operations) |
-| Network | One public subnet; no load balancer, NAT or interface endpoints; port 80 open only to an IP allow-list, no TLS | Public subnets with a load balancer and TLS (CloudFront's domain or a real one) in 2 zones | Private subnets, NAT per zone, interface endpoints |
-| Database | Postgres 16 with pgvector in a container on the instance, data on its own EBS volume, daily snapshots | Aurora with a small minimum | Aurora 1 to 16 ACU, reader and RDS Proxy as load grows |
-| Cache, queue, auth | Valkey in a container on the instance; SQS; Cognito | ElastiCache Serverless Valkey, SQS, Cognito | Same |
-| Environments | One AWS account, one environment; Docker Compose for local development | Separate staging (scales to zero) | Prod, staging and shared accounts |
+| Compute | One VM on GCP (e2-small, Container-Optimized OS) running every container under systemd; built for one ARM64 EC2 instance through ECS, which the AWS account's policy blocks | Fargate ARM: 2 gateway tasks, workers from zero | As sized in [Infrastructure and operations](#4-infrastructure-and-operations) |
+| Network | One subnet, a static IP; no load balancer or NAT; port 80 behind an IP allow-list (open to all at the moment), no TLS; SSH only through IAP | Public subnets with a load balancer and TLS (CloudFront's domain or a real one) in 2 zones | Private subnets, NAT per zone, interface endpoints |
+| Database | Postgres 16 with pgvector in a container on the VM, data on its own persistent disk, nightly pg_dump to Cloud Storage (7 days) | Aurora with a small minimum | Aurora 1 to 16 ACU, reader and RDS Proxy as load grows |
+| Cache, queue, auth | Valkey and ElasticMQ (SQS API) in containers on the VM; Google sign-in with an email allow-list | ElastiCache Serverless Valkey, SQS, Cognito | Same |
+| Environments | One GCP project, one environment; Docker Compose for local development | Separate staging (scales to zero) | Prod, staging and shared accounts |
 | Detector | Haiku on every utterance | Local classifier trained on Stage 0 calls, then Haiku | Same |
 | Deploys | Stop, then start, per service; the client resumes the session | Blue/green for the gateway | Blue/green |
 | Not yet | TLS, billing, code signing, RDS Proxy, SOC 2 | SOC 2 | Everything in place |
-| Fixed cost | About $22 a month running all the time, about $10 stopped between tests | About $150 a month | About $750 a month |
+| Fixed cost | About $15 a month running all the time, about $10 stopped between tests | About $150 a month | About $750 a month |
 | Move on when | The team uses it daily and at least 50 calls are recorded and labeled | About 30 concurrent sessions or paying customers |  |
 
 Not cut at any stage: row-level security, per-user encryption, session logging, tracing, Terraform, CI/CD and automated backups. These are cheap now and expensive to add later.
@@ -1226,7 +1226,7 @@ Staging uses the same shapes with Aurora at 0 to 4 ACU (scale to zero) and one t
 
 #### Stage 0 settings
 
-The sizes above are for Stage 2. Stage 0 (decided in build step 5) does not run them scaled down: it runs every container on **one ARM64 instance** and uses managed services only where they cost almost nothing. Aurora's resume after a pause would land on the first call of a test, and ElastiCache Serverless bills a minimum even when idle; at four users neither pays for itself. The containers and their task definitions are the ones Fargate runs in Stage 1, so moving up changes the launch type and the stores, not the code.
+As designed for AWS in build step 5; Stage 0 now runs the same shape on Google Cloud (see [Stage 0 on GCP](#stage-0-on-gcp) below), and this AWS version is kept in `infra/envs/stage0`, unused. The sizes above are for Stage 2. Stage 0 (decided in build step 5) does not run them scaled down: it runs every container on **one ARM64 instance** and uses managed services only where they cost almost nothing. Aurora's resume after a pause would land on the first call of a test, and ElastiCache Serverless bills a minimum even when idle; at four users neither pays for itself. The containers and their task definitions are the ones Fargate runs in Stage 1, so moving up changes the launch type and the stores, not the code.
 
 ```hcl
 # infra/envs/stage0/terraform.tfvars (abridged)
@@ -1265,6 +1265,36 @@ scheduler_rate     = "rate(5 minutes)"
 | **Total** | **\~$22** | **\~$10** |
 
 Cognito, SQS, EventBridge Scheduler, ECS on EC2, Data Lifecycle Manager and the first two budgets stay within free usage at this size. The earlier plan (Fargate behind a load balancer, Aurora and ElastiCache Serverless) came to about $80. A t4g.medium would add about $12.30 running all the time.
+
+#### Stage 0 on GCP
+
+The AWS account's organization policy denies EC2, SQS, Cognito and most creates, and the team's own network blocks OpenAI and Deepgram by host name, so in October 2026 Stage 0 moved to Google Cloud (project `career-pilot-512115`, us-central1, close to the team and between OpenAI and Deepgram) with the same single-instance shape and the same code. Terraform is in `infra/gcp`; operations go through `infra/gcp/scripts/stage.py` (README, "Deploying Stage 0").
+
+| Part | Stage 0 on GCP |
+| --- | --- |
+| Compute | One **e2-small** (2 shared vCPUs, 2 GiB; the services use about 1 GiB) on Container-Optimized OS. A t2a-standard-1 (ARM) costs twice as much, so the images are built for linux/amd64 and linux/arm64. Every workload is a Docker container with host networking under a systemd unit; `copilotctl` (`infra/gcp/host`) does what ECS did: it starts each container with its environment from the VM's metadata and its secrets from Secret Manager, deploys and rolls back image tags, and runs the scheduler tick every 5 minutes (a systemd timer, in place of EventBridge Scheduler) and the nightly backup |
+| Edge | nginx on port 80 of the VM's static IP: `/v1/session` to the gateway, everything else to the API, 120 s idle timeout. No TLS (see Security and privacy); a VPC firewall rule admits port 80 from an allow-list that `stage.py allow` changes in one command (open to all at the owner's choice for now). No SSH from the internet: IAP TCP forwarding with OS Login |
+| Data | Postgres, Valkey and ElasticMQ (the `jobs` queue and its dead-letter queue, persisted in an H2 file) on a separate persistent disk that survives restarts, deploys and replacing the VM; each binds to 127.0.0.1. Nightly `pg_dump` to a Cloud Storage bucket that keeps 7 days; `stage.py restore` puts one back |
+| Uploads | Cloud Storage through its S3-compatible XML API with an HMAC key, so the S3 store and its presigned uploads are unchanged (Cloud Storage takes no multi-object delete, so a prefix is deleted object by object). The organization forbids service account keys, HMAC keys included; the one key was made with that policy lifted for the project around the call, and enforcement put back |
+| Encryption | Cloud KMS behind the key-provider interface: Cloud KMS has no data-key call or encryption context, so the service makes each user's data key and wraps it with Encrypt, with the user id as additional authenticated data; Decrypt opens it only with the same user id, the encryption context's guarantee |
+| Secrets | Secret Manager: OpenAI, Deepgram, the Google client secret, a password per database role, the HMAC key. Created empty by Terraform; filled by hand or generated straight into Secret Manager, never in the state |
+| Sign-in | Google OIDC with an email allow-list (see Desktop client) in place of Cognito; account deletion removes the user's data but not their Google account, so removing them from the allow-list is a manual step |
+| Logs | Cloud Logging through Container-Optimized OS's logging agent: the JSON lines become structured entries, so `jsonPayload.session_id` finds a session's lines from every service |
+| CI | GitHub Actions through Workload Identity Federation (no service account key; only `main` of this repository): multi-arch images to Artifact Registry on merge. Deploying is a person's command (`stage.py deploy`) |
+| Budget | A $25 Cloud Billing budget with emails at 50%, 80% and 100% |
+
+- **Identity on one host.** The VM has one service account. Containers share the host's network, so the host firewall lets only root, the API and the workers reach the metadata server (for Cloud KMS); the gateway, the one-off tasks and the data services cannot. On AWS each task had its own role; here the API and the workers share the VM's, which may use the KMS key, read the stage's secrets and images, write logs and use the backups bucket.
+- **Latency from the VM** (October 2026, medians of 10 fresh connections): OpenAI's API (Cloudflare's edge) 16 ms TCP round trip, 31 ms TLS handshake, 130 ms to the first byte of an error reply; Deepgram's API 57 ms, 53 ms and 162 ms.
+
+| Stage 0 on GCP fixed item (us-central1 list prices, October 2026) | Running all the time | Stopped between tests |
+| --- | --- | --- |
+| e2-small ($0.0168 an hour) | \~$12.20 | \~$0.70 (40 hours) |
+| Two 10 GB balanced persistent disks (boot, data) | \~$2.00 | \~$2.00 |
+| Static IP (free while the VM uses it, under the monthly allowance; $0.01 an hour reserved and idle) | \~$0 | \~$6.90 |
+| Secret Manager, Cloud KMS, Artifact Registry, egress | \~$1.00 | \~$0.75 |
+| **Total** | **\~$15** | **\~$10** |
+
+Cloud Storage, Cloud Logging, the budget and IAP stay within free usage at this size.
 
 ### Terraform layout and IAM
 
@@ -1305,7 +1335,7 @@ GitHub Actions, authenticating to AWS through OIDC roles.
 6. **Approval:** manual approval on the GitHub `prod` environment.
 7. **Prod:** migrations, then deploy the same image digests that passed staging.
 
-**Stage 0:** `.github/workflows/ci.yml` runs on pull requests (Python with Postgres and Valkey as service containers, TypeScript, Rust on Windows, migrations, and `terraform plan` posted on the PR); `.github/workflows/deploy.yml` runs on merge to `main`: ARM64 images built natively on GitHub's ARM runners, pushed to ECR with the git SHA as the tag, then `infra/scripts/deploy.py` runs the migration task and moves each service to the new images. A rollback is a deploy of an older tag (from the Actions tab, or `deploy.py --tag`); migrations are expand then contract, so older code runs against a newer schema. There is no staging step or replay check yet.
+**Stage 0:** `.github/workflows/ci.yml` runs on pull requests (Python with Postgres and Valkey as service containers, TypeScript, Rust on Windows, migrations, and `terraform plan` posted on the PR); `.github/workflows/deploy.yml` runs on merge to `main`: ARM64 images built natively on GitHub's ARM runners, pushed to ECR with the git SHA as the tag, then `infra/scripts/deploy.py` runs the migration task and moves each service to the new images. A rollback is a deploy of an older tag (from the Actions tab, or `deploy.py --tag`); migrations are expand then contract, so older code runs against a newer schema. There is no staging step or replay check yet. On GCP (where Stage 0 runs now), `deploy.yml` builds each image natively for linux/amd64 and linux/arm64, joins them under one tag (the git SHA) and pushes it to Artifact Registry through Workload Identity Federation; `ci.yml` validates `infra/gcp` and lints the VM's `copilotctl`; deploying and rolling back are `infra/gcp/scripts/stage.py deploy` and `rollback`, run by a person.
 
 **Desktop releases:** a `desktop-v*` tag builds macOS (universal) and Windows, signs and notarizes them, uploads them to the updates bucket, and publishes the Tauri updater manifest.
 

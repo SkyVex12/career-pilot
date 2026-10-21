@@ -46,7 +46,7 @@ def test_every_line_has_a_session_id_field(capture) -> None:
     assert lines[2]["job"] == "session.flush"
     assert "job" not in lines[3]
     assert lines[0]["service"] == "test"
-    assert lines[0]["level"] == "INFO"
+    assert lines[0]["level"] == lines[0]["severity"] == "INFO"
 
 
 async def test_tasks_keep_the_ids_of_the_context_that_started_them(capture) -> None:

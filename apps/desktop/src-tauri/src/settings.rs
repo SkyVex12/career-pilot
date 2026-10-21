@@ -1,14 +1,15 @@
 //! App settings, as JSON in the app's config directory
 //! (`%APPDATA%\com.copilot.desktop\settings.json` on Windows). No token is here: the dev token
-//! and the Cognito refresh token live in the Windows Credential Manager (copilot_client::auth).
+//! and the sign-in's refresh token live in the Windows Credential Manager (copilot_client::auth).
 //!
 //! Two environments, each with its own URLs: `local` (the docker compose stack and the
-//! services on this machine, with the dev token) and `aws` (a deployed stage, with Cognito
-//! sign-in). Switching does not lose the other's URLs.
+//! services on this machine, with the dev token) and `cloud` (a deployed stage, with the
+//! browser sign-in: Google on GCP, Cognito on AWS). Switching does not lose the other's URLs.
+//! Files from before the rename (`aws`, `aws_*_url`, `cognito`) still load.
 
 use std::path::PathBuf;
 
-use copilot_client::cognito::CognitoConfig;
+use copilot_client::oauth::OAuthConfig;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -17,7 +18,8 @@ use uuid::Uuid;
 pub enum Environment {
     #[default]
     Local,
-    Aws,
+    #[serde(alias = "aws")]
+    Cloud,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,11 +29,14 @@ pub struct Settings {
     /// Local: the gateway's `/v1/session` WebSocket URL and the API's `/v1` root.
     pub gateway_url: String,
     pub api_url: String,
-    /// AWS: the same for the deployed stage (`terraform output gateway_url api_url`).
-    pub aws_gateway_url: String,
-    pub aws_api_url: String,
+    /// Cloud: the same for the deployed stage (`terraform output gateway_url api_url`).
+    #[serde(alias = "aws_gateway_url")]
+    pub cloud_gateway_url: String,
+    #[serde(alias = "aws_api_url")]
+    pub cloud_api_url: String,
     /// The deployed stage's sign-in, from its `GET /v1/auth/config` at the last sign-in.
-    pub cognito: Option<CognitoConfig>,
+    #[serde(alias = "cognito")]
+    pub oauth: Option<OAuthConfig>,
     /// cpal device ids; None is the system default.
     pub mic_device: Option<String>,
     pub output_device: Option<String>,
@@ -49,9 +54,9 @@ impl Default for Settings {
             environment: Environment::Local,
             gateway_url: "ws://127.0.0.1:8081/v1/session".into(),
             api_url: "http://127.0.0.1:8080/v1".into(),
-            aws_gateway_url: String::new(),
-            aws_api_url: String::new(),
-            cognito: None,
+            cloud_gateway_url: String::new(),
+            cloud_api_url: String::new(),
+            oauth: None,
             mic_device: None,
             output_device: None,
             echo_cancellation: true,
@@ -79,13 +84,13 @@ impl Settings {
     pub fn active_urls(&self) -> (&str, &str) {
         match self.environment {
             Environment::Local => (&self.gateway_url, &self.api_url),
-            Environment::Aws => (&self.aws_gateway_url, &self.aws_api_url),
+            Environment::Cloud => (&self.cloud_gateway_url, &self.cloud_api_url),
         }
     }
 }
 
 /// A warning for the settings screen when a URL sends traffic in the clear to another
-/// machine: Stage 0 on AWS has no TLS and is only safe behind its IP allow-list.
+/// machine: Stage 0 in the cloud has no TLS and is only safe behind its IP allow-list.
 pub fn insecure_url_warning(url: &str) -> Option<String> {
     let url = url.trim();
     if url.is_empty() {
@@ -122,13 +127,26 @@ mod tests {
         assert_eq!(s.environment, Environment::Local);
         assert_eq!(s.active_urls(), ("ws://10.0.0.5:8081/v1/session", "http://10.0.0.5:8080/v1"));
         assert_eq!(s.hotkey, "F9");
-        let aws = Settings {
-            environment: Environment::Aws,
-            aws_gateway_url: "ws://ec2-1-2-3-4.compute-1.amazonaws.com/v1/session".into(),
-            aws_api_url: "http://ec2-1-2-3-4.compute-1.amazonaws.com/v1".into(),
+        let cloud = Settings {
+            environment: Environment::Cloud,
+            cloud_gateway_url: "ws://34.1.2.3/v1/session".into(),
+            cloud_api_url: "http://34.1.2.3/v1".into(),
             ..s
         };
-        assert_eq!(aws.active_urls().1, "http://ec2-1-2-3-4.compute-1.amazonaws.com/v1");
+        assert_eq!(cloud.active_urls().1, "http://34.1.2.3/v1");
+    }
+
+    #[test]
+    fn aws_settings_files_load_as_the_cloud_environment() {
+        let old = r#"{"environment":"aws","aws_gateway_url":"ws://h/v1/session","aws_api_url":"http://h/v1",
+            "cognito":{"domain":"https://d.auth.us-east-1.amazoncognito.com","client_id":"c","scopes":["openid"]}}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(s.environment, Environment::Cloud);
+        assert_eq!(s.active_urls(), ("ws://h/v1/session", "http://h/v1"));
+        assert_eq!(s.oauth.as_ref().unwrap().provider_name(), "Cognito");
+        let saved = serde_json::to_value(&s).unwrap();
+        assert_eq!(saved["environment"], "cloud");
+        assert!(saved.get("cloud_api_url").is_some() && saved.get("aws_api_url").is_none());
     }
 
     #[test]

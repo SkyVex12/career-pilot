@@ -2,8 +2,9 @@
 storage").
 
 Keys live under `uploads/{user_id}/`, the prefix the API's presigned uploads are limited to
-and the one `user.delete` removes. Locally the store is MinIO; in AWS the bucket's default
-encryption is SSE-KMS (Terraform, build step 5).
+and the one `user.delete` removes. Locally the store is SeaweedFS; in AWS the bucket's default
+encryption is SSE-KMS (Terraform, build step 5); on GCP it is Cloud Storage through its
+S3-compatible XML API with an HMAC key, presigned uploads included.
 """
 
 import asyncio
@@ -56,26 +57,46 @@ class ObjectStore(Protocol):
     async def list_keys(self, prefix: str) -> list[str]: ...
 
 
+GCS_ENDPOINT = "storage.googleapis.com"
+
+
+def is_gcs(endpoint: str | None) -> bool:
+    """Cloud Storage's S3-compatible XML API (Stage 0 on GCP, with HMAC keys)."""
+    return bool(endpoint) and GCS_ENDPOINT in str(endpoint)
+
+
+def s3_client(settings: DataSettings) -> Any:
+    from botocore.config import Config
+
+    kwargs: dict[str, Any] = {
+        "region_name": settings.s3_region or settings.aws_region,
+        # Checksums only where S3 requires them: boto3's default sends CRC32 trailers in
+        # aws-chunked bodies, which Cloud Storage (and older S3 stand-ins) refuse.
+        "config": Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
+    }
+    if settings.s3_endpoint:
+        kwargs["endpoint_url"] = settings.s3_endpoint
+    if settings.s3_access_key and settings.s3_secret_key:
+        kwargs["aws_access_key_id"] = settings.s3_access_key.get_secret_value()
+        kwargs["aws_secret_access_key"] = settings.s3_secret_key.get_secret_value()
+    return boto3_client("s3", **kwargs)
+
+
 class S3Store:
     def __init__(self, settings: DataSettings, client: Any = None) -> None:
         self.bucket = settings.s3_bucket
-        if client is None:
-            from botocore.config import Config
-
-            kwargs: dict[str, Any] = {
-                "region_name": settings.aws_region,
-                "config": Config(signature_version="s3v4", s3={"addressing_style": "path"}),
-            }
-            if settings.s3_endpoint:
-                kwargs["endpoint_url"] = settings.s3_endpoint
-            if settings.s3_access_key and settings.s3_secret_key:
-                kwargs["aws_access_key_id"] = settings.s3_access_key.get_secret_value()
-                kwargs["aws_secret_access_key"] = settings.s3_secret_key.get_secret_value()
-            client = boto3_client("s3", **kwargs)
-        self.client: Any = client
+        # Cloud Storage has no multi-object delete (POST ?delete); objects go one by one.
+        self.batch_delete = not is_gcs(settings.s3_endpoint)
+        self.client: Any = client or s3_client(settings)
 
     async def ensure_bucket(self) -> None:
-        """Local stack only: create the bucket if it is missing (Terraform owns it in AWS)."""
+        """Local stack only: create the bucket if it is missing (Terraform owns it in the
+        cloud)."""
         try:
             await asyncio.to_thread(self.client.head_bucket, Bucket=self.bucket)
         except Exception as e:
@@ -126,7 +147,13 @@ class S3Store:
         )
 
     async def delete(self, key: str) -> None:
-        await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+        # S3 answers a delete of a missing key with 204; Cloud Storage answers 404. Either way
+        # the object is gone, which is all callers need.
+        try:
+            await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+        except Exception as e:
+            if not _not_found(e):
+                raise
 
     async def list_keys(self, prefix: str) -> list[str]:
         keys: list[str] = []
@@ -143,6 +170,10 @@ class S3Store:
 
     async def delete_prefix(self, prefix: str) -> int:
         keys = await self.list_keys(prefix)
+        if not self.batch_delete:
+            for key in keys:
+                await self.delete(key)
+            return len(keys)
         for i in range(0, len(keys), 1000):
             batch = [{"Key": k} for k in keys[i : i + 1000]]
             await asyncio.to_thread(

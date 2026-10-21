@@ -6,6 +6,7 @@ Each service subclasses `CoreSettings` with its own fields. Values come from the
 
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -29,9 +30,28 @@ AWS_RUNTIME_MARKERS = (
 )
 
 
+# Compute Engine names itself in the VM's DMI data, which containers can read; nothing in the
+# environment says so (Stage 0 on GCP runs plain Docker containers on one VM).
+GCE_DMI_PRODUCT = Path("/sys/class/dmi/id/product_name")
+
+
 def aws_runtime(environ: Mapping[str, str]) -> list[str]:
     """The AWS compute markers present; empty off AWS."""
     return [m for m in AWS_RUNTIME_MARKERS if environ.get(m)]
+
+
+def gce_runtime(product: Path = GCE_DMI_PRODUCT) -> list[str]:
+    """["GCE"] on a Compute Engine VM (or in a container on one); empty elsewhere."""
+    try:
+        name = product.read_text(encoding="ascii", errors="replace").strip()
+    except OSError:
+        return []
+    return ["GCE"] if name.startswith("Google Compute Engine") else []
+
+
+def cloud_runtime(environ: Mapping[str, str]) -> list[str]:
+    """Markers of cloud compute (AWS or Compute Engine); empty on a laptop or a CI runner."""
+    return aws_runtime(environ) + gce_runtime()
 
 
 def split_list(value: object) -> object:
@@ -54,7 +74,8 @@ class CoreSettings(BaseSettings):
     env: Literal["dev", "test", "staging", "prod"] = "prod"
 
     # Auth (ARCHITECTURE.md, "Connection and auth" and "REST API").
-    auth: Literal["dev", "cognito"] = "cognito"
+    # cognito on AWS; google on GCP (Google ID tokens, for allow-listed emails only).
+    auth: Literal["dev", "cognito", "google"] = "cognito"
     dev_token: SecretStr | None = None
     dev_user_id: str = "0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b"
     dev_user_name: str = "Dev User"
@@ -65,6 +86,12 @@ class CoreSettings(BaseSettings):
     # no email claim (first login only). https://auth.<domain>
     cognito_domain: str | None = None
     jwks_ttl_s: int = 3600
+    # Google sign-in (Stage 0 on GCP): the desktop OAuth client the app signs in with, and the
+    # emails let in. Google treats an installed app's client secret as not confidential; it
+    # lives in Secret Manager and reaches the app through GET /v1/auth/config.
+    google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
+    google_client_secret: SecretStr | None = None
+    google_allowed_emails: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
 
     # Model providers in fallback order; the first gets one retry before the next. Claude
     # (bedrock, anthropic) is the design default; openai is a supported alternative.
@@ -203,11 +230,11 @@ class CoreSettings(BaseSettings):
     @model_validator(mode="after")
     def _no_dev_or_test_on_aws(self) -> Self:
         # dev and test unlock the dev token, the dev key provider and recorded fixtures; none
-        # of them may ever run on AWS compute, whatever else is configured.
-        if self.env in ("dev", "test") and (markers := aws_runtime(os.environ)):
+        # of them may ever run on AWS or Compute Engine, whatever else is configured.
+        if self.env in ("dev", "test") and (markers := cloud_runtime(os.environ)):
             raise ValueError(
-                f"COPILOT_ENV={self.env} cannot run on AWS ({', '.join(markers)}); "
-                "AWS deployments use staging or prod"
+                f"COPILOT_ENV={self.env} cannot run in the cloud ({', '.join(markers)}); "
+                "deployments use staging or prod"
             )
         return self
 
@@ -221,7 +248,13 @@ class CoreSettings(BaseSettings):
     def _merge_tiers(cls, value: dict[str, float]) -> dict[str, float]:
         return {**DEFAULT_TIERS, **value}
 
-    @field_validator("llm_providers", "cognito_client_ids", mode="before")
+    @field_validator(
+        "llm_providers",
+        "cognito_client_ids",
+        "google_client_ids",
+        "google_allowed_emails",
+        mode="before",
+    )
     @classmethod
     def _comma_list(cls, value: object) -> object:
         return split_list(value)
@@ -248,15 +281,20 @@ class DataSettings(CoreSettings):
     db_pool_min: int = 1
     db_pool_max: int = 10
 
-    # S3. Locally MinIO; in AWS the endpoint is unset and the bucket comes from Terraform.
+    # S3. Locally SeaweedFS; in AWS the endpoint is unset and the bucket comes from Terraform;
+    # on GCP it is Cloud Storage's XML API (https://storage.googleapis.com) with HMAC keys.
     s3_endpoint: str | None = "http://localhost:9000"
+    # The region requests are signed for; empty uses AWS_REGION. Cloud Storage takes "auto".
+    s3_region: str | None = None
     s3_bucket: str = "copilot-uploads"
     s3_access_key: SecretStr | None = Field(default=None, validation_alias="COPILOT_S3_ACCESS_KEY")
     s3_secret_key: SecretStr | None = Field(default=None, validation_alias="COPILOT_S3_SECRET_KEY")
 
     # Per-user envelope encryption (ARCHITECTURE.md, "Security and privacy").
-    # "kms" in AWS; "dev" is a local stand-in with a master key from dev_master_key.
-    key_provider: Literal["kms", "dev"] = "kms"
+    # "kms" in AWS, "gcp_kms" (Cloud KMS) on GCP; "dev" is a local stand-in with a master key
+    # from dev_master_key.
+    key_provider: Literal["kms", "gcp_kms", "dev"] = "kms"
     kms_key_id: str | None = None  # alias/copilot-user-data
+    gcp_kms_key: str | None = None  # projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
     dev_master_key: SecretStr | None = None  # base64 of 32 bytes
     dek_cache_ttl_s: float = 300.0

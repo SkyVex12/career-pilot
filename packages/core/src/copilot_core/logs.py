@@ -6,8 +6,9 @@ line logged anywhere under a session, a request or a job names it without the ca
 passing it along. asyncio tasks copy the context when they are created, so a task started
 inside a bound block keeps the ids.
 
-- `COPILOT_LOG_FORMAT=json` writes JSON lines (the default inside AWS, where CloudWatch Logs
-  Insights filters on `session_id`); `text` is the local default, with the ids appended.
+- `COPILOT_LOG_FORMAT=json` writes JSON lines (the default on AWS and Compute Engine, where
+  CloudWatch Logs Insights and Cloud Logging filter on `session_id`); `text` is the local
+  default, with the ids appended.
 - `COPILOT_LOG_DIR` also writes JSON lines to `<dir>/<service>-<start time>.log`, one file
   per run, for analyzing a local test the way CloudWatch allows in AWS.
 
@@ -26,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from copilot_core.config import aws_runtime
+from copilot_core.config import cloud_runtime
 
 FIELDS = ("session_id", "user_id", "job", "request_id")
 
@@ -83,6 +84,8 @@ class JsonFormatter(logging.Formatter):
         out: dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
+            # Cloud Logging reads the entry's severity from this key; CloudWatch ignores it.
+            "severity": record.levelname,
             "service": self.service,
             "logger": record.name,
             "msg": record.getMessage(),
@@ -113,7 +116,7 @@ class TextFormatter(logging.Formatter):
 def configure(service: str, environ: Mapping[str, str] | None = None) -> Path | None:
     """Set up the root logger for a service; returns the log file, if one was opened."""
     env = os.environ if environ is None else environ
-    fmt = env.get("COPILOT_LOG_FORMAT") or ("json" if aws_runtime(env) else "text")
+    fmt = env.get("COPILOT_LOG_FORMAT") or ("json" if cloud_runtime(env) else "text")
     level = env.get("LOG_LEVEL", "INFO")
     context = ContextFilter()
 

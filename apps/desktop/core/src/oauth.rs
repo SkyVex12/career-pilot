@@ -1,15 +1,19 @@
-//! Cognito sign-in (ARCHITECTURE.md, "Desktop client": Login): OAuth 2.0 with PKCE in the
+//! Browser sign-in (ARCHITECTURE.md, "Desktop client": Login): OAuth 2.0 with PKCE in the
 //! user's browser, the tokens back through a loopback redirect, and the refresh token in the
-//! OS credential store (Windows Credential Manager). The access token lives in memory only.
+//! OS credential store (Windows Credential Manager). The bearer token lives in memory only.
+//! Two providers speak it: Cognito on AWS, and Google on GCP (Stage 0), where the services take
+//! Google's ID token as the bearer (its access tokens are opaque) and the desktop client's
+//! secret, which Google does not treat as confidential, goes with each token request.
 //!
-//! [`CognitoTokenProvider`] is a [`TokenProvider`], so the gateway client and the API client
+//! [`OAuthTokenProvider`] is a [`TokenProvider`], so the gateway client and the API client
 //! use it exactly as they used the dev token: the gateway client sends `auth.refresh` with a
 //! new token before the old one expires (and on `auth.expiring`), and the API client refreshes
 //! once on a `401`.
 //!
-//! The app learns the user pool's domain and its app client from `GET /v1/auth/config`, so a
+//! The app learns the provider, its endpoints and the client from `GET /v1/auth/config`, so a
 //! deployment's sign-in can change without a new build.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -23,8 +27,8 @@ use tokio::net::TcpListener;
 
 use crate::auth::{AuthError, BoxFuture, SecretStore, Token, TokenProvider};
 
-/// The loopback port Cognito redirects to; the app client lists exactly this redirect
-/// (infra/modules/cognito).
+/// The loopback port the provider redirects to: Cognito's app client lists exactly this
+/// redirect (infra/modules/cognito), and Google's desktop clients accept any loopback port.
 pub const CALLBACK_PORT: u16 = 53682;
 /// How long the browser sign-in may take.
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -36,42 +40,101 @@ pub fn redirect_uri(port: u16) -> String {
     format!("http://127.0.0.1:{port}/callback")
 }
 
-/// `GET /v1/auth/config`: Cognito, or the dev token on the local stack.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `GET /v1/auth/config`: Cognito, Google, or the dev token on the local stack.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
 pub struct AuthConfig {
     pub provider: String,
-    #[serde(default)]
+    /// Cognito: the user pool's domain, with /oauth2/authorize, /oauth2/token and
+    /// /oauth2/revoke under it.
     pub domain: Option<String>,
-    #[serde(default)]
     pub client_id: Option<String>,
-    #[serde(default)]
     pub scopes: Vec<String>,
+    /// Google: the endpoints, the desktop client's secret, the token the services take, and
+    /// extra authorize parameters.
+    pub authorize_url: Option<String>,
+    pub token_url: Option<String>,
+    pub revoke_url: Option<String>,
+    pub client_secret: Option<String>,
+    pub bearer: Option<String>,
+    pub authorize_params: BTreeMap<String, String>,
 }
 
-/// What the app needs to sign in to one deployment.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CognitoConfig {
-    /// https://<prefix>.auth.<region>.amazoncognito.com
+/// What the app needs to sign in to one deployment, kept in the settings file. A client
+/// secret here is Google's desktop one, which Google does not treat as confidential.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct OAuthConfig {
+    /// "cognito" or "google"; settings saved before Google was added say nothing (Cognito).
+    pub provider: String,
+    /// Cognito: https://<prefix>.auth.<region>.amazoncognito.com. Google: its accounts domain.
     pub domain: String,
     pub client_id: String,
     pub scopes: Vec<String>,
+    pub authorize_url: Option<String>,
+    pub token_url: Option<String>,
+    pub revoke_url: Option<String>,
+    pub client_secret: Option<String>,
+    /// The ID token is the bearer (Google), instead of the access token (Cognito).
+    pub id_token_bearer: bool,
+    pub authorize_params: BTreeMap<String, String>,
+}
+
+impl OAuthConfig {
+    pub fn authorize_endpoint(&self) -> String {
+        self.authorize_url.clone().unwrap_or_else(|| format!("{}/oauth2/authorize", self.domain))
+    }
+
+    pub fn token_endpoint(&self) -> String {
+        self.token_url.clone().unwrap_or_else(|| format!("{}/oauth2/token", self.domain))
+    }
+
+    pub fn revoke_endpoint(&self) -> String {
+        self.revoke_url.clone().unwrap_or_else(|| format!("{}/oauth2/revoke", self.domain))
+    }
+
+    /// Who the user signs in with, for messages.
+    pub fn provider_name(&self) -> &'static str {
+        if self.provider == "google" { "Google" } else { "Cognito" }
+    }
+}
+
+fn https(url: &Option<String>) -> Option<String> {
+    url.as_ref().filter(|u| u.starts_with("https://")).map(|u| u.trim_end_matches('/').to_string())
 }
 
 impl AuthConfig {
-    pub fn cognito(&self) -> Result<CognitoConfig, AuthError> {
-        match (self.provider.as_str(), &self.domain, &self.client_id) {
-            ("cognito", Some(domain), Some(client_id)) if domain.starts_with("https://") => {
-                Ok(CognitoConfig {
-                    domain: domain.trim_end_matches('/').to_string(),
+    pub fn oauth(&self) -> Result<OAuthConfig, AuthError> {
+        let scopes = if self.scopes.is_empty() { vec!["openid".into()] } else { self.scopes.clone() };
+        match (self.provider.as_str(), &self.client_id) {
+            ("cognito", Some(client_id)) if https(&self.domain).is_some() => Ok(OAuthConfig {
+                provider: "cognito".into(),
+                domain: https(&self.domain).unwrap_or_default(),
+                client_id: client_id.clone(),
+                scopes,
+                ..OAuthConfig::default()
+            }),
+            ("google", Some(client_id))
+                if https(&self.authorize_url).is_some() && https(&self.token_url).is_some() =>
+            {
+                Ok(OAuthConfig {
+                    provider: "google".into(),
+                    domain: "https://accounts.google.com".into(),
                     client_id: client_id.clone(),
-                    scopes: if self.scopes.is_empty() { vec!["openid".into()] } else { self.scopes.clone() },
+                    scopes,
+                    authorize_url: https(&self.authorize_url),
+                    token_url: https(&self.token_url),
+                    revoke_url: https(&self.revoke_url),
+                    client_secret: self.client_secret.clone(),
+                    id_token_bearer: self.bearer.as_deref() == Some("id_token"),
+                    authorize_params: self.authorize_params.clone(),
                 })
             }
-            ("cognito", ..) => {
-                Err(AuthError::NotSignedIn("the API's Cognito settings are incomplete".into()))
+            (p @ ("cognito" | "google"), _) => {
+                Err(AuthError::NotSignedIn(format!("the API's {p} sign-in settings are incomplete")))
             }
-            (other, ..) => Err(AuthError::NotSignedIn(format!(
-                "this API signs in with {other}, not Cognito; use the local environment for the dev token"
+            (other, _) => Err(AuthError::NotSignedIn(format!(
+                "this API signs in with {other}; use the local environment for the dev token"
             ))),
         }
     }
@@ -163,20 +226,19 @@ fn form(pairs: &[(&str, &str)]) -> String {
     pairs.iter().map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect::<Vec<_>>().join("&")
 }
 
-pub fn authorize_url(cfg: &CognitoConfig, pkce: &Pkce, state: &str, redirect: &str) -> String {
-    format!(
-        "{}/oauth2/authorize?{}",
-        cfg.domain,
-        form(&[
-            ("response_type", "code"),
-            ("client_id", &cfg.client_id),
-            ("redirect_uri", redirect),
-            ("scope", &cfg.scopes.join(" ")),
-            ("state", state),
-            ("code_challenge", &pkce.challenge),
-            ("code_challenge_method", "S256"),
-        ])
-    )
+pub fn authorize_url(cfg: &OAuthConfig, pkce: &Pkce, state: &str, redirect: &str) -> String {
+    let scope = cfg.scopes.join(" ");
+    let mut pairs = vec![
+        ("response_type", "code"),
+        ("client_id", cfg.client_id.as_str()),
+        ("redirect_uri", redirect),
+        ("scope", scope.as_str()),
+        ("state", state),
+        ("code_challenge", pkce.challenge.as_str()),
+        ("code_challenge_method", "S256"),
+    ];
+    pairs.extend(cfg.authorize_params.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    format!("{}?{}", cfg.authorize_endpoint(), form(&pairs))
 }
 
 /// The query of the redirect's request line, if it is the callback.
@@ -270,25 +332,25 @@ fn email_of(id_token: &str) -> Option<String> {
     claims.get("email")?.as_str().map(str::to_string)
 }
 
-pub struct CognitoTokenProvider {
-    cfg: CognitoConfig,
+pub struct OAuthTokenProvider {
+    cfg: OAuthConfig,
     store: Arc<dyn SecretStore>,
     http: reqwest::Client,
     cached: tokio::sync::Mutex<Option<Token>>,
     port: u16,
 }
 
-impl CognitoTokenProvider {
-    pub fn new(cfg: CognitoConfig, store: Arc<dyn SecretStore>) -> Self {
+impl OAuthTokenProvider {
+    pub fn new(cfg: OAuthConfig, store: Arc<dyn SecretStore>) -> Self {
         Self::with_port(cfg, store, CALLBACK_PORT)
     }
 
     /// Tests use another port.
-    pub fn with_port(cfg: CognitoConfig, store: Arc<dyn SecretStore>, port: u16) -> Self {
+    pub fn with_port(cfg: OAuthConfig, store: Arc<dyn SecretStore>, port: u16) -> Self {
         Self { cfg, store, http: http(), cached: tokio::sync::Mutex::new(None), port }
     }
 
-    pub fn config(&self) -> &CognitoConfig {
+    pub fn config(&self) -> &OAuthConfig {
         &self.cfg
     }
 
@@ -327,30 +389,29 @@ impl CognitoTokenProvider {
         let tokens = self
             .token_request(&[
                 ("grant_type", "authorization_code"),
-                ("client_id", &self.cfg.client_id),
                 ("code", &code),
                 ("redirect_uri", &redirect),
                 ("code_verifier", &pkce.verifier),
             ])
             .await?;
-        let refresh = tokens
-            .refresh_token
-            .clone()
-            .ok_or_else(|| AuthError::NotSignedIn("Cognito returned no refresh token".into()))?;
+        let refresh = tokens.refresh_token.clone().ok_or_else(|| {
+            AuthError::NotSignedIn(format!("{} returned no refresh token", self.cfg.provider_name()))
+        })?;
         let email = tokens.id_token.as_deref().and_then(email_of).unwrap_or_default();
+        let token = self.token_of(&tokens)?;
         self.store.set(&self.refresh_key(), &refresh)?;
         self.store.set(&self.user_key(), &email)?;
-        *self.cached.lock().await = Some(token_of(&tokens));
+        *self.cached.lock().await = Some(token);
         Ok(email)
     }
 
-    /// Forget the tokens here and revoke the refresh token at Cognito (best effort).
+    /// Forget the tokens here and revoke the refresh token at the provider (best effort).
     pub async fn sign_out(&self) -> Result<(), AuthError> {
         if let Ok(Some(refresh)) = self.store.get(&self.refresh_key()) {
             let body = form(&[("token", &refresh), ("client_id", &self.cfg.client_id)]);
             let _ = self
                 .http
-                .post(format!("{}/oauth2/revoke", self.cfg.domain))
+                .post(self.cfg.revoke_endpoint())
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .body(body)
                 .send()
@@ -361,15 +422,36 @@ impl CognitoTokenProvider {
         self.store.delete(&self.user_key())
     }
 
+    /// The bearer the services take: the access token (Cognito) or the ID token (Google).
+    fn token_of(&self, tokens: &TokenResponse) -> Result<Token, AuthError> {
+        let bearer = if self.cfg.id_token_bearer {
+            tokens.id_token.clone().ok_or_else(|| {
+                AuthError::NotSignedIn(format!("{} returned no ID token", self.cfg.provider_name()))
+            })?
+        } else {
+            tokens.access_token.clone()
+        };
+        Ok(Token {
+            access_token: bearer,
+            expires_at: Some(SystemTime::now() + Duration::from_secs(tokens.expires_in)),
+        })
+    }
+
     async fn token_request(&self, pairs: &[(&str, &str)]) -> Result<TokenResponse, AuthError> {
+        let mut all = vec![("client_id", self.cfg.client_id.as_str())];
+        if let Some(secret) = &self.cfg.client_secret {
+            all.push(("client_secret", secret.as_str()));
+        }
+        all.extend_from_slice(pairs);
+        let name = self.cfg.provider_name();
         let response = self
             .http
-            .post(format!("{}/oauth2/token", self.cfg.domain))
+            .post(self.cfg.token_endpoint())
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(form(pairs))
+            .body(form(&all))
             .send()
             .await
-            .map_err(|e| AuthError::NotSignedIn(format!("could not reach Cognito: {e}")))?;
+            .map_err(|e| AuthError::NotSignedIn(format!("could not reach {name}: {e}")))?;
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if status.is_success() {
@@ -378,7 +460,7 @@ impl CognitoTokenProvider {
         }
         let error = serde_json::from_str::<TokenErrorBody>(&text).map(|b| b.error).unwrap_or_default();
         Err(AuthError::NotSignedIn(format!(
-            "Cognito refused the token request: HTTP {} {error}",
+            "{name} refused the token request: HTTP {} {error}",
             status.as_u16()
         )))
     }
@@ -387,20 +469,13 @@ impl CognitoTokenProvider {
         let Some(refresh) = self.store.get(&self.refresh_key())? else {
             return Err(AuthError::NotSignedIn("sign in under Settings".into()));
         };
-        match self
-            .token_request(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", &self.cfg.client_id),
-                ("refresh_token", &refresh),
-            ])
-            .await
-        {
+        match self.token_request(&[("grant_type", "refresh_token"), ("refresh_token", &refresh)]).await {
             Ok(tokens) => {
-                // Cognito returns a new refresh token only when rotation is on.
+                // Cognito returns a new refresh token only when rotation is on; Google never.
                 if let Some(rotated) = &tokens.refresh_token {
                     self.store.set(&self.refresh_key(), rotated)?;
                 }
-                let token = token_of(&tokens);
+                let token = self.token_of(&tokens)?;
                 *self.cached.lock().await = Some(token.clone());
                 Ok(token)
             }
@@ -415,14 +490,7 @@ impl CognitoTokenProvider {
     }
 }
 
-fn token_of(tokens: &TokenResponse) -> Token {
-    Token {
-        access_token: tokens.access_token.clone(),
-        expires_at: Some(SystemTime::now() + Duration::from_secs(tokens.expires_in)),
-    }
-}
-
-impl TokenProvider for CognitoTokenProvider {
+impl TokenProvider for OAuthTokenProvider {
     fn current(&self) -> BoxFuture<'_, Result<Token, AuthError>> {
         Box::pin(async move {
             if let Some(token) = self.cached.lock().await.clone()
@@ -444,11 +512,13 @@ mod tests {
     use super::*;
     use crate::auth::MemorySecretStore;
 
-    fn cfg(domain: &str) -> CognitoConfig {
-        CognitoConfig {
+    fn cfg(domain: &str) -> OAuthConfig {
+        OAuthConfig {
+            provider: "cognito".into(),
             domain: domain.into(),
             client_id: "client-1".into(),
             scopes: vec!["openid".into(), "email".into()],
+            ..OAuthConfig::default()
         }
     }
 
@@ -488,23 +558,53 @@ mod tests {
     }
 
     #[test]
-    fn auth_config_must_be_cognito_over_https() {
+    fn auth_config_must_be_cognito_or_google_over_https() {
         let ok = AuthConfig {
             provider: "cognito".into(),
             domain: Some("https://d.auth.us-east-1.amazoncognito.com/".into()),
             client_id: Some("c".into()),
-            scopes: vec![],
+            ..AuthConfig::default()
         };
-        assert_eq!(ok.cognito().unwrap().domain, "https://d.auth.us-east-1.amazoncognito.com");
-        let dev = AuthConfig { provider: "dev".into(), domain: None, client_id: None, scopes: vec![] };
-        assert!(dev.cognito().is_err());
+        let cfg = ok.oauth().unwrap();
+        assert_eq!(cfg.domain, "https://d.auth.us-east-1.amazoncognito.com");
+        assert_eq!(cfg.token_endpoint(), "https://d.auth.us-east-1.amazoncognito.com/oauth2/token");
+        assert!(!cfg.id_token_bearer && cfg.client_secret.is_none());
+        let dev = AuthConfig { provider: "dev".into(), ..AuthConfig::default() };
+        assert!(dev.oauth().is_err());
         let plain = AuthConfig { domain: Some("http://d".into()), ..ok };
-        assert!(plain.cognito().is_err());
+        assert!(plain.oauth().is_err());
+
+        // What GET /v1/auth/config returns on GCP (copilot_api.routes.auth).
+        let google: AuthConfig = serde_json::from_str(
+            r#"{"provider":"google","client_id":"123-abc.apps.googleusercontent.com",
+                "client_secret":"GOCSPX-x","scopes":["openid","email","profile"],
+                "authorize_url":"https://accounts.google.com/o/oauth2/v2/auth",
+                "token_url":"https://oauth2.googleapis.com/token",
+                "revoke_url":"https://oauth2.googleapis.com/revoke","bearer":"id_token",
+                "authorize_params":{"access_type":"offline","prompt":"consent"}}"#,
+        )
+        .unwrap();
+        let g = google.oauth().unwrap();
+        assert!(g.id_token_bearer);
+        assert_eq!(g.token_endpoint(), "https://oauth2.googleapis.com/token");
+        assert_eq!(g.revoke_endpoint(), "https://oauth2.googleapis.com/revoke");
+        let url = authorize_url(&g, &Pkce::from_verifier("v".repeat(43)), "s", &redirect_uri(53682));
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?response_type=code&"));
+        assert!(url.ends_with("&access_type=offline&prompt=consent"));
+        let no_token_url = AuthConfig { token_url: None, ..google };
+        assert!(no_token_url.oauth().is_err());
+        // Settings saved before Google was added still load, as Cognito.
+        let old: OAuthConfig =
+            serde_json::from_str(r#"{"domain":"https://d","client_id":"c","scopes":["openid"]}"#).unwrap();
+        assert_eq!(old.authorize_endpoint(), "https://d/oauth2/authorize");
+        assert_eq!(old.provider_name(), "Cognito");
     }
 
-    /// A stand-in for Cognito's token endpoint: answers each POST with the next canned reply
+    /// A stand-in for the provider's token endpoint: answers each POST with the next canned reply
     /// and records the request bodies.
-    async fn fake_cognito(replies: Vec<(u16, String)>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    async fn fake_token_endpoint(
+        replies: Vec<(u16, String)>,
+    ) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -556,7 +656,7 @@ mod tests {
         );
         let refreshed =
             "{\"access_token\":\"at-2\",\"expires_in\":3600,\"token_type\":\"Bearer\"}".to_string();
-        let (domain, seen) = fake_cognito(vec![
+        let (domain, seen) = fake_token_endpoint(vec![
             (200, tokens),
             (200, refreshed),
             (400, "{\"error\":\"invalid_grant\"}".into()),
@@ -566,7 +666,7 @@ mod tests {
         let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = probe.local_addr().unwrap().port();
         drop(probe);
-        let p = CognitoTokenProvider::with_port(cfg(&domain), store.clone(), port);
+        let p = OAuthTokenProvider::with_port(cfg(&domain), store.clone(), port);
         assert!(p.signed_in_as().is_none());
         assert!(matches!(p.current().await, Err(AuthError::NotSignedIn(_))));
 
@@ -599,6 +699,59 @@ mod tests {
         // A revoked or expired refresh token signs the user out.
         assert!(matches!(p.refresh().await, Err(AuthError::NotSignedIn(m)) if m.contains("sign in again")));
         assert!(p.signed_in_as().is_none());
+    }
+
+    #[tokio::test]
+    async fn google_sends_its_client_secret_and_uses_the_id_token() {
+        let first = format!(
+            "{{\"access_token\":\"ya29.opaque\",\"id_token\":\"{}\",\"refresh_token\":\"1//rt\",\"expires_in\":3599}}",
+            id_token("sam@gmail.com")
+        );
+        // Google's refresh answer: a new ID token, no new refresh token.
+        let second = format!(
+            "{{\"access_token\":\"ya29.opaque2\",\"id_token\":\"{}\",\"expires_in\":3599}}",
+            id_token("sam@gmail.com")
+        );
+        let (base, seen) = fake_token_endpoint(vec![(200, first), (200, second)]).await;
+        let store = Arc::new(MemorySecretStore::default());
+        let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let cfg = OAuthConfig {
+            provider: "google".into(),
+            domain: "https://accounts.google.com".into(),
+            client_id: "123-abc.apps.googleusercontent.com".into(),
+            scopes: vec!["openid".into(), "email".into()],
+            authorize_url: Some(format!("{base}/auth")),
+            token_url: Some(format!("{base}/token")),
+            client_secret: Some("GOCSPX-desktop".into()),
+            id_token_bearer: true,
+            ..OAuthConfig::default()
+        };
+        let p = OAuthTokenProvider::with_port(cfg, store.clone(), port);
+        let email = p
+            .sign_in(|url| {
+                assert!(url.starts_with(&format!("{base}/auth?response_type=code&")));
+                let state = url.split("&state=").nth(1).unwrap().split('&').next().unwrap().to_string();
+                tokio::spawn(async move {
+                    reqwest::get(format!("http://127.0.0.1:{port}/callback?code=c&state={state}"))
+                        .await
+                        .unwrap();
+                });
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(email, "sam@gmail.com");
+        let bearer = p.current().await.unwrap().access_token;
+        assert!(bearer.starts_with("eyJ"), "the ID token is the bearer, not the opaque access token");
+        assert!(seen.lock().unwrap()[0].contains("client_secret=GOCSPX-desktop"));
+        assert!(p.refresh().await.unwrap().access_token.starts_with("eyJ"));
+        assert!(seen.lock().unwrap()[1].contains("client_secret=GOCSPX-desktop"));
+        assert_eq!(
+            store.get("cognito-refresh:123-abc.apps.googleusercontent.com").unwrap().as_deref(),
+            Some("1//rt")
+        );
     }
 
     #[tokio::test]

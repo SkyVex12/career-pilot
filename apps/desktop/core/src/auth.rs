@@ -1,11 +1,11 @@
 //! Access tokens for the gateway (ARCHITECTURE.md, "Connection and auth").
 //!
 //! The client only sees [`TokenProvider`]: a token for the upgrade request, and a fresh one
-//! on `auth.expiring`, before expiry, and after a `4401`. Stage 0 has no Cognito, so
-//! [`DevTokenProvider`] hands out the gateway's static dev token, kept in the OS credential
-//! store (Windows Credential Manager) rather than in the settings file. [`crate::cognito`] is the
-//! Cognito provider (OAuth with PKCE in the browser, refresh token in the credential store)
-//! behind the same trait; nothing else changes.
+//! on `auth.expiring`, before expiry, and after a `4401`. Locally, [`DevTokenProvider`]
+//! hands out the gateway's static dev token, kept in the OS credential store (Windows
+//! Credential Manager) rather than in the settings file. [`crate::oauth`] is the browser
+//! sign-in for a deployed stage (Google or Cognito: OAuth with PKCE, refresh token in the
+//! credential store) behind the same trait; nothing else changes.
 
 use std::future::Future;
 use std::pin::Pin;
