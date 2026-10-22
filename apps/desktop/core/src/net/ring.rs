@@ -1,15 +1,13 @@
 //! The resend buffer (ARCHITECTURE.md, "Close codes, reconnect policy and limits"): while
-//! disconnected, the client keeps the last 10 seconds of "them" speech and resends it after
-//! the resume. The gateway drops frames whose `frame_seq` it already has, so resending
-//! everything buffered is safe even when part of it arrived before the drop.
+//! disconnected, the client keeps the last 10 seconds of speech, both channels', and resends
+//! it after the resume. The gateway drops frames whose `frame_seq` it already has, so
+//! resending everything buffered is safe even when part of it arrived before the drop.
 //!
-//! The limit counts speech audio, not wall time, since only speech is sent. The "me"
-//! channel's flag-only frames ride along in order (they carry no audio and are a few bytes),
-//! so a speech start or end the user made during the outage still reaches the gateway.
+//! The limit counts speech audio, not wall time, since only speech is sent. Flag-only frames
+//! (speech ends, and the "me" channel when the gateway takes no mic audio) ride along in order,
+//! so a speech start or end during the outage still reaches the gateway.
 
 use std::collections::VecDeque;
-
-use copilot_protocol::audio::CHANNEL_THEM;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingFrame {
@@ -29,7 +27,7 @@ pub struct FrameRing {
 }
 
 impl FrameRing {
-    /// `seconds` of 16 kHz "them" audio.
+    /// `seconds` of 16 kHz speech audio, either channel.
     pub fn new(seconds: u32) -> Self {
         Self {
             frames: VecDeque::new(),
@@ -41,15 +39,11 @@ impl FrameRing {
     }
 
     pub fn push(&mut self, frame: RingFrame) {
-        if frame.channel == CHANNEL_THEM {
-            self.audio_samples += frame.audio_samples;
-        }
+        self.audio_samples += frame.audio_samples;
         self.frames.push_back(frame);
         while self.audio_samples > self.max_audio_samples || self.frames.len() > self.max_frames {
             let Some(old) = self.frames.pop_front() else { break };
-            if old.channel == CHANNEL_THEM {
-                self.audio_samples -= old.audio_samples;
-            }
+            self.audio_samples -= old.audio_samples;
         }
     }
 
@@ -79,7 +73,7 @@ impl FrameRing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use copilot_protocol::audio::CHANNEL_ME;
+    use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM};
 
     fn them(seq: u32, samples: usize) -> RingFrame {
         RingFrame {
@@ -113,7 +107,18 @@ mod tests {
     }
 
     #[test]
-    fn keeps_order_across_channels_and_counts_only_them_audio() {
+    fn the_users_speech_audio_counts_too() {
+        let mut ring = FrameRing::new(1);
+        ring.push(them(0, 8_000));
+        ring.push(RingFrame { audio_samples: 8_000, bytes: vec![1; 16_010], ..me(0) });
+        ring.push(them(1, 1_600)); // over 1 s of speech in all: the oldest frame goes
+        let order: Vec<(u8, u32)> = ring.iter().map(|f| (f.channel, f.frame_seq)).collect();
+        assert_eq!(order, vec![(CHANNEL_ME, 0), (CHANNEL_THEM, 1)]);
+        assert_eq!(ring.audio_ms(), 600);
+    }
+
+    #[test]
+    fn keeps_order_across_channels_with_flag_only_frames() {
         let mut ring = FrameRing::new(1);
         ring.push(them(0, 8_000));
         ring.push(me(0));

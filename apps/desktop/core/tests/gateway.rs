@@ -18,7 +18,7 @@ use copilot_client::net::client::{
 };
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::audio::{CHANNEL_ME, CHANNEL_THEM, FLAG_SPEECH_END, FLAG_SPEECH_START};
-use copilot_client::protocol::{ClientMessage, Mode, Pass, QuestionForce, ServerMessage};
+use copilot_client::protocol::{Channel, ClientMessage, Mode, Pass, QuestionForce, ServerMessage};
 use support::{Gateway, TOKEN, free_port};
 use tokio::sync::mpsc::UnboundedReceiver;
 use uuid::Uuid;
@@ -93,16 +93,24 @@ impl Call {
         self.say_end();
     }
 
-    fn me_speaks(&mut self) {
-        for flags in [FLAG_SPEECH_START, FLAG_SPEECH_END] {
-            self.capture_ms += 300;
-            self.handle.send_frame(OutFrame {
-                channel: CHANNEL_ME,
-                flags,
-                capture_ms: self.capture_ms,
-                audio: vec![],
-            });
-        }
+    /// The user says `text` on the mic: the start frame with the words, then the end frame.
+    fn me_says(&mut self, text: &str) {
+        let audio = text_audio(text);
+        self.capture_ms += 300;
+        let ms = (audio.len() / 16) as u32;
+        self.handle.send_frame(OutFrame {
+            channel: CHANNEL_ME,
+            flags: FLAG_SPEECH_START,
+            capture_ms: self.capture_ms,
+            audio,
+        });
+        self.capture_ms += ms;
+        self.handle.send_frame(OutFrame {
+            channel: CHANNEL_ME,
+            flags: FLAG_SPEECH_END,
+            capture_ms: self.capture_ms,
+            audio: vec![],
+        });
     }
 
     async fn wait<T>(&mut self, what: &str, secs: u64, mut pick: impl FnMut(&ClientEvent) -> Option<T>) -> T {
@@ -213,9 +221,26 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
     .await;
     call.answer_done(q1, Pass::Fast).await;
     call.answer_done(q1, Pass::Deep).await;
-    call.me_speaks();
 
-    // A typed question: type "other", so the deep pass waits for expand.
+    // The user answers: session.ready asked for the mic's audio, and the gateway's own STT
+    // stream sends the words back on the "me" channel.
+    assert!(
+        call.server_messages()
+            .iter()
+            .any(|m| matches!(m, ServerMessage::SessionReady(r) if r.me_audio == Some(true)))
+    );
+    call.me_says("We sharded the ledger by account");
+    let mine = call
+        .server(
+            "the user's own words",
+            |m| matches!(m, ServerMessage::TranscriptFinal(f) if f.channel == Channel::Me),
+        )
+        .await;
+    let ServerMessage::TranscriptFinal(mine) = mine else { unreachable!() };
+    assert_eq!(mine.text, "We sharded the ledger by account");
+
+    // A typed question: type "other", which gets its deep pass on its own too; an expand
+    // tap meanwhile changes nothing.
     tokio::time::sleep(Duration::from_millis(1_100)).await; // question.force: at most 1/s
     call.handle
         .send(ClientMessage::QuestionForce(QuestionForce {

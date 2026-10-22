@@ -3,11 +3,10 @@
     uv run python scripts/record_worker_fixtures.py                    # Claude, every job
     uv run python scripts/record_worker_fixtures.py --only extract pack
     uv run python scripts/record_worker_fixtures.py --provider openai  # OpenAI, every job
-    uv run python scripts/record_worker_fixtures.py --deepgram me.wav  # also Deepgram
 
 Needs ANTHROPIC_API_KEY (the direct API, so recordings carry no Bedrock specifics), or
-OPENAI_API_KEY and the COPILOT_OPENAI_<JOB>_MODEL settings for --provider openai, and, for
-Deepgram, DEEPGRAM_API_KEY; from the environment or .env. Claude recordings go to
+OPENAI_API_KEY and the COPILOT_OPENAI_<JOB>_MODEL settings for --provider openai; from the
+environment or .env. Claude recordings go to
 fixtures/claude/, OpenAI recordings to fixtures/openai/ (Responses API events).
 
 Each model request is the one the worker sends (copilot_worker.prompts builds both), sent
@@ -18,7 +17,6 @@ through the official SDK over a transport that keeps the raw response bytes:
   job description. Short ids in the output are written as {{ref:N}}, N being the id's position
   in that digest, so the replay can put the run's own ids back (copilot_worker.fixtures).
 - postcall_interview, postcall_standup, postcall_meeting: the sample transcripts below.
-- deepgram/prerecorded.json: the /v1/listen response for --deepgram's file.
 
 Recordings hold no secrets, only the sample documents' and transcripts' content.
 """
@@ -44,7 +42,6 @@ from copilot_worker.documents import document_block
 from copilot_worker.fixtures import SHORT_ID
 from copilot_worker.llm import build_routes
 from copilot_worker.memory import render_digest
-from copilot_worker.stt import DeepgramPrerecorded
 
 FIXTURES = Path(__file__).resolve().parent.parent / "apps" / "worker" / "tests" / "fixtures"
 INPUTS = FIXTURES / "inputs"
@@ -173,7 +170,6 @@ async def main() -> int:
     jobs = ["extract", "job", "pack", "postcall_interview", "postcall_standup", "postcall_meeting"]
     parser.add_argument("--only", nargs="+", choices=jobs, default=jobs)
     parser.add_argument("--provider", choices=["anthropic", "openai"], default="anthropic")
-    parser.add_argument("--deepgram", type=Path, help="audio file to send to Deepgram")
     args = parser.parse_args()
     load_dotenv()
     settings = WorkerSettings(llm_providers=[args.provider])  # pyright: ignore[reportCallIssue]
@@ -244,17 +240,6 @@ async def main() -> int:
             context = ["User: Alex Doe", f"Mode: {mode}", "Length: 15 min"]
             req = prompts.postcall_request(mode, context, transcript, log)
             await record(provider, recorder, *route("postcall"), req, name)
-    if args.deepgram:
-        if not settings.deepgram_api_key or not settings.deepgram_api_key.get_secret_value():
-            sys.exit("DEEPGRAM_API_KEY is not set")
-        keep = Recorder()
-        stt = DeepgramPrerecorded(settings.deepgram_api_key.get_secret_value(), transport=keep)
-        segments = await stt.transcribe(args.deepgram.read_bytes(), "audio/wav")
-        data = json.loads(keep.body)
-        (FIXTURES / "deepgram" / "prerecorded.json").write_text(
-            json.dumps(data, indent=2) + "\n", "utf-8", newline="\n"
-        )
-        print(f"wrote deepgram/prerecorded.json ({len(segments)} utterances)")
     return 0
 
 

@@ -53,6 +53,7 @@ class Env:
         self.valkey_server = FakeServer()
         self.jobs = MemoryJobQueue()
         self.stt = TextSTTControl()
+        self.stt_me = TextSTTControl()  # the user's mic stream
         self.providers: list[LLMProvider] = [ScriptedProvider("anthropic")]
         self.verifier = StaticVerifier(
             {
@@ -76,8 +77,8 @@ class Env:
     ) -> Services:
         settings = settings or make_settings()
 
-        def factory(name: str) -> Callable[[], TextSTT]:
-            return lambda: TextSTT(self.stt, name)
+        def factory(name: str, control: TextSTTControl | None = None) -> Callable[[], TextSTT]:
+            return lambda: TextSTT(control or self.stt, name)
 
         return Services(
             settings=settings,
@@ -86,6 +87,7 @@ class Env:
             router=build_router(settings, self.providers),
             verifier=self.verifier,
             stt_providers=[(n, factory(n)) for n in stt_names],
+            stt_me_providers=[(n, factory(n, self.stt_me)) for n in stt_names],
             **extra,
         )
 

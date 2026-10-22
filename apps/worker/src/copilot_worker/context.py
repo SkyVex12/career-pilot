@@ -20,10 +20,9 @@ from copilot_core.providers import make_providers
 from copilot_core.storage import ObjectStore, S3Store
 from copilot_core.valkey_client import Valkey, make_valkey
 from copilot_worker.config import WorkerSettings
-from copilot_worker.fixtures import DeepgramFixtures, fixture_provider, model_fixtures
+from copilot_worker.fixtures import fixture_provider, model_fixtures
 from copilot_worker.llm import build_router
 from copilot_worker.prompts import JOB_PROMPTS
-from copilot_worker.stt import DeepgramPrerecorded, PrerecordedSTT
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +37,6 @@ class Ctx:
     store: ObjectStore
     crypto: UserCrypto
     router: ModelRouter
-    stt: PrerecordedSTT | None = None
     embedder: Embedder | None = None
     # The Cognito user pool (user.delete); None with the dev token, which has no sign-in.
     users: UserDirectory | None = None
@@ -73,21 +71,9 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         wire = "openai" if settings.llm_providers[:1] == ["openai"] else "claude"
         fixtures = model_fixtures(directory, JOB_PROMPTS, wire)
         router = build_router(settings, [fixture_provider(fixtures)])
-        stt: PrerecordedSTT | None = DeepgramPrerecorded(
-            "fixture", transport=DeepgramFixtures(directory)
-        )
-        log.warning("offline: %s and Deepgram answer from fixtures in %s", wire, directory)
+        log.warning("offline: %s answers from fixtures in %s", wire, directory)
     else:
         router = build_router(settings, make_providers(settings, settings.llm_timeout_s))
-        stt = None
-        if settings.deepgram_api_key is not None:
-            stt = DeepgramPrerecorded(
-                settings.deepgram_api_key.get_secret_value(),
-                url=settings.deepgram_prerecorded_url,
-                model=settings.deepgram_model,
-            )
-        else:
-            log.warning("DEEPGRAM_API_KEY is not set; the user's own audio is not transcribed")
     embedder: Embedder | None = None
     if not settings.fixtures_dir:
         embedder = make_embedder(settings)
@@ -111,7 +97,6 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         store=store,
         crypto=UserCrypto(make_key_provider(settings), settings.dek_cache_ttl_s),
         router=router,
-        stt=stt,
         embedder=embedder,
         users=users,
     )

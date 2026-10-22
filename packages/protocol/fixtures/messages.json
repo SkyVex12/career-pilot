@@ -61,7 +61,9 @@
       "seq": 1,
       "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
       "server_time": "2026-10-05T15:02:11Z",
-      "limits": { "max_minutes": 120 }
+      "limits": { "max_minutes": 120 },
+      "me_audio": true,
+      "deep_auto_types": ["behavioral", "technical", "system_design", "coding", "standup_status", "other"]
     },
     { "type": "transcript.partial", "seq": 2, "channel": "them", "seg_id": 0, "text": "Tell me about a time" },
     {
@@ -72,6 +74,26 @@
       "text": "Tell me about a time you scaled a system.",
       "start_ms": 1200,
       "end_ms": 3850
+    },
+    { "type": "transcript.partial", "seq": 3, "channel": "me", "seg_id": 0, "text": "Sure, at Acme" },
+    {
+      "type": "transcript.final",
+      "seq": 3,
+      "channel": "me",
+      "seg_id": 0,
+      "text": "Sure, at Acme we moved the ledger.",
+      "start_ms": 4100,
+      "end_ms": 6200
+    },
+    {
+      "type": "transcript.final",
+      "seq": 3,
+      "channel": "me",
+      "seg_id": 1,
+      "text": "you scaled a system",
+      "start_ms": 2900,
+      "end_ms": 3800,
+      "echo": true
     },
     {
       "type": "question.detected",
@@ -241,6 +263,23 @@
         "limits": { "max_minutes": 120 }
       }
     },
+    {
+      "side": "server",
+      "why": "deep_auto_types holds an unknown question type",
+      "message": {
+        "type": "session.ready",
+        "seq": 1,
+        "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33",
+        "server_time": "2026-10-05T15:02:11Z",
+        "limits": { "max_minutes": 120 },
+        "deep_auto_types": ["chitchat"]
+      }
+    },
+    {
+      "side": "server",
+      "why": "echo is a boolean",
+      "message": { "type": "transcript.final", "seq": 3, "channel": "me", "seg_id": 0, "text": "hi", "start_ms": 0, "end_ms": 10, "echo": [true] }
+    },
     { "side": "server", "why": "client message sent as server message", "message": { "type": "session.end", "seq": 3 } }
   ],
   "audio_frames": [
@@ -255,6 +294,12 @@
       "header": { "channel": 1, "flags": 2, "frame_seq": 4294967295, "capture_ms": 123456789 },
       "audio_hex": "",
       "frame_hex": "0102ffffffff075bcd15"
+    },
+    {
+      "why": "me channel, speech start, with audio (session.ready said me_audio)",
+      "header": { "channel": 1, "flags": 1, "frame_seq": 7, "capture_ms": 4100 },
+      "audio_hex": "0100ff7f",
+      "frame_hex": "010100000007000010040100ff7f"
     },
     {
       "why": "them channel, no flags, big-endian check",

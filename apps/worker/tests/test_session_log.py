@@ -6,7 +6,6 @@ runs the real gateway instead.
 """
 
 import json
-import uuid
 from datetime import timedelta
 from uuid import UUID
 
@@ -95,7 +94,7 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
         q1,
     )
     assert [(a["pass"], a["feedback"], a["expanded"]) for a in answers] == [
-        ("deep", "up", False),  # behavioral gets a deep pass on its own: not an expand
+        ("deep", "up", False),  # a deep pass that started on its own: not an expand
         ("fast", "up", False),
     ]
     assert {a["id"] for a in answers} == {answer_id(q1, "deep"), answer_id(q1, "fast")}
@@ -111,21 +110,11 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
     assert session is not None
     assert session["billed_seconds"] == 605
     assert session["ended_at"] == STARTED + timedelta(seconds=605)
-    [transcribe] = stack.take("me_audio.transcribe")
-    assert transcribe["idempotency_key"] == f"me_audio.transcribe:{log.sid}"
+    # Post-call work starts at once: the user's words came live, nothing waits for audio.
+    assert stack.take("me_audio.transcribe") == []
     assert await stack.ctx.valkey.ttl(keys.sess_log(log.sid)) > 0  # kept 1 h after the flush
-
-    # The user's own audio arrives; it is transcribed, stored as "me" segments, and deleted.
-    await stack.ctx.store.put(me_audio_key(uid, log.sid), b"RIFF fake wav", "audio/wav")
-    await stack.admin.execute(
-        "update app.sessions set me_audio_status = 'uploaded' where id = $1", log.sid
-    )
-    await stack.run(transcribe)
-    assert await stack.ctx.store.head(me_audio_key(uid, log.sid)) is None
-    sent = stack.deepgram.requests[-1]
-    assert sent.headers["content-type"] == "audio/wav"
-    assert sent.url.params["model"] == "nova-3"
     [postcall] = stack.take("session.postcall")
+    assert postcall["idempotency_key"] == f"session.postcall:{log.sid}"
     await stack.run(postcall)
 
     texts = await decrypt_all(stack, uid, log.sid)
@@ -159,14 +148,16 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
     assert count == 3
 
 
-async def test_expand_on_a_non_auto_type_marks_the_deep_answer(stack: Stack) -> None:
+async def test_a_deep_answer_started_by_expand_is_marked(stack: Stack) -> None:
+    # The gateway says so in the answer entry (every type gets a deep pass on its own now, so
+    # the question type no longer tells).
     uid = await stack.new_user()
     log = GatewayLog(stack, uid)
     await log.start()
     q = uuid7()
     await log.question(q, "What is your favorite database?", qtype="other")
     await log.add({"kind": "expand", "question_id": str(q)})
-    upto = await log.answer(q, "deep", "PostgreSQL, because...")
+    upto = await log.answer(q, "deep", "PostgreSQL, because...", expanded=True)
     await stack.run(log.flush_job(upto))
     expanded = await stack.admin.fetchval(
         "select expanded from app.answers where question_id = $1 and pass = 'deep'", q
@@ -222,13 +213,6 @@ async def test_without_transcript_consent_no_text_is_stored(stack: Stack) -> Non
     await stack.run(log.flush_job(upto))
     await log.end(seconds=120)
     await stack.run(log.ended_job())
-    [transcribe] = stack.take("me_audio.transcribe")
-    assert transcribe["payload"] == {"session_id": str(log.sid)}
-    await stack.ctx.store.put(me_audio_key(uid, log.sid), b"RIFF audio", "audio/wav")
-    calls = len(stack.deepgram.requests)
-    await stack.run(transcribe)
-    assert len(stack.deepgram.requests) == calls  # no audio sent to STT
-    assert await stack.ctx.store.head(me_audio_key(uid, log.sid)) is None  # and none kept
     [postcall] = stack.take("session.postcall")
     claude_calls = len(stack.claude.requests)
     await stack.run(postcall)
@@ -254,7 +238,7 @@ async def test_without_transcript_consent_no_text_is_stored(stack: Stack) -> Non
     me_status = await stack.admin.fetchval(
         "select me_audio_status from app.sessions where id = $1", log.sid
     )
-    assert me_status == "none"
+    assert me_status == "live"
     texts = await decrypt_all(stack, uid, log.sid)
     assert texts["segments"] == texts["questions"] == texts["answers"] == []
     [summary] = texts["outputs"]
@@ -324,12 +308,28 @@ async def test_a_session_of_another_user_is_refused(stack: Stack) -> None:
         ))  # fmt: skip
 
 
-async def test_me_audio_waits_for_session_ended(stack: Stack) -> None:
-    from copilot_worker.runtime import RetryLater
-
+async def test_a_legacy_transcribe_job_only_cleans_up(stack: Stack) -> None:
+    """A me_audio.transcribe job an older gateway or API enqueued: the upload is deleted
+    untranscribed and post-call work starts."""
     uid = await stack.new_user()
-    sid = uuid.uuid4()
-    with pytest.raises(RetryLater):
-        await stack.run(jobs.envelope(
-            "me_audio.transcribe", f"me_audio.transcribe:{sid}", uid, {"session_id": str(sid)}
-        ))  # fmt: skip
+    log = GatewayLog(stack, uid)
+    await log.start()
+    await log.segment("Hello there", 0)
+    await log.end(seconds=60)
+    await stack.run(log.ended_job())
+    stack.take("session.postcall")
+    await stack.admin.execute(
+        "update app.sessions set me_audio_status = 'uploaded' where id = $1", log.sid
+    )
+    await stack.ctx.store.put(me_audio_key(uid, log.sid), b"RIFF audio", "audio/wav")
+    await stack.run(jobs.envelope(
+        "me_audio.transcribe", f"me_audio.transcribe:{log.sid}", uid,
+        {"session_id": str(log.sid)},
+    ))  # fmt: skip
+    assert await stack.ctx.store.head(me_audio_key(uid, log.sid)) is None
+    status = await stack.admin.fetchval(
+        "select me_audio_status from app.sessions where id = $1", log.sid
+    )
+    assert status == "none"
+    [postcall] = stack.take("session.postcall")
+    assert postcall["payload"] == {"session_id": str(log.sid)}

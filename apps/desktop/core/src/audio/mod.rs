@@ -33,7 +33,7 @@ pub struct OutFrame {
     pub flags: u8,
     /// Milliseconds since the pipeline started.
     pub capture_ms: u32,
-    /// 16 kHz mono PCM. Always empty on the "me" channel.
+    /// 16 kHz mono PCM, speech only; may be empty on a flag frame.
     pub audio: Vec<i16>,
 }
 

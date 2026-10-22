@@ -301,7 +301,16 @@
         "seq": { "$ref": "#/$defs/Seq" },
         "session_id": { "$ref": "#/$defs/Uuid" },
         "server_time": { "type": "string", "format": "date-time" },
-        "limits": { "$ref": "#/$defs/SessionLimits" }
+        "limits": { "$ref": "#/$defs/SessionLimits" },
+        "me_audio": {
+          "description": "true: the gateway transcribes the user's own speech live, so the client sends speech audio on the me channel (after echo cancellation and VAD, never silence). Absent or false: me frames carry speech flags only, as before.",
+          "type": "boolean"
+        },
+        "deep_auto_types": {
+          "description": "Question types whose deep answer starts on its own once the fast answer is done; other types get one only on answer.expand. Absent: the client assumes behavioral, technical and system_design.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/QuestionType" }
+        }
       },
       "required": ["type", "seq", "session_id", "server_time", "limits"]
     },
@@ -318,7 +327,7 @@
       "required": ["type", "seq", "channel", "seg_id", "text"]
     },
     "TranscriptFinal": {
-      "description": "Final text for a segment.",
+      "description": "Final text for a segment, on either channel (the me channel only when session.ready said me_audio).",
       "type": "object",
       "properties": {
         "type": { "type": "string", "const": "transcript.final" },
@@ -327,7 +336,11 @@
         "seg_id": { "type": "integer", "minimum": 0 },
         "text": { "type": "string" },
         "start_ms": { "type": "integer", "minimum": 0 },
-        "end_ms": { "type": "integer", "minimum": 0 }
+        "end_ms": { "type": "integer", "minimum": 0 },
+        "echo": {
+          "description": "Only on the me channel: true when the gateway took the segment for the other side's voice leaking into the microphone. Its text is not used or stored, and the client drops the line.",
+          "type": "boolean"
+        }
       },
       "required": ["type", "seq", "channel", "seg_id", "text", "start_ms", "end_ms"]
     },
@@ -451,7 +464,7 @@
       ]
     },
     "AudioFrameHeader": {
-      "description": "Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200 bytes; may be empty on a speech-end frame, and is always empty on the me channel). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.",
+      "description": "Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200 bytes; may be empty on a speech-end frame; on the me channel empty unless session.ready said me_audio). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.",
       "type": "object",
       "x-binary-layout": {
         "byteOrder": "big-endian",
@@ -465,7 +478,7 @@
       },
       "properties": {
         "channel": {
-          "description": "0 = them (system output), 1 = me (microphone; speech flags only, no audio).",
+          "description": "0 = them (system output), 1 = me (microphone, echo-cancelled; speech audio when session.ready said me_audio, else speech flags only).",
           "type": "integer",
           "enum": [0, 1]
         },

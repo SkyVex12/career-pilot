@@ -13,8 +13,9 @@ with --valkey. fakeredis's TCP server cannot stand in: on Windows it deadlocks o
 commands.
 
 The STT is `TextSTT`: it reads the audio bytes as UTF-8 words, so a client "speaks" by sending
-text padded to pcm16 frames (`testing.text_frame_audio`). Real microphone audio produces no
-transcript; typed questions still get scripted answers.
+text padded to pcm16 frames (`testing.text_frame_audio`), on either channel: the user's own
+mic stream is a second TextSTT. Real microphone audio produces no transcript; typed questions
+still get scripted answers.
 
 The process prints one line, `listening <port>`, once it accepts connections. The desktop
 client's integration test (apps/desktop/core/tests/gateway.rs) starts these processes.
@@ -76,6 +77,7 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         for token, expires in map(parse_token, args.token)
     }
     control = TextSTTControl()
+    me_control = TextSTTControl()
     queue: JobQueue = MemoryJobQueue()
     if args.sqs:
         queue = SqsJobQueue(
@@ -88,6 +90,7 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         router=build_router(settings, [ScriptedProvider("anthropic")]),
         verifier=StaticVerifier(principals),
         stt_providers=[("text", lambda: TextSTT(control, "text"))],
+        stt_me_providers=[("text", lambda: TextSTT(me_control, "text"))],
     )
     server = GatewayServer(services)
     server.server.config.port = args.port

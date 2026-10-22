@@ -9,7 +9,6 @@ also drops what this one already had.
 from dataclasses import dataclass
 
 from copilot_protocol.audio import (
-    CHANNEL_ME,
     CHANNEL_THEM,
     FLAG_SPEECH_END,
     FLAG_SPEECH_START,
@@ -30,8 +29,6 @@ class Frame:
 def parse(data: bytes) -> Frame:
     """Decode a binary frame; raises ValueError on a malformed one."""
     header, audio = decode_frame(data)
-    if header.channel == CHANNEL_ME and audio:
-        raise ValueError("the me channel carries speech flags only, no audio")
     if len(audio) % 2:
         raise ValueError("pcm16 audio must have an even number of bytes")
     return Frame(

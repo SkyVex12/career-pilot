@@ -113,8 +113,6 @@ async def test_postcall_interview_on_openai(openai_stack: Stack) -> None:
     await stack.run(log.flush_job(upto))
     await log.end(seconds=300)
     await stack.run(log.ended_job())
-    [transcribe] = stack.take("me_audio.transcribe")
-    await stack.run(transcribe)
     [postcall] = stack.take("session.postcall")
     await stack.run(postcall)
     kinds = await stack.admin.fetch(

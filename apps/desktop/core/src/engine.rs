@@ -21,7 +21,6 @@ use crate::net::client::{
     self, ClientConfig, ClientEvent, ClientHandle, ClientStats, Command, ConnectionState,
 };
 use crate::net::close::StopReason;
-use crate::recording::MeAudioSink;
 
 // A few events a second go to the UI, so the size of the largest (a server message) does not
 // matter; boxing it would only add an allocation per message.
@@ -66,7 +65,6 @@ pub struct AudioParts {
     pub aec: Box<dyn EchoCanceller>,
     pub them_vad: ChannelVad,
     pub me_vad: ChannelVad,
-    pub recorder: Box<dyn MeAudioSink>,
 }
 
 pub struct Engine {
@@ -90,11 +88,8 @@ impl Engine {
         let (client, task) = client::spawn(config, tokens, events_tx);
         let latency = Arc::new(Mutex::new(LatencyTracker::default()));
         let session_id = Arc::new(Mutex::new(None));
-        // The recording of the user's audio follows the session ids the client goes live with.
-        let bind_recording = audio.recorder.session_binder();
-
         // Audio thread: frames to the client, speech edges to the UI and the latency tracker.
-        let pipeline = Pipeline::new(audio.aec, audio.them_vad, audio.me_vad, audio.recorder);
+        let pipeline = Pipeline::new(audio.aec, audio.them_vad, audio.me_vad);
         let audio_thread = {
             let client = client.clone();
             let latency = latency.clone();
@@ -149,9 +144,6 @@ impl Engine {
                             match &state {
                                 ConnectionState::Live { session_id: sid, .. } => {
                                     *session_id.lock().unwrap() = Some(*sid);
-                                    if let Some(bind) = &bind_recording {
-                                        bind(*sid);
-                                    }
                                 }
                                 ConnectionState::Stopped { reason } => {
                                     let reason = *reason;

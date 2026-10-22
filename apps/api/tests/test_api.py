@@ -326,39 +326,15 @@ async def test_a_live_session_is_reported_and_cannot_be_deleted(api: Api) -> Non
     assert (await api.client.delete(f"/v1/sessions/{sid}", headers=h)).status_code == 409
 
 
-async def test_me_audio_upload_and_complete(api: Api) -> None:
+async def test_no_audio_upload_after_the_call(api: Api) -> None:
+    """The gateway transcribes the user's mic live; the upload routes are gone."""
     uid, h = api.user()
     await api.client.get("/v1/me", headers=h)
     sid = await seed_session(api, uid, outputs=False)
-    no_consent = await seed_session(api, uid, outputs=False, store_transcript=False)
-    r = await api.client.post(f"/v1/sessions/{no_consent}/me-audio", headers=h, json={})
-    assert r.status_code == 409
-    r = await api.client.post(f"/v1/sessions/{sid}/me-audio/complete", headers=h)
-    assert r.status_code == 409  # nothing uploaded yet
-    # While the gateway still holds the session (live, or resumable), the upload waits.
-    state = keys.sess_state(sid)
-    await api.svc.valkey.hset(state, mapping={"user_id": str(uid), "status": "reconnecting"})
     for path in ("me-audio", "me-audio/complete"):
         r = await api.client.post(f"/v1/sessions/{sid}/{path}", headers=h, json={})
-        assert r.status_code == 409
-        assert r.json()["detail"].startswith("live:")
-    await api.svc.valkey.hset(state, "status", "ended")
-    r = await api.client.post(
-        f"/v1/sessions/{sid}/me-audio", headers=h, json={"content_type": "audio/wav"}
-    )
-    assert r.status_code == 201
-    upload = r.json()["upload"]
-    async with httpx2.AsyncClient() as s3:
-        put = await s3.put(upload["url"], content=b"RIFF....", headers=upload["headers"])
-        assert put.status_code == 200
-    r = await api.client.post(f"/v1/sessions/{sid}/me-audio/complete", headers=h)
-    assert r.status_code == 202
-    status = await api.admin.fetchval("select me_audio_status from app.sessions where id = $1", sid)
-    assert status == "uploaded"
-    [job] = api.take("me_audio.transcribe")
-    assert job["idempotency_key"] == f"me_audio.transcribe:{sid}"
-    again = await api.client.post(f"/v1/sessions/{sid}/me-audio", headers=h, json={})
-    assert again.status_code == 409
+        assert r.status_code in (404, 405)
+    assert api.take("me_audio.transcribe") == []
 
 
 async def test_usage_and_account_deletion(api: Api) -> None:

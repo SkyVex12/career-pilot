@@ -17,7 +17,7 @@ from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, mode
 LLMProviderName = Literal["bedrock", "anthropic", "openai"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 # Model routes, one per job: the gateway's live jobs and the workers' background jobs.
-OPENAI_JOBS = ("detector", "fast", "deep", "extract", "job", "pack", "postcall")
+OPENAI_JOBS = ("detector", "fast", "deep", "summary", "extract", "job", "pack", "postcall")
 EMBED_DIMENSIONS = 1024  # memory_nodes.embedding is vector(1024)
 
 
@@ -117,6 +117,9 @@ class CoreSettings(BaseSettings):
     openai_detector_model: str | None = None
     openai_fast_model: str | None = None
     openai_deep_model: str | None = None
+    # The live call's rolling summary (gateway conversation memory). Unset: the detector's
+    # model and reasoning, the cheapest live route.
+    openai_summary_model: str | None = None
     openai_extract_model: str | None = None  # memory extraction from documents
     openai_job_model: str | None = None  # job description to company, title, summary
     openai_pack_model: str | None = None
@@ -124,6 +127,7 @@ class CoreSettings(BaseSettings):
     openai_detector_reasoning: ReasoningEffort | None = None
     openai_fast_reasoning: ReasoningEffort | None = None
     openai_deep_reasoning: ReasoningEffort | None = None
+    openai_summary_reasoning: ReasoningEffort | None = None
     openai_extract_reasoning: ReasoningEffort | None = None
     openai_job_reasoning: ReasoningEffort | None = None
     openai_pack_reasoning: ReasoningEffort | None = None
@@ -212,6 +216,8 @@ class CoreSettings(BaseSettings):
         """The OpenAI model and reasoning effort for a job; an unset model is an error."""
         if job not in OPENAI_JOBS:
             raise ValueError(f"no OpenAI settings for job {job!r}")
+        if job == "summary" and not self.openai_summary_model:
+            job = "detector"
         model = getattr(self, f"openai_{job}_model")
         if not model:
             raise ValueError(

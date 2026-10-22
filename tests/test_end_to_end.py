@@ -55,11 +55,10 @@ from copilot_gateway.testing import (
 from copilot_worker import documents, packs, sessionlog, system
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import Ctx
-from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures, fixture_provider
+from copilot_worker.fixtures import ClaudeFixtures, fixture_provider
 from copilot_worker.llm import build_router as worker_router
 from copilot_worker.prompts import JOB_PROMPTS
 from copilot_worker.runtime import HANDLERS, Job
-from copilot_worker.stt import DeepgramPrerecorded
 
 pytestmark = pytest.mark.stack
 
@@ -142,7 +141,6 @@ async def world() -> AsyncIterator[World]:
         store=store,
         crypto=UserCrypto(provider),
         router=worker_router(worker_settings, [fixture_provider(claude)]),
-        stt=DeepgramPrerecorded("fixture", transport=DeepgramFixtures(FIXTURES)),
     )
 
     gw_overrides: dict[str, Any] = {
@@ -230,28 +228,25 @@ async def test_resume_to_interview_to_summary(world: World) -> None:
     assert live["status"] == "live"
     await c.say("Tell me about a migration of a critical data store you led?")
     await c.wait_type("question.detected", speculative=False)
+    # The user's own words, transcribed live on the mic stream.
+    await c.say_me("We moved the ledger to Postgres with dual writes", capture_ms=9000)
+    await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
     await c.send({"type": "question.force", "text": "How do you make payouts exactly-once?"})
     await c.wait_type("answer.done", pass_="fast", timeout=8)
     await c.send({"type": "session.end"})
     assert await c.closed() == 1000
 
-    # After the socket closes: the user's own audio, then the workers.
-    r = await w.api.post(f"/v1/sessions/{sid}/me-audio", headers=w.headers, json={})
-    # The session row may not exist yet (no flush before the end); the API checks Valkey.
-    assert r.status_code == 201, r.text
-    target = r.json()["upload"]
-    async with httpx2.AsyncClient() as s3:
-        assert (
-            await s3.put(target["url"], content=b"RIFF", headers=target["headers"])
-        ).status_code == 200
-    r = await w.api.post(f"/v1/sessions/{sid}/me-audio/complete", headers=w.headers)
-    assert r.status_code == 202, r.text
-    # Workers: session.ended writes the log and creates the row; the transcribe job the API
-    # enqueued waits for it, transcribes the audio, deletes it and runs the post-call job.
+    # After the socket closes, the workers: session.ended writes the log (the user's own
+    # words with it) and creates the row, then the post-call job runs at once; there is no
+    # audio to wait for.
     ran = await w.work()
     assert ran[0] == "session.ended"
-    assert "me_audio.transcribe" in ran
+    assert "me_audio.transcribe" not in ran
     assert "session.postcall" in ran
+    r = await w.api.get(f"/v1/sessions/{sid}/transcript", headers=w.headers)
+    assert ("me", "We moved the ledger to Postgres with dual writes") in [
+        (s["channel"], s["text"]) for s in r.json()["segments"]
+    ]
 
     detail = (await w.api.get(f"/v1/sessions/{sid}", headers=w.headers)).json()
     assert detail["status"] == "ready"

@@ -5,9 +5,15 @@ ARCHITECTURE.md, "Realtime pipeline" steps 5 and 6:
   answer in the session pack (a similarity and a margin over the runner-up calibrated per
   embedding model, `Settings.prepared_answer_thresholds`), those points are sent at once and
   no model is called. An exact repeat of a normalized question is served from `qa:{uid}:{qhash}`.
-- The deep pass (Sonnet) starts at confirmation for the auto types, otherwise on expand.
-- A new confirmed question stops generation for the old one; the old answer stays on screen
-  (the client keeps what it has; the server sends answer.error with code `cancelled`).
+- The deep pass (Sonnet) starts on its own once the question is confirmed and its fast pass is
+  done, for every type in `deep_pass_auto_types` (all but small talk by default), otherwise on
+  expand. Starting after the fast pass, not with it, means a quick follow-up that is confirmed
+  while the fast pass still streams costs no deep tokens at all.
+- A new confirmed question stops generation for the old one, deep pass included; the old
+  answer stays on screen (the client keeps what it has; the server sends answer.error with
+  code `cancelled`), and a deep pass not started yet never starts.
+- Both passes see the conversation so far (`AnswerHost.call_context`, the session's
+  conversation memory) after the cached blocks.
 - Without transcript consent the session log keeps question and answer metadata only, and
   nothing goes into the exact-repeat cache (it holds answer text).
 
@@ -87,6 +93,10 @@ class Question:
     released: asyncio.Event = field(default_factory=asyncio.Event)
     released_at: float | None = None
     discarded: bool = False
+    # Confirmed (not speculative any more), and the fast pass has ended: together they start
+    # the automatic deep pass.
+    confirmed: bool = False
+    fast_ended: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,7 +185,9 @@ class AnswerHost(Protocol):
         """Transcript consent: without it, question and answer text are never stored."""
         ...
 
-    def transcript(self, seconds: float) -> str: ...
+    def call_context(self) -> prompts.CallContext:
+        """The conversation so far: recent lines verbatim, the summary, earlier answers."""
+        ...
 
     def prompt_context(self) -> prompts.PromptContext: ...
 
@@ -239,10 +251,20 @@ class AnswerEngine:
         late = {"turn_end_ms": turn_end_ms, "final_ms": final_ms}
         for pass_ in q.logged:
             self._late_latency(q, pass_, {k: v for k, v in late.items() if v is not None})
+        q.confirmed = True
         self.supersede(keep=qid)
         self._log_question(q, kept=True)
-        if q.qtype in self.host.settings.deep_pass_auto_types:
-            self.start_pass(q, "deep")
+        self._auto_deep(q)
+
+    def _auto_deep(self, q: Question) -> None:
+        """The deep pass starts on its own once the question is confirmed and its fast pass
+        has ended, for the auto types; never for a question a newer one has replaced."""
+        s = self.host.settings
+        if not s.deep_pass_auto or q.qtype not in s.deep_pass_auto_types:
+            return
+        if not (q.confirmed and q.fast_ended) or q.superseded or q.cancelled or q.discarded:
+            return
+        self.start_pass(q, "deep")
 
     def release(self, qid: UUID) -> None:
         """The detector confirmed a held question (the session has just sent it): what its
@@ -355,6 +377,7 @@ class AnswerEngine:
         started = time.monotonic()
         state: dict[str, Any] = {
             "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
+            "stopped": False,
         }  # fmt: skip
 
         def delta(text: str) -> None:
@@ -447,6 +470,8 @@ class AnswerEngine:
                     "cost_usd": self._cost(done_info),
                     "latency_ms": stored,
                     "memory_node_ids": [str(r.node_id) for r in refs],
+                    # The deep pass ran because the user tapped expand, not on its own.
+                    "expanded": pass_ == "deep" and q.expanded_at is not None,
                 }
             )
 
@@ -549,6 +574,7 @@ class AnswerEngine:
             host.llm_status(False)
             error("llm_unavailable")
         except asyncio.CancelledError:
+            state["stopped"] = True
             if (model_task := state.get("model")) is not None:
                 model_task.cancel()
             if q.superseded:
@@ -562,6 +588,10 @@ class AnswerEngine:
             log.debug(
                 "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
             )
+            if pass_ == "fast" and not state["stopped"]:
+                # Done, failed or refused: the deep pass may start now.
+                q.fast_ended = True
+                self._auto_deep(q)
 
     def _log_cancelled(
         self, q: Question, pass_: str, state: Mapping[str, Any], reason: str | None = None
@@ -622,7 +652,7 @@ class AnswerEngine:
     def _request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
         s = self.host.settings
         ctx = self.host.prompt_context()
-        transcript = self.host.transcript(s.transcript_context_s)
+        transcript = self.host.call_context()
         memory = memory or []
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.

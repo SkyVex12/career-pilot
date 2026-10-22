@@ -24,7 +24,7 @@ from copilot_core.teststack import S3_ENDPOINT, VALKEY_URL
 from copilot_worker import documents, packs, sessionlog, system, workplace
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import Ctx
-from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures
+from copilot_worker.fixtures import ClaudeFixtures
 from copilot_worker.runtime import HANDLERS, Job
 
 FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
@@ -54,7 +54,6 @@ class Stack:
     admin: asyncpg.Connection  # superuser on the test database, for checks only
     jobs: MemoryJobQueue
     claude: ClaudeFixtures
-    deepgram: DeepgramFixtures
     url: str = ""  # the test database's superuser URL, for pools as other roles
 
     async def run(self, message: dict[str, Any]) -> None:
@@ -168,14 +167,14 @@ class GatewayLog:
             "forced_by_hotkey": False, "detected_at": datetime.now(UTC).isoformat(),
         })  # fmt: skip
 
-    async def answer(self, qid: UUID, pass_: str, text: str) -> str:
+    async def answer(self, qid: UUID, pass_: str, text: str, **extra: Any) -> str:
         return await self.add({
             "kind": "answer", "question_id": str(qid), "pass": pass_, "source": "model",
             "provider": "anthropic", "model": "claude-haiku-4-5", "fallback_attempt": 0,
             "tier": "standard", "text": text, "input_tokens": 4200, "cached_tokens": 4000,
             "output_tokens": 40, "cost_usd": 0.0008,
             "latency_ms": {"first_token_ms": 420, "total_ms": 900},
-            "memory_node_ids": [],
+            "memory_node_ids": [], **extra,
         })  # fmt: skip
 
     async def end(self, seconds: int) -> None:

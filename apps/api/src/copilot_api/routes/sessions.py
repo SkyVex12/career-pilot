@@ -1,4 +1,7 @@
-"""Sessions: list, detail with post-call outputs, transcript, delete, and the user's audio.
+"""Sessions: list, detail with post-call outputs, transcript, and delete.
+
+The user's own words are transcribed live by the gateway (ARCHITECTURE.md, "Desktop client"),
+so there is no audio upload after the call any more.
 
 `GET /sessions/{id}` reports `status`: `live` while the call runs, `processing` after it ends
 until the post-call outputs are written, then `ready` with the outputs. The desktop app polls
@@ -6,11 +9,10 @@ it after a call. Text is decrypted in memory only for the response.
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, ConfigDict
 
 from copilot_api.deps import Services, SvcDep, UserDep
 from copilot_core import keys
@@ -155,77 +157,9 @@ async def delete_session(session_id: UUID, svc: SvcDep, user: UserDep) -> Respon
         )
     if deleted is None and state is None:
         raise HTTPException(404, "no such session")
+    # A recording an older client uploaded before live transcription, if one is left.
     await svc.store.delete(me_audio_key(user.user_id, session_id))
     await svc.valkey.delete(
         keys.sess_state(session_id), keys.sess_events(session_id), keys.sess_log(session_id)
     )
     return Response(status_code=204)
-
-
-class MeAudioIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    content_type: Literal["audio/wav", "audio/ogg", "audio/webm", "audio/mpeg"] = "audio/wav"
-
-
-async def _me_audio_session(svc: Services, user: Principal, sid: UUID) -> dict[str, Any]:
-    """The session's consent and audio status, from its row or, before the row exists, from
-    the gateway's state (the call may end before its first flush).
-
-    The audio is uploaded after the socket closes for good. While the gateway still holds the
-    session (live, or resumable after a dropped socket) this refuses with 409 `live`, so a
-    client retrying an upload at startup cannot start transcription before the call ends."""
-    state = await _live_owner(svc, user, sid)
-    if state is not None and state.get("status") not in (None, "ended"):
-        raise HTTPException(409, "live: the session has not ended yet")
-    async with svc.tx(user) as conn:
-        row = await conn.fetchrow(
-            "select store_transcript, me_audio_status from app.sessions where id = $1", sid
-        )
-    if row is not None:
-        return dict(row)
-    if state is None:
-        raise HTTPException(404, "no such session")
-    return {"store_transcript": state.get("store_transcript") == "1", "me_audio_status": "pending"}
-
-
-@router.post("/sessions/{session_id}/me-audio", status_code=201)
-async def me_audio_upload(
-    session_id: UUID, body: MeAudioIn, svc: SvcDep, user: UserDep
-) -> dict[str, Any]:
-    """A presigned upload for the user's own audio after the call."""
-    session = await _me_audio_session(svc, user, session_id)
-    if not session["store_transcript"]:
-        raise HTTPException(409, "no transcript consent for this session; delete the recording")
-    if session["me_audio_status"] != "pending":
-        raise HTTPException(409, f"the audio is already {session['me_audio_status']}")
-    upload = await svc.store.presign_put(
-        me_audio_key(user.user_id, session_id), body.content_type, svc.settings.upload_url_ttl_s
-    )
-    return {"session_id": str(session_id), "upload": upload}
-
-
-@router.post("/sessions/{session_id}/me-audio/complete", status_code=202)
-async def me_audio_complete(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
-    """The client finished the upload: transcribe it now instead of after the 10-minute wait."""
-    session = await _me_audio_session(svc, user, session_id)
-    key = me_audio_key(user.user_id, session_id)
-    head = await svc.store.head(key)
-    if head is None:
-        raise HTTPException(409, "no audio was uploaded for this session")
-    if session["me_audio_status"] != "pending" or not session["store_transcript"]:
-        await svc.store.delete(key)  # too late, or not wanted: never keep it
-        raise HTTPException(409, f"the audio is already {session['me_audio_status']}")
-    if int(head.get("ContentLength", 0)) > svc.settings.max_me_audio_bytes:
-        await svc.store.delete(key)
-        raise HTTPException(413, "the recording is too large")
-    async with svc.tx(user) as conn:
-        await conn.execute(
-            "update app.sessions set me_audio_status = 'uploaded'"
-            " where id = $1 and me_audio_status = 'pending'",
-            session_id,
-        )
-    await svc.enqueue(
-        "me_audio.transcribe", f"me_audio.transcribe:{session_id}", user.user_id,
-        {"session_id": str(session_id)},
-    )  # fmt: skip
-    return {"session_id": str(session_id), "me_audio_status": "uploaded"}

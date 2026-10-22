@@ -351,8 +351,9 @@ def test_frame_parse_and_dedupe_per_channel() -> None:
     me = audio.parse(frame(1, 0b10, 0))
     assert me.channel == "me"
     assert me.speech_end
-    with pytest.raises(ValueError, match="no audio"):
-        audio.parse(frame(1, 0, 1, b"\x00\x00"))
+    # The me channel carries the user's speech audio (session.ready me_audio).
+    me_audio = audio.parse(frame(1, 0b01, 1, b"\x01\x00" * 1600))
+    assert (me_audio.channel, me_audio.speech_start, len(me_audio.audio)) == ("me", True, 3200)
     with pytest.raises(ValueError, match="even number"):
         audio.parse(frame(0, 0, 1, b"\x00"))
     with pytest.raises(ValueError, match="header alone"):
@@ -461,9 +462,14 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     assert (s.stage1_min_score, s.detector_hedge_ms) == (0.3, 2000)
     assert (s.detector_max_tokens, s.fast_pass_max_tokens, s.deep_pass_max_tokens) == (80, 250, 800)
     assert s.prepared_answer_min_similarity == 0.85
-    assert s.deep_pass_auto_types == ["behavioral", "technical", "system_design"]
+    assert s.deep_pass_auto
+    assert s.deep_pass_auto_types == [
+        "behavioral", "technical", "system_design", "coding", "standup_status", "other",
+    ]  # fmt: skip
+    assert (s.conversation_summary_tokens, s.conversation_answers_tokens) == (500, 600)
+    assert (s.detector_context_tokens, s.me_stt) == (300, True)
     assert (s.rerank_keep, s.retrieval_budget_ms, s.first_token_timeout_ms) == (6, 100, 1500)
-    assert (s.transcript_context_s, s.sessions_per_task_target) == (60, 60)
+    assert (s.conversation_budget_tokens, s.sessions_per_task_target) == (3000, 60)
     assert s.env == "prod"
     assert s.auth == "cognito"
     monkeypatch.setenv("COPILOT_LLM_PROVIDERS", "anthropic")

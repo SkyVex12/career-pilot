@@ -4,8 +4,8 @@
 chunk extends the interim transcript and finalize() turns it into a flushed final. Failures are
 scripted through a shared `TextSTTControl`, which lives across reconnects.
 
-`ScriptedProvider` answers detector, fast and deep requests from simple rules, with optional
-delays and failures per call.
+`ScriptedProvider` answers detector, fast, deep and summary requests from simple rules, with
+optional delays and failures per call.
 """
 
 import asyncio
@@ -141,6 +141,9 @@ def default_reply(job: str, req: LLMRequest) -> Reply:
         )
         body = {"answer": qtype if is_q else "none"}
         return Reply([json.dumps(body)])
+    if job == "summary":
+        lines = content.split("<new_lines>")[-1].split("</new_lines>")[0].strip().splitlines()
+        return Reply([f"- Earlier: {len(lines)} lines, from {lines[0][:40] if lines else ''}"])
     if job == "fast":
         return Reply(
             ["- Led the payments migration [n:3f2a]\n", "- Cut p95 latency 40% [n:3f2a]\n"]
@@ -154,6 +157,8 @@ def job_of(req: LLMRequest) -> str:
     if req.json_schema is not None:
         return "detector"
     system = req.system[0].text if req.system else ""
+    if system.startswith("You keep the running summary"):
+        return "summary"
     return "fast" if "talking" in system else "deep"
 
 
@@ -166,6 +171,7 @@ class ScriptedProvider:
         self.name = name
         self.reply = reply
         self.calls: list[tuple[str, str]] = []  # (job, model)
+        self.requests: list[tuple[str, LLMRequest]] = []  # (job, request)
         self.prewarms: list[tuple[str, LLMRequest]] = []  # (model, request)
         self.cancelled = 0
 
@@ -178,6 +184,7 @@ class ScriptedProvider:
     ) -> AsyncGenerator[LLMChunk]:
         job = job_of(req)
         self.calls.append((job, model))
+        self.requests.append((job, req))
         reply = self.reply(job, req)
         try:
             if reply.first_delay_s:
@@ -342,6 +349,12 @@ class ProtocolClient:
         """Speech on the them channel: start flag with the words, then a speech-end frame."""
         await self.frame(0, 0b01, text_frame_audio(text), capture_ms)
         await self.frame(0, 0b10, b"", capture_ms + 100)
+
+    async def say_me(self, text: str, capture_ms: int = 0, end_ms: int | None = None) -> None:
+        """The user's own speech on the me channel, as a client sends it when session.ready
+        said me_audio: start flag with the words, then a speech-end frame."""
+        await self.frame(1, 0b01, text_frame_audio(text), capture_ms)
+        await self.frame(1, 0b10, b"", end_ms if end_ms is not None else capture_ms + 100)
 
     async def wait(
         self, pred: Callable[[dict[str, Any]], bool], timeout: float = 5.0, start: int = 0

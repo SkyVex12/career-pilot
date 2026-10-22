@@ -34,21 +34,14 @@ class WorkerSettings(DataSettings):
     llm_timeout_s: float = 600.0
     llm_first_token_timeout_s: float = 300.0
 
-    # Pre-recorded STT for the user's own audio.
-    deepgram_prerecorded_url: str = "https://api.deepgram.com/v1/listen"
-
     # Session log (ARCHITECTURE.md, "Session logging").
-    me_audio_wait_s: int = 600  # post-call work runs without the upload after this
     log_ttl_after_flush_s: int = 3600
     resume_window_s: float = 120.0  # the gateway's; the sweeper ends sessions idle longer
-    # Deep passes run on their own for these types, so a deep answer to any other type means
-    # the user tapped expand (the gateway's deep_pass_auto_types).
-    deep_pass_auto_types: tuple[str, ...] = ("behavioral", "technical", "system_design")
 
     # Packs.
     prepared_answers: int = 30
     pack_ttl_s: int = 24 * 3600  # after the call's due time
 
-    # Offline runs (dev and test only): replay recorded Claude and Deepgram responses from
+    # Offline runs (dev and test only): replay recorded model responses from
     # this directory instead of calling the providers. See copilot_worker.fixtures.
     fixtures_dir: str | None = None

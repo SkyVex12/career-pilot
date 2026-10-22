@@ -12,7 +12,6 @@
 mod support;
 
 use std::future::Future;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,12 +19,11 @@ use copilot_client::api::{ApiClient, ApiError};
 use copilot_client::audio::aec::NoEchoCancellation;
 use copilot_client::audio::source::FakeSource;
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
-use copilot_client::auth::{MemorySecretStore, StaticTokens};
+use copilot_client::auth::StaticTokens;
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{ClientConfig, StartParams};
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::{Mode, Pass, ServerMessage};
-use copilot_client::recording::{self, UploadOutcome};
 use serde_json::{Value, json};
 use support::Stack;
 use uuid::Uuid;
@@ -60,9 +58,9 @@ struct Call {
     events: Vec<UiEvent>,
 }
 
-/// One call through the gateway: the user's audio plays on the mic, a typed question gets an
-/// answer, then the session ends. With consent, the audio is recorded into `dir`.
-async fn call(stack: &Stack, params: StartParams, dir: &Path, secrets: &MemorySecretStore) -> Call {
+/// One call through the gateway: the user's audio plays on the mic (the gateway transcribes it
+/// live), a typed question gets an answer, then the session ends.
+async fn call(stack: &Stack, params: StartParams) -> Call {
     let me = wav("me.wav");
     let vad = || ChannelVad::new(Box::new(Silero::new().unwrap()), VadParams::default());
     let parts = AudioParts {
@@ -70,7 +68,6 @@ async fn call(stack: &Stack, params: StartParams, dir: &Path, secrets: &MemorySe
         aec: Box::new(NoEchoCancellation),
         them_vad: vad(),
         me_vad: vad(),
-        recorder: recording::sink_for_session(params.store_transcript, dir, secrets).unwrap(),
     };
     let events: Arc<Mutex<Vec<UiEvent>>> = Arc::default();
     let sink = {
@@ -174,30 +171,11 @@ async fn documents_to_interview_to_post_call_through_the_api() {
     })
     .await;
 
-    // The call, with consent: the user's audio is recorded, encrypted, on disk.
-    let dir = tempfile::tempdir().unwrap();
-    let rec_dir = dir.path().join("me-audio");
-    let secrets = MemorySecretStore::default();
-    let c = call(&stack, start_params(Some(job_id), Some(interview_id), true), &rec_dir, &secrets).await;
+    // The call, with consent: the user's own words reach the gateway live; nothing is recorded.
+    let c = call(&stack, start_params(Some(job_id), Some(interview_id), true)).await;
     assert!(
         c.events.iter().any(|e| matches!(e, UiEvent::Server { message: ServerMessage::SessionReady(_) }))
     );
-    let waiting = recording::pending(&rec_dir, false);
-    assert_eq!(waiting.len(), 1);
-    assert_eq!(waiting[0].session_id, c.session_id);
-
-    // The upload fails (the API is unreachable): the recording stays for the next start.
-    let down = ApiClient::new("http://127.0.0.1:9/v1", Arc::new(StaticTokens::one(&stack.token))).unwrap();
-    let out = recording::upload_pending(&down, &secrets, &rec_dir, false, &[], &|_, _| {}).await;
-    assert!(matches!(&out[..], [(sid, UploadOutcome::Kept(_))] if *sid == c.session_id), "{out:?}");
-    assert_eq!(recording::pending(&rec_dir, true).len(), 1);
-
-    // Next app start: uploaded through the presigned URL, completed, deleted locally.
-    let out =
-        recording::upload_pending(&api, &secrets, &rec_dir, true, &[Duration::from_secs(1); 5], &|_, _| {})
-            .await;
-    assert_eq!(out, vec![(c.session_id, UploadOutcome::Uploaded)]);
-    assert!(std::fs::read_dir(&rec_dir).unwrap().next().is_none(), "the local copy is deleted");
 
     // Post-call: the app polls GET /sessions/{id} until the outputs are ready.
     let path = format!("/sessions/{}", c.session_id);
@@ -211,14 +189,11 @@ async fn documents_to_interview_to_post_call_through_the_api() {
     }
     assert_eq!(uuid(&session["interview_id"]), interview_id);
     assert_eq!(uuid(&session["job_id"]), job_id);
-    assert_eq!(session["me_audio_status"], "transcribed");
+    assert_eq!(session["me_audio_status"], "live");
     let transcript = api.get(&format!("{path}/transcript")).await.unwrap();
     let channels: Vec<&str> =
         transcript["segments"].as_array().unwrap().iter().filter_map(|s| s["channel"].as_str()).collect();
-    assert!(channels.contains(&"me"), "the user's side was transcribed: {transcript}");
-    // Uploading again after that is refused for good, and would be deleted.
-    let again = api.post(&format!("{path}/me-audio"), &json!({})).await.unwrap_err();
-    assert_eq!(again.status(), Some(409));
+    assert!(channels.contains(&"me"), "the user's side was transcribed live: {transcript}");
 
     // History and usage.
     let list = api.get("/sessions").await.unwrap();
@@ -226,9 +201,8 @@ async fn documents_to_interview_to_post_call_through_the_api() {
     let usage = api.get("/usage").await.unwrap();
     assert!(usage["sessions"].as_u64().unwrap() >= 1);
 
-    // Without consent: nothing recorded, nothing uploaded, a metadata summary only.
-    let c2 = call(&stack, start_params(Some(job_id), None, false), &rec_dir, &secrets).await;
-    assert!(recording::pending(&rec_dir, true).is_empty());
+    // Without consent: no words stored, either side's, and a metadata summary only.
+    let c2 = call(&stack, start_params(Some(job_id), None, false)).await;
     let s2 = until("the no-consent summary", 120, || async {
         let s = api.get(&format!("/sessions/{}", c2.session_id)).await.unwrap();
         (s["status"] == "ready").then_some(s)

@@ -1,12 +1,11 @@
-"""Replay recorded model and Deepgram responses through the real clients.
+"""Replay recorded model responses through the real clients.
 
 Tests, and a worker started with COPILOT_FIXTURES_DIR (dev and test only), send every model
-request through the official SDK (Anthropic or OpenAI) and every Deepgram request through
-httpx2, but over a mock transport that answers from files instead of the network:
+request through the official SDK (Anthropic or OpenAI), but over a mock transport that
+answers from files instead of the network:
 
     <dir>/claude/<job>.sse          streaming Messages API events, byte for byte
     <dir>/openai/<job>.sse          streaming Responses API events, byte for byte
-    <dir>/deepgram/prerecorded.json a /v1/listen response
 
 The job is recognized by the first line of the request's system prompt (each worker prompt
 starts with its own line; see `JOB_PROMPTS`): Claude's `system`, OpenAI's developer message.
@@ -96,20 +95,6 @@ class OpenAIFixtures(ClaudeFixtures):
             return ""
         content: list[Any] = turns[0].get("content") or []
         return str(content[0].get("text", "")) if content else ""
-
-
-class DeepgramFixtures(httpx2.AsyncBaseTransport):
-    def __init__(self, directory: Path) -> None:
-        self.directory = directory
-        self.requests: list[httpx2.Request] = []
-
-    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        await request.aread()
-        self.requests.append(request)
-        path = self.directory / "deepgram" / "prerecorded.json"
-        return httpx2.Response(
-            200, headers={"content-type": "application/json"}, content=path.read_bytes()
-        )
 
 
 def model_fixtures(directory: Path, job_prompts: Mapping[str, str], wire: str) -> ClaudeFixtures:
