@@ -194,7 +194,9 @@ async def test_a_newer_question_means_no_deep_tokens_for_the_old_one(env) -> Non
 
     def slow_fast(job: str, req: Any) -> Reply:
         if job == "fast" and "ledger" in str(req.content).split("Question")[-1]:
-            return Reply([f"- cue {i}\n" for i in range(20)], chunk_delay_s=0.05)
+            # Long enough (6 s) that the follow-up is confirmed while it still streams, however
+            # the event loop schedules the turns.
+            return Reply([f"- cue {i}\n" for i in range(60)], chunk_delay_s=0.1)
         return default_reply(job, req)
 
     provider.reply = slow_fast
@@ -216,9 +218,9 @@ async def test_a_newer_question_means_no_deep_tokens_for_the_old_one(env) -> Non
                 and m["question_id"] != q1["question_id"]
             )
         )
+        err = await c.wait_type("answer.error", question_id=q1["question_id"])
         await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
         await asyncio.sleep(0.2)
-    err = next(m for m in c.of_type("answer.error") if m["question_id"] == q1["question_id"])
     assert (err["pass"], err["code"]) == ("fast", "cancelled")
     # The first question's deep pass never started: one deep call, the second question's.
     assert [j for j, _ in provider.calls].count("deep") == 1

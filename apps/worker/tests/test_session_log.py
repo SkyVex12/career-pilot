@@ -101,6 +101,16 @@ async def test_full_interview_log_to_postcall(stack: Stack) -> None:
     assert {str(a["cost_usd"]) for a in answers} == {"0.000800"}  # priced by the gateway
     assert await stack.ctx.valkey.xlen(keys.sess_log(log.sid)) == 0  # trimmed after commit
 
+    # The user's own words, transcribed live by the gateway, arrive in the log like the
+    # other side's.
+    await log.segment(
+        "Sure. At Acme I led the move of our payments ledger from MySQL to PostgreSQL with dual"
+        " writes and a shadow read path.", 4000, channel="me",
+    )  # fmt: skip
+    await log.segment(
+        "I'd put an idempotency key on every payout request and keep a state machine per"
+        " payout.", 30000, channel="me",
+    )  # fmt: skip
     await log.end(seconds=605)
     await stack.run(log.ended_job())
     session = await stack.admin.fetchrow(

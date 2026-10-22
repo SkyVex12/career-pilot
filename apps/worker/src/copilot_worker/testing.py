@@ -152,10 +152,10 @@ class GatewayLog:
         raw = await self.stack.ctx.valkey.xadd(keys.sess_log(self.sid), {"e": json.dumps(entry)})
         return raw.decode()
 
-    async def segment(self, text: str, start_ms: int) -> str:
+    async def segment(self, text: str, start_ms: int, channel: str = "them") -> str:
         # The gateway leaves text out of the log without consent; `text` here lets a test
-        # check that the worker drops it anyway.
-        entry = {"kind": "segment", "channel": "them", "seg_id": self.seg, "start_ms": start_ms,
+        # check that the worker drops it anyway. "me" segments come from the live mic stream.
+        entry = {"kind": "segment", "channel": channel, "seg_id": self.seg, "start_ms": start_ms,
                  "end_ms": start_ms + 2000, "text": text}  # fmt: skip
         self.seg += 1
         return await self.add(entry)
