@@ -348,8 +348,10 @@ def desktop_config() -> None:
     cfg: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     keys = ("api_url", "gateway_url", "update_url")
     changed = {k: urls[k] for k in keys if cfg.get(k) != urls[k]}
-    cfg.update(changed)
-    path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    if changed:
+        cfg.update(changed)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(cfg, indent=2) + "\n")
     done = ", ".join(f"{k} = {v}" for k, v in changed.items()) or "already current"
     print(f"{path}: {done}")
     print(f"download link for the team: {urls['download_url']}")
