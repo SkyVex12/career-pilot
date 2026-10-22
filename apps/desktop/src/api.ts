@@ -169,7 +169,6 @@ export const api = {
       }),
     ),
   deleteAccount: () => invoke<{ status: string }>("delete_account"),
-  uploadStatus: (sessionId: string) => invoke<UploadOutcome | null>("upload_status", { sessionId }),
   startSession: (request: StartRequest) => invoke<void>("start_session", { request }),
   endSession: () => invoke<void>("end_session"),
   endOtherSession: () => invoke<string>("end_other_session"),
@@ -178,7 +177,8 @@ export const api = {
   sendFeedback: (questionId: string, up: boolean) =>
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
-  snapshot: () => invoke<[Numbered[], boolean]>("snapshot"),
+  /** The session's events so far (compacted), whether one is running, and the next event's n. */
+  snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
   showOverlay: (show: boolean) => invoke<void>("show_overlay", { show }),
 };
@@ -191,13 +191,6 @@ export interface Numbered {
 
 export function onEvent(handler: (e: Numbered) => void): Promise<UnlistenFn> {
   return listen<Numbered>("copilot://event", (e) => handler(e.payload));
-}
-
-// The user's own audio after a call (copilot_client::recording::UploadOutcome).
-export type UploadOutcome = { state: "uploaded" } | { state: "discarded"; message: string } | { state: "kept"; message: string };
-
-export function onUpload(handler: (sessionId: string, outcome: UploadOutcome) => void): Promise<UnlistenFn> {
-  return listen<{ session_id: string; outcome: UploadOutcome }>("copilot://upload", (e) => handler(e.payload.session_id, e.payload.outcome));
 }
 
 // The Copilot API's responses (apps/api/src/copilot_api/routes).
@@ -264,7 +257,8 @@ export interface SessionItem {
   started_at: string | null;
   ended_at: string | null;
   billed_seconds: number;
-  me_audio_status: "pending" | "uploaded" | "transcribed" | "none";
+  /** "live": the user's words came from the live stream; the others are from before it. */
+  me_audio_status: "live" | "pending" | "uploaded" | "transcribed" | "none";
   status: SessionStatus;
 }
 

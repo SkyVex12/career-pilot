@@ -2,14 +2,13 @@
 // session opened from History. Polls GET /sessions/{id} for up to 5 minutes until the
 // outputs are ready, then shows them and the transcript when it was stored.
 import { useCallback, useEffect, useState } from "react";
-import { api, inTauri, onUpload, rest, type SessionDetail as Detail, type UploadOutcome } from "./api";
+import { rest, type SessionDetail as Detail } from "./api";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 
 export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: string; onDeleted?: () => void; onClose?: () => void }) {
   const [state, setState] = useState<PollState>({ phase: "waiting", session: null, elapsedMs: 0, error: null });
   const [round, setRound] = useState(0); // bumped by "Look again"
   const [transcript, setTranscript] = useState<TranscriptRow[] | null>(null);
-  const [upload, setUpload] = useState<UploadOutcome | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,15 +25,6 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
       cancelled = true;
     };
   }, [sessionId, round]);
-
-  useEffect(() => {
-    if (!inTauri) return;
-    api.uploadStatus(sessionId).then(setUpload, () => undefined);
-    const unlisten = onUpload((sid, outcome) => sid === sessionId && setUpload(outcome));
-    return () => {
-      unlisten.then((u) => u());
-    };
-  }, [sessionId]);
 
   const remove = async () => {
     if (!window.confirm("Delete this session, its transcript and its outputs? Facts already approved into your memory stay.")) return;
@@ -60,7 +50,7 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
         )}
       </div>
       {session && <p className="note">{facts(session)}</p>}
-      {session?.store_transcript && <AudioStatus upload={upload} session={session} />}
+      {session?.store_transcript && <AudioStatus session={session} />}
 
       {state.phase !== "ready" && (
         <div className="callout">
@@ -126,15 +116,11 @@ function facts(s: Detail): string {
   return parts.join(" · ");
 }
 
-function AudioStatus({ upload, session }: { upload: UploadOutcome | null; session: Detail }) {
+function AudioStatus({ session }: { session: Detail }) {
   let text: string;
-  if (session.me_audio_status === "transcribed") text = "Your side of the call was transcribed; the audio is deleted.";
-  else if (session.me_audio_status === "uploaded") text = "Your audio is uploaded and being transcribed.";
-  else if (upload?.state === "uploaded") text = "Your audio is uploaded.";
-  else if (upload?.state === "kept") text = `Your audio is not uploaded yet; retrying (${upload.message}).`;
-  else if (upload?.state === "discarded") text = `Your audio was not used: ${upload.message}`;
-  else if (session.me_audio_status === "none") text = "Your audio did not arrive in time; the summary is from the other side only.";
-  else text = "Uploading your audio…";
+  if (session.me_audio_status === "live") text = "Your side of the call was transcribed live; no audio was kept.";
+  else if (session.me_audio_status === "transcribed") text = "Your side of the call was transcribed; the audio is deleted.";
+  else text = "Your side of the call was not transcribed; the summary is from the other side only.";
   return <p className="note">{text}</p>;
 }
 

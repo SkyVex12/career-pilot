@@ -81,7 +81,8 @@ describe("post-call formatting", () => {
   it("says what it is waiting for", () => {
     const waiting = (s: SessionDetail): PollState => ({ phase: "waiting", session: s, elapsedMs: 0, error: null });
     expect(waitingText(waiting(session({ status: "live" })), true)).toMatch(/Ending/);
-    expect(waitingText(waiting(session()), true)).toMatch(/your audio/);
+    // Both sides are transcribed live: nothing waits for an audio upload.
+    expect(waitingText(waiting(session({ me_audio_status: "live" })), true)).toBe("Writing the summary…");
     expect(waitingText(waiting(session({ me_audio_status: "none" })), false)).toMatch(/summary/);
     expect(waitingText({ phase: "timeout", session: null, error: null }, true)).toMatch(/5 minutes/);
   });
