@@ -7,7 +7,8 @@
 # image also runs copilot-scheduler, copilot-migrate and copilot-db-logins, so the migrations
 # are in every image under /app/migrations.
 
-ARG PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm
+# Docker Hub's official image through Google's mirror (see docker/proxy/Dockerfile).
+ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.12-slim-bookworm
 
 FROM ${PYTHON_IMAGE} AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /bin/uv
