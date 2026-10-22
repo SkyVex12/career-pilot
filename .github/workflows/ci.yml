@@ -1,15 +1,25 @@
 # Pull requests (ARCHITECTURE.md, "CI/CD" step 1): lint, type checks, tests against the local
 # stack, protocol codegen and migration checks, and a Terraform plan for Stage 0 posted on the
-# PR. Merging runs .github/workflows/deploy.yml.
+# PR. Merging runs .github/workflows/deploy.yml, which runs these same jobs first (as a
+# reusable workflow) and deploys only if they pass.
 name: ci
 
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to check (deploy.yml passes the one it deploys)
+        type: string
+        required: false
+        default: ""
 
+# A new push to a pull request cancels its older run. Runs called by deploy.yml are never
+# cancelled here; deploy.yml decides which deploy wins.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -41,6 +51,8 @@ jobs:
           --health-retries 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - name: ElasticMQ and the S3 store
         run: docker compose up -d --wait elasticmq s3
       - uses: astral-sh/setup-uv@v7
@@ -63,6 +75,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -93,6 +107,8 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - name: System libraries (ALSA for cpal, D-Bus for keyring)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
@@ -129,6 +145,8 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -137,6 +155,12 @@ jobs:
           shared-key: rust-windows
           cache-on-failure: true
       - run: cargo clippy -p copilot-desktop --all-targets -- -D warnings
+      # The installer's build (release.yml): apps/desktop/release.json embedded, no dev token,
+      # the updater.
+      - name: Clippy, release build
+        run: cargo clippy -p copilot-desktop --features release --all-targets -- -D warnings
+      - name: Release config overlay
+        run: node apps/desktop/scripts/release.mjs config --version 0.0.0-ci
       - run: cargo test -p copilot-desktop
 
   terraform:
@@ -155,6 +179,8 @@ jobs:
         working-directory: infra/envs/stage0
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.16.5"

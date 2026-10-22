@@ -1,0 +1,155 @@
+# The desktop installer (README.md, "Releasing the desktop app"): push a tag desktop-v<version>
+# (e.g. desktop-v0.2.0) on a commit on main. The Windows runner builds the NSIS installer with
+# that version, pointed at the stage in apps/desktop/release.json, with the updater signature
+# (secrets TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD). The publish job
+# puts it in the public releases bucket, latest.json last, so installed apps update at their
+# next start.
+#
+# Windows code signing is off until there is a certificate: set the repository variable
+# AZURE_SIGNING_ACCOUNT (and its secrets, below) for Azure Trusted Signing, or
+# WINDOWS_SIGN_COMMAND for any other signer (README.md, "Code signing").
+name: release-desktop
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: installer (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        name: Version from the tag
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#desktop-v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::tag $GITHUB_REF_NAME: expected desktop-v1.2.3"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: The updater's signing key is set
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is not set (README.md, \"Releasing the desktop app\")"; exit 1; }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-windows
+      - run: pnpm install --frozen-lockfile
+
+      # --- Code signing (a drop-in; off until configured) -----------------------------------
+      # Azure Trusted Signing: an Azure account, a Trusted Signing account and certificate
+      # profile, and an app registration with the "Trusted Signing Certificate Profile Signer"
+      # role. Variables AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE, AZURE_SIGNING_ENDPOINT;
+      # secrets AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID.
+      - name: Azure Trusted Signing
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        shell: bash
+        run: |
+          cargo install trusted-signing-cli --locked
+          echo "WINDOWS_SIGN_COMMAND=trusted-signing-cli -e ${{ vars.AZURE_SIGNING_ENDPOINT }} -a ${{ vars.AZURE_SIGNING_ACCOUNT }} -c ${{ vars.AZURE_SIGNING_PROFILE }} -d Copilot %1" >> "$GITHUB_ENV"
+      - name: Another signer
+        if: vars.AZURE_SIGNING_ACCOUNT == '' && vars.WINDOWS_SIGN_COMMAND != ''
+        shell: bash
+        run: echo "WINDOWS_SIGN_COMMAND=${{ vars.WINDOWS_SIGN_COMMAND }}" >> "$GITHUB_ENV"
+
+      - name: Release config (version, updater, signing)
+        working-directory: apps/desktop
+        run: node scripts/release.mjs config --version ${{ steps.version.outputs.version }}
+      - name: Build the installer
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: pnpm tauri build --features release --config src-tauri/tauri.release.conf.json
+      - name: Release files and the update manifest
+        working-directory: apps/desktop
+        run: node scripts/release.mjs manifest --version ${{ steps.version.outputs.version }} --out ../../dist-release
+      - name: Signed for Windows?
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature dist-release/Copilot-setup.exe
+          "Authenticode: $($sig.Status) $($sig.SignerCertificate.Subject)" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ steps.version.outputs.version }}
+          path: dist-release
+          if-no-files-found: error
+
+  publish:
+    name: publish to the releases bucket
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation into the release account: no stored key
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      BUCKET: ${{ vars.GCP_RELEASES_BUCKET }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: The tag is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; tag a commit on main"; exit 1; }
+      - name: The repository variables are set
+        run: |
+          [ -n "$BUCKET" ] && [ -n "${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}" ] ||
+            { echo "::error::set GCP_RELEASES_BUCKET and GCP_RELEASE_SERVICE_ACCOUNT (terraform output ci)"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-${{ needs.build.outputs.version }}
+          path: dist-release
+      - name: The manifest points at this bucket
+        run: |
+          url=$(jq -r '.platforms["windows-x86_64"].url' dist-release/latest.json)
+          case "$url" in
+            "https://storage.googleapis.com/$BUCKET/desktop/$VERSION/"*) echo "installer url: $url" ;;
+            *) echo "::error::latest.json points at $url, not this bucket: run stage.py desktop-config"; exit 1 ;;
+          esac
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Upload (the versioned installer, then the download link, then latest.json)
+        run: |
+          base="gs://$BUCKET/desktop"
+          gcloud storage cp --cache-control="public, max-age=31536000, immutable" \
+            "dist-release/$VERSION/"* "$base/$VERSION/"
+          gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/Copilot-setup.exe "$base/Copilot-setup.exe"
+          gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/latest.json "$base/latest.json"
+      - name: Summary
+        run: |
+          {
+            echo "### Copilot desktop $VERSION published"
+            echo ""
+            echo "- Download: https://storage.googleapis.com/$BUCKET/desktop/Copilot-setup.exe"
+            echo "- Update manifest: https://storage.googleapis.com/$BUCKET/desktop/latest.json"
+            echo "- Installed apps offer the update at their next start."
+          } >> "$GITHUB_STEP_SUMMARY"

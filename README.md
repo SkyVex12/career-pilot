@@ -42,7 +42,7 @@ evals/          copilot-replay: stream a recorded call through the gateway
 infra/gcp/      Terraform for Stage 0 on GCP, and stage.py (see infra/gcp/README.md)
 infra/          Terraform for Stage 0 on AWS (unused), and deploy.py (see infra/README.md)
 docker/         the service images (python.Dockerfile, proxy/) and the local stack's config
-.github/        CI on pull requests, deploy on merge to main
+.github/        CI on pull requests; deploy on merge to main; desktop releases on desktop-v* tags
 scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py,
                 desktop_test_stack.py (the backend for the client's API tests)
 ```
@@ -400,30 +400,66 @@ Done once, by hand, in this order.
    uv run infra/gcp/scripts/stage.py secrets status
    ```
 
-8. **CI.** Repository variables (Settings → Secrets and variables → Actions → Variables, or
+8. **CI/CD.** Repository variables (Settings → Secrets and variables → Actions → Variables, or
    `gh variable set`) from `terraform output ci`: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-   `GCP_CI_SERVICE_ACCOUNT` and `GCP_REGISTRY`. No key is stored in GitHub: workflow runs on
-   `main` sign in through Workload Identity Federation and may only push images.
-9. **First deploy:** merge to `main` (CI builds the images), then `stage.py deploy`.
-10. **The desktop app.** Settings → Environment: Cloud. Paste the VM's IP (`terraform output
-    external_ip`) into "Cloud host" and press Fill URLs, Save, then Sign in: the browser opens
-    Google's sign-in, and the app keeps the sign-in in the Windows Credential Manager.
+   `GCP_CI_SERVICE_ACCOUNT`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_RELEASE_SERVICE_ACCOUNT`,
+   `GCP_REGISTRY` and `GCP_RELEASES_BUCKET`. No key is stored in GitHub: runs sign in through
+   Workload Identity Federation, and only from `main` (images, deploys) or a `desktop-v*` tag
+   (desktop releases), each as an account that may do only that (`infra/gcp/modules/ci`).
+   For desktop releases, also the secrets `TAURI_SIGNING_PRIVATE_KEY` and
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` ("Releasing the desktop app").
+9. **First deploy:** merge to `main`. The workflow checks, builds and deploys.
+10. **The desktop app.** Teammates install the release build ("Installing the desktop app"),
+    which knows the stage. A dev build (`tauri dev`): Settings → Environment: Cloud, paste the
+    VM's IP (`terraform output external_ip`) into "Cloud host", press Fill URLs, Save, then
+    Sign in: the browser opens Google's sign-in, and the app keeps the sign-in in the Windows
+    Credential Manager.
 
 ### Deploy
 
-Merging to `main` builds the images (`.github/workflows/deploy.yml`: linux/amd64 for the VM and
-linux/arm64, one tag, the git SHA) and pushes them to Artifact Registry. Deploying is a command:
+Every push to `main` deploys (`.github/workflows/deploy.yml`):
+
+1. **Checks:** the same jobs as on a pull request (`ci.yml`: Python, TypeScript, Rust on Linux
+   and Windows, Terraform). Nothing below runs unless all of them pass.
+2. **Images:** gateway, API, worker and proxy for linux/amd64 and linux/arm64, one tag, the git
+   SHA, in Artifact Registry.
+3. **Deploy** of exactly those images, as the deploy service account (Workload Identity
+   Federation; IAP and OS Login to the VM, no SSH port): `stage.py deploy --tag <sha> --start
+   --check`. If the VM is stopped it is started first and left running (the run's summary
+   says so). On the VM, `copilotctl` pulls the images, runs the migrations and the database
+   logins as a one-off container, then replaces the API, the worker, the gateway and the proxy
+   one at a time; each must report healthy, or it puts the previous tag back. Then the health
+   check (`stage.py health`): each service's `/healthz`, and through nginx the API's
+   `/v1/auth/config` and a WebSocket handshake on `/v1/session` that the gateway itself
+   answers. If it fails, the previous tag is deployed again and the run fails.
+
+One deploy runs at a time: a merge that lands during a deploy waits for it, and of several
+waiting the newest wins (the older ones show as cancelled). A call in progress reconnects and
+resumes in a few seconds.
+
+**Watching a deploy:** Actions → deploy, or `gh run watch` (`gh run list --workflow deploy`).
+The run's summary page shows the commit, the tag it replaced, the health check, and whether
+the VM was started or a rollback happened. Then `stage.py status` and `stage.py logs --since
+15m`.
+
+**Deploying a specific commit** (it must be on `main`): Actions → deploy → Run workflow, with
+the SHA, or `gh workflow run deploy --ref main -f sha=<git sha>`. That run checks out the
+commit, runs the checks on it, builds its images (mostly from the cache) and deploys it, with
+the same health check and rollback. By hand, without the checks, for images already in the
+registry:
 
 ```sh
-uv run infra/gcp/scripts/stage.py deploy                 # the commit at origin/main
-uv run infra/gcp/scripts/stage.py deploy --tag <git sha> # any tag in the registry
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check   # --start if it is stopped
 uv run infra/gcp/scripts/stage.py status
+uv run infra/gcp/scripts/stage.py health
 ```
 
-On the VM (over IAP SSH) it pulls the images, runs the migrations and the database logins as
-a one-off container, then replaces the API, the worker, the gateway and the proxy one at a
-time; each must report healthy, or the deploy rolls everything back to the previous tag. A call
-in progress reconnects and resumes in a few seconds. The VM must be running.
+**Branch protection.** `main` should require a pull request with every CI job passing; GitHub
+offers that for private repositories only on a paid plan (Pro, Team or Enterprise), so it is
+not turned on. Until then, pushing to `main` directly still runs the checks before anything is
+deployed. With a paid plan: Settings → Branches → Add rule for `main` (or `gh api -X PUT
+repos/SkyVex12/career-pilot/branches/main/protection`), "Require a pull request", "Require
+status checks": the jobs of `ci` (python, typescript, rust-linux, rust-windows, terraform).
 
 Infrastructure changes are not deployed by CI: run `terraform plan` and `apply` after merging.
 A change to a service's configuration (`copilot-env` in the VM's metadata) or to a secret is
@@ -431,13 +467,17 @@ live after an apply and `stage.py restart` (each container reads both when it st
 
 ### Rollback
 
+A failed health check rolls back by itself. By hand:
+
 ```sh
-uv run infra/gcp/scripts/stage.py rollback               # the tag deployed before this one
-uv run infra/gcp/scripts/stage.py deploy --tag <git sha> # or any older tag still kept
+uv run infra/gcp/scripts/stage.py rollback                       # the tag deployed before this one
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check # or any older tag still kept
 ```
 
-The registry keeps about the last ten tags. Migrations follow expand then contract, so older
-code runs against the newer schema.
+or Actions → deploy → Run workflow with the older commit's SHA (checks and all). A rollback
+does not revert `main`: the next merge deploys the head of `main` again, so revert the bad
+commit in a pull request too. The registry keeps about the last ten tags. Migrations follow
+expand then contract, so older code runs against the newer schema.
 
 ### Logs
 
@@ -509,6 +549,100 @@ and CI's access. The KMS key's versions are destroyed a day later; the empty key
 since Google never deletes key rings (it costs nothing, and a new apply needs
 `terraform import` of it or another `name`). Delete the repository variables so the workflow
 skips the GCP jobs again.
+
+## Installing the desktop app
+
+For teammates (Windows 10 or 11). The installer is built from a `desktop-v*` tag and points at
+the Stage 0 server; it updates itself.
+
+1. **Get on the allow-list first.** Only listed Google accounts can sign in. Send the owner the
+   Google account email you will use; they add it to `allowed_emails` in
+   `infra/gcp/envs/stage0/allowlist.auto.tfvars` and run:
+
+   ```sh
+   terraform -chdir=infra/gcp/envs/stage0 plan -out=tfplan    # shows only copilot-env changing
+   terraform -chdir=infra/gcp/envs/stage0 apply tfplan
+   uv run infra/gcp/scripts/stage.py restart api gateway worker
+   ```
+
+2. **Download** the installer:
+   <https://storage.googleapis.com/copilot-stage0-releases-career-pilot-512115/desktop/Copilot-setup.exe>
+3. **Run it.** The installer is not code-signed yet, so Windows warns: "Windows protected your
+   PC". Click **More info**, then **Run anyway**. (Your browser may also ask whether to keep
+   the file: choose Keep.) It installs for your user only, without an administrator prompt,
+   and adds Copilot Desktop to the Start menu.
+4. **Sign in.** Open Copilot Desktop → Settings → **Sign in**. Your browser opens Google's sign-in;
+   choose the allow-listed account and allow access. "Signed in as you@…" appears in the app.
+   An account not on the list gets "not allowed" from the server.
+5. Settings: pick the microphone and the speakers the call plays on.
+
+**Updates:** at each start the app asks the releases bucket for a newer version; when there is
+one, a bar at the top offers **Install and restart** (not during a call). Updates are signed;
+the app installs only installers signed with the release key.
+
+**Plain HTTP:** Stage 0 has no TLS yet (see "Deploying Stage 0"): use it only for the team's
+tests. To uninstall: Settings → Apps → Copilot Desktop → Uninstall; the sign-in stays in the Windows
+Credential Manager (`com.copilot.desktop` entries) until you sign out.
+
+## Releasing the desktop app
+
+Tag a commit on `main`:
+
+```sh
+git tag desktop-v0.2.0 origin/main && git push origin desktop-v0.2.0
+gh run watch $(gh run list --workflow release-desktop -L 1 --json databaseId -q '.[0].databaseId')
+```
+
+`.github/workflows/release-desktop.yml` builds the installer on a Windows runner with the
+tag's version (`pnpm tauri build --features release`), signs it for the updater, and publishes
+to the public bucket `copilot-stage0-releases-career-pilot-512115`: `desktop/<version>/`
+(the installer and its signature, kept), `desktop/Copilot-setup.exe` (the download link) and,
+last, `desktop/latest.json`, the update manifest. Installed apps pick it up at their next
+start. Versions must go up (semver); a tag on a commit not on `main` builds but does not
+publish.
+
+**Release builds.** The `release` Cargo feature embeds `apps/desktop/release.json` (the stage's
+API and gateway URLs, the update manifest's URL and the updater's public key): no local
+environment, no dev token, no URL fields in the settings. After a change to the stage's IP or
+bucket, `uv run infra/gcp/scripts/stage.py desktop-config` rewrites the URLs from `terraform
+output desktop`; commit the file and tag a release. `apps/desktop/scripts/release.mjs` writes
+the Tauri config for the build (`config`) and the manifest (`manifest`). A local release build:
+
+```sh
+cd apps/desktop
+node scripts/release.mjs config --version 0.2.0
+$env:TAURI_SIGNING_PRIVATE_KEY = "$HOME\.copilot-release\updater.key"          # PowerShell
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Get-Content "$HOME\.copilot-release\updater.key.password"
+pnpm tauri build --features release --config src-tauri/tauri.release.conf.json
+node scripts/release.mjs manifest --version 0.2.0 --out ../../dist-release
+```
+
+**The updater key.** `pnpm tauri signer generate -w <file>` made the pair. The public key is in
+`release.json`; the private key and its password are not in the repository: they are the
+secrets `TAURI_SIGNING_PRIVATE_KEY` (the key file's contents) and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, with the owner's copy kept offline. Losing the private
+key means installed apps can no longer update: a new key needs a new installer, installed by
+hand. If it leaks, make a new pair, release with the new public key, and have everyone
+reinstall.
+
+### Code signing
+
+The installer is unsigned for now, hence the SmartScreen warning. Signing is a drop-in in
+`release-desktop.yml`: set the repository variable `AZURE_SIGNING_ACCOUNT` (with
+`AZURE_SIGNING_PROFILE`, `AZURE_SIGNING_ENDPOINT` and the secrets `AZURE_CLIENT_ID`,
+`AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`) for Azure Trusted Signing, or `WINDOWS_SIGN_COMMAND`
+for any other signer (Tauri runs it with `%1` as the file to sign, for the app and the
+installer). The run's summary shows the Authenticode status. Options, at list prices as of
+late 2026 (check before buying):
+
+| Option | Cost | Notes |
+| --- | --- | --- |
+| Azure Trusted Signing (Artifact Signing) | about $10 a month (Basic, 5,000 signatures) | Microsoft-managed keys and short-lived certificates, built for CI. Identity validation of an organization (or, in the US and Canada, an individual); takes days. Simplest with this workflow |
+| OV code signing certificate (Sectigo, DigiCert, SSL.com, …) | about $200 to $500 a year | Since 2023 the key must live in a hardware token or a cloud HSM, so a `.pfx` in a GitHub secret is no longer possible; use the CA's cloud signing (e.g. SSL.com eSigner, DigiCert KeyLocker, extra fees) or Azure Key Vault Premium with `WINDOWS_SIGN_COMMAND` |
+| EV code signing certificate | about $300 to $700 a year | The same key rules. Since 2024 EV no longer skips SmartScreen's reputation check, so it buys little over OV here |
+
+With any of them, SmartScreen may still warn for the first downloads until the publisher
+builds reputation; signing removes "Unknown publisher" at once.
 
 ## Protocol codegen
 

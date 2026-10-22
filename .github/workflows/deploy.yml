@@ -1,10 +1,16 @@
-# Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4, Stage 0). On GCP (the gcp-* jobs at
-# the end): multi-arch images to Artifact Registry; deploying is a person's command. On AWS
-# (unused while the account's organization policy blocks it): build the ARM64 images on
-# GitHub's ARM runners (native, no emulation), push them to ECR tagged with the git SHA, run
-# the migrations as a one-off ECS task, then deploy the services (infra/scripts/deploy.py).
-# The instance must be running; a deploy to a stopped stage fails and can be rerun from the
-# Actions tab (or run deploy.py by hand) once it is started.
+# Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4; README.md, "Deploy"): the same checks
+# as on pull requests (ci.yml, called here), then the images, then the deploy of exactly those
+# images. Nothing is built or deployed unless every check passes in this run.
+#
+# Stage 0 on GCP (the gcp-* jobs): multi-arch images to Artifact Registry, tagged with the git
+# SHA; then `stage.py deploy --tag <sha> --start --check` as the deploy service account: start
+# the VM if it is stopped (and leave it running), migrations, each service in turn, a health
+# check of the gateway and the API, and a rollback to the previous tag if that fails (the run
+# then fails). Access is Workload Identity Federation only (no keys), the VM is reached over
+# IAP with OS Login (no SSH port is open), and one deploy runs at a time.
+#
+# AWS (the images and deploy jobs; unused while the account's organization policy blocks it):
+# ARM64 images to ECR, migrations as a one-off ECS task, then the services (deploy.py).
 name: deploy
 
 on:
@@ -12,28 +18,66 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Deploy an image tag (git SHA) that is already in ECR, e.g. to roll back. Empty: build and deploy this commit."
+      sha:
+        description: "A commit on main to check, build and deploy (e.g. to go back to it). Empty: the head of main."
         required: false
-
-concurrency:
-  group: deploy-stage0
-  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write # GitHub OIDC into the deploy role: no stored AWS keys
 
 env:
   AWS_REGION: us-east-1
   STAGE: copilot-stage0
 
 jobs:
+  commit:
+    name: commit to deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - name: Deploys run from main only
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::deploy.yml runs from main only (this run is on ${GITHUB_REF})"
+          exit 1
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: sha
+        name: The commit, which must be on main
+        env:
+          WANTED: ${{ inputs.sha || github.sha }}
+        run: |
+          sha=$(git rev-parse --verify "${WANTED}^{commit}") || { echo "::error::no commit ${WANTED}"; exit 1; }
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Deploying \`$sha\`: $(git log -1 --format=%s "$sha")" >> "$GITHUB_STEP_SUMMARY"
+
+  checks:
+    name: checks
+    needs: commit
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.commit.outputs.sha }}
+    # What ci.yml's jobs ask for (the Terraform job's OIDC and its PR comment, unused here).
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+  # --- AWS (unused) ----------------------------------------------------------------------------
+
   images:
-    if: vars.AWS_DEPLOY_ROLE_ARN != '' && (github.event_name == 'push' || inputs.tag == '')
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    needs: [commit, checks]
     name: image (${{ matrix.image }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         include:
@@ -43,6 +87,8 @@ jobs:
           - { image: proxy, dockerfile: docker/proxy/Dockerfile, package: "", command: "" }
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.commit.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -61,19 +107,27 @@ jobs:
           build-args: |
             PACKAGE=${{ matrix.package }}
             COMMAND=${{ matrix.command }}
-          tags: ${{ steps.ecr.outputs.registry }}/${{ env.STAGE }}/${{ matrix.image }}:${{ github.sha }}
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.STAGE }}/${{ matrix.image }}:${{ needs.commit.outputs.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   deploy:
-    if: always() && vars.AWS_DEPLOY_ROLE_ARN != '' && (needs.images.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
-    needs: images
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    needs: [commit, images]
     runs-on: ubuntu-24.04
     # No `environment:` here: it would change the OIDC subject the deploy role trusts
     # (repo:<owner>/<repo>:ref:refs/heads/main).
     timeout-minutes: 30
+    concurrency:
+      group: deploy-stage0-aws
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.commit.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -84,19 +138,22 @@ jobs:
       - name: Migrate and deploy
         run: >-
           uv run --no-project --with "boto3>=1.40" python infra/scripts/deploy.py
-          --name "$STAGE" --region "$AWS_REGION" --tag "${{ inputs.tag || github.sha }}"
+          --name "$STAGE" --region "$AWS_REGION" --tag "${{ needs.commit.outputs.sha }}"
 
-  # --- Stage 0 on GCP (infra/gcp) -----------------------------------------------------------
-  # Images to Artifact Registry through Workload Identity Federation (no service account key):
-  # each image built natively for linux/amd64 (the e2-small VM) and linux/arm64, then joined
-  # into one multi-arch tag, the git SHA. Deploying stays a person's command
-  # (`infra/gcp/scripts/stage.py deploy`, README.md "Deploying Stage 0"). Skipped until the
-  # repository variables from `terraform output ci` are set.
+  # --- Stage 0 on GCP (infra/gcp) -------------------------------------------------------------
+  # Images through Workload Identity Federation as the push-only CI account: each image built
+  # natively for linux/amd64 (the e2-small VM) and linux/arm64, then joined into one multi-arch
+  # tag, the git SHA. Skipped until the repository variables from `terraform output ci` are set.
+
   gcp-images:
-    if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && (github.event_name == 'push' || inputs.tag == '')
+    if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+    needs: [commit, checks]
     name: gcp image (${{ matrix.image }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -108,6 +165,8 @@ jobs:
           - { image: proxy, dockerfile: docker/proxy/Dockerfile, package: "", command: "" }
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.commit.outputs.sha }}
       - id: gcp
         uses: google-github-actions/auth@v3
         with:
@@ -131,15 +190,18 @@ jobs:
           build-args: |
             PACKAGE=${{ matrix.package }}
             COMMAND=${{ matrix.command }}
-          tags: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}-${{ matrix.arch }}
+          tags: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}:${{ needs.commit.outputs.sha }}-${{ matrix.arch }}
           cache-from: type=gha,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
 
   gcp-manifests:
-    needs: gcp-images
+    needs: [commit, gcp-images]
     name: gcp image (${{ matrix.image }}, multi-arch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         image: [gateway, api, worker, proxy]
@@ -159,6 +221,41 @@ jobs:
       - name: One tag for both architectures
         env:
           REPO: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}
+          SHA: ${{ needs.commit.outputs.sha }}
         run: |
-          docker buildx imagetools create -t "$REPO:$GITHUB_SHA" "$REPO:$GITHUB_SHA-amd64" "$REPO:$GITHUB_SHA-arm64"
-          docker buildx imagetools inspect "$REPO:$GITHUB_SHA" | grep -E "Platform|Name"
+          docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
+          docker buildx imagetools inspect "$REPO:$SHA" | grep -E "Platform|Name"
+
+  gcp-deploy:
+    # Only from main, and only after the checks and the images of this run (needs). Skipped
+    # until GCP_DEPLOY_SERVICE_ACCOUNT is set (terraform output ci).
+    if: github.ref == 'refs/heads/main' && vars.GCP_DEPLOY_SERVICE_ACCOUNT != ''
+    needs: [commit, gcp-manifests]
+    name: gcp deploy (Stage 0 VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # One deploy at a time: a newer merge waits for the running deploy, and a waiting one is
+    # replaced by the next (GitHub keeps one pending run per group).
+    concurrency:
+      group: deploy-stage0-gcp
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.commit.outputs.sha }}
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.7"
+      - name: Deploy, health check, roll back on failure
+        run: >-
+          uv run --no-project python infra/gcp/scripts/stage.py deploy
+          --tag "${{ needs.commit.outputs.sha }}" --start --check

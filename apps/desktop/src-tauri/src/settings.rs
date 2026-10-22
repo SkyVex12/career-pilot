@@ -13,6 +13,8 @@ use copilot_client::oauth::OAuthConfig;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::release::ReleaseConfig;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Environment {
@@ -78,6 +80,18 @@ impl Settings {
         }
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(path, text).map_err(|e| e.to_string())
+    }
+
+    /// Release builds talk to their stage only: the cloud environment with the embedded URLs,
+    /// whatever the file says (a dev build's settings file may be there from before).
+    pub fn pin_to_release(&mut self, release: &ReleaseConfig) {
+        if self.cloud_api_url.trim() != release.api_url {
+            // The sign-in settings belong to the stage they came from.
+            self.oauth = None;
+        }
+        self.environment = Environment::Cloud;
+        self.cloud_api_url = release.api_url.clone();
+        self.cloud_gateway_url = release.gateway_url.clone();
     }
 
     /// The URLs the app uses now: (gateway, API).
@@ -147,6 +161,33 @@ mod tests {
         let saved = serde_json::to_value(&s).unwrap();
         assert_eq!(saved["environment"], "cloud");
         assert!(saved.get("cloud_api_url").is_some() && saved.get("aws_api_url").is_none());
+    }
+
+    #[test]
+    fn a_release_build_pins_the_cloud_environment_to_its_stage() {
+        let release = ReleaseConfig {
+            stage: "Stage 0".into(),
+            api_url: "http://34.1.2.3/v1".into(),
+            gateway_url: "ws://34.1.2.3/v1/session".into(),
+            update_url: "https://storage.googleapis.com/b/desktop/latest.json".into(),
+        };
+        let oauth = r#"{"domain":"https://accounts.google.com","client_id":"c","scopes":["openid"]}"#;
+        // A dev build's file, on the local stack: switched to the stage, the old sign-in dropped.
+        let mut s: Settings = serde_json::from_str(&format!(
+            r#"{{"environment":"local","cloud_api_url":"http://10.0.0.9/v1","oauth":{oauth}}}"#
+        ))
+        .unwrap();
+        s.pin_to_release(&release);
+        assert_eq!(s.environment, Environment::Cloud);
+        assert_eq!(s.active_urls(), ("ws://34.1.2.3/v1/session", "http://34.1.2.3/v1"));
+        assert!(s.oauth.is_none());
+        // Already on the stage: the sign-in settings stay.
+        let mut s: Settings = serde_json::from_str(&format!(
+            r#"{{"environment":"cloud","cloud_api_url":"http://34.1.2.3/v1","oauth":{oauth}}}"#
+        ))
+        .unwrap();
+        s.pin_to_release(&release);
+        assert!(s.oauth.is_some());
     }
 
     #[test]

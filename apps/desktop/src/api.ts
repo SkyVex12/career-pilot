@@ -70,6 +70,10 @@ export interface Settings {
 // src-tauri get_settings
 export interface SettingsView {
   settings: Settings;
+  /** The app's version (the release tag's, in an installed build). */
+  version: string;
+  /** An installed release build: pinned to its stage, no local environment or dev token. */
+  release: { stage: string; api_url: string } | null;
   dev_token_set: boolean;
   /** The cloud environment's signed-in user (their email), if any. */
   signed_in_as: string | null;
@@ -126,8 +130,26 @@ export interface StartRequest {
   store_transcript: boolean;
 }
 
+/** src-tauri release.rs UpdateState: an update found at start (release builds). */
+export type UpdateState =
+  | { state: "none" }
+  | { state: "available"; version: string; notes: string | null }
+  | { state: "installing"; version: string }
+  | { state: "failed"; message: string };
+
+/** The Rust side changed the settings on its own (e.g. the sign-in settings at startup). */
+export function onSettingsChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("copilot://settings", () => handler());
+}
+
+export function onUpdate(handler: (u: UpdateState) => void): Promise<UnlistenFn> {
+  return listen<UpdateState>("copilot://update", (e) => handler(e.payload));
+}
+
 export const api = {
   getSettings: () => invoke<SettingsView>("get_settings"),
+  updateStatus: () => invoke<UpdateState>("update_status"),
+  installUpdate: () => invoke<void>("install_update"),
   signIn: () => invoke<string>("sign_in"),
   signOut: () => invoke<void>("sign_out"),
   saveSettings: (settings: Settings, devToken: string | null) =>

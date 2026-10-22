@@ -248,6 +248,40 @@ resource "google_storage_bucket_iam_member" "backups" {
   member = "serviceAccount:${module.host.service_account}"
 }
 
+# --- Desktop releases: the installers and the update manifest, readable by anyone -------------
+
+# The desktop app's installer and latest.json (the Tauri updater's manifest), published by
+# .github/workflows/release-desktop.yml. Public: teammates download the installer with a
+# plain link and the installed apps read the manifest without signing in. Nothing secret
+# goes here, and the updater checks every download against the public key in the app.
+resource "google_storage_bucket" "releases" {
+  name                        = "${local.prefix}-releases-${var.project_id}"
+  location                    = upper(var.region)
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "inherited"
+  force_destroy               = true
+  versioning {
+    enabled = true # a replaced latest.json or installer can be restored
+  }
+  lifecycle_rule {
+    condition {
+      num_newer_versions = 3
+      with_state         = "ARCHIVED"
+    }
+    action {
+      type = "Delete"
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_storage_bucket_iam_member" "releases_public" {
+  bucket = google_storage_bucket.releases.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+}
+
 # --- Per-user encryption: Cloud KMS ------------------------------------------------------------
 
 # Key rings cannot be deleted in GCP: teardown removes the key's versions (after a day) and
@@ -372,4 +406,8 @@ module "ci" {
   github_repo         = var.github_repo
   repository_id       = google_artifact_registry_repository.images.repository_id
   repository_location = google_artifact_registry_repository.images.location
+  instance            = module.host.instance
+  zone                = module.host.zone
+  vm_service_account  = module.host.service_account
+  releases_bucket     = google_storage_bucket.releases.name
 }

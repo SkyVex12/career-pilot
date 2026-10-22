@@ -3,7 +3,20 @@
 // panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
 import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
-import { api, inTauri, rest, type DeviceInfo, type Employer, type LiveStatus, type PackState, type Settings, type SettingsView } from "./api";
+import {
+  api,
+  inTauri,
+  onSettingsChanged,
+  onUpdate,
+  rest,
+  type DeviceInfo,
+  type Employer,
+  type LiveStatus,
+  type PackState,
+  type Settings,
+  type SettingsView,
+  type UpdateState,
+} from "./api";
 import { cloudUrlsFor } from "./urls";
 import { parseTarget, upcoming } from "./catalog";
 import { Documents, when } from "./Documents";
@@ -41,7 +54,12 @@ export default function App() {
     });
   };
   useEffect(() => {
-    if (inTauri) reload();
+    if (!inTauri) return;
+    reload();
+    const off = onSettingsChanged(reload);
+    return () => {
+      off.then((f) => f());
+    };
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -80,6 +98,7 @@ export default function App() {
         <span className="spacer" />
         <StatusBadge session={session} />
       </nav>
+      <UpdateBanner running={session.running} />
       {tab === "start" && (
         <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
       )}
@@ -91,6 +110,36 @@ export default function App() {
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
     </main>
+  );
+}
+
+/** Release builds check for a new version at start; installing it restarts the app. */
+function UpdateBanner({ running }: { running: boolean }) {
+  const [update, setUpdate] = useState<UpdateState>({ state: "none" });
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.updateStatus().then(setUpdate);
+    const off = onUpdate(setUpdate);
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
+  if (update.state === "none") return null;
+  if (update.state === "failed") return <p className="callout">{update.message}</p>;
+  if (update.state === "installing") return <p className="callout">Installing version {update.version}; the app restarts…</p>;
+  const install = () => {
+    setError(null);
+    api.installUpdate().catch((e) => setError(String(e)));
+  };
+  return (
+    <p className="callout">
+      Version {update.version} is available.{" "}
+      <button className="primary" onClick={install} disabled={running}>
+        Install and restart
+      </button>
+      {running && <span className="note"> After this session.</span>}
+      {error && <span className="note"> {error}</span>}
+    </p>
   );
 }
 
@@ -479,22 +528,37 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
     </select>
   );
 
+  const release = view.release;
   return (
     <section className="panel">
       <div className="grid">
-        <label>Environment</label>
-        <div className="row">
-          <label className="check">
-            <input type="radio" checked={draft.environment === "local"} onChange={() => set("environment", "local")} />
-            Local (this machine, dev token)
-          </label>
-          <label className="check">
-            <input type="radio" checked={draft.environment === "cloud"} onChange={() => set("environment", "cloud")} />
-            Cloud (Google sign-in)
-          </label>
-        </div>
+        {release ? (
+          <>
+            <label>Server</label>
+            <div>
+              <span>{release.stage}</span>
+              <p className="note">
+                {release.api_url} · version {view.version}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <label>Environment</label>
+            <div className="row">
+              <label className="check">
+                <input type="radio" checked={draft.environment === "local"} onChange={() => set("environment", "local")} />
+                Local (this machine, dev token)
+              </label>
+              <label className="check">
+                <input type="radio" checked={draft.environment === "cloud"} onChange={() => set("environment", "cloud")} />
+                Cloud (Google sign-in)
+              </label>
+            </div>
+          </>
+        )}
 
-        {draft.environment === "local" ? (
+        {!release && draft.environment === "local" && (
           <>
             <label>Gateway URL</label>
             <input value={draft.gateway_url} onChange={(e) => set("gateway_url", e.target.value)} />
@@ -518,7 +582,9 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
               </p>
             </div>
           </>
-        ) : (
+        )}
+
+        {!release && draft.environment === "cloud" && (
           <>
             <label>Cloud host</label>
             <div className="row">
@@ -542,7 +608,11 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
 
             <label>API URL</label>
             <input value={draft.cloud_api_url} onChange={(e) => set("cloud_api_url", e.target.value)} />
+          </>
+        )}
 
+        {(release || draft.environment === "cloud") && (
+          <>
             <label>Account</label>
             <div>
               {view.signed_in_as !== null ? (

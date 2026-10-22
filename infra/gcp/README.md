@@ -13,10 +13,13 @@ envs/stage0/      Stage 0: main.tf wires everything, terraform.tfvars sizes it;
 modules/
   host/           the VM, its static IP, firewall rules (port 80, IAP SSH), the data disk, its
                   service account, and the boot config (cloud-init.yaml.tftpl)
-  ci/             Workload Identity Federation for GitHub Actions, the push-only CI account
+  ci/             Workload Identity Federation for GitHub Actions and its three accounts:
+                  ci (image pushes), deploy (start the VM, IAP + OS Login), release (the
+                  desktop releases bucket)
 host/             files the VM gets at every boot: copilotctl.sh, elasticmq.conf
-scripts/stage.py  one command per operation (deploy, rollback, logs, backups, allow-list,
-                  secrets, start and stop); it runs copilotctl on the VM over IAP SSH
+scripts/stage.py  one command per operation (deploy, rollback, health, logs, backups,
+                  allow-list, secrets, start and stop, desktop-config); it runs copilotctl on
+                  the VM over IAP SSH
 ```
 
 ## On the VM
