@@ -45,3 +45,6 @@ logs/
 evals/bench/audio/
 evals/bench/results/*/run-*.json
 evals/bench/results/*/logs/
+
+# Company eval: cached node vectors per embedding model (evals/company)
+evals/company/.vectors-*.json

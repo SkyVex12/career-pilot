@@ -123,6 +123,9 @@ export interface StartRequest {
   job_id: string | null;
   interview_id: string | null;
   meeting_title: string | null;
+  /** A standup or meeting at a company: its pack and its memory. */
+  employer_id?: string | null;
+  agenda?: string | null;
   platform: string;
   store_transcript: boolean;
 }
@@ -156,6 +159,13 @@ export const api = {
     file.arrayBuffer().then((buf) =>
       invoke<DocumentItem>("upload_document", new Uint8Array(buf), {
         headers: { "x-kind": kind, "x-file-name": encodeURIComponent(file.name) },
+      }),
+    ),
+  /** A company document or work log attachment, posted raw to `path` (the API seals it). */
+  uploadCompanyFile: (path: string, file: File) =>
+    file.arrayBuffer().then((buf) =>
+      invoke<CompanyDocument>("upload_company_file", new Uint8Array(buf), {
+        headers: { "x-api-path": encodeURIComponent(path), "x-file-name": encodeURIComponent(file.name) },
       }),
     ),
   deleteAccount: () => invoke<{ status: string }>("delete_account"),
@@ -249,6 +259,7 @@ export interface SessionItem {
   platform: string | null;
   job_id: string | null;
   interview_id: string | null;
+  employer_id?: string | null;
   store_transcript: boolean;
   started_at: string | null;
   ended_at: string | null;
@@ -288,6 +299,90 @@ export interface Me {
   plan: string;
 }
 
+// Company workspaces (apps/api/src/copilot_api/routes/employers.py).
+
+export interface Employer {
+  id: string;
+  name: string;
+  title: string;
+  team: string;
+  started_on: string | null;
+  ended_on: string | null;
+  status: "active" | "archived";
+  current: boolean;
+  created_at: string;
+  logs?: number;
+  last_log?: string | null;
+  documents?: number;
+  pending_proposals?: number;
+}
+
+export type EmployerFields = Partial<Pick<Employer, "name" | "title" | "team" | "started_on" | "ended_on" | "status">>;
+
+export type WorkplaceKind = "work_item" | "commitment" | "project" | "system" | "person" | "decision" | "term";
+
+export interface MemoryItem {
+  id: string;
+  kind: WorkplaceKind;
+  title: string;
+  summary: string;
+  body: Record<string, unknown>;
+  day: string | null;
+  status: "active" | "archived";
+  source: { type?: string; ref?: string };
+  edited: boolean;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+export interface WorkLog {
+  id: string;
+  day: string;
+  text: string;
+  status: "saved" | "extracting" | "extracted" | "failed";
+  attachments: Attachment[];
+  updated_at: string | null;
+  items?: MemoryItem[];
+}
+
+export interface CompanyDocument {
+  id: string;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  status: "uploaded" | "ingesting" | "ingested" | "failed";
+  created_at?: string;
+  pending_proposals?: number;
+  approved_proposals?: number;
+}
+
+export interface Proposal {
+  id: string;
+  employer_id: string | null;
+  company_document_id: string | null;
+  document_name: string | null;
+  status: "pending" | "approved" | "rejected";
+  kind: WorkplaceKind;
+  title: string;
+  summary: string;
+  evidence: string | null;
+  body: Record<string, unknown>;
+}
+
+export interface PackState {
+  mode: "standup" | "meeting";
+  status: "none" | "stale" | "ready" | "building";
+  pack_id?: string;
+  built_at?: string;
+  day?: string | null;
+  token_count?: number;
+}
+
 const call = <T>(method: string, path: string, body?: unknown) =>
   invoke<T>("api_call", { method, path, body: body ?? null });
 
@@ -307,4 +402,31 @@ export const rest = {
   session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
+
+  employers: () => call<{ employers: Employer[] }>("GET", "/employers"),
+  createEmployer: (fields: EmployerFields & { name: string }) => call<Employer>("POST", "/employers", fields),
+  updateEmployer: (id: string, fields: EmployerFields) => call<Employer>("PATCH", `/employers/${id}`, fields),
+  deleteEmployer: (id: string, confirm: string) =>
+    call<{ deleted: Record<string, number> }>("DELETE", `/employers/${id}?confirm=${encodeURIComponent(confirm)}`),
+  logs: (employerId: string, before?: string | null) =>
+    call<{ logs: WorkLog[]; next_before: string | null }>(
+      "GET",
+      `/employers/${employerId}/logs${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+    ),
+  putLog: (employerId: string, day: string, text: string) => call<WorkLog>("PUT", `/employers/${employerId}/logs/${day}`, { text }),
+  deleteLog: (employerId: string, day: string) => call<null>("DELETE", `/employers/${employerId}/logs/${day}`),
+  companyDocuments: (employerId: string) => call<{ documents: CompanyDocument[] }>("GET", `/employers/${employerId}/documents`),
+  deleteCompanyDocument: (employerId: string, id: string) => call<null>("DELETE", `/employers/${employerId}/documents/${id}`),
+  memory: (employerId: string, kind?: WorkplaceKind) =>
+    call<{ memory: MemoryItem[] }>("GET", `/employers/${employerId}/memory${kind ? `?kind=${kind}` : ""}`),
+  updateMemory: (id: string, fields: { title?: string; summary?: string; body?: Record<string, unknown> }) =>
+    call<MemoryItem>("PATCH", `/memory/${id}`, fields),
+  archiveMemory: (id: string) => call<null>("DELETE", `/memory/${id}`),
+  proposals: (employerId: string) => call<{ proposals: Proposal[] }>("GET", `/proposals?employer_id=${employerId}`),
+  approveProposal: (id: string, edit?: { title?: string; summary?: string }) => call<unknown>("POST", `/proposals/${id}/approve`, edit ?? null),
+  rejectProposal: (id: string) => call<unknown>("POST", `/proposals/${id}/reject`),
+  decideDocument: (documentId: string, action: "approve" | "reject") =>
+    call<{ decided: number }>("POST", "/proposals/bulk", { action, company_document_id: documentId }),
+  packs: (employerId: string) => call<{ packs: PackState[] }>("GET", `/employers/${employerId}/packs`),
+  ensurePack: (employerId: string, mode: "standup" | "meeting") => call<PackState>("POST", `/employers/${employerId}/packs/${mode}`),
 };

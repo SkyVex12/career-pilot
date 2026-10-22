@@ -113,7 +113,7 @@
       "required": ["max_minutes"]
     },
     "LatencyMs": {
-      "description": "Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a fast pass started speculatively before the detector decided was released to the client (its first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.",
+      "description": "Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a fast pass started speculatively before the detector decided was released to the client (its first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss; memory_wait_ms: how long the pass waited for live memory search (a standup or meeting at a company); memory_hits: the <memory> lines it got; memory_fts_ms and memory_hybrid_ms: the full-text and hybrid queries (durations). Fields are absent when they do not apply.",
       "type": "object",
       "properties": {
         "turn_end_ms": { "type": "integer", "minimum": 0 },
@@ -126,7 +126,11 @@
         "expand_ms": { "type": "integer", "minimum": 0 },
         "release_ms": { "type": "integer", "minimum": 0 },
         "prepared_ms": { "type": "integer", "minimum": 0 },
-        "prepared_similarity": { "type": "number", "minimum": -1, "maximum": 1 }
+        "prepared_similarity": { "type": "number", "minimum": -1, "maximum": 1 },
+        "memory_wait_ms": { "type": "integer", "minimum": 0 },
+        "memory_hits": { "type": "integer", "minimum": 0 },
+        "memory_fts_ms": { "type": "integer", "minimum": 0 },
+        "memory_hybrid_ms": { "type": "integer", "minimum": 0 }
       }
     },
     "MemoryRef": {
@@ -161,6 +165,15 @@
           "$ref": "#/$defs/Uuid"
         },
         "meeting_title": { "type": "string" },
+        "employer_id": {
+          "description": "The company a standup or meeting is at: its pack is loaded and its memory searched live. Ignored in interviews.",
+          "$ref": "#/$defs/Uuid"
+        },
+        "agenda": {
+          "description": "The meeting's agenda or topic, as the user typed it; added to the meeting pack.",
+          "type": "string",
+          "maxLength": 2000
+        },
         "platform": {
           "description": "Call platform, for example zoom, meet or teams.",
           "type": "string",

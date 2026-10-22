@@ -1,0 +1,155 @@
+# A fictional company workspace for the answer-quality eval (evals/README.md, "Company
+# workspaces"): two weeks of work logs and three company documents of the benchmark's fictional
+# candidate (evals/bench/profile.toml) at their current employer. Nothing here is a real
+# company or person.
+#
+# `copilot-company-eval prepare` runs the real extraction prompts on these (work logs as the
+# worklog job, documents as the company_doc job, their proposals approved as a user would) and
+# saves the resulting memory to memory.json, which `run` loads.
+
+today = "2026-10-20"  # a Tuesday: the standup's "yesterday" is Monday's log
+
+[employer]
+name = "Larkspur Commerce"
+title = "Senior Backend Engineer"
+team = "Checkout Platform"
+
+[[log]]
+day = "2026-10-06"
+text = """
+- Picked up PSP-412: refunds can be sent twice to the PSP when the adapter retries after a timeout. Plan: idempotency key per refund, stored with the response.
+- Paired with Dana on the on-call dashboard for the payments adapter.
+- Tomorrow: write the PSP-412 change, look at the checkout p95 alert (CHK-1290).
+"""
+
+[[log]]
+day = "2026-10-07"
+text = """
+- PSP-412: idempotency key = refund id, unique index on (provider, idempotency_key) in the adapter's Postgres, stored response returned on retry. Tests written.
+- CHK-1290: checkout p95 went from 420 ms to 840 ms after last week's cart pricing release. Started profiling.
+- Tomorrow: open the PSP-412 PR, keep digging on CHK-1290.
+"""
+
+[[log]]
+day = "2026-10-08"
+text = """
+- Opened PR #881 for PSP-412 (refund idempotency). Priya reviewing.
+- CHK-1290: traces show the pricing call fanning out per cart line.
+- Tomorrow: confirm the N+1, sync with Marco on the reservation work for Q4.
+"""
+
+[[log]]
+day = "2026-10-09"
+text = """
+- CHK-1290: confirmed an N+1 query in cart pricing: one SELECT per cart line for promo rules. Fix is to batch-load the rules per cart.
+- Synced with Marco (PM): inventory reservations must stop losing events when the reservation service crashes between the DB write and the SQS send. He wants a plan this month.
+- Told Sam I'd review his fraud scoring client timeout PR by Monday.
+"""
+
+[[log]]
+day = "2026-10-12"
+text = """
+- PR #881 (PSP-412) merged after Priya's review.
+- Reviewed Sam's fraud scoring client timeout PR (#887): left two comments, approved.
+- Wrote the design doc for the reservation outbox: write the event to an outbox table in the same Postgres transaction as the reservation, a relay publishes to SQS FIFO.
+- Tomorrow: deploy PSP-412, write the CHK-1290 fix.
+"""
+
+[[log]]
+day = "2026-10-13"
+text = """
+- Deployed PSP-412 to production at 10:00, no duplicate refunds since.
+- Incident (SEV-3, 14:20 to 15:05): duplicate order events after an order-pipeline consumer group rebalance; downstream ledger feed got 312 duplicates. Mitigated by making the consumer idempotent on order id. I was incident lead.
+- CHK-1290 fix in progress.
+"""
+
+[[log]]
+day = "2026-10-14"
+text = """
+- Reservation sync meeting with Priya, Marco and Dana: decided to keep SQS FIFO for reservations and add the transactional outbox; Kafka revisited in Q1 if reservations pass 2,000 messages a second.
+- Promised Marco the outbox rollout plan by Friday 2026-10-23.
+- Opened PR #893 for CHK-1290 (batch-load promo rules). Waiting on Dana's review.
+"""
+
+[[log]]
+day = "2026-10-15"
+text = """
+- Postmortem for the 10-13 duplicate events incident. Action item for me: add a dedupe table for order events with a 7-day TTL, due 2026-10-27.
+- Started the outbox migration (CHK-1305): outbox table and the relay skeleton in Go.
+"""
+
+[[log]]
+day = "2026-10-16"
+text = """
+- Outbox relay: polling the outbox with SELECT ... FOR UPDATE SKIP LOCKED in batches of 100, publishing to SQS FIFO with the reservation id as message group and dedupe id.
+- On-call handoff to Dana, nothing open.
+- Monday: get PR #893 merged, wire the relay into staging.
+"""
+
+[[log]]
+day = "2026-10-19"
+text = """
+- PR #893 (CHK-1290) merged: checkout p95 back down from 840 ms to 310 ms in staging.
+- Reviewed Priya's RFC on PSP failover (switching a payment to the backup PSP when the primary times out). Left comments on retry ordering.
+- Outbox in staging: blocked, the relay's database role has no grant on the outbox table in the staging Postgres, and only SRE can change roles there. Need Dana to grant it.
+- Tomorrow: pair with Dana on the staging grant, start the backfill script for existing reservations (CHK-1311).
+"""
+
+[[document]]
+name = "checkout-platform-architecture.md"
+text = """
+# Checkout Platform: architecture notes
+
+Owner: Checkout Platform team (engineering manager: Priya Raman).
+
+## Services
+- **Checkout API**: Python (FastAPI) on ECS Fargate behind an ALB. Owns the cart, pricing and the checkout flow. Calls the payments adapter over gRPC.
+- **Payments adapter** ("the adapter"): Go service on ECS that talks to the PSPs (Stripe as primary, Adyen as backup). One connection pool per PSP, capped at 200 connections. Stores refund and capture records in its own Postgres.
+- **Order pipeline**: Go consumers on Kafka (MSK). Turns checkout events into orders and feeds the ledger.
+- **Reservation service**: Go on ECS. Holds inventory for a cart during checkout and sends reservation events to an SQS FIFO queue for the warehouse system.
+- **Fraud scoring client**: a Python library the Checkout API calls; owned by Sam Okafor. Times out after 800 ms and fails open.
+
+## Data and messaging
+- Postgres (RDS) per service; no shared databases.
+- Kafka topics: checkout-events, orders, ledger-feed.
+- SQS FIFO: reservations.fifo. Messages that fail 5 receives go to reservations-dlq; Dana's team replays the DLQ with the `dlq-replay` tool after a fix, and checks it every Monday.
+
+## Operations
+- On-call: one engineer per week; Dana Whitfield (SRE) owns the platform side.
+- Dashboards in Grafana; alerts page at checkout p95 above 600 ms for 10 minutes.
+"""
+
+[[document]]
+name = "2026-10-14-reservation-sync-notes.md"
+text = """
+# Reservation sync, 2026-10-14
+
+Attendees: Priya Raman (EM), Marco Silva (PM), Dana Whitfield (SRE), Alex Rivera.
+
+## Problem
+The reservation service writes the reservation to Postgres and then sends to SQS. A crash between the two loses the event; the warehouse never sees the hold.
+
+## Options
+1. Move reservations to Kafka. Rejected for now: a second MSK cluster or new topics on the order cluster add cost and on-call load, and the team knows SQS well.
+2. Keep SQS FIFO and add a transactional outbox: the event is written in the same transaction as the reservation; a relay publishes it.
+
+## Decision
+Keep SQS FIFO and build the outbox (option 2). SQS FIFO's 5-minute deduplication window plus idempotent warehouse consumers is enough. Revisit Kafka in Q1 if reservations pass 2,000 messages a second.
+
+## Action items
+- Alex: outbox design and rollout plan for Marco by 2026-10-23.
+- Dana: staging access for the relay.
+- Marco: tell the warehouse team about the duplicate-tolerant consumer requirement.
+"""
+
+[[document]]
+name = "checkout-glossary.md"
+text = """
+# Checkout glossary
+
+- **PSP**: payment service provider (Stripe, Adyen).
+- **Reservation hold**: the inventory a cart holds during checkout; it expires after 15 minutes without payment.
+- **Auth-capture gap**: the time between authorizing a card and capturing the payment; ours is up to 7 days for back-ordered items.
+- **Ledger feed**: the Kafka topic finance reads orders from; it must not see duplicates.
+- **The adapter**: the payments adapter service.
+"""

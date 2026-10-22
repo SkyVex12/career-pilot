@@ -103,6 +103,8 @@ fn start_params(job_id: Option<Uuid>, interview_id: Option<Uuid>, store_transcri
         job_id,
         interview_id,
         meeting_title: None,
+        employer_id: None,
+        agenda: None,
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript,

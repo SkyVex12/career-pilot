@@ -33,6 +33,16 @@ def document_key(user_id: UUID, document_id: UUID, content_type: str) -> str:
     return f"{user_prefix(user_id)}documents/{document_id}{EXTENSIONS.get(content_type, '')}"
 
 
+def employer_prefix(user_id: UUID, employer_id: UUID) -> str:
+    """Everything stored for one company: its documents and work log attachments, sealed
+    with the user's data key. "Delete all data for this company" removes this prefix."""
+    return f"{user_prefix(user_id)}employers/{employer_id}/"
+
+
+def company_document_key(user_id: UUID, employer_id: UUID, document_id: UUID) -> str:
+    return f"{employer_prefix(user_id, employer_id)}{document_id}.sealed"
+
+
 def me_audio_key(user_id: UUID, session_id: UUID) -> str:
     return f"{user_prefix(user_id)}me-audio/{session_id}"
 

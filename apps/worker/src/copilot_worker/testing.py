@@ -21,14 +21,14 @@ from copilot_core.ids import uuid7
 from copilot_core.jobs import MemoryJobQueue
 from copilot_core.storage import document_key
 from copilot_core.teststack import S3_ENDPOINT, VALKEY_URL
-from copilot_worker import documents, packs, sessionlog, system
+from copilot_worker import documents, packs, sessionlog, system, workplace
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import Ctx
 from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures
 from copilot_worker.runtime import HANDLERS, Job
 
 FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
-HANDLER_MODULES = (documents, packs, sessionlog, system)
+HANDLER_MODULES = (documents, packs, sessionlog, system, workplace)
 
 
 def worker_settings(**over: Any) -> WorkerSettings:
@@ -55,6 +55,7 @@ class Stack:
     jobs: MemoryJobQueue
     claude: ClaudeFixtures
     deepgram: DeepgramFixtures
+    url: str = ""  # the test database's superuser URL, for pools as other roles
 
     async def run(self, message: dict[str, Any]) -> None:
         """Run one enqueued message's handler directly."""
@@ -117,9 +118,10 @@ STARTED = datetime(2026, 10, 6, 15, 0, tzinfo=UTC)
 
 class GatewayLog:
     def __init__(self, stack: Stack, uid: UUID, store_transcript: bool = True,
-                 mode: str = "interview") -> None:  # fmt: skip
+                 mode: str = "interview", employer_id: UUID | None = None) -> None:  # fmt: skip
         self.stack = stack
         self.uid = uid
+        self.employer_id = employer_id
         self.sid = uuid7()
         self.store = store_transcript
         self.mode = mode
@@ -138,6 +140,8 @@ class GatewayLog:
             "started_at": STARTED.isoformat(),
             "pack_id": "",
             "digest_version": "",
+            "employer_id": str(self.employer_id) if self.employer_id else "",
+            "agenda": "",
             "task_id": "task-1",
             "updated_at": str(time.time()),
         }

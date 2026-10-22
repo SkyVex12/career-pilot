@@ -10,6 +10,7 @@ import hashlib
 import math
 import re
 import struct
+from collections.abc import Iterable, Mapping
 from typing import Literal
 from uuid import UUID
 
@@ -71,6 +72,64 @@ class PreparedAnswer(_Model):
         return list(struct.unpack(f"<{len(raw) // 4}f", raw))
 
 
+class PackItem(_Model):
+    """One line of a standup or meeting pack: a workplace memory node as the prompt shows it."""
+
+    node_id: UUID
+    short_id: str = ""
+    text: str
+    date: str | None = None  # the work log day it came from
+    due_date: str | None = None  # commitments
+    state: str | None = None
+
+
+class StandupBrief(_Model):
+    """A company's standup: the last working day's log, today's plans, blockers and open
+    commitments, all from that company's memory (copilot_core.workplace)."""
+
+    day: str = ""  # the standup's date, in the user's time zone
+    yesterday_day: str | None = None  # the log day "yesterday" is from (the last one before)
+    yesterday: list[PackItem] = []
+    today: list[PackItem] = []
+    blockers: list[PackItem] = []
+    open_commitments: list[PackItem] = []
+    recent: list[PackItem] = []  # the rest of the last week, for "what about X?"
+
+
+# The meeting brief's sections, in prompt order, with their headings.
+BRIEF_SECTIONS: dict[str, str] = {
+    "projects": "Projects",
+    "systems": "Systems and stack",
+    "people": "People",
+    "decisions": "Decisions",
+    "terms": "Terms used here",
+    "recent_work": "Recent work",
+    "open_commitments": "Open commitments",
+}
+
+
+class WorkplaceBrief(_Model):
+    """A company's meeting pack: what the user's work there is about, from its memory."""
+
+    sections: dict[str, list[PackItem]] = {}
+
+
+class MeetingContext(_Model):
+    """What the user typed for this meeting, and the company's memory that matches it. Set
+    by the gateway at session start on its own copy of the pack, never stored by workers."""
+
+    title: str | None = None
+    agenda: str | None = None
+    related: list[PackItem] = []
+
+
+class EmployerRef(_Model):
+    id: UUID
+    name: str
+    title: str = ""
+    team: str = ""
+
+
 class SessionPack(_Model):
     """`pack:{uid}:{pack_id}`: `session_pack.v1`.
 
@@ -88,8 +147,14 @@ class SessionPack(_Model):
     ranked_stories: list[RankedStory] = []
     prepared_answers: list[PreparedAnswer] = []
     embedding_model: str | None = None
-    standup: dict[str, object] | None = None
+    standup: StandupBrief | None = None
     token_count: int = 0
+    # Company workspaces: the employer a standup or meeting pack belongs to, the version of
+    # that company's memory it was rendered from, and the meeting brief.
+    employer: EmployerRef | None = None
+    memory_version: str | None = None
+    workplace: WorkplaceBrief | None = None
+    meeting: MeetingContext | None = None
     # Short ids used in prepared talking points that are not ranked stories.
     refs: dict[str, NodeRef] = {}
 
@@ -109,6 +174,21 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+def pack_items(pack: SessionPack) -> list[PackItem]:
+    """Every standup and meeting item of a pack."""
+    items: list[PackItem] = []
+    if pack.standup is not None:
+        b = pack.standup
+        for group in (b.yesterday, b.today, b.blockers, b.open_commitments, b.recent):
+            items.extend(group)
+    if pack.workplace is not None:
+        for group in pack.workplace.sections.values():
+            items.extend(group)
+    if pack.meeting is not None:
+        items.extend(pack.meeting.related)
+    return items
+
+
 def ref_map(digest: Digest | None, pack: SessionPack | None) -> dict[str, NodeRef]:
     """Short id to node, from the digest and the pack (the pack wins on a clash)."""
     refs: dict[str, NodeRef] = {}
@@ -118,7 +198,40 @@ def ref_map(digest: Digest | None, pack: SessionPack | None) -> dict[str, NodeRe
         refs.update(pack.refs)
         for story in pack.ranked_stories:
             refs[story.short_id] = NodeRef(node_id=story.node_id, label=story.title)
+        for item in pack_items(pack):
+            if item.short_id:
+                refs[item.short_id] = NodeRef(node_id=item.node_id, label=item.text[:120])
     return refs
+
+
+def short_ids(node_ids: Iterable[UUID], prefix: str = "") -> dict[UUID, str]:
+    """Short ids like n:3f2a from a hash of the node id, stable across rebuilds; longer only on
+    a clash. Career memory uses plain hex; workplace memory starts with `w` (n:w3f2), a letter
+    hex never has, so a company's ids never clash with the digest's."""
+    out: dict[UUID, str] = {}
+    used: set[str] = set()
+    for node_id in sorted(set(node_ids)):
+        out[node_id] = _short_id(node_id, prefix, used)
+        used.add(out[node_id])
+    return out
+
+
+def _short_id(node_id: UUID, prefix: str, taken: Iterable[str]) -> str:
+    used = set(taken)
+    digest = hashlib.sha256(node_id.bytes).hexdigest()
+    size = 4 - len(prefix)
+    while f"n:{prefix}{digest[:size]}" in used:
+        size += 1
+    return f"n:{prefix}{digest[:size]}"
+
+
+def assign_short_id(node_id: UUID, refs: Mapping[str, NodeRef], prefix: str = "w") -> str:
+    """The short id for a node found during the call (live memory search): the one the session
+    already uses for it, otherwise the stable one, longer if another node has that."""
+    for short, ref in refs.items():
+        if ref.node_id == node_id:
+            return short
+    return _short_id(node_id, prefix, refs.keys())
 
 
 def cited_refs(text: str, refs: dict[str, NodeRef]) -> list[NodeRef]:
@@ -154,9 +267,55 @@ def render_pack(pack: SessionPack) -> str:
         for a in pack.prepared_answers:
             lines.append(f"Q: {a.question}")
             lines.extend(f"- {p}" for p in a.talking_points)
-    if pack.standup:
-        lines.append("## Standup")
-        for key in ("yesterday", "today", "blockers", "open_commitments"):
-            if key in pack.standup:
-                lines.append(f"{key}: {pack.standup[key]}")
+    if pack.standup is not None:
+        lines.extend(_render_standup(pack.standup))
+    if pack.meeting is not None and (pack.meeting.title or pack.meeting.agenda):
+        lines.append("## This meeting")
+        if pack.meeting.title:
+            lines.append(f"Title: {pack.meeting.title}")
+        if pack.meeting.agenda:
+            lines.append(f"Agenda: {pack.meeting.agenda}")
+        if pack.meeting.related:
+            lines.append("Related to the agenda:")
+            lines.extend(render_item(i) for i in pack.meeting.related)
+    if pack.workplace is not None:
+        for key, heading in BRIEF_SECTIONS.items():
+            items = pack.workplace.sections.get(key) or []
+            if items:
+                lines.append(f"## {heading}")
+                lines.extend(render_item(i) for i in items)
     return "\n".join(lines)
+
+
+def render_item(item: PackItem) -> str:
+    cite = f"[{item.short_id}] " if item.short_id else ""
+    extra: list[str] = []
+    if item.state and item.state not in ("open", "active"):
+        extra.append(item.state.replace("_", " "))
+    if item.date:
+        extra.append(item.date)
+    if item.due_date:
+        extra.append(f"due {item.due_date}")
+    tail = f" ({', '.join(extra)})" if extra else ""
+    return f"- {cite}{item.text}{tail}"
+
+
+def _render_standup(b: StandupBrief) -> list[str]:
+    lines = [f"## Standup on {b.day}" if b.day else "## Standup"]
+    yesterday = f"Yesterday ({b.yesterday_day})" if b.yesterday_day else "Yesterday"
+    groups = (
+        (yesterday, b.yesterday, "nothing logged"),
+        ("Today", b.today, "nothing planned in the log"),
+        ("Blockers", b.blockers, "none logged"),
+        ("Open commitments", b.open_commitments, "none"),
+    )
+    for heading, items, empty in groups:
+        lines.append(f"{heading}:")
+        if items:
+            lines.extend(render_item(i) for i in items)
+        else:
+            lines.append(f"- ({empty})")
+    if b.recent:
+        lines.append("Earlier this week:")
+        lines.extend(render_item(i) for i in b.recent)
+    return lines

@@ -46,6 +46,10 @@ VISIBILITY: dict[str, int] = {
     "usage.report": 900,
     "user.delete": 1800,
     "sessions.sweep": 120,
+    "worklog.extract": 900,
+    "company_doc.extract": 900,
+    "workplace.refresh": 600,
+    "employer.purge": 1800,
 }
 
 

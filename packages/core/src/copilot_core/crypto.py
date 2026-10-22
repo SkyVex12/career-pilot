@@ -208,15 +208,25 @@ def seal(dek: bytes, table: str, row_id: str, plaintext: str) -> bytes:
     return FORMAT_V1 + nonce + ct
 
 
-def open_sealed(dek: bytes, table: str, row_id: str, sealed: bytes) -> str:
+def seal_bytes(dek: bytes, table: str, row_id: str, plaintext: bytes) -> bytes:
+    """`seal` for files (company documents in object storage): the same format and
+    associated data, bytes in and out."""
+    nonce = os.urandom(NONCE_BYTES)
+    return FORMAT_V1 + nonce + AESGCM(dek).encrypt(nonce, plaintext, associated_data(table, row_id))
+
+
+def open_sealed_bytes(dek: bytes, table: str, row_id: str, sealed: bytes) -> bytes:
     if not sealed.startswith(FORMAT_V1) or len(sealed) < 1 + NONCE_BYTES + 16:
         raise DecryptError("unknown ciphertext format")
     nonce, ct = sealed[1 : 1 + NONCE_BYTES], sealed[1 + NONCE_BYTES :]
     try:
-        plain = AESGCM(dek).decrypt(nonce, ct, associated_data(table, row_id))
+        return AESGCM(dek).decrypt(nonce, ct, associated_data(table, row_id))
     except InvalidTag as e:
         raise DecryptError(f"ciphertext does not open for app.{table} row {row_id}") from e
-    return plain.decode("utf-8")
+
+
+def open_sealed(dek: bytes, table: str, row_id: str, sealed: bytes) -> str:
+    return open_sealed_bytes(dek, table, row_id, sealed).decode("utf-8")
 
 
 class UserCrypto:
@@ -296,6 +306,17 @@ class UserCrypto:
         version: int,
     ) -> str:
         return open_sealed(await self.key(conn, user_id, version), table, row_id, sealed)
+
+    async def encrypt_bytes(
+        self, conn: Conn, user_id: UUID, table: str, row_id: str, plaintext: bytes
+    ) -> tuple[bytes, int]:
+        version, dek = await self.current_key(conn, user_id)
+        return seal_bytes(dek, table, row_id, plaintext), version
+
+    async def decrypt_bytes(
+        self, conn: Conn, user_id: UUID, table: str, row_id: str, sealed: bytes, version: int
+    ) -> bytes:
+        return open_sealed_bytes(await self.key(conn, user_id, version), table, row_id, sealed)
 
 
 def segment_row_id(session_id: UUID | str, channel: str, seg_id: int) -> str:

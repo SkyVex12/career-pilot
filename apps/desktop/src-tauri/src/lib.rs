@@ -254,6 +254,26 @@ async fn upload_document(state: State<'_, AppState>, request: Request<'_>) -> Re
     state.api()?.upload_document(&kind, &file_name, bytes.clone()).await.map_err(|e| e.to_string())
 }
 
+/// A company document or work log attachment from the UI: the file's bytes as the raw body,
+/// the API path to post it to in `x-api-path` and its name in `x-file-name` (URI-encoded).
+#[tauri::command]
+async fn upload_company_file(state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the file's bytes".into());
+    };
+    let header = |name: &str| -> Res<String> {
+        let raw =
+            request.headers().get(name).and_then(|v| v.to_str().ok()).ok_or(format!("missing {name}"))?;
+        Ok(percent_decode(raw))
+    };
+    let path = header("x-api-path")?;
+    if !path.starts_with("/employers/") {
+        return Err(format!("cannot upload to {path}"));
+    }
+    let file_name = header("x-file-name")?;
+    state.api()?.upload_raw(&path, &file_name, bytes.clone()).await.map_err(|e| e.to_string())
+}
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -365,6 +385,10 @@ struct StartRequest {
     job_id: Option<Uuid>,
     interview_id: Option<Uuid>,
     meeting_title: Option<String>,
+    #[serde(default)]
+    employer_id: Option<Uuid>,
+    #[serde(default)]
+    agenda: Option<String>,
     platform: String,
     store_transcript: bool,
 }
@@ -428,6 +452,8 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             job_id: request.job_id,
             interview_id: request.interview_id,
             meeting_title: request.meeting_title,
+            employer_id: request.employer_id,
+            agenda: request.agenda,
             platform: request.platform,
             client_version: format!("desktop-{}", app.package_info().version),
             store_transcript: request.store_transcript,
@@ -695,6 +721,7 @@ pub fn run() {
             list_devices,
             api_call,
             upload_document,
+            upload_company_file,
             delete_account,
             sign_in,
             sign_out,

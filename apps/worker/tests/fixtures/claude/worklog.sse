@@ -1,0 +1,39 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_fixture_worklog","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2400,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"fixture-signature"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\"work_items\": [{\"title\": \"Label retry bug fix\", \"summary\": \"Fixed the label retry bug; retries now back off 1s, 4s, 16s\", \"state\": \"done\", \"external_id\": \"PR #412\", \"project\": \"Label service\"}, {\"title\": \"Review of the rate cache PR\", \"summary\": \"Reviewed Sam's PR for the rate cache\", \"state\": \"done\", \"external_id\": \"\", \"project\": \"Rate service\"}, {\"title\": \"Tracking webhook testing\", \"summary\": "}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"Blocked: the DHL carrier sandbox is down, so the new tracking webhook cannot be tested\", \"state\": \"blocked\", \"external_id\": \"\", \"project\": \"Tracking API\"}, {\"title\": \"Rate cache warm-up job\", \"summary\": \"Start the rate cache warm-up job\", \"state\": \"planned\", \"external_id\": \"RATE-88\", \"project\": \"Rate service\"}], \"decisions\": [{\"title\": \"Keep SQS for the dispatch queue\", \"summary\": \"Decided with P"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"riya to keep SQS instead of moving to Kafka this quarter\", \"project\": \"Dispatch service\"}], \"commitments\": [{\"text\": \"Send Priya the rollout plan for the label retries\", \"due_date\": \"2026-10-23\"}], \"closed_commitments\": [], \"projects\": [], \"systems\": [{\"name\": \"Label service\", \"summary\": \"Prints carrier labels and retries failed carrier calls\", \"stack\": []}, {\"name\": \"Rate service\", \"summary\": \"Qu"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"otes shipping rates\", \"stack\": []}, {\"name\": \"Tracking API\", \"summary\": \"Receives carrier tracking webhooks\", \"stack\": []}], \"people\": [{\"name\": \"Priya Raman\", \"role\": \"Engineering manager\", \"summary\": \"Manager the user agreed the SQS decision with\"}, {\"name\": \"Sam Okafor\", \"role\": \"\", \"summary\": \"Wrote the rate cache PR\"}], \"terms\": []}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":600}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

@@ -417,8 +417,10 @@ impl Validate for SessionLimits {
 /// expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a
 /// fast pass started speculatively before the detector decided was released to the client (its
 /// first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a
-/// duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss.
-/// Fields are absent when they do not apply.
+/// duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss;
+/// memory_wait_ms: how long the pass waited for live memory search (a standup or meeting at a
+/// company); memory_hits: the <memory> lines it got; memory_fts_ms and memory_hybrid_ms: the full-
+/// text and hybrid queries (durations). Fields are absent when they do not apply.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencyMs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -443,6 +445,14 @@ pub struct LatencyMs {
     pub prepared_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_similarity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_wait_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_hits: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_fts_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_hybrid_ms: Option<u64>,
 }
 
 impl Validate for LatencyMs {
@@ -495,6 +505,13 @@ pub struct SessionStart {
     pub interview_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meeting_title: Option<String>,
+    /// The company a standup or meeting is at: its pack is loaded and its memory searched live.
+    /// Ignored in interviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub employer_id: Option<Uuid>,
+    /// The meeting's agenda or topic, as the user typed it; added to the meeting pack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agenda: Option<String>,
     /// Call platform, for example zoom, meet or teams.
     pub platform: String,
     pub client_version: String,
@@ -504,6 +521,9 @@ pub struct SessionStart {
 
 impl Validate for SessionStart {
     fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(v) = &self.agenda {
+            check::max_len("agenda", v, 2000)?;
+        }
         {
             let v = &self.platform;
             check::min_len("platform", v, 1)?;

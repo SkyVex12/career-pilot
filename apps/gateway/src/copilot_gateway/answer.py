@@ -21,7 +21,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -132,15 +132,25 @@ class PreparedMatcher:
     def enabled(self) -> bool:
         return self.embedder is not None and bool(self.vectors)
 
-    async def match(self, text: str) -> MatchResult | None:
+    async def match(
+        self, text: str, embedding: "Awaitable[list[float] | None] | None" = None
+    ) -> MatchResult | None:
+        """`embedding` is the text's vector when the session already asked for it (memory
+        search shares it), else the matcher embeds the text itself."""
         if self.embedder is None or not self.vectors:
             return None
         started = time.monotonic()
-        try:
-            [query] = await self.embedder.embed([text])
-        except Exception as e:
-            log.warning("prepared-answer embedding failed: %s", e)
-            return None
+        if embedding is not None:
+            vec = await asyncio.shield(embedding)
+            if vec is None:
+                return None
+            query = vec
+        else:
+            try:
+                [query] = await self.embedder.embed([text])
+            except Exception as e:
+                log.warning("prepared-answer embedding failed: %s", e)
+                return None
         scored = sorted(
             ((cosine(query, vec), i) for i, (_, vec) in enumerate(self.vectors)), reverse=True
         )
@@ -174,6 +184,14 @@ class AnswerHost(Protocol):
     def llm_status(self, ok: bool) -> None: ...
 
     def cache_version(self) -> str: ...
+
+    def cache_extra(self) -> dict[str, str]:
+        """Fields stored with an exact-repeat answer (the company it was given at)."""
+        ...
+
+    async def memory_lines(self, text: str, pass_: str) -> tuple[list[str], dict[str, int]]:
+        """Live memory search results for this pass, as `<memory>` lines, and their timings."""
+        ...
 
     async def qa_get(self, qhash: str) -> dict[str, Any] | None: ...
 
@@ -372,6 +390,7 @@ class AnswerEngine:
                 out["expand_ms"] = max(0, int((q.expanded_at - q.t0) * 1000))
             if pass_ == "fast" and (m := self._match_result(q)) is not None:
                 out["prepared_ms"] = m.ms
+            out.update(state.get("memory") or {})
             return out
 
         def done(
@@ -468,7 +487,9 @@ class AnswerEngine:
             self.stats["model_passes"] += 1
             state["start_at"] = time.monotonic()
             job = pass_
-            req = self._request(q, pass_)
+            memory, memory_stats = await host.memory_lines(q.text, pass_)
+            state["memory"] = memory_stats
+            req = self._request(q, pass_, memory)
             state["req"] = req
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
@@ -598,15 +619,16 @@ class AnswerEngine:
             )
         self.host.log_entry(entry)
 
-    def _request(self, q: Question, pass_: str) -> LLMRequest:
+    def _request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
         s = self.host.settings
         ctx = self.host.prompt_context()
         transcript = self.host.transcript(s.transcript_context_s)
+        memory = memory or []
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.
             qtype = None if q.held else q.qtype
-            return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens)
-        return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens)
+            return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory)
+        return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory)
 
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit."""
@@ -644,7 +666,7 @@ class AnswerEngine:
             version = self.host.cache_version()
             current: dict[str, Any] = await self.host.qa_get(qhash) or {}
             if current.get("v") != version:
-                current = {"v": version}
+                current = {"v": version, **self.host.cache_extra()}
             current[pass_] = {"text": text, "refs": [r.model_dump(mode="json") for r in refs]}
             await self.host.qa_put(qhash, current)
 

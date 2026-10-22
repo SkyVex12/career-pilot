@@ -18,25 +18,28 @@ of the log, and the flush drops any that arrives anyway.
 import json
 import logging
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
-from copilot_core import keys
-from copilot_core.crypto import segment_row_id
+from copilot_core import jobs, keys
+from copilot_core.crypto import UserCrypto, segment_row_id
 from copilot_core.db import Conn
-from copilot_core.ids import uuid7_for
+from copilot_core.ids import uuid7, uuid7_for
 from copilot_core.storage import me_audio_key
 from copilot_core.valkey_client import text
+from copilot_core.workplace import local_today, memory_version
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import as_dict, as_list, complete_json
 from copilot_worker.runtime import Job, RetryLater, handler
 
 log = logging.getLogger(__name__)
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 ME_AUDIO_GIVE_UP_S = 3600  # a transcribe job still waiting on session.ended after this
 
@@ -100,7 +103,7 @@ async def load_state(ctx: Ctx, sid: UUID) -> dict[str, str]:
 
 
 async def ensure_session(
-    conn: Conn, uid: UUID, sid: UUID, meta: dict[str, Any]
+    conn: Conn, uid: UUID, sid: UUID, meta: dict[str, Any], crypto: UserCrypto | None = None
 ) -> dict[str, Any] | None:
     """The sessions row, created from the gateway's state on the first flush."""
     row = await conn.fetchrow(
@@ -125,10 +128,14 @@ async def ensure_session(
     mode = (
         meta.get("mode") if meta.get("mode") in ("interview", "standup", "meeting") else "meeting"
     )
+    # The company a standup or meeting is at, if it is still this user's.
+    employer_id = await conn.fetchval(
+        "select id from app.employers where id = $1", _uuid(meta.get("employer_id"))
+    )
     await conn.execute(
         "insert into app.sessions (id, user_id, mode, job_id, interview_id, platform, title,"
-        " store_transcript, started_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
-        " on conflict (id) do nothing",
+        " store_transcript, started_at, employer_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9,"
+        " $10) on conflict (id) do nothing",
         sid,
         uid,
         mode,
@@ -138,7 +145,17 @@ async def ensure_session(
         meta.get("title") or None,
         str(meta.get("store_transcript")) in ("1", "True", "true"),
         started_at,
+        employer_id,
     )
+    agenda = str(meta.get("agenda") or "")
+    if agenda and crypto is not None:
+        enc, version = await crypto.encrypt(conn, uid, "sessions", str(sid), agenda)
+        await conn.execute(
+            "update app.sessions set agenda_enc = $2, agenda_key_version = $3 where id = $1",
+            sid,
+            enc,
+            version,
+        )
     return await ensure_session(conn, uid, sid, {})
 
 
@@ -158,7 +175,7 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
 
     deferred: list[Entry] = []
     async with ctx.user(uid) as conn:
-        session = await ensure_session(conn, uid, sid, meta)
+        session = await ensure_session(conn, uid, sid, meta, ctx.crypto)
         if session is None:
             log.info("session %s: no state and no row; nothing to flush", sid)
             return result
@@ -564,9 +581,11 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     async with ctx.user(uid) as conn:
         session = await conn.fetchrow(
             "select s.mode, s.store_transcript, s.started_at, s.ended_at, s.billed_seconds,"
-            " j.company, j.title as job_title, i.round, u.display_name"
+            " s.employer_id, e.name as employer_name,"
+            " j.company, j.title as job_title, i.round, u.display_name, u.settings"
             " from app.sessions s join app.users u on u.id = s.user_id"
             " left join app.jobs j on j.id = s.job_id"
+            " left join app.employers e on e.id = s.employer_id"
             " left join app.interviews i on i.id = s.interview_id where s.id = $1",
             sid,
         )
@@ -576,18 +595,22 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     mode = str(session["mode"])
     types = [str(q["type"]) for q in transcript.questions]
     minutes = max(1, math.ceil(int(session["billed_seconds"]) / 60))
+    data: dict[str, Any] = {}
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
         outputs = {"summary": metadata_summary(mode, minutes, types)}
     else:
         context = [f"User: {session['display_name']}", f"Mode: {mode}", f"Length: {minutes} min"]
         if session["company"]:
             context.append(f"Company: {session['company']}, role: {session['job_title']}")
+        if session["employer_name"]:
+            context.append(f"At work, company: {session['employer_name']}")
         if session["round"]:
             context.append(f"Round: {session['round']}")
         req = prompts.postcall_request(
             mode, context, transcript_text(transcript), questions_text(transcript)
         )
-        outputs = render_outputs(mode, await complete_json(ctx.router, "postcall", req))
+        data = await complete_json(ctx.router, "postcall", req)
+        outputs = render_outputs(mode, data)
     async with ctx.user(uid) as conn:
         await conn.execute("delete from app.session_outputs where session_id = $1", sid)
         for kind, content in outputs.items():
@@ -603,5 +626,52 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
                 enc,
                 version,
             )
+        employer_id = session["employer_id"]
+        version = None
+        if mode == "standup" and employer_id is not None:
+            # The standup's commitments go back into that company's memory and feed the next
+            # standup pack. They are the user's own promises, so they are kept at once (the
+            # post-call screen shows them with a remove button). A rerun replaces them.
+            day = local_today(as_dict(session["settings"]), session["started_at"])
+            added = await replace_session_commitments(
+                conn, uid, employer_id, sid, day, as_list(data.get("commitments"))
+            )
+            log.info("session %s: %d commitments for employer %s", sid, added, employer_id)
+            version = await memory_version(conn, uid, employer_id)
         await conn.execute("update app.sessions set outputs_ready_at = now() where id = $1", sid)
+    if version is not None:
+        await ctx.queue.send(jobs.workplace_refresh(uid, session["employer_id"], version))
     log.info("session %s: post-call outputs %s", sid, sorted(outputs))
+
+
+async def replace_session_commitments(
+    conn: Conn,
+    uid: UUID,
+    employer_id: UUID,
+    sid: UUID,
+    day: date,
+    commitments: Sequence[Any],
+) -> int:
+    """A standup's commitments as `commitment` nodes of its company (source: the session)."""
+    await conn.execute(
+        "delete from app.memory_nodes where kind = 'commitment' and source->>'type' = 'session'"
+        " and source->>'ref' = $1",
+        str(sid),
+    )
+    rows: list[tuple[Any, ...]] = []
+    for c in map(as_dict, commitments):
+        text_ = str(c.get("text") or "").strip()
+        if not text_:
+            continue
+        due = str(c.get("due_date") or "").strip()
+        body = {"due_date": due if DATE.fullmatch(due) else "", "state": "open",
+                "session_id": str(sid)}  # fmt: skip
+        rows.append((uuid7(), uid, employer_id, text_, text_, body,
+                     {"type": "session", "ref": str(sid)}, day))  # fmt: skip
+    await conn.executemany(
+        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title, summary,"
+        " body, source, valid_from) values ($1, $2, $3, 'commitment', 'workplace', $4, $5, $6,"
+        " $7, $8)",
+        rows,
+    )
+    return len(rows)

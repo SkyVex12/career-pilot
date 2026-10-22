@@ -83,6 +83,9 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
               {(kind === "follow_up_email" || kind === "standup_report") && <CopyButton text={text} />}
             </div>
             <div className="output-text">{text}</div>
+            {kind === "standup_report" && state.session.employer_id && (
+              <p className="note">The commitments were added to this company's open commitments for the next standup; remove any under Work, Facts.</p>
+            )}
           </article>
         ))}
       {state.phase === "ready" && outputsInOrder(state.session).length === 0 && <p className="note">No outputs for this session.</p>}

@@ -7,10 +7,12 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import asyncpg
 import uvicorn
 from fastapi import FastAPI, WebSocket
 
 from copilot_core import __version__, embed, logs
+from copilot_core.db import create_pool
 from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import Embedder
 from copilot_core.jobs import SqsJobQueue
@@ -67,6 +69,21 @@ def warn_missing_prices(router: ModelRouter, settings: Settings) -> None:
         log.warning("no price for %s; answers.cost_usd stays empty (COPILOT_MODEL_PRICES)", missing)
 
 
+async def open_pool(settings: Settings) -> asyncpg.Pool | None:
+    """Postgres as app_gateway, for company memory. A database that is down at startup only
+    turns live memory search off: standups and meetings still get their packs."""
+    assert settings.database_url
+    try:
+        pool = await asyncio.wait_for(
+            create_pool(settings.database_url, 1, settings.db_pool_max), timeout=10
+        )
+    except (OSError, TimeoutError, asyncpg.PostgresError) as e:
+        log.warning("no database for company memory (%s); live memory search is off", e)
+        return None
+    log.info("company memory search on (pool of %d)", settings.db_pool_max)
+    return pool
+
+
 def build_services(settings: Settings) -> Services:
     embedder = make_embedder(settings)
     router = build_router(settings)
@@ -88,6 +105,9 @@ def create_app(services: Services | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         svc = services or build_services(Settings())
+        owned_pool = svc.pool is None and bool(svc.settings.database_url)
+        if owned_pool:
+            svc.pool = await open_pool(svc.settings)
         app.state.manager = SessionManager(svc)
         warm = asyncio.create_task(svc.router.warm())
         try:
@@ -95,6 +115,8 @@ def create_app(services: Services | None = None) -> FastAPI:
         finally:
             warm.cancel()
             await app.state.manager.shutdown()
+            if owned_pool and svc.pool is not None:
+                await svc.pool.close()
 
     app = FastAPI(title="Copilot gateway", version=__version__, lifespan=lifespan)
 
