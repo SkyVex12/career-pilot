@@ -1,0 +1,6 @@
+- Fixed the label retry bug in the label service (PR #412, merged). Retries now back off 1s, 4s, 16s.
+- Reviewed Sam's PR for the rate cache.
+- Decided with Priya to keep SQS for the dispatch queue instead of moving to Kafka this quarter.
+- Blocked: the carrier sandbox for DHL is down, so I can't test the new tracking webhook.
+- Promised Priya the rollout plan for the label retries by Friday.
+- Tomorrow: start the rate cache warm-up job (RATE-88).

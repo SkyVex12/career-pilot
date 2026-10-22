@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
-from copilot_core import jobs, logs
+from copilot_core import jobs, logs, workplace
 from copilot_core.db import create_pool, system_tx
 from copilot_core.dotenv import load_dotenv
 from copilot_core.valkey_client import Valkey, make_valkey
@@ -132,6 +132,22 @@ class Scheduler:
             )
             await self.queue.send(message)
             sent.append(str(message["idempotency_key"]))
+            # Each company the user works at now gets its standup pack for that day too.
+            day = workplace.local_today(u.settings, standup).isoformat()
+            async with system_tx(self.pool) as conn:
+                current = [
+                    r["id"]
+                    for r in await conn.fetch(
+                        "select id from app.employers where user_id = $1 and status = 'active'"
+                        " and ended_on is null",
+                        u.id,
+                    )
+                ]
+                for eid in current:
+                    version = await workplace.memory_version(conn, u.id, eid)
+                    message = jobs.employer_pack_build(u.id, eid, "standup", version, day)
+                    await self.queue.send(message)
+                    sent.append(str(message["idempotency_key"]))
         return sent
 
 

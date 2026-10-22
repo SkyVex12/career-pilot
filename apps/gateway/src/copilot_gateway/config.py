@@ -71,6 +71,18 @@ class Settings(CoreSettings):
     )
     rerank_keep: int = 6
     retrieval_budget_ms: int = 100
+    # Live memory search (company workspaces). The gateway's own role, read only; unset, the
+    # gateway has no database and standups and meetings use their packs alone.
+    database_url: str | None = Field(default=None, validation_alias="COPILOT_GATEWAY_DATABASE_URL")
+    db_pool_max: int = 5
+    # How long a pass waits for search results: the fast pass only for full text (local
+    # Postgres answers in a few ms), the deep pass for the hybrid result, which also waits for
+    # the question's embedding.
+    memory_fast_wait_ms: int = 30
+    memory_deep_wait_ms: int = 150
+    memory_fast_hits: int = 4
+    # Rendering a company's pack at session start when no current one is stored (DB only).
+    pack_render_timeout_ms: int = 400
     first_token_timeout_ms: int = 1500
     transcript_context_s: int = 60
     sessions_per_task_target: int = 60

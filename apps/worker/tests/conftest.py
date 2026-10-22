@@ -61,7 +61,7 @@ async def make_stack(wire: str, **settings_over: Any) -> AsyncIterator[Stack]:
     )
     admin = await asyncpg.connect(url)
     try:
-        yield Stack(ctx, admin, jobs, claude, deepgram)
+        yield Stack(ctx, admin, jobs, claude, deepgram, url)
     finally:
         await admin.close()
         await ctx.pool.close()

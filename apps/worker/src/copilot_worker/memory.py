@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
-from copilot_core.packs import Digest, NodeRef
+from copilot_core.packs import Digest, NodeRef, short_ids
 
 DIGEST_MAX_CHARS = 14_000  # about 3,500 tokens; the doc's limit is 4,000
 MAX_STORIES = 12
@@ -156,20 +156,6 @@ async def memory_version(conn: Conn, user_id: UUID) -> str:
     for r in rows:
         h.update(f"{r['id']}:{r['updated_at'].isoformat()};".encode())
     return h.hexdigest()[:16]
-
-
-def short_ids(node_ids: Sequence[UUID]) -> dict[UUID, str]:
-    """Short ids like n:3f2a from a hash of the node id; longer only on a clash."""
-    out: dict[UUID, str] = {}
-    used: set[str] = set()
-    for node_id in sorted(node_ids):
-        digest = hashlib.sha256(node_id.bytes).hexdigest()
-        size = 4
-        while f"n:{digest[:size]}" in used:
-            size += 1
-        out[node_id] = f"n:{digest[:size]}"
-        used.add(out[node_id])
-    return out
 
 
 def _body(row: Any) -> dict[str, Any]:

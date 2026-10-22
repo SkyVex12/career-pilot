@@ -32,7 +32,7 @@ INSUFFICIENT_PRIVILEGE = "42501"  # both "permission denied" and RLS policy viol
 
 APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # Tables each role may read, from the role table in ARCHITECTURE.md.
-GATEWAY_TABLES = {"users", "jobs", "interviews", "memory_nodes", "memory_edges"}
+GATEWAY_TABLES = {"users", "jobs", "interviews", "memory_nodes", "memory_edges", "employers"}
 # Tables without row-level security, on purpose (system table, workers only).
 NO_RLS_TABLES = {"job_runs"}
 
@@ -49,6 +49,9 @@ class World:
     )
     session_id: uuid.UUID = field(default_factory=uuid.uuid4)
     question_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    employer_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    work_log_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    company_document_id: uuid.UUID = field(default_factory=uuid.uuid4)
 
 
 NOW = datetime(2026, 10, 5, 15, 0, tzinfo=UTC)
@@ -67,6 +70,32 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "id": w.user_id if n == 0 else uuid.uuid4(),
         "email": f"{uuid.uuid4().hex}@example.com",
         "display_name": "Test user",
+    },
+    "employers": lambda w, n: {
+        "id": _id(w, n, w.employer_id),
+        "user_id": w.user_id,
+        "name": "Fernhill Logistics",
+    },
+    "work_logs": lambda w, n: {
+        "id": _id(w, n, w.work_log_id),
+        "user_id": w.user_id,
+        "employer_id": w.employer_id,
+        "day": date(2026, 10, 1) + timedelta(days=n),
+        "text_enc": b"ciphertext",
+        "key_version": 1,
+        "content_sha256": "0" * 64,
+    },
+    "company_documents": lambda w, n: {
+        "id": _id(w, n, w.company_document_id),
+        "user_id": w.user_id,
+        "employer_id": w.employer_id,
+        "work_log_id": w.work_log_id,
+        "name_enc": b"ciphertext",
+        "key_version": 1,
+        "s3_key": f"uploads/{w.user_id}/employers/{w.employer_id}/{n}",
+        "sha256": "0" * 64,
+        "content_type": "text/markdown",
+        "size_bytes": 10,
     },
     "user_keys": lambda w, n: {"user_id": w.user_id, "version": n + 1, "encrypted_dek": b"dek"},
     "jobs": lambda w, n: {
@@ -87,7 +116,8 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "id": w.node_ids[n] if n < 2 else uuid.uuid4(),
         "user_id": w.user_id,
         "kind": "commitment",
-        "domain": "career",
+        "domain": "workplace",
+        "employer_id": w.employer_id,
         "title": f"Node {n}",
         "summary": "A commitment",
         "body": {"due_date": "2026-10-06", "state": "open"},
@@ -102,9 +132,11 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
     "memory_proposals": lambda w, n: {
         "id": uuid.uuid4(),
         "user_id": w.user_id,
-        "source": {"type": "session"},
+        "source": {"type": "company_document"},
         "action": "create",
         "payload": {},
+        "employer_id": w.employer_id,
+        "company_document_id": w.company_document_id,
     },
     "sessions": lambda w, n: {
         "id": _id(w, n, w.session_id),
@@ -112,6 +144,7 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "mode": "meeting",
         "store_transcript": True,
         "started_at": NOW,
+        "employer_id": w.employer_id,
     },
     "transcript_segments": lambda w, n: {
         "session_id": w.session_id,
@@ -428,6 +461,13 @@ REFERENCES = [
     ("questions", "session_id", "sessions"),
     ("answers", "question_id", "questions"),
     ("session_outputs", "session_id", "sessions"),
+    ("work_logs", "employer_id", "employers"),
+    ("company_documents", "employer_id", "employers"),
+    ("company_documents", "work_log_id", "work_logs"),
+    ("memory_nodes", "employer_id", "employers"),
+    ("memory_proposals", "employer_id", "employers"),
+    ("memory_proposals", "company_document_id", "company_documents"),
+    ("sessions", "employer_id", "employers"),
 ]
 WRITE_ROLES = [r for r in APP_ROLES if can_write(r)]
 
@@ -439,6 +479,9 @@ def parent_id(w: World, parent: str) -> uuid.UUID:
         "memory_nodes": w.node_ids[0],
         "sessions": w.session_id,
         "questions": w.question_id,
+        "employers": w.employer_id,
+        "work_logs": w.work_log_id,
+        "company_documents": w.company_document_id,
     }[parent]
 
 
@@ -478,7 +521,9 @@ async def test_cannot_repoint_reference_to_another_users_row(
 ) -> None:
     # transcript_segments' key includes session_id; move seg_id so the update cannot collide
     # with user B's seeded segment, which would fail on the key before the foreign key check.
-    extra = ", seg_id = seg_id + 1000" if child == "transcript_segments" else ""
+    # work_logs is unique per (employer, day) the same way.
+    extra = {"transcript_segments": ", seg_id = seg_id + 1000",
+             "work_logs": ", day = day + 1000"}.get(child, "")  # fmt: skip
     sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
     status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
     assert err == FOREIGN_KEY_VIOLATION, (
@@ -548,3 +593,65 @@ async def test_every_reference_between_user_tables_is_same_user(db: Db) -> None:
         assert list(pairs.values()) == ["id"], f"{r['child']}: unexpected key {r['ref_cols']}"
         found.add((r["child"], next(iter(pairs)), r["parent"]))
     assert found == set(REFERENCES), "foreign keys and this test's REFERENCES differ"
+
+
+async def test_deleting_an_employer_removes_its_data_and_only_its_data(db: Db) -> None:
+    """ "Delete all data for this company": the cascade takes the company's logs, documents,
+    workplace memory, proposals and sessions (with their logs), and nothing of another company
+    of the same user or of their career memory."""
+    a = db.a
+    other = uuid.uuid4()
+    career = uuid.uuid4()
+    try:
+        async with db.conn.transaction():
+            await insert(db.conn, "employers", {"id": other, "user_id": a.user_id, "name": "B"})
+            await insert(
+                db.conn, "memory_nodes", ROWS["memory_nodes"](a, 5) | {"employer_id": other}
+            )
+            await insert(db.conn, "memory_nodes", ROWS["memory_nodes"](a, 6) | {
+                "id": career, "domain": "career", "employer_id": None})  # fmt: skip
+            await insert(db.conn, "sessions", ROWS["sessions"](a, 7) | {"employer_id": other})
+            await db.conn.execute("delete from app.employers where id = $1", a.employer_id)
+            for table, col in (("work_logs", "employer_id"), ("company_documents", "employer_id"),
+                               ("memory_nodes", "employer_id"), ("memory_proposals", "employer_id"),
+                               ("sessions", "employer_id")):  # fmt: skip
+                gone = await db.conn.fetchval(
+                    f"select count(*) from app.{table} where {col} = $1", a.employer_id
+                )
+                assert gone == 0, f"{table} rows of the deleted company remain"
+                kept = await db.conn.fetchval(
+                    f"select count(*) from app.{table} where {col} = $1", other
+                )
+                if table in ("memory_nodes", "sessions"):
+                    assert kept == 1, f"{table} rows of the other company were deleted"
+            # The seeded session belonged to the deleted company: its log went with it.
+            assert (
+                await db.conn.fetchval(
+                    "select count(*) from app.questions where session_id = $1", a.session_id
+                )
+                == 0
+            )
+            assert (
+                await db.conn.fetchval(
+                    "select count(*) from app.memory_nodes where id = $1", career
+                )
+                == 1
+            )
+            # User B's company is untouched.
+            assert (
+                await db.conn.fetchval(
+                    "select count(*) from app.memory_nodes where employer_id = $1", db.b.employer_id
+                )
+                == 2
+            )
+            raise Rollback
+    except Rollback:
+        pass
+
+
+async def test_workplace_nodes_name_their_employer(db: Db) -> None:
+    for row in (ROWS["memory_nodes"](db.a, 8) | {"employer_id": None},
+                ROWS["memory_nodes"](db.a, 9) | {"domain": "career"}):  # fmt: skip
+        with pytest.raises(asyncpg.CheckViolationError):
+            async with db.conn.transaction():
+                await insert(db.conn, "memory_nodes", row)

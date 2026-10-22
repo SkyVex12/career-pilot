@@ -23,7 +23,7 @@ router = APIRouter()
 
 SESSION_COLUMNS = (
     "id, mode, title, platform, job_id, interview_id, store_transcript, started_at, ended_at,"
-    " billed_seconds, me_audio_status, outputs_ready_at"
+    " billed_seconds, me_audio_status, outputs_ready_at, employer_id"
 )
 
 
@@ -45,6 +45,7 @@ def _session(row: Any) -> dict[str, Any]:
         "platform": row["platform"],
         "job_id": str(row["job_id"]) if row["job_id"] else None,
         "interview_id": str(row["interview_id"]) if row["interview_id"] else None,
+        "employer_id": str(row["employer_id"]) if row["employer_id"] else None,
         "store_transcript": row["store_transcript"],
         "started_at": _iso(row["started_at"]),
         "ended_at": _iso(row["ended_at"]),

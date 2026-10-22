@@ -119,6 +119,7 @@ variables below they need:
 | Variable | For |
 | --- | --- |
 | `COPILOT_API_DATABASE_URL`, `COPILOT_WORKER_DATABASE_URL`, `COPILOT_SYSTEM_DATABASE_URL` | Each service's own role (`app_api`, `app_worker`, `app_system`); the defaults match `copilot-dev-roles`. `COPILOT_DATABASE_URL` is only for migrations |
+| `COPILOT_GATEWAY_DATABASE_URL` | The gateway's read-only role (`app_gateway`), for company memory: live search in standups and meetings, and rendering a company's pack at session start when no current one is stored. Unset, the gateway uses stored packs only |
 | `COPILOT_KEY_PROVIDER=dev`, `COPILOT_DEV_MASTER_KEY` | Per-user data keys wrapped by a local master key instead of KMS (dev only; see ARCHITECTURE.md "Security and privacy"). Make one with `uv run python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"` |
 | `COPILOT_S3_ENDPOINT`, `COPILOT_S3_ACCESS_KEY`, `COPILOT_S3_SECRET_KEY` | The compose S3 store |
 | `ANTHROPIC_API_KEY` or Bedrock credentials | Workers: resume extraction (Opus), job descriptions, packs and post-call outputs (Sonnet). On Bedrock they try the Flex tier first, then Standard |

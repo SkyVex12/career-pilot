@@ -78,6 +78,14 @@ export interface SessionStart {
   interview_id?: string;
   meeting_title?: string;
   /**
+   * UUID (v7 for ids we generate), lowercase hex with dashes.
+   */
+  employer_id?: string;
+  /**
+   * The meeting's agenda or topic, as the user typed it; added to the meeting pack.
+   */
+  agenda?: string;
+  /**
    * Call platform, for example zoom, meet or teams.
    */
   platform: string;
@@ -279,7 +287,7 @@ export interface Usage {
   output_tokens: number;
 }
 /**
- * Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a fast pass started speculatively before the detector decided was released to the client (its first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss. Fields are absent when they do not apply.
+ * Server-side timings for one answer pass, in milliseconds from t0 (speech end, or the force message) unless noted. turn_end_ms: question confirmed; detector_ms: detector call (a duration); first_token_ms: request to first model token (a duration); first_delta_ms: the first answer.delta sent; final_ms: the STT final arrived; start_ms: the pass started (the model request, or the prepared-answer lookup); expand_ms: the user tapped expand (deep pass after expand; its first word on screen is first_delta_ms minus expand_ms after the tap); release_ms: a fast pass started speculatively before the detector decided was released to the client (its first_delta_ms is never earlier); prepared_ms: the prepared-answer embedding and match (a duration); prepared_similarity: the best prepared answer's cosine similarity, hit or miss; memory_wait_ms: how long the pass waited for live memory search (a standup or meeting at a company); memory_hits: the <memory> lines it got; memory_fts_ms and memory_hybrid_ms: the full-text and hybrid queries (durations). Fields are absent when they do not apply.
  */
 export interface LatencyMs {
   turn_end_ms?: number;
@@ -293,6 +301,10 @@ export interface LatencyMs {
   release_ms?: number;
   prepared_ms?: number;
   prepared_similarity?: number;
+  memory_wait_ms?: number;
+  memory_hits?: number;
+  memory_fts_ms?: number;
+  memory_hybrid_ms?: number;
 }
 /**
  * That pass failed; the other pass may still arrive.
