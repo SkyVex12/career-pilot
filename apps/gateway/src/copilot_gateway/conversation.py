@@ -155,6 +155,13 @@ class Conversation:
     def capture_now(self) -> int:
         return max((ln.end_ms for ln in self.lines), default=0)
 
+    @property
+    def them_end(self) -> int:
+        """Where the other side last stopped: a question detected now ended there."""
+        return max(
+            (ln.end_ms for ln in self.lines if ln.channel == "them"), default=self.capture_now
+        )
+
     def add(self, line: Line) -> None:
         """A final line from either channel. The two STT streams deliver their finals a little
         out of order, so lines are kept in order of their start."""

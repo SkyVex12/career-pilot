@@ -172,7 +172,7 @@ class CoreSettings(BaseSettings):
     embed_model: str = "cohere.embed-v4:0"  # Bedrock
     openai_embed_model: str | None = None
 
-    # Deepgram: streaming STT in the gateway, pre-recorded STT in the workers.
+    # Deepgram: streaming STT in the gateway, one stream per channel.
     deepgram_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
     deepgram_model: str = "nova-3"
 

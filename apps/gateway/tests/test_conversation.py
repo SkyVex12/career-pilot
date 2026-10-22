@@ -155,6 +155,8 @@ async def test_questions_pair_with_what_the_user_said() -> None:
     conv.add(Line("me", 16100, 18000, "Sure, the launch in May."))
     conv.question("q3", "Tell me about a failure.", 16000)
     assert conv.asked[2].said == ["Sure, the launch in May."]
+    # The session pairs a detected question from where the other side stopped.
+    assert conv.them_end == 16000
 
 
 async def test_earlier_answers_are_the_users_words_never_suggestions() -> None:

@@ -522,7 +522,9 @@ class Session:
         self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
     ) -> None:
         self.answers.confirm(qid, text, turn_end_ms, final_ms)
-        self.conv.question(str(qid), text, self.capture_now)
+        # Paired with what the user says after the question's own words, which may already
+        # have started by the time the turn is confirmed.
+        self.conv.question(str(qid), text, self.conv.them_end)
 
     def cancel_question(self, qid: UUID) -> None:
         self.answers.cancel_speculative(qid)
