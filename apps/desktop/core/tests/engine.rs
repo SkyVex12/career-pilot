@@ -51,6 +51,8 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
             job_id: None,
             interview_id: None,
             meeting_title: None,
+            employer_id: None,
+            agenda: None,
             platform: "test".into(),
             client_version: "test".into(),
             store_transcript: false,

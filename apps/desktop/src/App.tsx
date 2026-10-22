@@ -1,9 +1,9 @@
 // The main window: the session (start screen, then the post-call screen), documents, jobs
-// and interviews, history, settings, and the debug panel (hidden unless turned on in the
-// settings, or with Ctrl+Shift+D).
+// and interviews, work (the companies the user works at), history, settings, and the debug
+// panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
 import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
-import { api, inTauri, type DeviceInfo, type LiveStatus, type Settings, type SettingsView } from "./api";
+import { api, inTauri, rest, type DeviceInfo, type Employer, type LiveStatus, type PackState, type Settings, type SettingsView } from "./api";
 import { cloudUrlsFor } from "./urls";
 import { parseTarget, upcoming } from "./catalog";
 import { Documents, when } from "./Documents";
@@ -11,13 +11,16 @@ import { History } from "./History";
 import { Jobs, roundLabel, useCatalog } from "./Jobs";
 import { SessionDetail } from "./SessionDetail";
 import { badge, useSession, type SessionView } from "./session";
+import { Work } from "./Work";
+import { defaultEmployer, packLabel } from "./workday";
 
-type Tab = "start" | "documents" | "jobs" | "history" | "settings" | "debug";
+type Tab = "start" | "documents" | "jobs" | "work" | "history" | "settings" | "debug";
 
 const TABS: [Tab, string][] = [
   ["start", "Session"],
   ["documents", "Documents"],
   ["jobs", "Jobs"],
+  ["work", "Work"],
   ["history", "History"],
   ["settings", "Settings"],
 ];
@@ -60,7 +63,7 @@ export default function App() {
     );
   }
 
-  const needsToken = !tokenSet && (tab === "documents" || tab === "jobs" || tab === "history");
+  const needsToken = !tokenSet && (tab === "documents" || tab === "jobs" || tab === "work" || tab === "history");
   return (
     <main className="page">
       <nav className="tabs">
@@ -83,6 +86,7 @@ export default function App() {
       {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
       {!needsToken && tab === "documents" && <Documents />}
       {!needsToken && tab === "jobs" && <Jobs />}
+      {!needsToken && tab === "work" && <Work />}
       {!needsToken && tab === "history" && <History />}
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
@@ -138,6 +142,14 @@ function StartScreen({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [postCall, setPostCall] = useState<string | null>(null);
+  const work = useCompanies(tokenSet);
+  const [employerId, setEmployerId] = useState("");
+  const [agenda, setAgenda] = useState("");
+  const atWork = mode === "standup" || mode === "meeting";
+  useEffect(() => {
+    if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, lastCompany()));
+  }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pack = usePackFor(atWork && !session.running ? employerId : "", mode);
 
   const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
@@ -158,10 +170,14 @@ function StartScreen({
     setMessage(null);
     try {
       const picked = mode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
+      const company = atWork && employerId ? employerId : null;
+      if (company) rememberCompany(company);
       await api.startSession({
         mode,
         ...picked,
         meeting_title: title.trim() || null,
+        employer_id: company,
+        agenda: mode === "meeting" ? agenda.trim() || null : null,
         platform,
         store_transcript: consent,
       });
@@ -202,8 +218,29 @@ function StartScreen({
           ))}
         </div>
 
-        <label>Call for</label>
-        <div>
+        {atWork ? (
+          <>
+            <label>Company</label>
+            <div>
+              <select value={employerId} disabled={running} onChange={(e) => setEmployerId(e.target.value)}>
+                <option value="">None (no company's notes)</option>
+                {work.employers
+                  ?.filter((e) => e.status === "active")
+                  .map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                      {e.current ? "" : " (past)"}
+                    </option>
+                  ))}
+              </select>{" "}
+              {employerId && <span className={`chip chip-${packLabel(pack).tone}`}>{packLabel(pack).text}</span>}
+              {work.employers?.length === 0 && <p className="note">No company yet: add the one you work at under Work.</p>}
+              {work.error && <p className="note warn">{work.error}</p>}
+            </div>
+          </>
+        ) : null}
+        <label className={atWork ? "hidden" : ""}>Call for</label>
+        <div className={atWork ? "hidden" : ""}>
           <select value={target} disabled={running || mode !== "interview"} onChange={(e) => setTarget(e.target.value)}>
             <option value="">Nothing specific (the mode's pack, if any)</option>
             {interviews.length > 0 && (
@@ -236,6 +273,19 @@ function StartScreen({
 
         <label>Meeting title</label>
         <input value={title} disabled={running} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" />
+
+        {mode === "meeting" && (
+          <>
+            <label>Agenda</label>
+            <textarea
+              rows={3}
+              value={agenda}
+              disabled={running}
+              onChange={(e) => setAgenda(e.target.value)}
+              placeholder="Optional: the topic or agenda, so answers start from the right systems and decisions"
+            />
+          </>
+        )}
 
         <label>Call app</label>
         <select value={platform} disabled={running} onChange={(e) => setPlatform(e.target.value)}>
@@ -294,6 +344,73 @@ function StartScreen({
       )}
     </section>
   );
+}
+
+const LAST_COMPANY = "copilot.lastCompany";
+
+function lastCompany(): string | null {
+  try {
+    return localStorage.getItem(LAST_COMPANY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberCompany(id: string) {
+  try {
+    localStorage.setItem(LAST_COMPANY, id);
+  } catch {
+    // a convenience only
+  }
+}
+
+function useCompanies(ready: boolean): { employers: Employer[] | null; error: string | null } {
+  const [employers, setEmployers] = useState<Employer[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ready) return;
+    rest.employers().then(
+      (r) => {
+        setEmployers(r.employers);
+        setError(null);
+      },
+      (e) => setError(String(e)),
+    );
+  }, [ready]);
+  return { employers, error };
+}
+
+/// Picking a company asks for its pack, so the session starts on a pack built from the
+/// latest notes; a call never waits for it (the gateway renders one itself if needed).
+function usePackFor(employerId: string, mode: Mode): PackState | null {
+  const [state, setState] = useState<PackState | null>(null);
+  useEffect(() => {
+    setState(null);
+    if (!employerId || (mode !== "standup" && mode !== "meeting")) return;
+    let stop = false;
+    let tries = 0;
+    const poll = async () => {
+      try {
+        const asked = await rest.ensurePack(employerId, mode);
+        if (stop) return;
+        setState(asked);
+        while (!stop && asked.status !== "ready" && tries++ < 20) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const now = (await rest.packs(employerId)).packs.find((p) => p.mode === mode) ?? null;
+          if (stop) return;
+          setState(now?.status === "ready" ? now : { ...(now ?? asked), status: "building" });
+          if (now?.status === "ready") return;
+        }
+      } catch {
+        if (!stop) setState(null);
+      }
+    };
+    poll();
+    return () => {
+      stop = true;
+    };
+  }, [employerId, mode]);
+  return state;
 }
 
 function packNote(pack: { available: boolean } | null | undefined): string {

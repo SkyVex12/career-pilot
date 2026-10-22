@@ -9,12 +9,14 @@ export function History() {
   const [sessions, setSessions] = useState<SessionItem[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [companies, setCompanies] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, u] = await Promise.all([rest.sessions(), rest.usage()]);
+      const [s, u, e] = await Promise.all([rest.sessions(), rest.usage(), rest.employers().catch(() => ({ employers: [] }))]);
+      setCompanies(Object.fromEntries(e.employers.map((x) => [x.id, x.name])));
       setSessions(s.sessions);
       setNext(s.next_before);
       setUsage(u);
@@ -74,6 +76,7 @@ export function History() {
                 <td>{s.started_at ? when(s.started_at) : "–"}</td>
                 <td>
                   {s.mode}
+                  {s.employer_id && companies[s.employer_id] ? ` at ${companies[s.employer_id]}` : ""}
                   {s.title ? `: ${s.title}` : ""}
                 </td>
                 <td className="muted">{s.ended_at ? `${Math.max(1, Math.round(s.billed_seconds / 60))} min` : ""}</td>

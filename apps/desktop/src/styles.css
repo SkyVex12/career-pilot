@@ -636,3 +636,105 @@ tr.muted td {
   margin-top: 0;
   color: var(--bad);
 }
+
+/* Work: companies, the work log, material and facts. */
+.hidden {
+  display: none;
+}
+
+textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  resize: vertical;
+}
+
+button.small {
+  padding: 3px 8px;
+  font-size: 13px;
+}
+
+.danger-text {
+  color: var(--bad);
+}
+
+.companies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.companies button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.companies .count {
+  margin-left: 6px;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.company h3 .muted {
+  margin-left: 8px;
+  font-weight: normal;
+  font-size: 13px;
+}
+
+.company .segmented {
+  margin: 12px 0;
+}
+
+.files,
+.facts {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.facts li {
+  margin: 4px 0;
+}
+
+.facts li input {
+  width: auto;
+  margin-right: 6px;
+}
+
+.doc {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.doc-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.proposal {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 8px;
+  padding: 6px 0 6px 12px;
+  align-items: start;
+}
+
+.proposal .kind {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.proposal .evidence {
+  font-size: 12px;
+  margin-top: 2px;
+}

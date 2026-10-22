@@ -287,6 +287,10 @@ mod tests {
                 release_ms: None,
                 prepared_ms: None,
                 prepared_similarity: None,
+                memory_wait_ms: None,
+                memory_hits: None,
+                memory_fts_ms: None,
+                memory_hybrid_ms: None,
             }),
         });
         let r = l.on_message(&done, t0).unwrap();
