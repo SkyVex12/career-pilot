@@ -8,8 +8,12 @@ Commands on the VM go through IAP SSH with OS Login, so nothing but port 80 is o
 or generated here, piped straight into Secret Manager, and never printed.
 
     deploy [--tag SHA]     migrations, then each service, on images already in the registry
-                           (default: the commit at origin/main, which CI built)
+                           (default: the commit at origin/main, which CI built); --start
+                           starts a stopped VM first (and leaves it running), --check runs
+                           `health` after and rolls back to the previous tag if it fails
+                           (what .github/workflows/deploy.yml runs on every merge)
     rollback               the tag deployed before the current one
+    health                 the gateway and the API, on the VM and through nginx
     status                 the deployed tag, the containers and their health, disk and memory
     restart [NAME ...]     restart services, which reread their config and secrets
                            (default: proxy, gateway, api, worker)
@@ -25,6 +29,8 @@ or generated here, piped straight into Secret Manager, and never printed.
                            (--lift-key-policy: see infra/gcp/README.md)
     ssh                    a shell on the VM (sudo for root)
     latency                round trips from the VM to OpenAI and Deepgram
+    desktop-config         write the stage's URLs (terraform output desktop) into
+                           apps/desktop/release.json, which release builds embed
 """
 
 import argparse
@@ -39,6 +45,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 # infra/gcp/envs/stage0/terraform.tfvars; override with the environment for another stage.
@@ -64,6 +71,10 @@ SECRETS = (
 )
 GENERATED_DB = ("db-postgres", "db-app-api", "db-app-gateway", "db-app-worker", "db-app-system")
 IMAGES = ("gateway", "api", "worker", "proxy")
+ROOT = Path(__file__).resolve().parents[3]
+# In GitHub Actions: no known host to check against on a fresh runner, and the SSH key gcloud
+# makes for the deploy account's OS Login profile expires after the run.
+IN_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 
 
 def gcloud_bin() -> str:
@@ -92,18 +103,34 @@ def gcloud(
     return result.stdout.decode() if capture and result.stdout else ""
 
 
-def on_vm(command: str) -> None:
+def ssh_args(command: str) -> list[str]:
     args = ["compute", "ssh", NAME, f"--zone={ZONE}", "--tunnel-through-iap", "--quiet"]
+    if IN_CI:
+        args += ["--strict-host-key-checking=no", "--ssh-key-expire-after=2h"]
     if command:
         # On Windows gcloud is a .cmd script, and cmd.exe mangles newlines and some
         # characters on its command line; the script travels base64-encoded instead.
         encoded = base64.b64encode(command.encode()).decode()
         args.append(f"--command=echo {encoded} | base64 -d | bash")
-    gcloud(*args)
+    return args
+
+
+def on_vm(command: str) -> None:
+    gcloud(*ssh_args(command))
+
+
+def on_vm_rc(command: str, capture: bool = False) -> tuple[int, str]:
+    """Run on the VM without exiting on failure: (exit code, stdout if captured)."""
+    cmd = [gcloud_bin(), *ssh_args(command), f"--project={PROJECT}"]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE if capture else None, check=False)
+    return result.returncode, (result.stdout or b"").decode()
+
+
+CTL = "sudo bash /var/lib/copilot/copilotctl.sh"
 
 
 def ctl(*args: str) -> None:
-    on_vm("sudo bash /var/lib/copilot/copilotctl.sh " + " ".join(args))
+    on_vm(f"{CTL} {' '.join(args)}")
 
 
 # --- Deploys ---------------------------------------------------------------------------------
@@ -115,8 +142,7 @@ def main_sha() -> str:
     return out.stdout.decode().strip()
 
 
-def deploy(tag: str | None) -> None:
-    tag = tag or main_sha()
+def check_images(tag: str) -> None:
     for image in IMAGES:
         found = gcloud(
             "artifacts", "docker", "images", "describe", f"{REGISTRY}/{image}:{tag}",
@@ -127,8 +153,206 @@ def deploy(tag: str | None) -> None:
                 f"{REGISTRY}/{image}:{tag} is not in the registry; CI builds it on merge to main "
                 "(.github/workflows/deploy.yml)"
             )
-    print(f"deploying {tag}")
-    ctl("deploy", tag)
+
+
+def deploy(tag: str | None, start: bool, check: bool) -> None:
+    """copilotctl deploy, which runs the migrations and replaces each service in turn (it
+    puts the previous tag back itself if the migrations fail or a service does not get
+    healthy). With `check`, `health` runs after it; if that fails the previous tag is
+    deployed again. Either failure exits non-zero, so the workflow fails."""
+    tag = tag or main_sha()
+    check_images(tag)
+    notes: list[str] = []
+    if ensure_running(start):
+        notes.append(f"The VM `{NAME}` was stopped: started it for this deploy, left running.")
+    before = deployed_tag()
+    print(f"deploying {tag} (was {before})")
+    code, _ = on_vm_rc(f"{CTL} deploy {tag}")
+    if code != 0:
+        healthy = health(quiet=True) if check else None
+        summary(
+            "failed",
+            tag,
+            before,
+            [
+                *notes,
+                f"`copilotctl deploy {tag}` failed (migrations, or a service did not get "
+                f"healthy); it put `{before}` back itself.",
+                f"`{deployed_tag()}` is deployed now; health check: {verdict(healthy)}.",
+            ],
+        )
+        sys.exit(f"deploy of {tag} failed; {before} is back")
+    if not check:
+        summary("deployed", tag, before, notes)
+        return
+    if health():
+        public_check(notes)
+        summary("deployed", tag, before, [*notes, "Health check passed: gateway and API."])
+        return
+    if before in ("none", "unknown", tag):
+        summary(
+            "failed",
+            tag,
+            before,
+            [*notes, "The health check failed and there is no earlier tag to roll back to."],
+        )
+        sys.exit(f"health check failed on {tag}; nothing to roll back to")
+    print(f"health check failed on {tag}: rolling back to {before}")
+    code, _ = on_vm_rc(f"{CTL} rollback")
+    healthy = code == 0 and health()
+    summary(
+        "rolled back",
+        tag,
+        before,
+        [
+            *notes,
+            f"The health check failed on `{tag}`, so `{before}` was deployed again (rollback "
+            f"{'succeeded' if code == 0 else 'FAILED'}; health check: {verdict(healthy)}).",
+            f"`{deployed_tag()}` is deployed now.",
+        ],
+    )
+    sys.exit(f"health check failed on {tag}; rolled back to {before}")
+
+
+def verdict(ok: bool | None) -> str:
+    return "not run" if ok is None else ("passed" if ok else "FAILED")
+
+
+def vm_status() -> str:
+    return gcloud(
+        "compute", "instances", "describe", NAME, f"--zone={ZONE}", "--format=value(status)",
+        capture=True,
+    ).strip()  # fmt: skip
+
+
+def ensure_running(start: bool) -> bool:
+    """True if the VM was not running and was started (or resumed) here."""
+    status = vm_status()
+    if status == "RUNNING":
+        return False
+    if not start:
+        sys.exit(f"the VM is {status}: `stage.py start` first, or deploy with --start")
+    for _ in range(60):  # a stop in progress finishes first
+        if status not in ("STOPPING", "SUSPENDING", "PROVISIONING", "STAGING"):
+            break
+        time.sleep(5)
+        status = vm_status()
+    if status == "SUSPENDED":
+        print("the VM is suspended: resuming it")
+        gcloud("compute", "instances", "resume", NAME, f"--zone={ZONE}")
+    elif status != "RUNNING":
+        print(f"the VM is {status}: starting it (it stays running after the deploy)")
+        gcloud("compute", "instances", "start", NAME, f"--zone={ZONE}")
+    # SSH comes up first; then cloud-init writes copilotctl and boots the data services.
+    ready = (
+        "sudo cloud-init status --wait >/dev/null 2>&1; "
+        "test -f /var/lib/copilot/copilotctl.sh && systemctl is-active -q copilot-postgres"
+    )
+    for _ in range(40):
+        if on_vm_rc(ready)[0] == 0:
+            print("the VM is up")
+            return True
+        time.sleep(10)
+    sys.exit("the VM started but its services did not come up in 7 minutes (stage.py status)")
+
+
+def deployed_tag() -> str:
+    code, out = on_vm_rc(
+        "cat /mnt/disks/data/copilot/image-tag 2>/dev/null || echo none", capture=True
+    )
+    lines = out.strip().splitlines()
+    return lines[-1].strip() if code == 0 and lines else "unknown"
+
+
+# The gateway and the API as the app reaches them, minus the VPC firewall: each one's own
+# /healthz, then through nginx the API's sign-in settings and the gateway's WebSocket
+# handshake, which must end in the gateway's own `unauthorized` (no token is sent).
+HEALTH = r"""set -u
+api_direct() { curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/healthz; }
+gateway_direct() { curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/healthz; }
+api_proxy() { curl -sf -m 5 http://127.0.0.1/v1/auth/config | grep -q '"provider"'; }
+gateway_proxy() {
+  curl -s -m 5 -i -N -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    http://127.0.0.1/v1/session 2>/dev/null | grep -aq '"code":"unauthorized"'
+}
+for _ in $(seq 1 20); do
+  failed=""
+  for c in api_direct gateway_direct api_proxy gateway_proxy; do $c || failed="$failed $c"; done
+  if [ -z "$failed" ]; then
+    tag=$(cat /mnt/disks/data/copilot/image-tag 2>/dev/null)
+    echo "health ok on $tag: api and gateway /healthz; through nginx /v1/auth/config"
+    echo "and the gateway's reply to a /v1/session handshake"
+    exit 0
+  fi
+  sleep 3
+done
+echo "health FAILED:$failed"
+exit 1"""
+
+
+def health(quiet: bool = False) -> bool:
+    code, out = on_vm_rc(HEALTH, capture=True)
+    if not quiet or code != 0:
+        print(out.strip())
+    return code == 0
+
+
+def public_check(notes: list[str]) -> None:
+    """The API check from this machine, through the VM's IP and its firewall. A warning only:
+    port 80 may be limited to the team's addresses (stage.py allow)."""
+    ip = gcloud(
+        "compute", "instances", "describe", NAME, f"--zone={ZONE}",
+        "--format=value(networkInterfaces[0].accessConfigs[0].natIP)", capture=True,
+    ).strip()  # fmt: skip
+    try:
+        with urllib.request.urlopen(f"http://{ip}/v1/auth/config", timeout=10) as r:
+            ok = r.status == 200 and b"provider" in r.read()
+    except OSError:
+        ok = False
+    if ok:
+        notes.append(f"`http://{ip}/v1/auth/config` answers from the runner too.")
+    else:
+        notes.append(
+            f"`http://{ip}` is not reachable from the runner; expected if port 80 is limited "
+            "to the team (stage.py allow)."
+        )
+        print(f"warning: http://{ip}/v1/auth/config not reachable from this machine")
+
+
+def summary(outcome: str, tag: str, before: str, notes: list[str]) -> None:
+    """Printed, and in GitHub Actions also the run's summary page."""
+    lines = [f"### Stage 0 deploy: {outcome}", "", f"- Commit `{tag}` (was `{before}`)"]
+    lines += [f"- {n}" for n in notes]
+    text = "\n".join(lines)
+    print(text)
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+
+
+# --- Desktop release config ------------------------------------------------------------------
+
+
+def desktop_config() -> None:
+    """apps/desktop/release.json's URLs from `terraform output desktop` (the stage and the
+    releases bucket). The rest of the file (the name shown, the updater's public key) stays."""
+    tf = shutil.which("terraform") or sys.exit("terraform is not installed")
+    out = subprocess.run(
+        [tf, f"-chdir={ROOT / 'infra/gcp/envs/stage0'}", "output", "-json", "desktop"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    urls = json.loads(out)
+    path = ROOT / "apps/desktop/release.json"
+    cfg: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    keys = ("api_url", "gateway_url", "update_url")
+    changed = {k: urls[k] for k in keys if cfg.get(k) != urls[k]}
+    cfg.update(changed)
+    path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    done = ", ".join(f"{k} = {v}" for k, v in changed.items()) or "already current"
+    print(f"{path}: {done}")
+    print(f"download link for the team: {urls['download_url']}")
 
 
 # --- Logs ------------------------------------------------------------------------------------
@@ -357,7 +581,12 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("deploy")
     p.add_argument("--tag")
-    for name in ("rollback", "status", "start", "stop", "backup", "backups", "ssh", "latency"):
+    p.add_argument("--start", action="store_true", help="start the VM first if it is stopped")
+    p.add_argument("--check", action="store_true", help="health check after; roll back on failure")
+    for name in (
+        "rollback", "status", "start", "stop", "backup", "backups", "ssh", "latency", "health",
+        "desktop-config",
+    ):  # fmt: skip
         sub.add_parser(name)
     p = sub.add_parser("restart")
     p.add_argument("names", nargs="*", help="proxy gateway api worker postgres valkey elasticmq")
@@ -389,7 +618,12 @@ def main() -> None:
 
     match a.cmd:
         case "deploy":
-            deploy(a.tag)
+            deploy(a.tag, a.start, a.check)
+        case "health":
+            if not health():
+                sys.exit(1)
+        case "desktop-config":
+            desktop_config()
         case "rollback":
             ctl("rollback")
         case "status":
