@@ -1,0 +1,260 @@
+# Standup and meeting questions for the company-workspace eval (evals/README.md, "Company
+# workspaces"). The company and its material are in company.toml; "today" is its `today`.
+#
+# Fields per question:
+#   id, question, type  as in evals/answers/questions.toml (type: the detector's type)
+#   mode                standup or meeting
+#   key_points          what a complete, correct answer covers (from the logs, the documents
+#                       and general knowledge); the grader checks completeness against them
+#   trap                what the answer must not claim (facts the material does not hold)
+#
+# Meeting questions share one meeting: its title and agenda are [meeting].
+
+[meeting]
+title = "Reservation outbox design review"
+agenda = "Rollout and backfill of the reservation outbox; how we keep duplicates out of the warehouse and the ledger feed."
+transcript = """[00:01] Them: Okay, let's get started. Thanks for joining, everyone.
+[00:05] Them: Alex, you've been driving the outbox work, so most questions will go to you.
+[00:12] (Alex Rivera spoke for 20 s)"""
+
+[standup]
+transcript = """[00:01] Them: Morning all. Let's go around. Priya, you first.
+[00:05] Them: Thanks Priya. Alex?"""
+
+# --- Standup ---------------------------------------------------------------------------------
+
+[[question]]
+id = "su_update"
+mode = "standup"
+type = "standup_status"
+question = "Alex, what's your update?"
+key_points = [
+  "yesterday: merged PR #893 for CHK-1290, checkout p95 from 840 ms to 310 ms in staging",
+  "yesterday: reviewed Priya's PSP failover RFC",
+  "blocker: the outbox relay's role has no grant on the staging outbox table; needs Dana (SRE)",
+  "today: pair with Dana on the grant, start the backfill script (CHK-1311)",
+]
+trap = "the CHK-1290 fix is not said to be deployed to production; the outbox is not running in staging yet"
+
+[[question]]
+id = "su_yesterday"
+mode = "standup"
+type = "standup_status"
+question = "What did you get done yesterday?"
+key_points = [
+  "merged PR #893 (CHK-1290): p95 840 ms to 310 ms in staging",
+  "reviewed Priya's PSP failover RFC, comments on retry ordering",
+  "tried the outbox relay in staging and hit the permission blocker",
+]
+trap = "no other work items were done on 2026-10-19"
+
+[[question]]
+id = "su_blockers"
+mode = "standup"
+type = "standup_status"
+question = "Anything blocking you?"
+key_points = [
+  "yes: the relay's database role has no grant on the outbox table in staging",
+  "only SRE can change roles there; needs Dana; pairing with her today",
+]
+trap = "no other blockers are in the log"
+
+[[question]]
+id = "su_chk1290"
+mode = "standup"
+type = "standup_status"
+question = "Is the checkout latency fix out yet?"
+key_points = [
+  "PR #893 for CHK-1290 merged on 2026-10-19 (batch-loads promo rules, fixing the N+1 in cart pricing)",
+  "p95 back from 840 ms to 310 ms in staging",
+  "production rollout is not in the log: say it is merged and in staging",
+]
+trap = "the fix is not stated to be in production"
+
+[[question]]
+id = "su_outbox_plan"
+mode = "standup"
+type = "standup_status"
+question = "Are we still on track for the outbox rollout plan by Friday?"
+key_points = [
+  "the plan is promised to Marco for 2026-10-23",
+  "the staging grant blocks testing the relay; risk to the date unless Dana grants it today",
+  "relay built (SKIP LOCKED batches of 100 to SQS FIFO), backfill script starting today",
+]
+trap = "no new date was agreed; the plan is not done"
+
+[[question]]
+id = "su_dedupe"
+mode = "standup"
+type = "standup_status"
+question = "Where's the dedupe table from the postmortem?"
+key_points = [
+  "action item from the 2026-10-15 postmortem: dedupe table for order events, 7-day TTL",
+  "due 2026-10-27",
+  "not started yet per the logs; after the outbox work",
+]
+trap = "it is not done or in review"
+
+[[question]]
+id = "su_help"
+mode = "standup"
+type = "other"
+question = "Do you need anything from me?"
+key_points = [
+  "help getting the staging grant for the relay from SRE (Dana) if pairing today does not settle it",
+  "otherwise nothing",
+]
+trap = "no other requests are in the log"
+
+[[question]]
+id = "su_psp412"
+mode = "standup"
+type = "standup_status"
+question = "Did the refund idempotency change go out?"
+key_points = [
+  "PSP-412, PR #881: merged 2026-10-12, deployed to production 2026-10-13 at 10:00",
+  "no duplicate refunds since",
+  "idempotency key = refund id, unique on (provider, key), stored response returned on retry",
+]
+trap = "no numbers beyond the log"
+
+# --- Meeting ---------------------------------------------------------------------------------
+
+[[question]]
+id = "mt_why_sqs"
+mode = "meeting"
+type = "other"
+question = "Remind me, why did we stay on SQS instead of moving reservations to Kafka?"
+key_points = [
+  "decided 2026-10-14 with Priya, Marco and Dana",
+  "Kafka meant a second MSK cluster or new topics on the order cluster: cost and on-call load; the team knows SQS",
+  "SQS FIFO's 5-minute dedupe window plus idempotent warehouse consumers is enough",
+  "revisit in Q1 if reservations pass 2,000 messages a second",
+]
+trap = "no other reasons or numbers"
+
+[[question]]
+id = "mt_outbox_how"
+mode = "meeting"
+type = "technical"
+question = "Walk us through how the outbox works with the reservation service."
+key_points = [
+  "the reservation and its event are written in the same Postgres transaction (outbox table)",
+  "a relay polls with SELECT ... FOR UPDATE SKIP LOCKED in batches of 100 and publishes to SQS FIFO",
+  "reservation id as message group id and dedupe id",
+  "mark rows sent after publish; the relay can publish twice, so consumers stay idempotent",
+]
+trap = "no CDC or logical replication: the relay polls"
+
+[[question]]
+id = "mt_dup_events"
+mode = "meeting"
+type = "other"
+question = "What caused the duplicate order events last week?"
+key_points = [
+  "2026-10-13, SEV-3, 14:20 to 15:05: an order-pipeline consumer group rebalance replayed events",
+  "the ledger feed got 312 duplicates",
+  "mitigated by making the consumer idempotent on order id; Alex was incident lead",
+  "follow-up: dedupe table with a 7-day TTL, due 2026-10-27",
+]
+trap = "no root cause beyond the rebalance"
+
+[[question]]
+id = "mt_exactly_once"
+mode = "meeting"
+type = "technical"
+question = "Could we get exactly-once delivery end to end with SQS FIFO?"
+key_points = [
+  "no: SQS FIFO dedupes only within a 5-minute window and delivery is at least once on failure",
+  "the outbox relay can publish twice after a crash",
+  "so effectively-once comes from idempotent consumers keyed by reservation id (the warehouse requirement)",
+]
+trap = "SQS FIFO does not give end-to-end exactly-once"
+
+[[question]]
+id = "mt_backfill"
+mode = "meeting"
+type = "system_design"
+question = "How should we backfill the existing reservations into the outbox without double-publishing?"
+key_points = [
+  "insert outbox rows for open reservations in batches, idempotently (one row per reservation, unique constraint)",
+  "the relay publishes them like new ones; dedupe id = reservation id so a repeat within 5 minutes is dropped",
+  "consumers are idempotent anyway; skip or expire holds older than 15 minutes",
+  "run it in staging first once the grant is in (CHK-1311)",
+]
+trap = "no existing backfill tool"
+
+[[question]]
+id = "mt_hold"
+mode = "meeting"
+type = "other"
+question = "Sorry, quick one: what's a reservation hold here, and how long does it last?"
+key_points = ["the inventory a cart holds during checkout", "expires after 15 minutes without payment"]
+trap = "no other duration"
+
+[[question]]
+id = "mt_fraud_owner"
+mode = "meeting"
+type = "other"
+question = "Who owns the fraud scoring client?"
+key_points = ["Sam Okafor", "a Python library the Checkout API calls; 800 ms timeout, fails open"]
+trap = "no other owner"
+
+[[question]]
+id = "mt_dlq"
+mode = "meeting"
+type = "technical"
+question = "What happens today to reservation messages that keep failing?"
+key_points = [
+  "after 5 receives they go to reservations-dlq",
+  "Dana's team replays them with the dlq-replay tool after a fix and checks the DLQ every Monday",
+]
+trap = "no alerting on the DLQ is described"
+
+[[question]]
+id = "mt_psp_rfc"
+mode = "meeting"
+type = "other"
+question = "Alex, you reviewed Priya's PSP failover RFC. What did you think?"
+key_points = [
+  "it switches a payment to the backup PSP (Adyen) when the primary (Stripe) times out",
+  "Alex's comments were about retry ordering",
+  "a reasoned view: the idempotency key from PSP-412 must hold across PSPs; avoid double charges on a late success",
+]
+trap = "no other RFC details or decisions"
+
+[[question]]
+id = "mt_sla"
+mode = "meeting"
+type = "other"
+question = "What's our availability SLA for checkout?"
+key_points = [
+  "gives no SLA figure, since the material has none, and offers to confirm the number",
+  "what is known: checkout pages at p95 above 600 ms for 10 minutes; on-call per week, Dana owns the platform side",
+]
+trap = "no SLA or availability percentage is in the material"
+
+[[question]]
+id = "mt_relay_scale"
+mode = "meeting"
+type = "system_design"
+question = "Will a single outbox relay keep up on Black Friday?"
+key_points = [
+  "a relay polling batches of 100 with SKIP LOCKED can run as several instances safely",
+  "watch the age of the oldest unsent outbox row; scale relays on it",
+  "SQS FIFO throughput per message group; reservation id groups spread load",
+  "the Black Friday story: 6x normal traffic exhausted the adapter's pools; load test the relay first",
+]
+trap = "no throughput numbers for the relay exist"
+
+[[question]]
+id = "mt_monitoring"
+mode = "meeting"
+type = "technical"
+question = "How would we know the relay is falling behind?"
+key_points = [
+  "metric: age of the oldest unsent outbox row, and the count of unsent rows",
+  "alert when it stays above a threshold, in Grafana like the checkout alerts",
+  "also SQS metrics: messages in flight and the DLQ depth",
+]
+trap = "no existing relay dashboard"

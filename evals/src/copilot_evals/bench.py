@@ -38,6 +38,7 @@ import time
 import urllib.request
 import uuid
 from collections import Counter
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,6 +79,13 @@ STAGES = (
     "server_first_word_ms",
     "first_word_ms",
     "deep_first_word_ms",
+    # Company memory (a --company run): how long each pass waited for live search, and the
+    # full-text and hybrid queries themselves.
+    "memory_wait_ms",
+    "memory_fts_ms",
+    "memory_hybrid_ms",
+    "deep_memory_wait_ms",
+    "deep_memory_hybrid_ms",
 )
 
 
@@ -171,18 +179,86 @@ def build_profile(
     return digest, pack
 
 
-async def seed(valkey: Any, profile: Profile, nonce: str | None) -> None:
+async def seed(valkey: Any, profile: Profile, nonce: str | None, uid: str = BENCH_USER_ID) -> None:
     from copilot_core import keys
 
     model_id, vectors = await embed_prepared(profile)
     digest, pack = build_profile(profile, nonce, model_id, vectors)
-    uid = BENCH_USER_ID
     await valkey.set(keys.digest(uid), digest.model_dump_json(by_alias=True))
     await valkey.set(keys.pack(uid, BENCH_PACK_ID), pack.model_dump_json(by_alias=True))
     await valkey.hset(keys.pack_index(uid), "mode:interview", BENCH_PACK_ID)
     await valkey.delete(keys.user_active_session(uid))
     async for key in valkey.scan_iter(match=f"qa:{{{uid}}}:*"):
         await valkey.delete(key)
+    # A company's packs: rendered by the gateway at each session start (no stored one).
+    await valkey.hdel(keys.pack_index(uid), "employer:" + COMPANY_ID + ":meeting")
+
+
+COMPANY_ID = "01a00000-be0c-7000-8000-0000000000c2"
+
+
+@contextlib.asynccontextmanager
+async def company_database(admin_url: str, uid: str) -> AsyncGenerator[str]:
+    """--company: a scratch database with the company eval's memory (evals/company) for the
+    benchmark user, and app_gateway able to log in to it with a one-off password. Yields the
+    gateway's database URL."""
+    import secrets
+    from urllib.parse import urlsplit, urlunsplit
+
+    import asyncpg
+
+    from copilot_evals import company_eval as ce
+
+    async with ce.scratch_database(admin_url) as url:
+        conn = await ce.connect(url)
+        try:
+            await conn.execute(
+                "insert into app.users (id, email, display_name) values ($1, $2, $3)",
+                uuid.UUID(uid),
+                f"{uid}@bench.local",
+                load_profile().user_name,
+            )
+            company = ce.load_company()
+            await conn.execute(
+                "insert into app.employers (id, user_id, name, title, team)"
+                " values ($1, $2, $3, $4, $5)",
+                uuid.UUID(COMPANY_ID),
+                uuid.UUID(uid),
+                company["employer"]["name"],
+                company["employer"]["title"],
+                company["employer"]["team"],
+            )
+            mem = json.loads(ce.MEMORY.read_text("utf-8"))
+            for n in mem["nodes"]:
+                await conn.execute(
+                    "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title,"
+                    " summary, body, source, valid_from)"
+                    " values ($1, $2, $3, $4, 'workplace', $5, $6, $7, $8, $9::text::date)",
+                    uuid.uuid4(),
+                    uuid.UUID(uid),
+                    uuid.UUID(COMPANY_ID),
+                    n["kind"],
+                    n["title"],
+                    n["summary"],
+                    n["body"],
+                    n["source"],
+                    n["valid_from"],
+                )
+            password = secrets.token_urlsafe(18)
+            await conn.execute(f"alter role app_gateway login password '{password}'")
+        finally:
+            await conn.close()
+        parts = urlsplit(url)
+        host = parts.hostname or "127.0.0.1"
+        port = f":{parts.port}" if parts.port else ""
+        netloc = f"app_gateway:{password}@{host}{port}"
+        try:
+            yield urlunsplit(parts._replace(netloc=netloc))
+        finally:
+            admin = await asyncpg.connect(url)
+            with contextlib.suppress(Exception):
+                await admin.execute("alter role app_gateway nologin password null")
+            await admin.close()
 
 
 async def session_log(valkey: Any, sid: str) -> list[dict[str, Any]]:
@@ -198,6 +274,24 @@ async def session_log(valkey: Any, sid: str) -> list[dict[str, Any]]:
 
 
 # The gateway under test.
+
+# The gateway process. With Google sign-in (a gateway on Compute Engine, where the dev token is
+# refused) the user's name comes from the token, and the script's questions are addressed to
+# the fictional candidate ("Hi Alex"), so the detector would take every one as meant for
+# someone else. The benchmark's gateway therefore names the signed-in user after the
+# candidate. Harness code only: the shipped gateway is unchanged, and this runs in any checkout.
+LAUNCH = """
+import dataclasses, os
+from copilot_core import auth
+name = os.environ.get("COPILOT_BENCH_DISPLAY_NAME")
+if name:
+    verify = auth.GoogleVerifier.verify
+    async def named(self, token):
+        return dataclasses.replace(await verify(self, token), display_name=name)
+    auth.GoogleVerifier.verify = named
+from copilot_gateway.main import run
+run()
+"""
 
 
 class Gateway:
@@ -219,6 +313,7 @@ class Gateway:
             "PORT": str(port),
             "COPILOT_DEV_USER_ID": BENCH_USER_ID,
             "COPILOT_DEV_USER_NAME": user_name,
+            "COPILOT_BENCH_DISPLAY_NAME": user_name,
             "COPILOT_LOG_DIR": str(log_dir),
             **env,
         }
@@ -229,7 +324,7 @@ class Gateway:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         out = (self.log_dir / "gateway-console.txt").open("wb")
         self.proc = subprocess.Popen(
-            [self.python, "-c", "from copilot_gateway.main import run; run()"],
+            [self.python, "-c", LAUNCH],
             env=self.env,
             stdout=out,
             stderr=subprocess.STDOUT,
@@ -316,7 +411,12 @@ def force_actions(script: list[Utterance], spans: list[Span]) -> list[tuple[floa
 
 
 async def run_once(
-    url: str, token: str, audio: Audio, actions: list[tuple[float, dict[str, Any]]], quiet: bool
+    url: str,
+    token: str,
+    audio: Audio,
+    actions: list[tuple[float, dict[str, Any]]],
+    quiet: bool,
+    start: dict[str, Any] | None = None,
 ) -> rp.Replay:
     replay = rp.Replay(
         url,
@@ -328,7 +428,9 @@ async def run_once(
         quiet=quiet,
         consent=False,
         actions=actions,
+        mode=str((start or {}).get("mode", "interview")),
     )
+    replay.start_extra = {k: v for k, v in (start or {}).items() if k != "mode"}
     await replay.run()
     return replay
 
@@ -450,6 +552,7 @@ def score_run(
             span = span_for(spans, seg.start_edge / SAMPLE_RATE, seg.end_edge / SAMPLE_RATE)
         fast = q.done.get("fast", {})
         lat = cast(dict[str, Any], fast.get("latency_ms", {}))
+        deep_lat = cast(dict[str, Any], q.done.get("deep", {}).get("latency_ms", {}))
         stored = stored_latency.get((q.question_id, "fast"), {})
         first_delta = q.first_delta_at.get("fast")
         anchor = forced_at if forced_at is not None else q.speech_end_at
@@ -484,6 +587,11 @@ def score_run(
             and anchor is not None
             and "expand_ms" not in q.done.get("deep", {}).get("latency_ms", {})
             else None,
+            "memory_wait_ms": lat.get("memory_wait_ms"),
+            "memory_fts_ms": lat.get("memory_fts_ms"),
+            "memory_hybrid_ms": lat.get("memory_hybrid_ms"),
+            "deep_memory_wait_ms": deep_lat.get("memory_wait_ms"),
+            "deep_memory_hybrid_ms": deep_lat.get("memory_hybrid_ms"),
             "errors": q.errors,
         }
         rows.append(row)
@@ -677,9 +785,15 @@ def print_run(i: int, run: dict[str, Any]) -> None:
     head = " ".join(f"{c:>6}" for c in cols)
     print(f"{'utterance':<18} {'exp':<6} {'fired':<6} {'src':<8} {head}")
     keys = (
-        "detector_ms", "final_ms", "turn_end_ms", "start_ms", "first_token_ms",
-        "server_first_word_ms", "first_word_ms", "deep_first_word_ms",
-    )  # fmt: skip
+        "detector_ms",
+        "final_ms",
+        "turn_end_ms",
+        "start_ms",
+        "first_token_ms",
+        "server_first_word_ms",
+        "first_word_ms",
+        "deep_first_word_ms",
+    )
     for r in sorted(run["questions"], key=lambda r: r["first_word_ms"] or 0):
         cells = " ".join(f"{'-' if r.get(k) is None else r[k]:>6}" for k in keys)
 
@@ -748,6 +862,20 @@ async def cmd_run(args: argparse.Namespace) -> int:
     actions = force_actions(script, spans)
     valkey = make_valkey(os.environ.get("COPILOT_VALKEY_URL", "redis://localhost:6379/0"))
     runs: dict[str, list[dict[str, Any]]] = {v.label: [] for v in variants}
+    start: dict[str, Any] | None = None
+    stack = contextlib.AsyncExitStack()
+    if args.company:
+        from copilot_evals.company_eval import load_questions
+
+        db_url = await stack.enter_async_context(company_database(args.database_url, args.user_id))
+        env["COPILOT_GATEWAY_DATABASE_URL"] = db_url
+        _, meeting = load_questions()
+        start = {
+            "mode": "meeting",
+            "employer_id": COMPANY_ID,
+            "meeting_title": meeting["title"],
+            "agenda": meeting["agenda"],
+        }
     try:
         for n, v in enumerate(variants):
             v.out_dir.mkdir(parents=True, exist_ok=True)
@@ -762,14 +890,14 @@ async def cmd_run(args: argparse.Namespace) -> int:
             for v in variants:
                 assert v.url is not None
                 nonce = None if args.warm_cache else f"{v.label}-{i}-{int(time.time())}"
-                await seed(valkey, profile, nonce)
+                await seed(valkey, profile, nonce, args.user_id)
                 measured = await probe() if not args.no_probe else None
                 print(
                     f"\n--- {v.label} run {i}/{args.runs} ({audio.seconds:.0f} s of audio; "
                     f"provider probe {measured['median_ms'] if measured else '-'} ms) ---",
                     flush=True,
                 )
-                replay = await run_once(v.url, token, audio, actions, args.quiet)
+                replay = await run_once(v.url, token, audio, actions, args.quiet, start)
                 await asyncio.sleep(2.0)  # the session's last log entries reach Valkey
                 log = await session_log(valkey, replay.session_id or "")
                 run = score_run(replay, log, script, spans, profile, audio, args.stt_price)
@@ -785,12 +913,14 @@ async def cmd_run(args: argparse.Namespace) -> int:
             if v.gateway is not None:
                 v.gateway.stop()
         await valkey.aclose()
+        await stack.aclose()
     for v in variants:
         summary = summarize(runs[v.label])
         probes = [r["probe"]["median_ms"] for r in runs[v.label] if r.get("probe")]
         summary["provider_probe_ms"] = round(statistics.median(probes)) if probes else None
         summary["label"] = v.label
-        summary["env"] = env
+        summary["env"] = {k: v for k, v in env.items() if "DATABASE_URL" not in k}
+        summary["company"] = bool(args.company)
         summary["interleaved_with"] = [w.label for w in variants if w is not v]
         summary["at"] = datetime.now(UTC).isoformat()
         (v.out_dir / "summary.json").write_text(json.dumps(summary, indent=2), "utf-8")
@@ -919,6 +1049,24 @@ def main(argv: list[str] | None = None) -> int:
         help="another gateway (another checkout's venv python), interleaved run by run",
     )
     r.add_argument("--no-probe", action="store_true", help="skip the provider latency probe")
+    r.add_argument(
+        "--user-id",
+        default=BENCH_USER_ID,
+        help="the user the gateway signs in (with Google sign-in, the token's: a uuid5 of sub)",
+    )
+    r.add_argument(
+        "--company",
+        action="store_true",
+        help="a meeting at the company eval's company (evals/company): its memory in a scratch "
+        "database the gateway searches live; needs --database-url",
+    )
+    r.add_argument(
+        "--database-url",
+        default=os.environ.get(
+            "COPILOT_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/copilot"
+        ),
+        help="a Postgres superuser URL, for --company's scratch database",
+    )
     c = sub.add_parser("compare", help="markdown table over result labels")
     c.add_argument("labels", nargs="+")
     rs = sub.add_parser("rescore", help="recompute summaries from the saved runs")

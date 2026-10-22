@@ -1,0 +1,1098 @@
+{
+ "nodes": [
+  {
+   "id": "01a16130-4747-762b-a382-bb725dee4f33",
+   "kind": "commitment",
+   "title": "Add a dedupe table for order events with a 7-day TTL.",
+   "summary": "Add a dedupe table for order events with a 7-day TTL.",
+   "body": {
+    "state": "open",
+    "due_date": "2026-10-27"
+   },
+   "source": {
+    "ref": "48a3c4b4-af84-5105-933d-a19631607114",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-15"
+  },
+  {
+   "id": "01a1612f-ee9d-708a-ad7b-8d8b3757005b",
+   "kind": "commitment",
+   "title": "Review Sam's fraud scoring client timeout PR by Monday.",
+   "summary": "Review Sam's fraud scoring client timeout PR by Monday.",
+   "body": {
+    "state": "done",
+    "due_date": "2026-10-12",
+    "closed_by": "18db19e4-4a17-51ec-8678-92fbd7a452e1"
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "01a16130-3042-7133-9713-752ebc36bfdc",
+   "kind": "commitment",
+   "title": "Send Marco the outbox rollout plan.",
+   "summary": "Send Marco the outbox rollout plan.",
+   "body": {
+    "state": "open",
+    "due_date": "2026-10-23"
+   },
+   "source": {
+    "ref": "c01b55f7-688a-5809-b75d-7e09e5f9256b",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-14"
+  },
+  {
+   "id": "01a16130-4746-7c6a-95c0-95a459282784",
+   "kind": "decision",
+   "title": "7-day TTL for order event deduplication",
+   "summary": "The duplicate events incident postmortem assigned Alex an action item to add a dedupe table for order events with a 7-day TTL.",
+   "body": {
+    "project": ""
+   },
+   "source": {
+    "ref": "48a3c4b4-af84-5105-933d-a19631607114",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-15"
+  },
+  {
+   "id": "01a1612f-ee9c-77d8-ab47-17031b8f863a",
+   "kind": "decision",
+   "title": "Batch-load promo rules",
+   "summary": "Fix the cart pricing N+1 query in CHK-1290 by batch-loading promo rules per cart instead of issuing one SELECT per cart line.",
+   "body": {
+    "project": ""
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "01a16130-1ed2-72a7-b5d0-f7a3f4660680",
+   "kind": "decision",
+   "title": "Consumer idempotency on order id",
+   "summary": "Made the consumer idempotent on order id to mitigate duplicate order events following a consumer group rebalance.",
+   "body": {
+    "project": "order-pipeline"
+   },
+   "source": {
+    "ref": "412a2c49-8d77-541f-8628-78a2babf0b06",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-13"
+  },
+  {
+   "id": "3801c962-70a4-4fe2-88e5-d8745fecb626",
+   "kind": "decision",
+   "title": "Fraud scoring timeout",
+   "summary": "The fraud scoring client times out after 800 ms and fails open.",
+   "body": {
+    "evidence": "Times out after 800 ms and fails open."
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "01a1612f-a71d-75db-898c-41a1a9a6e84f",
+   "kind": "decision",
+   "title": "Idempotency key per refund",
+   "summary": "Plan to store an idempotency key per refund with the response to prevent duplicate refunds when the adapter retries after a timeout.",
+   "body": {
+    "project": "payments adapter"
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a16130-3041-705e-9611-09d22d93a0e5",
+   "kind": "decision",
+   "title": "Keep SQS FIFO and add transactional outbox",
+   "summary": "At the reservation sync with Priya, Marco and Dana, decided to keep SQS FIFO for reservations and add the transactional outbox; revisit Kafka in Q1 if reservations exceed 2,000 messages a second.",
+   "body": {
+    "project": "reservation service"
+   },
+   "source": {
+    "ref": "c01b55f7-688a-5809-b75d-7e09e5f9256b",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-14"
+  },
+  {
+   "id": "65a3cec3-eaa1-46f1-a698-bfa6a76b666c",
+   "kind": "decision",
+   "title": "Keep SQS FIFO and build the outbox",
+   "summary": "Choose a transactional outbox over Kafka: SQS FIFO deduplication and idempotent warehouse consumers are sufficient; Kafka would add cost and on-call load. Revisit Kafka in Q1 if reservations exceed 2,000 messages per second.",
+   "body": {
+    "evidence": "Keep SQS FIFO and build the outbox (option 2). SQS FIFO's 5-minute deduplication window plus idempotent warehouse consumers is enough."
+   },
+   "source": {
+    "ref": "b13251e8-fac7-5602-aee2-0364711216c9",
+    "type": "company_document"
+   },
+   "valid_from": "2026-10-14"
+  },
+  {
+   "id": "9f4683bf-d7ec-4b62-ace5-1304167a9a91",
+   "kind": "decision",
+   "title": "Postgres per service",
+   "summary": "Use a separate RDS Postgres database per service, with no shared databases.",
+   "body": {
+    "evidence": "Postgres (RDS) per service; no shared databases."
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "01a1612f-bb59-7666-9737-0ae19571f4d0",
+   "kind": "decision",
+   "title": "Refund idempotency",
+   "summary": "Use the refund id as the idempotency key, enforce uniqueness on (provider, idempotency_key) in the adapter's Postgres, and return the stored response on retry.",
+   "body": {
+    "project": "payments adapter"
+   },
+   "source": {
+    "ref": "b5ce3193-f9f6-59e2-96d7-7ef3e932e267",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-07"
+  },
+  {
+   "id": "01a16130-09ae-7e87-a329-98b35884a4fa",
+   "kind": "decision",
+   "title": "Reservation outbox",
+   "summary": "The design writes the event to an outbox table in the same Postgres transaction as the reservation; a relay publishes it to SQS FIFO.",
+   "body": {
+    "project": "reservation service"
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a1612f-a717-71c7-a99a-3c34f9c4a864",
+   "kind": "person",
+   "title": "Dana",
+   "summary": "Paired with Alex on the payments adapter's on-call dashboard.",
+   "body": {
+    "role": ""
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a1612f-d3f9-7447-a815-ef71247cb9de",
+   "kind": "person",
+   "title": "Marco",
+   "summary": "Planned contact for a sync on reservation work for Q4.",
+   "body": {
+    "role": ""
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a1612f-d3f8-726a-8ec2-896dd8945227",
+   "kind": "person",
+   "title": "Priya",
+   "summary": "Reviewing PR #881 for PSP-412 (refund idempotency).",
+   "body": {
+    "role": "Reviewer"
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a1612f-ee99-71a8-be37-d9938b3feb6b",
+   "kind": "person",
+   "title": "Sam",
+   "summary": "Has a fraud scoring client timeout PR that Alex promised to review by Monday.",
+   "body": {
+    "role": ""
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "e8fd64be-3513-4f8e-a427-fe8ef56ea71e",
+   "kind": "project",
+   "title": "Reservation sync",
+   "summary": "Add a transactional outbox so reservation events reach SQS even if the reservation service crashes after writing to Postgres.",
+   "body": {
+    "stack": [
+     "Postgres",
+     "SQS FIFO"
+    ],
+    "evidence": "Keep SQS FIFO and add a transactional outbox: the event is written in the same transaction as the reservation; a relay publishes it."
+   },
+   "source": {
+    "ref": "b13251e8-fac7-5602-aee2-0364711216c9",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "9ce16750-9221-4e90-94b2-1d5460592b8a",
+   "kind": "system",
+   "title": "Checkout API",
+   "summary": "Python FastAPI service on ECS Fargate behind an ALB; owns cart, pricing and checkout flow and calls the payments adapter over gRPC.",
+   "body": {
+    "stack": [
+     "Python",
+     "FastAPI",
+     "ECS Fargate",
+     "ALB",
+     "gRPC"
+    ],
+    "evidence": "Python (FastAPI) on ECS Fargate behind an ALB. Owns the cart, pricing and the checkout flow. Calls the payments adapter over gRPC."
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "748bc4cf-f002-4f0c-b0c8-ba0749d1dcd6",
+   "kind": "system",
+   "title": "Fraud scoring client",
+   "summary": "Python library called by the Checkout API and owned by Sam Okafor; times out after 800 ms and fails open.",
+   "body": {
+    "stack": [
+     "Python"
+    ],
+    "evidence": "a Python library the Checkout API calls; owned by Sam Okafor. Times out after 800 ms and fails open."
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "40d30324-8468-423a-8b96-a72c0fbddc41",
+   "kind": "system",
+   "title": "Ledger feed",
+   "summary": "Kafka topic that finance reads orders from; it must not contain duplicates.",
+   "body": {
+    "stack": [
+     "Kafka"
+    ],
+    "evidence": "the Kafka topic finance reads orders from; it must not see duplicates."
+   },
+   "source": {
+    "ref": "bb660e11-fade-58a3-82bd-d95813c6e5d0",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "01a16130-1ecf-78b7-807d-9d6798e39aae",
+   "kind": "system",
+   "title": "order-pipeline",
+   "summary": "Processes order events through a consumer group; a rebalance caused 312 duplicates in the downstream ledger feed.",
+   "body": {
+    "stack": []
+   },
+   "source": {
+    "ref": "412a2c49-8d77-541f-8628-78a2babf0b06",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-13"
+  },
+  {
+   "id": "01a1612f-a70d-7df9-967a-ef90f38ea17e",
+   "kind": "system",
+   "title": "payments adapter",
+   "summary": "Adapter that sends refunds to the PSP; retries after a timeout can send a refund twice.",
+   "body": {
+    "stack": []
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a1612f-ee98-784f-a322-644c7cd52d7a",
+   "kind": "system",
+   "title": "reservation service",
+   "summary": "Handles inventory reservations; events can be lost if it crashes between the DB write and the SQS send.",
+   "body": {
+    "stack": [
+     "SQS"
+    ]
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "1f87b07e-1a1d-4859-ab52-f34fe3e7bbe1",
+   "kind": "term",
+   "title": "Auth-capture gap",
+   "summary": "Time between card authorization and payment capture; up to 7 days for back-ordered items.",
+   "body": {
+    "evidence": "the time between authorizing a card and capturing the payment; ours is up to 7 days for back-ordered items."
+   },
+   "source": {
+    "ref": "bb660e11-fade-58a3-82bd-d95813c6e5d0",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "cb987b0a-4948-48a3-8f01-9ca07ee1740a",
+   "kind": "term",
+   "title": "dlq-replay",
+   "summary": "Tool Dana's team uses to replay the reservations dead-letter queue after a fix.",
+   "body": {
+    "evidence": "Dana's team replays the DLQ with the `dlq-replay` tool after a fix"
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "6f245aec-77bf-4923-843b-cd863f9d8ab0",
+   "kind": "term",
+   "title": "duplicate-tolerant consumer requirement",
+   "summary": "Warehouse consumers must handle duplicate reservation events.",
+   "body": {
+    "evidence": "Marco: tell the warehouse team about the duplicate-tolerant consumer requirement."
+   },
+   "source": {
+    "ref": "b13251e8-fac7-5602-aee2-0364711216c9",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "4a78687c-82f1-4290-a965-7f5ac55012e6",
+   "kind": "term",
+   "title": "PSP",
+   "summary": "Payment service provider, such as Stripe or Adyen.",
+   "body": {
+    "evidence": "PSP: payment service provider (Stripe, Adyen)."
+   },
+   "source": {
+    "ref": "bb660e11-fade-58a3-82bd-d95813c6e5d0",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "01a16130-7662-7f73-baba-35126b7bdf03",
+   "kind": "term",
+   "title": "PSP failover",
+   "summary": "Switching a payment to the backup PSP when the primary times out.",
+   "body": {},
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "0313622c-4574-4aee-96e1-b25df125bfe0",
+   "kind": "term",
+   "title": "Reservation hold",
+   "summary": "Inventory held by a cart during checkout; expires after 15 minutes without payment.",
+   "body": {
+    "evidence": "the inventory a cart holds during checkout; it expires after 15 minutes without payment."
+   },
+   "source": {
+    "ref": "bb660e11-fade-58a3-82bd-d95813c6e5d0",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "6dc663ae-faab-4d21-a324-340e71eadc72",
+   "kind": "term",
+   "title": "reservations-dlq",
+   "summary": "Dead-letter queue for reservation messages that fail five receives.",
+   "body": {
+    "evidence": "Messages that fail 5 receives go to reservations-dlq"
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "1999fd49-dd97-4a83-a656-1a02737e5c7b",
+   "kind": "term",
+   "title": "the adapter",
+   "summary": "The payments adapter, which connects to payment service providers.",
+   "body": {
+    "evidence": "Payments adapter (\"the adapter\"): Go service on ECS that talks to the PSPs"
+   },
+   "source": {
+    "ref": "af7c9f57-12d1-5607-b34a-b43a74dcb67b",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "35ac5f8d-b224-4a63-b2dc-47931e0e5aaa",
+   "kind": "term",
+   "title": "transactional outbox",
+   "summary": "A reservation event written in the same database transaction as its reservation, then published by a relay.",
+   "body": {
+    "evidence": "the event is written in the same transaction as the reservation; a relay publishes it."
+   },
+   "source": {
+    "ref": "b13251e8-fac7-5602-aee2-0364711216c9",
+    "type": "company_document"
+   },
+   "valid_from": null
+  },
+  {
+   "id": "01a16130-7665-7696-8149-40ea9bf1ac41",
+   "kind": "work_item",
+   "title": "Backfill script for existing reservations",
+   "summary": "Plan to start the backfill script for existing reservations on 2026-10-20 (CHK-1311).",
+   "body": {
+    "state": "planned",
+    "project": "reservation service",
+    "external_id": "CHK-1311"
+   },
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "01a1612f-a71d-75db-898c-41a1a9a6b04f",
+   "kind": "work_item",
+   "title": "checkout p95 alert",
+   "summary": "Plan to look at the checkout p95 alert tomorrow.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a1612f-bb59-75dd-a60f-745960795648",
+   "kind": "work_item",
+   "title": "CHK-1290",
+   "summary": "Started profiling checkout p95 regression from 420 ms to 840 ms after last week's cart pricing release; investigation continues tomorrow.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "b5ce3193-f9f6-59e2-96d7-7ef3e932e267",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-07"
+  },
+  {
+   "id": "01a16130-1ed1-7de7-ab23-6d78002b53bf",
+   "kind": "work_item",
+   "title": "CHK-1290",
+   "summary": "Fix in progress.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "412a2c49-8d77-541f-8628-78a2babf0b06",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-13"
+  },
+  {
+   "id": "01a1612f-ee9a-71ad-8e48-6c1369054f2a",
+   "kind": "work_item",
+   "title": "CHK-1290",
+   "summary": "Confirmed an N+1 query in cart pricing: one SELECT per cart line for promo rules; the fix is to batch-load the rules per cart.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "01a1612f-d3fa-7ff4-ac37-d5f570ea7329",
+   "kind": "work_item",
+   "title": "CHK-1290",
+   "summary": "Traces show the pricing call fanning out per cart line; plan to confirm the N+1 tomorrow.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a16130-09ae-7e87-a329-98b3588445a9",
+   "kind": "work_item",
+   "title": "CHK-1290 fix",
+   "summary": "Plan to write the fix tomorrow, 2026-10-13.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": "CHK-1290"
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a16130-4745-730f-85b3-54c770b97f00",
+   "kind": "work_item",
+   "title": "Dedupe table for order events",
+   "summary": "Add a dedupe table with a 7-day TTL as a postmortem action item, due 2026-10-27.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "48a3c4b4-af84-5105-933d-a19631607114",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-15"
+  },
+  {
+   "id": "01a16130-09ae-7361-bd3b-1d706f65ba5b",
+   "kind": "work_item",
+   "title": "Deploy PSP-412",
+   "summary": "Planned deployment for tomorrow, 2026-10-13.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": "PSP-412"
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a16130-1ed0-7e4f-82c0-5241fbe36fcf",
+   "kind": "work_item",
+   "title": "Duplicate order events",
+   "summary": "Led the SEV-3 incident from 14:20 to 15:05 after an order-pipeline consumer group rebalance sent 312 duplicates to the downstream ledger feed; mitigated by making the consumer idempotent on order id.",
+   "body": {
+    "state": "done",
+    "project": "order-pipeline",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "412a2c49-8d77-541f-8628-78a2babf0b06",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-13"
+  },
+  {
+   "id": "01a1612f-ee9c-7689-a7d6-21ede21612ed",
+   "kind": "work_item",
+   "title": "Fraud scoring client timeout PR",
+   "summary": "Promised Sam a review by Monday, 2026-10-12.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "01a1612f-ee9a-7f45-afba-78f55e79948b",
+   "kind": "work_item",
+   "title": "Inventory reservations",
+   "summary": "Synced with Marco (PM) about events lost when the reservation service crashes between the DB write and the SQS send; he wants a plan this month.",
+   "body": {
+    "state": "planned",
+    "project": "reservation service",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "944ec598-3888-58f4-bb46-b6c0144614a1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-09"
+  },
+  {
+   "id": "01a1612f-a71b-710f-bb37-b75cd2dc9594",
+   "kind": "work_item",
+   "title": "on-call dashboard",
+   "summary": "Paired with Dana on the on-call dashboard for the payments adapter.",
+   "body": {
+    "state": "in_progress",
+    "project": "payments adapter",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a16130-5960-7e41-9371-ce1390e157d6",
+   "kind": "work_item",
+   "title": "On-call handoff",
+   "summary": "Handed off on-call to Dana with nothing open.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "9b7823c9-3c9d-5bdc-a08e-7ae5e3ff8b86",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-16"
+  },
+  {
+   "id": "01a16130-7664-71b1-a28b-707e18bc37b9",
+   "kind": "work_item",
+   "title": "Outbox in staging",
+   "summary": "Blocked because the relay's database role lacks a grant on the outbox table in staging Postgres; only SRE can change roles there, and Dana is needed to grant access.",
+   "body": {
+    "state": "blocked",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "01a16130-4746-784d-a190-50d0537314f1",
+   "kind": "work_item",
+   "title": "Outbox migration",
+   "summary": "Started CHK-1305 with the outbox table and relay skeleton in Go.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "CHK-1305"
+   },
+   "source": {
+    "ref": "48a3c4b4-af84-5105-933d-a19631607114",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-15"
+  },
+  {
+   "id": "01a16130-595f-7d17-9d5d-f1a119b1cb7a",
+   "kind": "work_item",
+   "title": "Outbox relay",
+   "summary": "Polling the outbox with SELECT ... FOR UPDATE SKIP LOCKED in batches of 100 and publishing to SQS FIFO with the reservation id as message group and dedupe id.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "9b7823c9-3c9d-5bdc-a08e-7ae5e3ff8b86",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-16"
+  },
+  {
+   "id": "01a16130-3040-7fe2-b100-5700c11f2fe9",
+   "kind": "work_item",
+   "title": "Outbox rollout plan",
+   "summary": "Promised Marco the outbox rollout plan by 2026-10-23.",
+   "body": {
+    "state": "planned",
+    "project": "reservation service",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "c01b55f7-688a-5809-b75d-7e09e5f9256b",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-14"
+  },
+  {
+   "id": "01a16130-4744-73d8-aa53-d14f6465e634",
+   "kind": "work_item",
+   "title": "Postmortem for the 10-13 duplicate events incident",
+   "summary": "Postmortem identified an action item to add a dedupe table for order events with a 7-day TTL.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "48a3c4b4-af84-5105-933d-a19631607114",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-15"
+  },
+  {
+   "id": "01a16130-09ac-73e0-9cdf-b0585e2569f7",
+   "kind": "work_item",
+   "title": "PR #881",
+   "summary": "PSP-412 merged after Priya's review.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": "PR #881"
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a1612f-d3f9-79d5-b0ef-fc8e6e5b558f",
+   "kind": "work_item",
+   "title": "PR #881",
+   "summary": "Opened for PSP-412 (refund idempotency); Priya is reviewing.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "PR #881"
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a16130-5961-76f2-8487-919faddf0995",
+   "kind": "work_item",
+   "title": "PR #893",
+   "summary": "Get PR #893 merged on Monday, 2026-10-19.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": "PR #893"
+   },
+   "source": {
+    "ref": "9b7823c9-3c9d-5bdc-a08e-7ae5e3ff8b86",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-16"
+  },
+  {
+   "id": "01a16130-7663-7e70-ae5d-58018f3a8da5",
+   "kind": "work_item",
+   "title": "PR #893",
+   "summary": "Merged PR #893 (CHK-1290), bringing checkout p95 down from 840 ms to 310 ms in staging.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": "PR #893"
+   },
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "01a16130-303f-70e0-b0b5-b15ebf1d559d",
+   "kind": "work_item",
+   "title": "PR #893",
+   "summary": "Opened PR #893 for CHK-1290 (batch-load promo rules); waiting on Dana's review.",
+   "body": {
+    "state": "blocked",
+    "project": "",
+    "external_id": "PR #893"
+   },
+   "source": {
+    "ref": "c01b55f7-688a-5809-b75d-7e09e5f9256b",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-14"
+  },
+  {
+   "id": "01a1612f-a718-7d96-bbd2-37bd434a4bf7",
+   "kind": "work_item",
+   "title": "PSP-412",
+   "summary": "Picked up duplicate refunds caused by adapter retries after a timeout; plan is an idempotency key per refund stored with the response, with implementation planned for tomorrow.",
+   "body": {
+    "state": "in_progress",
+    "project": "payments adapter",
+    "external_id": "PSP-412"
+   },
+   "source": {
+    "ref": "e61e9835-57ca-50d7-ab64-bc8549cd5948",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-06"
+  },
+  {
+   "id": "01a1612f-d3fa-7ff4-ac37-d5f570ea25a5",
+   "kind": "work_item",
+   "title": "PSP-412",
+   "summary": "Refund idempotency; PR #881 opened and under review by Priya.",
+   "body": {
+    "state": "in_progress",
+    "project": "",
+    "external_id": "PSP-412"
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a1612f-bb58-789a-9e96-9bbe6fe9e5de",
+   "kind": "work_item",
+   "title": "PSP-412",
+   "summary": "Implemented refund-id idempotency keys, a unique index on (provider, idempotency_key) in the adapter's Postgres, and stored responses returned on retry; tests written. PR planned for tomorrow.",
+   "body": {
+    "state": "in_progress",
+    "project": "payments adapter",
+    "external_id": "PSP-412"
+   },
+   "source": {
+    "ref": "b5ce3193-f9f6-59e2-96d7-7ef3e932e267",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-07"
+  },
+  {
+   "id": "01a16130-1ed0-7e4f-82c0-5241fbe2a065",
+   "kind": "work_item",
+   "title": "PSP-412",
+   "summary": "Deployed to production at 10:00; no duplicate refunds since.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": "PSP-412"
+   },
+   "source": {
+    "ref": "412a2c49-8d77-541f-8628-78a2babf0b06",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-13"
+  },
+  {
+   "id": "01a16130-7663-7e70-ae5d-58018f3afc44",
+   "kind": "work_item",
+   "title": "PSP failover RFC",
+   "summary": "Reviewed Priya's RFC on switching a payment to the backup PSP when the primary times out; left comments on retry ordering.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "01a16130-09ad-76e0-8aac-d652b110620a",
+   "kind": "work_item",
+   "title": "Reservation outbox design doc",
+   "summary": "Wrote the design doc: store the event in an outbox table in the same Postgres transaction as the reservation, then publish to SQS FIFO through a relay.",
+   "body": {
+    "state": "done",
+    "project": "reservation service",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a16130-09ac-761a-8d92-9e96b99b9b7b",
+   "kind": "work_item",
+   "title": "Sam's fraud scoring client timeout PR",
+   "summary": "Reviewed PR #887, left two comments and approved.",
+   "body": {
+    "state": "done",
+    "project": "",
+    "external_id": "PR #887"
+   },
+   "source": {
+    "ref": "18db19e4-4a17-51ec-8678-92fbd7a452e1",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-12"
+  },
+  {
+   "id": "01a16130-7664-7261-8175-d368009db868",
+   "kind": "work_item",
+   "title": "Staging grant",
+   "summary": "Plan to pair with Dana on the staging grant on 2026-10-20.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "837f7dad-3a53-5784-b328-346c34fec85f",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-19"
+  },
+  {
+   "id": "01a1612f-d3fb-783e-a952-bec20f68d87f",
+   "kind": "work_item",
+   "title": "Sync with Marco",
+   "summary": "Plan to sync with Marco tomorrow on reservation work for Q4.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "3ccff2cd-ac91-51f0-80c7-0659b94cfc05",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-08"
+  },
+  {
+   "id": "01a16130-5962-75f2-8f64-14348487d331",
+   "kind": "work_item",
+   "title": "Wire the relay into staging",
+   "summary": "Wire the outbox relay into staging on Monday, 2026-10-19.",
+   "body": {
+    "state": "planned",
+    "project": "",
+    "external_id": ""
+   },
+   "source": {
+    "ref": "9b7823c9-3c9d-5bdc-a08e-7ae5e3ff8b86",
+    "type": "worklog"
+   },
+   "valid_from": "2026-10-16"
+  }
+ ],
+ "edges": [
+  {
+   "src": "01a1612f-a718-7d96-bbd2-37bd434a4bf7",
+   "rel": "part_of",
+   "dst": "01a1612f-a70d-7df9-967a-ef90f38ea17e"
+  },
+  {
+   "src": "01a1612f-a71b-710f-bb37-b75cd2dc9594",
+   "rel": "part_of",
+   "dst": "01a1612f-a70d-7df9-967a-ef90f38ea17e"
+  },
+  {
+   "src": "01a1612f-a71d-75db-898c-41a1a9a6e84f",
+   "rel": "about",
+   "dst": "01a1612f-a70d-7df9-967a-ef90f38ea17e"
+  },
+  {
+   "src": "01a1612f-bb58-789a-9e96-9bbe6fe9e5de",
+   "rel": "part_of",
+   "dst": "01a1612f-a70d-7df9-967a-ef90f38ea17e"
+  },
+  {
+   "src": "01a1612f-bb59-7666-9737-0ae19571f4d0",
+   "rel": "about",
+   "dst": "01a1612f-a70d-7df9-967a-ef90f38ea17e"
+  },
+  {
+   "src": "01a1612f-ee9a-7f45-afba-78f55e79948b",
+   "rel": "part_of",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  },
+  {
+   "src": "01a16130-09ad-76e0-8aac-d652b110620a",
+   "rel": "part_of",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  },
+  {
+   "src": "01a16130-09ae-7e87-a329-98b35884a4fa",
+   "rel": "about",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  },
+  {
+   "src": "01a16130-1ed0-7e4f-82c0-5241fbe36fcf",
+   "rel": "part_of",
+   "dst": "01a16130-1ecf-78b7-807d-9d6798e39aae"
+  },
+  {
+   "src": "01a16130-1ed2-72a7-b5d0-f7a3f4660680",
+   "rel": "about",
+   "dst": "01a16130-1ecf-78b7-807d-9d6798e39aae"
+  },
+  {
+   "src": "01a16130-3040-7fe2-b100-5700c11f2fe9",
+   "rel": "part_of",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  },
+  {
+   "src": "01a16130-3041-705e-9611-09d22d93a0e5",
+   "rel": "about",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  },
+  {
+   "src": "01a16130-7665-7696-8149-40ea9bf1ac41",
+   "rel": "part_of",
+   "dst": "01a1612f-ee98-784f-a322-644c7cd52d7a"
+  }
+ ]
+}
