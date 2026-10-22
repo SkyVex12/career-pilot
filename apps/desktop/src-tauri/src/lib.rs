@@ -6,6 +6,7 @@
 //! session so a window opened mid-call (the overlay) can catch up with `snapshot`. Uploads of
 //! the user's own audio report as `copilot://upload`.
 
+mod release;
 mod settings;
 
 use std::collections::HashMap;
@@ -25,6 +26,7 @@ use copilot_client::net::close::StopReason;
 use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::Mode;
 use copilot_client::recording::{self, MeAudioSink, NoRecording, UploadOutcome};
+use release::UpdateState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Environment, Settings, insecure_url_warning};
@@ -36,6 +38,8 @@ use uuid::Uuid;
 
 const EVENT: &str = "copilot://event";
 const UPLOAD_EVENT: &str = "copilot://upload";
+/// The settings changed without the UI asking (the sign-in settings fetched at startup).
+const SETTINGS_EVENT: &str = "copilot://settings";
 const HISTORY_MAX: usize = 20_000;
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// Retries after a failed upload: about 11 minutes in all, past the 10 minutes post-call work
@@ -114,9 +118,20 @@ impl AppState {
 
 type Res<T> = Result<T, String>;
 
+/// What the settings screen shows of a release build: the stage it is pinned to.
+#[derive(Serialize)]
+struct ReleaseView {
+    stage: String,
+    api_url: String,
+}
+
 #[derive(Serialize)]
 struct SettingsView {
     settings: Settings,
+    /// The app's version (the tag's, in a release build).
+    version: String,
+    /// A release build: no local environment or dev token, the stage's URLs fixed.
+    release: Option<ReleaseView>,
     dev_token_set: bool,
     /// The cloud environment's signed-in user (their email), if any.
     signed_in_as: Option<String>,
@@ -127,7 +142,7 @@ struct SettingsView {
 }
 
 #[tauri::command]
-fn get_settings(state: State<'_, AppState>) -> SettingsView {
+fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
     let settings = state.settings.lock().unwrap().clone();
     let dev_token_set = state.dev_tokens.is_set();
     let signed_in_as = state.oauth().and_then(|p| p.signed_in_as());
@@ -137,7 +152,16 @@ fn get_settings(state: State<'_, AppState>) -> SettingsView {
     };
     let (gateway, api) = settings.active_urls();
     let warnings = [gateway, api].into_iter().filter_map(insecure_url_warning).collect();
-    SettingsView { settings, dev_token_set, signed_in_as, ready, warnings }
+    SettingsView {
+        settings,
+        version: app.package_info().version.to_string(),
+        release: release::config()
+            .map(|r| ReleaseView { stage: r.stage.clone(), api_url: r.api_url.clone() }),
+        dev_token_set,
+        signed_in_as,
+        ready,
+        warnings,
+    }
 }
 
 fn check_urls(gateway: &str, api: &str) -> Res<()> {
@@ -154,9 +178,15 @@ fn check_urls(gateway: &str, api: &str) -> Res<()> {
 fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
     dev_token: Option<String>,
 ) -> Res<()> {
+    if let Some(release) = release::config() {
+        if dev_token.is_some() {
+            return Err("this build signs in with Google only; it has no dev token".into());
+        }
+        settings.pin_to_release(release);
+    }
     let (gateway, api) = settings.active_urls();
     check_urls(gateway, api)?;
     if let Some(token) = dev_token {
@@ -399,7 +429,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             interview_id: request.interview_id,
             meeting_title: request.meeting_title,
             platform: request.platform,
-            client_version: format!("desktop-{}", env!("CARGO_PKG_VERSION")),
+            client_version: format!("desktop-{}", app.package_info().version),
             store_transcript: request.store_transcript,
         },
     );
@@ -519,6 +549,33 @@ fn live_status(state: State<'_, AppState>) -> Live {
     }
 }
 
+/// The update found at start, if any (release builds).
+#[tauri::command]
+fn update_status(app: AppHandle) -> UpdateState {
+    #[cfg(feature = "release")]
+    return app.state::<release::updater::Updates>().state();
+    #[cfg(not(feature = "release"))]
+    {
+        let _ = app;
+        UpdateState::None
+    }
+}
+
+/// Install the update found at start and restart into it. Not during a call.
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
+    if state.engine.lock().unwrap().is_some() {
+        return Err("End the session first; the app restarts to update.".into());
+    }
+    #[cfg(feature = "release")]
+    return release::updater::install(&app).await;
+    #[cfg(not(feature = "release"))]
+    {
+        let _ = app;
+        Err("this build does not update itself".into())
+    }
+}
+
 #[tauri::command]
 fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     let w = app.get_webview_window("overlay").ok_or("no overlay window")?;
@@ -542,7 +599,12 @@ pub fn run() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "release")]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(release::updater::Updates::default());
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -564,7 +626,11 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             let settings_path = dir.join("settings.json");
-            let settings = Settings::load(&settings_path);
+            let mut settings = Settings::load(&settings_path);
+            if let Some(release) = release::config() {
+                settings.pin_to_release(release);
+            }
+            let needs_auth_config = release::config().is_some() && settings.oauth.is_none();
             let hotkey = settings.hotkey.clone();
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             // Nothing records yet: close what a crash left open, so it uploads like the rest.
@@ -589,6 +655,20 @@ pub fn run() {
             // the sign-in); then any recording a failed upload or a crash left behind goes up.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // A release build learns its stage's sign-in settings at once, so a sign-in kept
+                // in the Credential Manager (from an earlier install) works without a new one.
+                if needs_auth_config {
+                    let state = handle.state::<AppState>();
+                    let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
+                    match oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()) {
+                        Ok(cfg) => {
+                            state.update_settings(|s| s.oauth = Some(cfg));
+                            // The settings screen may have loaded before this answered.
+                            let _ = handle.emit(SETTINGS_EVENT, ());
+                        }
+                        Err(e) => tracing::info!("sign-in settings not fetched at startup: {e}"),
+                    }
+                }
                 if let Ok(api) = handle.state::<AppState>().api()
                     && let Err(e) = api.get("/me").await
                 {
@@ -605,6 +685,8 @@ pub fn run() {
                 .skip_taskbar(true)
                 .visible(false)
                 .build()?;
+            #[cfg(feature = "release")]
+            release::updater::check_at_start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -627,6 +709,8 @@ pub fn run() {
             snapshot,
             live_status,
             show_overlay,
+            update_status,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
