@@ -135,14 +135,45 @@ impl ApiClient {
         let method = match method.to_ascii_uppercase().as_str() {
             "GET" => Method::GET,
             "POST" => Method::POST,
+            "PUT" => Method::PUT,
             "PATCH" => Method::PATCH,
             "DELETE" => Method::DELETE,
             other => return Err(ApiError::Invalid(format!("method {other} is not allowed"))),
         };
-        if !path.starts_with('/') || path.contains("://") || path.contains("..") {
-            return Err(ApiError::Invalid(format!("bad API path {path:?}")));
-        }
+        check_path(path)?;
         self.request(method, path, body).await
+    }
+
+    /// A company document or a work log attachment: the file's bytes as the raw body of a
+    /// `POST` to `path` (the API seals it before it is stored), its name in `x-file-name`.
+    pub async fn upload_raw(&self, path: &str, file_name: &str, bytes: Vec<u8>) -> Result<Value, ApiError> {
+        check_path(path)?;
+        let content_type = document_content_type(file_name)?;
+        if bytes.is_empty() {
+            return Err(ApiError::Invalid(format!("{file_name} is empty")));
+        }
+        let url = format!("{}{path}", self.base);
+        let name = percent_encode(file_name);
+        for attempt in 0..2 {
+            let response = self
+                .http
+                .post(&url)
+                .bearer_auth(self.token(attempt > 0).await?)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .header("x-file-name", &name)
+                .timeout(UPLOAD_TIMEOUT)
+                .body(bytes.clone())
+                .send()
+                .await
+                .map_err(|e| ApiError::Network(network_detail(&self.base, &e)))?;
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                continue;
+            }
+            let text = response.text().await.map_err(|e| ApiError::Network(e.to_string()))?;
+            return parse_response(status, &text);
+        }
+        Err(ApiError::Unauthorized)
     }
 
     pub async fn get(&self, path: &str) -> Result<Value, ApiError> {
@@ -215,6 +246,28 @@ impl ApiClient {
     }
 }
 
+const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn check_path(path: &str) -> Result<(), ApiError> {
+    if !path.starts_with('/') || path.contains("://") || path.contains("..") {
+        return Err(ApiError::Invalid(format!("bad API path {path:?}")));
+    }
+    Ok(())
+}
+
+/// A header value for any file name: every byte outside unreserved ASCII as %XX.
+pub fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 fn network_detail(target: &str, e: &reqwest::Error) -> String {
     let host = target.split('/').take(3).collect::<Vec<_>>().join("/");
     if e.is_timeout() { format!("{host} (timed out)") } else { format!("{host} ({e})") }
@@ -263,6 +316,12 @@ mod tests {
     }
 
     #[test]
+    fn file_names_are_percent_encoded() {
+        assert_eq!(percent_encode("Résumé notes.md"), "R%C3%A9sum%C3%A9%20notes.md");
+        assert_eq!(percent_encode("arch-v2_final.pdf"), "arch-v2_final.pdf");
+    }
+
+    #[test]
     fn sha256_is_lowercase_hex() {
         assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     }
@@ -271,7 +330,8 @@ mod tests {
     async fn calls_stay_under_the_base_url() {
         let api =
             ApiClient::new("http://127.0.0.1:9/v1", Arc::new(crate::auth::StaticTokens::one("t"))).unwrap();
-        for (method, path) in [("PUT", "/me"), ("GET", "me"), ("GET", "http://evil/x"), ("GET", "/../admin")]
+        for (method, path) in
+            [("TRACE", "/me"), ("GET", "me"), ("GET", "http://evil/x"), ("GET", "/../admin")]
         {
             assert!(
                 matches!(api.call(method, path, None).await, Err(ApiError::Invalid(_))),

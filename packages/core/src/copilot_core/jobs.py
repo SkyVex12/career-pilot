@@ -98,3 +98,36 @@ def pack_build(
         "due_at": due_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return envelope("pack.build", key, user_id, payload)
+
+
+def employer_pack_build(
+    user_id: UUID,
+    employer_id: UUID,
+    mode: str,
+    memory_version: str,
+    day: str,
+    embedding_model: str | None = None,
+) -> dict[str, Any]:
+    """`pack.build` for a company's standup or meeting pack (context `employer:{id}`).
+
+    The pack is rendered from that company's memory, with no model call, so the key names the
+    company's memory version (`workplace.memory_version`), the day the pack is for (a standup's
+    "yesterday" moves with it) and the embedding model of its prepared answers."""
+    key = (
+        f"pack.build:{user_id}:employer:{employer_id}:{mode}:{memory_version}:{day}"
+        f":{embedding_tag(embedding_model)}"
+    )
+    payload = {
+        "mode": mode,
+        "context": f"employer:{employer_id}",
+        "due_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "day": day,
+    }
+    return envelope("pack.build", key, user_id, payload)
+
+
+def workplace_refresh(user_id: UUID, employer_id: UUID, memory_version: str) -> dict[str, Any]:
+    """`workplace.refresh`: after a company's memory changed (extraction, approvals, edits,
+    post-call commitments), embed its new nodes and rebuild its packs. Once per version."""
+    key = f"workplace.refresh:{user_id}:{employer_id}:{memory_version}"
+    return envelope("workplace.refresh", key, user_id, {"employer_id": str(employer_id)})

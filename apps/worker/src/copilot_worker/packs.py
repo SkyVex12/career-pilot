@@ -109,6 +109,11 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     mode = str(job.payload.get("mode", "interview"))
     context = str(job.payload["context"])
+    if context.startswith("employer:"):
+        from copilot_worker.workplace import build_employer_pack
+
+        await build_employer_pack(ctx, job)
+        return
     due_at = datetime.fromisoformat(str(job.payload["due_at"]))
     digest = await current_digest(ctx, uid)
     if mode == "standup":
@@ -283,11 +288,13 @@ async def build_standup_pack(ctx: Ctx, uid: UUID, digest: Digest | None) -> Sess
     async with ctx.user(uid) as conn:
         rows = await conn.fetch(
             "select id, title, due_date from app.commitments"
-            " where user_id = $1 and coalesce(state, 'open') = 'open' order by due_date nulls last",
+            " where user_id = $1 and coalesce(state, 'open') = 'open' and employer_id is null"
+            " order by due_date nulls last",
             uid,
         )
     open_commitments = [
-        {"node_id": str(r["id"]), "text": r["title"], "due_date": r["due_date"]} for r in rows
+        {"node_id": str(r["id"]), "text": r["title"], "due_date": r["due_date"] or None}
+        for r in rows
     ]
     return SessionPack.model_validate(
         {

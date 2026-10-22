@@ -63,6 +63,10 @@ pub struct StartParams {
     /// A scheduled interview: the gateway loads its pack first (send its job_id too).
     pub interview_id: Option<Uuid>,
     pub meeting_title: Option<String>,
+    /// A standup or meeting at a company: its pack and its memory (company workspaces).
+    pub employer_id: Option<Uuid>,
+    /// The meeting's agenda, as typed.
+    pub agenda: Option<String>,
     pub platform: String,
     pub client_version: String,
     pub store_transcript: bool,
@@ -75,6 +79,8 @@ impl StartParams {
             job_id: self.job_id,
             interview_id: self.interview_id,
             meeting_title: self.meeting_title.clone().filter(|t| !t.trim().is_empty()),
+            employer_id: self.employer_id,
+            agenda: self.agenda.clone().filter(|t| !t.trim().is_empty()),
             platform: self.platform.clone(),
             client_version: self.client_version.clone(),
             consent: Consent { store_transcript: self.store_transcript },

@@ -140,3 +140,38 @@ uv run copilot-answer-eval compare before after           # summaries and 6 exam
 Results go to `answers/results/<label>/`: `answers.json`, `summary.json` and `samples.md`, the
 answers and grades to read. The shape grade judges against the current `DEEP_SHAPES`, so
 regrade older labels after changing them.
+
+## Company workspaces
+
+`copilot-company-eval` grades standup and meeting answers at a company the user works at.
+`company/company.toml` is the benchmark candidate's current employer (fictional): two weeks of
+work logs and three documents; `company/questions.toml` has 8 standup and 12 meeting questions,
+each with key points and the facts it must not claim.
+
+```sh
+uv run copilot-company-eval prepare --database-url postgresql://postgres:...@host/postgres
+uv run copilot-company-eval run --label company-before --variant before --reps 2
+uv run copilot-company-eval run --label company-after --variant after --reps 2
+uv run copilot-company-eval compare company-before company-after
+```
+
+- `prepare` runs the worker's own extraction (`worklog` and `company_doc` jobs, `.env` models)
+  on the material in a scratch database, approves the document facts as a user would, and saves
+  the company's memory to `company/memory.json` (committed, so runs need no extraction).
+- `run --variant after` loads that memory into a scratch database, renders the standup and
+  meeting packs with `copilot_core.workplace` (the meeting with its title, agenda and the facts
+  that match it), and gives each pass the `<memory>` lines live search returns (full text for
+  the fast pass, hybrid with the question's vector for the deep pass), through the gateway's
+  prompt builders. `--variant before` is the same call before company workspaces: the career
+  digest only, and an empty standup pack.
+- The grader sees the company's material as written (`<company_truth>`), so any fact about the
+  user's work or the company that the material does not hold counts as invented.
+
+A run costs about $0.65 (80 answers, graded); `prepare` about $0.50. Results go to
+`company/results/<label>/`, with the packs the after-run used (`packs.md`).
+
+`copilot-bench run --company --database-url ...` replays the benchmark audio as a meeting at the
+same company: the gateway renders the company's pack at session start and searches its memory
+(in a scratch database) for every question, and the summary adds the memory stages
+(`memory_wait_ms`, `memory_fts_ms`, `memory_hybrid_ms` and the deep pass's). `--user-id` names
+the user the gateway signs in, for a gateway with Google sign-in (the uuid5 of the token's sub).

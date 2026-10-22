@@ -23,6 +23,9 @@ use crate::net::client::{
 use crate::net::close::StopReason;
 use crate::recording::MeAudioSink;
 
+// A few events a second go to the UI, so the size of the largest (a server message) does not
+// matter; boxing it would only add an allocation per message.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UiEvent {

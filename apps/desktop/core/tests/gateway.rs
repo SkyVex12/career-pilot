@@ -29,6 +29,8 @@ fn start_params() -> StartParams {
         job_id: None,
         interview_id: None,
         meeting_title: None,
+        employer_id: None,
+        agenda: None,
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript: true,

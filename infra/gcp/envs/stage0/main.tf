@@ -21,7 +21,7 @@ locals {
     deepgram-api-key           = "Deepgram API key: streaming STT (gateway), pre-recorded (workers)"
     db-postgres                = "Postgres superuser password (migrations, backups)"
     db-app-api                 = "Postgres password of app_api"
-    db-app-gateway             = "Postgres password of app_gateway (no service uses it until phase 2)"
+    db-app-gateway             = "Postgres password of app_gateway (gateway: company memory, read only)"
     db-app-worker              = "Postgres password of app_worker"
     db-app-system              = "Postgres password of app_system"
     uploads-hmac-access-id     = "HMAC access id of the uploads service account (S3 API to Cloud Storage)"
@@ -31,10 +31,11 @@ locals {
   secret = { for k, _ in local.secrets : k => "{{secret:${local.prefix}-${k}}}" }
 
   db_url = { for role, s in {
-    postgres   = "db-postgres"
-    app_api    = "db-app-api"
-    app_worker = "db-app-worker"
-    app_system = "db-app-system"
+    postgres    = "db-postgres"
+    app_api     = "db-app-api"
+    app_gateway = "db-app-gateway"
+    app_worker  = "db-app-worker"
+    app_system  = "db-app-system"
   } : role => "postgresql://${role}:${local.secret[s]}@127.0.0.1:5432/copilot" }
 
   # The environment of each workload, as copilotctl reads it from the `copilot-env` metadata
@@ -84,7 +85,12 @@ locals {
       POSTGRES_PASSWORD = local.secret["db-postgres"]
       PGDATA            = "/pgroot/pgdata"
     }
-    gateway = merge(local.model_env, { HOST = "127.0.0.1", PORT = "8081" })
+    gateway = merge(local.model_env, {
+      HOST = "127.0.0.1"
+      PORT = "8081"
+      # Company memory: live search and the pack render at session start (read only).
+      COPILOT_GATEWAY_DATABASE_URL = local.db_url["app_gateway"]
+    })
     api = merge(local.data_env, {
       HOST                         = "127.0.0.1"
       PORT                         = "8080"

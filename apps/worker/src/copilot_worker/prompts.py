@@ -183,8 +183,110 @@ POSTCALL_MEETING_SCHEMA: dict[str, Any] = obj(
     {"summary": STR, "decisions": STRS, "action_items": STRS}
 )
 
+# --- worklog.extract and company_doc.extract (company workspaces) ---------------------
+
+WORKPLACE_RULES = f"""Rules:
+- Use only what the source says. Never invent tickets, people, systems, dates or numbers.
+  Where the source is thin, return less.
+- Titles are short names as the source writes them ("Label retry fix", "PR #412", "Dispatch
+  service", "Priya Raman"). Summaries are one plain line with the specifics the source gives
+  (what, why, numbers, ticket or PR ids); a system's or project's summary says what it does,
+  what it runs on and who owns it when the source says, so it can be found by search.
+- <known> lists what this company's memory already has. Reuse those exact titles when the
+  source means the same thing, so nothing is stored twice.
+- The user is named on the first line of the request. People are the user's colleagues and
+  others they work with: never list the user as a person.
+- Leave out anything about the user's private life and anything that is not about work.
+
+{DATA_RULE}"""
+
+WORKLOG_SYSTEM = f"""You extract workplace facts from a user's own daily work log.
+The log is what the user worked on at one company on one day: tasks, tickets, PRs, decisions,
+blockers and plans for the next day, in their own words, sometimes with attached files.
+
+Return:
+- work_items: each task, ticket, PR, bug or review the log mentions, with its state: done
+  (finished that day), in_progress, planned (for the next day or later), or blocked (with
+  what blocks it in the summary). external_id is a ticket or PR id when the log gives one.
+  project names the project or system it belongs to, from <known> or this log, or "".
+- decisions: what was decided, by whom if said, and why.
+- commitments: promises the user made to someone, with a due date (YYYY-MM-DD, worked out
+  from the log's day when the log says "Friday" or "tomorrow"; "" when none was said).
+- closed_commitments: short ids from <open_commitments> that this log says are done.
+- projects, systems, people (with their role) and terms (the company's own words and
+  acronyms, with their meaning) that the log names and <known> does not have yet.
+
+{WORKPLACE_RULES}"""
+
+_NAMED = obj({"name": STR, "summary": STR, "stack": STRS})
+WORKLOG_SCHEMA: dict[str, Any] = obj(
+    {
+        "work_items": {
+            "type": "array",
+            "items": obj(
+                {
+                    "title": STR,
+                    "summary": STR,
+                    "state": {
+                        "type": "string",
+                        "enum": ["done", "in_progress", "planned", "blocked"],
+                    },
+                    "external_id": STR,
+                    "project": STR,
+                }
+            ),
+        },
+        "decisions": {
+            "type": "array",
+            "items": obj({"title": STR, "summary": STR, "project": STR}),
+        },
+        "commitments": {"type": "array", "items": obj({"text": STR, "due_date": STR})},
+        "closed_commitments": STRS,
+        "projects": {"type": "array", "items": _NAMED},
+        "systems": {"type": "array", "items": _NAMED},
+        "people": {"type": "array", "items": obj({"name": STR, "role": STR, "summary": STR})},
+        "terms": {"type": "array", "items": obj({"term": STR, "meaning": STR})},
+    }
+)
+
+COMPANY_DOC_SYSTEM = f"""You extract workplace facts from a company document for a meeting copilot.
+The document belongs to the company the user works at: architecture notes, a wiki page,
+meeting notes or a spec. The user reviews every fact before it is kept.
+
+Return the projects, systems (what each does and its stack), people (name and role), decisions
+(what, by whom if said, why, and the date if given as YYYY-MM-DD) and terms (the company's own
+words and acronyms with their meaning) that a teammate would need to talk about this work. Each
+item carries evidence: a quote of at most 25 words from the document that supports it.
+
+{WORKPLACE_RULES}"""
+
+_EVIDENCE = {"evidence": STR}
+COMPANY_DOC_SCHEMA: dict[str, Any] = obj(
+    {
+        "projects": {
+            "type": "array",
+            "items": obj({"name": STR, "summary": STR, "stack": STRS, **_EVIDENCE}),
+        },
+        "systems": {
+            "type": "array",
+            "items": obj({"name": STR, "summary": STR, "stack": STRS, **_EVIDENCE}),
+        },
+        "people": {
+            "type": "array",
+            "items": obj({"name": STR, "role": STR, "summary": STR, **_EVIDENCE}),
+        },
+        "decisions": {
+            "type": "array",
+            "items": obj({"title": STR, "summary": STR, "date": STR, **_EVIDENCE}),
+        },
+        "terms": {"type": "array", "items": obj({"term": STR, "meaning": STR, **_EVIDENCE})},
+    }
+)
+
 # First line of each system prompt, by fixture job name (see copilot_worker.fixtures).
 JOB_PROMPTS: dict[str, str] = {
+    "worklog": WORKLOG_SYSTEM.split("\n", 1)[0],
+    "company_doc": COMPANY_DOC_SYSTEM.split("\n", 1)[0],
     "extract": EXTRACT_SYSTEM.split("\n", 1)[0],
     "job": JOB_SYSTEM.split("\n", 1)[0],
     "pack": PACK_SYSTEM.split("\n", 1)[0],
@@ -262,4 +364,49 @@ def postcall_request(
         ),
         max_tokens=16000,
         json_schema=schema,
+    )
+
+
+def worklog_request(
+    user_name: str,
+    company: str,
+    day: str,
+    log_text: str,
+    attachments: Sequence[Mapping[str, Any]],
+    known: str,
+    open_commitments: str,
+) -> LLMRequest:
+    """The user's log entry for one company and day, plus its attachments as documents."""
+    text = "\n\n".join(
+        [
+            f"User: {user_name}\nCompany: {company}\nLog day: {day}",
+            data_block("known", known or "(nothing yet)"),
+            data_block("open_commitments", open_commitments or "(none)"),
+            data_block("work_log", log_text),
+            "Extract the workplace facts from this work log (and its attached files) as JSON.",
+        ]
+    )
+    return LLMRequest(
+        system=[SystemBlock(WORKLOG_SYSTEM)],
+        content=[*attachments, {"type": "text", "text": text}],
+        max_tokens=16000,
+        json_schema=WORKLOG_SCHEMA,
+    )
+
+
+def company_doc_request(
+    user_name: str, company: str, document: Mapping[str, Any], known: str
+) -> LLMRequest:
+    text = "\n\n".join(
+        [
+            f"User: {user_name}\nCompany: {company}",
+            data_block("known", known or "(nothing yet)"),
+            "Extract the workplace facts from this company document as JSON.",
+        ]
+    )
+    return LLMRequest(
+        system=[SystemBlock(COMPANY_DOC_SYSTEM)],
+        content=[document, {"type": "text", "text": text}],
+        max_tokens=32000,
+        json_schema=COMPANY_DOC_SCHEMA,
     )

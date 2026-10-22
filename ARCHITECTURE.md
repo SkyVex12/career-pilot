@@ -125,14 +125,19 @@ Memory is a per-user career knowledge graph with embeddings, compiled into three
 | Project | Goal, the user's contribution, stack, outcome, metrics |
 | Story | STAR episode linked to a project, tagged by competency |
 | Skill | Technology or soft skill, years, linked evidence |
-| Work item | Ticket, PR, commit, decision or blocker, with dates |
-| Commitment | Promise made in a meeting, with its due date |
+| Work item | Ticket, PR, task, review or blocker at a company, with its state and the day |
+| Commitment | Promise made at work (in a work log or a standup), with its due date |
+| Decision | What was decided at a company, by whom and why |
+| System | A company's service or tool, what it does and its stack |
+| Term | A company's own word or acronym and its meaning |
+
+Career memory (roles, projects, stories, skills) and workplace memory are kept apart: every workplace node belongs to one employer (`memory_nodes.employer_id`, see [Company workspaces](#company-workspaces)), and the career digest and interview packs never read workplace nodes.
 
 **Read tiers**
 
 - **Hot digest:** a 2k to 4k token summary of the whole career, always first in the prompt and prompt-cached.
-- **Session pack:** built before each call by mode. Interview: stories ranked against the job description plus outlines for about 30 likely questions. Standup: yesterday's PRs, ticket updates and blockers, drafted 30 minutes before the meeting.
-- **Full memory:** hybrid search (Postgres full text, pgvector, graph hops) for questions the first two tiers cannot answer.
+- **Session pack:** built before each call by mode. Interview: stories ranked against the job description plus outlines for about 30 likely questions. Standup and meeting at a company: rendered from that company's memory (below).
+- **Full memory:** hybrid search (Postgres full text, pgvector, graph hops) for questions the first two tiers cannot answer. Live in standups and meetings at a company, scoped to that company.
 
 **Write path**
 
@@ -143,6 +148,26 @@ Memory is a per-user career knowledge graph with embeddings, compiled into three
 
 **Modes** (interview, standup, general meeting) pick the session pack and the prompt template.
 
+#### Company workspaces
+
+Standups and meetings answer from the user's work at a company. The companies the user works at (**employers**, `app.employers`) are kept apart from the jobs they apply to (`app.jobs`); usually one is current, sometimes more, and a past one can be archived.
+
+| Source | What it is | How it enters memory |
+| --- | --- | --- |
+| **Work log** | One entry per company and day (`app.work_logs`): what the user worked on, as they wrote or pasted it (tasks, tickets, PRs, decisions, blockers, plans for tomorrow), with attached files | `worklog.extract` (Sonnet, or the pack model on OpenAI) turns it into work items, decisions, commitments, and the projects, systems, people and terms it names. The user wrote it, so the facts are kept at once and shown under the entry to edit or remove. It also closes open commitments the log says are done |
+| **Company material** | Documents per company (`app.company_documents`): architecture notes, wiki pages, meeting notes, specs | `company_doc.extract` (Opus, or the extraction model on OpenAI) proposes projects, systems, people, decisions and terms, each with a quote as evidence. Other people wrote it, so the facts wait for approval, one by one or for the whole document ("approve all 18") |
+| **Standup report** | The post-call report of a standup at a company | Its commitments become that company's open commitments at once (the user's own promises; the post-call screen says so and they can be removed under Work), and feed the next standup |
+
+What decides between kept-at-once and approval is whose statement it is: the user's own log and promises are theirs, a document's facts are someone else's. A changed work log is extracted again (keyed by its content hash): the facts from its earlier content are replaced, except those the user edited, and the commitments it had closed open again before the new content closes its own. The worker embeds every workplace node as it writes it (`workplace.refresh`), so live search has vectors; until then it finds the node by full text.
+
+**Packs, built when the company is picked.** The start screen asks for the company's pack when the user picks it (`POST /employers/{id}/packs/{mode}`), and a worker builds it unless one already matches the company's memory (a hash of its active nodes, `memory_version`) and, for a standup, today. Both packs are rendered from the company's nodes with no model call, so a build takes milliseconds and the same memory gives the same bytes (prompt caching):
+
+- **Standup pack:** "yesterday" is the last log day before today (a Monday standup gets Friday's), with its done and in-progress items and decisions; "today" is today's log plus that day's plans; blockers from the last week that no later log moved on; open commitments with due dates; the rest of the week for "what about X?". It carries prepared answers for the fixed standup questions ("What did you work on yesterday?", "What's your update?"), whose points cite the items; their vectors are made once per embedding model and carried from pack to pack.
+- **Meeting pack:** a brief of the company's projects, systems and stack, people, recent decisions, terms, the last two weeks of work and open commitments (about 3,000 tokens at most). At session start the gateway adds the meeting's title and agenda and the company's memory that matches the agenda, on its own copy of the pack.
+
+**A pack that is not ready.** Session start never waits on a model: if no stored pack matches the company's memory and day (the worker has not built it yet, or the memory changed since), the gateway renders the same pack from Postgres itself (tens of milliseconds, read only), with the standup questions' vectors carried over from the stored pack, and asks a worker to build it for next time. Without a database the stored pack is used as it is; without either, the call runs on the career digest alone.
+
+**Live search.** Meeting questions cannot all be prepared, so the gateway searches the chosen company's memory for each question ([Hybrid memory search](#hybrid-memory-search)), as `app_gateway` (read only) on Postgres on the same host. Full text starts with the detector on the question's text; the fast pass waits at most 30 ms for it (`memory_fast_wait_ms`) and gets up to 4 hits as a `<memory>` block. The vector half waits for the question's embedding, which prepared-answer matching makes anyway (one call per text, shared); the deep pass, which starts at confirmation, waits at most 150 ms for the hybrid result (`memory_deep_wait_ms`) and otherwise takes the full-text one. Each query has the 100 ms retrieval budget. Hits the pack already shows are left out, and every hit gets a short id (`n:w…`) so its citation becomes a memory ref.
 ### Models and routing
 
 Each job gets the fastest model that is good enough for it; Opus stays out of the live path.
@@ -155,7 +180,8 @@ The routing layer is provider-neutral. Claude is the design default, and the tab
 | Fast answer | Haiku 4.5 | First words in under 1 second |
 | Deep answer | Sonnet 5.5 | Automatic for behavioral, technical and system design questions; otherwise only on tap |
 | Coding from screenshots | Sonnet 5.5 | Vision plus code reasoning |
-| Memory extraction | Opus 5.5 on Flex | Wrong facts in memory get repeated live, so accuracy matters most |
+| Memory extraction | Opus 5.5 on Flex | Wrong facts in memory get repeated live, so accuracy matters most. Company documents too |
+| Work log extraction | Sonnet 5.5 on Flex | The user's own short notes; on OpenAI the pack job's model, so no new settings |
 | Session packs, summaries, feedback | Sonnet 5.5 on Flex | Good enough for these at half the Opus price |
 | Hot digest | No model: rendered deterministically from memory nodes, at most about 3.5k tokens | Byte-identical output for prompt caching; the facts are already extracted (build step 4a) |
 | Embeddings and reranking | Cohere Embed v4 (on demand, 1024 output dimensions) and Rerank 3.5 on Bedrock; Voyage as alternative. Not Embed v3, which Bedrock offers only as provisioned throughput. OpenAI embeddings at 1024 dimensions when only OpenAI is configured | Stays inside AWS, no extra network hop on the live path |
@@ -194,7 +220,7 @@ One Aurora PostgreSQL database holds everything durable; Valkey holds everything
 | --- | --- |
 | Aurora PostgreSQL Serverless v2 + pgvector (Graviton) | Memory graph tables and embeddings, sessions, transcripts. Users keyed by Cognito user id, with row-level security on every user table, with a spare external id column for a later Career-OS link. Production keeps minimum capacity above zero; staging scales to zero (resume can take up to about a minute) |
 | ElastiCache Serverless for Valkey | Live session state, session packs as versioned JSON, pub/sub between gateway tasks, rate limits, a semantic answer cache keyed per user (never shared across users), live session logs. Priced 33% below the Redis OSS serverless option, from about $6 a month |
-| S3 | Uploaded documents, encrypted with per-user data keys under one KMS key. Raw interviewer audio is never stored; the user's own audio stays only until its post-call transcription |
+| S3 | Uploaded documents, encrypted with per-user data keys under one KMS key; company documents and work log attachments are sealed by the API with the user's data key before they are stored (under `uploads/{uid}/employers/{employer_id}/`). Raw interviewer audio is never stored; the user's own audio stays only until its post-call transcription |
 | SQS with fair queues | Background jobs. User id as the message group id, so one heavy user (a large tool sync) never delays everyone else |
 | EventBridge Scheduler | Timed jobs: standup packs before meetings, weekly digest rebuild |
 
@@ -206,7 +232,7 @@ Every interview and standup is a session with the same core log; the mode decide
 
 | Table | Key columns | Why |
 | --- | --- | --- |
-| `sessions` | user_id, mode, started_at, ended_at, platform, job_id or team, consent flags | One row per call; billed minutes come from here |
+| `sessions` | user_id, mode, started_at, ended_at, platform, job_id or employer_id, consent flags, the meeting's agenda (sealed) | One row per call; billed minutes come from here |
 | `transcript_segments` | session_id, speaker (them / me), start_ms, end_ms, text (encrypted) | Final STT results only |
 | `questions` | session_id, text (only with transcript consent), type, addressed_to_user, detected_at, forced_by_hotkey | Every question the detector fired on |
 | `answers` | question_id, pass (fast / deep), model, tier, tokens, cost, latency per stage, memory_fact_ids, expanded, feedback | Which memory facts produced each answer, plus speed and cost |
@@ -224,7 +250,7 @@ Every interview and standup is a session with the same core log; the mode decide
 
 **Transcript consent** (`consent.store_transcript` in `session.start`): without it, the session log holds no text at all: no transcript segments, no question text (the question is the other person's words), no answer text and no feedback reason, and nothing goes into the exact-repeat cache `qa:{uid}:{qhash}`. The metadata stays: question type and timing, tokens, cost, latency, memory node ids, feedback rating. The client does not record the user's own audio, so nothing is uploaded or transcribed, and post-call work writes only a metadata summary (length, question counts and types, no words) without calling Claude. The live state needed for a resume (`sess:{sid}:events` and the transcript tail in `sess:{sid}:state`) still holds text, for at most its 2-hour TTL.
 
-**Interviews** link to the job and round; outputs are the list of questions asked, a review of how the user answered compared with the suggestion, and a draft follow-up email. **Standups** produce yesterday, today, blockers and dated commitments, which feed the next day's standup pack.
+**Interviews** link to the job and round; outputs are the list of questions asked, a review of how the user answered compared with the suggestion, and a draft follow-up email. **Standups** produce yesterday, today, blockers and dated commitments; at a company, the commitments become that company's open commitments (`commitment` nodes with the session as source; a retried post-call replaces them) and feed the next standup pack.
 
 **Usage metering:** billed minutes come from `sessions`; a nightly worker job reports them to the payment provider.
 
@@ -265,10 +291,10 @@ The copilot holds resumes, meeting transcripts and employer data, so encryption 
 
 - **Tenant isolation:** Postgres row-level security on every user table, set from the session's user id, so a query that forgets its filter still returns nothing from other users. The semantic answer cache and all Valkey keys are scoped per user.
 - **Searchable versus encrypted data:** memory facts and embeddings must stay searchable, so they rely on Aurora encryption at rest plus row-level security. Transcripts, raw workplace data and documents get application-level envelope encryption: one KMS key, one data key per user. Deleting a user's data key makes that encrypted data unreadable.
-- **Two kinds of memory:** personal career memory and workplace data are stored and labeled separately, and workplace data can be deleted on its own.
+- **Two kinds of memory:** personal career memory and workplace data are stored and labeled separately, and workplace data can be deleted on its own, per company. Every workplace node, work log, company document, proposal and standup or meeting session names its employer with a same-user foreign key that cascades, so **"delete all data for this company"** (`DELETE /employers/{id}`, after typing the company's name; refused while a call there is live) removes that company's logs, documents, facts, proposals and sessions with their transcripts in one transaction, then `employer.purge` deletes its sealed files, its packs and the exact-repeat answers given from them. Nightly backups keep deleted rows for up to 7 days. Work log text and company documents are raw workplace data: sealed with the user's data key (`work_logs.text_enc`, `company_documents`' object and file name); the facts extracted from them stay searchable under row-level security, like all memory.
 - **Audio:** interviewer audio is transcribed in memory and never stored. The user's own audio is uploaded encrypted after the call, transcribed, then deleted. Recording consent rules vary by jurisdiction, so transcripts are opt-in with retention controls.
 - **Third-party processors:** audio goes to the STT provider, and error data to Sentry. Each needs a data processing agreement and zero-retention settings; prompt logs stay in a self-hosted Langfuse.
-- **Untrusted input:** transcripts and tool data are treated as data in prompts, and new facts enter memory only after the user approves them.
+- **Untrusted input:** transcripts, tool data and company documents are treated as data in prompts, and facts from other people's words enter memory only after the user approves them; the user's own work logs and promises are kept at once.
 - **Secrets and network:** app secrets (STT, Stripe, OAuth client secrets) in Secrets Manager, and per-user tool tokens encrypted with the user's data key in Aurora; Aurora and Valkey in private subnets; VPC endpoints for Bedrock and S3 keep that traffic inside AWS; CloudTrail logs every access to workplace data.
 - **Stage 0 exception: no TLS.** Stage 0 runs on a single GCP VM ([Stage 0 on GCP](#stage-0-on-gcp)) and serves the API and the gateway over plain HTTP and WebSocket on the VM's static IP, behind a VPC firewall rule meant to admit port 80 only from an IP allow-list of the team's addresses (a Terraform variable kept out of git, changed with one command). At the owner's choice the allow-list is currently open to every address, so the Google sign-in allow-list (verified emails) is the only gate. Google's sign-in, the presigned uploads to Cloud Storage and every call from the services to Google Cloud, OpenAI and Deepgram still use TLS; the ID token and call text between the app and the VM do not. TLS (a domain with a certificate, or a load balancer with a managed certificate) is required before anyone outside the team uses it, and before Stage 1. (On AWS the same exception held: the instance's AWS host name, a security group allow-list.)
 - **Later:** SOC 2 before selling to companies, and a local-first mode, since some employers restrict sending work data to third-party services.
@@ -360,7 +386,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 
 1. **Live answers:** desktop audio capture with echo cancellation, gateway, STT, turn detection, detector, fast and deep answers from resume and job description, Valkey, Aurora with row-level security, Cognito login, session logging, usage metering, and the failure-mode fallbacks.
 2. **Memory:** knowledge graph, memory interview, hot digest, session packs, workers, fact approval, and the local classifier for the two-stage detector, trained on the recorded-call corpus.
-3. **Work mode:** GitHub, Jira, Slack and calendar sync, standup mode with addressee detection, commitments.
+3. **Work mode:** company workspaces (employers, daily work logs, company material, standup and meeting packs, live search per company, commitments; built October 2026), then GitHub, Jira, Slack and calendar sync into the same per-company memory.
 4. **Hardening:** per-user encryption of transcripts and workplace data, retention controls, local-first option, SOC 2 preparation, and a Go gateway if the metrics call for it.
 5. **Career-OS integration (optional, later):** federated sign-in and an event bridge for resumes and jobs.
 
@@ -413,7 +439,7 @@ All messages are JSON objects with a `type` field.
 
 | type | Fields | When |
 | --- | --- | --- |
-| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
+| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `employer_id?` (a standup or meeting at this company: its pack and its memory; ignored in interviews, and when it is not the user's), `agenda?` (at most 2,000 characters, added to the meeting pack), `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
 | `session.resume` | `session_id`, `last_seq` | First message after a reconnect |
 | `auth.refresh` | `access_token` | Before the current token expires |
 | `question.force` | `text?` | Hotkey pressed (no text) or a typed question (with text) |
@@ -421,7 +447,7 @@ All messages are JSON objects with a `type` field.
 | `answer.expand` | `question_id` | User opens the deep answer |
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
 | `latency.report` | `question_id`, `pass`, `first_word_ms`, `anchor` (`speech_end`, `forced`, `expand`) | The first non-empty `answer.delta` of a pass arrived; the client's own first-word time, stored with the answer (`client_first_word_ms`). A report for a question the gateway does not hold is dropped without an error |
-| `mode.set` | `mode` | User switches mode mid-call |
+| `mode.set` | `mode` | User switches mode mid-call; between standup and meeting at a company, that company's pack for the new mode is loaded |
 | `session.end` | none | User ends the session |
 
 Example:
@@ -443,7 +469,7 @@ Example:
 | `question.detected` | `question_id`, `text`, `question_type`, `confidence`, `speculative` | A question aimed at the user; `speculative: true` means it may still be cancelled. `question_type` is the detector's type (`type` is taken by the message type) |
 | `question.cancelled` | `question_id` | A speculative question was dropped because the speaker kept talking |
 | `answer.delta` | `question_id`, `pass` (fast, deep), `text` | Next chunk of streamed answer text |
-| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`), `source?` (`model`, `prepared`, `cache`), `latency_ms?` (`turn_end_ms`, `detector_ms`, `first_token_ms`, `first_delta_ms`, `total_ms`, `final_ms`, `start_ms`, `expand_ms`, `prepared_ms`, `prepared_similarity`) | Answer finished. Times are from the end of speech (or the force message): `final_ms` when the STT final arrived, `start_ms` when the pass started, `expand_ms` when the user tapped expand; `prepared_ms` is the prepared-answer lookup's duration and `prepared_similarity` the best match's similarity, hit or miss |
+| `answer.done` | `question_id`, `pass`, `memory_refs` (node id and label), `usage` (`input_tokens`, `cached_tokens`, `output_tokens`), `source?` (`model`, `prepared`, `cache`), `latency_ms?` (`turn_end_ms`, `detector_ms`, `first_token_ms`, `first_delta_ms`, `total_ms`, `final_ms`, `start_ms`, `expand_ms`, `prepared_ms`, `prepared_similarity`) | Answer finished. Times are from the end of speech (or the force message): `final_ms` when the STT final arrived, `start_ms` when the pass started, `expand_ms` when the user tapped expand; `prepared_ms` is the prepared-answer lookup's duration and `prepared_similarity` the best match's similarity, hit or miss; at a company, `memory_wait_ms` is how long the pass waited for live search, `memory_hits` the `<memory>` lines it got, `memory_fts_ms` and `memory_hybrid_ms` the queries' durations |
 | `answer.error` | `question_id`, `pass`, `code` | That pass stopped; the other pass may still arrive. Codes: `cancelled` (a newer question was confirmed; keep showing what arrived), `refused`, `llm_unavailable`, `internal` |
 | `status` | `component` (stt, llm, memory), `state` (ok, degraded, reconnecting), `message` | Drives the small status badge in the overlay |
 | `auth.expiring` | `expires_in_s` | Ask the client to send `auth.refresh` now |
@@ -502,7 +528,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | --- | --- | --- |
 | `app_owner` | Migrations only | Owns all tables |
 | `app_api` | Copilot API | Read and write user tables, under row-level security |
-| `app_gateway` | Gateway | Read only: `users`, `jobs`, `interviews`, `memory_nodes`, `memory_edges` |
+| `app_gateway` | Gateway | Read only: `users`, `jobs`, `interviews`, `memory_nodes`, `memory_edges`, `employers` (never the raw work logs or documents) |
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
@@ -705,6 +731,68 @@ create table app.session_outputs (
   foreign key (session_id, user_id) references app.sessions(id, user_id) on delete cascade
 );
 
+-- Company workspaces (migration 0006). Employers are the companies the user works at; a
+-- work log is one entry per company and day; company documents include work log attachments.
+create table app.employers (
+  id          uuid primary key,
+  user_id     uuid not null references app.users(id) on delete cascade,
+  name        text not null,
+  title       text not null default '',          -- the user's role there
+  team        text not null default '',
+  started_on  date,
+  ended_on    date,                              -- null while the user works there
+  status      text not null default 'active' check (status in ('active','archived')),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (id, user_id)
+);
+
+create table app.work_logs (
+  id               uuid primary key,
+  user_id          uuid not null references app.users(id) on delete cascade,
+  employer_id      uuid not null,
+  day              date not null,
+  text_enc         bytea not null,                -- sealed with the user's data key
+  key_version      int  not null,
+  content_sha256   text not null,                 -- text plus attachments: one extraction each
+  status           text not null default 'saved'
+                   check (status in ('saved','extracting','extracted','failed')),
+  extracted_sha256 text,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  unique (id, user_id),
+  unique (employer_id, day),
+  foreign key (employer_id, user_id) references app.employers(id, user_id) on delete cascade
+);
+
+create table app.company_documents (
+  id           uuid primary key,
+  user_id      uuid not null references app.users(id) on delete cascade,
+  employer_id  uuid not null,
+  work_log_id  uuid,                             -- set for a work log attachment
+  name_enc     bytea not null,                   -- the file name, sealed
+  key_version  int  not null,                    -- also of the sealed object in storage
+  s3_key       text not null,
+  sha256       text not null,                    -- of the plaintext file
+  content_type text not null,                    -- application/pdf, text/plain, text/markdown
+  size_bytes   int  not null,
+  status       text not null default 'uploaded'
+               check (status in ('uploaded','ingesting','ingested','failed')),
+  created_at   timestamptz not null default now(),
+  unique (id, user_id),
+  foreign key (employer_id, user_id) references app.employers(id, user_id) on delete cascade,
+  foreign key (work_log_id, user_id) references app.work_logs(id, user_id) on delete cascade
+);
+
+-- Workplace memory belongs to one employer, career memory to none; new kinds decision,
+-- system and term. Proposals from a document and a company's sessions name it too.
+alter table app.memory_nodes add column employer_id uuid,
+  add foreign key (employer_id, user_id) references app.employers(id, user_id) on delete cascade,
+  add check ((domain = 'workplace') = (employer_id is not null));
+alter table app.memory_proposals add column employer_id uuid, add column company_document_id uuid;
+alter table app.sessions add column employer_id uuid, add column agenda_enc bytea,
+  add column agenda_key_version int;                 -- all three keys cascade (see 0006)
+
 -- Documents, integrations, usage
 create table app.documents (
   id         uuid primary key,
@@ -757,9 +845,14 @@ create table app.job_runs (
 | project | goal, contribution, stack, outcome, metrics |
 | story | situation, task, action, result, metrics, competencies |
 | skill | level, years, evidence_node_ids |
-| work_item | provider, external_id, url, state, date |
-| commitment | due_date, state (open, done, dropped), session_id |
-| company, person | name, relation to the user, notes |
+| work_item | state (done, in_progress, planned, blocked), external_id, project; `valid_from` is the log day |
+| commitment | due_date, state (open, done, dropped), session_id, closed_by (the work log that closed it) |
+| company, person | name, relation to the user, notes; a person's role |
+| decision | project; `valid_from` is the day it was decided |
+| system | stack (the summary says what it does and who owns it) |
+| term | none: the summary is its meaning |
+
+Any workplace node can carry `edited: true` (the user changed it; a work log's re-extraction keeps it) and `evidence` (the quote a document proposal was approved with).
 
 ### Row-level security
 
@@ -817,6 +910,8 @@ from fused f join app.memory_nodes n using (id)
 order by f.score desc;
 ```
 
+**At a company** the same query runs scoped to one employer (`employer_id = $5 and domain = 'workplace'`, index `memory_nodes_employer`), as the gateway's read-only role (`copilot_core.workplace.search`). Spoken questions are long, so the full-text half matches any of the question's lexemes (`'label' | 'retri' | ...`, built from `to_tsvector` of the question) ranked by `ts_rank`, rather than `websearch_to_tsquery`'s AND of every word. A work item logged on several days keeps only its newest entry, found by its ticket or PR id or its title even when that entry shares no word with the question: in the eval, "did the refund idempotency change go out?" matched PSP-412's in-review entries but not "deployed to production", and every answer gave the outdated status. Stage 0 has no reranker (no Bedrock); the fused order stands.
+
 Then expand one hop, so a matched project brings its stories and metrics along:
 
 ```sql
@@ -844,7 +939,7 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `user:{uid}:active_session` | string | 2 h | Gateway | Current session id; enforces one live session |
 | `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash, and the map from its short ids to node ids |
 | `pack:{uid}:{pack_id}` | string (JSON) | 24 h after the call's due time (an interview scheduled days ahead keeps its pack), at most 30 days | Worker | Prebuilt session pack |
-| `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the job's newest pack, then the mode's) |
+| `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the job's newest pack, then the mode's); `employer:{employer_id}:{mode}` to a company's standup or meeting pack, which a session at that company loads instead (never the mode's: it would hold no company or another's). A pack the gateway makes for one session (rendered at start, or with the meeting's agenda) is stored under its own `pack_id` for the session state's 2 hours, outside the index |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
 
@@ -878,7 +973,7 @@ The semantic cache is not a separate store: each session pack carries prepared a
 }
 ```
 
-For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). Embeddings are base64-encoded float32 arrays to keep the JSON small. `embedding_model` names the model that made them (null without vectors), and the gateway compares them only with question vectors from the same model. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
+For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). A company's pack adds `employer` (`id`, `name`, `title`, `team`), `memory_version` (the company's memory it was rendered from), `standup.day` and `standup.yesterday_day`, `standup.recent`, and for a meeting `workplace.sections` (projects, systems, people, decisions, terms, recent_work, open_commitments) and, on the gateway's copy, `meeting` (title, agenda, related items). Their items are `{node_id, short_id, text, date?, due_date?, state?}`; workplace short ids start with `w` (`n:w3f2`), a letter hex never has, so they never clash with the digest's. Embeddings are base64-encoded float32 arrays to keep the JSON small. `embedding_model` names the model that made them (null without vectors), and the gateway compares them only with question vectors from the same model. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
 
 **Hot digest record** in `digest:{uid}`:
 
@@ -929,6 +1024,11 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 | `usage.report` | Scheduler nightly | day | 15 min | `usage.report:{day}` |
 | `user.delete` | API | none | 30 min | `user.delete:{uid}` |
 | `sessions.sweep` | Scheduler every 5 minutes | none | 2 min | `sessions.sweep:{slot}` |
+| `worklog.extract` | API (a work log saved, an attachment added or removed) | work_log_id, content_sha256 | 15 min | `worklog.extract:{uid}:{log_id}:{content_sha256}` |
+| `company_doc.extract` | API (a company document uploaded) | document_id | 15 min | `company_doc.extract:{uid}:{document_id}:{sha256}` |
+| `workplace.refresh` | Worker (after extraction, post-call commitments), API (approvals, edits) | employer_id | 10 min | `workplace.refresh:{uid}:{employer_id}:{memory_version}` |
+| `pack.build` (company) | API (the start screen picked the company), worker (refresh), scheduler (standup time), gateway (it rendered one itself) | mode, context `employer:{id}`, day | 10 min | `pack.build:{uid}:employer:{id}:{mode}:{memory_version}:{day}:{embedding}` |
+| `employer.purge` | API (delete all data for a company) | employer_id | 30 min | `employer.purge:{employer_id}` |
 
 Post-call work runs in three steps: `session.ended` flushes the log; `me_audio.transcribe` transcribes the user's audio with pre-recorded STT and deletes it from S3 (or skips it); `session.postcall` writes the summary and feedback with Sonnet and memory proposals with Opus. The 10-minute delayed message uses SQS `DelaySeconds`, which allows up to 15 minutes.
 
@@ -990,7 +1090,8 @@ apps/gateway/
   stt/            deepgram.py, assemblyai.py behind one STTStream interface
   turn.py         silence timer and turn-detection model
   detector.py     Haiku question and addressee check
-  retrieval.py    embedding, hybrid search, rerank
+  retrieval.py    live memory search for a company: full text at once, hybrid when the
+                  question's vector is in, per-pass waits
   answer.py       fast and deep passes, cancellation
   router.py       model routes and fallbacks
   store.py        Valkey state, events and log streams
@@ -1048,6 +1149,10 @@ Answers run outside the group, one task per question, so a new question can canc
 | `first_token_timeout_ms` | 1500, then the next route (OpenAI live routes may set their own) |
 | `final_wait_max_ms` | 1500 after the silence timer, then confirm on the interim text |
 | `transcript_context_s` | 60 |
+| `memory_fast_wait_ms` | 30 (the fast pass's wait for full-text hits, at a company) |
+| `memory_deep_wait_ms` | 150 (the deep pass's wait for the hybrid result) |
+| `memory_fast_hits` | 4 |
+| `pack_render_timeout_ms` | 400 (rendering a company's pack at session start) |
 | `sessions_per_task_target` | 60 |
 
 ### Prompt design
@@ -1154,6 +1259,10 @@ speak from, in the shape given for the question type, not sentences to read out.
 
 **Why the content policy.** Until late October 2026 the rule was "facts about the user come only from the data", and answers to questions the data does not cover were thin or evasive ("not listed in my prepared materials" for salary), or forced a story onto them and stretched it ("learned Go consumers quickly" for the Kafka migration, "explained the issue to stakeholders" for the failed launch, "the consumers used goroutines" as an example for processes and threads). `copilot-answer-eval` now adds 14 questions the benchmark profile does not cover (general technical, system design, behavioral with no matching story, and the "other" questions) and grades completeness, technical correctness and invented personal facts. Over the 17 uncovered questions (2 answers each), invented personal facts went from 12% of fast answers and 3% of deep answers to none, completeness on the deep pass from 4.1 to 4.5 of 5, with correctness 5.0 and "sounds spoken" 4.9 to 5.0 on both. The fast pass's completeness stayed at 3.9: three or four cues open the answer, and the deep pass carries the rest. Over all 26 questions the deep pass went from 4.3 to 4.7 on completeness. The rules add about 340 tokens to the fast pass's system prefix, all of it served from the prompt cache. Alternating fast-pass calls with the old and new prompts (gpt-6-luna, warm cache, 104 pairs) put the first word at 1053 and 1091 ms p50 and 1489 and 1482 ms p90; two smaller runs gave +144 and +25 ms at p50, so the difference is within the run-to-run noise. On the interleaved latency benchmark (3 runs each, `aq-before` and `aq-after`) first word was 2356 and 2642 ms p50 and 3911 and 3521 ms p95, the p50 gap mostly in the detector and turn confirmation, which the change does not touch.
 
+**At work.** In a standup or meeting at a company the system block gets a paragraph more (only then, so interview prompts stay byte-identical): facts about the user's work there (tasks, tickets, decisions, commitments, the company's systems, people and terms) follow the rule for personal facts: only from `<session_pack>` or `<memory>`, cited, never invented, and when entries on one item have different dates the newest is its status. The interview rule on questions about the company, pay or culture does not apply. A standup gives the user's update from the standup section; a meeting is technical and open, not a status report: the company's systems, stack and decisions where they apply, general knowledge for the rest. The technical, system design, standup and "other" deep shapes have work versions (`prompts.WORKPLACE_SHAPES`).
+
+**Company workspaces, measured.** `copilot-company-eval` (evals/README.md) answers 8 standup and 12 meeting questions for the benchmark candidate at a fictional employer, from two weeks of work logs and three documents run through the real extraction, and grades each answer against the company's own material. Before (the career digest only, as before company workspaces) and after (company packs and live search), 2 answers per question and pass, October 2026, gpt-6-luna and gpt-6.1-sol: answers with no invented facts went from 31% to 94% (fast) and 25% to 100% (deep) on standups, 83% to 100% in meetings; completeness from 1.1 to 3.6 and 4.0 of 5 on standups, 2.0 to 3.5 and 3.8 in meetings, with correctness 4.9 to 5.0 and "sounds spoken" 4.6 to 5.0 (3.5 to 4.9 before). Two misses in the first after-run changed the code: an outdated ticket status (newest entry per ticket in search) and a document's owner dropped by extraction (summaries say who owns a system). Latency is not measured yet: the benchmark on the Stage 0 VM (`copilot-bench run --company`, which reports the memory stages, and the interview script interleaved with main) stopped when the OpenAI account ran out of credits; until it runs, the 30 ms and 150 ms waits are the design bounds, and the full-text query is a local Postgres call over one company's few hundred nodes.
+
 **Detector prompt** (`{mode}` is "an interview", "a standup" or "a meeting"):
 
 ```
@@ -1209,6 +1318,14 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |
 | `POST /integrations/{provider}/connect`, `GET .../callback`, `DELETE` | Connect and disconnect GitHub, Jira, Slack, calendars |
 | `GET /usage` | Minutes used this period |
+| `GET`, `POST /employers`; `PATCH /employers/{id}` | Companies the user works at: add, edit, archive (`status`) |
+| `DELETE /employers/{id}?confirm=<name>` | Delete all data for this company (the name must match; 409 while a call there is live); enqueues `employer.purge` |
+| `GET /employers/{id}/logs?before=`, `GET`, `PUT`, `DELETE /employers/{id}/logs/{day}` | The work log: one entry per day; `PUT` seals the text and enqueues `worklog.extract` when it changed; each entry lists its attachments and the facts that came from it |
+| `POST /employers/{id}/logs/{day}/attachments` | A file for that day's log, as the raw body (`Content-Type`, `X-File-Name`); sealed before it is stored; the log is extracted again |
+| `GET`, `POST /employers/{id}/documents`; `DELETE .../documents/{doc}` | Company material: uploaded through the API (at most 10 MB) so it is sealed before storage; enqueues `company_doc.extract`; lists pending and approved proposals per document |
+| `GET /employers/{id}/memory?kind=`; `PATCH`, `DELETE /memory/{id}` | A company's facts; edit (marked `edited`, kept by re-extraction) or archive |
+| `GET /proposals?employer_id=`; `POST /proposals/{id}/approve` (optional edited title or summary), `/reject`; `POST /proposals/bulk` (`ids`, or every pending proposal of a `company_document_id`) | One-tap approval of document facts, one by one or per document |
+| `GET /employers/{id}/packs`; `POST /employers/{id}/packs/{mode}` | A company's standup and meeting packs: `ready`, `stale`, `none`; `POST` (the start screen picked the company) enqueues a build unless the pack is current |
 | `POST /billing/checkout`, `POST /billing/webhook` | Stripe checkout and webhook |
 | `POST /sessions/{id}/me-audio` | Presigned S3 upload for the user's own audio after a call. While the gateway still holds the session (live or resumable) it answers 409 with a detail starting `live:`, and the client retries later |
 | `POST /sessions/{id}/me-audio/complete` | The client finished the upload; enqueues `me_audio.transcribe` at once instead of after the 10-minute wait. An S3 event into the queue would do the same without the call; this keeps the local stack free of S3 notifications |
@@ -1246,7 +1363,8 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
 - **Long calls:** a helper extends the message's visibility timeout every minute while an Opus call runs.
 - **Model calls:** workers use the same router as the gateway: Sonnet for session packs, summaries and feedback; Opus only for memory extraction; Flex first, then Standard. The digest needs no model.
 - **Account deletion:** `user.delete` removes the Cognito user with `AdminDeleteUser` first, so no new session can start, then the S3 prefix, Valkey keys, data keys and rows.
-- **Not built yet:** `tools.sync` comes with phase 3; memory proposals and commitments from post-call work come with phase 2; the gateway has no database connection until phase 2 retrieval.
+- **Company workspaces:** `copilot_worker.workplace` runs `worklog.extract`, `company_doc.extract`, `workplace.refresh` (node vectors from the configured embedder, then both packs) and `employer.purge`; `pack.build` for an `employer:` context renders the pack with `copilot_core.workplace`, the same code the gateway renders with. At a user's standup time the scheduler also builds each current company's standup pack.
+- **Not built yet:** `tools.sync` comes with phase 3; memory proposals from interview post-call work come with phase 2.
 
 ## 4. Infrastructure and operations
 
@@ -1346,6 +1464,7 @@ The AWS account's organization policy denies EC2, SQS, Cognito and most creates,
 | CI | GitHub Actions through Workload Identity Federation (no service account key; only `main` of this repository): multi-arch images to Artifact Registry on merge. Deploying is a person's command (`stage.py deploy`) |
 | Budget | A $25 Cloud Billing budget with emails at 50%, 80% and 100% |
 
+- **Gateway database login.** The gateway connects as `app_gateway` (read only) to the Postgres on the VM for company memory (`COPILOT_GATEWAY_DATABASE_URL`, from the `db-app-gateway` secret). It is part of the `copilot-env` metadata, so it takes a `terraform apply` of `infra/gcp/envs/stage0` before the deploy that uses it; without it the gateway runs on stored packs and searches nothing.
 - **Identity on one host.** The VM has one service account. Containers share the host's network, so the host firewall lets only root, the API and the workers reach the metadata server (for Cloud KMS); the gateway, the one-off tasks and the data services cannot. On AWS each task had its own role; here the API and the workers share the VM's, which may use the KMS key, read the stage's secrets and images, write logs and use the backups bucket.
 - **Latency from the VM** (October 2026, medians of 10 fresh connections): OpenAI's API (Cloudflare's edge) 16 ms TCP round trip, 31 ms TLS handshake, 130 ms to the first byte of an error reply; Deepgram's API 57 ms, 53 ms and 162 ms.
 
@@ -1423,6 +1542,7 @@ GitHub Actions, authenticating to AWS through OIDC roles.
 - **Local stack:** Docker Compose with Postgres plus pgvector, Valkey and ElasticMQ (an SQS-compatible queue); model and STT calls go to recorded fixtures by default.
 - **Row-level security test:** an automated test creates two users and checks that every table refuses cross-user reads and writes for every app role.
 - **Recorded call corpus:** at least 50 mock interviews and standups, recorded with every participant's consent and labeled with question times and addressee. Replayed in real time through the gateway, it measures detection precision and recall, addressee accuracy, first-word latency and speculative waste.
+- **Company isolation tests:** the row-level security test covers the company tables and their same-user keys; deleting one employer removes its rows and only its rows; extraction is idempotent per content hash and keeps the user's edits; live search, the gateway's pack render and the API never return another company's or another user's memory (`migrations/tests/test_rls.py`, `apps/*/tests/test_*company*`, `test_employers.py`, `test_workplace.py`).
 - **Answer evals:** about 100 questions per mode with fixed test memory. Rubric: every claim cites a node, no invented facts, right shape for the type, right length. Opus grades, and a person reviews 20 samples each week. A release is blocked if groundedness drops more than 3 points.
 - **Load test:** synthetic clients stream recorded audio; reach 500 concurrent sessions in staging before launch while watching gateway CPU, event loop lag, Valkey ECPU and Bedrock throttles.
 - **Chaos drills:** kill a gateway task mid-call, force Bedrock errors through a fault-injection flag, and cut the STT connection. Each must behave as its row in the [failure-mode table](#failure-modes) says.

@@ -15,27 +15,40 @@ import json
 import logging
 import math
 import time
-from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections import OrderedDict, deque
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, get_args
 from uuid import UUID
 
+import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, logs, prompts
+from copilot_core import jobs, logs, prompts, workplace
+from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
 from copilot_core.llm import LLMDone, ModelRouter
-from copilot_core.packs import Digest, NodeRef, SessionPack, ref_map, render_pack
+from copilot_core.packs import (
+    Digest,
+    MeetingContext,
+    NodeRef,
+    PackItem,
+    SessionPack,
+    assign_short_id,
+    pack_items,
+    ref_map,
+    render_pack,
+)
 from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
 from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import Detector
+from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
 from copilot_gateway.turn import Detection, TurnDetector, TurnModel
@@ -74,6 +87,8 @@ class Services:
     embedder: Embedder | None = None
     turn_model: TurnModel | None = None
     task_id: str = field(default_factory=lambda: str(uuid7()))
+    # Postgres as app_gateway (read only), for company memory; None without a database.
+    pool: asyncpg.Pool | None = None
 
 
 @dataclass
@@ -86,6 +101,9 @@ class SessionInfo:
     store_transcript: bool
     started_at: datetime
     interview_id: UUID | None = None
+    # A standup or meeting at a company (company workspaces), and the agenda typed for it.
+    employer_id: UUID | None = None
+    agenda: str | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +214,19 @@ class Session:
         self.me_since: int | None = None
         self._refs = ref_map(digest, pack)
         self._prompt_ctx = self._build_prompt_ctx()
+        # Company workspaces: live search over the chosen company's memory, and the question
+        # vectors that prepared-answer matching and that search share (one call per text).
+        self.company_memory: CompanyMemory | None = None
+        if svc.pool is not None and info.employer_id is not None:
+            self.company_memory = CompanyMemory(
+                svc.pool,
+                principal.user_id,
+                info.employer_id,
+                embedding_model=svc.embedder.model_id if svc.embedder else None,
+                budget_ms=self.settings.retrieval_budget_ms,
+                limit=self.settings.rerank_keep,
+            )
+        self._embeds: OrderedDict[str, asyncio.Task[list[float] | None]] = OrderedDict()
 
         self.last_speech = time.monotonic()
         self.last_force = 0.0
@@ -253,12 +284,76 @@ class Session:
         return self._prompt_ctx
 
     def _build_prompt_ctx(self) -> prompts.PromptContext:
+        employer = self.pack.employer if self.pack is not None else None
+        at_work = employer is not None and employer.id == self.info.employer_id
         return prompts.PromptContext(
             user_name=self.principal.display_name,
             mode=self.info.mode,
             digest_text=self.digest.text if self.digest else None,
             pack_text=render_pack(self.pack) if self.pack else None,
+            company=employer.name if at_work and employer else None,
+            role=(employer.title or None) if at_work and employer else None,
         )
+
+    # Company memory.
+
+    def embedding(self, text: str) -> "asyncio.Task[list[float] | None] | None":
+        """The text's vector, made once and shared by prepared-answer matching and memory
+        search; None without an embedder. A failed call gives None."""
+        embedder = self.svc.embedder
+        if embedder is None:
+            return None
+        task = self._embeds.get(text)
+        if task is None:
+
+            async def run() -> list[float] | None:
+                try:
+                    [vec] = await embedder.embed([text])
+                except Exception as e:
+                    log.warning("question embedding failed: %s", e)
+                    return None
+                return vec
+
+            task = asyncio.create_task(run())
+            self._embeds[text] = task
+            while len(self._embeds) > 32:
+                self._embeds.popitem(last=False)  # dropped, not cancelled: others may await it
+        return task
+
+    def _vector(self, text: str) -> "Callable[[], Awaitable[list[float] | None]] | None":
+        task = self.embedding(text)
+        if task is None:
+            return None
+
+        async def get() -> list[float] | None:
+            return await asyncio.shield(task)
+
+        return get
+
+    def _memory_on(self) -> bool:
+        return self.company_memory is not None and self.info.mode in ("standup", "meeting")
+
+    async def memory_lines(self, text: str, pass_: str) -> tuple[list[str], dict[str, int]]:
+        """The `<memory>` block for a pass: what search found in the chosen company's memory
+        within the pass's wait, minus what the pack already shows. Each line cites a short id
+        that the session's refs now map, so the answer's citations become memory_refs."""
+        mem = self.company_memory
+        if mem is None or not self._memory_on():
+            return [], {}
+        deep = pass_ == "deep"
+        s = self.settings
+        wait = s.memory_deep_wait_ms if deep else s.memory_fast_wait_ms
+        hits, stats = await mem.hits(text, self._vector(text), deep, wait)
+        if not deep:
+            hits = hits[: s.memory_fast_hits]
+        in_pack = {i.node_id for i in pack_items(self.pack)} if self.pack else set[UUID]()
+        lines = workplace.memory_lines(hits, self._refs, in_pack)
+        stats["memory_hits"] = len(lines)
+        return lines, stats
+
+    def cache_extra(self) -> dict[str, str]:
+        """Stored with exact-repeat answers, so deleting a company deletes its answers."""
+        return {"employer": str(self.info.employer_id)} if self.info.employer_id else {}
 
     def refs(self) -> dict[str, NodeRef]:
         return self._refs
@@ -309,9 +404,13 @@ class Session:
         return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
+        if self._memory_on() and self.company_memory is not None:
+            # Memory search starts with the detector, on the same text.
+            self.company_memory.lookup(utterance, self._vector(utterance))
         if not self.matcher.enabled:
             return None
-        return asyncio.create_task(self.matcher.match(utterance))  # pyright: ignore[reportReturnType]
+        match = self.matcher.match(utterance, self.embedding(utterance))
+        return asyncio.create_task(match)  # pyright: ignore[reportReturnType]
 
     def begin_question(
         self,
@@ -459,6 +558,8 @@ class Session:
             "started_at": self.info.started_at.isoformat(),
             "pack_id": str(self.pack.pack_id) if self.pack else "",
             "digest_version": self.digest.version if self.digest else "",
+            "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
+            "agenda": self.info.agenda or "",
             "task_id": self.svc.task_id,
         }
 
@@ -562,6 +663,32 @@ class Session:
                 }
             )
 
+    async def _mode_changed(self, mode: str) -> None:
+        """A switch between standup and meeting at a company loads that company's pack for the
+        new mode; then the new prefix is prewarmed."""
+        if self.info.employer_id is not None and mode in ("standup", "meeting"):
+            pack = await self.manager.employer_pack(
+                self.principal.user_id, self.info.employer_id, mode, self.info.title,
+                self.info.agenda,
+            )  # fmt: skip
+            if pack is not None:
+                self.set_pack(pack)
+                self._prompt_ctx = self._build_prompt_ctx()
+        await self.prewarm_prompts()
+
+    def set_pack(self, pack: SessionPack) -> None:
+        self.pack = pack
+        self._refs = ref_map(self.digest, pack)
+        self.matcher = PreparedMatcher(
+            self.svc.embedder,
+            pack.prepared_answers,
+            self.settings.prepared_threshold(
+                self.svc.embedder.model_id if self.svc.embedder else None
+            ),
+            pack.embedding_model,
+        )
+        self.writer.set_state(pack_id=str(pack.pack_id))
+
     async def _rebuild_stale_pack(self) -> None:
         """The pack's vectors came from another embedding model (or it has none): matching is
         off for this session, and the pack is rebuilt for the next one. The key names the
@@ -570,6 +697,22 @@ class Session:
         if pack is None or embedder is None:
             return
         info = self.info
+        if info.employer_id is not None and pack.memory_version:
+            log.info("company pack %s has no %s vectors; rebuilding it", pack.pack_id,
+                     embedder.model_id)  # fmt: skip
+            day = pack.standup.day if pack.standup else datetime.now(UTC).date().isoformat()
+            with contextlib.suppress(Exception):
+                await self.svc.jobs.send(
+                    jobs.employer_pack_build(
+                        self.principal.user_id,
+                        info.employer_id,
+                        pack.mode,
+                        pack.memory_version,
+                        day,
+                        embedder.model_id,
+                    )
+                )
+            return
         if info.interview_id is not None:
             context = f"interview:{info.interview_id}"
         elif info.job_id is not None:
@@ -858,8 +1001,8 @@ class Session:
                 self.info.mode = message.mode
                 self._prompt_ctx = self._build_prompt_ctx()
                 self.writer.set_state(mode=message.mode)
-                self._warm = asyncio.create_task(self.prewarm_prompts())  # a new prefix
                 self.log_entry({"kind": "mode", "mode": message.mode})
+                self._warm = asyncio.create_task(self._mode_changed(message.mode))
             case models.SessionEnd():
                 self.request_end("user", CLOSE_NORMAL)
             case _:
@@ -943,6 +1086,105 @@ class SessionManager:
     def forget(self, session: Session) -> None:
         if self.sessions.get(session.sid) is session:
             del self.sessions[session.sid]
+
+    async def employer_pack(
+        self,
+        uid: UUID,
+        employer_id: UUID,
+        mode: str,
+        title: str | None = None,
+        agenda: str | None = None,
+    ) -> SessionPack | None:
+        """The company's pack for this call, never waiting on a model.
+
+        The worker's pack (built when the company was picked) is used when it was rendered
+        from the company's memory as it is now, and for today. Otherwise the gateway renders
+        the same pack from Postgres itself (tens of ms; prepared standup vectors carry over
+        from the stored pack) and asks a worker to build it for next time. Without a database
+        the stored pack is used as it is. None: the company is not this user's, or there is
+        nothing to load.
+
+        A meeting gets its title and agenda, and the company's memory that matches the agenda,
+        on a copy with its own pack id, kept in Valkey for a resume."""
+        svc, s = self.svc, self.svc.settings
+        stored: SessionPack | None = None
+        try:
+            stored = await svc.store.get_employer_pack(uid, employer_id, mode)
+        except (*UNAVAILABLE, ValidationError, ValueError) as e:
+            log.warning("could not load the company pack: %s", e)
+        if stored is not None and stored.employer is not None and stored.employer.id != employer_id:
+            stored = None
+        pack, fresh, related = stored, False, list[PackItem]()
+        if svc.pool is not None:
+            try:
+                async with asyncio.timeout(s.pack_render_timeout_ms / 1000):
+                    async with user_tx(svc.pool, uid) as conn:
+                        if await workplace.employer(conn, employer_id) is None:
+                            return None
+                        settings = await conn.fetchval(
+                            "select settings from app.users where id = $1", uid
+                        )
+                        today = workplace.local_today(
+                            json.loads(settings) if isinstance(settings, str) else settings
+                        )
+                        version = await workplace.memory_version(conn, uid, employer_id)
+                        current = (
+                            stored is not None
+                            and stored.memory_version == version
+                            and (
+                                mode != "standup"
+                                or (stored.standup is not None and stored.standup.day == str(today))
+                            )
+                        )
+                        if not current:
+                            pack = await workplace.render_employer_pack(
+                                conn, uid, employer_id, mode, today
+                            )
+                            fresh = pack is not None
+                        if mode == "meeting" and agenda:
+                            hits = await workplace.search(
+                                conn, uid, employer_id, agenda, limit=6, hops=0
+                            )
+                            shown = {i.node_id for i in pack_items(pack)} if pack else set[UUID]()
+                            related = [
+                                PackItem(node_id=h.node_id, text=h.text, date=h.day)
+                                for h in hits
+                                if h.node_id not in shown
+                            ]
+            except (TimeoutError, OSError, asyncpg.PostgresError) as e:
+                log.warning("company pack render failed (%s); using the stored pack", e)
+                pack = stored
+        if pack is None:
+            return None
+        if fresh:
+            workplace.carry_vectors(pack, stored)
+            log.info("rendered the %s pack of employer %s at session start", mode, employer_id)
+            embedding = svc.embedder.model_id if svc.embedder else None
+            with contextlib.suppress(Exception):
+                await svc.jobs.send(
+                    jobs.employer_pack_build(
+                        uid,
+                        employer_id,
+                        mode,
+                        pack.memory_version or "",
+                        pack.standup.day if pack.standup else str(datetime.now(UTC).date()),
+                        embedding,
+                    )
+                )
+        if mode == "meeting" and (title or agenda):
+            pack = pack.model_copy(deep=True)
+            refs = ref_map(None, pack)
+            for item in related:
+                item.short_id = assign_short_id(item.node_id, refs)
+                refs[item.short_id] = NodeRef(node_id=item.node_id, label=item.text[:120])
+            pack.meeting = MeetingContext(title=title or None, agenda=agenda, related=related)
+            fresh = True
+        if fresh:
+            pack.pack_id = uuid7()
+            pack.user_id = uid
+            with contextlib.suppress(*UNAVAILABLE):
+                await svc.store.put_session_pack(uid, pack, s.state_ttl_s)
+        return pack
 
     def live_for_user(self, uid: UUID) -> Session | None:
         for s in self.sessions.values():
@@ -1040,12 +1282,20 @@ class SessionManager:
             valkey_ok = False
         digest: Digest | None = None
         pack: SessionPack | None = None
+        at_work = msg.employer_id is not None and msg.mode in ("standup", "meeting")
+        employer_id = msg.employer_id if at_work else None
+        agenda = (msg.agenda or "").strip() or None
         if valkey_ok:
             try:
                 digest = await store.get_digest(uid)
-                pack = await store.get_pack(uid, msg.job_id, msg.mode, msg.interview_id)
+                if employer_id is None:
+                    pack = await store.get_pack(uid, msg.job_id, msg.mode, msg.interview_id)
             except (*UNAVAILABLE, ValidationError, ValueError) as e:
                 log.warning("could not load digest or pack for %s: %s", uid, e)
+        if employer_id is not None:
+            pack = await self.employer_pack(uid, employer_id, msg.mode, msg.meeting_title, agenda)
+            if pack is None:
+                employer_id = None  # not this user's company, or nothing to load at all
         info = SessionInfo(
             mode=msg.mode,
             job_id=msg.job_id,
@@ -1055,6 +1305,8 @@ class SessionManager:
             client_version=msg.client_version,
             store_transcript=msg.consent.store_transcript,
             started_at=datetime.now(UTC),
+            employer_id=employer_id,
+            agenda=agenda,
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -1133,6 +1385,8 @@ class SessionManager:
             started_at=datetime.fromisoformat(state["started_at"])
             if state.get("started_at")
             else datetime.now(UTC),
+            employer_id=UUID(state["employer_id"]) if state.get("employer_id") else None,
+            agenda=state.get("agenda") or None,
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

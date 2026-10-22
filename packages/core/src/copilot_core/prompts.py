@@ -2,7 +2,8 @@
 
 Block order is fixed so the stable prefix stays byte-identical and cacheable:
 1 system rules, 2 <digest> (cache breakpoint), 3 <session_pack> (cache breakpoint),
-4 <memory> (deep pass only), 5 <transcript>, 6 question and type instruction.
+4 <memory> (live search: the deep pass, and the fast pass when it is in within its short
+wait), 5 <transcript>, 6 question and type instruction.
 Blocks 1 to 3 go in `system`; 4 to 6 in the user turn.
 """
 
@@ -125,6 +126,61 @@ DEEP_SHAPES: dict[str, str] = {
     ),
 }
 
+# Company workspaces: in a standup or meeting at a company the user works at, the session pack
+# and live <memory> hold that company's work, and these rules join the system block (only
+# then, so interview prompts stay byte-identical). The same content policy applies: facts
+# about the user's work there come only from the data, knowledge and reasoning from the model.
+WORKPLACE_RULES = """
+
+At work: {user_name} is in {mode} at {company}, where they work{role}.
+- Facts about {user_name}'s work there are facts too: their tasks, tickets, PRs, decisions,
+  blockers and commitments, and {company}'s projects, systems, stack, people and terms. They
+  come only from <session_pack> or <memory>, exactly as written, cited with their short id.
+  Never invent a ticket, a status, a date, a name or a detail of a system. When entries on
+  the same item have different dates, the newest is its current status.
+- The rule on questions about the job, company, pay or culture is for interviews. Here,
+  {company}'s facts come from <session_pack> and <memory>, and the rest from your knowledge.
+- {mode_rule}"""
+
+WORKPLACE_MODE_RULES = {
+    "standup": (
+        "In a standup, give {user_name}'s update from the standup section of <session_pack>:"
+        " what was done yesterday, today's plan, blockers, and commitments coming due. A"
+        " question about one item gets its status and next step from the data. Never make up"
+        " progress the log does not show."
+    ),
+    "meeting": (
+        "In a work meeting the talk is technical and open, not a status report: answer as an"
+        " experienced engineer at {company} would, using {company}'s systems, stack, decisions"
+        " and terms where they apply, and general knowledge for the rest, phrased as"
+        " {user_name}'s view. Give status only when asked."
+    ),
+}
+
+# Deep shapes that differ at work (the others are the same in every mode).
+WORKPLACE_SHAPES: dict[str, str] = {
+    "technical": (
+        "The direct answer in one line, how it works in 2 or 3 with the specifics, how it "
+        "applies to the company's systems where the pack or memory says so, the main tradeoff "
+        "or pitfall: 4 to 7 lines, under 80 words."
+    ),
+    "system_design": (
+        "1 or 2 clarifying questions, then the user's design as 'I'd' lines that start from the "
+        "company's current systems and stack where the data has them: components, data flow, "
+        "failure handling, scaling, tradeoffs. One short line each, under 110 words."
+    ),
+    "standup_status": (
+        "From the standup section only: yesterday, today, blockers, and a commitment coming due "
+        "if there is one; or, for one item, its status and next step. One line each, under 50 "
+        "words."
+    ),
+    "other": (
+        "A colleague's question at work: the direct answer or view first, the reasoning, the "
+        "company's facts where they apply, a next step or a question back if it helps. 3 to 5 "
+        "lines, under 60 words."
+    ),
+}
+
 # The detector's one output field: a question type when the utterance is a complete question
 # for the user that needs an answer now, else "wait" (it stops mid-sentence) or "none".
 DETECTOR_ANSWERS = (*QUESTION_TYPES, "wait", "none")
@@ -172,6 +228,13 @@ class PromptContext:
     mode: str
     digest_text: str | None
     pack_text: str | None
+    # The company a standup or meeting is at (company workspaces), and the user's role there.
+    company: str | None = None
+    role: str | None = None
+
+    @property
+    def at_work(self) -> bool:
+        return bool(self.company) and self.mode in WORKPLACE_MODE_RULES
 
 
 def _data(tag: str, body: str) -> str:
@@ -184,7 +247,15 @@ MODE_PHRASES = {"interview": "an interview", "standup": "a standup", "meeting": 
 
 def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
     mode = MODE_PHRASES.get(ctx.mode, f"a {ctx.mode}")
-    blocks = [SystemBlock(rules.format(user_name=ctx.user_name, mode=mode))]
+    text = rules.format(user_name=ctx.user_name, mode=mode)
+    if ctx.at_work:
+        names = {"user_name": ctx.user_name, "company": ctx.company, "mode": mode}
+        text += WORKPLACE_RULES.format(
+            **names,
+            role=f" as {ctx.role}" if ctx.role else "",
+            mode_rule=WORKPLACE_MODE_RULES[ctx.mode].format(**names),
+        )
+    blocks = [SystemBlock(text)]
     blocks.append(SystemBlock(_data("digest", ctx.digest_text or "(no digest yet)"), cache=True))
     if ctx.pack_text:
         blocks.append(SystemBlock(_data("session_pack", ctx.pack_text), cache=True))
@@ -192,11 +263,21 @@ def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
 
 
 def fast_pass(
-    ctx: PromptContext, transcript: str, question: str, qtype: str | None, max_tokens: int
+    ctx: PromptContext,
+    transcript: str,
+    question: str,
+    qtype: str | None,
+    max_tokens: int,
+    memory: Sequence[str] = (),
 ) -> LLMRequest:
-    """`qtype` is None for a speculative pass started before the detector typed the question."""
+    """`qtype` is None for a speculative pass started before the detector typed the question.
+    `memory` is what live search found in time (company workspaces); usually none."""
     asked = f"Question ({qtype}): {question}" if qtype else f"Question: {question}"
-    user = "\n\n".join([_data("transcript", transcript or "(empty)"), asked])
+    parts: list[str] = []
+    if memory:
+        parts.append(_data("memory", "\n".join(memory)))
+    parts += [_data("transcript", transcript or "(empty)"), asked]
+    user = "\n\n".join(parts)
     return LLMRequest(system=_system(FAST_SYSTEM, ctx), content=user, max_tokens=max_tokens)
 
 
@@ -212,7 +293,8 @@ def deep_pass(
     if memory:
         parts.append(_data("memory", "\n".join(memory)))
     parts.append(_data("transcript", transcript or "(empty)"))
-    shape = DEEP_SHAPES.get(qtype, DEEP_SHAPES["other"])
+    shapes = {**DEEP_SHAPES, **WORKPLACE_SHAPES} if ctx.at_work else DEEP_SHAPES
+    shape = shapes.get(qtype, shapes["other"])
     parts.append(f"Question ({qtype}): {question}\nShape: {shape}")
     return LLMRequest(
         system=_system(DEEP_SYSTEM, ctx), content="\n\n".join(parts), max_tokens=max_tokens

@@ -6,8 +6,8 @@ from uuid import UUID
 import pytest
 
 from copilot_core import jobs, keys
-from copilot_core.packs import SHORT_ID, Digest, SessionPack, cited_refs, ref_map
-from copilot_worker.memory import render_digest, short_ids
+from copilot_core.packs import SHORT_ID, Digest, SessionPack, cited_refs, ref_map, short_ids
+from copilot_worker.memory import render_digest
 from copilot_worker.testing import FIXTURES, Stack
 
 pytestmark = pytest.mark.stack
@@ -207,7 +207,7 @@ async def test_standup_pack_needs_no_model(stack: Stack) -> None:
     pack = await pack_for(stack, uid, "mode:standup")
     assert pack.mode == "standup"
     assert pack.standup is not None
-    assert pack.standup["open_commitments"] == []
+    assert pack.standup.open_commitments == []
     assert len(stack.claude.requests) == calls
 
 

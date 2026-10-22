@@ -261,6 +261,21 @@ class GatewayStore:
         raw = await self.client.get(keys.pack(uid, pack_id))
         return None if raw is None else SessionPack.model_validate_json(raw)
 
+    async def get_employer_pack(
+        self, uid: UUID, employer_id: UUID, mode: str
+    ) -> SessionPack | None:
+        """The worker's newest pack for a company and mode (`employer:{id}:{mode}`)."""
+        field = keys.employer_pack_field(employer_id, mode)
+        pack_id = await self.client.hget(keys.pack_index(uid), field)  # pyright: ignore[reportUnknownMemberType]
+        return None if pack_id is None else await self.get_pack_by_id(uid, _s(pack_id))
+
+    async def put_session_pack(self, uid: UUID, pack: SessionPack, ttl_s: int) -> None:
+        """A pack the gateway made for one session (rendered at start, or with the meeting's
+        agenda), kept as long as the session state so a resume on any task finds it. The index
+        stays the workers'."""
+        data = pack.model_dump_json(by_alias=True, exclude_none=True)
+        await self.client.set(keys.pack(uid, pack.pack_id), data, ex=ttl_s)
+
     async def qa_get(self, uid: UUID, qhash: str) -> dict[str, Any] | None:
         raw = await self.client.get(keys.qa(uid, qhash))
         return None if raw is None else cast(dict[str, Any], json.loads(raw))

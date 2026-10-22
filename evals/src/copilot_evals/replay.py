@@ -165,6 +165,7 @@ class Replay:
         self.sends = sends
         self.segments = segments
         self.mode = mode
+        self.start_extra: dict[str, Any] = {}  # more session.start fields (a company, an agenda)
         self.speed = speed
         self.tail_s = tail_s
         self.drop_at_s = drop_at_s
@@ -209,6 +210,7 @@ class Replay:
                     "client_version": "copilot-replay",
                     "consent": {"store_transcript": self.consent},
                     "audio": {"sample_rate": SAMPLE_RATE, "encoding": "pcm16"},
+                    **self.start_extra,
                 }
             )
         )

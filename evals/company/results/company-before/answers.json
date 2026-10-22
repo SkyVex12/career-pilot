@@ -1,0 +1,2493 @@
+[
+ {
+  "id": "su_update",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Alex, what's your update?",
+  "cost_usd": 0.0075060000000000005,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No update logged for yesterday\n- Nothing planned for today\n- No blockers logged\n- No open commitments listed",
+  "metrics": {
+   "words": 16,
+   "lines": 4,
+   "words_per_line": 4,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No update logged for yesterday",
+    "Nothing planned for today",
+    "No blockers logged",
+    "No open commitments listed"
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "The cues contradict the logged progress, today's plan, staging grant blocker, and open commitments rather than giving the standup update."
+  }
+ },
+ {
+  "id": "su_update",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Alex, what's your update?",
+  "cost_usd": 0.011446,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged for yesterday\nToday: nothing planned in the log\nBlockers: none logged in the standup pack",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims nothing was logged for yesterday, despite the October 19 work log recording the CHK-1290 merge and PSP failover RFC review.",
+    "Claims nothing is planned, despite plans to pair with Dana on the staging grant and start CHK-1311.",
+    "Claims no blockers are logged, despite the outbox relay being blocked by missing staging database permissions."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Uses short standup lines but falsely denies the logged progress, plans, and blocker, and omits the upcoming rollout-plan commitment."
+  }
+ },
+ {
+  "id": "su_yesterday",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What did you get done yesterday?",
+  "cost_usd": 0.007543,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Nothing logged for yesterday\n- No completed work to report\n- Can check in after reviewing tasks\n- No blocker noted yesterday",
+  "metrics": {
+   "words": 19,
+   "lines": 4,
+   "words_per_line": 4.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Nothing was logged for yesterday.",
+    "There was no completed work to report yesterday.",
+    "No blocker was noted yesterday."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Denies the logged work and staging permission blocker, omitting all three substantive standup updates and their citations."
+  }
+ },
+ {
+  "id": "su_yesterday",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What did you get done yesterday?",
+  "cost_usd": 0.009080000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no completed work logged\nToday: no planned work logged\nBlockers: no blockers currently logged",
+  "metrics": {
+   "words": 15,
+   "lines": 3,
+   "words_per_line": 5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims no completed work was logged, but October 19 records PR #893 merged and Priya's PSP failover RFC reviewed.",
+    "Claims no planned work was logged, but the plan was to pair with Dana on the staging grant and start the reservation backfill script.",
+    "Claims no blockers were logged, but the outbox relay was blocked by missing staging Postgres permissions."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The concise status format omits all actual progress, plans, the staging permission blocker, and the rollout-plan deadline."
+  }
+ },
+ {
+  "id": "su_blockers",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Anything blocking you?",
+  "cost_usd": 0.0073290000000000004,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No blockers on my side\n- Nothing flagged for now",
+  "metrics": {
+   "words": 9,
+   "lines": 2,
+   "words_per_line": 4.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims there are no blockers, but the staging outbox relay is blocked by a missing database grant that only SRE can provide."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 2,
+   "notes": "Denies the documented staging grant blocker and omits the need to pair with Dana today."
+  }
+ },
+ {
+  "id": "su_blockers",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Anything blocking you?",
+  "cost_usd": 0.009062,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged in the standup\nToday: nothing planned in the log\nBlockers: none logged in the standup",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims nothing was logged yesterday, despite the October 19 work log.",
+    "Claims nothing is planned, despite plans to pair with Dana on the staging grant and start CHK-1311.",
+    "Claims no blockers are logged, despite the outbox relay being blocked by missing staging database permissions."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Denies the documented staging grant blocker instead of naming Dana and the planned pairing."
+  }
+ },
+ {
+  "id": "su_chk1290",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Is the checkout latency fix out yet?",
+  "cost_usd": 0.007383,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have an update on the checkout latency fix\n- I\u2019d check its rollout status and latency metrics\n- If it\u2019s out, confirm impact against baseline\n- If not, ask what\u2019s blocking release",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects instead of saying PR #893 is merged and in staging, with p95 down from 840 ms to 310 ms; production rollout is not confirmed."
+  }
+ },
+ {
+  "id": "su_chk1290",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Is the checkout latency fix out yet?",
+  "cost_usd": 0.009788,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no checkout latency rollout confirmation logged\nToday: no work planned in the log\nBlockers: none logged in the standup pack",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No work planned in the log, despite the stated plan to pair with Dana on the staging grant and start the reservation backfill script.",
+    "No blockers logged, despite the documented staging database grant blocker for the outbox relay."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Does not answer the latency question: PR #893 is merged and in staging, with p95 down from 840 ms to 310 ms; production rollout is unconfirmed."
+  }
+ },
+ {
+  "id": "su_outbox_plan",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Are we still on track for the outbox rollout plan by Friday?",
+  "cost_usd": 0.007229,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have a rollout status yet\n- I\u2019d check progress against the Friday milestones\n- Flag any risks or blockers now\n- Confirm the owner and next update",
+  "metrics": {
+   "words": 26,
+   "lines": 4,
+   "words_per_line": 6.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Generic deflection omits the Friday commitment, Dana\u2019s blocking staging grant, and relay/backfill progress."
+  }
+ },
+ {
+  "id": "su_outbox_plan",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Are we still on track for the outbox rollout plan by Friday?",
+  "cost_usd": 0.008636,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no progress update logged\nToday: Friday rollout timing not confirmed\nBlockers: none logged for now",
+  "metrics": {
+   "words": 16,
+   "lines": 3,
+   "words_per_line": 5.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No blockers are logged, despite the documented staging Postgres grant blocking the outbox relay."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Misses the Friday commitment, relay progress and backfill next step, and incorrectly denies the staging access blocker."
+  }
+ },
+ {
+  "id": "su_dedupe",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Where's the dedupe table from the postmortem?",
+  "cost_usd": 0.007277,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have its location yet\n- I\u2019d check the postmortem link or ask its owner\n- Then I\u2019d share the table link here",
+  "metrics": {
+   "words": 22,
+   "lines": 3,
+   "words_per_line": 7.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects to finding a table link instead of giving the employee\u2019s action-item status, 7-day TTL, and October 27 deadline."
+  }
+ },
+ {
+  "id": "su_dedupe",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Where's the dedupe table from the postmortem?",
+  "cost_usd": 0.008422,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no dedupe table update logged\nToday: no dedupe table work planned in log\nBlockers: none logged in standup pack",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 2,
+   "shape": 2,
+   "notes": "Reports gaps in the logs instead of the item's status and next step; omits the 7-day TTL and October 27 deadline, and lacks citations."
+  }
+ },
+ {
+  "id": "su_help",
+  "mode": "standup",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Do you need anything from me?",
+  "cost_usd": 0.0074080000000000005,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Nothing I need right now\n- No blockers on my side\n- I\u2019ll flag anything that comes up",
+  "metrics": {
+   "words": 16,
+   "lines": 3,
+   "words_per_line": 5.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No blockers on my side contradicts the staging outbox blocker: the relay lacks a database grant that only SRE can change."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Short, speakable cues, but they deny the known blocker and omit the conditional ask for help getting Dana\u2019s staging grant."
+  }
+ },
+ {
+  "id": "su_help",
+  "mode": "standup",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Do you need anything from me?",
+  "cost_usd": 0.008848,
+  "variant": "before",
+  "memory": [],
+  "answer": "Just a steer on today's highest-priority work\nAny time-sensitive decisions you'd like me to pick up?\nAny dependencies I should coordinate with the team?",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Generic questions miss the specific ask: help getting Dana's staging grant if pairing does not resolve it; otherwise nothing."
+  }
+ },
+ {
+  "id": "su_psp412",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Did the refund idempotency change go out?",
+  "cost_usd": 0.007548999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don't have a release update yet\n- I'll check the deployment and confirm\n- If it went out, verify retries return the same refund result\n- If not, check what's holding it up",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [
+    "Claims not to have a release update, although the work log records PSP-412 deployed to production on 2026-10-13 at 10:00."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Deflects instead of confirming the production deployment, no duplicate refunds since, and the retry behavior."
+  }
+ },
+ {
+  "id": "su_psp412",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Did the refund idempotency change go out?",
+  "cost_usd": 0.010046,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no refund deployment status logged\nToday: no planned work logged\nBlockers: no blockers currently logged",
+  "metrics": {
+   "words": 16,
+   "lines": 3,
+   "words_per_line": 5.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No refund deployment status logged: PSP-412 was deployed to production on 2026-10-13 at 10:00.",
+    "No planned work logged: the latest log plans pairing with Dana on the staging grant and starting CHK-1311.",
+    "No blockers currently logged: the outbox relay is blocked on a staging database grant."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Does not answer the question: the change shipped to production and no duplicate refunds have occurred since; use a cited item-status cue rather than empty standup categories."
+  }
+ },
+ {
+  "id": "mt_why_sqs",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Remind me, why did we stay on SQS instead of moving reservations to Kafka?",
+  "cost_usd": 0.008164999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd stay with SQS if reservations need simple, durable work queues\n- Visibility timeouts and redrive make retries and failures straightforward\n- Kafka fits better when replay or ordered event streams are central\n- Choose based on delivery semantics and operations, not throughput alone",
+  "metrics": {
+   "words": 41,
+   "lines": 4,
+   "words_per_line": 10.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Gives generic queue-selection advice instead of the actual decision reasons, dedupe guarantees, and Kafka revisit threshold."
+  }
+ },
+ {
+  "id": "mt_why_sqs",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Remind me, why did we stay on SQS instead of moving reservations to Kafka?",
+  "cost_usd": 0.011622,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d favor SQS for reservations as queued work\nKafka fits replay and multiple independent consumers better\nI\u2019d use the outbox for reliable database-to-queue delivery\nStill need idempotent consumers; neither removes duplicate-processing risks\nI\u2019d choose FIFO only where per-group ordering matters",
+  "metrics": {
+   "words": 40,
+   "lines": 5,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Gives generic design preferences rather than the actual decision, omitting Kafka\u2019s cost and on-call load, SQS familiarity, the dedupe rationale, and the revisit threshold."
+  }
+ },
+ {
+  "id": "mt_outbox_how",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Walk us through how the outbox works with the reservation service.",
+  "cost_usd": 0.008218,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd write the reservation and outbox record in one database transaction\n- A publisher polls unpublished records, sends events, then marks them published\n- Retries can duplicate events, so consumers need idempotency\n- Ordering, retries, and a poison-message path need clear rules",
+  "metrics": {
+   "words": 39,
+   "lines": 4,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Clear short cues, but the uncited relay description omits SQS FIFO, SKIP LOCKED, batches of 100, and reservation-id grouping and deduplication."
+  }
+ },
+ {
+  "id": "mt_outbox_how",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Walk us through how the outbox works with the reservation service.",
+  "cost_usd": 0.009649000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d commit reservation state and outbox event atomically\nOne database transaction inserts both; rollback leaves neither committed\nA relay publishes committed events, then marks them delivered\nEvent includes reservation ID, event ID, and reservation version\nMain pitfall: publish succeeds, marking fails; delivery repeats\nI\u2019d deduplicate event IDs; check versions against stale updates",
+  "metrics": {
+   "words": 52,
+   "lines": 6,
+   "words_per_line": 8.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "The event includes an event ID and reservation version; neither field is specified in the company records."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Explains atomic writes and repeat delivery, but lacks citations and omits polling, batch size, SQS FIFO, and reservation-ID grouping and deduplication."
+  }
+ },
+ {
+  "id": "mt_dup_events",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What caused the duplicate order events last week?",
+  "cost_usd": 0.0073549999999999996,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d trace the outbox row through publish and acknowledgement\n- Check retry timing, idempotency keys, and consumer deduplication\n- A publish followed by lost acknowledgement can replay an event\n- Compare event IDs and logs before naming the cause",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Gives generic investigation cues instead of the known rebalance cause, impact, mitigation, and follow-up."
+  }
+ },
+ {
+  "id": "mt_dup_events",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What caused the duplicate order events last week?",
+  "cost_usd": 0.010083,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd check the outbox relay\u2019s publish and acknowledgement logs first\nPossible cause: publish succeeded, but marking the outbox row failed\nRetry then republishes the same event \u2014 expected with at-least-once delivery\nI'd confirm matching event IDs, then check consumer deduplication",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Offers a hypothetical outbox investigation instead of the known rebalance cause, impact, mitigation, and follow-up."
+  }
+ },
+ {
+  "id": "mt_exactly_once",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Could we get exactly-once delivery end to end with SQS FIFO?",
+  "cost_usd": 0.008025,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Not end to end; FIFO gives deduplication within its five-minute window\n- I'd make consumers idempotent and track processed message IDs\n- For database effects, write the change and outbox row in one transaction\n- Acknowledge only after commit; retries can still happen",
+  "metrics": {
+   "words": 40,
+   "lines": 4,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Missing the relay crash-and-republish case and the warehouse requirement for idempotency keyed by reservation ID."
+  }
+ },
+ {
+  "id": "mt_exactly_once",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Could we get exactly-once delivery end to end with SQS FIFO?",
+  "cost_usd": 0.009401,
+  "variant": "before",
+  "memory": [],
+  "answer": "No\u2014I'd treat SQS FIFO as at-least-once end to end\nFIFO deduplicates sends within a five-minute window using MessageDeduplicationId\nMessageGroupId scopes ordering; visibility timeout expiry can trigger redelivery\nI'd commit business changes and outbox rows together\nI'd atomically commit consumer deduplication and database side effects\nMain pitfall: external payments need their own idempotency keys",
+  "metrics": {
+   "words": 53,
+   "lines": 6,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Technically sound, but misses the relay crash-and-republish case and the warehouse requirement for idempotent consumers keyed by reservation id."
+  }
+ },
+ {
+  "id": "mt_backfill",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How should we backfill the existing reservations into the outbox without double-publishing?",
+  "cost_usd": 0.008128999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd snapshot reservations with stable event IDs\n- Record each event in the outbox transactionally, with a unique reservation-and-event key\n- Publish through an idempotent relay; mark sent only after broker acknowledgement\n- Keep live writes and backfill on the same dedupe key; watch for snapshot races",
+  "metrics": {
+   "words": 44,
+   "lines": 4,
+   "words_per_line": 11,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good dedupe cues, but misses batching open reservations, the five-minute SQS window, idempotent consumers, hold expiry, and staging validation after the grant."
+  }
+ },
+ {
+  "id": "mt_backfill",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How should we backfill the existing reservations into the outbox without double-publishing?",
+  "cost_usd": 0.010493,
+  "variant": "before",
+  "memory": [],
+  "answer": "Are existing reservations already published, with durable publication records?\nShould backfill emit current state or historical transitions?\nI'd define event identity: reservation ID, version, event type\nI'd share that identity across live writes and backfill\nI'd enforce uniqueness in outbox; insert conflicts do nothing\nI'd atomically write live reservation changes and outbox rows\nI'd backfill snapshot versions, excluding durably recorded publications\nI'd scan bounded batches using primary-key cursors and checkpoints\nI'd throttle workers against database and publisher lag\nI'd retry publishing; acknowledge outbox rows after broker confirmation\nI'd expect crash-window duplicates; consumers deduplicate transactionally by event identity\nI'd trade strict ordering for throughput unless explicitly required",
+  "metrics": {
+   "words": 106,
+   "lines": 12,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 4,
+   "notes": "Solid generic backfill design, but misses reservation-ID dedupe through SQS FIFO, the 15-minute hold expiry, and staging validation after the grant."
+  }
+ },
+ {
+  "id": "mt_hold",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Sorry, quick one: what's a reservation hold here, and how long does it last?",
+  "cost_usd": 0.007598,
+  "variant": "before",
+  "memory": [],
+  "answer": "- A temporary hold on funds or inventory\n- Until payment completes or expires\n- I'd check the product\u2019s configured timeout\n- Release it on completion, cancellation, or expiry",
+  "metrics": {
+   "words": 25,
+   "lines": 4,
+   "words_per_line": 6.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Describes a reservation hold as covering funds, whereas here it is inventory held by a cart during checkout.",
+    "States release on completion or cancellation, which is not specified in the company sources."
+   ],
+   "complete": 1,
+   "correct": 3,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Confuses the inventory hold with a funds hold, omits the 15-minute expiry without payment, and provides no citations."
+  }
+ },
+ {
+  "id": "mt_hold",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Sorry, quick one: what's a reservation hold here, and how long does it last?",
+  "cost_usd": 0.009351,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d mean temporarily reserving stock or funds during checkout\nThat prevents competing purchases from spending the same availability\nIt ends on completion, cancellation, or configured expiry\nNo universal duration; I\u2019d check this flow\u2019s timeout setting",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "A reservation hold here can reserve funds, rather than the cart's inventory.",
+    "The hold ends on completion, cancellation, or a configured expiry; those lifecycle rules are not documented."
+   ],
+   "complete": 1,
+   "correct": 3,
+   "spoken": 3,
+   "shape": 4,
+   "notes": "Gives a generic, uncited definition instead of the documented inventory hold that expires after 15 minutes without payment."
+  }
+ },
+ {
+  "id": "mt_fraud_owner",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Who owns the fraud scoring client?",
+  "cost_usd": 0.007417,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d clarify ownership of the client first\n- Usually the fraud team owns scoring logic\n- Payments owns integration, timeouts, and fallbacks\n- Confirm the service boundary and on-call team",
+  "metrics": {
+   "words": 27,
+   "lines": 4,
+   "words_per_line": 6.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Payments owns integration, timeouts, and fallbacks; the documented fraud scoring client owner is Sam Okafor."
+   ],
+   "complete": 1,
+   "correct": 3,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects a direct ownership question instead of naming Sam Okafor, and asserts unsupported payments ownership."
+  }
+ },
+ {
+  "id": "mt_fraud_owner",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Who owns the fraud scoring client?",
+  "cost_usd": 0.009337,
+  "variant": "before",
+  "memory": [],
+  "answer": "I don't have a confirmed owner for that client\nDo you mean the client library or fraud service?\nI'd confirm release ownership and on-call before assigning changes",
+  "metrics": {
+   "words": 27,
+   "lines": 3,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects instead of naming Sam Okafor and identifying the client library, despite explicit ownership in the architecture notes."
+  }
+ },
+ {
+  "id": "mt_dlq",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What happens today to reservation messages that keep failing?",
+  "cost_usd": 0.007275,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d check the retry policy and dead-letter handling\n- Cap retries with backoff, then route failures to a DLQ\n- Keep the reservation record and failure reason for replay\n- Alert on DLQ growth; avoid silent drops",
+  "metrics": {
+   "words": 34,
+   "lines": 4,
+   "words_per_line": 8.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Gives generic recommendations rather than today's five-receive DLQ policy and Dana's team's replay and Monday checks."
+  }
+ },
+ {
+  "id": "mt_dlq",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What happens today to reservation messages that keep failing?",
+  "cost_usd": 0.009195,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d verify today\u2019s retry policy before claiming their fate\nI\u2019d check retry limits, backoff, and dead-letter handling\nI\u2019d expect capped exponential backoff with jitter\nAfter exhaustion, I\u2019d quarantine, alert, and support controlled replay\nI\u2019d keep reservation handling idempotent to prevent duplicate effects\nMain pitfall: poison messages blocking later reservations indefinitely",
+  "metrics": {
+   "words": 50,
+   "lines": 6,
+   "words_per_line": 8.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 4,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Deflects into hypothetical checks instead of stating the five-receive DLQ policy and Dana\u2019s replay and Monday checks."
+  }
+ },
+ {
+  "id": "mt_psp_rfc",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Alex, you reviewed Priya's PSP failover RFC. What did you think?",
+  "cost_usd": 0.007438,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d check bounded retries and timeouts\n- Circuit breakers to stop hammering failed PSPs\n- Idempotency to prevent duplicate charges\n- Fail back only after health checks and controlled recovery",
+  "metrics": {
+   "words": 27,
+   "lines": 4,
+   "words_per_line": 6.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but generic: misses the RFC\u2019s backup-on-timeout proposal, Alex\u2019s retry-ordering comments, and cross-PSP idempotency for late successes."
+  }
+ },
+ {
+  "id": "mt_psp_rfc",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Alex, you reviewed Priya's PSP failover RFC. What did you think?",
+  "cost_usd": 0.009283,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d judge PSP failover by duplicate-charge risk first\nTimeouts mean unknown outcomes, not necessarily failed payments\nI\u2019d require reconciliation before rerouting ambiguous payment attempts\nIdempotency keys alone don\u2019t prevent duplicates across PSPs\nI\u2019d ask: which failures trigger failover versus reconciliation?",
+  "metrics": {
+   "words": 40,
+   "lines": 5,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good risk-based view, but omits the Stripe-to-Adyen failover context and Alex's actual comments on retry ordering."
+  }
+ },
+ {
+  "id": "mt_sla",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "question": "What's our availability SLA for checkout?",
+  "cost_usd": 0.007293,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have the agreed checkout SLA in front of me\n- I\u2019d confirm the target and measurement window\n- Then clarify what\u2019s excluded, like planned maintenance\n- And check how checkout availability is measured in practice",
+  "metrics": {
+   "words": 34,
+   "lines": 4,
+   "words_per_line": 8.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Avoids inventing an SLA and offers to confirm it, but omits the known latency alert and on-call ownership."
+  }
+ },
+ {
+  "id": "mt_sla",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "question": "What's our availability SLA for checkout?",
+  "cost_usd": 0.008341000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd confirm the agreed SLA before quoting a percentage\nI'd distinguish contractual SLA from our internal checkout SLO\nI'd check measurement window, successful checkouts, and excluded failures\nMain pitfall: healthy endpoints while customers can't complete payment",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Avoids inventing an SLA and offers to confirm it, but omits the known paging threshold and on-call ownership."
+  }
+ },
+ {
+  "id": "mt_relay_scale",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 0,
+  "question": "Will a single outbox relay keep up on Black Friday?",
+  "cost_usd": 0.007471,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd size relay throughput against peak write volume, not average\n- Partition or shard work; scale relay consumers with backlog\n- Monitor lag, publish rate, retries, and database pressure\n- Black Friday hit 6x normal traffic; shed load in 12 minutes [n:s1]",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.25,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but misses safe parallel relays with SKIP LOCKED, oldest-unsent-row age, FIFO message groups, and load-testing the relay."
+  }
+ },
+ {
+  "id": "mt_relay_scale",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 0,
+  "question": "Will a single outbox relay keep up on Black Friday?",
+  "cost_usd": 0.010841,
+  "variant": "before",
+  "memory": [],
+  "answer": "What peak events per second, including Black Friday headroom?\nWhat delivery lag and ordering guarantees are acceptable?\nI'd size relay throughput from load tests, not assumptions\nI'd write orders and outbox rows in one transaction\nI'd publish to Kafka, then mark rows delivered\nI'd expect duplicates after crashes; consumers deduplicate by event ID\nI'd retry with backoff; quarantine poison events for investigation\nI'd scale polling workers with SKIP LOCKED and bounded batches\nI'd preserve per-order ordering through keyed partitions and sequencing\nI'd monitor oldest unpublished age, throughput, and database pressure\nI'd consider CDC when polling overhead outweighs operational complexity\nBlack Friday payments adapter exhausted its connection pool at 6x [n:s1]",
+  "metrics": {
+   "words": 109,
+   "lines": 12,
+   "words_per_line": 9.1,
+   "cited_share": 0.08,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The design switches to orders and Kafka instead of the reservation outbox and SQS FIFO, missing message-group scaling and an explicit answer about multiple relay instances."
+  }
+ },
+ {
+  "id": "mt_monitoring",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "question": "How would we know the relay is falling behind?",
+  "cost_usd": 0.007268,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Track oldest unpublished outbox event age\n- Watch backlog size and publish rate\n- Alert when lag exceeds the delivery-time objective\n- Check retries, errors, and relay throughput together",
+  "metrics": {
+   "words": 26,
+   "lines": 4,
+   "words_per_line": 6.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise relay metrics, but missing SQS in-flight and DLQ depth checks and a sustained-threshold alert."
+  }
+ },
+ {
+  "id": "mt_monitoring",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "question": "How would we know the relay is falling behind?",
+  "cost_usd": 0.009585,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd alert on oldest unpublished outbox age, not just backlog\nI'd track pending rows, publish throughput, retries, and failures\nI'd compare insert versus publish rates; sustained gaps mean falling behind\nI'd set warning and paging thresholds against our delivery SLO\nPitfall I'd avoid: low backlog masking one repeatedly failing event",
+  "metrics": {
+   "words": 50,
+   "lines": 5,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good relay-lag cues, but missing sustained-threshold alerting in Grafana and SQS in-flight and DLQ metrics."
+  }
+ },
+ {
+  "id": "su_update",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Alex, what's your update?",
+  "cost_usd": 0.007789,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Nothing logged for yesterday\n- Nothing planned for today\n- No blockers\n- No open commitments",
+  "metrics": {
+   "words": 13,
+   "lines": 4,
+   "words_per_line": 3.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Nothing logged for yesterday, despite the October 19 work log.",
+    "Nothing planned for today, despite plans to pair with Dana and start CHK-1311.",
+    "No blockers, despite the missing staging outbox-table grant.",
+    "No open commitments, despite the outbox rollout plan and dedupe-table deadlines."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "The cues contradict the work logs and omit every substantive standup update."
+  }
+ },
+ {
+  "id": "su_update",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Alex, what's your update?",
+  "cost_usd": 0.009455999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged in the standup\nToday: nothing planned in the log\nBlockers: none logged in the standup",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims nothing is logged for yesterday, despite the October 19 merge, staging measurements, and RFC review.",
+    "Claims nothing is planned, despite plans to pair with Dana on the grant and start CHK-1311.",
+    "Claims no blockers are logged, despite the staging outbox table grant blocking the relay."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The brief status format fits, but every line denies logged work, plans, or blockers and omits the substantive update."
+  }
+ },
+ {
+  "id": "su_yesterday",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What did you get done yesterday?",
+  "cost_usd": 0.0075390000000000006,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No work logged for yesterday\n- Nothing specific to report from the log\n- Could share a current priority instead",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No work was logged for yesterday; the 2026-10-19 log records the PR #893 merge, PSP failover RFC review, and outbox staging permission blocker."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects instead of reporting yesterday\u2019s three logged updates, and falsely says there was no work logged."
+  }
+ },
+ {
+  "id": "su_yesterday",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What did you get done yesterday?",
+  "cost_usd": 0.008682,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged as completed\nToday: nothing planned in the log\nBlockers: none logged so far",
+  "metrics": {
+   "words": 16,
+   "lines": 3,
+   "words_per_line": 5.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims nothing was logged as completed yesterday, despite PR #893 merging and the PSP failover RFC review.",
+    "Claims nothing was planned, despite plans to pair with Dana on the staging grant and start CHK-1311.",
+    "Claims no blockers were logged, despite the outbox relay being blocked by missing staging database permissions."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The concise status format omits all actual progress and contradicts the logged plans and staging blocker."
+  }
+ },
+ {
+  "id": "su_blockers",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Anything blocking you?",
+  "cost_usd": 0.0072440000000000004,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Nothing blocking me today\n- No blockers logged",
+  "metrics": {
+   "words": 7,
+   "lines": 2,
+   "words_per_line": 3.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Nothing blocking me today; no blockers logged, contradicting the logged staging outbox grant blocker."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 2,
+   "notes": "Denies the logged staging grant blocker and omits the need to pair with Dana."
+  }
+ },
+ {
+  "id": "su_blockers",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Anything blocking you?",
+  "cost_usd": 0.008468,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged in the update\nToday: nothing planned in the log\nBlockers: none logged in the update",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims nothing was logged yesterday, despite the October 19 work log.",
+    "Claims nothing is planned, despite plans to pair with Dana on the staging grant and start the backfill script.",
+    "Claims no blockers are logged, contradicting the staging relay's missing database grant."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Denies the documented staging grant blocker and omits the need to pair with Dana today."
+  }
+ },
+ {
+  "id": "su_chk1290",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Is the checkout latency fix out yet?",
+  "cost_usd": 0.007318,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have a checkout latency update\n- I\u2019d check deployment status and latency metrics\n- If it\u2019s out, confirm impact against baseline",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Deflects instead of stating that PR #893 merged and staging p95 fell from 840 ms to 310 ms, with production rollout unconfirmed."
+  }
+ },
+ {
+  "id": "su_chk1290",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Is the checkout latency fix out yet?",
+  "cost_usd": 0.008492,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no checkout fix update logged\nToday: no checkout fix work logged\nBlockers: none logged in standup notes",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No checkout fix update or work is logged, despite the October 19 entry recording PR #893 merged and p95 improving in staging."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Misses the logged merged-and-staging status and latency improvement; should answer this item's status and next step rather than give empty standup categories."
+  }
+ },
+ {
+  "id": "su_outbox_plan",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Are we still on track for the outbox rollout plan by Friday?",
+  "cost_usd": 0.007354,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have a rollout update yet\n- I\u2019d check the remaining steps and owners\n- Then confirm any risks to Friday\n- I\u2019d share a revised date if needed",
+  "metrics": {
+   "words": 27,
+   "lines": 4,
+   "words_per_line": 6.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "The employee has no rollout update yet."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Deflects instead of giving the known progress, Dana\u2019s staging-grant blocker, and risk to Friday\u2019s promised plan."
+  }
+ },
+ {
+  "id": "su_outbox_plan",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Are we still on track for the outbox rollout plan by Friday?",
+  "cost_usd": 0.008834,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: nothing logged in the standup\nToday: nothing planned in the log\nBlockers: none logged in the standup",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Nothing planned today, despite the logged plan to pair with Dana on the staging grant and start the backfill script.",
+    "No blockers, despite the logged missing staging Postgres grant blocking the relay."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Uses empty standup placeholders instead of the logged outbox progress, staging blocker, next steps, and Friday commitment."
+  }
+ },
+ {
+  "id": "su_dedupe",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Where's the dedupe table from the postmortem?",
+  "cost_usd": 0.007275,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I don\u2019t have its location\n- I\u2019d check the postmortem link or incident channel\n- Which incident or postmortem do you mean?",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Deflects instead of reporting the order-event dedupe table\u2019s not-started status, 7-day TTL, and October 27 deadline."
+  }
+ },
+ {
+  "id": "su_dedupe",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Where's the dedupe table from the postmortem?",
+  "cost_usd": 0.00853,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: no progress logged on the dedupe table\nToday: no dedupe table work planned in the log\nBlockers: none logged for the dedupe table",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Missing the 7-day TTL, October 27 deadline, and next step after outbox work; uncited log summaries do not give a direct status update."
+  }
+ },
+ {
+  "id": "su_help",
+  "mode": "standup",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Do you need anything from me?",
+  "cost_usd": 0.007363000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No blockers on my end\n- Nothing I need from you right now\n- I\u2019ll flag anything that comes up",
+  "metrics": {
+   "words": 18,
+   "lines": 3,
+   "words_per_line": 6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No blockers on my end contradicts the outbox staging blocker: the relay lacks a database grant that only SRE can provide."
+   ],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Misses the conditional ask for help with Dana's staging grant and incorrectly says there are no blockers."
+  }
+ },
+ {
+  "id": "su_help",
+  "mode": "standup",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Do you need anything from me?",
+  "cost_usd": 0.008674,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd appreciate a steer on today's top priority\nAny dependencies you'd like me to coordinate first?\nAnything time-sensitive I should put ahead of that?",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Generic priority questions miss the actual ask: help getting Dana's staging grant if pairing does not resolve it, otherwise nothing."
+  }
+ },
+ {
+  "id": "su_psp412",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Did the refund idempotency change go out?",
+  "cost_usd": 0.0074540000000000006,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No update logged on the refund idempotency change\n- I\u2019d check the deployment status and confirm with the owner\n- If it\u2019s out, verify retries don\u2019t create duplicate refunds\n- If not, check the rollout plan and any blocker",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "No update logged on the refund idempotency change; the logs explicitly record its merge and production deployment."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Deflects instead of confirming the logged production deployment, absence of duplicate refunds, and retry behavior."
+  }
+ },
+ {
+  "id": "su_psp412",
+  "mode": "standup",
+  "qtype": "standup_status",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Did the refund idempotency change go out?",
+  "cost_usd": 0.00936,
+  "variant": "before",
+  "memory": [],
+  "answer": "Yesterday: refund idempotency rollout status not logged\nToday: nothing planned in the log\nBlockers: none logged in the standup pack",
+  "metrics": {
+   "words": 20,
+   "lines": 3,
+   "words_per_line": 6.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Claims the refund idempotency rollout status is not logged, but PSP-412 was deployed to production on 2026-10-13 at 10:00."
+   ],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Does not answer whether the change shipped; omits the logged production deployment, absence of duplicate refunds since, and retry behavior."
+  }
+ },
+ {
+  "id": "mt_why_sqs",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Remind me, why did we stay on SQS instead of moving reservations to Kafka?",
+  "cost_usd": 0.008435000000000002,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d compare delivery needs, not platform preference\n- SQS fits simpler managed queueing and independent consumers\n- Kafka makes sense for replay, ordering, or shared event streams\n- I\u2019d keep SQS unless those needs justify added operations cost",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Generic platform advice rather than the actual decision: misses Kafka's cost and on-call burden, team familiarity, FIFO dedupe plus idempotent consumers, and the Q1 throughput trigger."
+  }
+ },
+ {
+  "id": "mt_why_sqs",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Remind me, why did we stay on SQS instead of moving reservations to Kafka?",
+  "cost_usd": 0.010391000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d favor SQS for reservation work, not replayable streams\nKafka adds operational overhead unless replay or multiple consumers matter\nThe outbox closes the database-write-to-message gap with either option\nSQS Standard: at-least-once delivery, best-effort ordering; reservation handlers need idempotency\nIf per-reservation ordering matters, I\u2019d consider FIFO message groups",
+  "metrics": {
+   "words": 47,
+   "lines": 5,
+   "words_per_line": 9.4,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Gives generic queue advice instead of the actual decision, omitting Kafka\u2019s specific costs, existing FIFO guarantees, and the Q1 revisit threshold."
+  }
+ },
+ {
+  "id": "mt_outbox_how",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Walk us through how the outbox works with the reservation service.",
+  "cost_usd": 0.008466,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Reservation writes and outbox record commit together\n- A publisher reads pending records and sends events\n- Mark sent only after broker acknowledgment; retry failures\n- Consumers deduplicate by event ID; avoid dual-write loss",
+  "metrics": {
+   "words": 31,
+   "lines": 4,
+   "words_per_line": 7.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Consumers deduplicate by event ID; the supplied records require idempotent consumers but do not specify event-ID deduplication."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but missing citations and the relay\u2019s polling query, batch size, SQS FIFO destination, and reservation-ID grouping and deduplication."
+  }
+ },
+ {
+  "id": "mt_outbox_how",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Walk us through how the outbox works with the reservation service.",
+  "cost_usd": 0.009944999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d atomically save reservation changes and outbox events together\nSame database transaction: reservation state, event ID, reservation ID, version\nA relay publishes committed events, then marks them delivered\nI\u2019d use reservation ID as the broker partition key\nMain pitfall: publish-before-mark crashes cause duplicates; consumers need deduplication\nI\u2019d enforce reservation versions against stale or out-of-order updates",
+  "metrics": {
+   "words": 55,
+   "lines": 6,
+   "words_per_line": 9.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "The transaction includes an event ID and version; those schema details are not established in the supplied records."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good atomic-write and duplicate-delivery explanation, but missing citations and the actual polling, batch size, SQS FIFO, and message-group/dedupe-ID specifics."
+  }
+ },
+ {
+  "id": "mt_dup_events",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What caused the duplicate order events last week?",
+  "cost_usd": 0.007375,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d trace the event ID from the order write through publish and consume\n- Check whether retries followed a publish without confirmation\n- Look for missing idempotency or deduplication at the consumer\n- Pin down the failure window before naming a cause",
+  "metrics": {
+   "words": 39,
+   "lines": 4,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "The cues offer a generic investigation plan instead of the known rebalance cause, impact, mitigation, and follow-up."
+  }
+ },
+ {
+  "id": "mt_dup_events",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What caused the duplicate order events last week?",
+  "cost_usd": 0.009683,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d verify the failure window before naming the cause\nFirst check: publish succeeded, but marking delivered failed\nThat would replay the same outbox event on retry\nI\u2019d compare event IDs, outbox rows, and publisher logs\nSame ID: check consumer deduplication; different IDs: check creation",
+  "metrics": {
+   "words": 44,
+   "lines": 5,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 3,
+   "notes": "Offers hypothetical outbox troubleshooting instead of the known consumer rebalance, 312 ledger duplicates, mitigation, and dedupe follow-up."
+  }
+ },
+ {
+  "id": "mt_exactly_once",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Could we get exactly-once delivery end to end with SQS FIFO?",
+  "cost_usd": 0.007945,
+  "variant": "before",
+  "memory": [],
+  "answer": "- No\u2014SQS FIFO gives exactly-once processing only within its deduplication window\n- I'd make consumers idempotent; retries and downstream effects can still duplicate\n- For an outbox, publish at least once, then dedupe by stable event ID\n- Commit consumer state and side effects together, or use idempotency keys downstream",
+  "metrics": {
+   "words": 46,
+   "lines": 4,
+   "words_per_line": 11.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 3,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues, but FIFO deduplication is not exactly-once processing; missing the five-minute limit, relay crash scenario, and reservation-id warehouse deduplication."
+  }
+ },
+ {
+  "id": "mt_exactly_once",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Could we get exactly-once delivery end to end with SQS FIFO?",
+  "cost_usd": 0.009281,
+  "variant": "before",
+  "memory": [],
+  "answer": "No \u2014 I\u2019d distinguish FIFO deduplication from exactly-once effects\nFIFO deduplicates sends within a five-minute deduplication window\nMessageGroupId controls ordering; visibility timeout expiry permits redelivery\nI\u2019d atomically commit business changes and an outbox row\nConsumer transaction: deduplicate event ID and apply database changes\nDelete after commit; external payments need separate idempotency keys",
+  "metrics": {
+   "words": 52,
+   "lines": 6,
+   "words_per_line": 8.7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Technically sound, but misses the relay crash-and-republish case and the warehouse consumer requirement keyed by reservation id."
+  }
+ },
+ {
+  "id": "mt_backfill",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How should we backfill the existing reservations into the outbox without double-publishing?",
+  "cost_usd": 0.008071,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd use a transactional snapshot-and-capture backfill\n- Record a consistent database watermark, then scan existing reservations in batches\n- Insert idempotent outbox rows; unique reservation-and-event keys prevent duplicates\n- Publish from the outbox, and reconcile counts before removing the backfill path",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Covers batched idempotent inserts, but misses relay dedupe IDs, idempotent consumers, expired holds, and staging validation after the grant."
+  }
+ },
+ {
+  "id": "mt_backfill",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How should we backfill the existing reservations into the outbox without double-publishing?",
+  "cost_usd": 0.010455,
+  "variant": "before",
+  "memory": [],
+  "answer": "Have existing reservations already produced events consumers acted on?\nIs this current-state seeding, or historical event replay?\nI'd establish a snapshot boundary before starting live transactional writes\nI'd write reservation changes and outbox rows atomically\nI'd backfill snapshot rows using that same outbox\nI'd deduplicate inserts by reservation ID, version, event type\nI'd use keyset batches, checkpoints, and throttling\nI'd have workers claim rows, publish, then mark sent\nI'd retry failures; crashes after publishing can still duplicate\nI'd require consumer deduplication using stable event IDs\nI'd reconcile coverage before retiring the backfill\nI'd promise no duplicate effects, not exactly-once delivery",
+  "metrics": {
+   "words": 100,
+   "lines": 12,
+   "words_per_line": 8.3,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Solid retry-safe backfill outline, but misses SQS FIFO deduplication, the 15-minute hold expiry, and staging validation after the grant."
+  }
+ },
+ {
+  "id": "mt_hold",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Sorry, quick one: what's a reservation hold here, and how long does it last?",
+  "cost_usd": 0.007698,
+  "variant": "before",
+  "memory": [],
+  "answer": "- A temporary claim on funds, pending final settlement\n- Exact hold duration depends on the payment provider\n- I\u2019d check the provider\u2019s rules before quoting a time\n- Release or capture it when the order resolves",
+  "metrics": {
+   "words": 33,
+   "lines": 4,
+   "words_per_line": 8.2,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "The reservation hold is a temporary claim on funds pending settlement, rather than inventory held by a cart.",
+    "The hold duration depends on the payment provider, rather than expiring after 15 minutes without payment.",
+    "The hold is released or captured when the order resolves."
+   ],
+   "complete": 1,
+   "correct": 2,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Confuses an inventory reservation with a payment hold and omits the documented 15-minute expiry."
+  }
+ },
+ {
+  "id": "mt_hold",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Sorry, quick one: what's a reservation hold here, and how long does it last?",
+  "cost_usd": 0.009685,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d mean a temporary reservation of stock or funds\nNot a completed purchase or settled payment\nDuration depends on inventory TTL or payment-provider authorization rules\nI\u2019d enforce expiry explicitly, not rely on outbox delivery\nAre we talking inventory reservation or payment authorization here?",
+  "metrics": {
+   "words": 43,
+   "lines": 5,
+   "words_per_line": 8.6,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Suggests a reservation hold here can reserve funds, whereas the company defines it as inventory held by a cart.",
+    "Says the duration depends on inventory TTL or payment-provider authorization rules rather than the documented 15-minute expiry without payment."
+   ],
+   "complete": 1,
+   "correct": 3,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Conflates inventory holds with payment authorization and misses the direct answer: cart inventory held for 15 minutes without payment."
+  }
+ },
+ {
+  "id": "mt_fraud_owner",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Who owns the fraud scoring client?",
+  "cost_usd": 0.007287,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d clarify whether you mean ownership of the client or fraud-scoring decisions\n- I\u2019d assign one team clear ownership of the client interface and operations\n- Fraud-model owners should own scoring logic, thresholds, and decisions\n- Agree the boundary and escalation path with both teams",
+  "metrics": {
+   "words": 42,
+   "lines": 4,
+   "words_per_line": 10.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "The cues avoid the direct answer: Sam Okafor owns the Python client, which times out at 800 ms and fails open."
+  }
+ },
+ {
+  "id": "mt_fraud_owner",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Who owns the fraud scoring client?",
+  "cost_usd": 0.008015,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d confirm the owner before naming anyone\nWho maintains the client and handles its on-call?\nI\u2019d separate that from ownership of fraud scoring itself",
+  "metrics": {
+   "words": 24,
+   "lines": 3,
+   "words_per_line": 8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Deflects instead of naming Sam Okafor and giving the documented client details."
+  }
+ },
+ {
+  "id": "mt_dlq",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What happens today to reservation messages that keep failing?",
+  "cost_usd": 0.0072629999999999995,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d check retry policy and delivery guarantees\n- Use bounded retries with exponential backoff\n- Then dead-letter the message for inspection and replay\n- Alert on repeated failures; avoid silent loss",
+  "metrics": {
+   "words": 28,
+   "lines": 4,
+   "words_per_line": 7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Gives generic recommendations rather than today's five-receive DLQ policy, Dana's replay process, and Monday checks."
+  }
+ },
+ {
+  "id": "mt_dlq",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What happens today to reservation messages that keep failing?",
+  "cost_usd": 0.009261,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd check today's configuration: retry limits and failure destination\nI'd use exponential backoff with jitter for transient failures\nAfter bounded retries, quarantine with payload, error, attempt count\nI'd alert owners; replay only after fixing, with idempotency\nMain pitfall: blocked reservations; quarantine needs explicit recovery handling",
+  "metrics": {
+   "words": 45,
+   "lines": 5,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Gives hypothetical retry advice instead of the current five-receive DLQ policy and Dana's team's replay tool and Monday checks."
+  }
+ },
+ {
+  "id": "mt_psp_rfc",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Alex, you reviewed Priya's PSP failover RFC. What did you think?",
+  "cost_usd": 0.008163,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d check atomic payment state and outbox writes\n- Idempotency keys to prevent duplicate charges on retry\n- Explicit failover thresholds, timeouts, and recovery path\n- I\u2019d test partial failures and reconciliation behavior",
+  "metrics": {
+   "words": 30,
+   "lines": 4,
+   "words_per_line": 7.5,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good short cues, but generic: missing Stripe-to-Adyen failover, the retry-ordering comments, and cross-PSP idempotency to avoid double charges after a late success."
+  }
+ },
+ {
+  "id": "mt_psp_rfc",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Alex, you reviewed Priya's PSP failover RFC. What did you think?",
+  "cost_usd": 0.008641,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d judge PSP failover by duplicate-charge risk first\nTimeouts mean unknown outcomes, not permission to retry elsewhere\nI\u2019d require durable attempt tracking, reconciliation, and explicit routing rules\nI\u2019d want circuit breakers, bounded retries, and staged rollout\nDoes Priya\u2019s proposal distinguish confirmed failures from unknown outcomes?",
+  "metrics": {
+   "words": 45,
+   "lines": 5,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Sound risk framing, but omits the actual RFC review, retry-ordering comments, and cross-PSP idempotency concern."
+  }
+ },
+ {
+  "id": "mt_sla",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 1,
+  "question": "What's our availability SLA for checkout?",
+  "cost_usd": 0.007326,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I\u2019d define the SLA from the checkout boundary\n- Agree the availability target and measurement window\n- Track successful checkouts against eligible attempts\n- Exclude planned maintenance only if explicitly agreed",
+  "metrics": {
+   "words": 28,
+   "lines": 4,
+   "words_per_line": 7,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 1,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Gives generic SLA-design advice instead of saying the SLA is unknown, offering to confirm it, and sharing the known alert and on-call details."
+  }
+ },
+ {
+  "id": "mt_sla",
+  "mode": "meeting",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 1,
+  "question": "What's our availability SLA for checkout?",
+  "cost_usd": 0.008362999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "I\u2019d confirm the agreed SLA before quoting a number\nI\u2019d distinguish contractual SLA from our internal availability SLO\nFor checkout, I\u2019d measure successful checkouts, including payment dependencies\nDo we have the target and measurement window documented?",
+  "metrics": {
+   "words": 36,
+   "lines": 4,
+   "words_per_line": 9,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Avoids inventing an SLA and offers to confirm it, but omits the known paging threshold and on-call ownership."
+  }
+ },
+ {
+  "id": "mt_relay_scale",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "fast",
+  "rep": 1,
+  "question": "Will a single outbox relay keep up on Black Friday?",
+  "cost_usd": 0.00743,
+  "variant": "before",
+  "memory": [],
+  "answer": "- I'd size from peak write rate, not average\n- One relay can bottleneck on polling, publishing, or DB load\n- Partition work across relays; claim rows safely, publish idempotently\n- Load-test peak plus headroom; watch lag and contention",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues, but missing the existing SKIP LOCKED batching, oldest-unsent age, FIFO message-group scaling, and Black Friday lesson."
+  }
+ },
+ {
+  "id": "mt_relay_scale",
+  "mode": "meeting",
+  "qtype": "system_design",
+  "pass": "deep",
+  "rep": 1,
+  "question": "Will a single outbox relay keep up on Black Friday?",
+  "cost_usd": 0.010376999999999999,
+  "variant": "before",
+  "memory": [],
+  "answer": "What peak events per second, including Black Friday headroom?\nWhat delivery lag and ordering guarantees do we need?\nI'd avoid assuming one relay handles the peak\nI'd benchmark database reads, publishing throughput, and backlog drain\nI'd write orders and outbox rows in one transaction\nI'd publish to Kafka, marking sent after broker acknowledgment\nI'd expect at-least-once delivery; consumers deduplicate by event ID\nI'd retry failures with backoff, alert on oldest-event age\nI'd scale polling workers using FOR UPDATE SKIP LOCKED\nI'd preserve per-order ordering through explicit partition ownership\nI'd consider CDC when polling load becomes costly\nI'd trade simplicity against database contention and CDC complexity",
+  "metrics": {
+   "words": 105,
+   "lines": 12,
+   "words_per_line": 8.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 3,
+   "notes": "Proposes an order/Kafka design instead of the reservation/SQS outbox, missing reservation-id groups, batches of 100, and the Black Friday load-test lesson."
+  }
+ },
+ {
+  "id": "mt_monitoring",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "question": "How would we know the relay is falling behind?",
+  "cost_usd": 0.007268,
+  "variant": "before",
+  "memory": [],
+  "answer": "- Track oldest unpublished outbox event age\n- Watch backlog count and publish rate\n- Alert when age or backlog exceeds its threshold\n- Check relay errors, retries, and broker health",
+  "metrics": {
+   "words": 27,
+   "lines": 4,
+   "words_per_line": 6.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good concise cues, but misses SQS in-flight messages and DLQ depth, and sustained-threshold alerting."
+  }
+ },
+ {
+  "id": "mt_monitoring",
+  "mode": "meeting",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "question": "How would we know the relay is falling behind?",
+  "cost_usd": 0.009727000000000001,
+  "variant": "before",
+  "memory": [],
+  "answer": "I'd track oldest unpublished outbox age against our delivery SLO\nI'd measure pending rows, publish rate, retries, and failures\nI'd alert on sustained age growth, before breaching the SLO\nI'd compare insert and publish rates to spot growing backlog\nI'd watch CDC offset lag if the relay tails logs\nI'd avoid count-only alerts; one stuck event can hide starvation",
+  "metrics": {
+   "words": 59,
+   "lines": 6,
+   "words_per_line": 9.8,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 5,
+   "notes": "Good backlog signals, but misses SQS in-flight messages, DLQ depth, and Grafana alerting; the conditional CDC cue is unnecessary for this polling relay."
+  }
+ }
+]

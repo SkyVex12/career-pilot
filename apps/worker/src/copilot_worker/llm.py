@@ -23,7 +23,16 @@ JOBS: dict[str, Family] = {
     "job": "sonnet",  # job description to company, title, summary
     "pack": "sonnet",  # session pack: ranked stories and prepared answers
     "postcall": "sonnet",  # summary, feedback, follow-up email, standup report
+    # Company workspaces. A work log is the user's own short note: Sonnet reads it well enough
+    # at half the price. A company document's facts go to approval, but wrong ones still cost
+    # the user's time: Opus, like a resume.
+    "worklog": "sonnet",
+    "company_doc": "opus",
 }
+
+# OpenAI routes of the company workspace jobs use the settings of the job of the same kind,
+# so a deployment needs no new model settings for them.
+OPENAI_SETTINGS_JOB = {"worklog": "pack", "company_doc": "extract"}
 
 
 def _model(settings: WorkerSettings, provider: str, family: Family) -> str:
@@ -37,7 +46,10 @@ def build_routes(
 ) -> dict[str, list[Route]]:
     routes: dict[str, list[Route]] = {}
     for job, family in JOBS.items():
-        effort = settings.extract_effort if job == "extract" else settings.background_effort
+        effort = (
+            settings.extract_effort if job in ("extract", "company_doc")
+            else settings.background_effort
+        )  # fmt: skip
         params: dict[str, Any] = {
             "thinking": {"type": "adaptive"},
             "output_config": {"effort": effort},
@@ -45,8 +57,9 @@ def build_routes(
         job_routes: list[Route] = []
         for provider in providers:
             if provider.name == "openai":
-                model, _ = settings.openai_route(job)
-                job_routes.append(Route(provider, model, openai_params(settings, job)))
+                settings_job = OPENAI_SETTINGS_JOB.get(job, job)
+                model, _ = settings.openai_route(settings_job)
+                job_routes.append(Route(provider, model, openai_params(settings, settings_job)))
                 continue
             model = _model(settings, provider.name, family)
             if provider.name == "bedrock" and settings.bedrock_background_tier:

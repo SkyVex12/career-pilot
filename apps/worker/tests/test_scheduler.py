@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from copilot_core.ids import uuid7
 from copilot_core.jobs import MemoryJobQueue
 from copilot_worker.scheduler import Scheduler, next_standup, slots
 from copilot_worker.testing import Stack
@@ -52,3 +53,39 @@ async def test_tick_sends_each_slot_once(stack: Stack) -> None:
     assert standup[0]["payload"]["mode"] == "standup"
     assert standup[0]["payload"]["due_at"] == "2031-03-04T14:30:00Z"
     assert await scheduler.tick(now) == []  # nothing twice in the same slots
+
+
+@pytest.mark.stack
+async def test_standup_time_builds_each_current_companys_pack(stack: Stack) -> None:
+    uid = await stack.new_user()
+    await stack.admin.execute(
+        "update app.users set settings = $2::jsonb where id = $1",
+        uid,
+        '{"standup_time": "09:30", "timezone": "America/New_York"}',
+    )
+    now_id, past_id = uuid7(), uuid7()
+    await stack.admin.execute(
+        "insert into app.employers (id, user_id, name) values ($1, $3, 'Now Co'),"
+        " ($2, $3, 'Past Co')",
+        now_id,
+        past_id,
+        uid,
+    )
+    await stack.admin.execute(
+        "update app.employers set ended_on = '2030-01-01' where id = $1", past_id
+    )
+    queue = MemoryJobQueue()
+    scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    now = datetime(2031, 3, 5, 14, 10, tzinfo=UTC)  # a Wednesday, 09:10 in New York
+    await stack.ctx.valkey.delete(
+        *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
+    )
+    await scheduler.tick(now)
+    company = [
+        m for m in queue.sent
+        if m["type"] == "pack.build" and m["payload"]["context"].startswith("employer:")
+        and m["user_id"] == str(uid)
+    ]  # fmt: skip
+    assert [m["payload"]["context"] for m in company] == [f"employer:{now_id}"]
+    assert company[0]["payload"]["day"] == "2031-03-05"
+    assert company[0]["payload"]["mode"] == "standup"
