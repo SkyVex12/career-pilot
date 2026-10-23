@@ -1,9 +1,11 @@
 # Merge to main (ARCHITECTURE.md, "CI/CD" steps 2 to 4; README.md, "Deploy"): the same checks
 # as on pull requests (ci.yml, called here), then the images, then the deploy of exactly those
-# images. Nothing is built or deployed unless every check passes in this run.
+# images. Nothing is built or deployed unless every check passes in this run. A merge that
+# does not change the server (desktop app, docs or Terraform only; scripts/ci_changes.py,
+# `server`) builds no image and deploys nothing; a manual run always does.
 #
-# Stage 0 on GCP (the gcp-* jobs): multi-arch images to Artifact Registry, tagged with the git
-# SHA; then `stage.py deploy --tag <sha> --start --check` as the deploy service account: start
+# Stage 0 on GCP (the gcp-* jobs): linux/amd64 images (the VM's) to Artifact Registry, tagged
+# with the git SHA; then `stage.py deploy --tag <sha> --start --check` as the deploy service account: start
 # the VM if it is stopped (and leave it running), migrations, each service in turn, a health
 # check of the gateway and the API, and a rollback to the previous tag if that fails (the run
 # then fails). Access is Workload Identity Federation only (no keys), the VM is reached over
@@ -74,7 +76,7 @@ jobs:
   # --- AWS (unused) ----------------------------------------------------------------------------
 
   images:
-    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    if: vars.AWS_DEPLOY_ROLE_ARN != '' && needs.checks.outputs.server == 'true'
     needs: [commit, checks]
     name: image (${{ matrix.image }})
     runs-on: ubuntu-24.04-arm
@@ -145,22 +147,22 @@ jobs:
           --name "$STAGE" --region "$AWS_REGION" --tag "${{ needs.commit.outputs.sha }}"
 
   # --- Stage 0 on GCP (infra/gcp) -------------------------------------------------------------
-  # Images through Workload Identity Federation as the push-only CI account: each image built
-  # natively for linux/amd64 (the e2-small VM) and linux/arm64, then joined into one multi-arch
-  # tag, the git SHA. Skipped until the repository variables from `terraform output ci` are set.
+  # Images through Workload Identity Federation as the push-only CI account, for linux/amd64
+  # only (the e2-small VM; the AWS jobs above build their own ARM64 images), tagged with the git
+  # SHA. Skipped until the repository variables from `terraform output ci` are set.
 
   gcp-images:
-    if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+    if: vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && needs.checks.outputs.server == 'true'
     needs: [commit, checks]
-    name: gcp image (${{ matrix.image }}, ${{ matrix.arch }})
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    name: gcp image (${{ matrix.image }})
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        arch: [amd64]
         image: [gateway, api, worker, proxy]
         include:
           - { image: gateway, dockerfile: docker/python.Dockerfile, package: copilot-gateway, command: copilot-gateway }
@@ -194,47 +196,15 @@ jobs:
           build-args: |
             PACKAGE=${{ matrix.package }}
             COMMAND=${{ matrix.command }}
-          tags: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}:${{ needs.commit.outputs.sha }}-${{ matrix.arch }}
+          tags: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}:${{ needs.commit.outputs.sha }}
           cache-from: type=gha,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=gcp-${{ matrix.image }}-${{ matrix.arch }}
-
-  gcp-manifests:
-    needs: [commit, gcp-images]
-    name: gcp image (${{ matrix.image }}, multi-arch)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      matrix:
-        image: [gateway, api, worker, proxy]
-    steps:
-      - id: gcp
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
-          token_format: access_token
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ vars.GCP_REGISTRY_HOST || 'us-central1-docker.pkg.dev' }}
-          username: oauth2accesstoken
-          password: ${{ steps.gcp.outputs.access_token }}
-      - uses: docker/setup-buildx-action@v3
-      - name: One tag for both architectures
-        env:
-          REPO: ${{ vars.GCP_REGISTRY }}/${{ matrix.image }}
-          SHA: ${{ needs.commit.outputs.sha }}
-        run: |
-          docker buildx imagetools create -t "$REPO:$SHA" "$REPO:$SHA-amd64" "$REPO:$SHA-arm64"
-          docker buildx imagetools inspect "$REPO:$SHA" | grep -E "Platform|Name"
 
   gcp-deploy:
     # Only from main, and only after the checks and the images of this run (needs). Skipped
     # until GCP_DEPLOY_SERVICE_ACCOUNT is set (terraform output ci).
     if: github.ref == 'refs/heads/main' && vars.GCP_DEPLOY_SERVICE_ACCOUNT != ''
-    needs: [commit, gcp-manifests]
+    needs: [commit, gcp-images]
     name: gcp deploy (Stage 0 VM)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -265,13 +235,17 @@ jobs:
           --tag "${{ needs.commit.outputs.sha }}" --start --check
 
   # --- The desktop app (release-desktop.yml) ---------------------------------------------------
-  # After the backend is deployed and healthy, so a new app never meets an old backend. The
-  # plan job inside decides release or skip; one release runs at a time (a newer waiting one
-  # replaces an older, and its plan covers the older one's changes too).
+  # After the backend is deployed and healthy, so a new app never meets an old backend; when
+  # the merge did not change the server (no deploy), right after the checks. The plan job
+  # inside decides release or skip; one release runs at a time (a newer waiting one replaces
+  # an older, and its plan covers the older one's changes too).
 
   desktop-release:
-    if: github.ref == 'refs/heads/main'
-    needs: [commit, gcp-deploy]
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' && needs.checks.result == 'success' &&
+      (needs.gcp-deploy.result == 'success' ||
+       (needs.gcp-deploy.result == 'skipped' && needs.checks.outputs.server == 'false'))
+    needs: [commit, checks, gcp-deploy]
     name: desktop
     concurrency:
       group: release-desktop
