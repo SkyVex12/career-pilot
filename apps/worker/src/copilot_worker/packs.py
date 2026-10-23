@@ -1,18 +1,18 @@
 """`digest.rebuild` and `pack.build` (ARCHITECTURE.md, "Session pack and hot digest formats").
 
-The digest is rendered from memory (copilot_worker.memory). A pack is built per call context:
-an interview (its job and round), a job picked without an interview, or a standup. Interview
-packs come from Sonnet: stories ranked against the job and prepared answers citing the
-digest's short ids. Standup packs need no model in phase 1 (no tool sync yet): they carry the
-open commitments.
+Each resume version's digest is rendered from that version's memory (copilot_worker.memory). A
+pack is built per call context: an interview (its application and round), an application
+picked without an interview, or a standup. Interview packs come from Sonnet, from the
+application's JD and its paired resume version only (copilot_core.resumes): that version's
+digest, its stories ranked against the JD, and prepared answers citing its short ids. Standup
+packs need no model in phase 1 (no tool sync yet): they carry the open commitments.
 
-`pack:{uid}:index` points the gateway at the newest pack per job and per mode. A build only
-updates the index while its digest is still the current one; otherwise it queues a rebuild
-for the new digest, which will.
+`pack:{uid}:index` points the gateway at the newest pack per application, interview and (for
+standups) mode. A build only updates the index while its pairing and digest are still the
+current ones; otherwise it queues a rebuild for them, which will.
 
 Prepared answers carry vectors from the worker's embedder, and the pack names its model
-(`embedding_model`). A digest rebuild also rebuilds packs whose vectors came from another
-embedding model than the current one (the gateway asks for the same when it loads one).
+(`embedding_model`); the build key names it too, so a new embedding model rebuilds the packs.
 """
 
 import logging
@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from copilot_core import jobs, keys
+from copilot_core import jobs, keys, resumes
 from copilot_core.ids import uuid7
 from copilot_core.packs import SHORT_ID, Digest, NodeRef, SessionPack, encode_embedding, render_pack
 from copilot_core.valkey_client import Valkey, text
@@ -37,12 +37,14 @@ PACK_TTL_MAX_S = 30 * 24 * 3600
 
 
 async def current_digest(ctx: Ctx, uid: UUID) -> Digest | None:
+    """The base resume's digest (`digest:{uid}`): standups, meetings, sessions for no
+    application."""
     raw = await ctx.valkey.get(keys.digest(uid))
     return None if raw is None else Digest.model_validate_json(raw)
 
 
 async def digest_version_of(valkey: Valkey, uid: UUID) -> str | None:
-    """The current digest's version, or None before the first digest."""
+    """The base digest's version, or None before the first digest."""
     raw = await valkey.get(keys.digest(uid))
     return None if raw is None else Digest.model_validate_json(raw).version
 
@@ -54,45 +56,72 @@ async def stored_pack(ctx: Ctx, uid: UUID, pack_id: str) -> SessionPack | None:
 
 @handler("digest.rebuild")
 async def digest_rebuild(job: Job, ctx: Ctx) -> None:
+    """One resume version's digest (`resume_version_id`), or every version's (the weekly
+    rebuild, and messages from before resume versions). Each is rendered from that version's
+    nodes only; the base's is also `digest:{uid}`. Then the packs of the applications paired
+    with a rebuilt version are built for its new digest."""
     uid = job.uid
+    only = job.payload.get("resume_version_id")
     async with ctx.user(uid) as conn:
         name = await conn.fetchval("select display_name from app.users where id = $1", uid)
         if name is None:
             return  # the user was deleted
-        nodes = await load_digest_nodes(conn, uid)
-        interviews = await conn.fetch(
-            "select id, pack_id from app.interviews"
-            " where user_id = $1 and starts_at > now() - interval '2 hours'",
+        versions = await conn.fetch(
+            "select id, kind from app.resume_versions where user_id = $1"
+            " and ($2::uuid is null or id = $2) order by id",
             uid,
+            UUID(str(only)) if only else None,
         )
-    digest = render_digest(str(name), nodes)
-    if digest is None:
-        return
-    digest.built_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    await ctx.valkey.set(keys.digest(uid), digest.model_dump_json(by_alias=True))
-    log.info("digest for %s: %s, %d refs", uid, digest.version[:19], len(digest.refs))
-
-    # Packs built from an older digest are rebuilt: upcoming interviews, and jobs whose pack
-    # the gateway would load.
-    contexts: list[str] = []
-    for row in interviews:
-        pack = await stored_pack(ctx, uid, str(row["pack_id"])) if row["pack_id"] else None
-        if pack is None or stale(ctx, pack, digest):
-            contexts.append(f"interview:{row['id']}")
-    index = await ctx.valkey.hgetall(keys.pack_index(uid))
-    for field, pack_id in index.items():
-        name_ = text(field)
-        if not name_.startswith("job:"):
+        nodes = {v["id"]: await load_digest_nodes(conn, uid, v["id"]) for v in versions}
+    built_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for v in versions:
+        digest = render_digest(str(name), nodes[v["id"]])
+        targets = [keys.resume_digest(uid, v["id"])]
+        if v["kind"] == "base":
+            targets.append(keys.digest(uid))
+        if digest is None:
+            await ctx.valkey.delete(*targets)
             continue
-        pack = await stored_pack(ctx, uid, text(pack_id))
-        if pack is None or stale(ctx, pack, digest):
-            contexts.append(name_)
-    now = datetime.now(UTC)
+        digest.built_at = built_at
+        for key in targets:
+            await ctx.valkey.set(key, digest.model_dump_json(by_alias=True))
+        log.info(
+            "digest for %s, version %s: %s, %d refs",
+            uid, v["id"], digest.version[:19], len(digest.refs),
+        )  # fmt: skip
+    messages: list[dict[str, Any]] = []
     embedding = ctx.settings.embedding_model_id
-    for context in dict.fromkeys(contexts):
-        await ctx.queue.send(
-            jobs.pack_build(uid, "interview", context, now, digest.version, embedding)
-        )
+    async with ctx.user(uid) as conn:
+        seen: set[UUID] = set()
+        for v in versions:
+            for app_id in await resumes.applications_using(conn, v["id"]):
+                if app_id not in seen:
+                    seen.add(app_id)
+                    messages += await resumes.pack_messages(
+                        conn, ctx.valkey, uid, app_id, embedding
+                    )
+    await send_new(ctx, uid, messages)
+
+
+async def send_new(ctx: Ctx, uid: UUID, messages: list[dict[str, Any]]) -> None:
+    """Send the builds whose pack is not current: the indexed pack for that context was built
+    for the same pairing, from the same digest, with vectors from the current embedder."""
+    index = await ctx.valkey.hgetall(keys.pack_index(uid))
+    by_field = {text(k): text(v) for k, v in index.items()}
+    current = ctx.embedder.model_id if ctx.embedder is not None else None
+    for message in messages:
+        payload = message["payload"]
+        pack_id = by_field.get(str(payload["context"]))
+        pack = await stored_pack(ctx, uid, pack_id) if pack_id else None
+        if (
+            pack is not None
+            and pack.pairing is not None
+            and message["idempotency_key"].endswith(f":{pack.pairing}")
+            and f":{jobs.digest_tag(pack.digest_version or None)}:" in message["idempotency_key"]
+            and not (current and pack.prepared_answers and pack.embedding_model != current)
+        ):
+            continue
+        await ctx.queue.send(message)
 
 
 def stale(ctx: Ctx, pack: SessionPack, digest: Digest) -> bool:
@@ -115,39 +144,61 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
         await build_employer_pack(ctx, job)
         return
     due_at = datetime.fromisoformat(str(job.payload["due_at"]))
-    digest = await current_digest(ctx, uid)
+    job_id: UUID | None = None
+    interview_id: UUID | None = None
+    paired: resumes.Pairing | None = None
+    used: Digest | None
     if mode == "standup":
-        pack = await build_standup_pack(ctx, uid, digest)
-        job_id = None
-        interview_id = None
+        used = await current_digest(ctx, uid)
+        pack = await build_standup_pack(ctx, uid, used)
     else:
-        built = await build_interview_pack(ctx, uid, context, digest)
+        built = await build_interview_pack(ctx, uid, context)
         if built is None:
             return
-        pack, job_id, interview_id = built
-    pack.token_count = (len(digest.text) if digest else 0) // 4 + len(render_pack(pack)) // 4
+        pack, job_id, interview_id, paired, used = built
+    pack.token_count = (len(used.text) if used else 0) // 4 + len(render_pack(pack)) // 4
     ttl = int((due_at - datetime.now(UTC)).total_seconds()) + ctx.settings.pack_ttl_s
     ttl = max(ctx.settings.pack_ttl_s, min(ttl, PACK_TTL_MAX_S))
     async with ctx.user(uid) as conn:
         if await conn.fetchval("select 1 from app.users where id = $1", uid) is None:
             return  # the user was deleted meanwhile
+        now_paired = await resumes.pairing(conn, job_id) if job_id is not None else None
     await ctx.valkey.set(
         keys.pack(uid, pack.pack_id), pack.model_dump_json(by_alias=True, exclude_none=True), ex=ttl
     )
-    latest = await current_digest(ctx, uid)
-    if latest is not None and latest.version != pack.digest_version:
-        # The digest changed while this pack was built. A digest rebuild only rebuilds packs
-        # it can see in the index, and this one is not there yet, so rebuild it from here:
-        # the new digest makes a new key, which runs once.
-        log.info("pack %s built from an older digest; rebuilding it", pack.pack_id)
-        await ctx.queue.send(
-            jobs.pack_build(
-                uid, mode, context, due_at, latest.version, ctx.settings.embedding_model_id
-            )
+    if job_id is not None and paired is not None:
+        # The pairing, the JD or the version's digest changed while this pack was built: build
+        # again for what is current (a new key, so it runs once) and leave the index alone, so
+        # the gateway never loads a pack of a version the application no longer uses.
+        latest = await resumes.version_digest(
+            ctx.valkey, uid, paired.resume_version_id, paired.is_base
         )
-        return
-    fields = {f"mode:{mode}": str(pack.pack_id)}
-    if job_id is not None:
+        if now_paired != paired or (latest.version if latest else "") != pack.digest_version:
+            log.info("pack %s is out of date already; rebuilding it", pack.pack_id)
+            if now_paired is not None:
+                async with ctx.user(uid) as conn:
+                    messages = await resumes.pack_messages(
+                        conn, ctx.valkey, uid, job_id, ctx.settings.embedding_model_id
+                    )
+                for message in messages:
+                    await ctx.queue.send(message)
+            return
+    else:
+        latest = await current_digest(ctx, uid)
+        if latest is not None and latest.version != pack.digest_version:
+            log.info("pack %s built from an older digest; rebuilding it", pack.pack_id)
+            await ctx.queue.send(
+                jobs.pack_build(
+                    uid, mode, context, due_at, latest.version, ctx.settings.embedding_model_id
+                )
+            )
+            return
+    # An application's pack is indexed under its application and interview only, never as
+    # the mode's: a session for no application must not get one application's resume.
+    fields: dict[str, str] = {}
+    if job_id is None:
+        fields[f"mode:{mode}"] = str(pack.pack_id)
+    else:
         fields[f"job:{job_id}"] = str(pack.pack_id)
     if interview_id is not None:
         fields[f"interview:{interview_id}"] = str(pack.pack_id)
@@ -161,41 +212,48 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
 
 
 async def build_interview_pack(
-    ctx: Ctx, uid: UUID, context: str, digest: Digest | None
-) -> tuple[SessionPack, UUID, UUID | None] | None:
+    ctx: Ctx, uid: UUID, context: str
+) -> tuple[SessionPack, UUID, UUID | None, resumes.Pairing, Digest | None] | None:
+    """An application's interview pack from its JD and its paired resume version only: that
+    version's digest and stories. No other version's facts can reach it."""
     kind, _, ref = context.partition(":")
     async with ctx.user(uid) as conn:
         if kind == "interview":
             row = await conn.fetchrow(
-                "select i.id as interview_id, i.round, j.id as job_id, j.company, j.title,"
-                " j.description from app.interviews i join app.jobs j on j.id = i.job_id"
+                "select i.id as interview_id, i.round, a.id as job_id, a.company, a.role,"
+                " a.jd_text from app.interviews i join app.applications a on a.id = i.job_id"
                 " where i.id = $1",
                 UUID(ref),
             )
         else:
             row = await conn.fetchrow(
-                "select null::uuid as interview_id, null as round, id as job_id, company, title,"
-                " description from app.jobs where id = $1",
+                "select null::uuid as interview_id, null as round, id as job_id, company, role,"
+                " jd_text from app.applications where id = $1",
                 UUID(ref),
             )
         if row is None:
             log.info("pack context %s is gone", context)
             return None
+        paired = await resumes.pairing(conn, row["job_id"])
+        assert paired is not None
         stories = {
             r["id"]: r
             for r in await conn.fetch(
                 "select id, title, summary, body from app.memory_nodes"
-                " where user_id = $1 and kind = 'story' and status = 'active' order by id",
+                " where user_id = $1 and resume_version_id = $2 and kind = 'story'"
+                " and status = 'active' order by id",
                 uid,
+                paired.resume_version_id,
             )
         }
+    digest = await resumes.version_digest(ctx.valkey, uid, paired.resume_version_id, paired.is_base)
     round_ = str(row["round"] or "general")
     req = prompts.pack_request(
         digest.text if digest else None,
         str(row["company"]),
-        str(row["title"]),
+        str(row["role"]),
         round_,
-        str(row["description"]),
+        str(row["jd_text"]),
         ctx.settings.prepared_answers,
     )
     data = await complete_json(ctx.router, "pack", req)
@@ -236,6 +294,7 @@ async def build_interview_pack(
                 "node_ids": [str(refs[s].node_id) for s in cited],
             }
         )
+    version = paired.resume_version_id
     pack = SessionPack.model_validate(
         {
             "pack_id": str(uuid7()),
@@ -245,16 +304,18 @@ async def build_interview_pack(
             "digest_version": digest.version if digest else "",
             "context": {
                 "company": row["company"],
-                "role_title": row["title"],
+                "role_title": row["role"],
                 "round": row["round"],
                 "job_summary": str(data.get("job_summary", "")),
             },
             "ranked_stories": ranked,
             "prepared_answers": prepared,
+            "resume_version_id": str(version) if version else None,
+            "pairing": resumes.pairing_tag(paired),
         }
     )
     await embed_prepared(ctx, pack)
-    return pack, row["job_id"], row["interview_id"]
+    return pack, row["job_id"], row["interview_id"], paired, digest
 
 
 def short_id(value: object) -> str:

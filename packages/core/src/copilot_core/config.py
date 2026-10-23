@@ -318,3 +318,8 @@ class DataSettings(CoreSettings):
     gcp_kms_key: str | None = None  # projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
     dev_master_key: SecretStr | None = None  # base64 of 32 bytes
     dek_cache_ttl_s: float = 300.0
+
+    # Career-OS (ARCHITECTURE.md, "Career-OS link"): its API's base URL, for linking an account
+    # and pulling applications on demand. Unset: the link is not offered.
+    career_os_url: str | None = None
+    career_os_timeout_s: float = 15.0

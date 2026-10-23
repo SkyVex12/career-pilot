@@ -381,8 +381,11 @@ async def test_prepared_answer_skips_the_model(env) -> None:
 async def test_vectors_from_another_embedding_model_are_never_compared(env) -> None:
     # The same vectors, but the pack says another model made them: no match, the model
     # answers, and the pack is rebuilt for the gateway's embedding model.
-    await seed_memory(env, [scaled_answer()], embedding_model="bedrock:cohere.embed-v4:0@1024")
+    pack = await seed_memory(
+        env, [scaled_answer()], embedding_model="bedrock:cohere.embed-v4:0@1024"
+    )
     job_id = uuid7()
+    await env.client().hset(keys.pack_index(env.user_a), f"job:{job_id}", str(pack.pack_id))
     async with GatewayServer(env.services(embedder=FixedEmbedder())) as gw:
         c = ProtocolClient(gw.url)
         await c.start(job_id=str(job_id))

@@ -1,5 +1,5 @@
-// The main window: the session (start screen, then the post-call screen), documents, jobs
-// and interviews, work (the companies the user works at), history, settings, and the debug
+// The main window: the session (start screen, then the post-call screen), resumes,
+// applications and interviews, work (the companies the user works at), history, settings, and the debug
 // panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
 import { useEffect, useState } from "react";
 import type { Mode } from "@copilot/protocol";
@@ -20,20 +20,23 @@ import {
 import { cloudUrlsFor } from "./urls";
 import { ago, banner } from "./updates";
 import { parseTarget, upcoming } from "./catalog";
-import { Documents, when } from "./Documents";
+import { Applications, roundLabel, useCatalog } from "./Applications";
+import { applicationOption } from "./pairing";
+import { CareerOsSettings } from "./CareerOs";
 import { History } from "./History";
-import { Jobs, roundLabel, useCatalog } from "./Jobs";
+import { Resumes } from "./Resumes";
+import { when } from "./ui";
 import { SessionDetail } from "./SessionDetail";
 import { badge, useSession, type SessionView } from "./session";
 import { Work } from "./Work";
 import { defaultEmployer, packLabel } from "./workday";
 
-type Tab = "start" | "documents" | "jobs" | "work" | "history" | "settings" | "debug";
+type Tab = "start" | "resumes" | "applications" | "work" | "history" | "settings" | "debug";
 
 const TABS: [Tab, string][] = [
   ["start", "Session"],
-  ["documents", "Documents"],
-  ["jobs", "Jobs"],
+  ["applications", "Applications"],
+  ["resumes", "Resumes"],
   ["work", "Work"],
   ["history", "History"],
   ["settings", "Settings"],
@@ -82,7 +85,7 @@ export default function App() {
     );
   }
 
-  const needsToken = !tokenSet && (tab === "documents" || tab === "jobs" || tab === "work" || tab === "history");
+  const needsToken = !tokenSet && (tab === "resumes" || tab === "applications" || tab === "work" || tab === "history");
   return (
     <main className="page">
       <nav className="tabs">
@@ -104,8 +107,8 @@ export default function App() {
         <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
       )}
       {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
-      {!needsToken && tab === "documents" && <Documents />}
-      {!needsToken && tab === "jobs" && <Jobs />}
+      {!needsToken && tab === "resumes" && <Resumes />}
+      {!needsToken && tab === "applications" && <Applications />}
       {!needsToken && tab === "work" && <Work />}
       {!needsToken && tab === "history" && <History />}
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
@@ -218,11 +221,11 @@ function StartScreen({
 
   const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
-    // Default to the next interview, else the newest job.
+    // Default to the next interview, else the newest application.
     if (target) return;
     if (interviews.length) setTarget(`interview:${interviews[0].id}`);
-    else if (catalog.jobs?.length) setTarget(`job:${catalog.jobs[0].id}`);
-  }, [catalog.jobs, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
+    else if (catalog.applications?.length) setTarget(`job:${catalog.applications[0].id}`);
+  }, [catalog.applications, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The post-call screen for the session that just ended.
   useEffect(() => {
@@ -307,7 +310,7 @@ function StartScreen({
         <label className={atWork ? "hidden" : ""}>Call for</label>
         <div className={atWork ? "hidden" : ""}>
           <select value={target} disabled={running || mode !== "interview"} onChange={(e) => setTarget(e.target.value)}>
-            <option value="">Nothing specific (the mode's pack, if any)</option>
+            <option value="">No application (your base resume only)</option>
             {interviews.length > 0 && (
               <optgroup label="Interviews">
                 {interviews.map((i) => (
@@ -318,12 +321,12 @@ function StartScreen({
                 ))}
               </optgroup>
             )}
-            {(catalog.jobs?.length ?? 0) > 0 && (
-              <optgroup label="Jobs">
-                {catalog.jobs?.map((j) => (
-                  <option key={j.id} value={`job:${j.id}`}>
-                    {j.company} · {j.title}
-                    {packNote(j.pack)}
+            {(catalog.applications?.length ?? 0) > 0 && (
+              <optgroup label="Applications">
+                {catalog.applications?.map((a) => (
+                  <option key={a.id} value={`job:${a.id}`}>
+                    {applicationOption(a)}
+                    {packNote(a.pack)}
                   </option>
                 ))}
               </optgroup>
@@ -333,7 +336,8 @@ function StartScreen({
             Refresh
           </button>
           {catalog.error && <p className="note warn">{catalog.error}</p>}
-          {catalog.jobs?.length === 0 && <p className="note">No jobs yet: upload a job description under Documents.</p>}
+          {catalog.applications?.length === 0 && <p className="note">No applications yet: add one under Applications.</p>}
+          {mode === "interview" && <p className="note">The answers use the application's job description and its paired resume only.</p>}
         </div>
 
         <label>Meeting title</label>
@@ -753,6 +757,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
         </button>
         {message && <span className="note">{message}</span>}
       </div>
+      <CareerOsSettings ready={view.ready} />
       <Meters />
     </section>
   );

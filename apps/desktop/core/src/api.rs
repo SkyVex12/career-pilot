@@ -241,21 +241,37 @@ impl ApiClient {
         file_name: &str,
         bytes: Vec<u8>,
     ) -> Result<Value, ApiError> {
+        self.upload_document_for(kind, file_name, bytes, &serde_json::Map::new()).await
+    }
+
+    /// An upload for something: `application_id` (a tailored resume, or an application's JD),
+    /// `resume_version_id` (new content for that version) and `label`, only these.
+    pub async fn upload_document_for(
+        &self,
+        kind: &str,
+        file_name: &str,
+        bytes: Vec<u8>,
+        target: &serde_json::Map<String, Value>,
+    ) -> Result<Value, ApiError> {
         let content_type = document_content_type(file_name)?;
         if bytes.is_empty() {
             return Err(ApiError::Invalid(format!("{file_name} is empty")));
         }
-        let created = self
-            .post(
-                "/documents",
-                &serde_json::json!({
-                    "kind": kind,
-                    "content_type": content_type,
-                    "size_bytes": bytes.len(),
-                    "sha256": sha256_hex(&bytes),
-                }),
-            )
-            .await?;
+        let mut body = serde_json::json!({
+            "kind": kind,
+            "content_type": content_type,
+            "size_bytes": bytes.len(),
+            "sha256": sha256_hex(&bytes),
+        });
+        for (key, value) in target {
+            if !matches!(key.as_str(), "application_id" | "resume_version_id" | "label") {
+                return Err(ApiError::Invalid(format!("cannot upload with {key}")));
+            }
+            if !value.is_null() {
+                body[key.as_str()] = value.clone();
+            }
+        }
+        let created = self.post("/documents", &body).await?;
         let id = created["document_id"]
             .as_str()
             .ok_or_else(|| ApiError::Invalid("no document_id".into()))?

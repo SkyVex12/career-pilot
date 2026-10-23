@@ -2,9 +2,13 @@
 client and checks the tests use."""
 
 import base64
+import copy
+import hashlib
+import json
 import os
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -13,6 +17,7 @@ import httpx2
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services
 from copilot_core.auth import Principal, StaticVerifier
+from copilot_core.careeros import CareerOsClient
 from copilot_core.jobs import MemoryJobQueue
 from copilot_core.teststack import (
     S3_ENDPOINT,
@@ -55,3 +60,100 @@ class Api:
         out = [m for m in self.jobs.sent if m["type"] == job_type]
         self.jobs.sent = [m for m in self.jobs.sent if m not in out]
         return out
+
+
+CONTRACT = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "career_os_contract.json"
+
+
+class FakeCareerOs:
+    """Career-OS's /v1/career-pilot API as the contract fixture shapes it, in memory, for an
+    httpx2 MockTransport. Two Career-OS users; each token reads its own user's applications
+    only. Tests change `apps` to make an application change in Career-OS."""
+
+    def __init__(self) -> None:
+        contract = json.loads(CONTRACT.read_text("utf-8"))
+        self.contract = contract
+        detail = contract["application"]["response"]
+        self.users = {"u1": "Alex Doe", "u2": "Blair Roe"}
+        self.codes: dict[str, str] = {}
+        self.tokens: dict[str, str] = {}  # token -> Career-OS user
+        self.revoked: set[str] = set()
+        self.down = False
+        self.calls: list[str] = []
+        other = copy.deepcopy(detail)
+        other["application"].update(id="app_other_1", company="Initech", role="SRE")
+        other["resume_version"] = None
+        self.apps: dict[str, dict[str, dict[str, Any]]] = {
+            "u1": {"app_acme_1": copy.deepcopy(detail)},
+            "u2": {"app_other_1": other},
+        }
+        self.pdf = b"%PDF-1.4 fake resume for the test\n"
+
+    def code_for(self, user: str) -> str:
+        code = f"CODE-{user.upper()}-{len(self.codes):02d}"
+        self.codes[code] = user
+        return code
+
+    def transport(self) -> httpx2.MockTransport:
+        return httpx2.MockTransport(self.handle)
+
+    def client(self) -> "CareerOsClient":
+        return CareerOsClient("http://career-os.test", transport=self.transport())
+
+    @staticmethod
+    def hash_of(detail: dict[str, Any]) -> str:
+        body = {k: v for k, v in detail.items() if k != "content_hash"}
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        if self.down:
+            raise httpx2.ConnectError("career-os is down")
+        path = request.url.path.removeprefix("/v1/career-pilot")
+        self.calls.append(f"{request.method} {path}")
+        if request.method == "POST" and path == "/link":
+            body = json.loads(request.content)
+            user = self.codes.pop(body["code"], None)
+            if user is None:
+                return httpx2.Response(401, json={"detail": "invalid or expired code"})
+            token = f"cpt_{uuid.uuid4().hex}"
+            self.tokens[token] = user
+            out = copy.deepcopy(self.contract["link"]["response"])
+            out.update(token=token, user={"id": user, "name": self.users[user]})
+            return httpx2.Response(201, json=out)
+        auth = request.headers.get("authorization", "")
+        token = auth.removeprefix("Bearer ")
+        user = self.tokens.get(token)
+        if user is None or token in self.revoked:
+            return httpx2.Response(401, json={"detail": "invalid token"})
+        if request.method == "DELETE" and path == "/link":
+            self.revoked.add(token)
+            return httpx2.Response(204)
+        apps = self.apps[user]
+        if path == "/applications":
+            q = (request.url.params.get("q") or "").lower()
+            items: list[dict[str, Any]] = []
+            for d in apps.values():
+                a = d["application"]
+                if q and q not in (a["company"] + " " + a["role"]).lower():
+                    continue
+                items.append({
+                    **{k: a[k] for k in ("id", "company", "role", "stage", "source_site", "url",
+                                         "created_at", "updated_at")},
+                    "resume": "tailored" if d["resume_version"] else (
+                        "base" if d["base_resume"] else "none"),
+                    "content_hash": self.hash_of(d),
+                })  # fmt: skip
+            return httpx2.Response(200, json={"items": items, "next_cursor": None})
+        parts = path.strip("/").split("/")
+        if parts[0] == "applications" and len(parts) >= 2:
+            d = apps.get(parts[1])
+            if d is None:
+                return httpx2.Response(404, json={"detail": "Application not found"})
+            if len(parts) == 3 and parts[2] == "resume-file":
+                if not d["resume_version"] or not d["resume_version"].get("file"):
+                    return httpx2.Response(404, json={"detail": "no file"})
+                return httpx2.Response(200, content=self.pdf, headers={
+                    "content-type": "application/pdf",
+                    "content-disposition": 'attachment; filename="resume.pdf"'})  # fmt: skip
+            return httpx2.Response(200, json={**d, "content_hash": self.hash_of(d)})
+        return httpx2.Response(404, json={"detail": "Not Found"})

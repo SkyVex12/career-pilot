@@ -26,7 +26,7 @@ import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, logs, prompts, versions, workplace
+from copilot_core import jobs, logs, prompts, resumes, versions, workplace
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
@@ -108,6 +108,20 @@ class SessionInfo:
     # A standup or meeting at a company (company workspaces), and the agenda typed for it.
     employer_id: UUID | None = None
     agenda: str | None = None
+    # An interview for an application: the resume version its digest and pack come from.
+    resume_version_id: UUID | None = None
+    resume_is_base: bool = False
+
+
+@dataclass
+class ApplicationMemory:
+    """What an interview for an application loads: its paired resume version's digest and the
+    application's pack, never another version's."""
+
+    digest: Digest | None
+    pack: SessionPack | None
+    resume_version_id: UUID | None
+    is_base: bool
 
 
 # Echo (see Session._settle_me): this many lines taken for echo within ECHO_WINDOW_S turn the
@@ -740,6 +754,10 @@ class Session:
             "digest_version": self.digest.version if self.digest else "",
             "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
             "agenda": self.info.agenda or "",
+            "resume_version_id": str(self.info.resume_version_id)
+            if self.info.resume_version_id
+            else "",
+            "resume_base": "1" if self.info.resume_is_base else "0",
             "task_id": self.svc.task_id,
         }
 
@@ -895,24 +913,14 @@ class Session:
                     )
                 )
             return
-        if info.interview_id is not None:
-            context = f"interview:{info.interview_id}"
-        elif info.job_id is not None:
-            context = f"job:{info.job_id}"
-        else:
-            return
-        log.info(
-            "pack %s has %s vectors, not %s: prepared-answer matching off; rebuilding it",
-            pack.pack_id, pack.embedding_model or "no", embedder.model_id,
-        )  # fmt: skip
-        message = jobs.pack_build(
-            self.principal.user_id, pack.mode, context, datetime.now(UTC),
-            pack.digest_version or None, embedder.model_id,
-        )  # fmt: skip
-        try:
-            await self.svc.jobs.send(message)
-        except Exception as e:
-            log.warning("enqueue %s failed: %s", message["idempotency_key"], e)
+        if info.job_id is not None or info.interview_id is not None:
+            log.info(
+                "pack %s has %s vectors, not %s: prepared-answer matching off; rebuilding it",
+                pack.pack_id, pack.embedding_model or "no", embedder.model_id,
+            )  # fmt: skip
+            await self.manager.request_application_packs(
+                self.principal.user_id, info.job_id, info.interview_id, pack
+            )
 
     async def _send_job(
         self, job_type: str, key: str, payload: Mapping[str, Any], attempts: int = 3
@@ -1394,6 +1402,100 @@ class SessionManager:
                 await svc.store.put_session_pack(uid, pack, s.state_ttl_s)
         return pack
 
+    async def application_memory(
+        self, uid: UUID, job_id: UUID | None, interview_id: UUID | None
+    ) -> ApplicationMemory:
+        """The digest and pack for an interview for an application: its paired resume version
+        (from Postgres) and that version's digest; the application's (or interview's) pack only
+        if it was built from that same version, otherwise none until a worker rebuilds it.
+
+        Without a database the pairing cannot be checked: the indexed pack names its version,
+        whose digest goes with it; with no pack, no digest (it could be another version's)."""
+        svc, store = self.svc, self.svc.store
+        index = await store.pack_index(uid)
+        pack_id = (index.get(f"interview:{interview_id}") if interview_id else None) or (
+            index.get(f"job:{job_id}") if job_id else None
+        )
+        indexed = await store.get_pack_by_id(uid, pack_id) if pack_id else None
+        paired: resumes.Pairing | None = None
+        known = False
+        if svc.pool is not None:
+            try:
+                async with asyncio.timeout(svc.settings.pack_render_timeout_ms / 1000):
+                    async with user_tx(svc.pool, uid) as conn:
+                        app_id = await self._application_of(conn, job_id, interview_id)
+                        paired = await resumes.pairing(conn, app_id) if app_id else None
+                        known = True
+            except (TimeoutError, OSError, asyncpg.PostgresError) as e:
+                log.warning("could not read the application's resume pairing (%s)", e)
+        if known and paired is None:
+            log.info("interview for an application that is not this user's; no pack")
+            return ApplicationMemory(None, None, None, False)
+        if paired is None:  # no database
+            if indexed is None:
+                return ApplicationMemory(None, None, None, False)
+            if indexed.resume_version_id is None:  # built before resume versions: the base
+                return ApplicationMemory(await store.get_digest(uid), indexed, None, True)
+            version = indexed.resume_version_id
+            digest = await resumes.version_digest(store.client, uid, version, False)
+            return ApplicationMemory(digest, indexed, version, False)
+        version = paired.resume_version_id
+        digest = await resumes.version_digest(store.client, uid, version, paired.is_base)
+        pack = indexed
+        if pack is not None and not (
+            pack.resume_version_id == version or (pack.resume_version_id is None and paired.is_base)
+        ):
+            log.info("pack %s is another resume version's; not used", pack.pack_id)
+            pack = None
+        if pack is None or pack.pairing != resumes.pairing_tag(paired):
+            await self.request_application_packs(uid, job_id, interview_id, None)
+        return ApplicationMemory(digest, pack, version, paired.is_base)
+
+    @staticmethod
+    async def _application_of(
+        conn: Any, job_id: UUID | None, interview_id: UUID | None
+    ) -> UUID | None:
+        if interview_id is not None:
+            found = await conn.fetchval(
+                "select job_id from app.interviews where id = $1", interview_id
+            )
+            if found is not None:
+                return found
+        return job_id
+
+    async def request_application_packs(
+        self,
+        uid: UUID,
+        job_id: UUID | None,
+        interview_id: UUID | None,
+        pack: SessionPack | None,
+    ) -> None:
+        """Ask a worker to build the application's packs for its current pairing. Without a
+        database the pairing is not known here: the worker reads it when it builds."""
+        svc = self.svc
+        embedding = svc.embedder.model_id if svc.embedder else None
+        if svc.pool is None:
+            context = f"interview:{interview_id}" if interview_id else f"job:{job_id}"
+            digest = pack.digest_version if pack is not None else None
+            message = jobs.pack_build(
+                uid, "interview", context, datetime.now(UTC), digest or None, embedding
+            )
+            with contextlib.suppress(Exception):
+                await svc.jobs.send(message)
+            return
+        try:
+            async with user_tx(svc.pool, uid) as conn:
+                app_id = await self._application_of(conn, job_id, interview_id)
+                if app_id is None:
+                    return
+                messages = await resumes.pack_messages(
+                    conn, svc.store.client, uid, app_id, embedding
+                )
+            for message in messages:
+                await svc.jobs.send(message)
+        except Exception as e:
+            log.warning("could not ask for the application's packs: %s", e)
+
     def live_for_user(self, uid: UUID) -> Session | None:
         for s in self.sessions.values():
             if s.principal.user_id == uid and not s.ending:
@@ -1506,11 +1608,28 @@ class SessionManager:
         at_work = msg.employer_id is not None and msg.mode in ("standup", "meeting")
         employer_id = msg.employer_id if at_work else None
         agenda = (msg.agenda or "").strip() or None
+        resume_version_id: UUID | None = None
+        resume_is_base = False
+        for_application = (
+            employer_id is None
+            and msg.mode == "interview"
+            and (msg.job_id is not None or msg.interview_id is not None)
+        )
         if valkey_ok:
             try:
-                digest = await store.get_digest(uid)
-                if employer_id is None:
-                    pack = await store.get_pack(uid, msg.job_id, msg.mode, msg.interview_id)
+                if for_application:
+                    memory = await self.application_memory(uid, msg.job_id, msg.interview_id)
+                    digest, pack = memory.digest, memory.pack
+                    resume_version_id, resume_is_base = memory.resume_version_id, memory.is_base
+                else:
+                    # The base resume's digest. An interview for no application gets no
+                    # application's pack: only a mode pack from before resume versions, which
+                    # came from the one (base) resume too.
+                    digest = await store.get_digest(uid)
+                    if employer_id is None:
+                        pack = await store.get_pack(uid, None, msg.mode, None)
+                        if pack is not None and pack.resume_version_id is not None:
+                            pack = None
             except (*UNAVAILABLE, ValidationError, ValueError) as e:
                 log.warning("could not load digest or pack for %s: %s", uid, e)
         if employer_id is not None:
@@ -1528,6 +1647,8 @@ class SessionManager:
             started_at=datetime.now(UTC),
             employer_id=employer_id,
             agenda=agenda,
+            resume_version_id=resume_version_id,
+            resume_is_base=resume_is_base,
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -1588,7 +1709,19 @@ class SessionManager:
             seq = max(
                 int(state.get("last_seq", "0")), await store.last_event_seq(sid), msg.last_seq
             )
-            digest = await store.get_digest(uid)
+            rv = state.get("resume_version_id")
+            if rv:
+                digest = await resumes.version_digest(
+                    store.client, uid, UUID(rv), state.get("resume_base") == "1"
+                )
+            elif (
+                "resume_version_id" in state
+                and state.get("mode") == "interview"
+                and (state.get("job_id") or state.get("interview_id"))
+            ):
+                digest = None  # an application with no resume: no digest
+            else:
+                digest = await store.get_digest(uid)
             pack = None
             if state.get("pack_id"):
                 pack = await store.get_pack_by_id(uid, state["pack_id"])
@@ -1610,6 +1743,8 @@ class SessionManager:
             else datetime.now(UTC),
             employer_id=UUID(state["employer_id"]) if state.get("employer_id") else None,
             agenda=state.get("agenda") or None,
+            resume_version_id=UUID(rv) if rv else None,
+            resume_is_base=state.get("resume_base") == "1",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

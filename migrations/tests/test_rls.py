@@ -32,7 +32,11 @@ INSUFFICIENT_PRIVILEGE = "42501"  # both "permission denied" and RLS policy viol
 
 APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # Tables each role may read, from the role table in ARCHITECTURE.md.
-GATEWAY_TABLES = {"users", "jobs", "interviews", "memory_nodes", "memory_edges", "employers"}
+# resume_versions: metadata columns only (a column grant), never the text or file.
+GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
+                  "employers", "resume_versions"}  # fmt: skip
+# Tables the gateway reads through a table-wide grant (resume_versions has column grants).
+GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions"}
 # Tables without row-level security, on purpose (system table, workers only).
 NO_RLS_TABLES = {"job_runs"}
 
@@ -52,6 +56,8 @@ class World:
     employer_id: uuid.UUID = field(default_factory=uuid.uuid4)
     work_log_id: uuid.UUID = field(default_factory=uuid.uuid4)
     company_document_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    resume_version_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    document_id: uuid.UUID = field(default_factory=uuid.uuid4)
 
 
 NOW = datetime(2026, 10, 5, 15, 0, tzinfo=UTC)
@@ -98,12 +104,12 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "size_bytes": 10,
     },
     "user_keys": lambda w, n: {"user_id": w.user_id, "version": n + 1, "encrypted_dek": b"dek"},
-    "jobs": lambda w, n: {
+    "applications": lambda w, n: {
         "id": _id(w, n, w.job_id),
         "user_id": w.user_id,
         "company": "Acme",
-        "title": "Engineer",
-        "description": "Build things",
+        "role": "Engineer",
+        "jd_text": "Build things",
     },
     "interviews": lambda w, n: {
         "id": _id(w, n, w.interview_id),
@@ -185,11 +191,22 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "key_version": 1,
     },
     "documents": lambda w, n: {
-        "id": uuid.uuid4(),
+        "id": _id(w, n, w.document_id),
         "user_id": w.user_id,
         "kind": "resume",
         "s3_key": f"uploads/{w.user_id}/{n}",
         "sha256": "0" * 64,
+    },
+    # The seeded version is the base; new ones are tailored versions of the seeded application.
+    "resume_versions": lambda w, n: {
+        "id": _id(w, n, w.resume_version_id),
+        "user_id": w.user_id,
+        "kind": "base" if n == 0 else "tailored",
+        "application_id": None if n == 0 else w.job_id,
+        "label": f"Resume {n}",
+        "source": "file",
+        "document_id": w.document_id,
+        "content_sha256": "0" * 64,
     },
     "integrations": lambda w, n: {
         "user_id": w.user_id,
@@ -207,7 +224,7 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
 USER_TABLES = list(ROWS)
 # Views over user tables. They use security_invoker, so the base table's RLS applies;
 # their grants are their own (the gateway gets none).
-VIEWS = ["commitments"]
+VIEWS = ["commitments", "jobs"]
 
 
 def tenant_column(table: str) -> str:
@@ -433,8 +450,15 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
         " where grantee = 'app_gateway' and table_schema = 'app'"
     )
     assert {(g["table_name"], g["privilege_type"]) for g in grants} == {
-        (t, "SELECT") for t in GATEWAY_TABLES
+        (t, "SELECT") for t in GATEWAY_TABLE_GRANTS
     }
+    columns = await db.conn.fetch(
+        "select column_name, privilege_type from information_schema.column_privileges"
+        " where grantee = 'app_gateway' and table_schema = 'app' and table_name = 'resume_versions'"
+    )
+    assert {c["privilege_type"] for c in columns} == {"SELECT"}
+    readable = {c["column_name"] for c in columns}
+    assert not readable & {"text_enc", "file_s3_key", "file_name_enc", "document_id"}
     # job_runs: workers and system jobs only.
     for role, allowed in (("app_api", False), ("app_gateway", False), ("app_worker", True)):
         _, _, err = await as_user(db, role, db.a, "select 1 from app.job_runs")
@@ -447,15 +471,16 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
 # foreign key checks do not apply RLS.
 
 FOREIGN_KEY_VIOLATION = "23503"
+CHECK_VIOLATION = "23514"
 
 # (child table, reference column, parent table) for every foreign key between user tables.
 REFERENCES = [
-    ("interviews", "job_id", "jobs"),
+    ("interviews", "job_id", "applications"),
     ("memory_edges", "src", "memory_nodes"),
     ("memory_edges", "dst", "memory_nodes"),
     ("memory_proposals", "target_node_id", "memory_nodes"),
     ("memory_proposals", "session_id", "sessions"),
-    ("sessions", "job_id", "jobs"),
+    ("sessions", "job_id", "applications"),
     ("sessions", "interview_id", "interviews"),
     ("transcript_segments", "session_id", "sessions"),
     ("questions", "session_id", "sessions"),
@@ -468,13 +493,21 @@ REFERENCES = [
     ("memory_proposals", "employer_id", "employers"),
     ("memory_proposals", "company_document_id", "company_documents"),
     ("sessions", "employer_id", "employers"),
+    ("resume_versions", "application_id", "applications"),
+    ("resume_versions", "document_id", "documents"),
+    ("applications", "resume_version_id", "resume_versions"),
+    ("memory_nodes", "resume_version_id", "resume_versions"),
+    ("documents", "application_id", "applications"),
+    ("documents", "resume_version_id", "resume_versions"),
 ]
 WRITE_ROLES = [r for r in APP_ROLES if can_write(r)]
 
 
 def parent_id(w: World, parent: str) -> uuid.UUID:
     return {
-        "jobs": w.job_id,
+        "applications": w.job_id,
+        "resume_versions": w.resume_version_id,
+        "documents": w.document_id,
         "interviews": w.interview_id,
         "memory_nodes": w.node_ids[0],
         "sessions": w.session_id,
@@ -526,7 +559,10 @@ async def test_cannot_repoint_reference_to_another_users_row(
              "work_logs": ", day = day + 1000"}.get(child, "")  # fmt: skip
     sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
     status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
-    assert err == FOREIGN_KEY_VIOLATION, (
+    # A resume version never moves to another application: its trigger refuses first.
+    expected = CHECK_VIOLATION if (child, column) == ("resume_versions", "application_id") else (
+        FOREIGN_KEY_VIOLATION)  # fmt: skip
+    assert err == expected, (
         f"{role} pointed user A's {child}.{column} at user B's {parent}: {status}"
     )
 
@@ -555,7 +591,9 @@ async def test_deleting_a_job_nulls_session_references_but_keeps_the_session(db:
                 a.interview_id,
                 a.session_id,
             )
-            await db.conn.execute("delete from app.jobs where id = $1", a.job_id)  # cascades
+            await db.conn.execute(
+                "delete from app.applications where id = $1", a.job_id
+            )  # cascades
             row = await db.conn.fetchrow(
                 "select job_id, interview_id, user_id from app.sessions where id = $1",
                 a.session_id,

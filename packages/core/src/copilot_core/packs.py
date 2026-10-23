@@ -157,6 +157,12 @@ class SessionPack(_Model):
     meeting: MeetingContext | None = None
     # Short ids used in prepared talking points that are not ranked stories.
     refs: dict[str, NodeRef] = {}
+    # An application's interview pack: the resume version its digest and stories came from.
+    # None on packs from before resume versions, which all came from the one (base) resume.
+    resume_version_id: UUID | None = None
+    # The pairing it was built for (copilot_core.resumes.pairing_tag), so a rebuild can tell
+    # whether it is still current.
+    pairing: str | None = None
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

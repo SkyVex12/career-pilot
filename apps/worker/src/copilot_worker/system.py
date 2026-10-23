@@ -12,6 +12,7 @@
   before a `session.ended` reached a worker.
 """
 
+import json
 import logging
 import time
 from datetime import UTC, date, datetime
@@ -19,6 +20,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from copilot_core import keys
+from copilot_core.careeros import CareerOsError
 from copilot_core.storage import user_prefix
 from copilot_core.valkey_client import text
 from copilot_worker.context import Ctx
@@ -65,6 +67,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
     # Objects and live state next: if this run dies halfway, the users row is still there
     # and the retry finds everything it needs.
     removed = await ctx.store.delete_prefix(user_prefix(uid))
+    career_os = await revoke_career_os(ctx, uid)
     async with ctx.system() as conn:
         sessions = [r["id"] for r in await conn.fetch(
             "select id from app.sessions where user_id = $1", uid
@@ -78,7 +81,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
             keys.sess_state(sid), keys.sess_events(sid), keys.sess_log(sid), keys.sess_lease(sid)
         ))  # fmt: skip
     vk += int(await ctx.valkey.delete(keys.digest(uid), keys.user_active_session(uid)))
-    for prefix in ("pack", "qa", "rl"):
+    for prefix in ("pack", "qa", "rl", "digest"):  # digest: each resume version's
         vk += await _scan_delete(ctx, f"{prefix}:{{{uid}}}:*")
     async with ctx.system() as conn:
         # Data keys go first and explicitly: with them gone, ciphertext is unreadable even if
@@ -87,7 +90,35 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
         await conn.execute("delete from app.users where id = $1", uid)  # cascades
         await conn.execute("delete from app.job_runs where user_id = $1", uid)
     ctx.crypto.forget(uid)
-    log.info("user %s deleted: sign-in %s, %d objects, %d Valkey keys", uid, signin, removed, vk)
+    log.info(
+        "user %s deleted: sign-in %s, %d objects, %d Valkey keys, Career-OS link %s",
+        uid, signin, removed, vk, career_os,
+    )  # fmt: skip
+
+
+async def revoke_career_os(ctx: Ctx, uid: UUID) -> str:
+    """Revoke the account's Career-OS token on Career-OS before its sealed copy goes. Best
+    effort: the account is deleted either way, and the user can revoke the link in Career-OS."""
+    async with ctx.system() as conn:
+        row = await conn.fetchrow(
+            "select token_enc, key_version from app.integrations"
+            " where user_id = $1 and provider = 'career_os' and status = 'active'",
+            uid,
+        )
+        if row is None:
+            return "none"
+        if ctx.career_os is None:
+            return "kept (Career-OS not configured)"
+        secret = await ctx.crypto.decrypt(
+            conn, uid, "integrations", f"{uid}:career_os", bytes(row["token_enc"]),
+            int(row["key_version"]),
+        )  # fmt: skip
+    try:
+        await ctx.career_os.revoke(str(json.loads(secret)["token"]))
+    except CareerOsError as e:
+        log.warning("could not revoke the Career-OS link of %s: %s", uid, e.message)
+        return "not revoked"
+    return "revoked"
 
 
 @handler("sessions.sweep")

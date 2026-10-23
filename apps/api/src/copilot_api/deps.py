@@ -20,6 +20,7 @@ from fastapi import Depends, Header, HTTPException, Request
 from copilot_api.config import ApiSettings
 from copilot_core import jobs, keys, logs
 from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
+from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
 from copilot_core.db import Conn, user_tx
 from copilot_core.packs import Digest
@@ -38,6 +39,7 @@ class Services:
     store: ObjectStore
     crypto: UserCrypto
     verifier: TokenVerifier
+    career_os: CareerOsClient | None = None  # None: COPILOT_CAREER_OS_URL is unset
 
     @asynccontextmanager
     async def tx(self, user: Principal) -> AsyncGenerator[Conn]:

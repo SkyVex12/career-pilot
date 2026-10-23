@@ -263,14 +263,16 @@ Markdown or text file.
    dev token from `.env`, your microphone, and the output device the call plays on. If you
    have no headphones, keep echo cancellation on. Save. History is empty after `down -v`: the
    database is new.
-5. **Upload the resume** under Documents. Expect Processing, then Processed and "Career
-   digest: Ready" within about 1 to 2 minutes (Opus, or the OpenAI extract model, reads the
-   resume; the worker logs `memory.extract`, then `digest.rebuild`).
-6. **Upload the job description.** Expect Processing, then Processed with the company and
-   title read from it, and "Pack ready (N answers)" a minute later (`pack.build`).
-7. **Schedule the interview** under Jobs: the job, the round you will play (technical or
-   system design works best), and a start time about 15 minutes out. Expect "Pack ready" in
-   the Interviews list within about a minute.
+5. **Add the base resume** under Resumes (upload or paste). Expect Reading, then Ready with
+   its digest's facts within about 1 to 2 minutes (Opus, or the OpenAI extract model, reads
+   the resume; the worker logs `resume.extract`, then `digest.rebuild`).
+6. **Add the application** under Applications: company, role and the job description (or
+   pull it from Career-OS, once connected under Settings), and a tailored resume if you have
+   one. Expect "Pack ready (N answers)" a minute later (`pack.build`), built from that
+   application's resume only.
+7. **Schedule the interview** under Applications: the application, the round you will play
+   (technical or system design works best), and a start time about 15 minutes out. Expect
+   "Pack ready" in the Interviews list within about a minute.
 8. **Join the call** with your teammate, on the output device you picked. Under Session: mode
    interview, "Call for" the interview you scheduled, the call app, and tick the transcript
    consent (you both agreed). Start session; the overlay opens.
