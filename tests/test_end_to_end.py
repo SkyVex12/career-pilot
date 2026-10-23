@@ -196,7 +196,8 @@ async def test_resume_to_interview_to_summary(world: World) -> None:
     await upload(w, "resume", FIXTURES / "inputs" / "resume.md")
     job_id = await upload(w, "job_description", FIXTURES / "inputs" / "job.md")
     ran = await w.work()
-    assert ran.count("memory.extract") == 2
+    assert ran.count("resume.extract") == 1  # the resume is the base version's content
+    assert ran.count("memory.extract") == 1  # the job description
     assert "digest.rebuild" in ran
     assert "pack.build" in ran
 

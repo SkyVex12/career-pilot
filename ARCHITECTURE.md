@@ -21,7 +21,7 @@ The copilot listens to a live call, detects questions aimed at the user, and sho
 - **Speed:** first visible words 1 to 1.5 seconds after the question ends.
 - **Depth:** answers grounded in real roles, projects, stories, metrics and recent work items, not only a resume and job description.
 - **Growing memory:** fed by onboarding, connected tools and past sessions, with the user approving every new fact.
-- **Standalone on AWS:** its own users, login and data. Career-OS integration is kept as a later option, so nothing here depends on it.
+- **Standalone on AWS:** its own users, login and data. A Career Pilot account can link to the user's own Career-OS account and pull applications from it on demand (see [Career-OS link](#career-os-link)); nothing else depends on Career-OS.
 
 **Implementation spec.** This section explains the architecture and its reasons. The contracts to build against are in the sections below: [1. Realtime protocol](#1-realtime-protocol) (WebSocket messages and audio frames), [2. Data model](#2-data-model) (SQL, Valkey keys, job payloads), [3. Services and prompts](#3-services-and-prompts) (code layout, gateway logic, prompts, REST endpoints) and [4. Infrastructure and operations](#4-infrastructure-and-operations) (AWS setup, CI/CD, SLOs, testing, runbooks).
 
@@ -78,7 +78,7 @@ The client is a Tauri app: a React and TypeScript UI on a Rust core, for macOS a
 - **Transport:** 16 kHz PCM frames of about 100 ms over one WebSocket, with automatic reconnect and session resume.
 - **Overlay:** an always-on-top window with the whole conversation as one scrolling view that never drops earlier messages: the other side's speech on the left (live text that settles into the final), the suggested answers on the right (talking points first, the detailed answer streaming in below them), and the user's own words on the right as plain quoted lines marked "You said", with no panel and a purple rule, so they never read as answers. It follows the newest message while the reader is at the bottom; scrolled up, it stays put and shows "Jump to latest". Each talking-point list and detailed answer has a copy button (plain text, citation ids stripped, a brief "Copied"). A compact mode shows the answers only, tighter, for a small window; the frameless window resizes from a corner grip. A hotkey forces a trigger when detection misses a question; a box takes a typed question; thumbs rate each answer. The view is rebuilt from the session's events after a reconnect or a reload: the core keeps every UI event of the session, compacted (a segment's partials and final in one entry, an answer pass's deltas merged), and a window applies that snapshot, then the live events after it.
 - **User's own audio:** transcribed live, never recorded. When `session.ready` says `me_audio`, the client sends the mic's speech on the "me" channel the way it sends the other side's: echo-cancelled, cut by VAD, silence never sent. The gateway runs a second streaming STT on it and sends the words back as `transcript.partial` and `transcript.final` on the "me" channel; they feed the conversation memory and, with transcript consent only, the session log, like the other side's words. Against an older gateway (no `me_audio`) the client strips the audio and sends the speech flags alone. Until October 2026 the mic was recorded locally, encrypted, uploaded after the call and transcribed then; that path is gone, and the app deletes what an older version left on disk.
-- **Screens** (all data through the REST API): documents (upload a resume and job descriptions, their processing, the digest and packs once ready), jobs and interviews (schedule one), the start screen (pick an upcoming interview or a job), the post-call screen, history (past sessions, usage this period, account deletion) and settings (the environment, local or AWS, with its gateway and API URLs; the dev token locally or the Cognito sign-in in AWS; devices). The settings screen warns when a URL to another machine is plain HTTP or WS. The app calls `GET /me` at launch, which checks the sign-in (and would wake Aurora where it scales to zero).
+- **Screens** (all data through the REST API): applications (company, role, stage, which resume, whether it came from Career-OS; add or edit one with its JD and its resume pairing; pull one from Career-OS; schedule an interview), resumes (the base resume and the tailored versions, uploaded or pasted, with labels, their processing and digests), the start screen (pick an upcoming interview or an application), the post-call screen, history (past sessions, usage this period, account deletion) and settings (the environment, local or AWS, with its gateway and API URLs; the dev token locally or the Cognito sign-in in AWS; devices; "Connect Career-OS"). The settings screen warns when a URL to another machine is plain HTTP or WS. The app calls `GET /me` at launch, which checks the sign-in (and would wake Aurora where it scales to zero).
 - **Screenshots:** for coding questions, a captured screen region goes to a vision model.
 - **Login:** Amazon Cognito with OAuth and PKCE in the browser (built in step 5). The app reads the user pool's domain and app client from `GET /v1/auth/config`, opens the sign-in page in the default browser and takes the redirect on a fixed loopback port (`http://127.0.0.1:53682/callback`). The refresh token is kept in the OS credential store (Windows Credential Manager), the access token in memory only; the client refreshes it before expiry and sends it over the open socket (`auth.refresh`) during long calls, and a `401` from the API gets one refresh and one retry. A revoked or expired sign-in signs the app out. Career-OS sign-in can be added later as a federated identity provider. On the local stack the client sends the dev token instead, behind the same token-provider interface; the services refuse the dev token on AWS compute and on Compute Engine. **Stage 0 on GCP** signs in with Google instead of Cognito, through the same flow and interfaces: the app runs Google's OAuth with PKCE in the browser (a Desktop app client, whose secret Google does not treat as confidential, from `GET /v1/auth/config`), keeps the refresh token in the credential store, and sends Google's ID token as the bearer, since Google's access tokens are opaque; the services check it against Google's keys and an allow-list of the team's emails, and derive the user id as a UUIDv5 of Google's `sub` (see [Stage 0 on GCP](#stage-0-on-gcp)).
 - **Distribution:** signed and notarized macOS build, signed Windows build, Tauri updater for auto-updates.
@@ -159,16 +159,46 @@ Career memory (roles, projects, stories, skills) and workplace memory are kept a
 
 **Write path**
 
-1. **Seed from uploads:** the resume, job descriptions and a LinkedIn export build the first graph at sign-up. Claude reads PDFs directly, so no document parser is needed. Resume facts go straight into `memory_nodes` with `source.type = resume` (the upload is the user's own statement, so no approval step); a new resume archives the previous resume's nodes. A job description becomes an `app.jobs` row whose id is the document's id, and that job's session pack is built.
+1. **Seed from resumes and applications:** each resume version (the base resume, and tailored versions; see [Resume versions](#resume-versions)), job descriptions and a LinkedIn export build the graph. Claude reads PDFs directly, so no document parser is needed. Resume facts go straight into `memory_nodes` with `source.type = resume` and the version's id (the resume is the user's own statement, so no approval step); new content for a version archives that version's earlier nodes, and no other version's. A job description becomes an application (`app.applications`) whose id is the document's id, or fills the JD of the application it was uploaded for, and that application's session pack is built.
 2. **Memory interview at onboarding:** the app asks about each role and project and extracts stories with metrics.
 3. **Connected tools:** GitHub, Jira, Slack and calendar sync daily.
 4. **After each session:** an extraction job proposes new facts and commitments; the user approves them with one tap before they enter memory.
 
 **Modes** (interview, standup, general meeting) pick the session pack and the prompt template.
 
+#### Resume versions
+
+The user applies with more than one resume: a **base resume** and **tailored versions**, each made for one application. An interview for an application must answer from that application's JD and the resume the user sent with it, and from nothing else: a number from another version's bullet ("p95 down 55%" where this resume says 40%) said in the interview is a contradiction the interviewer can see.
+
+| Piece | What it is |
+| --- | --- |
+| Application | `app.applications` (what earlier versions called a job), shaped like Career-OS's: company, role, URL, source site, stage (`applied`, `interview`, `offer`, `rejected`), note, and the JD text. Added by hand, from an uploaded JD, or pulled from Career-OS |
+| Resume version | `app.resume_versions`: one `base` per user, and `tailored` versions, each owned by one application and deleted with it. Its content is an uploaded file (`app.documents`), pasted text, or a copy pulled from Career-OS (its text, and its generated file when it has one); text and pulled files are sealed with the user's data key. It has a label, and keeps its id while its content changes |
+| Pairing | An application uses the version the user chose (`applications.resume_version_id`), else its newest tailored version, else the base (`app.paired_resume(application)`, shared by the API, workers and gateway through `copilot_core.resumes`). The choice can only be the base or one of the application's own versions (a trigger refuses another application's) |
+| Memory | Each version has its own nodes (`memory_nodes.resume_version_id`, a same-user key that cascades). Re-extracting a version archives only that version's nodes |
+| Hot digest | One per version, `digest:{uid}:{version}`, rendered from that version's nodes only, byte-stable as before. `digest:{uid}` stays the base's: standups, meetings and interviews for no application use it |
+| Session pack | An application's (and its interviews') pack is built from its JD and its paired version only: that version's digest and that version's stories. The pack names the version (`resume_version_id`) and the pairing it was built for (`pairing`) |
+
+**Why a node set per version.** Shared, de-duplicated nodes with a version membership table would save a few hundred rows a user, but tailored versions rephrase the same role with other bullets and other numbers, and that is exactly where facts would cross. With a node set per version, "no leaks" is one filter in every reader. Career facts that belong to no version (the onboarding memory interview, approved session facts, none of them built yet) stay out of interview digests and packs, so an interview pack holds only the JD and the paired resume.
+
+**Rebuilds.** Changing a pairing bumps `applications.pairing_rev`; the `pack.build` key names the version, the JD's hash and that revision, so switching versions and back builds again rather than being skipped. Changing the pairing or the JD enqueues the application's packs (and its upcoming interviews'); new content for a version (`resume.extract`, then `digest.rebuild` for that version) rebuilds the packs of the applications that use it, and only those; deleting a version moves its applications to the automatic pairing and rebuilds them. A pack whose pairing or digest changed while it was built queues its own rebuild and stays out of the index.
+
+**At session start** (interview for an application), the gateway reads the pairing from Postgres as `app_gateway` (metadata columns of `resume_versions` only) and loads that version's digest, and the application's (or interview's) pack only if it was built from that version; otherwise it runs on the digest alone and asks for the pack. It never falls back to another application's pack: workers no longer index application packs as `mode:interview`, and a `mode:interview` pack is used only for an interview for no application, and only if it predates resume versions (it came from the one base resume then). Without a database the indexed pack names its version and its digest goes with it; with no pack, no digest.
+
+#### Career-OS link
+
+A Career Pilot account can link to exactly one Career-OS user, the same person, and pull applications from it on demand. Nothing syncs by itself.
+
+1. **Approval by the Career-OS user.** Signed in to Career-OS as themselves (a `user` principal; admins are refused), the user makes a one-time code (about 50 bits, valid 10 minutes, stored hashed) on their profile page and types it into Career Pilot's settings.
+2. **Exchange.** The API sends the code to Career-OS (`POST /v1/career-pilot/link`), which returns a read-only token (`applications:read`) bound to that user only, and revokes that user's previous link. Career Pilot seals the token with the user's data key in `app.integrations` (provider `career_os`, with the Career-OS user's id and name). The token lives in its own Career-OS table, hashed, so it opens none of Career-OS's other endpoints.
+3. **Search and pull.** The user searches their own Career-OS applications (company, role, date, stage) and pulls one: a copy of the application, its newest JD and its resume version as text (with the generated file, sealed), recorded with the Career-OS id, its content hash and the pull time. Without a resume version, the Career-OS base resume becomes the account's base if it has none, and otherwise the application's own version, so the user's base is never overwritten. Search compares each result's content hash with the pulled one and marks it "changed since the pull"; pulling again replaces the pulled fields, JD and resume, and keeps the application's id, interviews and a still-valid pairing.
+4. **Revocation.** Disconnecting revokes the token on Career-OS first and only then deletes it here (if Career-OS cannot be reached, the link stays). The user can also see and revoke the link in Career-OS; the next call gets 401 and the app asks to connect again. Deleting the account revokes it too.
+
+The API side is Career-OS's `/v1/career-pilot/*` (its `docs/career-pilot-api.md`); `tests/fixtures/career_os_contract.json` is the shared contract both repos test against. The Career-OS URL is a setting (`COPILOT_CAREER_OS_URL`; Terraform's `career_os_url` on GCP); without it the link is not offered.
+
 #### Company workspaces
 
-Standups and meetings answer from the user's work at a company. The companies the user works at (**employers**, `app.employers`) are kept apart from the jobs they apply to (`app.jobs`); usually one is current, sometimes more, and a past one can be archived.
+Standups and meetings answer from the user's work at a company. The companies the user works at (**employers**, `app.employers`) are kept apart from the applications they apply to (`app.applications`); usually one is current, sometimes more, and a past one can be archived.
 
 | Source | What it is | How it enters memory |
 | --- | --- | --- |
@@ -236,7 +266,7 @@ One Aurora PostgreSQL database holds everything durable; Valkey holds everything
 
 | Store | Holds |
 | --- | --- |
-| Aurora PostgreSQL Serverless v2 + pgvector (Graviton) | Memory graph tables and embeddings, sessions, transcripts. Users keyed by Cognito user id, with row-level security on every user table, with a spare external id column for a later Career-OS link. Production keeps minimum capacity above zero; staging scales to zero (resume can take up to about a minute) |
+| Aurora PostgreSQL Serverless v2 + pgvector (Graviton) | Memory graph tables and embeddings, sessions, transcripts. Users keyed by Cognito user id, with row-level security on every user table. A Career-OS link is a sealed token in `app.integrations`. Production keeps minimum capacity above zero; staging scales to zero (resume can take up to about a minute) |
 | ElastiCache Serverless for Valkey | Live session state, session packs as versioned JSON, pub/sub between gateway tasks, rate limits, a semantic answer cache keyed per user (never shared across users), live session logs. Priced 33% below the Redis OSS serverless option, from about $6 a month |
 | S3 | Uploaded documents, encrypted with per-user data keys under one KMS key; company documents and work log attachments are sealed by the API with the user's data key before they are stored (under `uploads/{uid}/employers/{employer_id}/`). No audio is ever stored: both sides are transcribed live |
 | SQS with fair queues | Background jobs. User id as the message group id, so one heavy user (a large tool sync) never delays everyone else |
@@ -301,7 +331,7 @@ Avoided: App Runner, which AWS has moved to maintenance mode.
 
 **Delivery:** Terraform for all infrastructure, GitHub Actions for CI/CD, staging and production from day one, multi-arch (ARM64) images in ECR.
 
-**Career-OS later:** if integration happens, Career-OS becomes a federated sign-in in Cognito, and its resume and job events flow in through an EventBridge or SQS bridge. The copilot's own data model does not change.
+**Career-OS:** a user links their own Career-OS account with a one-time code and pulls applications on demand ([Career-OS link](#career-os-link)): an HTTPS call from the API to Career-OS, no bridge and no sync. Federated sign-in stays a later option.
 
 ### Security and privacy
 
@@ -313,7 +343,9 @@ The copilot holds resumes, meeting transcripts and employer data, so encryption 
 - **Audio:** both sides are transcribed live, in memory, and no audio is ever stored. Recording consent rules vary by jurisdiction, so transcripts are opt-in with retention controls.
 - **Third-party processors:** audio goes to the STT provider, and error data to Sentry. Each needs a data processing agreement and zero-retention settings; prompt logs stay in a self-hosted Langfuse.
 - **Untrusted input:** transcripts, tool data and company documents are treated as data in prompts, and facts from other people's words enter memory only after the user approves them; the user's own work logs and promises are kept at once.
-- **Secrets and network:** app secrets (STT, Stripe, OAuth client secrets) in Secrets Manager, and per-user tool tokens encrypted with the user's data key in Aurora; Aurora and Valkey in private subnets; VPC endpoints for Bedrock and S3 keep that traffic inside AWS; CloudTrail logs every access to workplace data.
+- **Resume versions:** pasted and pulled resume text and pulled resume files are sealed with the user's data key (`resume_versions.text_enc`, the file in storage under `uploads/{uid}/resumes/`). An interview's prompts hold one resume version's facts only (see [Resume versions](#resume-versions)).
+- **Career-OS:** the link is approved by the Career-OS user themselves, signed in to Career-OS, never by an admin; the token is read-only, bound to that one user, rate limited on Career-OS, stored hashed there and sealed here, and revoked on both sides on disconnect or account deletion.
+- **Secrets and network:** app secrets (STT, Stripe, OAuth client secrets) in Secrets Manager, and per-user tool tokens (and the Career-OS token) encrypted with the user's data key in Aurora; Aurora and Valkey in private subnets; VPC endpoints for Bedrock and S3 keep that traffic inside AWS; CloudTrail logs every access to workplace data.
 - **Stage 0 exception: no TLS.** Stage 0 runs on a single GCP VM ([Stage 0 on GCP](#stage-0-on-gcp)) and serves the API and the gateway over plain HTTP and WebSocket on the VM's static IP, behind a VPC firewall rule meant to admit port 80 only from an IP allow-list of the team's addresses (a Terraform variable kept out of git, changed with one command). At the owner's choice the allow-list is currently open to every address, so the Google sign-in allow-list (verified emails) is the only gate. Google's sign-in, the presigned uploads to Cloud Storage and every call from the services to Google Cloud, OpenAI and Deepgram still use TLS; the ID token and call text between the app and the VM do not. TLS (a domain with a certificate, or a load balancer with a managed certificate) is required before anyone outside the team uses it, and before Stage 1. (On AWS the same exception held: the instance's AWS host name, a security group allow-list.)
 - **Later:** SOC 2 before selling to companies, and a local-first mode, since some employers restrict sending work data to third-party services.
 
@@ -413,7 +445,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 2. **Memory:** knowledge graph, memory interview, hot digest, session packs, workers, fact approval, and the local classifier for the two-stage detector, trained on the recorded-call corpus.
 3. **Work mode:** company workspaces (employers, daily work logs, company material, standup and meeting packs, live search per company, commitments; built October 2026), then GitHub, Jira, Slack and calendar sync into the same per-company memory.
 4. **Hardening:** per-user encryption of transcripts and workplace data, retention controls, local-first option, SOC 2 preparation, and a Go gateway if the metrics call for it.
-5. **Career-OS integration (optional, later):** federated sign-in and an event bridge for resumes and jobs.
+5. **Career-OS:** link and pull on demand (built October 2026); federated sign-in stays optional, later.
 
 ### Open questions
 
@@ -424,7 +456,7 @@ Each phase ships something usable; Terraform, staging and latency tracing exist 
 - [ ] Embeddings: Cohere on Bedrock or Voyage, decided by the eval set?
 - [x] Desktop framework: Tauri 2 (build step 3).
 - [ ] Pricing model for users (per-minute credits or plan tiers) and payment provider?
-- [ ] When to revisit Career-OS integration, and who owns the data if it happens?
+- [ ] Federated Career-OS sign-in: worth it once pulling is used? (Each app keeps its own data; a pull is a copy.)
 
 ### Sources
 
@@ -554,7 +586,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | --- | --- | --- |
 | `app_owner` | Migrations only | Owns all tables |
 | `app_api` | Copilot API | Read and write user tables, under row-level security |
-| `app_gateway` | Gateway | Read only: `users`, `jobs`, `interviews`, `memory_nodes`, `memory_edges`, `employers` (never the raw work logs or documents) |
+| `app_gateway` | Gateway | Read only: `users`, `applications` (and the `jobs` view), `interviews`, `memory_nodes`, `memory_edges`, `employers`, and the metadata columns of `resume_versions` (never the raw work logs, documents, resume text or files) |
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
@@ -573,7 +605,7 @@ create table app.users (
   display_name  text not null,
   plan          text not null default 'free',
   settings      jsonb not null default '{}',   -- retention days, standup time, consent defaults
-  external_ref  jsonb not null default '{}',   -- later: Career-OS user id
+  external_ref  jsonb not null default '{}',   -- unused: the Career-OS link is in integrations
   created_at    timestamptz not null default now()
 );
 
@@ -586,17 +618,29 @@ create table app.user_keys (
   primary key (user_id, version)
 );
 
--- Jobs and interviews
-create table app.jobs (
+-- Applications and interviews (app.jobs until 0008, which renamed it; a `jobs` view keeps
+-- the old names until 0009). Shaped like Career-OS's applications.
+create table app.applications (
   id          uuid primary key,
   user_id     uuid not null references app.users(id) on delete cascade,
   company     text not null,
-  title       text not null,
-  description text not null,
+  role        text not null,
+  jd_text     text not null,
   url         text,
+  source_site text,
+  stage       text not null default 'applied' check (stage in ('applied','interview','offer','rejected')),
+  note        text,
+  resume_version_id uuid,                      -- the user's pairing; null pairs automatically
+  pairing_rev int not null default 0,          -- bumped on every pairing change
+  career_os_application_id text,               -- pulled from Career-OS: its id,
+  career_os_hash text,                         -- its content hash at the pull,
+  pulled_at   timestamptz,                     -- and when
   created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
   unique (id, user_id)                         -- target of same-user foreign keys
 );
+create unique index applications_career_os on app.applications (user_id, career_os_application_id)
+  where career_os_application_id is not null;
 
 create table app.interviews (
   id         uuid primary key,
@@ -606,7 +650,7 @@ create table app.interviews (
   starts_at  timestamptz not null,
   pack_id    uuid,
   unique (id, user_id),
-  foreign key (job_id, user_id) references app.jobs(id, user_id) on delete cascade
+  foreign key (job_id, user_id) references app.applications(id, user_id) on delete cascade
 );
 
 -- Memory graph
@@ -686,7 +730,7 @@ create table app.sessions (
   outputs_ready_at timestamptz,                  -- post-call outputs written (0003)
   unique (id, user_id),
   -- set null on the reference column only; user_id stays
-  foreign key (job_id, user_id) references app.jobs(id, user_id) on delete set null (job_id),
+  foreign key (job_id, user_id) references app.applications(id, user_id) on delete set null (job_id),
   foreign key (interview_id, user_id) references app.interviews(id, user_id)
     on delete set null (interview_id)
 );
@@ -820,6 +864,39 @@ alter table app.memory_proposals add column employer_id uuid, add column company
 alter table app.sessions add column employer_id uuid, add column agenda_enc bytea,
   add column agenda_key_version int;                 -- all three keys cascade (see 0006)
 
+-- Resume versions (0008): one base per user, tailored versions owned by one application.
+create table app.resume_versions (
+  id                uuid primary key,
+  user_id           uuid not null references app.users(id) on delete cascade,
+  kind              text not null check (kind in ('base','tailored')),
+  application_id    uuid,                        -- tailored: its application
+  label             text not null,
+  source            text not null check (source in ('file','text','career_os')),
+  document_id       uuid,                        -- an uploaded file
+  text_enc          bytea, key_version int,      -- pasted or pulled text, sealed
+  file_s3_key       text, file_name_enc bytea, file_content_type text,  -- a pulled file, sealed
+  content_sha256    text not null,
+  extracted_sha256  text,                        -- the content its nodes came from
+  status            text not null default 'saved'
+                    check (status in ('saved','extracting','extracted','failed')),
+  career_os_ref     text, pulled_at timestamptz, -- resume_version:<id> or base:career-os
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now(),
+  unique (id, user_id),
+  check ((kind = 'tailored') = (application_id is not null)),
+  foreign key (application_id, user_id) references app.applications(id, user_id) on delete cascade,
+  foreign key (document_id, user_id) references app.documents(id, user_id)
+);
+create unique index resume_versions_one_base on app.resume_versions (user_id) where kind = 'base';
+alter table app.applications add foreign key (resume_version_id, user_id)
+  references app.resume_versions(id, user_id) on delete set null (resume_version_id);
+-- A trigger refuses a pairing with another application's tailored version, and a version
+-- changing kind or application. app.paired_resume(application) resolves the pairing.
+alter table app.memory_nodes add column resume_version_id uuid,   -- resume facts: their version
+  add foreign key (resume_version_id, user_id) references app.resume_versions(id, user_id)
+    on delete cascade,
+  add check (source->>'type' is distinct from 'resume' or resume_version_id is not null);
+
 -- Documents, integrations, usage
 create table app.documents (
   id         uuid primary key,
@@ -830,14 +907,21 @@ create table app.documents (
   content_type text,                             -- application/pdf, text/plain, text/markdown (0003)
   status     text not null default 'uploaded'
              check (status in ('uploaded','ingesting','ingested','failed')),  -- ingesting: 0004
-  created_at timestamptz not null default now()
+  application_id    uuid,                        -- 0008: what the upload is for: a tailored
+  resume_version_id uuid,                        -- resume or a JD of this application, or new
+  label             text,                        -- content for this version
+  created_at timestamptz not null default now(),
+  unique (id, user_id)
 );
 
 create table app.integrations (
   user_id      uuid not null references app.users(id) on delete cascade,
   provider     text not null check (provider in
-                 ('github','jira','slack','google_calendar','microsoft_calendar')),
+                 ('github','jira','slack','google_calendar','microsoft_calendar','career_os')),
   token_enc    bytea not null,                 -- OAuth tokens, encrypted with the user's data key
+  external_id  text,                           -- career_os: the Career-OS user id (0008)
+  external_label text,                         -- its name, for the settings screen
+  connected_at timestamptz,
   key_version  int   not null,
   scopes       text[] not null,
   status       text not null default 'active',
@@ -964,9 +1048,10 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `sess:{sid}:log` | stream | Until flushed, then 1 h | Gateway | Final segments, questions, answers for the log flush |
 | `sess:{sid}:lease` | string | 30 s, renewed every 10 s | Gateway | Id of the task holding the live connection |
 | `user:{uid}:active_session` | string | 2 h | Gateway | Current session id; enforces one live session |
-| `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | Hot digest text and version hash, and the map from its short ids to node ids |
+| `digest:{uid}:{version}` | string (JSON) | None, replaced on rebuild, deleted with the version | Worker | One resume version's hot digest text and version hash, and the map from its short ids to node ids |
+| `digest:{uid}` | string (JSON) | None, replaced on rebuild | Worker | The base resume's digest, the same record: standups, meetings, interviews for no application, gateways from before resume versions |
 | `pack:{uid}:{pack_id}` | string (JSON) | 24 h after the call's due time (an interview scheduled days ahead keeps its pack), at most 30 days | Worker | Prebuilt session pack |
-| `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{job_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the job's newest pack, then the mode's); `employer:{employer_id}:{mode}` to a company's standup or meeting pack, which a session at that company loads instead (never the mode's: it would hold no company or another's). A pack the gateway makes for one session (rendered at start, or with the meeting's agenda) is stored under its own `pack_id` for the session state's 2 hours, outside the index |
+| `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{application_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the application's newest pack; only if built from the application's paired resume version; `mode:` only for a session for no application); `employer:{employer_id}:{mode}` to a company's standup or meeting pack, which a session at that company loads instead (never the mode's: it would hold no company or another's). A pack the gateway makes for one session (rendered at start, or with the meeting's agenda) is stored under its own `pack_id` for the session state's 2 hours, outside the index |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
 
@@ -1000,7 +1085,7 @@ The semantic cache is not a separate store: each session pack carries prepared a
 }
 ```
 
-For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). A company's pack adds `employer` (`id`, `name`, `title`, `team`), `memory_version` (the company's memory it was rendered from), `standup.day` and `standup.yesterday_day`, `standup.recent`, and for a meeting `workplace.sections` (projects, systems, people, decisions, terms, recent_work, open_commitments) and, on the gateway's copy, `meeting` (title, agenda, related items). Their items are `{node_id, short_id, text, date?, due_date?, state?}`; workplace short ids start with `w` (`n:w3f2`), a letter hex never has, so they never clash with the digest's. Embeddings are base64-encoded float32 arrays to keep the JSON small. `embedding_model` names the model that made them (null without vectors), and the gateway compares them only with question vectors from the same model. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
+An application's interview pack adds `resume_version_id` (the version its digest and stories came from) and `pairing` (the version, JD hash and pairing revision it was built for). For standups, `prepared_answers` is short and `standup` holds `yesterday`, `today`, `blockers` and `open_commitments` (node id, text, due date). A company's pack adds `employer` (`id`, `name`, `title`, `team`), `memory_version` (the company's memory it was rendered from), `standup.day` and `standup.yesterday_day`, `standup.recent`, and for a meeting `workplace.sections` (projects, systems, people, decisions, terms, recent_work, open_commitments) and, on the gateway's copy, `meeting` (title, agenda, related items). Their items are `{node_id, short_id, text, date?, due_date?, state?}`; workplace short ids start with `w` (`n:w3f2`), a letter hex never has, so they never clash with the digest's. Embeddings are base64-encoded float32 arrays to keep the JSON small. `embedding_model` names the model that made them (null without vectors), and the gateway compares them only with question vectors from the same model. An optional `refs` object maps short ids that prepared talking points cite, other than the ranked stories, to `{"node_id", "label"}`.
 
 **Hot digest record** in `digest:{uid}`:
 
@@ -1044,9 +1129,10 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 | `session.ended` | Gateway | session_id | 5 min | `session.ended:{sid}` |
 | `session.postcall` | `session.ended`, at once | session_id | 15 min | `session.postcall:{sid}` |
 | `me_audio.transcribe` (legacy) | Only an older gateway or API, from before live transcription of the mic: it deletes a leftover upload untranscribed and enqueues `session.postcall` | session_id | 1 min | `me_audio.transcribe:{sid}` |
-| `memory.extract` | API (document ingest) | document_id | 15 min | `memory.extract:{uid}:{document_id}:{sha256}` |
+| `memory.extract` | API (job description ingest; a resume from an API before 0008) | document_id | 15 min | `memory.extract:{uid}:{document_id}:{sha256}` |
+| `resume.extract` | API (a resume pasted, uploaded or pulled) | resume_version_id, content_sha256 | 15 min | `resume.extract:{uid}:{version}:{content_sha256}` |
 | `pack.build` | API (job saved, interview scheduled), worker (job description ingested, digest rebuilt), scheduler (standups) | mode, context (`interview:{id}`, `job:{id}` or `standup:{date}`), due_at | 10 min | `pack.build:{uid}:{context}:{digest}:{embedding}` |
-| `digest.rebuild` | Scheduler weekly; resume ingested; after approvals, debounced 10 min | none | 10 min | `digest.rebuild:{uid}:{memory version}` |
+| `digest.rebuild` | Scheduler weekly (every version); a resume version extracted (that version); after approvals, debounced 10 min | resume_version_id, or none for every version | 10 min | `digest.rebuild:{uid}:{version}:{memory version}` |
 | `tools.sync` | Scheduler daily | provider | 15 min | `tools.sync:{uid}:{provider}:{date}` |
 | `usage.report` | Scheduler nightly | day | 15 min | `usage.report:{day}` |
 | `user.delete` | API | none | 30 min | `user.delete:{uid}` |
@@ -1059,7 +1145,7 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 
 Post-call work runs in two steps: `session.ended` flushes the log (both sides' segments are already in it) and enqueues `session.postcall`, which writes the summary and feedback with Sonnet and memory proposals with Opus. Nothing waits for audio any more.
 
-Two keys name more than the catalog first had. `memory.extract` names the user and the document as well as the content hash: the hash alone would collide across users and skip a second document with the same content. `pack.build` names the context, the digest (`digest` is the first 16 hex digits of its version, `none` before the first digest) and the embedding model of the prepared answers' vectors (`embedding` is 8 hex digits of the SHA-256 of the model id, `none` without one). A pack depends on all three, so a digest rebuild or a new embedding model makes a new key and the pack is rebuilt, while a repeat is skipped.
+Two keys name more than the catalog first had. `memory.extract` names the user and the document as well as the content hash: the hash alone would collide across users and skip a second document with the same content. `pack.build` names the context, the digest (`digest` is the first 16 hex digits of its version, `none` before the first digest) and the embedding model of the prepared answers' vectors (`embedding` is 8 hex digits of the SHA-256 of the model id, `none` without one). A pack depends on all three, so a digest rebuild or a new embedding model makes a new key and the pack is rebuilt, while a repeat is skipped. An application's pack also depends on its pairing, so its key ends with the resume version (12 hex digits), 8 of the JD's SHA-256 and `r{pairing_rev}`.
 
 **Scheduler:** the timed jobs come from one small program, `copilot-scheduler`, which enqueues whatever is due (the sweep, the nightly usage report, the weekly digest, standup packs) at most once per slot. Locally it runs in a loop; in AWS, EventBridge Scheduler runs `copilot-scheduler --once` every 5 minutes as a one-off task, rather than one EventBridge schedule per job.
 
@@ -1345,15 +1431,19 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `PATCH /me` | Profile fields (display name); settings fields are refused |
 | `PATCH /me/settings` | Settings: retention days, standup time and timezone, consent defaults; profile fields are refused |
 | `DELETE /me` | Account deletion; enqueues `user.delete` |
-| `POST /documents` | Returns a presigned S3 upload URL and a document id |
+| `POST /documents` | Returns a presigned S3 upload URL and a document id. A resume names its `application_id` (a tailored version) or `resume_version_id` (new content for it), or neither (the base); a JD may name its `application_id`; both may carry a `label` |
 | `GET /documents` | Documents with their status (`uploaded`, `ingesting`, `ingested`, `failed`), the job each job description became, and the hot digest's version and build time once it exists |
-| `POST /documents/{id}/ingest` | Marks an uploaded document `ingesting` and enqueues `memory.extract`; a `failed` document is uploaded again instead |
+| `POST /documents/{id}/ingest` | Marks an uploaded document `ingesting`; a resume becomes its version's content and enqueues `resume.extract`, a JD enqueues `memory.extract`; a `failed` document is uploaded again instead |
 | `POST /memory-interview/turns` | One turn of the onboarding memory interview |
 | `GET /memory?kind=&q=` | Browse and search memory |
 | `GET`, `PATCH`, `DELETE /memory/{id}` | View, edit, archive a memory node |
 | `GET /proposals?status=pending` | Pending memory updates |
 | `POST /proposals/{id}/approve`, `/reject`, `POST /proposals/bulk` | Decide on proposals; approvals trigger a debounced `digest.rebuild` |
-| `POST /jobs`, `GET /jobs` | Save and list job descriptions |
+| `GET`, `POST /applications`; `GET`, `PATCH`, `DELETE /applications/{id}` | Applications with their JD and resume pairing (`resume_version_id`: a version or `"auto"`); a new application may carry a pasted tailored resume. A changed pairing or JD enqueues its packs |
+| `GET`, `POST /resumes`; `GET`, `PATCH`, `DELETE /resumes/{id}`; `GET /resumes/{id}/file` | The base resume and tailored versions: pasted text (sealed), labels, status, digest, the applications using each; a pulled file. New content enqueues `resume.extract`; deleting a version rebuilds the packs that used it |
+| `GET /career-os/connection`, `POST /career-os/connect` (`code`), `DELETE /career-os/connection` | The Career-OS link: connect with a one-time code; disconnect revokes on Career-OS first |
+| `GET /career-os/applications?q=&stage=&from=&to=`; `GET .../{id}/status`; `POST .../{id}/pull` | Search the user's Career-OS applications (each marked pulled, or changed since the pull); pull one, or pull it again |
+| `POST /jobs`, `GET /jobs` | Desktop builds from before applications: the same rows, as jobs (until 0009) |
 | `POST /interviews`, `GET /interviews` | Schedule an interview (enqueues `pack.build`); list interviews with their job and pack |
 | `GET /sessions`, `GET /sessions/{id}` | Session list; one session's status and outputs |
 | `GET /sessions/{id}/transcript` | Decrypted transcript, if stored |
@@ -1400,6 +1490,7 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
 - **Model calls:** workers use the same router as the gateway: Sonnet for session packs, summaries and feedback; Opus only for memory extraction; Flex first, then Standard. The digest needs no model.
 - **Account deletion:** `user.delete` removes the Cognito user with `AdminDeleteUser` first, so no new session can start, then the S3 prefix, Valkey keys, data keys and rows.
 - **Company workspaces:** `copilot_worker.workplace` runs `worklog.extract`, `company_doc.extract`, `workplace.refresh` (node vectors from the configured embedder, then both packs) and `employer.purge`; `pack.build` for an `employer:` context renders the pack with `copilot_core.workplace`, the same code the gateway renders with. At a user's standup time the scheduler also builds each current company's standup pack.
+- **Resume versions:** `copilot_worker.documents` runs `resume.extract` (one version's content into its nodes) and `memory.extract` (JDs); `digest.rebuild` renders each version's digest and sends the builds of the applications paired with it whose pack is not current; `pack.build` for an application reads its pairing (`copilot_core.resumes`). `user.delete` also revokes the Career-OS link.
 - **Not built yet:** `tools.sync` comes with phase 3; memory proposals from interview post-call work come with phase 2.
 
 ## 4. Infrastructure and operations

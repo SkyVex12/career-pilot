@@ -1,11 +1,14 @@
 """System jobs: usage.report, user.delete (nothing left behind) and the session sweeper."""
 
+import json
 import time
 from datetime import UTC, date, datetime, timedelta
 
+import httpx2
 import pytest
 
 from copilot_core import jobs, keys
+from copilot_core.careeros import CareerOsClient
 from copilot_core.identity import CognitoUsers
 from copilot_core.storage import me_audio_key, user_prefix
 from copilot_worker.testing import FIXTURES, GatewayLog, Stack
@@ -84,7 +87,8 @@ async def test_user_delete_leaves_nothing_behind(stack: Stack) -> None:
     tables = await user_tables(stack)
     before = {t: await stack.admin.fetchval(f"select count(*) from app.{t} where user_id = $1", uid)
               for t in tables}  # fmt: skip
-    for t in ("user_keys", "memory_nodes", "memory_edges", "jobs", "sessions",
+    for t in ("user_keys", "memory_nodes", "memory_edges", "applications", "resume_versions",
+              "sessions",
               "transcript_segments", "session_outputs", "documents", "job_runs"):  # fmt: skip
         assert before[t] > 0, f"the test should have put rows in {t}"
     assert await stack.ctx.store.list_keys(user_prefix(uid))
@@ -180,3 +184,32 @@ async def test_sweeper_ends_abandoned_sessions(stack: Stack) -> None:
         "select billed_seconds from app.sessions where id = $1", abandoned.sid
     )
     assert billed is not None
+
+
+async def test_user_delete_revokes_the_career_os_link(stack: Stack) -> None:
+    uid = await stack.new_user()
+    async with stack.ctx.user(uid) as conn:
+        sealed, version = await stack.ctx.crypto.encrypt(
+            conn, uid, "integrations", f"{uid}:career_os",
+            json.dumps({"token": "cpt_secret", "link_id": "cpl_1"}),
+        )  # fmt: skip
+        await conn.execute(
+            "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
+            " external_id) values ($1, 'career_os', $2, $3, '{applications:read}', 'u1')",
+            uid, sealed, version,
+        )  # fmt: skip
+    seen: list[tuple[str, str, str]] = []
+
+    def career_os(request: httpx2.Request) -> httpx2.Response:
+        seen.append((request.method, request.url.path, request.headers["authorization"]))
+        return httpx2.Response(204)
+
+    stack.ctx.career_os = CareerOsClient("http://career-os.test",
+                                         transport=httpx2.MockTransport(career_os))  # fmt: skip
+    try:
+        await stack.run(jobs.envelope("user.delete", f"user.delete:{uid}", uid, {}))
+    finally:
+        stack.ctx.career_os = None
+    assert seen == [("DELETE", "/v1/career-pilot/link", "Bearer cpt_secret")]
+    assert await stack.admin.fetchval("select count(*) from app.integrations where user_id = $1",
+                                      uid) == 0  # fmt: skip

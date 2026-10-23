@@ -69,7 +69,7 @@ locals {
     { for job, effort in var.openai_reasoning : "COPILOT_OPENAI_${upper(job)}_REASONING" => effort },
   )
   # The API and the workers: Cloud Storage through its S3 API, and Cloud KMS.
-  data_env = {
+  data_env = merge({
     COPILOT_S3_ENDPOINT   = "https://storage.googleapis.com"
     COPILOT_S3_REGION     = "auto"
     COPILOT_S3_BUCKET     = google_storage_bucket.uploads.name
@@ -77,7 +77,10 @@ locals {
     COPILOT_S3_SECRET_KEY = local.secret["uploads-hmac-secret"]
     COPILOT_KEY_PROVIDER  = "gcp_kms"
     COPILOT_GCP_KMS_KEY   = local.kms_key
-  }
+    }, var.career_os_url == "" ? {} : {
+    # The Career-OS link (ARCHITECTURE.md, "Career-OS link"): unset, it is not offered.
+    COPILOT_CAREER_OS_URL = var.career_os_url
+  })
   env = {
     common = local.common_env
     postgres = {

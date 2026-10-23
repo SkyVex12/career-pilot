@@ -123,9 +123,17 @@ async def test_document_upload_and_ingest(api: Api) -> None:
     r = await api.client.post(f"/v1/documents/{doc}/ingest", headers=h)
     assert r.status_code == 202
     assert r.json()["status"] == "ingesting"
-    [job] = api.take("memory.extract")
-    assert job["payload"] == {"document_id": doc}
+    # A resume upload is the base resume version's content: resume.extract reads it.
+    [job] = api.take("resume.extract")
+    version = await api.admin.fetchval(
+        "select id from app.resume_versions where user_id = $1 and kind = 'base'", uid
+    )
+    assert job["payload"] == {
+        "resume_version_id": str(version),
+        "content_sha256": hashlib.sha256(body).hexdigest(),
+    }
     assert job["user_id"] == str(uid)
+    assert r.json()["resume_version_id"] == str(version)
     listed = (await api.client.get("/v1/documents", headers=h)).json()
     assert {d["id"]: d["status"] for d in listed["documents"]} == {
         doc: "ingesting",  # until memory.extract ends
@@ -134,7 +142,7 @@ async def test_document_upload_and_ingest(api: Api) -> None:
     assert listed["digest"] is None
     # Asking again changes nothing and queues nothing.
     assert (await api.client.post(f"/v1/documents/{doc}/ingest", headers=h)).status_code == 202
-    assert api.take("memory.extract") == []
+    assert api.take("resume.extract") == []
     # A document the worker could not read is uploaded again, not re-ingested.
     await api.admin.execute(
         "update app.documents set status = 'failed' where id = $1", uuid.UUID(doc)
@@ -198,7 +206,10 @@ async def test_jobs_interviews_and_their_packs(api: Api) -> None:
     [build] = api.take("pack.build")
     assert build["payload"]["context"] == f"job:{job['id']}"
     tag = jobs.embedding_tag(api.svc.settings.embedding_model_id)
-    assert build["idempotency_key"] == f"pack.build:{uid}:job:{job['id']}:{'ab' * 8}:{tag}"
+    # No resume version yet: no digest ("none"), then the pairing (no version, the JD, rev 0).
+    key = build["idempotency_key"]
+    assert key.startswith(f"pack.build:{uid}:job:{job['id']}:none:{tag}:none:")
+    assert key.endswith(":r0")
 
     listed = (await api.client.get("/v1/jobs", headers=h)).json()["jobs"]
     assert [j["pack"] for j in listed] == [None]

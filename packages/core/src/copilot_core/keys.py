@@ -33,13 +33,19 @@ def digest(uid: Id) -> str:
     return f"digest:{{{uid}}}"
 
 
+def resume_digest(uid: Id, resume_version_id: Id) -> str:
+    """One resume version's hot digest. `digest(uid)` stays the base version's (standups,
+    meetings, and gateways from before resume versions)."""
+    return f"digest:{{{uid}}}:{{{resume_version_id}}}"
+
+
 def pack(uid: Id, pack_id: Id) -> str:
     return f"pack:{{{uid}}}:{{{pack_id}}}"
 
 
 def pack_index(uid: Id) -> str:
-    """Hash from `job:{job_id}`, `mode:{mode}` or `employer:{employer_id}:{mode}` to the pack
-    id to load at session start."""
+    """Hash from `job:{application_id}`, `interview:{interview_id}`, `mode:{mode}` or
+    `employer:{employer_id}:{mode}` to the pack id to load at session start."""
     return f"pack:{{{uid}}}:index"
 
 

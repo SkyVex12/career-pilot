@@ -165,3 +165,13 @@ variable "budget_emails" {
 variable "github_repo" {
   type = string
 }
+
+variable "career_os_url" {
+  description = "Career-OS's API base URL (https://...), for linking accounts and pulling applications; empty turns the link off"
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.career_os_url == "" || startswith(var.career_os_url, "https://")
+    error_message = "career_os_url must be an https:// URL (it carries the link token)."
+  }
+}

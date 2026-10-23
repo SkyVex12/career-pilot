@@ -43,6 +43,11 @@ def company_document_key(user_id: UUID, employer_id: UUID, document_id: UUID) ->
     return f"{employer_prefix(user_id, employer_id)}{document_id}.sealed"
 
 
+def resume_file_key(user_id: UUID, resume_version_id: UUID) -> str:
+    """A resume file pulled from Career-OS, sealed with the user's data key."""
+    return f"{user_prefix(user_id)}resumes/{resume_version_id}.sealed"
+
+
 def me_audio_key(user_id: UUID, session_id: UUID) -> str:
     return f"{user_prefix(user_id)}me-audio/{session_id}"
 

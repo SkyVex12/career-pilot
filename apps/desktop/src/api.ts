@@ -177,10 +177,16 @@ export const api = {
   saveSettings: (settings: Settings, devToken: string | null) =>
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),
-  uploadDocument: (kind: DocumentKind, file: File) =>
+  /** `target`: a tailored resume's application, a version whose content it replaces, a label;
+   * or the application a job description belongs to. */
+  uploadDocument: (kind: DocumentKind, file: File, target?: UploadTarget) =>
     file.arrayBuffer().then((buf) =>
       invoke<DocumentItem>("upload_document", new Uint8Array(buf), {
-        headers: { "x-kind": kind, "x-file-name": encodeURIComponent(file.name) },
+        headers: {
+          "x-kind": kind,
+          "x-file-name": encodeURIComponent(file.name),
+          ...(target ? { "x-target": encodeURIComponent(JSON.stringify(target)) } : {}),
+        },
       }),
     ),
   /** A company document or work log attachment, posted raw to `path` (the API seals it). */
@@ -226,6 +232,108 @@ export interface DocumentItem {
   status: "uploaded" | "ingesting" | "ingested" | "failed";
   created_at: string;
   job_id: string | null;
+  resume_version_id?: string | null;
+}
+
+export interface UploadTarget {
+  application_id?: string | null;
+  resume_version_id?: string | null;
+  label?: string | null;
+}
+
+// Applications and resume versions (routes/applications.py, routes/resumes.py).
+
+export type Stage = "applied" | "interview" | "offer" | "rejected";
+
+export interface PairedResume {
+  version_id: string;
+  kind: "base" | "tailored";
+  label: string;
+  status: ResumeStatus;
+  /** The user chose it; otherwise the automatic rule (its tailored version, else the base). */
+  manual: boolean;
+}
+
+export interface ApplicationItem {
+  id: string;
+  company: string;
+  role: string;
+  url: string | null;
+  source_site: string | null;
+  stage: Stage;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  resume: PairedResume | null;
+  career_os: { application_id: string; pulled_at: string; content_hash: string | null } | null;
+  pack: PackInfo | null;
+}
+
+export interface ApplicationDetail extends ApplicationItem {
+  jd_text: string;
+  /** The versions it may pair with: the base and its own tailored versions. */
+  versions: { id: string; kind: "base" | "tailored"; label: string; status: ResumeStatus }[];
+  pulled?: "new" | "again";
+}
+
+export interface ApplicationFields {
+  company: string;
+  role: string;
+  url: string | null;
+  source_site: string | null;
+  stage: Stage;
+  note: string | null;
+  jd_text: string;
+}
+
+export type ResumeStatus = "saved" | "extracting" | "extracted" | "failed";
+
+export interface ResumeVersion {
+  id: string;
+  kind: "base" | "tailored";
+  label: string;
+  source: "file" | "text" | "career_os";
+  status: ResumeStatus;
+  application: { id: string; company: string; role: string } | null;
+  career_os: { ref: string; pulled_at: string } | null;
+  file: { content_type: string } | null;
+  created_at: string;
+  updated_at: string;
+  used_by: string[];
+  digest: DigestInfo | null;
+  text?: string | null;
+}
+
+// The Career-OS link (routes/career_os.py).
+
+export interface CareerOsConnection {
+  connected: boolean;
+  /** This server has Career-OS set up. */
+  available: boolean;
+  status?: "active" | "revoked";
+  user?: { id: string; name: string };
+  connected_at?: string | null;
+  last_pull_at?: string | null;
+}
+
+export interface CareerOsItem {
+  id: string;
+  company: string;
+  role: string;
+  stage: string;
+  source_site: string | null;
+  url: string | null;
+  created_at: string;
+  updated_at: string;
+  resume: "tailored" | "base" | "none";
+  pulled: { application_id: string; pulled_at: string; changed: boolean } | null;
+}
+
+export interface CareerOsQuery {
+  q?: string;
+  stage?: Stage | "";
+  from?: string;
+  to?: string;
 }
 
 export interface DigestInfo {
@@ -237,6 +345,7 @@ export interface DigestInfo {
 export interface PackInfo {
   pack_id: string;
   available: boolean;
+  resume_version_id?: string | null;
   built_at?: string;
   round?: string | null;
   prepared_answers?: number;
@@ -256,6 +365,7 @@ export type Round = "phone_screen" | "technical" | "system_design" | "final";
 
 export interface InterviewItem {
   id: string;
+  /** The application's id. */
   job_id: string;
   round: Round;
   starts_at: string;
@@ -402,12 +512,39 @@ export interface PackState {
 const call = <T>(method: string, path: string, body?: unknown) =>
   invoke<T>("api_call", { method, path, body: body ?? null });
 
+/** `?q=…&stage=…`, leaving out empty values. */
+export function queryString(query: object): string {
+  const parts = Object.entries(query)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
 export const rest = {
   me: () => call<Me>("GET", "/me"),
   usage: () => call<Usage>("GET", "/usage"),
   documents: () => call<{ documents: DocumentItem[]; digest: DigestInfo | null }>("GET", "/documents"),
   jobs: () => call<{ jobs: JobItem[] }>("GET", "/jobs"),
   interviews: () => call<{ interviews: InterviewItem[] }>("GET", "/interviews"),
+  applications: () => call<{ applications: ApplicationItem[] }>("GET", "/applications"),
+  application: (id: string) => call<ApplicationDetail>("GET", `/applications/${id}`),
+  createApplication: (fields: ApplicationFields & { resume_text?: string | null; resume_label?: string | null }) =>
+    call<ApplicationDetail>("POST", "/applications", fields),
+  updateApplication: (id: string, fields: Partial<ApplicationFields> & { resume_version_id?: string }) =>
+    call<ApplicationDetail>("PATCH", `/applications/${id}`, fields),
+  deleteApplication: (id: string) => call<null>("DELETE", `/applications/${id}`),
+  resumes: () => call<{ base: ResumeVersion | null; versions: ResumeVersion[] }>("GET", "/resumes"),
+  resume: (id: string) => call<ResumeVersion>("GET", `/resumes/${id}`),
+  createResume: (body: { kind: "base" | "tailored"; application_id?: string | null; label?: string | null; text: string }) =>
+    call<ResumeVersion>("POST", "/resumes", body),
+  updateResume: (id: string, body: { label?: string; text?: string }) => call<ResumeVersion>("PATCH", `/resumes/${id}`, body),
+  deleteResume: (id: string) => call<null>("DELETE", `/resumes/${id}`),
+  careerOs: () => call<CareerOsConnection>("GET", "/career-os/connection"),
+  connectCareerOs: (code: string) => call<CareerOsConnection>("POST", "/career-os/connect", { code }),
+  disconnectCareerOs: () => call<null>("DELETE", "/career-os/connection"),
+  searchCareerOs: (query: CareerOsQuery) =>
+    call<{ items: CareerOsItem[]; next_cursor: string | null }>("GET", `/career-os/applications${queryString(query)}`),
+  pullCareerOs: (id: string) => call<ApplicationDetail>("POST", `/career-os/applications/${encodeURIComponent(id)}/pull`),
   scheduleInterview: (jobId: string, round: Round, startsAt: string) =>
     call<InterviewItem>("POST", "/interviews", { job_id: jobId, round, starts_at: startsAt }),
   sessions: (before?: string | null) =>

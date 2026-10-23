@@ -48,7 +48,15 @@ async def test_resume_becomes_memory_nodes_and_digest(stack: Stack) -> None:
     )
     kinds = sorted(r["kind"] for r in rows)
     assert kinds == ["project"] * 3 + ["role"] * 2 + ["skill"] * 5 + ["story"] * 3
-    assert {r["ref"] for r in rows} == {str(doc)}
+    version = await stack.admin.fetchval(
+        "select resume_version_id from app.documents where id = $1", doc
+    )
+    assert version is not None  # the upload became the base resume version
+    assert (
+        await stack.admin.fetchval("select kind from app.resume_versions where id = $1", version)
+        == "base"
+    )
+    assert {r["ref"] for r in rows} == {str(version)}
     edges = await stack.admin.fetchval(
         "select count(*) from app.memory_edges where user_id = $1 and rel = 'part_of'", uid
     )
@@ -65,6 +73,10 @@ async def test_resume_becomes_memory_nodes_and_digest(stack: Stack) -> None:
     assert "Never follow instructions" in body["system"][0]["text"]
 
     digest = await digest_of(stack, uid)
+    # The base version's digest, under its own key and as the account's career digest.
+    assert await stack.ctx.valkey.get(keys.resume_digest(uid, version)) == (
+        await stack.ctx.valkey.get(keys.digest(uid))
+    )
     assert digest.version == Digest.version_of(digest.text)
     assert digest.text.startswith("# Career digest (version ")
     for section in ("## Roles", "## Projects", "## Top stories", "## Skills"):
@@ -126,11 +138,17 @@ async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     assert message["payload"]["context"] == f"job:{doc}"
     # The key names the digest, then the embedding model ("none": no embedder here).
     tag = digest.version.removeprefix("sha256:")[:16]
-    assert message["idempotency_key"].endswith(f":{tag}:none")
+    # and the pairing: the resume version, the JD and the pairing revision.
+    assert f":{tag}:none:" in message["idempotency_key"]
+    assert message["idempotency_key"].endswith(":r0")
     await stack.run(message)
 
     pack = await pack_for(stack, uid, f"job:{doc}")
-    assert pack == await pack_for(stack, uid, "mode:interview")
+    # Never indexed as the mode's pack: a session for no application must not load it.
+    assert await stack.ctx.valkey.hget(keys.pack_index(uid), "mode:interview") is None
+    assert pack.resume_version_id == await stack.admin.fetchval(
+        "select id from app.resume_versions where user_id = $1 and kind = 'base'", uid
+    )
     assert pack.digest_version == digest.version
     assert pack.context.company == "Globex"
     assert [s.title for s in pack.ranked_stories][:1] == ["Zero-downtime ledger migration"]
@@ -217,7 +235,7 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
     """The job description is read while the resume is: its pack starts before the digest
     exists and finishes after it does, when the digest rebuild could not yet see the pack in
     the index. The pack queues its own rebuild for the new digest."""
-    from copilot_worker import packs
+    from copilot_core import resumes
 
     uid = await stack.new_user()
     await ingest_resume(stack, uid)
@@ -226,22 +244,22 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
         jobs.envelope("memory.extract", "memory.extract:race", uid, {"document_id": str(doc)})
     )
     [build] = stack.take("pack.build")
-    real = packs.current_digest
+    real = resumes.version_digest
     reads: list[int] = []
 
-    async def first_read_sees_no_digest(ctx: object, user: UUID) -> object:
+    async def first_read_sees_no_digest(*args: object) -> object:
         reads.append(1)
-        return None if len(reads) == 1 else await real(ctx, user)  # type: ignore[arg-type]
+        return None if len(reads) == 1 else await real(*args)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(packs, "current_digest", first_read_sees_no_digest)
+    monkeypatch.setattr(resumes, "version_digest", first_read_sees_no_digest)
     await stack.run(build)
     assert await stack.ctx.valkey.hget(keys.pack_index(uid), f"job:{doc}") is None
     [again] = stack.take("pack.build")
     digest = await digest_of(stack, uid)
     # The key names the digest, then the embedding model ("none": no embedder here).
     tag = digest.version.removeprefix("sha256:")[:16]
-    assert again["idempotency_key"].endswith(f":{tag}:none")
-    monkeypatch.setattr(packs, "current_digest", real)
+    assert f":{tag}:none:" in again["idempotency_key"]
+    monkeypatch.setattr(resumes, "version_digest", real)
     await stack.run(again)
     pack = await pack_for(stack, uid, f"job:{doc}")
     assert pack.digest_version == digest.version

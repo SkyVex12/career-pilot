@@ -324,7 +324,18 @@ async fn upload_document(app: AppHandle, state: State<'_, AppState>, request: Re
         return Err(format!("cannot upload a {kind}"));
     }
     let file_name = header("x-file-name")?;
-    state.api()?.upload_document(&kind, &file_name, bytes.clone()).await.map_err(|e| api_error(&app, e))
+    // Optional: what the upload is for, as URI-encoded JSON (application_id, resume_version_id,
+    // label); the core refuses anything else.
+    let target = match request.headers().get("x-target").and_then(|v| v.to_str().ok()) {
+        Some(raw) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&percent_decode(raw))
+            .map_err(|e| format!("x-target: {e}"))?,
+        None => serde_json::Map::new(),
+    };
+    state
+        .api()?
+        .upload_document_for(&kind, &file_name, bytes.clone(), &target)
+        .await
+        .map_err(|e| api_error(&app, e))
 }
 
 /// A company document or work log attachment from the UI: the file's bytes as the raw body,

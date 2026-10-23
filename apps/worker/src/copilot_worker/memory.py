@@ -1,13 +1,15 @@
 """Phase 1 memory: career facts from the resume, and the hot digest built from them.
 
-The resume seeds the memory graph (ARCHITECTURE.md, "Write path", step 1): roles, projects,
-stories and skills become `memory_nodes` with `source.type = "resume"`, linked by `part_of`
-edges. A newer resume archives the nodes of the older one. Each extracted item is validated
-with a Pydantic model for its kind; items that fail are dropped.
+Each resume version seeds its own part of the memory graph (ARCHITECTURE.md, "Write path",
+step 1, and "Resume versions"): roles, projects, stories and skills become `memory_nodes` with
+`source.type = "resume"` and the version's id, linked by `part_of` edges. New content for a
+version archives that version's earlier nodes, and only those. Each extracted item is
+validated with a Pydantic model for its kind; items that fail are dropped.
 
-The digest is rendered from the active nodes without a model call, so the same memory always
-gives the same bytes (prompt caching) and a rebuild costs nothing. Short ids come from a hash
-of the node id, so they stay the same across rebuilds and match the session packs.
+A version's digest is rendered from its own active nodes without a model call, so the same
+memory always gives the same bytes (prompt caching) and a rebuild costs nothing, and no fact
+of another version can reach it. Short ids come from a hash of the node id, so they stay the
+same across rebuilds and match the session packs.
 """
 
 import hashlib
@@ -85,18 +87,19 @@ def _valid[T: _Item](model: type[T], items: Any) -> list[T]:
 
 
 async def replace_resume_nodes(
-    conn: Conn, user_id: UUID, document_id: UUID, data: dict[str, Any]
+    conn: Conn, user_id: UUID, resume_version_id: UUID, data: dict[str, Any]
 ) -> int:
-    """Archive the previous resume's nodes and write this one's; returns the node count."""
+    """Archive this version's earlier nodes and write the new ones; returns the node count."""
     roles = _valid(RoleItem, data.get("roles"))
     projects = _valid(ProjectItem, data.get("projects"))
     stories = _valid(StoryItem, data.get("stories"))
     skills = _valid(SkillItem, data.get("skills"))
-    source = {"type": "resume", "ref": str(document_id)}
+    source = {"type": "resume", "ref": str(resume_version_id)}
     await conn.execute(
         "update app.memory_nodes set status = 'archived', updated_at = now()"
-        " where user_id = $1 and status = 'active' and source->>'type' = 'resume'",
+        " where user_id = $1 and status = 'active' and resume_version_id = $2",
         user_id,
+        resume_version_id,
     )
     ids: dict[str, UUID] = {}
     rows: list[tuple[Any, ...]] = []
@@ -105,7 +108,7 @@ async def replace_resume_nodes(
         node_id = uuid7()
         if key:
             ids[key] = node_id
-        rows.append((node_id, user_id, kind, title, summary, body, source))
+        rows.append((node_id, user_id, kind, title, summary, body, source, resume_version_id))
         return node_id
 
     for r in roles:
@@ -126,8 +129,8 @@ async def replace_resume_nodes(
         node("skill", None, k.name, k.level or k.name,
              {"level": k.level, "years": k.years, "evidence_node_ids": []})  # fmt: skip
     await conn.executemany(
-        "insert into app.memory_nodes (id, user_id, kind, domain, title, summary, body, source)"
-        " values ($1, $2, $3, 'career', $4, $5, $6, $7)",
+        "insert into app.memory_nodes (id, user_id, kind, domain, title, summary, body, source,"
+        " resume_version_id) values ($1, $2, $3, 'career', $4, $5, $6, $7, $8)",
         rows,
     )
     edges: list[tuple[UUID, UUID, UUID]] = []
@@ -145,12 +148,14 @@ async def replace_resume_nodes(
     return len(rows)
 
 
-async def memory_version(conn: Conn, user_id: UUID) -> str:
-    """Changes whenever an active node is added, changed or archived."""
+async def memory_version(conn: Conn, user_id: UUID, resume_version_id: UUID | None = None) -> str:
+    """Changes whenever an active node (of the version, if given) is added, changed or
+    archived."""
     rows = await conn.fetch(
         "select id, updated_at from app.memory_nodes where user_id = $1 and status = 'active'"
-        " order by id",
+        " and ($2::uuid is null or resume_version_id = $2) order by id",
         user_id,
+        resume_version_id,
     )
     h = hashlib.sha256()
     for r in rows:
@@ -230,12 +235,14 @@ def render_digest(
     return Digest.model_validate({"version": Digest.version_of(text), "text": text, "refs": kept})
 
 
-async def load_digest_nodes(conn: Conn, user_id: UUID) -> list[Any]:
+async def load_digest_nodes(conn: Conn, user_id: UUID, resume_version_id: UUID) -> list[Any]:
+    """The digest's nodes: one resume version's career facts, and nothing else."""
     return list(
         await conn.fetch(
             "select id, kind, title, summary, body from app.memory_nodes"
-            " where user_id = $1 and status = 'active' and domain = 'career'"
-            " and kind in ('role', 'project', 'story', 'skill') order by id",
+            " where user_id = $1 and resume_version_id = $2 and status = 'active'"
+            " and domain = 'career' and kind in ('role', 'project', 'story', 'skill') order by id",
             user_id,
+            resume_version_id,
         )
     )

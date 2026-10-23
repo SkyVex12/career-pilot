@@ -134,6 +134,21 @@ async fn documents_to_interview_to_post_call_through_the_api() {
     let job_id = uuid(&jd_doc["job_id"]); // the job description became a job
     let err = api.upload_document("resume", "resume.docx", b"x".to_vec()).await.unwrap_err();
     assert!(matches!(err, ApiError::Invalid(_)), "{err:?}");
+    // A resume tailored for the application; anything but its three target fields is refused.
+    let mut bad = serde_json::Map::new();
+    bad.insert("user_id".into(), Value::from("someone-else"));
+    let err =
+        api.upload_document_for("resume", "resume.md", worker_input("resume.md"), &bad).await.unwrap_err();
+    assert!(matches!(err, ApiError::Invalid(_)), "{err:?}");
+    let mut target = serde_json::Map::new();
+    target.insert("application_id".into(), Value::from(job_id.to_string()));
+    target.insert("label".into(), Value::from("For Globex"));
+    let tailored =
+        api.upload_document_for("resume", "resume.md", worker_input("resume.md"), &target).await.unwrap();
+    let version = tailored["resume_version_id"].as_str().unwrap().to_string();
+    let app = api.get(&format!("/applications/{job_id}")).await.unwrap();
+    assert_eq!(app["resume"]["version_id"], version.as_str());
+    assert_eq!(app["resume"]["label"], "For Globex");
 
     // Jobs: the job's pack is built.
     let job = until("the job's pack", 60, || async {

@@ -2,7 +2,7 @@
 // deletion behind a confirmation.
 import { useCallback, useEffect, useState } from "react";
 import { api, rest, type SessionItem, type Usage } from "./api";
-import { Chip, when } from "./Documents";
+import { Chip, when } from "./ui";
 import { SessionDetail } from "./SessionDetail";
 
 export function History() {

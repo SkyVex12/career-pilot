@@ -11,6 +11,8 @@ from uuid import UUID
 import asyncpg
 
 from copilot_core import jobs
+from copilot_core.careeros import CareerOsClient
+from copilot_core.careeros import make_client as make_career_os
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import Conn, create_pool, system_tx, user_tx
 from copilot_core.embed import Embedder, make_embedder
@@ -40,6 +42,8 @@ class Ctx:
     embedder: Embedder | None = None
     # The Cognito user pool (user.delete); None with the dev token, which has no sign-in.
     users: UserDirectory | None = None
+    # Career-OS, to revoke an account's link when the account is deleted.
+    career_os: CareerOsClient | None = None
 
     @asynccontextmanager
     async def user(self, user_id: UUID) -> AsyncGenerator[Conn]:
@@ -99,6 +103,7 @@ async def build_ctx(settings: WorkerSettings) -> Ctx:
         router=router,
         embedder=embedder,
         users=users,
+        career_os=make_career_os(settings.career_os_url, settings.career_os_timeout_s),
     )
 
 

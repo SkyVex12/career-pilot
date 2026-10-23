@@ -41,6 +41,7 @@ VISIBILITY: dict[str, int] = {
     "me_audio.transcribe": 60,  # legacy: deletes a leftover upload, starts post-call
     "session.postcall": 900,
     "memory.extract": 900,
+    "resume.extract": 900,
     "pack.build": 600,
     "digest.rebuild": 600,
     "usage.report": 900,

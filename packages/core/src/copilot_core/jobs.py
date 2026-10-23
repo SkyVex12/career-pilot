@@ -81,17 +81,23 @@ def pack_build(
     due_at: datetime,
     digest_version: str | None,
     embedding_model: str | None = None,
+    pairing: str | None = None,
 ) -> dict[str, Any]:
-    """`pack.build` for one call context: `interview:{id}`, `job:{id}` or `standup:{date}`.
+    """`pack.build` for one call context: `interview:{id}`, `job:{id}` (an application) or
+    `standup:{date}`.
 
     A pack depends on its context, on the digest it was built from and on the embedding model
     of its prepared answers' vectors, so the key names all three: a digest rebuild or a new
-    embedding model makes a new key and the pack is rebuilt; a repeat is skipped.
+    embedding model makes a new key and the pack is rebuilt; a repeat is skipped. An
+    application's pack also depends on its pairing (`copilot_core.resumes.pairing_tag`: the
+    resume version, the JD and the pairing revision), so switching versions and back rebuilds.
     """
     key = (
         f"pack.build:{user_id}:{context}:{digest_tag(digest_version)}"
         f":{embedding_tag(embedding_model)}"
     )
+    if pairing:
+        key += f":{pairing}"
     payload = {
         "mode": mode,
         "context": context,
@@ -131,3 +137,16 @@ def workplace_refresh(user_id: UUID, employer_id: UUID, memory_version: str) -> 
     post-call commitments), embed its new nodes and rebuild its packs. Once per version."""
     key = f"workplace.refresh:{user_id}:{employer_id}:{memory_version}"
     return envelope("workplace.refresh", key, user_id, {"employer_id": str(employer_id)})
+
+
+def resume_extract(user_id: UUID, resume_version_id: UUID, content_sha256: str) -> dict[str, Any]:
+    """`resume.extract`: one resume version's content into its memory nodes, once per content."""
+    key = f"resume.extract:{user_id}:{resume_version_id}:{content_sha256}"
+    payload = {"resume_version_id": str(resume_version_id), "content_sha256": content_sha256}
+    return envelope("resume.extract", key, user_id, payload)
+
+
+def digest_rebuild(user_id: UUID, resume_version_id: UUID, memory_version: str) -> dict[str, Any]:
+    """`digest.rebuild` for one resume version, once per version of its memory."""
+    key = f"digest.rebuild:{user_id}:{resume_version_id}:{memory_version}"
+    return envelope("digest.rebuild", key, user_id, {"resume_version_id": str(resume_version_id)})

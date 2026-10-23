@@ -15,9 +15,19 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services
-from copilot_api.routes import auth, documents, employers, jobs, me, sessions
+from copilot_api.routes import (
+    applications,
+    auth,
+    career_os,
+    documents,
+    employers,
+    me,
+    resumes,
+    sessions,
+)
 from copilot_core import __version__, logs, versions
 from copilot_core.auth import make_verifier
+from copilot_core.careeros import make_client
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import create_pool
 from copilot_core.dotenv import load_dotenv
@@ -106,6 +116,7 @@ async def build_services(settings: ApiSettings) -> Services:
         store=store,
         crypto=UserCrypto(make_key_provider(settings), settings.dek_cache_ttl_s),
         verifier=make_verifier(settings),
+        career_os=make_client(settings.career_os_url, settings.career_os_timeout_s),
     )
 
 
@@ -129,7 +140,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
-    for module in (auth, me, documents, jobs, sessions, employers):
+    for module in (auth, me, documents, applications, resumes, career_os, sessions, employers):
         app.include_router(module.router, prefix="/v1")
     return app
 
