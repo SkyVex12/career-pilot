@@ -6,7 +6,8 @@
 #   ci       (main)  push images to the one Artifact Registry repository
 #   deploy   (main)  read that repository; start the VM; SSH to it through IAP with OS Login
 #                    and sudo (copilotctl runs as root); nothing else in the project
-#   release  (tags)  write the desktop installers and the update manifest to the releases bucket
+#   release  (main,  write the desktop installers and the update manifest to the releases bucket
+#             tags)  (releases on merge run from main; hand-pushed desktop-v* tags from the tag)
 
 variable "name" {
   type = string
@@ -188,13 +189,22 @@ resource "google_service_account_iam_member" "deploy_act_as_vm" {
 resource "google_service_account" "release" {
   account_id   = "${var.name}-release"
   display_name = "Copilot desktop releases"
-  description  = "release-desktop.yml on desktop-v* tags: write installers and latest.json"
+  description  = "release-desktop.yml (on main and desktop-v* tags): write installers and latest.json"
 }
 
 resource "google_service_account_iam_member" "release_github" {
   service_account_id = google_service_account.release.name
   role               = "roles/iam.workloadIdentityUser"
   member             = local.tag_runs
+}
+
+# Releases on merge: deploy.yml calls release-desktop.yml, so that run's ref is main, not a
+# tag. Main's runs may already act as the deploy account (root on the VM); writing the
+# releases bucket adds nothing beyond that.
+resource "google_service_account_iam_member" "release_github_main" {
+  service_account_id = google_service_account.release.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = local.main_runs
 }
 
 # Create and replace objects (latest.json and Copilot-setup.exe are replaced each release).
