@@ -18,6 +18,7 @@ import {
   type UpdateState,
 } from "./api";
 import { cloudUrlsFor } from "./urls";
+import { ago, banner } from "./updates";
 import { parseTarget, upcoming } from "./catalog";
 import { Documents, when } from "./Documents";
 import { History } from "./History";
@@ -113,31 +114,46 @@ export default function App() {
   );
 }
 
-/** Release builds check for a new version at start; installing it restarts the app. */
+/** Release builds update themselves (src-tauri/src/release.rs). The banner says when that
+ * happened, and in "ask me first" mode offers the install. */
 function UpdateBanner({ running }: { running: boolean }) {
   const [update, setUpdate] = useState<UpdateState>({ state: "none" });
   const [error, setError] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
     api.updateStatus().then(setUpdate);
-    const off = onUpdate(setUpdate);
+    const off = onUpdate((u) => {
+      setUpdate(u);
+      setDismissed(false);
+    });
     return () => {
       off.then((f) => f());
     };
   }, []);
-  if (update.state === "none") return null;
-  if (update.state === "failed") return <p className="callout">{update.message}</p>;
-  if (update.state === "installing") return <p className="callout">Installing version {update.version}; the app restarts…</p>;
+  const b = banner(update, running);
+  if (b.kind === "none" || dismissed) return null;
+  if (b.kind === "note") {
+    return (
+      <p className="callout">
+        {b.text}{" "}
+        {b.dismissible && (
+          <button className="link" onClick={() => setDismissed(true)}>
+            OK
+          </button>
+        )}
+      </p>
+    );
+  }
   const install = () => {
     setError(null);
     api.installUpdate().catch((e) => setError(String(e)));
   };
   return (
     <p className="callout">
-      Version {update.version} is available.{" "}
-      <button className="primary" onClick={install} disabled={running}>
+      {b.text}{" "}
+      <button className="primary" onClick={install} disabled={!b.canInstall}>
         Install and restart
       </button>
-      {running && <span className="note"> After this session.</span>}
       {error && <span className="note"> {error}</span>}
     </p>
   );
@@ -378,6 +394,9 @@ function StartScreen({
         </p>
       )}
       {session.stopped === "no_minutes" && <p className="callout">No minutes left on the plan.</p>}
+      {session.stopped === "outdated" && (
+        <p className="callout">This version is older than the server supports. The app is updating; it restarts by itself.</p>
+      )}
       {session.stopped === "unauthorized" && (
         <p className="callout">
           {environment === "cloud"
@@ -529,17 +548,70 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
   );
 
   const release = view.release;
+  const updates = view.updates;
+  const checkNow = () => {
+    setMessage(null);
+    api
+      .checkUpdates()
+      .then(() => setMessage("Checking for updates…"))
+      .catch((e) => setMessage(String(e)));
+    setTimeout(onSaved, 5000); // the check's result lands in the log
+  };
   return (
     <section className="panel">
       <div className="grid">
+        <label>Version</label>
+        <div>
+          <span>{view.version}</span>
+          {updates.enabled ? (
+            <p className="note">
+              Last checked {updates.checked_at ? ago(updates.checked_at) : "not yet"}. Checks at start and every four hours.{" "}
+              <button className="link" onClick={checkNow}>
+                Check now
+              </button>
+            </p>
+          ) : (
+            <p className="note">A development build: it does not update itself.</p>
+          )}
+        </div>
+
+        {updates.enabled && (
+          <>
+            <label>Updates</label>
+            <div>
+              <select value={draft.update_mode} onChange={(e) => set("update_mode", e.target.value as Settings["update_mode"])}>
+                <option value="auto">Install by themselves</option>
+                <option value="ask">Ask me first</option>
+              </select>
+              <p className="note">
+                Never during a call. Automatic updates install at start, a minute after a session ends, or after ten quiet
+                minutes, then the app restarts and says “Updated to …”.
+              </p>
+              {updates.log.length > 0 && (
+                <details>
+                  <summary className="note">Update log</summary>
+                  <ul className="note update-log">
+                    {updates.log
+                      .slice()
+                      .reverse()
+                      .map((e, i) => (
+                        <li key={i}>
+                          {new Date(e.at_ms).toLocaleString()}: {e.message}
+                        </li>
+                      ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          </>
+        )}
+
         {release ? (
           <>
             <label>Server</label>
             <div>
               <span>{release.stage}</span>
-              <p className="note">
-                {release.api_url} · version {view.version}
-              </p>
+              <p className="note">{release.api_url}</p>
             </div>
           </>
         ) : (

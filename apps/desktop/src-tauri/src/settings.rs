@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::release::ReleaseConfig;
+use crate::release::schedule::UpdateMode;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +49,12 @@ pub struct Settings {
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
+    /// Release builds: install updates by themselves (when no session runs), or ask first.
+    pub update_mode: UpdateMode,
+    /// The version that last ran, and the update being installed when the app exited: for
+    /// the "Updated to x.y.z" note after the restart (release::schedule::after_start).
+    pub last_version: Option<String>,
+    pub pending_update: Option<String>,
 }
 
 impl Default for Settings {
@@ -65,6 +72,9 @@ impl Default for Settings {
             hotkey: "CommandOrControl+Shift+Space".into(),
             show_debug: false,
             last_session_id: None,
+            update_mode: UpdateMode::Auto,
+            last_version: None,
+            pending_update: None,
         }
     }
 }
@@ -141,6 +151,9 @@ mod tests {
         assert_eq!(s.environment, Environment::Local);
         assert_eq!(s.active_urls(), ("ws://10.0.0.5:8081/v1/session", "http://10.0.0.5:8080/v1"));
         assert_eq!(s.hotkey, "F9");
+        // Files from before automatic updates install them by themselves.
+        assert_eq!(s.update_mode, UpdateMode::Auto);
+        assert!(s.last_version.is_none() && s.pending_update.is_none());
         let cloud = Settings {
             environment: Environment::Cloud,
             cloud_gateway_url: "ws://34.1.2.3/v1/session".into(),

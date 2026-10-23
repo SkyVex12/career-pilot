@@ -315,6 +315,23 @@ async fn a_replaced_connection_stops_without_reconnecting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_app_older_than_the_minimum_stops_with_4426_and_does_not_reconnect() {
+    let gw = Gateway::start_with(0, &[TOKEN], None, &["--min-client-version", "0.2.0"]);
+    let mut config =
+        ClientConfig::new(gw.url(), StartParams { client_version: "desktop-0.1.5".into(), ..start_params() });
+    config.ping_interval = Duration::from_secs(30);
+    let (tx, events) = tokio::sync::mpsc::unbounded_channel();
+    let (handle, task) = client::spawn(config, tokens(TOKEN), tx);
+    let call = Call { handle, events, task, seen: Vec::new(), capture_ms: 0 };
+    let (reason, seen, call) = call.stopped().await;
+    assert_eq!(reason, StopReason::Outdated);
+    let stats = call.handle.stats();
+    assert_eq!(stats.close_codes, vec![Some(4426)]);
+    assert_eq!(stats.connects, 1, "no reconnect after 4426");
+    assert!(seen.iter().any(|e| matches!(e, ClientEvent::Server { message: ServerMessage::ServerError(err) } if err.code == "client_outdated")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_second_session_gets_4409_until_the_other_is_ended() {
     let gw = Gateway::start(0, &[TOKEN], None);
     let mut a = Call::start(&gw.url(), tokens(TOKEN), None);

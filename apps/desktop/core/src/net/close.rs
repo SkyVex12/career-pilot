@@ -30,6 +30,8 @@ pub enum StopReason {
     Replaced,
     /// 4401 again right after a token refresh: the token is no good.
     Unauthorized,
+    /// 4426: this app is older than the server supports. Do not reconnect; update.
+    Outdated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +77,7 @@ pub fn on_close(code: Option<u16>, ctx: CloseContext) -> CloseAction {
         Some(CloseCode::NoStart) => Reconnect { resume: false, delay: Delay::Backoff, refresh_token: false },
         Some(CloseCode::SessionActive) => Stop(StopReason::SessionActive),
         Some(CloseCode::Replaced) => Stop(StopReason::Replaced),
+        Some(CloseCode::ClientOutdated) => Stop(StopReason::Outdated),
         Some(CloseCode::RateLimited) => Reconnect {
             resume,
             delay: ctx.retry_after_ms.map_or(Delay::Backoff, |ms| Delay::After(Duration::from_millis(ms))),
@@ -108,6 +111,7 @@ mod tests {
             (4408, reconnect(false, Delay::Backoff)),
             (4409, CloseAction::Stop(StopReason::SessionActive)),
             (4410, CloseAction::Stop(StopReason::Replaced)),
+            (4426, CloseAction::Stop(StopReason::Outdated)),
             (4429, reconnect(true, Delay::Backoff)),
             (4500, reconnect(true, Delay::Backoff)),
         ];
