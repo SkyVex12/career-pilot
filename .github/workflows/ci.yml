@@ -2,6 +2,11 @@
 # stack, protocol codegen and migration checks, and a Terraform plan for Stage 0 posted on the
 # PR. Merging runs .github/workflows/deploy.yml, which runs these same jobs first (as a
 # reusable workflow) and deploys only if they pass.
+#
+# To save Actions minutes, each job runs only when its area changed (scripts/ci_changes.py):
+# on a pull request, its changes; on main, what the push brought. A manual run, a change to CI
+# itself, or a file no area knows runs everything. The Rust caches are saved from main only;
+# pull requests restore main's (saving a branch's own copy took eight minutes on Windows).
 name: ci
 
 on:
@@ -14,6 +19,10 @@ on:
         type: string
         required: false
         default: ""
+    outputs:
+      server:
+        description: "true if the change needs new images and a deploy (deploy.yml)"
+        value: ${{ jobs.changes.outputs.server }}
 
 # A new push to a pull request cancels its older run. Runs called by deploy.yml are never
 # cancelled here; deploy.yml decides which deploy wins.
@@ -25,8 +34,43 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: changes (which jobs to run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      windows: ${{ steps.areas.outputs.windows }}
+      rust_linux: ${{ steps.areas.outputs.rust_linux }}
+      python: ${{ steps.areas.outputs.python }}
+      typescript: ${{ steps.areas.outputs.typescript }}
+      terraform: ${{ steps.areas.outputs.terraform }}
+      server: ${{ steps.areas.outputs.server }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - id: areas
+        name: Changed areas
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          # deploy.yml on a push to main: the commit before the push.
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            args="--base $PR_BASE --head HEAD"
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            args="--base $BEFORE --head HEAD"
+          else
+            args="--all"
+          fi
+          python3 scripts/ci_changes.py $args --github-output | tee -a "$GITHUB_STEP_SUMMARY"
+
   python:
     name: python (lint, types, tests with the stack)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Postgres and Valkey run as service containers. ElasticMQ and the S3 store need a config
@@ -71,6 +115,8 @@ jobs:
 
   typescript:
     name: typescript (types, tests, codegen)
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -98,6 +144,8 @@ jobs:
     # The protocol crate and the client core (audio pipeline, VAD, AEC, framing, the gateway
     # and API clients, Cognito sign-in) have no Windows-only code, so their tests run on Linux,
     # which builds faster and costs a third of a Windows runner's minutes.
+    needs: changes
+    if: needs.changes.outputs.rust_linux == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -118,6 +166,7 @@ jobs:
         with:
           shared-key: rust-linux
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.7"
@@ -137,6 +186,8 @@ jobs:
     name: rust (desktop shell, Windows)
     # The Tauri shell (WASAPI capture devices, the Credential Manager, WebView2) is
     # Windows-only for now, so it is linted and tested here; the shared crates run on Linux.
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 40
     env:
@@ -154,6 +205,7 @@ jobs:
         with:
           shared-key: rust-windows
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy -p copilot-desktop --all-targets -- -D warnings
       # The installer's build (release.yml): apps/desktop/release.json embedded, no dev token,
       # the updater.
@@ -165,6 +217,8 @@ jobs:
 
   terraform:
     name: terraform (fmt, validate, plan for Stage 0)
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

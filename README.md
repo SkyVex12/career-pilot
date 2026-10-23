@@ -417,9 +417,13 @@ Done once, by hand, in this order.
 Every push to `main` deploys (`.github/workflows/deploy.yml`):
 
 1. **Checks:** the same jobs as on a pull request (`ci.yml`: Python, TypeScript, Rust on Linux
-   and Windows, Terraform). Nothing below runs unless all of them pass.
-2. **Images:** gateway, API, worker and proxy for linux/amd64 and linux/arm64, one tag, the git
-   SHA, in Artifact Registry.
+   and Windows, Terraform), each only if its area changed (see "Actions minutes"). Nothing
+   below runs unless all of them pass.
+2. **Images:** gateway, API, worker and proxy for linux/amd64 (the VM's), tagged with the git
+   SHA, in Artifact Registry. Only when the push changed the server (the services, `packages/`
+   Python, migrations, `docker/`, the Python lockfile); a desktop, docs or Terraform merge
+   skips the images and the deploy, so the VM keeps running the last deployed commit. A
+   manual run (Actions → deploy → Run workflow) always builds and deploys.
 3. **Deploy** of exactly those images, as the deploy service account (Workload Identity
    Federation; IAP and OS Login to the VM, no SSH port): `stage.py deploy --tag <sha> --start
    --check`. If the VM is stopped it is started first and left running (the run's summary
@@ -436,6 +440,17 @@ Every push to `main` deploys (`.github/workflows/deploy.yml`):
 One deploy runs at a time: a merge that lands during a deploy waits for it, and of several
 waiting the newest wins (the older ones show as cancelled). A call in progress reconnects and
 resumes in a few seconds.
+
+**Actions minutes.** The repository is private, so Actions minutes count against the free
+plan's 2,000 a month, and Windows minutes count double. To keep well inside it:
+`scripts/ci_changes.py` decides which jobs a change needs (a pull request's changes, or on
+`main` what the push brought). The Windows job runs only when the desktop shell, the client
+core, the protocol's Rust or the Cargo files changed; Python, TypeScript, Terraform and the
+Linux Rust job each have their own areas. Docs-only changes run nothing. A change to CI itself,
+or a file no area knows, runs everything. Dry-run it on your branch:
+`python scripts/ci_changes.py --base origin/main`. The Rust caches are saved only from `main`
+(pull requests restore `main`'s; a branch saving its own copy took eight minutes on Windows).
+Images are built for linux/amd64 only.
 
 **Watching a deploy:** Actions → deploy, or `gh run watch` (`gh run list --workflow deploy`).
 The run's summary page shows the commit, the tag it replaced, the health check, and whether
@@ -740,7 +755,8 @@ uv run pyright
   `apps/desktop/src-tauri/src/release.rs` tests the update schedule (never during a session,
   even when the server insists; at start, after a session, when idle; ask mode; a session
   start and an install never overlap; the restart note) and the update log;
-  `apps/desktop/tests/updates.test.ts` the banner. The version guard:
+  `apps/desktop/tests/updates.test.ts` the banner. `tests/test_ci_changes.py`: which CI jobs
+  and whether a deploy each kind of change needs. The version guard:
   `apps/gateway/tests/test_version_guard.py` (4426, and 4410 for 0.1.0),
   `apps/api/tests/test_version_guard.py` (426) and, end to end, the client stopping on 4426
   without reconnecting (`apps/desktop/core/tests/gateway.rs`).
