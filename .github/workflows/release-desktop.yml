@@ -1,9 +1,18 @@
-# The desktop installer (README.md, "Releasing the desktop app"): push a tag desktop-v<version>
-# (e.g. desktop-v0.2.0) on a commit on main. The Windows runner builds the NSIS installer with
-# that version, pointed at the stage in apps/desktop/release.json, with the updater signature
-# (secrets TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD). The publish job
-# puts it in the public releases bucket, latest.json last, so installed apps update at their
-# next start.
+# The desktop installer (README.md, "Releasing the desktop app"). Two ways in:
+#
+# - After every deploy of main (deploy.yml calls this workflow once the backend deploy passed):
+#   the plan job (scripts/desktop_release.py) releases the next patch version only if the merge
+#   changed something the app ships since the last desktop-v* tag, and skips otherwise. The
+#   desktop-v<version> tag is pushed after the publish. (A tag pushed with GITHUB_TOKEN starts
+#   no workflow, which is why deploy.yml calls this one instead of relying on the tag.)
+# - A tag desktop-v<version> pushed by hand on a commit on main (minor and major versions):
+#   always a release, with that version.
+#
+# The Windows runner builds the NSIS installer with that version, pointed at the stage in
+# apps/desktop/release.json, with the updater signature (secrets TAURI_SIGNING_PRIVATE_KEY and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD). The publish job puts it in the public releases bucket,
+# latest.json last and never over a newer one; installed apps find it at their next check
+# (at start and every four hours) and install it when no call is running.
 #
 # Windows code signing is off until there is a certificate: set the repository variable
 # AZURE_SIGNING_ACCOUNT (and its secrets, below) for Azure Trusted Signing, or
@@ -13,32 +22,73 @@ name: release-desktop
 on:
   push:
     tags: ["desktop-v*"]
+  workflow_call:
+    inputs:
+      sha:
+        description: The commit on main that deploy.yml just deployed
+        type: string
+        required: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-desktop
-  cancel-in-progress: false
+# No workflow-level concurrency: deploy.yml holds the group `release-desktop` around the call
+# (a group here would wait on itself). Publishes are one at a time (the publish job).
 
 jobs:
+  plan:
+    name: plan (release or skip, version, notes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+      create_tag: ${{ steps.plan.outputs.create_tag }}
+      notes: ${{ steps.plan.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0 # every tag and the merges since the last one
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.7"
+      - id: plan
+        name: Plan
+        env:
+          SHA: ${{ inputs.sha || github.sha }}
+          # Set for a tag pushed by hand; empty when deploy.yml calls (its ref is main).
+          TAG: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
+        run: |
+          uv run --no-project python scripts/desktop_release.py plan --sha "$SHA" --tag "$TAG" --published --github-output
+      - name: Summary
+        env:
+          RELEASE: ${{ steps.plan.outputs.release }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          NOTES: ${{ steps.plan.outputs.notes }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            { echo "### Desktop $VERSION: releasing"; echo; echo "$REASON"; echo; echo '```'; echo "$NOTES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            { echo "### Desktop: no release"; echo; echo "$REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
     name: installer (Windows)
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: windows-2025
     timeout-minutes: 60
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ needs.plan.outputs.version }}
     env:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v5
-      - id: version
-        name: Version from the tag
-        shell: bash
-        run: |
-          v="${GITHUB_REF_NAME#desktop-v}"
-          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::tag $GITHUB_REF_NAME: expected desktop-v1.2.3"; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
       - name: The updater's signing key is set
         shell: bash
         env:
@@ -74,7 +124,7 @@ jobs:
 
       - name: Release config (version, updater, signing)
         working-directory: apps/desktop
-        run: node scripts/release.mjs config --version ${{ steps.version.outputs.version }}
+        run: node scripts/release.mjs config --version ${{ needs.plan.outputs.version }}
       - name: Build the installer
         working-directory: apps/desktop
         env:
@@ -86,7 +136,9 @@ jobs:
         run: pnpm tauri build --features release --config src-tauri/tauri.release.conf.json
       - name: Release files and the update manifest
         working-directory: apps/desktop
-        run: node scripts/release.mjs manifest --version ${{ steps.version.outputs.version }} --out ../../dist-release
+        env:
+          COPILOT_RELEASE_NOTES: ${{ needs.plan.outputs.notes }}
+        run: node scripts/release.mjs manifest --version ${{ needs.plan.outputs.version }} --out ../../dist-release
       - name: Signed for Windows?
         shell: pwsh
         run: |
@@ -94,36 +146,42 @@ jobs:
           "Authenticode: $($sig.Status) $($sig.SignerCertificate.Subject)" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ steps.version.outputs.version }}
+          name: desktop-${{ needs.plan.outputs.version }}
           path: dist-release
           if-no-files-found: error
 
   publish:
     name: publish to the releases bucket
-    needs: build
+    needs: [plan, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # One publish at a time, whether from a merge or a tag pushed by hand.
+    concurrency:
+      group: release-desktop-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write # Workload Identity Federation into the release account: no stored key
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      SHA: ${{ needs.plan.outputs.sha }}
       BUCKET: ${{ vars.GCP_RELEASES_BUCKET }}
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
-      - name: The tag is on main
+      - name: The commit is on main
         run: |
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
-            { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; tag a commit on main"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main ||
+            { echo "::error::$SHA is not on main; tag a commit on main"; exit 1; }
       - name: The repository variables are set
         run: |
           [ -n "$BUCKET" ] && [ -n "${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}" ] ||
             { echo "::error::set GCP_RELEASES_BUCKET and GCP_RELEASE_SERVICE_ACCOUNT (terraform output ci)"; exit 1; }
       - uses: actions/download-artifact@v4
         with:
-          name: desktop-${{ needs.build.outputs.version }}
+          name: desktop-${{ needs.plan.outputs.version }}
           path: dist-release
       - name: The manifest points at this bucket
         run: |
@@ -132,6 +190,16 @@ jobs:
             "https://storage.googleapis.com/$BUCKET/desktop/$VERSION/"*) echo "installer url: $url" ;;
             *) echo "::error::latest.json points at $url, not this bucket: run stage.py desktop-config"; exit 1 ;;
           esac
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.7"
+      - name: Never over a newer release
+        run: |
+          live=$(curl -fsS "https://storage.googleapis.com/$BUCKET/desktop/latest.json" | jq -r .version) || live=""
+          if [ -n "$live" ] && uv run --no-project python scripts/desktop_release.py newer "$live" "$VERSION"; then
+            echo "::error::the bucket already has $live, newer than $VERSION; tag a higher version"; exit 1
+          fi
+          echo "published now: ${live:-none}; publishing $VERSION"
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -140,8 +208,7 @@ jobs:
       - name: Upload (the versioned installer, then the download link, then latest.json)
         run: |
           base="gs://$BUCKET/desktop"
-          gcloud storage cp --cache-control="public, max-age=31536000, immutable" \
-            "dist-release/$VERSION/"* "$base/$VERSION/"
+          gcloud storage cp --cache-control="public, max-age=31536000, immutable"             "dist-release/$VERSION/"* "$base/$VERSION/"
           gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/Copilot-setup.exe "$base/Copilot-setup.exe"
           gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/latest.json "$base/latest.json"
       - name: Summary
@@ -151,5 +218,28 @@ jobs:
             echo ""
             echo "- Download: https://storage.googleapis.com/$BUCKET/desktop/Copilot-setup.exe"
             echo "- Update manifest: https://storage.googleapis.com/$BUCKET/desktop/latest.json"
-            echo "- Installed apps offer the update at their next start."
+            echo "- Installed apps find it at their next check (at start, then every four hours) and install it when no call is running."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A release from a merge gets its tag once it is published, so the next plan counts from it.
+  # (Pushed with GITHUB_TOKEN, the tag starts no other run.)
+  tag:
+    name: tag desktop-v${{ needs.plan.outputs.version }}
+    needs: [plan, publish]
+    if: needs.plan.outputs.create_tag == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Push the tag
+        env:
+          TAG: desktop-v${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          git tag "$TAG" "$SHA"
+          git push origin "refs/tags/$TAG"
+          echo "Tagged \`$SHA\` as \`$TAG\`." >> "$GITHUB_STEP_SUMMARY"

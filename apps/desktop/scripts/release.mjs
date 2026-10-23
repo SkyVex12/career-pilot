@@ -9,7 +9,7 @@
 //   node scripts/release.mjs manifest --version 0.2.0 --out dist-release
 //       copies the installer and its signature from target/release/bundle/nsis into the
 //       folder, as they are published to the releases bucket, and writes latest.json, the
-//       update manifest the installed apps read at start
+//       update manifest the installed apps check (notes from --notes or COPILOT_RELEASE_NOTES)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,7 +107,8 @@ function writeManifest(a) {
   copyFileSync(installer, join(out, "Copilot-setup.exe"));
   const manifest = {
     version: v,
-    notes: typeof a.notes === "string" ? a.notes : `Copilot ${v}`,
+    // --notes, or COPILOT_RELEASE_NOTES (release-desktop.yml: the merged pull requests' titles).
+    notes: typeof a.notes === "string" ? a.notes : process.env.COPILOT_RELEASE_NOTES?.trim() || `Copilot ${v}`,
     pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     platforms: {
       "windows-x86_64": {
