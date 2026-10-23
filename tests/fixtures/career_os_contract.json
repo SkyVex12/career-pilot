@@ -54,7 +54,7 @@
         "schema_version": "categorizer_v2",
         "created_at": "2026-10-01T09:05:00",
         "text": "Alex Doe\nSenior Backend Engineer\n\nExperience\nAcme Corp, Backend Engineer, 2021 to now\n- Moved the ledger to a new store with zero downtime; p95 latency down 40%\n",
-        "file": {"filename": "resume.pdf", "content_type": "application/pdf", "size": 48213}
+        "file": {"filename": "resume.pdf", "content_type": "application/pdf"}
       },
       "base_resume": {"text": "Alex Doe\nBackend Engineer\n\nExperience\nAcme Corp, Backend Engineer, 2021 to now\n- Built payment services\n", "updated_at": "2026-09-20T08:00:00"},
       "content_hash": "3f1c2a9e0b7d4c6e8a1f2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70"
@@ -65,8 +65,8 @@
     "response_headers": {"content-type": "application/pdf", "content-disposition": "attachment; filename=\"resume.pdf\""}
   },
   "errors": {
-    "401": "missing, unknown, revoked or expired token or code; disabled user",
-    "403": "a link code asked for by an admin, or a session token used on the bearer endpoints",
+    "401": "missing, unknown, revoked or expired token or code; a session token on the bearer endpoints; disabled user",
+    "403": "a link code asked for by an admin (link codes are for users signed in as themselves)",
     "404": "no such application for this user (another user's looks the same)",
     "429": "rate limited: {\"detail\": \"...\"} with Retry-After"
   }
