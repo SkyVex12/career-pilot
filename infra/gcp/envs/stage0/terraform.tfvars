@@ -66,3 +66,8 @@ image_keep_count   = 30 # about 10 deploys: each multi-arch tag is three version
 budget_monthly_usd = 25
 budget_emails      = ["leadstar116@proton.me"]
 github_repo        = "SkyVex12/career-pilot"
+
+# The Career-OS backend (Cloud Run, project-045de1e9-8f62-42ef-b6d, us-east1), for linking
+# accounts and pulling applications (ARCHITECTURE.md, "Career-OS link"). Its web app is
+# https://career-os-delta.vercel.app, where users make the link code.
+career_os_url = "https://career-os-backend-27mjonenmq-ue.a.run.app"
