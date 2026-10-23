@@ -1,6 +1,6 @@
 """Worker tests against the docker compose stack: a throwaway migrated database (connected as
-app_worker and app_system), Valkey database 14, the S3 store, and recorded model and
-Deepgram responses replayed through the real clients (see copilot_worker.testing).
+app_worker and app_system), Valkey database 14, the S3 store, and recorded model responses
+replayed through the real clients (see copilot_worker.testing).
 `stack` replays Claude's recordings; `openai_stack` OpenAI's, with only openai configured."""
 
 import base64
@@ -18,10 +18,9 @@ from copilot_core.storage import S3Store
 from copilot_core.teststack import StackUnavailableError, as_role, temp_database
 from copilot_core.valkey_client import make_valkey
 from copilot_worker.context import Ctx
-from copilot_worker.fixtures import DeepgramFixtures, fixture_provider, model_fixtures
+from copilot_worker.fixtures import fixture_provider, model_fixtures
 from copilot_worker.llm import build_router
 from copilot_worker.prompts import JOB_PROMPTS
-from copilot_worker.stt import DeepgramPrerecorded
 from copilot_worker.testing import FIXTURES, Stack, worker_settings
 
 OPENAI: dict[str, Any] = {
@@ -41,7 +40,6 @@ async def make_stack(wire: str, **settings_over: Any) -> AsyncIterator[Stack]:
         pytest.fail(str(e), pytrace=False)
     settings = worker_settings(**settings_over)
     claude = model_fixtures(FIXTURES, JOB_PROMPTS, wire)
-    deepgram = DeepgramFixtures(FIXTURES)
     jobs = MemoryJobQueue()
     store = S3Store(settings)
     await store.ensure_bucket()
@@ -57,11 +55,10 @@ async def make_stack(wire: str, **settings_over: Any) -> AsyncIterator[Stack]:
             DevKeyProvider(base64.b64decode(settings.dev_master_key.get_secret_value()))
         ),
         router=build_router(settings, [fixture_provider(claude)]),
-        stt=DeepgramPrerecorded("fixture", transport=deepgram),
     )
     admin = await asyncpg.connect(url)
     try:
-        yield Stack(ctx, admin, jobs, claude, deepgram, url)
+        yield Stack(ctx, admin, jobs, claude, url)
     finally:
         await admin.close()
         await ctx.pool.close()

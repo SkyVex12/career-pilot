@@ -700,6 +700,16 @@ pub struct SessionReady {
     pub session_id: Uuid,
     pub server_time: String,
     pub limits: SessionLimits,
+    /// true: the gateway transcribes the user's own speech live, so the client sends speech audio
+    /// on the me channel (after echo cancellation and VAD, never silence). Absent or false: me
+    /// frames carry speech flags only, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub me_audio: Option<bool>,
+    /// Question types whose deep answer starts on its own once the fast answer is done; other types
+    /// get one only on answer.expand. Absent: the client assumes behavioral, technical and
+    /// system_design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep_auto_types: Option<Vec<QuestionType>>,
 }
 
 impl Validate for SessionReady {
@@ -741,7 +751,8 @@ impl Validate for TranscriptPartial {
     }
 }
 
-/// Final text for a segment.
+/// Final text for a segment, on either channel (the me channel only when session.ready said
+/// me_audio).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TranscriptFinal {
     /// Per-session server message counter. Starts at 1 and increases by one per message; the client
@@ -752,6 +763,10 @@ pub struct TranscriptFinal {
     pub text: String,
     pub start_ms: u64,
     pub end_ms: u64,
+    /// Only on the me channel: true when the gateway took the segment for the other side's voice
+    /// leaking into the microphone. Its text is not used or stored, and the client drops the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo: Option<bool>,
 }
 
 impl Validate for TranscriptFinal {
@@ -1023,12 +1038,13 @@ impl CloseCode {
 }
 
 /// Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200
-/// bytes; may be empty on a speech-end frame, and is always empty on the me channel). Byte layout:
-/// [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32
-/// big-endian. Binary frames are at most 64 KB.
+/// bytes; may be empty on a speech-end frame; on the me channel empty unless session.ready said
+/// me_audio). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian,
+/// [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioFrameHeader {
-    /// 0 = them (system output), 1 = me (microphone; speech flags only, no audio).
+    /// 0 = them (system output), 1 = me (microphone, echo-cancelled; speech audio when
+    /// session.ready said me_audio, else speech flags only).
     pub channel: u8,
     /// Bit 0 = VAD speech start, bit 1 = VAD speech end. Other bits are 0.
     pub flags: u8,

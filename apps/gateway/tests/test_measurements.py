@@ -74,7 +74,8 @@ async def test_prepared_similarity_is_kept_on_a_miss(env) -> None:
 
 async def test_client_first_word_is_stored_with_the_answer(env) -> None:
     await seed_memory(env)
-    async with GatewayServer(env.services()) as gw:
+    # The deep pass only on expand, so its tap is measured.
+    async with GatewayServer(env.services(env.settings(deep_pass_auto=False))) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
         await c.send({"type": "question.force", "text": "Why us?"})

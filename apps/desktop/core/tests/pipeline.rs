@@ -7,7 +7,6 @@ use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::audio::{OutFrame, TICK_SAMPLES};
 use copilot_client::protocol::Channel;
 use copilot_client::protocol::audio::{CHANNEL_ME, CHANNEL_THEM, FLAG_SPEECH_END, FLAG_SPEECH_START};
-use copilot_client::recording::NoRecording;
 
 fn load(name: &str) -> Vec<f32> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -19,7 +18,7 @@ fn load(name: &str) -> Vec<f32> {
 
 fn pipeline(aec: Box<dyn EchoCanceller>) -> Pipeline {
     let vad = || ChannelVad::new(Box::new(Silero::new().unwrap()), VadParams::default());
-    Pipeline::new(aec, vad(), vad(), Box::new(NoRecording))
+    Pipeline::new(aec, vad(), vad())
 }
 
 struct Run {
@@ -130,4 +129,14 @@ fn with_echo_the_users_own_speech_still_counts() {
     let overlap: u32 =
         r.me_segments.iter().map(|&(a, b)| b.min(near_to).saturating_sub(a.max(near_from))).sum();
     assert!(overlap > 1_500, "user speech detected for only {overlap} ms: {:?}", r.me_segments);
+    // The user's speech goes out as audio for the gateway's live STT, and only speech: each
+    // segment plus its pre-roll and the end decision's hangover, never the silence between.
+    let me_frames: Vec<&OutFrame> = r.frames.iter().filter(|f| f.channel == CHANNEL_ME).collect();
+    let me_audio_ms = (me_frames.iter().map(|f| f.audio.len()).sum::<usize>() / 16) as u32;
+    assert!(me_audio_ms >= overlap, "{me_audio_ms} ms of mic audio sent for {overlap} ms of speech");
+    let bound = r.me_speech_ms + 600 * r.me_segments.len() as u32;
+    assert!(me_audio_ms <= bound, "{me_audio_ms} ms of mic audio sent, over {bound}");
+    let starts = me_frames.iter().filter(|f| f.flags & FLAG_SPEECH_START != 0).count();
+    let ends = me_frames.iter().filter(|f| f.flags & FLAG_SPEECH_END != 0).count();
+    assert_eq!((starts, ends), (r.me_segments.len(), r.me_segments.len()));
 }

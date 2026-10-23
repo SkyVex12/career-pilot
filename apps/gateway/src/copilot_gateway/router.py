@@ -18,7 +18,11 @@ from copilot_core.providers import make_providers, openai_params
 from copilot_gateway.config import Settings
 
 Family = Literal["haiku", "sonnet"]
-JOBS: dict[str, Family] = {"detector": "haiku", "fast": "haiku", "deep": "sonnet"}
+# "summary" is the call's rolling summary (conversation memory): background, on the cheapest
+# family, like the detector.
+JOBS: dict[str, Family] = {
+    "detector": "haiku", "fast": "haiku", "deep": "sonnet", "summary": "haiku",
+}  # fmt: skip
 SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 

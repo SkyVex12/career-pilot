@@ -144,7 +144,6 @@ The API (base path `/v1`, bearer token on every request):
 | `POST /interviews`, `GET /interviews` | Schedule an interview (builds its pack for the round) |
 | `GET /sessions`, `GET /sessions/{id}` | Sessions; one session's status (`live`, `processing`, `ready`) and outputs |
 | `GET /sessions/{id}/transcript`, `DELETE /sessions/{id}` | The decrypted transcript, if stored; delete a session and its log |
-| `POST /sessions/{id}/me-audio`, `.../me-audio/complete` | Upload the user's own audio after the call; completing starts transcription |
 | `GET /usage` | Live minutes this month (`?month=YYYY-MM` for another) |
 
 ### Running the gateway locally
@@ -224,12 +223,12 @@ One terminal per long-running step.
 `scripts/dev_profile.py --resume resume.pdf --job job.md --round technical` does steps 6 and 7
 from the command line.
 
-With transcript consent the app records your own audio (the microphone after echo
-cancellation) in `%LOCALAPPDATA%\com.copilot.desktop\me-audio`, encrypted with a key kept in
-the Windows Credential Manager (`com.copilot.desktop`, `me-audio-key`). It uploads it when the
-call ends, retries for about 11 minutes, deletes it once the upload is complete, and retries
-whatever is left at the next start. Without consent nothing is recorded. Post-call work waits
-up to 10 minutes for the upload.
+Your own words are transcribed live, like the other side's: the app sends your microphone's
+speech (after echo cancellation, silence never sent) to the gateway, which shows them in the
+overlay as "You said" lines and gives them to the answers. No audio is recorded or uploaded;
+with transcript consent the words are stored with the transcript, without it they are not.
+A version before this one kept a recording in `%LOCALAPPDATA%\com.copilot.desktop\me-audio`;
+the app deletes that folder at its next start.
 
 To check the devices without the app, `cargo run -p copilot-client --example capture_check -- 5`
 lists them and reports how much audio each stream delivered (play something meanwhile;
@@ -278,20 +277,18 @@ Markdown or text file.
    ("Tell me about a time..."), two technical, one system design, plus small talk and a
    question for someone else ("Sam, what do you think?"), which should not fire. Answer
    aloud. Expect talking points about a second after each question ends (on OpenAI about
-   2 to 3 seconds: see "OpenAI as a provider" in ARCHITECTURE.md), and a deeper answer below
-   for behavioral, technical and system design ones. Try the hotkey once after
+   2 to 3 seconds: see "OpenAI as a provider" in ARCHITECTURE.md), the detailed answer
+   streaming in below them a moment later, and your own answer as "You said" lines. Try the hotkey once after
    a question the overlay missed, and type one question into the overlay. Open the debug
    panel (Ctrl+Shift+D) to see the latency per question.
-10. **End the session.** The post-call screen shows "Waiting for your audio", then "Your audio
-    is uploaded", then the summary, feedback and follow-up email (Copy puts it on the
-    clipboard), and the transcript with both sides. Expect this within about 3 minutes.
+10. **End the session.** The post-call screen shows "Writing the summary…", then the
+    summary, feedback and follow-up email (Copy puts it on the clipboard), and the transcript
+    with both sides. Expect this within about 2 minutes.
 11. **History.** The session is listed with its minutes; opening it shows the same outputs.
     The live minutes at the top include it.
-12. **Optional checks.** A short session without transcript consent: no recording appears in
-    the `me-audio` folder, and the summary covers only length and question types. Close the
-    app right after ending a consented session (before the upload): at the next start the
-    recording uploads and the session still gets its transcript, if that start is within 10
-    minutes of the end. Delete a session from History. Delete the account last (type
+12. **Optional checks.** A short session without transcript consent: the transcript is empty
+    afterwards, and the summary covers only length and question types. Delete a session from
+    History. Delete the account last (type
     "delete"): History is empty afterwards.
 
 Things worth sending back: the debug panel's latency table, questions the overlay missed or
@@ -302,8 +299,7 @@ the worker log around any failure.
 running with `COPILOT_LLM_PROVIDERS=openai`): `scripts/dev_profile.py` as above, then a
 session with typed `question.force` messages through `copilot_gateway.testing.ProtocolClient`
 (`ws://127.0.0.1:8081/v1/session`, the dev token), `answer.expand` for the deep pass,
-`session.end`, the user's audio through `POST /sessions/{id}/me-audio` and `.../complete`, and
-`GET /sessions/{id}` until it is `ready`. The gateway logs `prepared-answer matching on:
+`session.end`, and `GET /sessions/{id}` until it is `ready`. The gateway logs `prepared-answer matching on:
 openai:...` at startup and opens its OpenAI connection (`GET /v1/models`) before the first
 question.
 

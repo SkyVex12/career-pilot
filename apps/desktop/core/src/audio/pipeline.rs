@@ -2,8 +2,8 @@
 //!
 //! [`Pipeline::process_tick`] takes one 10 ms tick of each stream: the system output goes to
 //! the echo canceller as its reference and to the "them" VAD; the mic is cleaned by the echo
-//! canceller, handed to the recording hook, and goes to the "me" VAD. The VAD events become
-//! wire frames. [`AudioThread`] drives it on the wall clock from an [`AudioSource`].
+//! canceller and goes to the "me" VAD. The VAD events become wire frames carrying the speech
+//! of both channels (silence is never sent). [`AudioThread`] drives it on the wall clock from an [`AudioSource`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
@@ -12,14 +12,14 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use copilot_protocol::Channel;
+use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM};
 
 use super::aec::EchoCanceller;
 use super::clock::{Fifo, PRIME_MS, Ticker};
-use super::framer::{MeFramer, ThemFramer};
+use super::framer::SpeechFramer;
 use super::source::{AudioSource, CaptureError, Packet};
 use super::vad::{ChannelVad, VadEvent};
 use super::{OutFrame, TICK_SAMPLES, samples_to_ms, to_i16};
-use crate::recording::MeAudioSink;
 
 /// What a tick produced, for the network client and the UI.
 #[derive(Debug, Default)]
@@ -44,27 +44,20 @@ pub struct Pipeline {
     aec: Box<dyn EchoCanceller>,
     them_vad: ChannelVad,
     me_vad: ChannelVad,
-    them_framer: ThemFramer,
-    me_framer: MeFramer,
-    recorder: Box<dyn MeAudioSink>,
+    them_framer: SpeechFramer,
+    me_framer: SpeechFramer,
     tick: u64,
     me_clean: Vec<f32>,
 }
 
 impl Pipeline {
-    pub fn new(
-        aec: Box<dyn EchoCanceller>,
-        them_vad: ChannelVad,
-        me_vad: ChannelVad,
-        recorder: Box<dyn MeAudioSink>,
-    ) -> Self {
+    pub fn new(aec: Box<dyn EchoCanceller>, them_vad: ChannelVad, me_vad: ChannelVad) -> Self {
         Self {
             aec,
             them_vad,
             me_vad,
-            them_framer: ThemFramer::new(),
-            me_framer: MeFramer,
-            recorder,
+            them_framer: SpeechFramer::new(CHANNEL_THEM),
+            me_framer: SpeechFramer::new(CHANNEL_ME),
             tick: 0,
             me_clean: vec![0.0; TICK_SAMPLES],
         }
@@ -76,15 +69,13 @@ impl Pipeline {
 
     pub fn process_tick(&mut self, them: &[f32], me: &[f32]) -> TickOutput {
         let mut out = TickOutput::default();
-        let at_ms = self.capture_ms();
         self.me_clean.copy_from_slice(me);
         self.aec.process(them, &mut self.me_clean);
-        self.recorder.on_audio(at_ms, &self.me_clean);
 
         let them_events = self.them_vad.push(them);
         out.frames.extend(self.them_framer.push(&to_i16(them), &them_events));
         let me_events = self.me_vad.push(&self.me_clean);
-        out.frames.extend(self.me_framer.push(&me_events));
+        out.frames.extend(self.me_framer.push(&to_i16(&self.me_clean), &me_events));
         for (channel, events) in [(Channel::Them, &them_events), (Channel::Me, &me_events)] {
             out.vad.extend(events.iter().map(|e| match *e {
                 VadEvent::Start { edge, decided } => VadChange {
@@ -103,10 +94,6 @@ impl Pipeline {
         }
         self.tick += 1;
         out
-    }
-
-    pub fn finish(&mut self) {
-        self.recorder.finish();
     }
 }
 
@@ -147,7 +134,6 @@ impl AudioThread {
                 .name("copilot-audio".into())
                 .spawn(move || {
                     run(rx, &mut pipeline, &mut on_tick, &stop, &levels, started_at);
-                    pipeline.finish();
                     source.stop();
                 })
                 .map_err(|e| CaptureError::Other(e.to_string()))?

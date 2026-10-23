@@ -47,6 +47,7 @@ from copilot_gateway import audio
 from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
+from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
@@ -85,6 +86,8 @@ class Services:
     verifier: TokenVerifier
     stt_providers: Sequence[tuple[str, STTFactory]]
     embedder: Embedder | None = None
+    # The user's own mic stream; None: the same providers as the other side's.
+    stt_me_providers: Sequence[tuple[str, STTFactory]] | None = None
     turn_model: TurnModel | None = None
     task_id: str = field(default_factory=lambda: str(uuid7()))
     # Postgres as app_gateway (read only), for company memory; None without a database.
@@ -106,12 +109,13 @@ class SessionInfo:
     agenda: str | None = None
 
 
-@dataclass(frozen=True)
-class TailItem:
-    channel: str
-    start_ms: int
-    end_ms: int
-    text: str
+# Echo (see Session._settle_me): this many lines taken for echo within ECHO_WINDOW_S turn the
+# status badge to a headphones hint, until ECHO_WINDOW_S passes without one.
+ECHO_WARN_COUNT = 3
+ECHO_WINDOW_S = 120.0
+# The other side's speech counts as "around the same time" as a line of the user's this close.
+ECHO_NEAR_MS = 500
+ECHO_TEXT_MS = 1500
 
 
 def _type_of(cls: type[Any]) -> str:
@@ -171,15 +175,12 @@ class Session:
             buffer_max=self.settings.store_buffer_max,
         )
         self.stt: ResilientSTT | None = None
+        # The user's own microphone, transcribed live as a second stream (me_stt).
+        self.stt_me: ResilientSTT | None = None
         if svc.stt_providers:
-            self.stt = ResilientSTT(
-                svc.stt_providers,
-                on_result=self._on_stt,
-                on_status=self._on_stt_status,
-                stall_s=self.settings.stt_stall_s,
-                failures_before_switch=self.settings.stt_failures_before_switch,
-                keepalive_s=self.settings.stt_keepalive_s,
-            )
+            self.stt = self._stt_stream(self._on_stt)
+            if self.settings.me_stt:
+                self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers)
         self.detector = Detector(
             svc.router,
             principal.display_name,
@@ -207,11 +208,30 @@ class Session:
             {ch: int(restored[f"hw_{ch}"]) for ch in ("them", "me") if f"hw_{ch}" in restored}
         )
         self.seg_id = int(restored.get("seg_them", "0"))
-        self.tail: deque[TailItem] = deque(
-            TailItem(**item) for item in json.loads(restored.get("tail", "[]"))
+        self.seg_me = int(restored.get("seg_me", "0"))
+        s = self.settings
+        self.conv = Conversation(
+            principal.display_name,
+            Budget(
+                total=s.conversation_budget_tokens,
+                summary=s.conversation_summary_tokens,
+                answers=s.conversation_answers_tokens,
+                chunk=s.conversation_summary_chunk_tokens,
+            ),
+            self._summarize,
+            retry_s=s.conversation_summary_retry_s,
+            on_change=self._save_conversation,
         )
-        self.capture_now = max((t.end_ms for t in self.tail), default=0)
+        self._restore_conversation(restored)
         self.me_since: int | None = None
+        self.me_audio_seen = False
+        # The other side's speech, from the frames' flags: closed spans and the open one, for
+        # the echo check on the user's lines.
+        self.them_spans: deque[tuple[int, int]] = deque(maxlen=64)
+        self.them_open: int | None = None
+        self.echo_at: deque[float] = deque(maxlen=ECHO_WARN_COUNT)
+        self.echo_warned = False
+        self._settling: set[asyncio.Task[None]] = set()
         self._refs = ref_map(digest, pack)
         self._prompt_ctx = self._build_prompt_ctx()
         # Company workspaces: live search over the chosen company's memory, and the question
@@ -264,21 +284,75 @@ class Session:
     def log_entry(self, entry: Mapping[str, Any]) -> None:
         self.writer.log_entry({**entry, "at": datetime.now(UTC).isoformat()})
 
+    def _stt_stream(
+        self,
+        on_result: Callable[[TimedResult], Awaitable[None]],
+        providers: Sequence[tuple[str, STTFactory]] | None = None,
+    ) -> ResilientSTT:
+        s = self.settings
+        return ResilientSTT(
+            providers or self.svc.stt_providers,
+            on_result=on_result,
+            on_status=self._on_stt_status,
+            stall_s=s.stt_stall_s,
+            failures_before_switch=s.stt_failures_before_switch,
+            keepalive_s=s.stt_keepalive_s,
+        )
+
+    @property
+    def capture_now(self) -> int:
+        return self.conv.capture_now
+
+    @property
+    def me_audio(self) -> bool:
+        """The client should send the user's speech audio (session.ready me_audio)."""
+        return self.stt_me is not None
+
+    # Conversation memory.
+
+    def _restore_conversation(self, restored: Mapping[str, str]) -> None:
+        if restored.get("conversation"):
+            with contextlib.suppress(ValueError):
+                self.conv.restore(json.loads(restored["conversation"]))
+        elif restored.get("tail"):  # state written before conversation memory
+            with contextlib.suppress(ValueError, TypeError, KeyError):
+                self.conv.lines = [Line(**item) for item in json.loads(restored["tail"])]
+
+    def _save_conversation(self) -> None:
+        self.writer.set_state(conversation=self.conv.to_state())
+
+    async def _summarize(self, previous: str, new_lines: str) -> str | None:
+        """The rolling summary's update, on the cheapest route (job "summary"), logged with its
+        tokens and cost; its text is never logged."""
+        s = self.settings
+        req = prompts.summary(
+            self.principal.display_name, self.info.mode, previous, new_lines,
+            s.conversation_summary_tokens,
+        )  # fmt: skip
+        started = time.monotonic()
+        text, done = await self.router.complete("summary", req)
+        ms = int((time.monotonic() - started) * 1000)
+        log.info(
+            "conversation summary on %s: %s in / %s out tokens in %s ms",
+            done.model, done.usage.input_tokens, done.usage.output_tokens, ms,
+        )  # fmt: skip
+        self.log_entry(
+            {
+                "kind": "summary",
+                "model": done.model,
+                "input_tokens": done.usage.input_tokens,
+                "cached_tokens": done.usage.cached_tokens,
+                "output_tokens": done.usage.output_tokens,
+                "cost_usd": self._cost(done),
+                "latency_ms": ms,
+            }
+        )
+        return text
+
     # AnswerHost.
 
-    def transcript(self, seconds: float) -> str:
-        since = self.capture_now - int(seconds * 1000)
-        lines: list[str] = []
-        for item in self.tail:
-            if item.end_ms < since:
-                continue
-            stamp = f"[{item.start_ms // 60000:02d}:{item.start_ms // 1000 % 60:02d}]"
-            if item.channel == "them":
-                lines.append(f"{stamp} Them: {item.text}")
-            else:
-                secs = max(1, (item.end_ms - item.start_ms) // 1000)
-                lines.append(f"{stamp} ({self.principal.display_name} spoke for {secs} s)")
-        return "\n".join(lines)
+    def call_context(self) -> prompts.CallContext:
+        return self.conv.context()
 
     def prompt_context(self) -> prompts.PromptContext:
         return self._prompt_ctx
@@ -400,7 +474,7 @@ class Session:
     # TurnHost.
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
-        transcript = self.transcript(self.settings.transcript_context_s)
+        transcript = self.conv.recent(self.settings.detector_context_tokens)
         return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
@@ -448,6 +522,9 @@ class Session:
         self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
     ) -> None:
         self.answers.confirm(qid, text, turn_end_ms, final_ms)
+        # Paired with what the user says after the question's own words, which may already
+        # have started by the time the turn is confirmed.
+        self.conv.question(str(qid), text, self.conv.them_end)
 
     def cancel_question(self, qid: UUID) -> None:
         self.answers.cancel_speculative(qid)
@@ -508,7 +585,7 @@ class Session:
                     start_ms=r.start_ms,
                     end_ms=r.end_ms,
                 )
-                self._add_tail(TailItem("them", r.start_ms, r.end_ms, r.text))
+                self.conv.add(Line("them", r.start_ms, r.end_ms, r.text))
                 if self.info.store_transcript:
                     self.log_entry(
                         {
@@ -529,20 +606,122 @@ class Session:
     def _on_stt_status(self, state: str, message: str) -> None:
         self.set_status("stt", state, message)
 
-    def _add_tail(self, item: TailItem) -> None:
-        self.tail.append(item)
-        self.capture_now = max(self.capture_now, item.end_ms)
-        keep_from = self.capture_now - 5 * 60_000
-        while self.tail and self.tail[0].end_ms < keep_from:
-            self.tail.popleft()
-        recent = [
-            t.__dict__
-            for t in self.tail
-            if t.end_ms >= self.capture_now - self.settings.transcript_context_s * 1000
-        ]
-        self.writer.set_state(tail=recent)
+    # The user's own words (live STT of the mic).
+
+    def _them_near(self, start_ms: int, end_ms: int) -> bool:
+        """The other side was speaking around this time (their speech flags)."""
+        lo, hi = start_ms - ECHO_NEAR_MS, end_ms + ECHO_NEAR_MS
+        if self.them_open is not None and self.them_open <= hi:
+            return True
+        return any(a <= hi and b >= lo for a, b in self.them_spans)
+
+    async def _on_me_stt(self, r: TimedResult) -> None:
+        if not r.text:
+            return
+        if not r.is_final:
+            # Not while the other side speaks: that text may be their echo.
+            if not self._them_near(r.start_ms, r.end_ms):
+                self.emit(models.TranscriptPartial, channel="me", seg_id=self.seg_me, text=r.text)
+            return
+        seg = self.seg_me
+        self.seg_me += 1
+        self.writer.set_state(seg_me=str(self.seg_me))
+        line = Line("me", r.start_ms, r.end_ms, r.text)
+        if not self._them_near(line.start_ms, line.end_ms):
+            self._accept_me(seg, line)
+            return
+        task = asyncio.create_task(self._settle_me(seg, line))
+        self._settling.add(task)
+        task.add_done_callback(self._settling.discard)
+
+    async def _settle_me(self, seg: int, line: Line) -> None:
+        """Echo check for a line of the user's said while the other side was speaking: once
+        the other side's transcript covers that time (at most echo_wait_ms), a line whose
+        words mostly appear in theirs is their voice leaking into the mic past echo
+        cancellation. It is dropped: not shown, not in the conversation, never stored."""
+        s = self.settings
+        deadline = time.monotonic() + s.echo_wait_ms / 1000
+        while time.monotonic() < deadline:
+            covered = any(
+                ln.channel == "them" and ln.end_ms >= line.end_ms - ECHO_NEAR_MS
+                for ln in self.conv.lines[-20:]
+            )
+            if covered or (self.them_open is None and not self.turns.interim):
+                break
+            await asyncio.sleep(0.05)
+        heard = self.conv.them_text_between(
+            line.start_ms - ECHO_TEXT_MS, line.end_ms + ECHO_TEXT_MS
+        )
+        share = echo_share(line.text, [*heard, self.turns.interim])
+        if share >= s.echo_min_overlap:
+            self._echo(seg, line, share)
+        else:
+            self._accept_me(seg, line)
+
+    def _accept_me(self, seg: int, line: Line) -> None:
+        self.emit(
+            models.TranscriptFinal,
+            channel="me",
+            seg_id=seg,
+            text=line.text,
+            start_ms=line.start_ms,
+            end_ms=line.end_ms,
+        )
+        self.conv.add(line)
+        if self.info.store_transcript:  # the user's words follow the same consent
+            self.log_entry(
+                {
+                    "kind": "segment",
+                    "channel": "me",
+                    "seg_id": seg,
+                    "start_ms": line.start_ms,
+                    "end_ms": line.end_ms,
+                    "text": line.text,
+                }
+            )
+        if self.echo_warned and (
+            not self.echo_at or time.monotonic() - self.echo_at[-1] > ECHO_WINDOW_S
+        ):
+            self.echo_warned = False
+            self.set_status("stt", "ok", "Transcription back to normal")
+
+    def _echo(self, seg: int, line: Line, share: float) -> None:
+        self.emit(
+            models.TranscriptFinal,
+            channel="me",
+            seg_id=seg,
+            text="",
+            start_ms=line.start_ms,
+            end_ms=line.end_ms,
+            echo=True,
+        )
+        self.log_entry(
+            {
+                "kind": "echo",
+                "seg_id": seg,
+                "start_ms": line.start_ms,
+                "end_ms": line.end_ms,
+                "share": round(share, 2),
+            }
+        )
+        log.info("me segment %d taken for echo (%.0f%% of its words)", seg, share * 100)
+        now = time.monotonic()
+        self.echo_at.append(now)
+        if (
+            len(self.echo_at) == ECHO_WARN_COUNT
+            and now - self.echo_at[0] <= ECHO_WINDOW_S
+            and not self.echo_warned
+        ):
+            self.echo_warned = True
+            self.set_status(
+                "stt", "degraded", "Your mic is picking up the other side; headphones help"
+            )
 
     # Lifecycle.
+
+    def deep_auto_types(self) -> list[str]:
+        s = self.settings
+        return list(s.deep_pass_auto_types) if s.deep_pass_auto else []
 
     def state_fields(self) -> dict[str, Any]:
         return {
@@ -571,6 +750,8 @@ class Session:
             async with asyncio.TaskGroup() as tg:
                 if self.stt is not None:
                     tg.create_task(self.stt.run())
+                if self.stt_me is not None:
+                    tg.create_task(self.stt_me.run())
                 tg.create_task(self.writer.run())
                 tg.create_task(self._lease_loop())
                 tg.create_task(self._flush_loop())
@@ -844,6 +1025,9 @@ class Session:
 
     async def _stop(self) -> None:
         self.manager.forget(self)
+        self.conv.close()
+        for task in list(self._settling):
+            task.cancel()
         if self.send_q is not None:
             self.send_q.put_nowait(None)
         task = self.core_task
@@ -930,24 +1114,47 @@ class Session:
         if frame.speech_start or frame.audio:
             self.last_speech = time.monotonic()
         if frame.channel == "me":
-            if frame.speech_start:
-                self.me_since = frame.capture_ms
-            if frame.speech_end and self.me_since is not None:
-                self._add_tail(TailItem("me", self.me_since, frame.capture_ms, ""))
-                self.me_since = None
+            await self._on_me_frame(frame)
             return
         if frame.speech_start:
+            self.them_open = frame.capture_ms
             if self.stt is not None:
                 self.stt.speech(True)
             self.turns.on_speech_start()
         if frame.audio and self.stt is not None:
             await self.stt.send(frame.audio, frame.capture_ms)
         if frame.speech_end:
+            if self.them_open is not None:
+                self.them_spans.append((self.them_open, frame.capture_ms))
+                self.them_open = None
             if self.stt is not None:
                 self.stt.speech(False)
             self.turns.on_speech_end()
             if self.stt is not None:
                 await self.stt.finalize()
+
+    async def _on_me_frame(self, frame: audio.Frame) -> None:
+        """The user's mic: speech audio goes to its own STT stream when the client sends it
+        (session.ready me_audio). A speech segment that came with no audio (an older client,
+        or me_stt off) leaves only its timing, as "(name spoke for N s)"."""
+        stt = self.stt_me
+        if frame.speech_start:
+            self.me_since = frame.capture_ms
+            self.me_audio_seen = False
+            if stt is not None:
+                stt.speech(True)
+        if frame.audio and stt is not None:
+            self.me_audio_seen = True
+            await stt.send(frame.audio, frame.capture_ms)
+        if frame.speech_end:
+            if stt is not None:
+                stt.speech(False)
+            if self.me_audio_seen and stt is not None:
+                await stt.finalize()
+            elif self.me_since is not None:
+                self.conv.add(Line("me", self.me_since, frame.capture_ms, ""))
+            self.me_since = None
+            self.me_audio_seen = False
 
     async def on_text(self, text: str) -> None:
         s = self.settings
@@ -1067,10 +1274,10 @@ class Session:
         )
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None)
+        self.conv.question(str(q.qid), text, self.capture_now)
 
     def transcript_text(self, seconds: float) -> str:
-        since = self.capture_now - int(seconds * 1000)
-        return " ".join(t.text for t in self.tail if t.channel == "them" and t.end_ms >= since)
+        return self.conv.them_text_since(self.capture_now - int(seconds * 1000))
 
 
 Handler = Callable[[WebSocket], Any]
@@ -1326,6 +1533,8 @@ class SessionManager:
             session_id=sid,
             server_time=datetime.now(UTC),
             limits={"max_minutes": self.svc.settings.max_session_minutes},
+            me_audio=session.me_audio,
+            deep_auto_types=session.deep_auto_types(),
         )
         if digest is None:
             session.set_status("memory", "degraded", "No career digest loaded")

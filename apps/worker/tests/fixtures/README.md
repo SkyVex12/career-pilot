@@ -12,7 +12,6 @@ Wire-format responses that the worker tests (and a worker started with
 | `claude/postcall_{interview,standup,meeting}.sse` | Anthropic SDK stream | `session.postcall` per mode |
 | `openai/*.sse` (the same six jobs) | OpenAI SDK stream (Responses API) | The same jobs on OpenAI (`test_openai_jobs.py`), recorded from the real API in October 2026 with the models `.env.example` suggests |
 | `claude/worklog.sse`, `claude/company_doc.sse` | Anthropic SDK stream | `worklog.extract` and `company_doc.extract` (company workspaces), written by hand from `inputs/worklog.md` and `inputs/company_doc.md`; no OpenAI recordings yet |
-| `deepgram/prerecorded.json` | httpx2 | `me_audio.transcribe` (Deepgram `/v1/listen`) |
 | `inputs/resume.md`, `inputs/job.md`, `inputs/worklog.md`, `inputs/company_doc.md` | | The sample documents the tests upload |
 
 The replay picks the file by the first line of the request's system prompt (Claude's
@@ -27,7 +26,6 @@ them from the real services with the same requests the workers send:
 ```sh
 uv run python scripts/record_worker_fixtures.py                   # needs ANTHROPIC_API_KEY
 uv run python scripts/record_worker_fixtures.py --provider openai # needs OPENAI_API_KEY
-uv run python scripts/record_worker_fixtures.py --deepgram me.wav # needs DEEPGRAM_API_KEY
 ```
 
 OpenAI streams a few characters per delta, so a short id can span deltas. For the pack, the

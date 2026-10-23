@@ -1,9 +1,9 @@
 """Session log jobs (ARCHITECTURE.md, "Session logging" and "SQS job catalog").
 
 `session.flush` copies the gateway's `sess:{sid}:log` stream into Aurora every 30 seconds;
-`session.ended` copies the rest and closes the session; `me_audio.transcribe` turns the
-user's uploaded audio into "me" segments and deletes it; `session.postcall` writes the
-summary and feedback.
+`session.ended` copies the rest, closes the session and starts `session.postcall`, which writes
+the summary and feedback. The user's own words arrive in the log like the other side's: the
+gateway transcribes the mic live ("me" segments), so nothing waits for an upload.
 
 Writes are idempotent, so any job can run twice: segments and questions keep their keys,
 and an answer's id is derived from its question and pass. After a flush commits, the stream
@@ -36,12 +36,10 @@ from copilot_core.workplace import local_today, memory_version
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import as_dict, as_list, complete_json
-from copilot_worker.runtime import Job, RetryLater, handler
+from copilot_worker.runtime import Job, handler
 
 log = logging.getLogger(__name__)
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-ME_AUDIO_GIVE_UP_S = 3600  # a transcribe job still waiting on session.ended after this
 
 
 @dataclass
@@ -327,10 +325,9 @@ async def write_answer(
     text_enc, version = None, None
     if store and d.get("text"):
         text_enc, version = await ctx.crypto.encrypt(conn, uid, "answers", str(aid), d["text"])
-    qtype = await conn.fetchval("select type from app.questions where id = $1", qid)
-    # A deep answer to a type that does not get one on its own means the user tapped expand
-    # (the expand entry may have been flushed before this answer existed).
-    expanded = pass_ == "deep" and qtype not in ctx.settings.deep_pass_auto_types
+    # The gateway says whether the user tapped expand for this deep answer; an expand entry
+    # flushed later sets it too.
+    expanded = pass_ == "deep" and bool(d.get("expanded"))
     node_ids = [u for u in map(_uuid, d.get("memory_node_ids") or []) if u is not None]
     await conn.execute(
         "insert into app.answers (id, question_id, user_id, pass, model, tier, text_enc,"
@@ -386,70 +383,28 @@ async def session_ended(job: Job, ctx: Ctx) -> None:
             "update app.sessions set ended_at = coalesce(ended_at, $2),"
             " billed_seconds = greatest(0, ceil(extract(epoch from"
             " (coalesce(ended_at, $2) - started_at))))::int"
-            " where id = $1 returning store_transcript, me_audio_status",
+            " where id = $1 returning id",
             sid,
             ended_at,
         )
     assert row is not None
-    # Post-call work waits up to 10 minutes for the user's audio (SQS DelaySeconds); an
-    # upload that completes sooner enqueues the same job at once through the API.
-    waiting = row["store_transcript"] and row["me_audio_status"] == "pending"
-    await ctx.enqueue(
-        "me_audio.transcribe",
-        f"me_audio.transcribe:{sid}",
-        uid,
-        {"session_id": str(sid)},
-        delay_s=ctx.settings.me_audio_wait_s if waiting else 0,
-    )
+    await ctx.enqueue("session.postcall", f"session.postcall:{sid}", uid, {"session_id": str(sid)})
 
 
 @handler("me_audio.transcribe")
 async def me_audio_transcribe(job: Job, ctx: Ctx) -> None:
+    """Left from before live transcription of the user's mic: a job enqueued by an older
+    gateway or API. Nothing is transcribed any more; an uploaded recording is deleted and the
+    post-call job runs (enqueued once: its key is the session's)."""
     sid = UUID(job.payload["session_id"])
     uid = job.uid
+    await ctx.store.delete(me_audio_key(uid, sid))
     async with ctx.user(uid) as conn:
-        row = await conn.fetchrow(
-            "select store_transcript, ended_at, me_audio_status from app.sessions where id = $1",
+        await conn.execute(
+            "update app.sessions set me_audio_status = 'none'"
+            " where id = $1 and me_audio_status in ('pending', 'uploaded')",
             sid,
         )
-    if row is None or row["ended_at"] is None:
-        if job.age_s() < ME_AUDIO_GIVE_UP_S:
-            raise RetryLater(30, "waiting for session.ended")
-        log.warning("session %s never ended; transcribing without it", sid)
-        if row is None:
-            return
-    key = me_audio_key(uid, sid)
-    status = row["me_audio_status"]
-    if status not in ("transcribed", "none"):
-        audio = await ctx.store.get(key)
-        segments = 0
-        if audio is not None and row["store_transcript"] and ctx.stt is not None:
-            head = await ctx.store.head(key)
-            content_type = str((head or {}).get("ContentType") or "audio/wav")
-            found = await ctx.stt.transcribe(audio, content_type)
-            async with ctx.user(uid) as conn:
-                for i, seg in enumerate(found):
-                    await write_segment(
-                        ctx, conn, uid, sid,
-                        {"channel": "me", "seg_id": i, "start_ms": seg.start_ms,
-                         "end_ms": seg.end_ms, "text": seg.text},
-                    )  # fmt: skip
-                await conn.execute(
-                    "update app.sessions set me_audio_status = 'transcribed' where id = $1", sid
-                )
-            segments = len(found)
-            status = "transcribed"
-        else:
-            if audio is not None and ctx.stt is None:
-                log.warning("session %s: no pre-recorded STT configured; audio dropped", sid)
-            async with ctx.user(uid) as conn:
-                await conn.execute(
-                    "update app.sessions set me_audio_status = 'none' where id = $1", sid
-                )
-            status = "none"
-        log.info("session %s: me audio %s (%d segments)", sid, status, segments)
-    # The user's audio stays only until its transcription (or until we know it is not needed).
-    await ctx.store.delete(key)
     await ctx.enqueue("session.postcall", f"session.postcall:{sid}", uid, {"session_id": str(sid)})
 
 

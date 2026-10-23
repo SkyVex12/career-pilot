@@ -72,7 +72,7 @@ async def test_user_delete_leaves_nothing_behind(stack: Stack) -> None:
         await log.end(seconds=60)
         await stack.run(log.ended_job())
         await stack.ctx.store.put(me_audio_key(owner, log.sid), b"audio", "audio/wav")
-        await stack.drain("me_audio.transcribe", "session.postcall")
+        await stack.drain("session.postcall")
         await stack.ctx.valkey.set(keys.qa(owner, "abc"), "{}")
         await stack.ctx.valkey.set(keys.user_active_session(owner), str(log.sid))
         await stack.admin.execute(

@@ -66,8 +66,21 @@ class Settings(CoreSettings):
     fast_pass_max_tokens: int = 250
     fast_pass_priority: bool = False
     deep_pass_max_tokens: int = 800
+    # The deep pass starts on its own once the fast pass is done (and the question is
+    # confirmed), for these types; other types only on expand. Off: every deep pass waits for
+    # expand. A newer confirmed question cancels it. Until October 2026 only behavioral,
+    # technical and system_design started on their own; that list is the setting to turn the
+    # deep pass's cost down (ARCHITECTURE.md, "Cost estimate").
+    deep_pass_auto: bool = True
     deep_pass_auto_types: Annotated[list[QuestionType], NoDecode] = Field(
-        default_factory=lambda: ["behavioral", "technical", "system_design"]
+        default_factory=lambda: [
+            "behavioral",
+            "technical",
+            "system_design",
+            "coding",
+            "standup_status",
+            "other",
+        ]
     )
     rerank_keep: int = 6
     retrieval_budget_ms: int = 100
@@ -84,7 +97,28 @@ class Settings(CoreSettings):
     # Rendering a company's pack at session start when no current one is stored (DB only).
     pack_render_timeout_ms: int = 400
     first_token_timeout_ms: int = 1500
-    transcript_context_s: int = 60
+    # Conversation memory (ARCHITECTURE.md, "Conversation memory"): what the detector and both
+    # passes see of the call, in a hard budget (about 4 characters a token). The latest lines
+    # verbatim get what the summary and the earlier answers leave; when they overflow, the
+    # oldest `conversation_summary_chunk_tokens` of them go to the summary model in the
+    # background (job "summary"), so a summary call happens every few minutes of talk, never
+    # per line and never on the answer's path.
+    conversation_budget_tokens: int = 3000
+    conversation_summary_tokens: int = 500
+    conversation_answers_tokens: int = 600
+    conversation_summary_chunk_tokens: int = 500
+    conversation_summary_retry_s: float = 30.0
+    # The detector sees only the latest lines of it, this many tokens.
+    detector_context_tokens: int = 300
+    # Live transcription of the user's own microphone, as a second STT stream. Off: the client
+    # is told to send speech flags only on the me channel (session.ready me_audio), and the
+    # conversation holds only "(spoke for N s)" for the user.
+    me_stt: bool = True
+    # Echo: a me segment whose words mostly (this share) appeared in the other side's speech
+    # around the same time is the other side leaking into the mic, not the user. When the
+    # other side was speaking then, the check waits up to `echo_wait_ms` for its transcript.
+    echo_min_overlap: float = 0.6
+    echo_wait_ms: int = 2000
     sessions_per_task_target: int = 60
     # Not in the doc's table: how long confirmation waits for the STT final after the
     # silence timer before it uses the interim text.

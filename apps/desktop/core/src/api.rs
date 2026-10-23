@@ -2,9 +2,8 @@
 //!
 //! The UI renders what the API returns, so most calls hand back the JSON as it came; only the
 //! uploads have types here, because the client does the work in between: a document goes
-//! straight to the object store (S3, or Cloud Storage) with the presigned URL from `POST /documents`, then `POST .../ingest`; the
-//! user's own audio goes through `POST /sessions/{id}/me-audio` the same way
-//! (see [`crate::recording`]).
+//! straight to the object store (S3, or Cloud Storage) with the presigned URL from
+//! `POST /documents`, then `POST .../ingest`.
 //!
 //! A `401` gets one token refresh and one retry, so the browser sign-in ([`crate::oauth`])
 //! slots in behind [`TokenProvider`] with no change here.
@@ -53,7 +52,7 @@ impl ApiError {
     }
 }
 
-/// Where and how to `PUT` an upload, as `POST /documents` and `POST .../me-audio` return it.
+/// Where and how to `PUT` an upload, as `POST /documents` returns it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PresignedUpload {
     pub method: String,

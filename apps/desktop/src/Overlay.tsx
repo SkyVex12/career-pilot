@@ -1,22 +1,84 @@
-// The always-on-top overlay: talking points first, the deep answer below with an expand
-// control, thumbs, the status badge, and a box to type a question.
-import { useEffect, useMemo, useState } from "react";
+// The always-on-top overlay: the whole conversation as one scrolling view that never drops
+// earlier messages. The other side on the left (live text that settles into the final), the
+// suggested answers on the right (talking points first, the detailed answer streaming in
+// below), and the user's own words on the right as plain quoted lines, marked "You said", so
+// they never read as an answer. It follows the newest message while the reader is at the
+// bottom; scrolled up, it stays put and offers "Jump to latest". Hotkey, typed question,
+// thumbs and the status badge as before; a compact mode for a small window.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api } from "./api";
+import { api, inTauri } from "./api";
 import { AnswerText } from "./AnswerText";
-import { AUTO_DEEP, badge, useSession, type QuestionView } from "./session";
+import { copier, Follower } from "./follow";
+import { badge, conversation, deepStartsAlone, useSession, type ConversationItem, type QuestionView, type SessionView } from "./session";
+
+const COMPACT_KEY = "overlay.compact";
+
+function loadCompact(): boolean {
+  try {
+    return window.localStorage.getItem(COMPACT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveCompact(on: boolean) {
+  try {
+    window.localStorage.setItem(COMPACT_KEY, on ? "1" : "0");
+  } catch {
+    // Per-window convenience only.
+  }
+}
+
+/// Changes whenever anything shown grows, so the view can follow it.
+function contentSize(items: ConversationItem[]): string {
+  let chars = 0;
+  for (const it of items) {
+    if (it.kind === "question") chars += it.question.fast.text.length + it.question.deep.text.length + (it.question.deep.done ? 1 : 0);
+    else chars += it.text.length;
+  }
+  return `${items.length}:${chars}`;
+}
 
 export default function Overlay() {
   const [s, dispatch] = useSession();
-  const visible = useMemo(() => s.questions.filter((q) => !q.cancelled), [s.questions]);
-  // Follow the newest question unless the user went back to an older one.
-  const [pinned, setPinned] = useState<string | null>(null);
-  const index = pinned ? visible.findIndex((q) => q.id === pinned) : visible.length - 1;
-  const q = index >= 0 ? visible[index] : undefined;
+  const items = useMemo(() => conversation(s), [s]);
+  const [compact, setCompact] = useState(loadCompact);
+  const shown = useMemo(() => (compact ? items.filter((i) => i.kind === "question") : items), [items, compact]);
+  const size = contentSize(shown);
+  const body = useRef<HTMLDivElement>(null);
+  const follower = useRef(new Follower());
+  const [jump, setJump] = useState(false);
   const b = badge(s);
 
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    follower.current.onContent(el);
+    setJump(follower.current.showJump);
+  }, [size, compact]);
+
+  const onScroll = () => {
+    const el = body.current;
+    if (!el) return;
+    follower.current.onScroll(el);
+    setJump(follower.current.showJump);
+  };
+  const toLatest = () => {
+    const el = body.current;
+    if (!el) return;
+    follower.current.jump(el);
+    setJump(false);
+  };
+  const toggleCompact = () => {
+    setCompact((c) => {
+      saveCompact(!c);
+      return !c;
+    });
+  };
+
   return (
-    <div className="overlay">
+    <div className={compact ? "overlay compact" : "overlay"}>
       <header className="overlay-head" data-tauri-drag-region>
         <span className={`badge badge-${b.state}`} title={b.text} data-tauri-drag-region>
           <span className="dot" />
@@ -27,55 +89,72 @@ export default function Overlay() {
           {s.speaking.me && <span className="pill pill-me">you</span>}
         </span>
         <span className="spacer" data-tauri-drag-region />
-        {visible.length > 1 && (
-          <span className="nav">
-            <button disabled={index <= 0} onClick={() => setPinned(visible[index - 1].id)} title="Older question">
-              ‹
-            </button>
-            <span className="muted">
-              {index + 1}/{visible.length}
-            </span>
-            <button
-              disabled={index >= visible.length - 1}
-              onClick={() => setPinned(index + 1 >= visible.length - 1 ? null : visible[index + 1].id)}
-              title="Newer question"
-            >
-              ›
-            </button>
-          </span>
-        )}
-        <button className="icon" title="Hide overlay" onClick={() => getCurrentWindow().hide()}>
+        <button className="icon" title={compact ? "Show the whole conversation" : "Compact: answers only"} onClick={toggleCompact}>
+          {compact ? "☰" : "▭"}
+        </button>
+        <button className="icon" title="Hide overlay" onClick={() => inTauri && getCurrentWindow().hide()}>
           ×
         </button>
       </header>
 
-      <main className="overlay-body">
-        {q ? (
-          <QuestionCard key={q.id} q={q} onExpand={() => dispatch({ type: "deep_requested", id: q.id })} />
-        ) : (
+      <main className="overlay-body" ref={body} onScroll={onScroll}>
+        {shown.length === 0 ? (
           <p className="muted empty">
-            {s.running ? "Waiting for a question. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
+            {s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
           </p>
+        ) : (
+          <ol className="conversation">
+            {shown.map((it) => (
+              <Item key={it.key} item={it} s={s} compact={compact} onExpand={(id) => dispatch({ type: "deep_requested", id })} />
+            ))}
+          </ol>
         )}
       </main>
 
+      {jump && (
+        <button className="jump" onClick={toLatest}>
+          Jump to latest ↓
+        </button>
+      )}
+
       <AskBox disabled={!s.running} />
+      <span className="grip" title="Resize" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
     </div>
   );
 }
 
-function QuestionCard({ q, onExpand }: { q: QuestionView; onExpand: () => void }) {
-  const [open, setOpen] = useState(false);
+function Item({ item, s, compact, onExpand }: { item: ConversationItem; s: SessionView; compact: boolean; onExpand: (id: string) => void }) {
+  switch (item.kind) {
+    case "them":
+      return (
+        <li className="msg them">
+          <span className="who">Them</span>
+          <p className={item.final ? "" : "partial"}>{item.text}</p>
+        </li>
+      );
+    case "me":
+      return (
+        <li className="msg me">
+          <span className="who">You said</span>
+          <p className={item.final ? "" : "partial"}>“{item.text}”</p>
+        </li>
+      );
+    case "question":
+      return (
+        <li className="msg answer">
+          <QuestionCard q={item.question} s={s} compact={compact} onExpand={() => onExpand(item.question.id)} />
+        </li>
+      );
+  }
+}
+
+function QuestionCard({ q, s, compact, onExpand }: { q: QuestionView; s: SessionView; compact: boolean; onExpand: () => void }) {
   const [rating, setRating] = useState<"up" | "down" | null>(null);
   const deepStarted = q.deep.text.length > 0 || q.deep.done || q.deepRequested;
-  useEffect(() => setOpen(false), [q.id]);
 
   const expand = () => {
-    if (!deepStarted) {
-      onExpand();
-      api.expandAnswer(q.id).catch(() => undefined);
-    }
-    setOpen((o) => !o || !deepStarted);
+    onExpand();
+    api.expandAnswer(q.id).catch(() => undefined);
   };
   const rate = (up: boolean) => {
     setRating(up ? "up" : "down");
@@ -84,13 +163,15 @@ function QuestionCard({ q, onExpand }: { q: QuestionView; onExpand: () => void }
 
   return (
     <article className="card">
-      <h2 className="question">
-        {q.text}
-        {q.speculative && <span className="tag">listening…</span>}
+      <header className="card-head">
+        <span className="label">Suggested</span>
         <span className="tag">{q.type.replace("_", " ")}</span>
-      </h2>
+        {q.speculative && <span className="tag">listening…</span>}
+      </header>
+      <p className="question">{q.text}</p>
 
       <section className="points">
+        <PassHead title="Talking points" text={q.fast.text} />
         {q.fast.text ? <AnswerText text={q.fast.text} /> : !q.fast.done && <p className="muted">Thinking…</p>}
         {q.fast.source === "prepared" && <p className="note">Prepared answer</p>}
         {q.fast.error && q.fast.error !== "cancelled" && <p className="note warn">Talking points failed ({q.fast.error})</p>}
@@ -98,16 +179,19 @@ function QuestionCard({ q, onExpand }: { q: QuestionView; onExpand: () => void }
       </section>
 
       <section className="deep">
-        <button className="link" onClick={expand}>
-          {!deepStarted ? "Get the detailed answer ▾" : open ? "Hide the detailed answer ▴" : "Show the detailed answer ▾"}
-        </button>
-        {deepStarted && (
-          <div className={open ? "deep-text" : "deep-text collapsed"} onClick={() => setOpen(true)}>
+        {deepStarted ? (
+          <>
+            <PassHead title="Detailed answer" text={q.deep.text} />
             {q.deep.text ? <AnswerText text={q.deep.text} /> : !q.deep.done && <p className="muted">Writing…</p>}
+            {q.deep.error === "cancelled" && <p className="note">Stopped for a newer question</p>}
             {q.deep.error && q.deep.error !== "cancelled" && <p className="note warn">Detailed answer failed ({q.deep.error})</p>}
-          </div>
+          </>
+        ) : (
+          <button className="link" onClick={expand}>
+            Get the detailed answer ▾
+          </button>
         )}
-        {!AUTO_DEEP.includes(q.type) && !deepStarted && <p className="note">Only on request for this question type.</p>}
+        {!deepStarted && !deepStartsAlone(s, q.type) && !compact && <p className="note">Only on request for this question type.</p>}
       </section>
 
       <footer className="thumbs">
@@ -117,13 +201,33 @@ function QuestionCard({ q, onExpand }: { q: QuestionView; onExpand: () => void }
         <button className={rating === "down" ? "on" : ""} onClick={() => rate(false)} title="Not helpful">
           👎
         </button>
-        {q.fast.refs.length > 0 && (
+        {!compact && q.fast.refs.length > 0 && (
           <span className="refs muted" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
           </span>
         )}
       </footer>
     </article>
+  );
+}
+
+function PassHead({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="pass-head">
+      <span className="pass-title">{title}</span>
+      <CopyButton text={text} />
+    </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const c = useMemo(() => copier(setCopied), []);
+  useEffect(() => () => c.dispose(), [c]);
+  return (
+    <button className="copy" disabled={!text} onClick={() => c.copy(text)} title="Copy as plain text">
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 

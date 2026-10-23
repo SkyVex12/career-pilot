@@ -373,10 +373,15 @@ html[data-window="overlay"] #root {
   background: #5b3a99;
 }
 
+.overlay {
+  position: relative;
+}
+
 .overlay-body {
   flex: 1;
   overflow: auto;
-  padding: 10px 12px;
+  padding: 8px 10px;
+  overscroll-behavior: contain;
 }
 
 .empty {
@@ -384,22 +389,124 @@ html[data-window="overlay"] #root {
   text-align: center;
 }
 
-.card .question {
+/* The conversation: the other side on the left, answers and the user's own words on the right. */
+
+.conversation {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  max-width: 92%;
+  line-height: 1.4;
+}
+
+.msg p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.msg .who {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--overlay-muted);
+  margin-bottom: 2px;
+}
+
+.msg.them {
+  align-self: flex-start;
+  background: #262b32;
+  border-radius: 10px 10px 10px 2px;
+  padding: 6px 10px;
+}
+
+.msg .partial {
+  color: var(--overlay-muted);
+  font-style: italic;
+}
+
+/* The user's own words: plain quoted text, no panel, a purple rule: never like an answer. */
+.msg.me {
+  align-self: flex-end;
+  text-align: right;
+  border-right: 2px solid #8b6fd6;
+  padding: 2px 8px 2px 0;
   font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 8px;
+}
+
+.msg.me .who {
+  color: #b9a5f0;
+}
+
+.msg.answer {
+  align-self: flex-end;
+  width: 92%;
+}
+
+.card {
+  background: #18263a;
+  border: 1px solid #2b4466;
+  border-radius: 10px 10px 2px 10px;
+  padding: 8px 10px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.card-head .label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8ab4ff;
+}
+
+.card .question {
+  font-size: 12px;
+  color: var(--overlay-muted);
+  margin: 0 0 6px;
   line-height: 1.35;
 }
 
 .tag {
   font-size: 10px;
   font-weight: 400;
-  margin-left: 6px;
-  padding: 1px 5px;
+  margin-left: 4px;
+  padding: 0 5px;
   border: 1px solid #3a414a;
   border-radius: 6px;
   color: var(--overlay-muted);
   text-transform: capitalize;
+}
+
+.pass-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.pass-title {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--overlay-muted);
+}
+
+.overlay button.copy {
+  font-size: 11px;
+  padding: 0 6px;
+  min-width: 52px;
 }
 
 .points .bullets {
@@ -410,7 +517,7 @@ html[data-window="overlay"] #root {
 }
 
 .points .bullets li {
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .prose p {
@@ -425,9 +532,17 @@ html[data-window="overlay"] #root {
 }
 
 .deep {
-  margin-top: 10px;
-  border-top: 1px solid #2c323a;
-  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid #2b4466;
+  padding-top: 6px;
+  font-size: 13px;
+}
+
+.deep .bullets {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .overlay button.link {
@@ -436,23 +551,11 @@ html[data-window="overlay"] #root {
   padding: 0;
 }
 
-.deep-text {
-  margin-top: 6px;
-  font-size: 13px;
-}
-
-.deep-text.collapsed {
-  max-height: 3.2em;
-  overflow: hidden;
-  cursor: pointer;
-  mask-image: linear-gradient(#000 40%, transparent);
-}
-
 .thumbs {
   display: flex;
   gap: 6px;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .thumbs button.on {
@@ -464,6 +567,60 @@ html[data-window="overlay"] #root {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.overlay button.jump {
+  position: absolute;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%);
+  background: #2563eb;
+  border: 0;
+  border-radius: 12px;
+  padding: 3px 12px;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 55%, #4a525c 55%, #4a525c 65%, transparent 65%, transparent 75%, #4a525c 75%, #4a525c 85%, transparent 85%);
+}
+
+/* Compact: answers only, tighter, for a small window. */
+.overlay.compact .overlay-body {
+  padding: 4px 6px;
+}
+
+.overlay.compact .conversation {
+  gap: 4px;
+}
+
+.overlay.compact .msg.answer {
+  width: 100%;
+  max-width: 100%;
+}
+
+.overlay.compact .card {
+  padding: 5px 7px;
+}
+
+.overlay.compact .points .bullets {
+  font-size: 13px;
+}
+
+.overlay.compact .deep,
+.overlay.compact .deep .bullets {
+  font-size: 12px;
+}
+
+.overlay.compact .thumbs {
+  margin-top: 3px;
 }
 
 .ask {

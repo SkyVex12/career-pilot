@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 VISIBILITY: dict[str, int] = {
     "session.flush": 120,
     "session.ended": 300,
-    "me_audio.transcribe": 900,
+    "me_audio.transcribe": 60,  # legacy: deletes a leftover upload, starts post-call
     "session.postcall": 900,
     "memory.extract": 900,
     "pack.build": 600,

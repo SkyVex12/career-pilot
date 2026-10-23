@@ -4,7 +4,7 @@ Runs, in this one process, on the local stack (`docker compose up -d --wait`):
 
 - the real Copilot API (uvicorn, as `app_api`, on a migrated throwaway database),
 - a real worker consumer (as `app_worker` and `app_system`) reading a throwaway ElasticMQ
-  queue, with Claude and Deepgram answered from the recorded fixtures in
+  queue, with Claude answered from the recorded fixtures in
   apps/worker/tests/fixtures (the real SDK and HTTP clients over a mock transport),
 - the real gateway with scripted STT and Claude (copilot_gateway.testing), sending its
   session log jobs to the same queue.
@@ -55,11 +55,10 @@ from copilot_gateway.testing import GatewayServer, ScriptedProvider, TextSTT, Te
 from copilot_worker import documents, packs, sessionlog, system
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import Ctx
-from copilot_worker.fixtures import ClaudeFixtures, DeepgramFixtures, fixture_provider
+from copilot_worker.fixtures import ClaudeFixtures, fixture_provider
 from copilot_worker.llm import build_router as worker_router
 from copilot_worker.prompts import JOB_PROMPTS
 from copilot_worker.runtime import Consumer, JobRuns, SqsQueue
-from copilot_worker.stt import DeepgramPrerecorded
 
 HANDLER_MODULES = (documents, packs, sessionlog, system)  # importing them registers handlers
 FIXTURES = Path(__file__).resolve().parent.parent / "apps" / "worker" / "tests" / "fixtures"
@@ -163,7 +162,6 @@ async def serve() -> int:
             router=worker_router(
                 worker_settings, [fixture_provider(ClaudeFixtures(FIXTURES, JOB_PROMPTS))]
             ),
-            stt=DeepgramPrerecorded("fixture", transport=DeepgramFixtures(FIXTURES)),
         )
         pools += [ctx.pool, ctx.system_pool]
         consumer = Consumer(

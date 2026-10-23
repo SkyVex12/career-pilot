@@ -9,6 +9,9 @@
 //!   Audio waits for `session.ready` on a start; after a resume the ring is resent at once
 //!   and the gateway drops what it already has.
 //! - Messages replayed on resume with a `seq` already processed are dropped here.
+//! - The mic's speech audio goes out only when `session.ready` said `me_audio` (the gateway
+//!   transcribes it live); otherwise "me" frames carry their speech flags alone, as an older
+//!   gateway expects.
 //! - WebSocket pings every 30 s keep the load balancer from closing a quiet call.
 //! - Tokens: [`TokenProvider::current`] for the upgrade's `Authorization` header;
 //!   `refresh` on `auth.expiring`, two minutes before a known expiry, and after a `4401`.
@@ -221,6 +224,7 @@ pub fn spawn(
         session_id: None,
         last_seq: 0,
         frame_seq: [0, 0],
+        me_audio: false,
         capture_base_ms: 0,
         last_capture_ms: 0,
         ending: false,
@@ -241,6 +245,8 @@ struct Client {
     session_id: Option<Uuid>,
     last_seq: u64,
     frame_seq: [u32; 2],
+    /// The gateway takes the mic's speech audio (`session.ready` `me_audio`).
+    me_audio: bool,
     ring: FrameRing,
     /// Stream position where the current session started (non-zero after a 4408 restart).
     capture_base_ms: u32,
@@ -371,6 +377,7 @@ impl Client {
         self.session_id = None;
         self.last_seq = 0;
         self.frame_seq = [0, 0];
+        self.me_audio = false;
         self.ring.clear();
         self.capture_base_ms = self.last_capture_ms;
     }
@@ -399,8 +406,10 @@ impl Client {
         }
     }
 
-    /// Number and encode a frame and keep it in the ring.
+    /// Number and encode a frame and keep it in the ring. Without `me_audio`, a "me" frame
+    /// keeps only its flags, and one with no flags is not sent at all.
     fn buffer(&mut self, f: OutFrame) -> Option<Vec<u8>> {
+        let f = for_wire(f, self.me_audio)?;
         let ch = usize::from(f.channel == CHANNEL_ME);
         self.last_capture_ms = self.last_capture_ms.max(f.capture_ms);
         let header = AudioFrameHeader {
@@ -530,6 +539,7 @@ impl Client {
                         match &message {
                             ServerMessage::SessionReady(ready) => {
                                 self.session_id = Some(ready.session_id);
+                                self.me_audio = ready.me_audio.unwrap_or(false);
                                 {
                                     let mut stats = self.stats();
                                     stats.new_sessions += 1;
@@ -665,5 +675,47 @@ pub async fn end_session(
             Ok(None) => return Ok(None),
             Err(_) => return Err("timed out waiting for the gateway to end the session".into()),
         }
+    }
+}
+
+/// What of a frame goes on the wire: everything on "them"; on "me" the speech audio only when
+/// the gateway takes it (`me_audio`), else the flags alone, and nothing for a frame without
+/// flags.
+fn for_wire(mut f: OutFrame, me_audio: bool) -> Option<OutFrame> {
+    if f.channel == CHANNEL_ME && !me_audio {
+        if f.flags == 0 {
+            return None;
+        }
+        f.audio.clear();
+    }
+    Some(f)
+}
+
+#[cfg(test)]
+mod tests {
+    use copilot_protocol::audio::{FLAG_SPEECH_END, FLAG_SPEECH_START};
+
+    use super::*;
+
+    fn frame(channel: u8, flags: u8) -> OutFrame {
+        OutFrame { channel, flags, capture_ms: 100, audio: vec![7; 1_600] }
+    }
+
+    #[test]
+    fn mic_audio_goes_out_only_when_the_gateway_takes_it() {
+        // The gateway transcribes the mic live: speech frames go out whole.
+        assert_eq!(
+            for_wire(frame(CHANNEL_ME, FLAG_SPEECH_START), true),
+            Some(frame(CHANNEL_ME, FLAG_SPEECH_START))
+        );
+        assert_eq!(for_wire(frame(CHANNEL_ME, 0), true), Some(frame(CHANNEL_ME, 0)));
+        // An older gateway: the speech flags alone, and no flagless frames at all.
+        let start = for_wire(frame(CHANNEL_ME, FLAG_SPEECH_START), false).unwrap();
+        assert!(start.audio.is_empty());
+        assert_eq!(start.flags, FLAG_SPEECH_START);
+        assert!(for_wire(frame(CHANNEL_ME, FLAG_SPEECH_END), false).unwrap().audio.is_empty());
+        assert_eq!(for_wire(frame(CHANNEL_ME, 0), false), None);
+        // The other side's speech is never changed.
+        assert_eq!(for_wire(frame(CHANNEL_THEM, 0), false), Some(frame(CHANNEL_THEM, 0)));
     }
 }

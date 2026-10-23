@@ -17,7 +17,6 @@ use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{ClientConfig, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::{Channel, Mode, Pass, ServerMessage};
-use copilot_client::recording::NoRecording;
 use support::{Gateway, TOKEN};
 
 fn load(name: &str) -> Vec<f32> {
@@ -37,7 +36,6 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
         aec: Box::new(WebRtcAec::new()),
         them_vad: vad(),
         me_vad: vad(),
-        recorder: Box::new(NoRecording),
     };
     let events: Arc<Mutex<Vec<UiEvent>>> = Arc::default();
     let sink = {

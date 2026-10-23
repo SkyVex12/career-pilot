@@ -106,7 +106,7 @@ export function waitingText(state: PollState, storeTranscript: boolean): string 
   if (state.phase === "timeout") return "Not ready after 5 minutes. The workers may be busy or stopped; look again in History.";
   const s = state.session;
   if (!s || s.status === "live") return "Ending the session…";
-  if (storeTranscript && s.me_audio_status === "pending") return "Waiting for your audio, then writing the summary…";
-  if (s.me_audio_status === "uploaded") return "Transcribing your side of the call…";
+  // Both sides were transcribed live: nothing waits for an upload any more.
+  void storeTranscript;
   return "Writing the summary…";
 }

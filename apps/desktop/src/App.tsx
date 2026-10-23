@@ -353,8 +353,8 @@ function StartScreen({
           </label>
           <p className="note">
             {consent
-              ? "Your own audio is recorded on this computer, encrypted, uploaded after the call for transcription, then deleted."
-              : "Nothing is recorded or stored; the summary covers only the call's length and the questions' types."}
+              ? "Both sides are transcribed live and the transcript is stored, encrypted. No audio is recorded."
+              : "Both sides are transcribed live for the answers, but no words are stored; the summary covers only the call's length and the questions' types."}
           </p>
         </div>
       </div>
