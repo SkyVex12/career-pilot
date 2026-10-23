@@ -62,6 +62,7 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         "embedder": "none",
         "valkey_url": args.valkey if args.valkey != "fake" else "redis://unused",
         **(FAST_TIMERS if args.fast_timers else {}),
+        **({"min_client_version": args.min_client_version} if args.min_client_version else {}),
     }
     settings = Settings(_env_file=None, **overrides)  # pyright: ignore[reportCallIssue]
     if args.valkey == "fake":
@@ -115,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--sqs", action="store_true", help="send jobs to the local SQS queue (default: dropped)"
+    )
+    parser.add_argument(
+        "--min-client-version", default="", help="the oldest desktop app served (e.g. 0.2.0)"
     )
     args = parser.parse_args(argv)
     if not args.token:

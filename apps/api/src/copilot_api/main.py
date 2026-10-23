@@ -10,12 +10,13 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services
 from copilot_api.routes import auth, documents, employers, jobs, me, sessions
-from copilot_core import __version__, logs
+from copilot_core import __version__, logs, versions
 from copilot_core.auth import make_verifier
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import create_pool
@@ -23,6 +24,7 @@ from copilot_core.dotenv import load_dotenv
 from copilot_core.jobs import SqsJobQueue
 from copilot_core.storage import S3Store
 from copilot_core.valkey_client import make_valkey
+from copilot_protocol.models import ClientOutdated
 
 SERVICE = "api"
 SESSION_PATH = re.compile(r"/v1/sessions/([0-9a-fA-F-]{36})(?:/|$)")
@@ -61,6 +63,35 @@ class RequestLog:
             )  # fmt: skip
 
 
+class VersionGuard:
+    """An app older than min_client_version (its `x-copilot-client` header, desktop-<version>)
+    gets HTTP 426 with the `ClientOutdated` body on every /v1 request, and updates at once.
+    Requests without the header (0.1.0, curl, the tests) pass."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"].startswith("/v1/"):
+            client = next(
+                (
+                    v.decode("latin-1")
+                    for k, v in scope["headers"]
+                    if k == versions.CLIENT_HEADER.encode()
+                ),
+                None,
+            )
+            minimum: str = scope["app"].state.services.settings.min_client_version
+            if versions.is_outdated(client, minimum):
+                assert client is not None
+                body = ClientOutdated.model_validate(versions.outdated(client, minimum))
+                log.info("refused %s: older than the minimum %s", client, minimum)
+                response = JSONResponse(body.model_dump(exclude_none=True), status_code=426)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 async def build_services(settings: ApiSettings) -> Services:
     store = S3Store(settings)
     if settings.env in ("dev", "test"):
@@ -91,6 +122,7 @@ def create_app(services: Services | None = None) -> FastAPI:
                 await app.state.services.valkey.aclose()
 
     app = FastAPI(title="Copilot API", version=__version__, lifespan=lifespan)
+    app.add_middleware(VersionGuard)
     app.add_middleware(RequestLog)
 
     @app.get("/healthz")

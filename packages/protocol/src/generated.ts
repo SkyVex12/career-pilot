@@ -359,9 +359,19 @@ export interface ServerError {
 }
 
 /**
- * WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4429 rate limited; 4500 internal error (resume).
+ * WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume).
  */
-export type CloseCode = 1000 | 1001 | 4401 | 4403 | 4408 | 4409 | 4410 | 4429 | 4500;
+export type CloseCode = 1000 | 1001 | 4401 | 4403 | 4408 | 4409 | 4410 | 4426 | 4429 | 4500;
+
+/**
+ * The app is older than the oldest version the server supports (its min_client_version setting). The REST API answers any request with HTTP 426 and this as the JSON body; the gateway sends an error with code client_outdated (this message) before closing with 4426. The app names its version as desktop-<version>: in session.start's client_version and in the x-copilot-client header of API requests.
+ */
+export interface ClientOutdated {
+  code: "client_outdated";
+  message: string;
+  min_version: string;
+  client_version?: string;
+}
 
 /**
  * Header of a binary audio frame: 10 bytes, then 16 kHz mono pcm16 audio (a 100 ms frame is 3,200 bytes; may be empty on a speech-end frame; on the me channel empty unless session.ready said me_audio). Byte layout: [0] channel uint8, [1] flags uint8, [2..5] frame_seq uint32 big-endian, [6..9] capture_ms uint32 big-endian. Binary frames are at most 64 KB.

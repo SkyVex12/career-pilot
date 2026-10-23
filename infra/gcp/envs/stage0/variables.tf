@@ -34,6 +34,16 @@ variable "copilot_env" {
   }
 }
 
+variable "min_desktop_version" {
+  type        = string
+  default     = "0.1.0"
+  description = "The oldest desktop app the gateway and the API serve (COPILOT_MIN_CLIENT_VERSION); older apps are told to update at once. Raise it only once the newer version is published (README.md, \"Releasing the desktop app\")."
+  validation {
+    condition     = can(regex("^[0-9]+[.][0-9]+[.][0-9]+$", var.min_desktop_version))
+    error_message = "min_desktop_version is a version such as 0.2.0."
+  }
+}
+
 # --- The VM --------------------------------------------------------------------------------------
 
 variable "machine_type" {
