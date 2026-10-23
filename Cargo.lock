@@ -716,6 +716,7 @@ name = "copilot-desktop"
 version = "0.0.0"
 dependencies = [
  "copilot-client",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

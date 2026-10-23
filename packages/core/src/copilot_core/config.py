@@ -182,6 +182,20 @@ class CoreSettings(BaseSettings):
     sqs_endpoint: str | None = "http://localhost:9324"  # unset in AWS (empty string)
     sqs_queue_url: str = "http://localhost:9324/000000000000/jobs"
 
+    # The oldest desktop app the gateway and the API serve (copilot_core.versions). Older
+    # release builds get close code 4426 or HTTP 426 `client_outdated` and update at once.
+    # 0.1.0 is the first release, so every installed app works until this is raised.
+    min_client_version: str = "0.1.0"
+
+    @field_validator("min_client_version", mode="after")
+    @classmethod
+    def _semver(cls, value: str) -> str:
+        from copilot_core.versions import parse
+
+        if parse(value) is None:
+            raise ValueError(f"min_client_version {value!r}: expected 1.2.3")
+        return value
+
     @property
     def embedding_provider(self) -> Literal["bedrock", "openai"] | None:
         if self.embedder == "auto":

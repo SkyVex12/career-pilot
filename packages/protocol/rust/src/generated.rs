@@ -989,8 +989,9 @@ impl Validate for ServerError {
 
 /// WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid
 /// or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active;
-/// 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4429 rate
-/// limited; 4500 internal error (resume).
+/// 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app
+/// is older than the server supports (do not reconnect; update first; the error before it is
+/// client_outdated); 4429 rate limited; 4500 internal error (resume).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CloseCode {
     Normal = 1000,
@@ -1000,12 +1001,13 @@ pub enum CloseCode {
     NoStart = 4408,
     SessionActive = 4409,
     Replaced = 4410,
+    ClientOutdated = 4426,
     RateLimited = 4429,
     Internal = 4500,
 }
 
 impl CloseCode {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Normal,
         Self::GoingAway,
         Self::Unauthorized,
@@ -1013,6 +1015,7 @@ impl CloseCode {
         Self::NoStart,
         Self::SessionActive,
         Self::Replaced,
+        Self::ClientOutdated,
         Self::RateLimited,
         Self::Internal,
     ];
@@ -1030,10 +1033,39 @@ impl CloseCode {
             4408 => Some(Self::NoStart),
             4409 => Some(Self::SessionActive),
             4410 => Some(Self::Replaced),
+            4426 => Some(Self::ClientOutdated),
             4429 => Some(Self::RateLimited),
             4500 => Some(Self::Internal),
             _ => None,
         }
+    }
+}
+
+/// The app is older than the oldest version the server supports (its min_client_version setting).
+/// The REST API answers any request with HTTP 426 and this as the JSON body; the gateway sends an
+/// error with code client_outdated (this message) before closing with 4426. The app names its
+/// version as desktop-<version>: in session.start's client_version and in the x-copilot-client
+/// header of API requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClientOutdated {
+    pub code: String,
+    pub message: String,
+    pub min_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<String>,
+}
+
+impl Validate for ClientOutdated {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.code;
+            check::const_str("code", v, "client_outdated")?;
+        }
+        {
+            let v = &self.min_version;
+            check::min_len("min_version", v, 1)?;
+        }
+        Ok(())
     }
 }
 

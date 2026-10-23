@@ -12,8 +12,9 @@ mod settings;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use copilot_client::api::ApiClient;
+use copilot_client::api::{ApiClient, ApiError};
 use copilot_client::audio::aec::{EchoCanceller, NoEchoCancellation, WebRtcAec};
 use copilot_client::audio::capture::{self, DeviceInfo, DeviceSource};
 use copilot_client::audio::pipeline::Levels;
@@ -26,6 +27,8 @@ use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::Mode;
 use history::History;
 use release::UpdateState;
+use release::journal::{Entry, Journal};
+use release::schedule::{Activity, AfterStart, Gate, Starting};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Environment, Settings, insecure_url_warning};
@@ -51,9 +54,44 @@ struct AppState {
     oauth: Mutex<Option<Arc<OAuthTokenProvider>>>,
     engine: Mutex<Option<Arc<Engine>>>,
     history: Arc<Mutex<History>>,
+    /// `desktop-<version>`: the gateway's client_version and the API's x-copilot-client.
+    client: String,
+    /// The app's clock for the update schedule (release::schedule), and what the user did.
+    started: Instant,
+    activity: Mutex<Activity>,
+    /// A session starting, or an update installing: never both (release::schedule::Gate).
+    gate: Gate,
+    /// updates.log (release::journal).
+    journal: Journal,
 }
 
 impl AppState {
+    fn clock(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// What the update schedule needs: whether a session is running or starting, and when
+    /// the user last touched the app or ended a session.
+    #[cfg_attr(not(feature = "release"), allow(dead_code))]
+    fn activity(&self) -> Activity {
+        let session = self.engine.lock().unwrap().is_some() || self.gate.starting();
+        Activity { session, ..*self.activity.lock().unwrap() }
+    }
+
+    /// For the installer: true if no session runs or starts, and none can start from now on.
+    #[cfg_attr(not(feature = "release"), allow(dead_code))]
+    fn claim_for_install(&self) -> bool {
+        let running = self.engine.lock().unwrap().is_some();
+        self.gate.claim_install(running)
+    }
+
+    /// For start_session: refuse while an update installs, else mark a session as starting
+    /// until the returned guard drops.
+    fn begin_start(&self) -> Res<Starting<'_>> {
+        let running = self.engine.lock().unwrap().is_some();
+        self.gate.begin_start(running).map_err(str::to_string)
+    }
+
     fn engine(&self) -> Result<Arc<Engine>, String> {
         self.engine.lock().unwrap().clone().ok_or_else(|| "no session is running".into())
     }
@@ -93,7 +131,27 @@ impl AppState {
 
     fn api(&self) -> Result<ApiClient, String> {
         let url = self.settings.lock().unwrap().active_urls().1.to_string();
-        ApiClient::new(&url, self.tokens()?).map_err(|e| e.to_string())
+        Ok(ApiClient::new(&url, self.tokens()?).map_err(|e| e.to_string())?.with_client(self.client.clone()))
+    }
+}
+
+/// An API error for the UI. A 426 (this app is too old for the server) also starts the
+/// update at once.
+fn api_error(app: &AppHandle, e: ApiError) -> String {
+    if let ApiError::Outdated { min_version, .. } = &e {
+        outdated(app, &format!("the API needs {min_version} or newer"));
+    }
+    e.to_string()
+}
+
+/// The server refused this version (close 4426 or HTTP 426).
+fn outdated(app: &AppHandle, why: &str) {
+    #[cfg(feature = "release")]
+    release::updater::urgent(app, why);
+    #[cfg(not(feature = "release"))]
+    {
+        let _ = app;
+        tracing::warn!("{why}; this build does not update itself");
     }
 }
 
@@ -104,6 +162,17 @@ type Res<T> = Result<T, String>;
 struct ReleaseView {
     stage: String,
     api_url: String,
+}
+
+/// The updater, for the settings screen.
+#[derive(Serialize)]
+struct UpdatesView {
+    /// A release build: it updates itself.
+    enabled: bool,
+    /// The last check, Unix milliseconds.
+    checked_at: Option<u64>,
+    /// The newest lines of updates.log, oldest first.
+    log: Vec<Entry>,
 }
 
 #[derive(Serialize)]
@@ -120,6 +189,7 @@ struct SettingsView {
     ready: bool,
     /// Plain HTTP or WS to another machine, for the active environment.
     warnings: Vec<String>,
+    updates: UpdatesView,
 }
 
 #[tauri::command]
@@ -142,6 +212,21 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
         signed_in_as,
         ready,
         warnings,
+        updates: UpdatesView {
+            enabled: release::config().is_some(),
+            checked_at: checked_at(&app),
+            log: state.journal.lines(20),
+        },
+    }
+}
+
+fn checked_at(app: &AppHandle) -> Option<u64> {
+    #[cfg(feature = "release")]
+    return app.state::<release::updater::Updates>().checked_at();
+    #[cfg(not(feature = "release"))]
+    {
+        let _ = app;
+        None
     }
 }
 
@@ -174,14 +259,20 @@ fn save_settings(
         state.dev_tokens.save(&token).map_err(|e| e.to_string())?;
     }
     let hotkey_changed = state.settings.lock().unwrap().hotkey != settings.hotkey;
-    let (last, oauth, cloud_api) = {
-        let s = state.settings.lock().unwrap();
-        (s.last_session_id, s.oauth.clone(), s.cloud_api_url.clone())
-    };
+    let kept = state.settings.lock().unwrap().clone();
     // The sign-in settings belong to the stage they came from: a new cloud API URL needs a new
     // sign-in.
-    let oauth = if settings.cloud_api_url.trim() == cloud_api.trim() { oauth } else { None };
-    state.update_settings(|s| *s = Settings { last_session_id: last, oauth, ..settings.clone() });
+    let oauth = if settings.cloud_api_url.trim() == kept.cloud_api_url.trim() { kept.oauth } else { None };
+    // What the app keeps for itself, whatever the screen sent.
+    state.update_settings(|s| {
+        *s = Settings {
+            last_session_id: kept.last_session_id,
+            oauth,
+            last_version: kept.last_version,
+            pending_update: kept.pending_update,
+            ..settings.clone()
+        }
+    });
     if hotkey_changed {
         register_hotkey(&app, &settings.hotkey)?;
     }
@@ -207,18 +298,19 @@ async fn list_devices() -> Devices {
 /// One Copilot API call for the UI's screens (documents, jobs, interviews, sessions, usage).
 #[tauri::command]
 async fn api_call(
+    app: AppHandle,
     state: State<'_, AppState>,
     method: String,
     path: String,
     body: Option<Value>,
 ) -> Res<Value> {
-    state.api()?.call(&method, &path, body.as_ref()).await.map_err(|e| e.to_string())
+    state.api()?.call(&method, &path, body.as_ref()).await.map_err(|e| api_error(&app, e))
 }
 
 /// A resume or job description from the UI: the file's bytes as the raw body, its kind and
 /// name in the `x-kind` and `x-file-name` headers (URI-encoded).
 #[tauri::command]
-async fn upload_document(state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
+async fn upload_document(app: AppHandle, state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected the file's bytes".into());
     };
@@ -232,13 +324,13 @@ async fn upload_document(state: State<'_, AppState>, request: Request<'_>) -> Re
         return Err(format!("cannot upload a {kind}"));
     }
     let file_name = header("x-file-name")?;
-    state.api()?.upload_document(&kind, &file_name, bytes.clone()).await.map_err(|e| e.to_string())
+    state.api()?.upload_document(&kind, &file_name, bytes.clone()).await.map_err(|e| api_error(&app, e))
 }
 
 /// A company document or work log attachment from the UI: the file's bytes as the raw body,
 /// the API path to post it to in `x-api-path` and its name in `x-file-name` (URI-encoded).
 #[tauri::command]
-async fn upload_company_file(state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
+async fn upload_company_file(app: AppHandle, state: State<'_, AppState>, request: Request<'_>) -> Res<Value> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected the file's bytes".into());
     };
@@ -252,7 +344,7 @@ async fn upload_company_file(state: State<'_, AppState>, request: Request<'_>) -
         return Err(format!("cannot upload to {path}"));
     }
     let file_name = header("x-file-name")?;
-    state.api()?.upload_raw(&path, &file_name, bytes.clone()).await.map_err(|e| e.to_string())
+    state.api()?.upload_raw(&path, &file_name, bytes.clone()).await.map_err(|e| api_error(&app, e))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -307,8 +399,8 @@ async fn sign_out(state: State<'_, AppState>) -> Res<()> {
 /// `DELETE /me`. In the cloud the sign-in goes too (on AWS the account deletion also removes
 /// the Cognito user); the dev token stays (it is the local gateway's).
 #[tauri::command]
-async fn delete_account(state: State<'_, AppState>) -> Res<Value> {
-    let result = state.api()?.delete("/me").await.map_err(|e| e.to_string())?;
+async fn delete_account(app: AppHandle, state: State<'_, AppState>) -> Res<Value> {
+    let result = state.api()?.delete("/me").await.map_err(|e| api_error(&app, e))?;
     state.update_settings(|s| s.last_session_id = None);
     if state.settings.lock().unwrap().environment == Environment::Cloud
         && let Some(p) = state.oauth()
@@ -342,9 +434,7 @@ fn emit(app: &AppHandle, history: &Mutex<History>, event: &UiEvent) {
 
 #[tauri::command]
 async fn start_session(app: AppHandle, state: State<'_, AppState>, request: StartRequest) -> Res<()> {
-    if state.engine.lock().unwrap().is_some() {
-        return Err("a session is already running".into());
-    }
+    let _starting = state.begin_start()?;
     let tokens = state.tokens()?;
     tokens.current().await.map_err(|e| e.to_string())?;
     let settings = state.settings.lock().unwrap().clone();
@@ -371,7 +461,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             employer_id: request.employer_id,
             agenda: request.agenda,
             platform: request.platform,
-            client_version: format!("desktop-{}", app.package_info().version),
+            client_version: state.client.clone(),
             store_transcript: request.store_transcript,
         },
     );
@@ -385,6 +475,9 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             }
             if let UiEvent::Stopped { reason: StopReason::Ended | StopReason::Replaced } = &event {
                 app.state::<AppState>().update_settings(|s| s.last_session_id = None);
+            }
+            if let UiEvent::Stopped { reason: StopReason::Outdated } = &event {
+                outdated(&app, "the gateway closed the session with 4426");
             }
             emit(&app, &history, &event);
         })
@@ -403,6 +496,8 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             if slot.as_ref().is_some_and(|e| Arc::ptr_eq(e, &engine)) {
                 *slot = None;
             }
+            let now = state.clock();
+            state.activity.lock().unwrap().last_session_end = Some(now);
         }
     });
     if let Some(overlay) = app.get_webview_window("overlay") {
@@ -490,7 +585,29 @@ fn live_status(state: State<'_, AppState>) -> Live {
     }
 }
 
-/// The update found at start, if any (release builds).
+/// A click, key or scroll in a window (throttled by the UI): an update waits for quiet.
+#[tauri::command]
+fn note_activity(state: State<'_, AppState>) {
+    let now = state.clock();
+    state.activity.lock().unwrap().last_input = Some(now);
+}
+
+/// Look for an update now (the settings' "Check now").
+#[tauri::command]
+fn check_updates(app: AppHandle) -> Res<()> {
+    #[cfg(feature = "release")]
+    {
+        app.state::<release::updater::Updates>().check_now();
+        Ok(())
+    }
+    #[cfg(not(feature = "release"))]
+    {
+        let _ = app;
+        Err("this build does not update itself".into())
+    }
+}
+
+/// The updater's state (release builds).
 #[tauri::command]
 fn update_status(app: AppHandle) -> UpdateState {
     #[cfg(feature = "release")]
@@ -502,14 +619,11 @@ fn update_status(app: AppHandle) -> UpdateState {
     }
 }
 
-/// Install the update found at start and restart into it. Not during a call.
+/// "Install and restart": the downloaded update, now. Never during a session.
 #[tauri::command]
-async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
-    if state.engine.lock().unwrap().is_some() {
-        return Err("End the session first; the app restarts to update.".into());
-    }
+fn install_update(app: AppHandle) -> Res<()> {
     #[cfg(feature = "release")]
-    return release::updater::install(&app).await;
+    return release::updater::install(&app, true);
     #[cfg(not(feature = "release"))]
     {
         let _ = app;
@@ -542,9 +656,7 @@ pub fn run() {
         .init();
     let builder = tauri::Builder::default();
     #[cfg(feature = "release")]
-    let builder = builder
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(release::updater::Updates::default());
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -571,6 +683,34 @@ pub fn run() {
             if let Some(release) = release::config() {
                 settings.pin_to_release(release);
             }
+            let version = app.package_info().version.to_string();
+            let journal = Journal::new(app.path().app_log_dir()?.join("updates.log"));
+            // After an update's restart: the "Updated to" note, or a log line that it did not take.
+            let after = release::schedule::after_start(
+                settings.last_version.as_deref(),
+                settings.pending_update.as_deref(),
+                &version,
+            );
+            let updated = match &after {
+                AfterStart::Updated { from } => {
+                    let from = from.as_deref().unwrap_or("an older version");
+                    journal.write(&format!("updated to {version} (from {from})"));
+                    true
+                }
+                AfterStart::DidNotTake { version: wanted } => {
+                    journal.write(&format!("the update to {wanted} did not complete; still on {version}"));
+                    false
+                }
+                AfterStart::Nothing => false,
+            };
+            if release::config().is_some() {
+                journal.write(&format!("started {version}"));
+            }
+            settings.last_version = Some(version.clone());
+            settings.pending_update = None;
+            if let Err(e) = settings.save(&settings_path) {
+                tracing::warn!("could not save settings: {e}");
+            }
             let needs_auth_config = release::config().is_some() && settings.oauth.is_none();
             let hotkey = settings.hotkey.clone();
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
@@ -589,7 +729,22 @@ pub fn run() {
                 secrets,
                 engine: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
+                client: format!("desktop-{version}"),
+                started: Instant::now(),
+                activity: Mutex::new(Activity::default()),
+                gate: Gate::default(),
+                journal: journal.clone(),
             });
+            #[cfg(feature = "release")]
+            {
+                let updates = release::updater::Updates::new(journal);
+                if updated {
+                    updates.set(app.handle(), UpdateState::Updated { version: version.clone() });
+                }
+                app.manage(updates);
+            }
+            #[cfg(not(feature = "release"))]
+            let _ = (updated, journal);
             if let Err(e) = register_hotkey(app.handle(), &hotkey) {
                 tracing::warn!("{e}");
             }
@@ -614,7 +769,7 @@ pub fn run() {
                 if let Ok(api) = handle.state::<AppState>().api()
                     && let Err(e) = api.get("/me").await
                 {
-                    tracing::info!("GET /me at startup: {e}");
+                    tracing::info!("GET /me at startup: {}", api_error(&handle, e));
                 }
             });
             WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
@@ -627,7 +782,7 @@ pub fn run() {
                 .visible(false)
                 .build()?;
             #[cfg(feature = "release")]
-            release::updater::check_at_start(app.handle());
+            release::updater::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -652,6 +807,8 @@ pub fn run() {
             show_overlay,
             update_status,
             install_update,
+            check_updates,
+            note_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

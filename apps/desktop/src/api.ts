@@ -7,7 +7,8 @@ import type { Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@cop
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export type StopReason = "ended" | "no_minutes" | "session_active" | "replaced" | "unauthorized";
+/** "outdated": the gateway closed with 4426; the app is updating. */
+export type StopReason = "ended" | "no_minutes" | "session_active" | "replaced" | "unauthorized" | "outdated";
 
 export type ConnectionState =
   | { state: "connecting"; attempt: number }
@@ -65,6 +66,11 @@ export interface Settings {
   hotkey: string;
   show_debug: boolean;
   last_session_id: string | null;
+  /** Release builds: install updates by themselves when no session runs, or ask first. */
+  update_mode: "auto" | "ask";
+  /** Kept by the app for the "Updated to" note; the screen sends them back unchanged. */
+  last_version: string | null;
+  pending_update: string | null;
 }
 
 // src-tauri get_settings
@@ -81,6 +87,14 @@ export interface SettingsView {
   ready: boolean;
   /** Plain HTTP or WS to another machine in the current environment. */
   warnings: string[];
+  updates: {
+    /** A release build: it updates itself. */
+    enabled: boolean;
+    /** The last update check, Unix milliseconds. */
+    checked_at: number | null;
+    /** The newest lines of updates.log, oldest first. */
+    log: { at_ms: number; message: string }[];
+  };
 }
 
 export interface DeviceInfo {
@@ -130,11 +144,16 @@ export interface StartRequest {
   store_transcript: boolean;
 }
 
-/** src-tauri release.rs UpdateState: an update found at start (release builds). */
+/** src-tauri release.rs UpdateState (release builds). */
 export type UpdateState =
   | { state: "none" }
-  | { state: "available"; version: string; notes: string | null }
+  /** Downloaded and verified. auto: installs by itself when no session runs. */
+  | { state: "ready"; version: string; notes: string | null; auto: boolean }
   | { state: "installing"; version: string }
+  /** The app restarted into this version. */
+  | { state: "updated"; version: string }
+  /** The server needs a newer app than any that could be installed. */
+  | { state: "outdated"; message: string }
   | { state: "failed"; message: string };
 
 /** The Rust side changed the settings on its own (e.g. the sign-in settings at startup). */
@@ -150,6 +169,9 @@ export const api = {
   getSettings: () => invoke<SettingsView>("get_settings"),
   updateStatus: () => invoke<UpdateState>("update_status"),
   installUpdate: () => invoke<void>("install_update"),
+  checkUpdates: () => invoke<void>("check_updates"),
+  /** A click, key or scroll (throttled): an automatic update waits for a quiet moment. */
+  noteActivity: () => invoke<void>("note_activity"),
   signIn: () => invoke<string>("sign_in"),
   signOut: () => invoke<void>("sign_out"),
   saveSettings: (settings: Settings, devToken: string | null) =>

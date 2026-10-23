@@ -26,7 +26,7 @@ import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, logs, prompts, workplace
+from copilot_core import jobs, logs, prompts, versions, workplace
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
@@ -71,6 +71,7 @@ CLOSE_NO_MINUTES = 4403
 CLOSE_NO_START = 4408
 CLOSE_SESSION_ACTIVE = 4409
 CLOSE_REPLACED = 4410  # a newer connection took this session; the client must not reconnect
+CLOSE_CLIENT_OUTDATED = 4426  # older than min_client_version: update, do not reconnect
 CLOSE_RATE_LIMITED = 4429
 CLOSE_INTERNAL = 4500
 
@@ -1406,6 +1407,16 @@ class SessionManager:
             await ws.send_text(_error_json(code, message, True, **extra))
         await close_ws(ws, close, code)
 
+    async def reject_outdated(self, ws: WebSocket, client_version: str) -> None:
+        """An app older than min_client_version: the `client_outdated` error, then 4426. A
+        release from before 4426 existed would reconnect on a code it does not know, so it
+        gets 4410 (stop, no reconnect) instead; it offers the update at its next start."""
+        minimum = self.svc.settings.min_client_version
+        body = models.ClientOutdated.model_validate(versions.outdated(client_version, minimum))
+        close = CLOSE_CLIENT_OUTDATED if versions.knows_4426(client_version) else CLOSE_REPLACED
+        log.info("refused %s: older than the minimum %s (close %s)", client_version, minimum, close)
+        await self.reject(ws, close, body.code, body.message)
+
     async def handle(self, ws: WebSocket) -> None:
         s = self.svc.settings
         token = bearer_token(ws.headers.get("authorization"))
@@ -1430,6 +1441,9 @@ class SessionManager:
         except ValidationError:
             first = None
         if isinstance(first, models.SessionStart):
+            if versions.is_outdated(first.client_version, s.min_client_version):
+                await self.reject_outdated(ws, first.client_version)
+                return
             await self.start(ws, principal, first)
         elif isinstance(first, models.SessionResume):
             await self.resume(ws, principal, first)

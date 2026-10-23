@@ -9,6 +9,10 @@
 # then fails). Access is Workload Identity Federation only (no keys), the VM is reached over
 # IAP with OS Login (no SSH port is open), and one deploy runs at a time.
 #
+# Then the desktop app (desktop-release): release-desktop.yml, called once the GCP deploy
+# passed. It builds and publishes the next patch version only if the merge changed something
+# the app ships since the last desktop-v* tag (README.md, "Releasing the desktop app").
+#
 # AWS (the images and deploy jobs; unused while the account's organization policy blocks it):
 # ARM64 images to ECR, migrations as a one-off ECS task, then the services (deploy.py).
 name: deploy
@@ -259,3 +263,23 @@ jobs:
         run: >-
           uv run --no-project python infra/gcp/scripts/stage.py deploy
           --tag "${{ needs.commit.outputs.sha }}" --start --check
+
+  # --- The desktop app (release-desktop.yml) ---------------------------------------------------
+  # After the backend is deployed and healthy, so a new app never meets an old backend. The
+  # plan job inside decides release or skip; one release runs at a time (a newer waiting one
+  # replaces an older, and its plan covers the older one's changes too).
+
+  desktop-release:
+    if: github.ref == 'refs/heads/main'
+    needs: [commit, gcp-deploy]
+    name: desktop
+    concurrency:
+      group: release-desktop
+      cancel-in-progress: false
+    permissions:
+      contents: write # the desktop-v* tag
+      id-token: write # the releases bucket, through Workload Identity Federation
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      sha: ${{ needs.commit.outputs.sha }}
+    secrets: inherit

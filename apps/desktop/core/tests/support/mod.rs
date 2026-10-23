@@ -37,6 +37,11 @@ pub struct Gateway {
 
 impl Gateway {
     pub fn start(port: u16, tokens: &[&str], valkey: Option<&str>) -> Self {
+        Self::start_with(port, tokens, valkey, &[])
+    }
+
+    /// With more `copilot_gateway.offline` arguments (e.g. `--min-client-version 0.2.0`).
+    pub fn start_with(port: u16, tokens: &[&str], valkey: Option<&str>, extra: &[&str]) -> Self {
         let mut cmd = Proc::new(python());
         cmd.current_dir(repo_root())
             .args(["-m", "copilot_gateway.offline", "--fast-timers", "--port", &port.to_string()])
@@ -48,6 +53,7 @@ impl Gateway {
         if let Some(url) = valkey {
             cmd.args(["--valkey", url]);
         }
+        cmd.args(extra);
         let mut child = cmd.spawn().expect("start the offline gateway");
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();

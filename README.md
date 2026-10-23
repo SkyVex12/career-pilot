@@ -42,9 +42,10 @@ evals/          copilot-replay: stream a recorded call through the gateway
 infra/gcp/      Terraform for Stage 0 on GCP, and stage.py (see infra/gcp/README.md)
 infra/          Terraform for Stage 0 on AWS (unused), and deploy.py (see infra/README.md)
 docker/         the service images (python.Dockerfile, proxy/) and the local stack's config
-.github/        CI on pull requests; deploy on merge to main; desktop releases on desktop-v* tags
+.github/        CI on pull requests; deploy on merge to main, then a desktop release if the app changed
 scripts/        codegen.py, dev_profile.py, record_fixtures.py, record_worker_fixtures.py,
-                desktop_test_stack.py (the backend for the client's API tests)
+                desktop_test_stack.py (the backend for the client's API tests),
+                desktop_release.py (release on merge: skip or the next version, notes)
 ```
 
 ## Prerequisites
@@ -428,6 +429,9 @@ Every push to `main` deploys (`.github/workflows/deploy.yml`):
    check (`stage.py health`): each service's `/healthz`, and through nginx the API's
    `/v1/auth/config` and a WebSocket handshake on `/v1/session` that the gateway itself
    answers. If it fails, the previous tag is deployed again and the run fails.
+4. **Desktop app:** once the deploy passed, `release-desktop.yml` (called from `deploy.yml`)
+   releases a new installer if the merge changed something the app ships, and skips
+   otherwise (see "Releasing the desktop app").
 
 One deploy runs at a time: a merge that lands during a deploy waits for it, and of several
 waiting the newest wins (the older ones show as cancelled). A call in progress reconnects and
@@ -548,8 +552,8 @@ skips the GCP jobs again.
 
 ## Installing the desktop app
 
-For teammates (Windows 10 or 11). The installer is built from a `desktop-v*` tag and points at
-the Stage 0 server; it updates itself.
+For teammates (Windows 10 or 11). The installer is built on every merge that changes the app
+(and from `desktop-v*` tags) and points at the Stage 0 server; it updates itself.
 
 1. **Get on the allow-list first.** Only listed Google accounts can sign in. Send the owner the
    Google account email you will use; they add it to `allowed_emails` in
@@ -572,9 +576,19 @@ the Stage 0 server; it updates itself.
    An account not on the list gets "not allowed" from the server.
 5. Settings: pick the microphone and the speakers the call plays on.
 
-**Updates:** at each start the app asks the releases bucket for a newer version; when there is
-one, a bar at the top offers **Install and restart** (not during a call). Updates are signed;
-the app installs only installers signed with the release key.
+**Updates** install by themselves. The app asks the releases bucket for a newer version at
+start and every four hours, downloads it in the background and checks its signature (only
+installers signed with the release key are installed). It never installs during a call: only
+when no session is running or starting, at start (before you click anything), a minute after a
+session ends (if you have not touched the app since), or after ten quiet minutes. Then it
+restarts and says **Updated to x.y.z**. Settings → Updates → **Ask me first** downloads but waits
+for your **Install and restart** instead. A failed download or install is retried after half an
+hour; the running version keeps working meanwhile. Settings shows the version, the last check
+(**Check now**) and the update log, which is also in
+`%LOCALAPPDATA%\com.copilot.desktop\logs\updates.log`.
+
+If the server no longer supports your version (see "The minimum app version"), the session
+stops with a note and the app updates at once, in either mode.
 
 **Plain HTTP:** Stage 0 has no TLS yet (see "Deploying Stage 0"): use it only for the team's
 tests. To uninstall: Settings → Apps → Copilot Desktop → Uninstall; the sign-in stays in the Windows
@@ -582,20 +596,67 @@ Credential Manager (`com.copilot.desktop` entries) until you sign out.
 
 ## Releasing the desktop app
 
-Tag a commit on `main`:
+**On merge (patch versions).** After every deploy of `main` (`deploy.yml`, once the backend is
+deployed and healthy), `release-desktop.yml` runs its plan (`scripts/desktop_release.py plan`):
+if anything the app ships changed since the last `desktop-v*` tag, it builds and publishes the
+next patch version and then pushes its tag; otherwise it skips. What ships: `apps/desktop/`
+(not its tests or docs), the protocol's schema, Rust and TypeScript (not its Python side or
+fixtures), `Cargo.toml`, `Cargo.lock`, `pnpm-lock.yaml` and `release-desktop.yml`. A merge of
+backend, infrastructure or docs only releases nothing. Changes add up: if a release was skipped
+or cancelled, the next one covers them. The version is one patch above the newest of every
+`desktop-v*` tag and the version already published in `latest.json`. The release notes (in
+`latest.json`, and in the run's summary) list the titles of the pull requests merged since the
+last release that changed the app. One release runs at a time, and a commit older than the
+newest tag is never released.
+
+The plan is plain git, so you can dry-run it on any commit:
+
+```sh
+uv run --no-project python scripts/desktop_release.py plan --sha origin/main --published
+```
+
+`deploy.yml` calls the release workflow rather than relying on the tag it pushes: a tag pushed
+with `GITHUB_TOKEN` starts no other workflow.
+
+**By hand (minor and major versions).** Tag a commit on `main`; merges count on from it (after
+`desktop-v0.2.0` comes `0.2.1`):
 
 ```sh
 git tag desktop-v0.2.0 origin/main && git push origin desktop-v0.2.0
 gh run watch $(gh run list --workflow release-desktop -L 1 --json databaseId -q '.[0].databaseId')
 ```
 
-`.github/workflows/release-desktop.yml` builds the installer on a Windows runner with the
-tag's version (`pnpm tauri build --features release`), signs it for the updater, and publishes
-to the public bucket `copilot-stage0-releases-career-pilot-512115`: `desktop/<version>/`
-(the installer and its signature, kept), `desktop/Copilot-setup.exe` (the download link) and,
-last, `desktop/latest.json`, the update manifest. Installed apps pick it up at their next
-start. Versions must go up (semver); a tag on a commit not on `main` builds but does not
-publish.
+Either way the Windows runner builds the installer with that version
+(`pnpm tauri build --features release`), signs it for the updater, and publishes to the public
+bucket `copilot-stage0-releases-career-pilot-512115`: `desktop/<version>/` (the installer and
+its signature, kept), `desktop/Copilot-setup.exe` (the download link) and, last,
+`desktop/latest.json`, the update manifest. It refuses to replace a `latest.json` that names a
+newer version. Installed apps find it at their next check (at start, then every four hours) and
+install it when no call is running ("Installing the desktop app"). Versions must go up (semver);
+a commit not on `main` builds but does not publish.
+
+### The minimum app version
+
+The gateway and the API know the oldest app they serve: `COPILOT_MIN_CLIENT_VERSION`, set from
+`min_desktop_version` in `infra/gcp/envs/stage0` (default `0.1.0`, the first release, so every
+installed app works until you raise it). The app names its version as `desktop-<version>`, in
+`session.start` and in an `x-copilot-client` header on every API request. An older app gets
+close code `4426` from the gateway (after an `error` with code `client_outdated`) and HTTP `426`
+from the API, with the `ClientOutdated` body from `protocol.schema.json`; it stops the session
+and updates at once. Dev builds (`0.0.0`) and other clients are never held back.
+
+To raise it, once the newer version is published:
+
+```sh
+# infra/gcp/envs/stage0/terraform.tfvars: min_desktop_version = "0.2.0"
+terraform -chdir=infra/gcp/envs/stage0 plan -out=tfplan    # only copilot-env changes
+terraform -chdir=infra/gcp/envs/stage0 apply tfplan
+uv run infra/gcp/scripts/stage.py restart api gateway
+```
+
+0.1.0 predates the guard: it sends no version header, so the API cannot hold it back, and it
+does not know `4426`, so the gateway closes it with `4410` instead (it stops rather than
+reconnecting). It still offers each newer version at its next start.
 
 **Release builds.** The `release` Cargo feature embeds `apps/desktop/release.json` (the stage's
 API and gateway URLs, the update manifest's URL and the updater's public key): no local
@@ -672,6 +733,17 @@ uv run ruff check . && uv run ruff format --check .
 uv run pyright
 ```
 
+- **Desktop releases and updates:** `tests/test_desktop_release.py` runs the release plan
+  against a throwaway git repository (a merge that changes the app releases the next patch;
+  backend, docs, tests and infrastructure skip; changes add up across skipped releases; hand
+  tags; a published version whose tag is missing; an older commit; the notes);
+  `apps/desktop/src-tauri/src/release.rs` tests the update schedule (never during a session,
+  even when the server insists; at start, after a session, when idle; ask mode; a session
+  start and an install never overlap; the restart note) and the update log;
+  `apps/desktop/tests/updates.test.ts` the banner. The version guard:
+  `apps/gateway/tests/test_version_guard.py` (4426, and 4410 for 0.1.0),
+  `apps/api/tests/test_version_guard.py` (426) and, end to end, the client stopping on 4426
+  without reconnecting (`apps/desktop/core/tests/gateway.rs`).
 - **Contract tests** (`packages/protocol/tests/`, `packages/protocol/rust/tests/`): the
   fixtures in `packages/protocol/fixtures/messages.json` round-trip through the Python,
   TypeScript and Rust types. They cover every message type, messages that must be rejected, and audio frame

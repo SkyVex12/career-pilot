@@ -7,6 +7,9 @@
 //!
 //! A `401` gets one token refresh and one retry, so the browser sign-in ([`crate::oauth`])
 //! slots in behind [`TokenProvider`] with no change here.
+//!
+//! Every request names the app (`x-copilot-client: desktop-<version>`, [`ApiClient::with_client`]);
+//! an app older than the server supports gets `426` and [`ApiError::Outdated`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,6 +23,9 @@ use sha2::{Digest, Sha256};
 use crate::auth::TokenProvider;
 
 const JSON_TIMEOUT: Duration = Duration::from_secs(30);
+/// The header that names the app and its version to the API (protocol.schema.json,
+/// `ClientOutdated`).
+pub const CLIENT_HEADER: &str = "x-copilot-client";
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ApiError {
@@ -33,6 +39,9 @@ pub enum ApiError {
     Network(String),
     #[error("{0}")]
     Invalid(String),
+    /// `426`: this app is older than the server supports; it must update first.
+    #[error("{message}")]
+    Outdated { min_version: String, message: String },
 }
 
 impl ApiError {
@@ -40,6 +49,7 @@ impl ApiError {
         match self {
             Self::Status { status, .. } => Some(*status),
             Self::Unauthorized => Some(401),
+            Self::Outdated { .. } => Some(426),
             _ => None,
         }
     }
@@ -81,6 +91,8 @@ pub struct ApiClient {
     base: String,
     http: reqwest::Client,
     tokens: Arc<dyn TokenProvider>,
+    /// `desktop-<version>`, sent as [`CLIENT_HEADER`].
+    client: Option<String>,
 }
 
 impl ApiClient {
@@ -94,7 +106,20 @@ impl ApiClient {
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| ApiError::Invalid(e.to_string()))?;
-        Ok(Self { base, http, tokens })
+        Ok(Self { base, http, tokens, client: None })
+    }
+
+    /// Name the app on every request (`desktop-0.1.1`), for the server's version guard.
+    pub fn with_client(mut self, client: impl Into<String>) -> Self {
+        self.client = Some(client.into());
+        self
+    }
+
+    fn named(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.client {
+            Some(c) => req.header(CLIENT_HEADER, c),
+            None => req,
+        }
     }
 
     pub fn base_url(&self) -> &str {
@@ -111,8 +136,7 @@ impl ApiClient {
         let url = format!("{}{path}", self.base);
         for attempt in 0..2 {
             let mut req = self
-                .http
-                .request(method.clone(), &url)
+                .named(self.http.request(method.clone(), &url))
                 .bearer_auth(self.token(attempt > 0).await?)
                 .timeout(JSON_TIMEOUT);
             if let Some(body) = body {
@@ -155,8 +179,7 @@ impl ApiClient {
         let name = percent_encode(file_name);
         for attempt in 0..2 {
             let response = self
-                .http
-                .post(&url)
+                .named(self.http.post(&url))
                 .bearer_auth(self.token(attempt > 0).await?)
                 .header(reqwest::header::CONTENT_TYPE, content_type)
                 .header("x-file-name", &name)
@@ -281,6 +304,11 @@ fn parse_response(status: StatusCode, text: &str) -> Result<Value, ApiError> {
     if status == StatusCode::UNAUTHORIZED {
         return Err(ApiError::Unauthorized);
     }
+    if status == StatusCode::UPGRADE_REQUIRED
+        && let Ok(body) = serde_json::from_value::<copilot_protocol::ClientOutdated>(value.clone())
+    {
+        return Err(ApiError::Outdated { min_version: body.min_version, message: body.message });
+    }
     // FastAPI: {"detail": "..."}, or a list of validation errors for 422.
     let detail = match &value["detail"] {
         Value::String(s) => s.clone(),
@@ -312,6 +340,26 @@ mod tests {
         assert_eq!(parse_response(StatusCode::UNAUTHORIZED, "{}").unwrap_err(), ApiError::Unauthorized);
         let e = parse_response(StatusCode::BAD_GATEWAY, "upstream down").unwrap_err();
         assert_eq!(e.detail(), "upstream down");
+    }
+
+    #[test]
+    fn an_outdated_app_gets_its_own_error() {
+        let body = r#"{"code":"client_outdated","message":"Copilot 0.1.4 is older than this server supports (0.2.0 or newer).","min_version":"0.2.0","client_version":"0.1.4"}"#;
+        let e = parse_response(StatusCode::UPGRADE_REQUIRED, body).unwrap_err();
+        assert_eq!(
+            e,
+            ApiError::Outdated {
+                min_version: "0.2.0".into(),
+                message: "Copilot 0.1.4 is older than this server supports (0.2.0 or newer).".into()
+            }
+        );
+        assert_eq!(e.status(), Some(426));
+        // A 426 from something else (a proxy) stays a plain status error.
+        assert_eq!(parse_response(StatusCode::UPGRADE_REQUIRED, "nope").unwrap_err().status(), Some(426));
+        assert!(matches!(
+            parse_response(StatusCode::UPGRADE_REQUIRED, "nope").unwrap_err(),
+            ApiError::Status { .. }
+        ));
     }
 
     #[test]

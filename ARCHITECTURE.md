@@ -530,6 +530,7 @@ A session moves through `connecting`, `active`, `reconnecting` (zero or more tim
 | `4408` | No start or resume message in time | Reconnect with a new `session.start` |
 | `4409` | Another session is already active | Offer to end the other session (when this client knows its id: resume it and send `session.end`) |
 | `4410` | Replaced by a newer connection for this session | Nothing: do not reconnect or prompt (the newer connection is this client's) |
+| `4426` | The app is older than the server supports (`min_client_version`; the `error` before it has code `client_outdated`) | Do not reconnect; update at once (never during another session). An app from before `4426` existed (0.1.0) gets `4410` instead, since it would reconnect on a code it does not know |
 | `4429` | Rate limited | Retry after the `retry_after_ms` in the preceding `error` |
 | `4500` | Internal error | Reconnect and resume |
 
@@ -1554,7 +1555,7 @@ GitHub Actions, authenticating to AWS through OIDC roles.
 
 **Stage 0:** `.github/workflows/ci.yml` runs on pull requests (Python with Postgres and Valkey as service containers, TypeScript, Rust on Windows, migrations, and `terraform plan` posted on the PR); `.github/workflows/deploy.yml` runs on merge to `main`: ARM64 images built natively on GitHub's ARM runners, pushed to ECR with the git SHA as the tag, then `infra/scripts/deploy.py` runs the migration task and moves each service to the new images. A rollback is a deploy of an older tag (from the Actions tab, or `deploy.py --tag`); migrations are expand then contract, so older code runs against a newer schema. There is no staging step or replay check yet. On GCP (where Stage 0 runs now), `deploy.yml` builds each image natively for linux/amd64 and linux/arm64, joins them under one tag (the git SHA) and pushes it to Artifact Registry through Workload Identity Federation; `ci.yml` validates `infra/gcp` and lints the VM's `copilotctl`; deploying and rolling back are `infra/gcp/scripts/stage.py deploy` and `rollback`, run by a person.
 
-**Desktop releases:** a `desktop-v*` tag builds macOS (universal) and Windows, signs and notarizes them, uploads them to the updates bucket, and publishes the Tauri updater manifest.
+**Desktop releases:** a `desktop-v*` tag builds macOS (universal) and Windows, signs and notarizes them, uploads them to the updates bucket, and publishes the Tauri updater manifest. In Stage 0 (Windows only), every deploy of `main` that changed what the app ships also releases the next patch version and tags it (`release-desktop.yml`, called by `deploy.yml` after the backend deploy passed); a tag pushed by hand sets a minor or major version. Installed apps check at start and every four hours, download and verify in the background, and install only when no session runs. The gateway and the API refuse apps older than `min_client_version` (`4426`, HTTP `426` with the `ClientOutdated` body), and such an app updates at once.
 
 ### SLOs, alerts and feature flags
 

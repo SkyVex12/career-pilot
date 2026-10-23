@@ -895,3 +895,11 @@ button.small {
   font-size: 12px;
   margin-top: 2px;
 }
+
+/* The settings screen's update log. */
+.update-log {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 160px;
+  overflow: auto;
+}
