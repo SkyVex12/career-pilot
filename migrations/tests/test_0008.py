@@ -100,7 +100,9 @@ async def test_existing_jobs_interviews_and_resume_move_into_the_new_structure(
         active = await node(c, a, {"type": "resume", "ref": str(new_doc)}, "active")
         from_session = await node(c, a, {"type": "session", "ref": str(session)}, "active")
 
-        assert await apply(database, MIGRATIONS) == ["0008_applications_resumes"]
+        # Up to 0008 only, so later migrations do not change what this checks.
+        shutil.copy(MIGRATIONS / "0008_applications_resumes.sql", tmp_path)
+        assert await apply(database, tmp_path) == ["0008_applications_resumes"]
 
         rows = {
             r["id"]: r
