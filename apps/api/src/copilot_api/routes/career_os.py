@@ -104,7 +104,35 @@ async def remote_failed(svc: Services, user: Principal, e: CareerOsError) -> HTT
     return HTTPException(502, e.message)
 
 
-def connection_out(row: Any | None, available: bool) -> dict[str, Any]:
+async def kind_of(svc: Services, account: Principal, row: Any | None) -> str:
+    """The link's Career-OS account type: `user`, `admin` or `super_admin`. A link made before
+    Career Pilot kept it (migration 0009) has none: Career-OS is asked once (`GET /me`) and the
+    answer kept. Until Career-OS answers, such a link counts as a user link."""
+    if row is None:
+        return "user"
+    kind = row["external_kind"]
+    if kind in ACCOUNT_TYPES:
+        return str(kind)
+    if row["status"] != "active" or svc.career_os is None:
+        return "user"
+    try:
+        async with svc.tx(account) as conn:
+            token = await token_of(svc, conn, account.user_id)
+        me = await svc.career_os.me(token)
+    except (HTTPException, CareerOsError):
+        return "user"
+    found = me.get("account_type")
+    kind = found if found in ACCOUNT_TYPES else "user"
+    async with svc.tx(account) as conn:
+        await conn.execute(
+            "update app.integrations set external_kind = $2"
+            " where provider = $1 and external_kind is null",
+            PROVIDER, kind,
+        )  # fmt: skip
+    return kind
+
+
+def connection_out(row: Any | None, available: bool, kind: str = "user") -> dict[str, Any]:
     if row is None:
         return {"connected": False, "available": available}
     return {
@@ -112,7 +140,7 @@ def connection_out(row: Any | None, available: bool) -> dict[str, Any]:
         "available": available,
         "status": row["status"],
         "user": {"id": row["external_id"], "name": row["external_label"]},
-        "account_type": row["external_kind"] or "user",
+        "account_type": kind,
         "connected_at": row["connected_at"].isoformat() if row["connected_at"] else None,
         "last_pull_at": row["last_sync_at"].isoformat() if row["last_sync_at"] else None,
     }
@@ -126,7 +154,7 @@ async def get_connection(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
             " last_sync_at from app.integrations where provider = $1",
             PROVIDER,
         )
-    return connection_out(row, svc.career_os is not None)
+    return connection_out(row, svc.career_os is not None, await kind_of(svc, user, row))
 
 
 @router.post("/career-os/connect", status_code=201)
@@ -181,7 +209,7 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
         # Never leave a token on Career-OS that this account does not hold.
         await client.revoke(str(linked["token"]))
         raise
-    return connection_out(row, True)
+    return connection_out(row, True, kind)
 
 
 @router.delete("/career-os/connection", status_code=204)
@@ -242,12 +270,12 @@ class Homes:
     async def load(cls, svc: Services, account: Principal) -> "Homes":
         async with svc.tx(account) as conn:
             row = await conn.fetchrow(
-                "select external_id, external_kind from app.integrations where provider = $1",
+                "select status, external_id, external_kind from app.integrations"
+                " where provider = $1",
                 PROVIDER,
             )
         linked_id = None if row is None else cast(str | None, row["external_id"])
-        kind = "user" if row is None else str(row["external_kind"] or "user")
-        homes = cls(svc, account, linked_id, kind)
+        homes = cls(svc, account, linked_id, await kind_of(svc, account, row))
         if homes.self_id:
             homes.by_cos[homes.self_id] = account
             homes.cos_of[account.user_id] = homes.self_id

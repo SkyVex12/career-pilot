@@ -13,7 +13,7 @@ from typing import Any, cast
 from fastapi import APIRouter
 
 from copilot_api.deps import AccountDep, SvcDep
-from copilot_api.routes.career_os import PROVIDER, obj, token_of, user_out
+from copilot_api.routes.career_os import PROVIDER, kind_of, obj, token_of, user_out
 from copilot_core import profiles
 from copilot_core.careeros import CareerOsError
 
@@ -32,7 +32,7 @@ async def list_profiles(svc: SvcDep, account: AccountDep) -> dict[str, Any]:
         )
     me = profiles.me_out(account)
     me["name"] = name or account.display_name
-    kind = (link and link["external_kind"]) or "user"
+    kind = await kind_of(svc, account, link)
     if link is None or link["status"] != "active":
         return {"items": [me, *await profiles.listed(svc.pool, account)], "career_os": None}
     if kind == "user":

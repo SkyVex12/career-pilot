@@ -151,6 +151,12 @@ class FakeCareerOs:
             self.revoked.add(token)
             return httpx2.Response(204)
         scope = self.scope(account)
+        if path == "/me":
+            is_admin = account in self.admins
+            me = copy.deepcopy(self.contract["me"])
+            me.update(user_id=account, account_type="admin" if is_admin else "user",
+                      name=(self.admins if is_admin else self.users)[account])  # fmt: skip
+            return httpx2.Response(200, json=me)
         if path == "/users":
             users = sorted(({"id": u, "name": self.users[u]} for u in scope),
                            key=lambda u: u["name"])  # fmt: skip

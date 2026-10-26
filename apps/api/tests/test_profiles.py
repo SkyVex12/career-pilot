@@ -82,6 +82,30 @@ async def test_an_admin_link_lists_a_profile_per_user(api: Api, fake: FakeCareer
     assert len(await listed(api, h)) == 3
 
 
+async def test_a_link_without_its_account_type_asks_once(api: Api, fake: FakeCareerOs) -> None:
+    """Links made before migration 0009 have no account type: Career-OS is asked once (its
+    `GET /me`), and the answer is kept, so an admin's old link lists its users' profiles."""
+    uid, h = await admin_account(api, fake)
+    await api.admin.execute(
+        "update app.integrations set external_kind = null where user_id = $1", uid
+    )
+    fake.down = True  # Career-OS cannot say yet: a user link for now, and nothing kept
+    assert [p["me"] for p in await listed(api, h)] == [True]
+    assert await api.admin.fetchval(
+        "select external_kind from app.integrations where user_id = $1", uid) is None  # fmt: skip
+    fake.down = False
+    assert [p["name"] for p in await listed(api, h)] == ["Alex", "Alex Doe", "Blair Roe"]
+    kept = await api.admin.fetchval(
+        "select external_kind from app.integrations where user_id = $1", uid
+    )
+    assert kept == "admin"
+    conn = (await api.client.get("/v1/career-os/connection", headers=h)).json()
+    assert conn["account_type"] == "admin"
+    calls = len([c for c in fake.calls if c == "GET /me"])
+    await listed(api, h)
+    assert len([c for c in fake.calls if c == "GET /me"]) == calls  # asked once
+
+
 async def test_each_profile_sees_only_its_own_data(api: Api, fake: FakeCareerOs) -> None:
     _, h = await admin_account(api, fake)
     _, alex, blair = await listed(api, h)
