@@ -44,7 +44,7 @@ from copilot_core.packs import (
 )
 from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
-from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
+from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question, is_answer_command
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
@@ -1256,6 +1256,8 @@ class Session:
             )
             return
         self.last_force = now
+        if text and is_answer_command(text):
+            text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
         if not text:
             heard = self.transcript_text(self.settings.force_context_s)
             text = " ".join(p for p in (heard, self.turns.interim) if p).strip()
