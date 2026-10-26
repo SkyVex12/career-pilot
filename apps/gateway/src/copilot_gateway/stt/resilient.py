@@ -75,6 +75,7 @@ class ResilientSTT:
         stall_s: float = 3.0,
         failures_before_switch: int = 2,
         keepalive_s: float = 5.0,
+        keyterms: Sequence[str] = (),
     ) -> None:
         if not providers:
             raise ValueError("at least one STT provider is needed")
@@ -84,6 +85,7 @@ class ResilientSTT:
         self.stall_s = stall_s
         self.failures_before_switch = failures_before_switch
         self.keepalive_s = keepalive_s
+        self.keyterms = list(keyterms)
 
         self.index = 0
         self.failures = 0
@@ -160,7 +162,7 @@ class ResilientSTT:
 
     async def _run_once(self) -> None:
         name, factory = self.providers[self.index]
-        stream = factory()
+        stream = factory(self.keyterms)
         try:
             await stream.connect()
         except Exception as e:

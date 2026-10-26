@@ -312,6 +312,7 @@ class Session:
             stall_s=s.stt_stall_s,
             failures_before_switch=s.stt_failures_before_switch,
             keepalive_s=s.stt_keepalive_s,
+            keyterms=self.pack.keyterms if self.pack is not None else (),
         )
 
     @property

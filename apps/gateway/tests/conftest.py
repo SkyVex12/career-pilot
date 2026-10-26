@@ -2,7 +2,7 @@
 real uvicorn server per test. Timers are shortened so the tests run in seconds."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -77,8 +77,14 @@ class Env:
     ) -> Services:
         settings = settings or make_settings()
 
-        def factory(name: str, control: TextSTTControl | None = None) -> Callable[[], TextSTT]:
-            return lambda: TextSTT(control or self.stt, name)
+        def factory(
+            name: str, control: TextSTTControl | None = None
+        ) -> Callable[[Sequence[str]], TextSTT]:
+            def make(keyterms: Sequence[str]) -> TextSTT:
+                (control or self.stt).keyterms.append(list(keyterms))
+                return TextSTT(control or self.stt, name)
+
+            return make
 
         return Services(
             settings=settings,

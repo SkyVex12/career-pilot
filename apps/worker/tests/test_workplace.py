@@ -20,7 +20,7 @@ from copilot_core.packs import SessionPack, render_pack
 from copilot_core.storage import company_document_key, employer_prefix
 from copilot_core.teststack import as_role
 from copilot_core.workplace import memory_version, search
-from copilot_worker.testing import FIXTURES, GatewayLog, Stack
+from copilot_worker.testing import FIXTURES, STARTED, GatewayLog, Stack
 from copilot_worker.workplace import write_worklog_nodes
 
 pytestmark = pytest.mark.stack
@@ -452,6 +452,11 @@ async def test_standup_commitments_go_back_to_the_company(stack: Stack) -> None:
         "session.postcall", f"session.postcall:{log.sid}", uid, {"session_id": str(log.sid)}
     )
     await stack.run(postcall)
+    # 2026-10-26: without the day, "today or tomorrow" had no due date and the model wrote
+    # "the session date was not provided" into the commitment.
+    job, body = stack.claude.requests[-1]
+    assert job == "postcall_standup"
+    assert f"Date: {STARTED:%A} {STARTED.date().isoformat()}" in json.dumps(body["messages"])
     await stack.run(postcall)  # a retry replaces them
     rows = await nodes_of(stack, eid)
     assert [(r["kind"], r["title"]) for r in rows] == [

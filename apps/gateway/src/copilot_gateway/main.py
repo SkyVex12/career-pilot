@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 
 import asyncpg
@@ -40,8 +40,13 @@ def stt_providers(settings: Settings) -> list[tuple[str, STTFactory]]:
                 continue
             key = settings.deepgram_api_key.get_secret_value()
 
-            def deepgram(key: str = key) -> DeepgramSTT:
-                return DeepgramSTT(key, url=settings.deepgram_url, model=settings.deepgram_model)
+            def deepgram(keyterms: Sequence[str], key: str = key) -> DeepgramSTT:
+                return DeepgramSTT(
+                    key,
+                    url=settings.deepgram_url,
+                    model=settings.deepgram_model,
+                    keyterms=list(keyterms),
+                )
 
             providers.append(("deepgram", deepgram))
         else:

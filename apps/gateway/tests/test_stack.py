@@ -144,7 +144,7 @@ async def test_session_resume_across_tasks_on_the_stack(
             jobs=SqsJobQueue(url, "us-east-1", client=sqs),
             router=build_router(settings, env.providers),
             verifier=env.verifier,
-            stt_providers=[("text", lambda: TextSTT(env.stt))],
+            stt_providers=[("text", lambda _: TextSTT(env.stt))],
         )
 
     await vk.delete(keys.user_active_session(env.user_a))

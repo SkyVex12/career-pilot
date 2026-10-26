@@ -161,6 +161,12 @@ POSTCALL_STANDUP_SYSTEM = f"""You write the report of a standup the user just fi
 Return a short summary, what the user did yesterday and will do today, their blockers, and
 every commitment the user made with its due date (YYYY-MM-DD, or an empty string when none
 was said).
+- Work due dates out from the Date line: "today", "tomorrow", "by Friday"; for "today or
+  tomorrow" take the later day.
+- A commitment is the promise alone, in a few words as the user would put it ("Send the rate
+  cache plan"). Never add remarks about the call, the transcript, the audio or
+  missing information to any field.
+- Blockers are what blocks the user's own work, not someone else's trouble in the call.
 
 {POSTCALL_RULES}"""
 

@@ -178,6 +178,12 @@ async def test_meeting_renders_the_companys_pack_and_searches_it(env: Env, db: D
     pack_id = state[b"pack_id"].decode()
     stored = await vk.get(keys.pack(USER_A, pack_id))
     assert stored is not None  # the session's copy, for a resume
+    # The company's names went to speech to text as keyterms (2026-10-26: a report's name
+    # was misheard), and nothing of another user's company did.
+    terms = env.stt.keyterms[0]
+    assert terms[0] == "Fernhill Logistics"
+    assert "Label service" in terms
+    assert "B label API" not in terms
 
 
 async def test_live_memory_finds_what_the_pack_leaves_out(env: Env, db: Db) -> None:

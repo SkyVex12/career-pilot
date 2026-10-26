@@ -1,6 +1,6 @@
 """The STTStream interface every provider implements."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -40,4 +40,5 @@ class STTStream(Protocol):
     async def close(self) -> None: ...
 
 
-type STTFactory = Callable[[], STTStream]
+# Makes a stream; the argument is the words to expect (keyterms), possibly none.
+type STTFactory = Callable[[Sequence[str]], STTStream]

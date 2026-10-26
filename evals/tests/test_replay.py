@@ -80,7 +80,7 @@ def services() -> Services:
         jobs=MemoryJobQueue(),
         router=build_router(settings, [ScriptedProvider("anthropic")]),
         verifier=StaticVerifier({"tok": Principal(UUID(uid), "Alex", None)}),
-        stt_providers=[("script", ScriptSTT)],
+        stt_providers=[("script", lambda _: ScriptSTT())],
     )
 
 

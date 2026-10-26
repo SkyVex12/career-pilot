@@ -398,7 +398,35 @@ async def render_employer_pack(
     nodes = await load_nodes(conn, user_id, employer_id)
     version = await memory_version(conn, user_id, employer_id)
     build = standup_pack if mode == "standup" else meeting_pack
-    return build(user_id, emp, nodes, today, version, built_at)
+    pack = build(user_id, emp, nodes, today, version, built_at)
+    return pack.model_copy(update={"keyterms": keyterms(emp.name, nodes)})
+
+
+KEYTERM_KINDS = ("project", "system", "term", "person")
+KEYTERMS_MAX = 40
+KEYTERM_MAX_WORDS = 4
+
+
+def keyterms(company: str, nodes: Sequence[Row]) -> list[str]:
+    """The names speech to text should expect at this company: the company, then its
+    projects, systems, terms and people, in that order and by title (the same memory gives
+    the same list), short ones only, at most KEYTERMS_MAX."""
+    out: list[str] = []
+    seen: set[str] = set()
+    ranked = sorted(
+        (n for n in nodes if n["kind"] in KEYTERM_KINDS),
+        key=lambda n: (KEYTERM_KINDS.index(n["kind"]), str(n["title"]).lower()),
+    )
+    for title in [company, *(str(n["title"]) for n in ranked)]:
+        title = " ".join(title.split())
+        key = title.lower()
+        if not title or key in seen or len(title.split()) > KEYTERM_MAX_WORDS:
+            continue
+        seen.add(key)
+        out.append(title)
+        if len(out) == KEYTERMS_MAX:
+            break
+    return out
 
 
 # Live search -------------------------------------------------------------------------------
