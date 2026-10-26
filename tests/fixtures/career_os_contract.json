@@ -1,7 +1,7 @@
 {
   "about": "The Career-OS API Career Pilot uses (/v1/career-pilot). The same file is in Career-OS (backend/tests/fixtures/career_pilot_contract.json): Career-OS's tests check its responses have these shapes, Career Pilot's fake Career-OS answers with them. Change both together.",
   "link_code": {
-    "request": "POST /v1/career-pilot/link-codes (X-Auth-Token of a signed-in user)",
+    "request": "POST /v1/career-pilot/link-codes (X-Auth-Token of a signed-in user, admin or super admin)",
     "response": {"code": "K7QM-2XPA-9R", "expires_at": "2026-10-22T10:10:00"}
   },
   "link": {
@@ -10,12 +10,17 @@
       "token": "cpt_EXAMPLE-not-a-real-token",
       "link_id": "cpl_01",
       "user": {"id": "u20260101000000", "name": "Alex Doe"},
+      "account_type": "user",
       "scopes": ["applications:read"]
     }
   },
-  "me": {"user_id": "u20260101000000", "name": "Alex Doe", "link_id": "cpl_01", "scopes": ["applications:read"]},
+  "me": {"user_id": "u20260101000000", "name": "Alex Doe", "link_id": "cpl_01", "account_type": "user", "scopes": ["applications:read"]},
+  "users": {
+    "request": "GET /v1/career-pilot/users",
+    "response": {"items": [{"id": "u20260101000000", "name": "Alex Doe"}]}
+  },
   "search": {
-    "request": "GET /v1/career-pilot/applications?q=acme&stage=interview&from=2026-09-01&to=2026-10-31&limit=25&cursor=",
+    "request": "GET /v1/career-pilot/applications?user_id=u20260101000000&q=acme&stage=interview&from=2026-09-01&to=2026-10-31&limit=25&cursor=",
     "response": {
       "items": [
         {
@@ -27,6 +32,7 @@
           "url": "https://jobs.example.com/acme/123",
           "created_at": "2026-10-01T09:00:00",
           "updated_at": "2026-10-05T12:00:00",
+          "user": {"id": "u20260101000000", "name": "Alex Doe"},
           "resume": "tailored",
           "content_hash": "3f1c2a9e0b7d4c6e8a1f2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70"
         }
@@ -48,6 +54,7 @@
         "created_at": "2026-10-01T09:00:00",
         "updated_at": "2026-10-05T12:00:00"
       },
+      "user": {"id": "u20260101000000", "name": "Alex Doe"},
       "job_description": {"text": "Acme Payments is hiring a Senior Backend Engineer to scale its ledger. Python, PostgreSQL, Kafka.", "created_at": "2026-10-01T09:00:00"},
       "resume_version": {
         "id": "rv20261001090000",
@@ -65,9 +72,8 @@
     "response_headers": {"content-type": "application/pdf", "content-disposition": "attachment; filename=\"resume.pdf\""}
   },
   "errors": {
-    "401": "missing, unknown, revoked or expired token or code; a session token on the bearer endpoints; disabled user",
-    "403": "a link code asked for by an admin (link codes are for users signed in as themselves)",
-    "404": "no such application for this user (another user's looks the same)",
+    "401": "missing, unknown, revoked or expired token or code; a session token on the bearer endpoints; disabled user or admin",
+    "404": "no such application or user_id in the link's scope (the user's own, or an admin's linked users'; anything else looks the same)",
     "429": "rate limited: {\"detail\": \"...\"} with Retry-After"
   }
 }
