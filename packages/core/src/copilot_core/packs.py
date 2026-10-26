@@ -78,6 +78,8 @@ class PackItem(_Model):
     node_id: UUID
     short_id: str = ""
     text: str
+    title: str = ""  # the node's short name, for prepared talking points
+    external_id: str = ""  # a ticket or PR id, when the log gave one
     date: str | None = None  # the work log day it came from
     due_date: str | None = None  # commitments
     state: str | None = None

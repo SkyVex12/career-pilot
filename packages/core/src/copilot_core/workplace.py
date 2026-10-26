@@ -173,6 +173,8 @@ def _item(row: Row, sids: Mapping[UUID, str], with_date: bool = False) -> PackIt
         node_id=row["id"],
         short_id=sids.get(row["id"], ""),
         text=item_text(row),
+        title=str(row["title"]),
+        external_id=str(b.get("external_id") or ""),
         date=day.isoformat() if (with_date and day) else None,
         due_date=str(b["due_date"]) if row["kind"] == "commitment" and b.get("due_date") else None,
         state=state if row["kind"] in ("work_item", "commitment") else None,
@@ -272,8 +274,34 @@ def standup_pack(
     return pack
 
 
+# Prepared standup points are read at a glance while the user talks: the item's name and
+# state, never its whole summary (the 2026-10-26 standup showed four 200-300 character
+# summaries). The deep pass still gets the full items from the pack.
+POINT_MAX_WORDS = 12
+POINTS_PER_SECTION = 3
+STATE_LABELS = {"done": "Done", "in_progress": "In progress", "planned": "Next",
+                "blocked": "Blocked"}  # fmt: skip
+
+
+def _ranked(items: Sequence[PackItem]) -> list[PackItem]:
+    """Items with a ticket or PR id first (what the team tracks), otherwise as listed."""
+    return sorted(items, key=lambda i: not i.external_id)
+
+
+def _point(i: PackItem) -> str:
+    name = i.title or i.text
+    words = name.split()
+    if len(words) > POINT_MAX_WORDS:
+        name = " ".join(words[:POINT_MAX_WORDS]) + "..."
+    if i.external_id and i.external_id.lower() not in name.lower():
+        name = f"{name} ({i.external_id})"
+    label = STATE_LABELS.get(i.state or "")
+    line = f"{label}: {name}" if label else name
+    return f"{line} [{i.short_id}]" if i.short_id else line
+
+
 def _points(items: Sequence[PackItem], n: int) -> list[str]:
-    return [f"{i.text} [{i.short_id}]" if i.short_id else i.text for i in items[:n]]
+    return [_point(i) for i in _ranked(items)[:n]]
 
 
 def standup_answers(brief: StandupBrief) -> list[PreparedAnswer]:
@@ -281,9 +309,9 @@ def standup_answers(brief: StandupBrief) -> list[PreparedAnswer]:
     Vectors are added by the pack builder (`carry_vectors`, or the worker's embedder)."""
     answers: dict[str, list[str]] = {}
     if brief.yesterday:
-        answers["yesterday"] = _points(brief.yesterday, 4)
+        answers["yesterday"] = _points(brief.yesterday, POINTS_PER_SECTION)
     if brief.today:
-        answers["today"] = _points(brief.today, 4)
+        answers["today"] = _points(brief.today, POINTS_PER_SECTION)
     if brief.yesterday or brief.today:
         blockers = _points(brief.blockers, 2) or ["Nothing blocking me right now"]
         answers["blockers"] = blockers
@@ -302,12 +330,12 @@ def standup_answers(brief: StandupBrief) -> list[PreparedAnswer]:
 
 def _source(brief: StandupBrief, key: str) -> list[PackItem]:
     if key == "yesterday":
-        return brief.yesterday[:4]
+        return _ranked(brief.yesterday)[:POINTS_PER_SECTION]
     if key == "today":
-        return brief.today[:4]
+        return _ranked(brief.today)[:POINTS_PER_SECTION]
     if key == "blockers":
-        return brief.blockers[:2]
-    return brief.yesterday[:2] + brief.today[:2] + brief.blockers[:1]
+        return _ranked(brief.blockers)[:2]
+    return _ranked(brief.yesterday)[:2] + _ranked(brief.today)[:2] + _ranked(brief.blockers)[:1]
 
 
 def carry_vectors(pack: SessionPack, previous: SessionPack | None) -> None:

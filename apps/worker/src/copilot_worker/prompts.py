@@ -219,6 +219,10 @@ Return:
 - commitments: promises the user made to someone, with a due date (YYYY-MM-DD, worked out
   from the log's day when the log says "Friday" or "tomorrow"; "" when none was said).
 - closed_commitments: short ids from <open_commitments> that this log says are done.
+- Titles and summaries are the user's own notes, read aloud in a standup: "Merged PR #412
+  after review", never "The user merged..." The log may be a report written from the user's
+  sessions with a coding assistant; what the assistant did there is the user's work, so
+  never name an assistant or tool (Claude, Codex, Copilot) as the one who did it.
 - projects, systems, people (with their role) and terms (the company's own words and
   acronyms, with their meaning) that the log names and <known> does not have yet.
 

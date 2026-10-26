@@ -148,6 +148,8 @@ async def test_work_log_becomes_company_memory_once(stack: Stack) -> None:
     assert "Fixed the label retry bug" in sent
     assert "Attachment: incident.md" in sent  # the attachment went in as a document
     assert "Log day: 2026-10-19" in sent
+    # Logs written from coding-assistant sessions kept "the user ... Claude ..." narration.
+    assert "never name an assistant or tool" in json.dumps(body["system"])
 
     rows = await nodes_of(stack, eid)
     assert kinds(rows) == {"commitment": 1, "decision": 1, "person": 2, "system": 3, "work_item": 4}
