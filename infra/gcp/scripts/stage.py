@@ -166,6 +166,10 @@ def deploy(tag: str | None, start: bool, check: bool) -> None:
     if ensure_running(start):
         notes.append(f"The VM `{NAME}` was stopped: started it for this deploy, left running.")
     before = deployed_tag()
+    # Room on the boot disk for the new images: drop every image no container uses (earlier
+    # tags; the running ones stay, and a rollback pulls its tag again). copilotctl prunes too,
+    # but the VM runs the copilotctl of its last boot, so this works before that one is there.
+    on_vm_rc("sudo docker image prune -af >/dev/null")
     print(f"deploying {tag} (was {before})")
     code, _ = on_vm_rc(f"{CTL} deploy {tag}")
     if code != 0:

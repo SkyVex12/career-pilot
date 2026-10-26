@@ -216,11 +216,28 @@ wait_data() {
   healthy postgres || die "postgres is not healthy"
 }
 
+prune_images() {
+  # Remove the app images of every tag but the given ones, and unused layers. Docker keeps
+  # images on the small boot disk, so without this each deploy adds a full set until pulls
+  # fail with "no space left on device". An image a container still uses is left alone, and a
+  # rollback pulls its tag again.
+  local keep=" $* " reg ref
+  reg=$(registry)
+  while IFS= read -r ref; do
+    case $ref in
+      "$reg"/*) [[ $keep == *" ${ref##*:} "* ]] || docker image rm "$ref" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(docker image ls --format '{{.Repository}}:{{.Tag}}')
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
 deploy() {
   local new=$1 old
   old=$(tag)
   [ -n "$new" ] || die "usage: copilotctl deploy <tag>"
   log "deploy $new (was $old)"
+  # Room for the new images: only the running tag's stay (and $new's, if a pull was cut short).
+  prune_images "$old" "$new"
   echo "$new" > "$STATE/image-tag.next"
   for s in gateway api worker proxy; do
     docker pull -q "$(registry)/$s:$new" >/dev/null || { rm -f "$STATE/image-tag.next"; die "no image $s:$new in the registry"; }
@@ -246,6 +263,8 @@ deploy() {
     fi
   done
   [ "$old" != none ] && [ "$old" != "$new" ] && echo "$old" >> "$STATE/tag-history"
+  # The previous tag's images stay for a quick rollback; older ones go.
+  prune_images "$new" "$old"
   log "deployed $new; rollback: copilotctl rollback (to $old)"
 }
 
@@ -268,6 +287,7 @@ status() {
   docker ps -a --filter name=copilot- --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
   systemctl list-timers 'copilot-*' --no-pager | head -n 4
   df -h "$DATA" | tail -n 1
+  df -h /var/lib/docker | tail -n 1  # the boot disk, where the images are
   free -m | sed -n 2,3p
 }
 
