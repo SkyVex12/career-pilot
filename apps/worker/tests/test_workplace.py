@@ -20,7 +20,7 @@ from copilot_core.packs import SessionPack, render_pack
 from copilot_core.storage import company_document_key, employer_prefix
 from copilot_core.teststack import as_role
 from copilot_core.workplace import memory_version, search
-from copilot_worker.testing import FIXTURES, GatewayLog, Stack
+from copilot_worker.testing import FIXTURES, STARTED, GatewayLog, Stack
 from copilot_worker.workplace import write_worklog_nodes
 
 pytestmark = pytest.mark.stack
@@ -148,6 +148,8 @@ async def test_work_log_becomes_company_memory_once(stack: Stack) -> None:
     assert "Fixed the label retry bug" in sent
     assert "Attachment: incident.md" in sent  # the attachment went in as a document
     assert "Log day: 2026-10-19" in sent
+    # Logs written from coding-assistant sessions kept "the user ... Claude ..." narration.
+    assert "never name an assistant or tool" in json.dumps(body["system"])
 
     rows = await nodes_of(stack, eid)
     assert kinds(rows) == {"commitment": 1, "decision": 1, "person": 2, "system": 3, "work_item": 4}
@@ -452,6 +454,11 @@ async def test_standup_commitments_go_back_to_the_company(stack: Stack) -> None:
         "session.postcall", f"session.postcall:{log.sid}", uid, {"session_id": str(log.sid)}
     )
     await stack.run(postcall)
+    # 2026-10-26: without the day, "today or tomorrow" had no due date and the model wrote
+    # "the session date was not provided" into the commitment.
+    job, body = stack.claude.requests[-1]
+    assert job == "postcall_standup"
+    assert f"Date: {STARTED:%A} {STARTED.date().isoformat()}" in json.dumps(body["messages"])
     await stack.run(postcall)  # a retry replaces them
     rows = await nodes_of(stack, eid)
     assert [(r["kind"], r["title"]) for r in rows] == [
@@ -495,3 +502,30 @@ async def test_search_reports_a_tickets_newest_entry(stack: Stack) -> None:
     assert [(h.day, h.text) for h in hits if h.kind == "work_item"] == [
         ("2026-10-13", "PSP-412: Deployed to production at 10:00")
     ]
+
+
+async def test_a_provider_outage_marks_the_log_failed_and_it_is_retried(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 2026-10-22 on Stage 0: every route failed (no credits) and the log said "Reading" for
+    # four days, so that day's work never reached a standup pack.
+    from copilot_core.llm import AllRoutesFailedError
+    from copilot_worker import workplace
+
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    log_id, sha = await seed_log(stack, uid, eid, (INPUTS / "worklog.md").read_text("utf-8"))
+
+    async def outage(*_: Any, **__: Any) -> Any:
+        raise AllRoutesFailedError("worklog", ["openai:gpt-6.1-sol: no credits remaining"])
+
+    with monkeypatch.context() as m:
+        m.setattr(workplace, "complete_json", outage)
+        with pytest.raises(AllRoutesFailedError):  # raised again, so the queue retries it
+            await stack.run(extract_job(uid, log_id, sha))
+    status = await stack.admin.fetchval("select status from app.work_logs where id = $1", log_id)
+    assert status == "failed"
+    await stack.run(extract_job(uid, log_id, sha))  # the provider is back
+    status = await stack.admin.fetchval("select status from app.work_logs where id = $1", log_id)
+    assert status == "extracted"
+    assert await nodes_of(stack, eid)

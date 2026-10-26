@@ -51,6 +51,17 @@ from copilot_protocol import models
 log = logging.getLogger(__name__)
 
 CACHE_READ_TIMEOUT_S = 0.1
+# Shorter questions ("why?", "and then?") mean something different each time they are asked,
+# so the exact-repeat cache never serves or keeps them.
+CACHE_MIN_WORDS = 4
+
+# Words of a typed instruction to answer what was just said ("answer", "answer every question
+# now"), as opposed to a question. The 2026-10-26 standup typed these into the Ask box.
+_COMMAND_VERBS = {"answer", "answers", "reply", "respond", "help", "suggest"}
+_COMMAND_WORDS = _COMMAND_VERBS | {
+    "please", "pls", "now", "it", "that", "this", "them", "all", "every", "each", "the", "to",
+    "me", "question", "questions", "what", "was", "just", "said", "asked", "him", "her", "for",
+}  # fmt: skip
 
 
 def normalize_question(text: str) -> str:
@@ -60,6 +71,23 @@ def normalize_question(text: str) -> str:
 
 def question_hash(text: str) -> str:
     return hashlib.sha256(normalize_question(text).encode()).hexdigest()[:32]
+
+
+def cacheable(text: str) -> bool:
+    return len(normalize_question(text).split()) >= CACHE_MIN_WORDS
+
+
+def is_answer_command(text: str) -> bool:
+    """A typed instruction to answer what was just said, rather than a question of its own:
+    a few words, no question mark, one of them a verb such as "answer" and the rest filler."""
+    if "?" in text:
+        return False
+    words = normalize_question(text).split()
+    return (
+        0 < len(words) <= 6
+        and any(w in _COMMAND_VERBS for w in words)
+        and all(w in _COMMAND_WORDS for w in words)
+    )
 
 
 @dataclass
@@ -501,7 +529,7 @@ class AnswerEngine:
                     await prepared(answer)
                     return
             qhash = question_hash(q.text)
-            cached = await self._cached(qhash, pass_)
+            cached = await self._cached(qhash, pass_) if cacheable(q.text) else None
             if cached is not None:
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -561,7 +589,7 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs())
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded and host.store_text():
+            if not q.cancelled and not q.superseded and host.store_text() and cacheable(q.text):
                 task = asyncio.create_task(self._cache_put(qhash, pass_, text, refs))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
@@ -661,7 +689,10 @@ class AnswerEngine:
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory)
 
     def _prepared(self, q: Question) -> PreparedAnswer | None:
-        """The prepared answer, if the question's match has finished with a hit."""
+        """The prepared answer, if the question's match has finished with a hit. A reply to a
+        remark (respond) is never a prepared standup answer."""
+        if q.qtype == "respond":
+            return None
         result = self._match_result(q)
         return result.answer if result is not None else None
 

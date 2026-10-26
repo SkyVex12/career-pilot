@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use copilot_protocol::{
     AnswerExpand, AnswerFeedback, AnswerFeedbackRating, Channel, ClientMessage, Mode, ModeSet, QuestionForce,
+    QuestionForceKind,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -190,9 +191,19 @@ impl Engine {
 
     /// The hotkey (no text) or a typed question.
     pub async fn force_question(&self, text: Option<String>) {
+        self.force(text, None).await;
+    }
+
+    /// The Respond button: a suggested reply to what was just said, for a remark that needs
+    /// one but is not a question (a request, a reminder, "makes sense?").
+    pub async fn respond(&self, text: Option<String>) {
+        self.force(text, Some(QuestionForceKind::Respond)).await;
+    }
+
+    async fn force(&self, text: Option<String>, kind: Option<QuestionForceKind>) {
         self.latency.lock().unwrap().on_force(Instant::now());
         let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-        self.send(ClientMessage::QuestionForce(QuestionForce { text })).await;
+        self.send(ClientMessage::QuestionForce(QuestionForce { text, kind })).await;
     }
 
     pub async fn expand(&self, question_id: Uuid) {

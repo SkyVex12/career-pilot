@@ -77,3 +77,16 @@ def test_summary_reports_uncovered_questions_apart_and_the_cost() -> None:
     assert s["uncovered"]["deep"]["complete_mean"] == 2
     assert s["uncovered"]["deep"]["answers"] == 1
     assert s["cost_usd"] == 0.02
+
+
+def test_group_standup_script_puts_the_users_lines_in_context_only() -> None:
+    from copilot_evals.benchdata import BENCH_DIR, load_script
+    from copilot_evals.detector_eval import cases
+
+    all_cases = cases(load_script(BENCH_DIR / "group_standup.toml"), "Alex Rivera")
+    ids = [c.id for c in all_cases]
+    assert "alex_update" not in ids  # the user's own line is not a case
+    week = next(c for c in all_cases if c.id == "dana_week")
+    assert "Alex Rivera: I'm finishing the label retry fix" in week.transcript
+    fire = {c.id for c in all_cases if c.should_fire}
+    assert fire == {"dana_turns_to_alex", "dana_week", "dana_reminder", "dana_request"}

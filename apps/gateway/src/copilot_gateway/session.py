@@ -44,7 +44,7 @@ from copilot_core.packs import (
 )
 from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
-from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question
+from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question, is_answer_command
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
@@ -277,6 +277,8 @@ class Session:
     # Messages to the client.
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
+        if fields.get("question_type") == "respond" and not self.knows_respond:
+            fields["question_type"] = "other"
         self.seq += 1
         message = cls.model_validate({"type": _type_of(cls), "seq": self.seq, **fields})
         data = message.model_dump_json(exclude_none=True, by_alias=True)
@@ -312,6 +314,7 @@ class Session:
             stall_s=s.stt_stall_s,
             failures_before_switch=s.stt_failures_before_switch,
             keepalive_s=s.stt_keepalive_s,
+            keyterms=self.pack.keyterms if self.pack is not None else (),
         )
 
     @property
@@ -1189,7 +1192,7 @@ class Session:
             case models.AuthRefresh():
                 await self._auth_refresh(message.access_token)
             case models.QuestionForce():
-                self._force(message.text)
+                self._force(message.text, respond=message.kind == "respond")
             case models.Screenshot():
                 self.error("not_implemented", "screenshots are not supported yet")
             case models.AnswerExpand():
@@ -1245,7 +1248,13 @@ class Session:
         self.principal = principal
         self.auth_warned = False
 
-    def _force(self, text: str | None) -> None:
+    @property
+    def knows_respond(self) -> bool:
+        return versions.knows_respond(self.info.client_version)
+
+    def _force(self, text: str | None, respond: bool = False) -> None:
+        """The hotkey, a typed question, or the Respond button (`respond`): a suggested reply
+        to what was just said, for a remark that needs one but is not a question."""
         now = time.monotonic()
         wait_s = self.settings.force_min_interval_s - (now - self.last_force)
         if wait_s > 0:
@@ -1256,6 +1265,8 @@ class Session:
             )
             return
         self.last_force = now
+        if text and is_answer_command(text):
+            text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
         if not text:
             heard = self.transcript_text(self.settings.force_context_s)
             text = " ".join(p for p in (heard, self.turns.interim) if p).strip()
@@ -1267,7 +1278,7 @@ class Session:
         q = Question(
             qid=uuid7(),
             text=text,
-            qtype="other",
+            qtype="respond" if respond else "other",
             confidence=1.0,
             addressed=True,
             speculative=False,

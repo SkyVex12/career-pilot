@@ -46,3 +46,37 @@ def test_monday_standup_reads_fridays_log() -> None:
     assert [i.text for i in pack.standup.today] == ["Start the backfill"]
     assert "Old task" not in render_pack(pack)
     assert {a.question for a in pack.prepared_answers} >= {"What did you work on yesterday?"}
+
+
+def test_prepared_standup_points_are_short_names_not_summaries() -> None:
+    # 2026-10-26: the prepared answer showed whole summaries, 150 to 300 characters each,
+    # one narrating "The user requested ... but Claude suppressed a server warning".
+    from copilot_core.packs import EmployerRef
+
+    long = " ".join(["detail"] * 60)
+
+    def node(title: str, day: date, state: str, ext: str = "") -> dict[str, object]:
+        return {"id": uuid.uuid4(), "kind": "work_item", "title": title, "summary": long,
+                "body": {"state": state, "external_id": ext}, "valid_from": day}  # fmt: skip
+
+    friday = date(2026, 10, 23)
+    nodes = [
+        node("Dispatch queue alerts", friday, "done"),
+        node("Staging data cleanup", friday, "done"),
+        node("Label retry fix", friday, "done", "LAB-412"),
+        node("Webhook signature check", friday, "done"),
+        node("Rate cache rollout", friday, "planned"),
+    ]
+    emp = EmployerRef(id=uuid.uuid4(), name="Larkspur")
+    pack = standup_pack(uuid.uuid4(), emp, nodes, date(2026, 10, 26), "v1")
+    answers = {a.question: a.talking_points for a in pack.prepared_answers}
+    yesterday = answers["What did you work on yesterday?"]
+    assert len(yesterday) == 3
+    assert yesterday[0].startswith("Done: Label retry fix (LAB-412) [")  # tracked first
+    assert answers["What are you working on today?"][0].startswith("Next: Rate cache rollout")
+    for points in answers.values():
+        for p in points:
+            assert "detail" not in p, p
+            assert len(p.split()) <= 18, p
+    assert pack.standup is not None
+    assert long in pack.standup.yesterday[0].text  # the deep pass keeps the full item

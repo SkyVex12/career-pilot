@@ -289,7 +289,7 @@ async def test_stt_reconnect_replays_while_audio_keeps_arriving() -> None:
         pass
 
     stt = ResilientSTT(
-        [("slow", lambda: SlowReplaySTT(received))],
+        [("slow", lambda _: SlowReplaySTT(received))],
         on_result=on_result,
         on_status=lambda state, message: None,
         stall_s=10.0,
@@ -351,7 +351,7 @@ async def test_a_late_reply_to_an_earlier_finalize_does_not_flush_the_new_turn()
         results.append(r)
 
     stt = ResilientSTT(
-        [("late", lambda: stream)],
+        [("late", lambda _: stream)],
         on_result=on_result,
         on_status=lambda state, message: None,
         stall_s=10.0,

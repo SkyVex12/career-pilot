@@ -456,8 +456,8 @@ async def put_log(
     async with svc.tx(user) as conn:
         await _require_employer(conn, employer_id)
         row = await conn.fetchrow(
-            "select id, content_sha256 from app.work_logs where employer_id = $1 and day = $2"
-            " for update",
+            "select id, content_sha256, status from app.work_logs where employer_id = $1"
+            " and day = $2 for update",
             employer_id,
             day,
         )
@@ -465,6 +465,13 @@ async def put_log(
         shas = await _attachment_shas(conn, log_id) if row is not None else []
         sha = content_sha(log_text, shas)
         changed = row is None or row["content_sha256"] != sha
+        # Saving a log whose extraction failed tries again, as the Work screen says.
+        retry = row is not None and not changed and row["status"] == "failed"
+        if retry:
+            await conn.execute(
+                "update app.work_logs set status = 'extracting', updated_at = now() where id = $1",
+                log_id,
+            )
         if changed:
             enc, version = await svc.crypto.encrypt(
                 conn, user.user_id, "work_logs", str(log_id), log_text
@@ -487,7 +494,7 @@ async def put_log(
             f"select {LOG_COLUMNS} from app.work_logs where id = $1", log_id
         )
         entry = await _log_entry(svc, conn, user, saved)
-    if changed:
+    if changed or retry:
         await _extract_log(svc, user, log_id, sha)
     return entry
 

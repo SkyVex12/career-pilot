@@ -50,6 +50,16 @@ def is_outdated(client: str | None, minimum: str) -> bool:
     return v is not None and floor is not None and _key(v) < _key(floor)
 
 
+# The last release whose QuestionType has no "respond": it cannot parse a question.detected
+# that carries it, so the gateway sends "other" instead (the same short reply either way).
+LAST_WITHOUT_RESPOND = (0, 1, 4)
+
+
+def knows_respond(client: str | None) -> bool:
+    v = desktop_version(client)
+    return v is None or v[:3] > LAST_WITHOUT_RESPOND
+
+
 def knows_4426(client: str) -> bool:
     v = desktop_version(client)
     return v is None or v[:3] > LAST_WITHOUT_4426

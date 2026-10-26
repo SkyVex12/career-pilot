@@ -92,6 +92,26 @@ class Scheduler:
     async def once(self, name: str, slot: str) -> bool:
         return bool(await self.valkey.set(f"sched:{name}:{slot}", "1", nx=True, ex=2 * 86400))
 
+    async def retry_work_logs(self, now: datetime) -> list[str]:
+        """Work logs whose extraction failed, or has been running for over an hour, are tried
+        again once an hour for a week, so a provider outage heals without the user. A retry
+        that fails costs nothing; one that works writes the facts as usual."""
+        async with system_tx(self.pool) as conn:
+            rows = await conn.fetch(
+                "select id, user_id, content_sha256 from app.work_logs"
+                " where (status = 'failed' or (status = 'extracting' and updated_at < $1))"
+                " and updated_at > $2 and extracted_sha256 is distinct from content_sha256",
+                now - timedelta(hours=1),
+                now - timedelta(days=7),
+            )
+        sent: list[str] = []
+        for r in rows:
+            key = f"worklog.extract:{r['user_id']}:{r['id']}:{r['content_sha256']}"
+            payload = {"work_log_id": str(r["id"]), "content_sha256": r["content_sha256"]}
+            await self.queue.send(jobs.envelope("worklog.extract", key, r["user_id"], payload))
+            sent.append(key)
+        return sent
+
     async def tick(self, now: datetime | None = None) -> list[str]:
         now = now or datetime.now(UTC)
         sent: list[str] = []
@@ -106,6 +126,9 @@ class Scheduler:
             key = f"usage.report:{day}"
             await self.queue.send(jobs.envelope("usage.report", key, None, {"day": day}))
             sent.append(key)
+        hour = now.strftime("%Y%m%dT%H")
+        if await self.once("worklog.retry", hour):
+            sent += await self.retry_work_logs(now)
         async with system_tx(self.pool) as conn:
             users = [UserRow(r["id"], r["settings"] or {}) for r in await conn.fetch(
                 "select id, settings from app.users"

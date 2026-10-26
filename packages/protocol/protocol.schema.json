@@ -70,7 +70,7 @@
       "enum": ["fast", "deep"]
     },
     "QuestionType": {
-      "description": "Question type from the detector.",
+      "description": "Question type from the detector. respond: not a question, but said to the user and needing a reply (a request, a reminder, \"makes sense?\"); also what the Respond button forces. Clients before desktop 0.1.5 get other instead.",
       "type": "string",
       "enum": [
         "behavioral",
@@ -79,6 +79,7 @@
         "coding",
         "standup_status",
         "small_talk",
+        "respond",
         "other"
       ]
     },
@@ -213,7 +214,12 @@
       "type": "object",
       "properties": {
         "type": { "type": "string", "const": "question.force" },
-        "text": { "type": "string", "minLength": 1 }
+        "text": { "type": "string", "minLength": 1 },
+        "kind": {
+          "description": "answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.",
+          "type": "string",
+          "enum": ["answer", "respond"]
+        }
       },
       "required": ["type"]
     },

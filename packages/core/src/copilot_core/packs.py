@@ -78,6 +78,8 @@ class PackItem(_Model):
     node_id: UUID
     short_id: str = ""
     text: str
+    title: str = ""  # the node's short name, for prepared talking points
+    external_id: str = ""  # a ticket or PR id, when the log gave one
     date: str | None = None  # the work log day it came from
     due_date: str | None = None  # commitments
     state: str | None = None
@@ -163,6 +165,9 @@ class SessionPack(_Model):
     # The pairing it was built for (copilot_core.resumes.pairing_tag), so a rebuild can tell
     # whether it is still current.
     pairing: str | None = None
+    # A company pack's names for speech to text (Deepgram keyterms): the company, its
+    # projects, systems, people and terms, so a product name is not misheard.
+    keyterms: list[str] = []
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

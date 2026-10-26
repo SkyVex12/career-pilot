@@ -21,7 +21,7 @@ from copilot_core.llm import (
 )
 from copilot_core.packs import Digest, NodeRef, PreparedAnswer, cited_refs, cosine, encode_embedding
 from copilot_gateway import audio
-from copilot_gateway.answer import normalize_question, question_hash
+from copilot_gateway.answer import is_answer_command, normalize_question, question_hash
 from copilot_gateway.auth import DevTokenVerifier, bearer_token, make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import parse_detection
@@ -595,3 +595,42 @@ def test_live_prompts_split_personal_facts_from_knowledge() -> None:
     for qtype in prompts.QUESTION_TYPES:
         if qtype != "small_talk":
             assert qtype in prompts.DEEP_SHAPES
+
+
+@pytest.mark.parametrize(
+    ("text", "command"),
+    [
+        ("answer", True),
+        ("answer.", True),
+        ("Answer every questions now.", True),
+        ("please answer that", True),
+        ("help me", True),
+        ("answer?", False),
+        ("What would you answer?", False),
+        ("How do you answer pages at night", False),
+        ("What questions did you catch?", False),
+        ("Answer the question about the backfill order", False),
+    ],
+)
+def test_answer_commands(text: str, command: bool) -> None:
+    assert is_answer_command(text) is command
+
+
+def test_detector_knows_a_group_call_and_the_users_first_name() -> None:
+    # 2026-10-26 standup: 5 of 7 answers fired on a manager's questions to a teammate; the
+    # transcript labels every remote speaker "Them", so it read like a one-on-one.
+    standup = prompts.detector("Jordan Rivera", "", "Where does he create that?", 80, "standup")
+    system = standup.system[0].text
+    assert "This is a group call" in system
+    assert "addressed by name (Jordan Rivera, or Jordan)" in system
+    assert "A question that follows someone else presenting" in system
+    interview = prompts.detector("Jordan Rivera", "", "Why us?", 80, "interview")
+    assert "This is a group call" not in interview.system[0].text
+    assert "- respond:" in system  # remarks that need a reply, in every mode
+
+
+def test_respond_fires_with_its_own_type() -> None:
+    d = parse_detection('{"answer": "respond"}')
+    assert d.fires
+    assert d.qtype == "respond"
+    assert "respond" in prompts.DEEP_SHAPES

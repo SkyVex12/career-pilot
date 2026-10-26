@@ -422,6 +422,81 @@ async def test_exact_repeat_served_from_cache(env) -> None:
     assert await env.client().keys("qa:*")
 
 
+async def test_typed_answer_command_answers_what_was_just_said(env) -> None:
+    # 2026-10-26 standup: "answer" typed into the Ask box was answered as the question
+    # "answer", and the second time from the exact-repeat cache, six minutes stale.
+    await seed_memory(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How do our label retries back off", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "retries" in m["text"])
+        await c.send({"type": "question.force", "text": "answer"})
+        first = await c.wait_type("question.detected")
+        assert "label retries" in first["text"]
+        await c.wait_type("answer.done", question_id=first["question_id"], pass_="fast")
+        await asyncio.sleep(1.1)
+        await c.say("Which queue takes the carrier webhooks", capture_ms=60_000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "webhooks" in m["text"])
+        await c.send({"type": "question.force", "text": "Answer every question now."})
+        second = await c.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != first["question_id"]
+        )
+        assert "carrier webhooks" in second["text"]
+        done = await c.wait_type("answer.done", question_id=second["question_id"], pass_="fast")
+        assert done["source"] == "model"  # not the first answer replayed from the cache
+
+
+async def test_respond_button_suggests_a_reply_to_what_was_just_said(env) -> None:
+    await seed_memory(env)
+    provider = env.providers[0]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Remember not to put report code in the shared libs folder", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "libs" in m["text"])
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected")
+        assert q["question_type"] == "respond"
+        assert "shared libs folder" in q["text"]
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+    fast = [req for job, req in provider.requests if job == "fast"][-1]
+    assert "Question (respond): Remember not to put report code" in str(fast.content)
+
+
+async def test_an_app_before_respond_gets_other(env) -> None:
+    # Desktop 0.1.4 cannot parse a question_type it does not know.
+    await seed_memory(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(client_version="desktop-0.1.4")
+        await c.send({"type": "question.force", "text": "Can you send the numbers by Friday?",
+                      "kind": "respond"})  # fmt: skip
+        q = await c.wait_type("question.detected")
+        assert q["question_type"] == "other"
+
+
+async def test_short_questions_skip_the_repeat_cache(env) -> None:
+    await seed_memory(env)
+    provider = env.providers[0]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        for i in range(2):
+            await c.send({"type": "question.force", "text": "Why that?"})
+            q = await c.wait(
+                lambda m, i=i: (
+                    m["type"] == "question.detected"
+                    and len(c.of_type("question.detected")) == i + 1
+                )
+            )
+            done = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+            assert done["source"] == "model"
+            await asyncio.sleep(1.1)
+    assert sum(1 for job, _ in provider.calls if job == "fast") == 2
+    assert not await env.client().keys("qa:*")
+
+
 async def test_flush_job_every_interval(env) -> None:
     settings = env.settings(flush_interval_s=0.3)
     async with GatewayServer(env.services(settings)) as gw:

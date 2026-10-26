@@ -31,7 +31,14 @@ DEFAULT_PREPARED_THRESHOLDS: dict[str, PreparedThreshold] = {
 }
 
 QuestionType = Literal[
-    "behavioral", "technical", "system_design", "coding", "standup_status", "small_talk", "other"
+    "behavioral",
+    "technical",
+    "system_design",
+    "coding",
+    "standup_status",
+    "small_talk",
+    "respond",
+    "other",
 ]
 
 

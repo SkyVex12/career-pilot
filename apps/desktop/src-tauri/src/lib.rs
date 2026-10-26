@@ -570,6 +570,12 @@ async fn force_question(state: State<'_, AppState>, text: Option<String>) -> Res
 }
 
 #[tauri::command]
+async fn respond(state: State<'_, AppState>, text: Option<String>) -> Res<()> {
+    state.engine()?.respond(text).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn expand_answer(state: State<'_, AppState>, question_id: Uuid) -> Res<()> {
     state.engine()?.expand(question_id).await;
     Ok(())
@@ -833,6 +839,7 @@ pub fn run() {
             end_session,
             end_other_session,
             force_question,
+            respond,
             expand_answer,
             send_feedback,
             set_mode,

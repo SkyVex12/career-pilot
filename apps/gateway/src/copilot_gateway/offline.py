@@ -90,8 +90,8 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         jobs=queue,
         router=build_router(settings, [ScriptedProvider("anthropic")]),
         verifier=StaticVerifier(principals),
-        stt_providers=[("text", lambda: TextSTT(control, "text"))],
-        stt_me_providers=[("text", lambda: TextSTT(me_control, "text"))],
+        stt_providers=[("text", lambda _: TextSTT(control, "text"))],
+        stt_me_providers=[("text", lambda _: TextSTT(me_control, "text"))],
     )
     server = GatewayServer(services)
     server.server.config.port = args.port

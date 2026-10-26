@@ -33,6 +33,7 @@ class TextSTTControl:
     final_delay_s: float = 0.02
     sent_text: list[str] = field(default_factory=list[str])
     names: list[str] = field(default_factory=list[str])
+    keyterms: list[list[str]] = field(default_factory=list[list[str]])  # per connect
 
 
 class TextSTT:

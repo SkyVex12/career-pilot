@@ -33,6 +33,9 @@ class Utterance:
     prepared: str | None = None
     force_after_s: float | None = None
     case: str = ""
+    # "me": a line of the user's own, which goes into the transcript but is not scored (the
+    # group standup script; the TTS benchmark has none).
+    speaker: str = "them"
 
     @property
     def text(self) -> str:
@@ -97,6 +100,7 @@ def load_script(path: Path = SCRIPT) -> list[Utterance]:
                 prepared=u.get("prepared"),
                 force_after_s=u.get("force_after_s"),
                 case=str(u.get("case", "")),
+                speaker=str(u.get("speaker", "them")),
             )
         )
     ids = [u.id for u in out]

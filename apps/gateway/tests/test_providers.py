@@ -3,6 +3,7 @@ Deepgram WebSocket."""
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -169,7 +170,7 @@ async def test_deepgram_stream_against_replayed_server() -> None:
         async def on_result(r: TimedResult) -> None:
             results.append(r)
 
-        def factory() -> DeepgramSTT:
+        def factory(_: Sequence[str]) -> DeepgramSTT:
             return DeepgramSTT("dg-key", url=f"ws://127.0.0.1:{port}/v1/listen", model="nova-3")
 
         stt = ResilientSTT([("deepgram", factory)], on_result, lambda s, m: statuses.append(s))

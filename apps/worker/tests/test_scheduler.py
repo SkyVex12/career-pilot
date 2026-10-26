@@ -1,6 +1,6 @@
 """The local scheduler: cadences, one send per slot, and standup packs 30 minutes ahead."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -89,3 +89,40 @@ async def test_standup_time_builds_each_current_companys_pack(stack: Stack) -> N
     assert [m["payload"]["context"] for m in company] == [f"employer:{now_id}"]
     assert company[0]["payload"]["day"] == "2031-03-05"
     assert company[0]["payload"]["mode"] == "standup"
+
+
+@pytest.mark.stack
+async def test_failed_and_stuck_work_logs_are_retried_hourly(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = uuid7()
+    await stack.admin.execute(
+        "insert into app.employers (id, user_id, name) values ($1, $2, 'Retry Co')", eid, uid
+    )
+    now = datetime(2031, 3, 6, 14, 10, tzinfo=UTC)
+    logs = {}
+    for day, status, age_h in (
+        ("2031-03-01", "failed", 2),  # failed: retried
+        ("2031-03-02", "extracting", 3),  # stuck for hours: retried
+        ("2031-03-03", "extracting", 0.2),  # still running: left alone
+        ("2031-03-04", "extracted", 2),  # done: left alone
+        ("2031-02-20", "failed", 24 * 9),  # failed long ago: given up
+    ):
+        log_id = uuid7()
+        logs[day] = log_id
+        await stack.admin.execute(
+            "insert into app.work_logs (id, user_id, employer_id, day, text_enc, key_version,"
+            " content_sha256, status, updated_at) values ($1, $2, $3, $4, $5, 1, $6, $7, $8)",
+            log_id, uid, eid, date.fromisoformat(day), b"\x00", f"sha-{day}", status,
+            now - timedelta(hours=age_h),
+        )  # fmt: skip
+    queue = MemoryJobQueue()
+    scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    await stack.ctx.valkey.delete(
+        *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
+    )
+    await scheduler.tick(now)
+    retried = {m["payload"]["work_log_id"] for m in queue.sent if m["type"] == "worklog.extract"}
+    assert retried == {str(logs["2031-03-01"]), str(logs["2031-03-02"])}
+    queue.sent.clear()
+    await scheduler.tick(now)  # the same hour: nothing again
+    assert not [m for m in queue.sent if m["type"] == "worklog.extract"]

@@ -172,6 +172,10 @@ class QuestionForce(BaseModel):
     )
     type: Literal["question.force"]
     text: Annotated[str | None, Field(min_length=1)] = None
+    kind: Literal["answer", "respond"] | None = None
+    """
+    answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.
+    """
 
 
 class Screenshot(BaseModel):
@@ -320,6 +324,7 @@ class SessionReady(BaseModel):
                 "coding",
                 "standup_status",
                 "small_talk",
+                "respond",
                 "other",
             ]
         ]
@@ -403,10 +408,11 @@ class QuestionDetected(BaseModel):
         "coding",
         "standup_status",
         "small_talk",
+        "respond",
         "other",
     ]
     """
-    Question type from the detector.
+    Question type from the detector. respond: not a question, but said to the user and needing a reply (a request, a reminder, "makes sense?"); also what the Respond button forces. Clients before desktop 0.1.5 get other instead.
     """
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     speculative: bool

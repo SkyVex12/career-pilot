@@ -554,7 +554,14 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
         outputs = {"summary": metadata_summary(mode, minutes, types)}
     else:
-        context = [f"User: {session['display_name']}", f"Mode: {mode}", f"Length: {minutes} min"]
+        # The call's day in the user's time zone, so "tomorrow" or "by Friday" becomes a date.
+        day = local_today(as_dict(session["settings"]), session["started_at"])
+        context = [
+            f"User: {session['display_name']}",
+            f"Mode: {mode}",
+            f"Date: {day:%A} {day.isoformat()}",
+            f"Length: {minutes} min",
+        ]
         if session["company"]:
             context.append(f"Company: {session['company']}, role: {session['job_title']}")
         if session["employer_name"]:

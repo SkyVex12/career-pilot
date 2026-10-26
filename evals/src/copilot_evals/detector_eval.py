@@ -3,6 +3,7 @@
     uv run copilot-detector-eval                                # the configured detector model
     uv run copilot-detector-eval --model gpt-5.4-nano --model gpt-6-luna --reps 3
     uv run copilot-detector-eval --system candidate_prompt.txt  # try a detector prompt
+    uv run copilot-detector-eval --script evals/bench/group_standup.toml --mode standup
 
 Each utterance of evals/bench/mock_interview.toml goes to the detector as the gateway sends it:
 the detector prompt, the transcript of the 60 s before it (the interviewer's lines, and the
@@ -61,6 +62,11 @@ def cases(script: list[Utterance], user_name: str) -> list[Case]:
     t = 0.0
     history: list[tuple[float, float, str]] = []  # (start, end, line)
     for u in script:
+        if u.speaker == "me":  # the user's own line: context only, never a case
+            t += u.gap_s
+            history.append((t, t + 0.4 * len(u.text.split()), f"{user_name}: {u.text}"))
+            t += 0.4 * len(u.text.split())
+            continue
         if history and u.gap_s >= 6:  # a long gap stands for the candidate answering
             history.append((t, t + u.gap_s - 1, f"({user_name} spoke for {int(u.gap_s - 1)} s)"))
         t += u.gap_s
@@ -84,16 +90,22 @@ def cases(script: list[Utterance], user_name: str) -> list[Case]:
 
 
 async def detect_once(
-    provider: Any, model: str, case: Case, user_name: str, system: str | None
+    provider: Any,
+    model: str,
+    case: Case,
+    user_name: str,
+    system: str | None,
+    mode: str = "interview",
 ) -> tuple[Any, float]:
     from copilot_core import prompts
     from copilot_core.llm import LLMDone, LLMRequest, SystemBlock
     from copilot_gateway.detector import parse_detection
 
-    req = prompts.detector(user_name, case.transcript, case.text, 80)
+    req = prompts.detector(user_name, case.transcript, case.text, 80, mode)
     if system is not None:
+        phrase = prompts.MODE_PHRASES.get(mode, f"a {mode}")
         req = LLMRequest(
-            system=[SystemBlock(system.format(user_name=user_name, mode="an interview"))],
+            system=[SystemBlock(system.format(user_name=user_name, mode=phrase))],
             content=req.content,
             max_tokens=req.max_tokens,
             json_schema=req.json_schema,
@@ -112,7 +124,7 @@ async def detect_once(
 
 async def eval_model(
     provider: Any, model: str, all_cases: list[Case], reps: int, user_name: str,
-    system: str | None,
+    system: str | None, mode: str = "interview",
 ) -> dict[str, Any]:  # fmt: skip
     latencies: list[float] = []
     false_fires: dict[str, int] = {}
@@ -122,7 +134,7 @@ async def eval_model(
     for _ in range(reps):
         for case in all_cases:
             try:
-                detection, ms = await detect_once(provider, model, case, user_name, system)
+                detection, ms = await detect_once(provider, model, case, user_name, system, mode)
             except Exception as e:
                 errors += 1
                 print(f"  {model} {case.id}: {type(e).__name__}: {e}"[:200])
@@ -165,6 +177,8 @@ async def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--system", type=Path, help="a detector system prompt to try instead")
     p.add_argument("--json", type=Path)
+    p.add_argument("--script", type=Path, help="labeled utterances (default: the mock interview)")
+    p.add_argument("--mode", default="interview", choices=["interview", "standup", "meeting"])
     args = p.parse_args(argv)
 
     from copilot_core.config import CoreSettings
@@ -179,10 +193,12 @@ async def main(argv: list[str] | None = None) -> int:
     models = args.model or [settings.openai_route("detector")[0]]
     system = args.system.read_text("utf-8") if args.system else None
     profile = load_profile()
-    all_cases = cases(load_script(), profile.user_name)
+    all_cases = cases(load_script(args.script) if args.script else load_script(), profile.user_name)
     results: list[dict[str, Any]] = []
     for model in models:
-        r = await eval_model(provider, model, all_cases, args.reps, profile.user_name, system)
+        r = await eval_model(
+            provider, model, all_cases, args.reps, profile.user_name, system, args.mode
+        )
         results.append(r)
         print(json.dumps(r))
     print(f"\n{'model':<14} {'reason':<8} {'acc':>5} {'type':>5} {'p50':>6} {'p95':>6}  wrong")
