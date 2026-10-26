@@ -1,8 +1,11 @@
 """The Career-OS link (ARCHITECTURE.md, "Career-OS link"): connect, search, pull on demand.
 
-One Career Pilot account links to one Career-OS user. The Career-OS user approves the link
-themselves: signed in to Career-OS, they generate a one-time code, and Career Pilot exchanges
-it for a read-only token bound to that user (`copilot_core.careeros`). The token is sealed with
+One Career Pilot account links to one Career-OS account: a user, or an admin or super admin.
+The Career-OS account approves the link itself: signed in to Career-OS, it generates a one-time
+code, and Career Pilot exchanges it for a read-only token bound to that account
+(`copilot_core.careeros`). A user's token reads that user's applications; an admin's reads
+those of the users linked to that admin in Career-OS (`/career-os/users` lists them, and search
+can narrow to one). The token is sealed with
 the user's data key in `app.integrations`, like every tool token. Disconnecting revokes it on
 Career-OS first, then deletes it here.
 
@@ -35,6 +38,7 @@ router = APIRouter()
 PROVIDER = "career_os"
 COS_ID = r"^[A-Za-z0-9_.:-]{1,128}$"
 STAGES = ("applied", "interview", "offer", "rejected")
+ACCOUNT_TYPES = ("user", "admin", "super_admin")
 FILE_TYPES = ("application/pdf", "text/plain", "text/markdown",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/msword")  # fmt: skip
@@ -105,6 +109,7 @@ def connection_out(row: Any | None, available: bool) -> dict[str, Any]:
         "available": available,
         "status": row["status"],
         "user": {"id": row["external_id"], "name": row["external_label"]},
+        "account_type": row["external_kind"] or "user",
         "connected_at": row["connected_at"].isoformat() if row["connected_at"] else None,
         "last_pull_at": row["last_sync_at"].isoformat() if row["last_sync_at"] else None,
     }
@@ -114,8 +119,8 @@ def connection_out(row: Any | None, available: bool) -> dict[str, Any]:
 async def get_connection(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
-            "select status, external_id, external_label, connected_at, last_sync_at"
-            " from app.integrations where provider = $1",
+            "select status, external_id, external_label, external_kind, connected_at,"
+            " last_sync_at from app.integrations where provider = $1",
             PROVIDER,
         )
     return connection_out(row, svc.career_os is not None)
@@ -142,6 +147,8 @@ async def connect(body: ConnectIn, svc: SvcDep, user: UserDep) -> dict[str, Any]
             raise HTTPException(429, e.message) from e
         raise HTTPException(502, e.message) from e
     cos_user = linked["user"]
+    kind = linked.get("account_type")
+    kind = kind if kind in ACCOUNT_TYPES else "user"
     secret = json.dumps({"token": linked["token"], "link_id": linked.get("link_id")})
     try:
         async with svc.tx(user) as conn:
@@ -150,20 +157,21 @@ async def connect(body: ConnectIn, svc: SvcDep, user: UserDep) -> dict[str, Any]
             )
             await conn.execute(
                 "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
-                " status, external_id, external_label, connected_at)"
-                " values ($1, $2, $3, $4, $5, 'active', $6, $7, now())"
+                " status, external_id, external_label, external_kind, connected_at)"
+                " values ($1, $2, $3, $4, $5, 'active', $6, $7, $8, now())"
                 " on conflict (user_id, provider) do update set token_enc = excluded.token_enc,"
                 " key_version = excluded.key_version, scopes = excluded.scopes,"
                 " status = 'active', external_id = excluded.external_id,"
-                " external_label = excluded.external_label, connected_at = now(),"
+                " external_label = excluded.external_label,"
+                " external_kind = excluded.external_kind, connected_at = now(),"
                 " last_sync_at = null",
                 uid, PROVIDER, sealed, key_version,
                 [str(s) for s in linked.get("scopes") or ["applications:read"]],
-                str(cos_user.get("id")), str(cos_user.get("name") or "")[:200],
+                str(cos_user.get("id")), str(cos_user.get("name") or "")[:200], kind,
             )  # fmt: skip
             row = await conn.fetchrow(
-                "select status, external_id, external_label, connected_at, last_sync_at"
-                " from app.integrations where provider = $1",
+                "select status, external_id, external_label, external_kind, connected_at,"
+                " last_sync_at from app.integrations where provider = $1",
                 PROVIDER,
             )
     except Exception:
@@ -197,10 +205,31 @@ async def disconnect(svc: SvcDep, user: UserDep) -> Response:
     return Response(status_code=204)
 
 
+@router.get("/career-os/users")
+async def users(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    """The Career-OS users the link reads: the linked user, or an admin's linked users. Their
+    ids narrow search (`user_id`)."""
+    client = client_of(svc)
+    async with svc.tx(user) as conn:
+        token = await token_of(svc, conn, user.user_id)
+    try:
+        found = await client.users(token)
+    except CareerOsError as e:
+        raise await remote_failed(svc, user, e) from e
+    items = [user_out(obj(entry)) for entry in cast(list[object], found.get("items") or [])]
+    return {"items": [i for i in items if i["id"]]}
+
+
+def user_out(raw: dict[str, Any]) -> dict[str, str]:
+    """A Career-OS user as `{id, name}` (empty strings when Career-OS sent none)."""
+    return {"id": str(raw.get("id") or ""), "name": str(raw.get("name") or "")[:200]}
+
+
 @router.get("/career-os/applications")
 async def search(
     svc: SvcDep,
     user: UserDep,
+    user_id: str | None = Query(default=None, pattern=COS_ID),
     q: str | None = Query(default=None, max_length=200),
     stage: Literal["applied", "interview", "offer", "rejected"] | None = None,
     date_from: str | None = Query(default=None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
@@ -208,8 +237,9 @@ async def search(
     cursor: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=25, ge=1, le=50),
 ) -> dict[str, Any]:
-    """The user's Career-OS applications (company, role, date, stage), each marked with
-    whether it was pulled here and whether it changed in Career-OS since."""
+    """The Career-OS applications the link reads (company, role, date, stage, whose), each
+    marked with whether it was pulled here and whether it changed in Career-OS since.
+    `user_id` (from `/career-os/users`) narrows to one Career-OS user."""
     client = client_of(svc)
     async with svc.tx(user) as conn:
         token = await token_of(svc, conn, user.user_id)
@@ -220,7 +250,8 @@ async def search(
                 " from app.applications where career_os_application_id is not null"
             )
         }
-    params = {k: v for k, v in (("q", q), ("stage", stage), ("from", date_from),
+    params = {k: v for k, v in (("user_id", user_id), ("q", q), ("stage", stage),
+                                ("from", date_from),
                                 ("to", date_to), ("cursor", cursor)) if v}  # fmt: skip
     params["limit"] = str(limit)
     try:
@@ -235,6 +266,7 @@ async def search(
         item: dict[str, Any] = {k: raw.get(k) for k in (
             "id", "company", "role", "stage", "source_site", "url", "created_at", "updated_at",
             "resume")}  # fmt: skip
+        item["user"] = user_out(obj(raw.get("user"))) if raw.get("user") else None
         here = pulled.get(str(raw.get("id")))
         item["pulled"] = (
             None
@@ -349,14 +381,22 @@ async def pull(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
                 str(version.get("text") or ""), file,
             )  # fmt: skip
         elif base is not None and str(base.get("text") or "").strip():
-            # The Career-OS base resume: this account's base if it has none (or its base is an
-            # earlier copy of the same), otherwise this application's own version, so the
-            # account's base is never overwritten.
+            # The linked user's Career-OS base resume: this account's base if it has none (or
+            # its base is an earlier copy of the same), otherwise this application's own
+            # version, so the account's base is never overwritten. Another Career-OS user's
+            # base (through an admin link) is always the application's own version.
             mine = await conn.fetchrow(
                 "select id, career_os_ref from app.resume_versions where kind = 'base'"
             )
-            ref = "base:career-os"
-            kind = "base" if mine is None or mine["career_os_ref"] == ref else "tailored"
+            linked_id = await conn.fetchval(
+                "select external_id from app.integrations where provider = $1", PROVIDER
+            )
+            owner = str(obj(detail.get("user")).get("id") or "")
+            if not owner or owner == linked_id:
+                ref = "base:career-os"
+                kind = "base" if mine is None or mine["career_os_ref"] == ref else "tailored"
+            else:
+                ref, kind = f"base:career-os:{owner}", "tailored"
             extract = await _pull_resume(
                 svc, conn, uid, app_id, kind, ref,
                 _label("Career-OS base resume", base.get("updated_at")),

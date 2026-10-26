@@ -311,9 +311,16 @@ export interface CareerOsConnection {
   /** This server has Career-OS set up. */
   available: boolean;
   status?: "active" | "revoked";
-  user?: { id: string; name: string };
+  /** The linked Career-OS account: a user, or an admin (who reads their users' applications). */
+  user?: CareerOsUser;
+  account_type?: "user" | "admin" | "super_admin";
   connected_at?: string | null;
   last_pull_at?: string | null;
+}
+
+export interface CareerOsUser {
+  id: string;
+  name: string;
 }
 
 export interface CareerOsItem {
@@ -325,11 +332,15 @@ export interface CareerOsItem {
   url: string | null;
   created_at: string;
   updated_at: string;
+  /** Whose application it is in Career-OS. */
+  user: CareerOsUser | null;
   resume: "tailored" | "base" | "none";
   pulled: { application_id: string; pulled_at: string; changed: boolean } | null;
 }
 
 export interface CareerOsQuery {
+  /** One of `careerOsUsers()`; empty for all of them. */
+  user_id?: string;
   q?: string;
   stage?: Stage | "";
   from?: string;
@@ -542,6 +553,7 @@ export const rest = {
   careerOs: () => call<CareerOsConnection>("GET", "/career-os/connection"),
   connectCareerOs: (code: string) => call<CareerOsConnection>("POST", "/career-os/connect", { code }),
   disconnectCareerOs: () => call<null>("DELETE", "/career-os/connection"),
+  careerOsUsers: () => call<{ items: CareerOsUser[] }>("GET", "/career-os/users"),
   searchCareerOs: (query: CareerOsQuery) =>
     call<{ items: CareerOsItem[]; next_cursor: string | null }>("GET", `/career-os/applications${queryString(query)}`),
   pullCareerOs: (id: string) => call<ApplicationDetail>("POST", `/career-os/applications/${encodeURIComponent(id)}/pull`),

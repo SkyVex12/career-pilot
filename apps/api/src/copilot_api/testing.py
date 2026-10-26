@@ -67,27 +67,44 @@ CONTRACT = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "career_
 
 class FakeCareerOs:
     """Career-OS's /v1/career-pilot API as the contract fixture shapes it, in memory, for an
-    httpx2 MockTransport. Two Career-OS users; each token reads its own user's applications
-    only. Tests change `apps` to make an application change in Career-OS."""
+    httpx2 MockTransport. Three Career-OS users and an admin, `a1`, linked to `u1` and `u2`
+    (`admin_users`); a user's token reads that user's applications, the admin's reads its
+    users'. Tests change `apps` to make an application change in Career-OS, and `admin_users`
+    to link or unlink a user."""
 
     def __init__(self) -> None:
         contract = json.loads(CONTRACT.read_text("utf-8"))
         self.contract = contract
         detail = contract["application"]["response"]
-        self.users = {"u1": "Alex Doe", "u2": "Blair Roe"}
+        self.users = {"u1": "Alex Doe", "u2": "Blair Roe", "u3": "Casey Poe"}
+        self.admins = {"a1": "Dana Admin"}
+        self.admin_users: dict[str, list[str]] = {"a1": ["u1", "u2"]}
         self.codes: dict[str, str] = {}
-        self.tokens: dict[str, str] = {}  # token -> Career-OS user
+        self.tokens: dict[str, str] = {}  # token -> Career-OS account (user or admin)
         self.revoked: set[str] = set()
         self.down = False
         self.calls: list[str] = []
+        mine = copy.deepcopy(detail)
+        mine["user"] = {"id": "u1", "name": "Alex Doe"}
         other = copy.deepcopy(detail)
         other["application"].update(id="app_other_1", company="Initech", role="SRE")
+        other["user"] = {"id": "u2", "name": "Blair Roe"}
         other["resume_version"] = None
+        other["base_resume"] = {"text": "Blair Roe\nSRE\n- Ran the on-call rota\n",
+                                "updated_at": "2026-09-21T08:00:00"}  # fmt: skip
+        third = copy.deepcopy(detail)
+        third["application"].update(id="app_hooli_1", company="Hooli", role="Data Engineer")
+        third["user"] = {"id": "u3", "name": "Casey Poe"}
         self.apps: dict[str, dict[str, dict[str, Any]]] = {
-            "u1": {"app_acme_1": copy.deepcopy(detail)},
+            "u1": {"app_acme_1": mine},
             "u2": {"app_other_1": other},
+            "u3": {"app_hooli_1": third},
         }
         self.pdf = b"%PDF-1.4 fake resume for the test\n"
+
+    def scope(self, account: str) -> list[str]:
+        """The users an account's token reads, as Career-OS's `applications_query` does."""
+        return list(self.admin_users.get(account, [])) if account in self.admins else [account]
 
     def code_for(self, user: str) -> str:
         code = f"CODE-{user.upper()}-{len(self.codes):02d}"
@@ -118,18 +135,33 @@ class FakeCareerOs:
             token = f"cpt_{uuid.uuid4().hex}"
             self.tokens[token] = user
             out = copy.deepcopy(self.contract["link"]["response"])
-            out.update(token=token, user={"id": user, "name": self.users[user]})
+            is_admin = user in self.admins
+            out.update(
+                token=token,
+                account_type="admin" if is_admin else "user",
+                user={"id": user, "name": (self.admins if is_admin else self.users)[user]},
+            )
             return httpx2.Response(201, json=out)
         auth = request.headers.get("authorization", "")
         token = auth.removeprefix("Bearer ")
-        user = self.tokens.get(token)
-        if user is None or token in self.revoked:
+        account = self.tokens.get(token)
+        if account is None or token in self.revoked:
             return httpx2.Response(401, json={"detail": "invalid token"})
         if request.method == "DELETE" and path == "/link":
             self.revoked.add(token)
             return httpx2.Response(204)
-        apps = self.apps[user]
+        scope = self.scope(account)
+        if path == "/users":
+            users = sorted(({"id": u, "name": self.users[u]} for u in scope),
+                           key=lambda u: u["name"])  # fmt: skip
+            return httpx2.Response(200, json={"items": users})
+        apps = {k: v for u in scope for k, v in self.apps.get(u, {}).items()}
         if path == "/applications":
+            wanted = request.url.params.get("user_id")
+            if wanted is not None:
+                if wanted not in scope:
+                    return httpx2.Response(404, json={"detail": "User not found"})
+                apps = dict(self.apps.get(wanted, {}))
             q = (request.url.params.get("q") or "").lower()
             items: list[dict[str, Any]] = []
             for d in apps.values():
@@ -139,6 +171,7 @@ class FakeCareerOs:
                 items.append({
                     **{k: a[k] for k in ("id", "company", "role", "stage", "source_site", "url",
                                          "created_at", "updated_at")},
+                    "user": d["user"],
                     "resume": "tailored" if d["resume_version"] else (
                         "base" if d["base_resume"] else "none"),
                     "content_hash": self.hash_of(d),

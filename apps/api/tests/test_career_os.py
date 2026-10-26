@@ -187,6 +187,67 @@ async def test_tokens_read_only_their_own_career_os_user(api: Api, fake: FakeCar
     assert (await api.client.get("/v1/applications", headers=b)).json()["applications"] == []
 
 
+async def test_a_user_link_lists_only_its_user(api: Api, fake: FakeCareerOs) -> None:
+    _, h = api.user()
+    await connect(api, fake, h, "u1")
+    conn = (await api.client.get("/v1/career-os/connection", headers=h)).json()
+    assert (conn["account_type"], conn["user"]["id"]) == ("user", "u1")
+    r = await api.client.get("/v1/career-os/users", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["items"] == [{"id": "u1", "name": "Alex Doe"}]
+    [item] = (await api.client.get("/v1/career-os/applications", headers=h,
+                                   params={"user_id": "u1"})).json()["items"]  # fmt: skip
+    assert (item["id"], item["user"]) == ("app_acme_1", {"id": "u1", "name": "Alex Doe"})
+    r = await api.client.get("/v1/career-os/applications", headers=h, params={"user_id": "u2"})
+    assert r.status_code == 404
+
+
+async def test_an_admin_link_reads_its_users_and_filters_by_user(
+    api: Api, fake: FakeCareerOs
+) -> None:
+    uid, h = api.user()
+    await connect(api, fake, h, "a1")
+    conn = (await api.client.get("/v1/career-os/connection", headers=h)).json()
+    assert (conn["account_type"], conn["user"]) == ("admin", {"id": "a1", "name": "Dana Admin"})
+    users = (await api.client.get("/v1/career-os/users", headers=h)).json()["items"]
+    assert users == [{"id": "u1", "name": "Alex Doe"}, {"id": "u2", "name": "Blair Roe"}]
+
+    items = (await api.client.get("/v1/career-os/applications", headers=h)).json()["items"]
+    assert {i["id"]: i["user"]["id"] for i in items} == {"app_acme_1": "u1", "app_other_1": "u2"}
+    get = lambda who: api.client.get(  # noqa: E731
+        "/v1/career-os/applications", headers=h, params={"user_id": who}
+    )
+    assert [i["id"] for i in (await get("u2")).json()["items"]] == ["app_other_1"]
+    # A user not linked to the admin is out of reach, and ids are checked before Career-OS.
+    assert (await get("u3")).status_code == 404
+    assert (await api.client.post("/v1/career-os/applications/app_hooli_1/pull",
+                                  headers=h)).status_code == 404  # fmt: skip
+    assert (await get("../users")).status_code == 422
+
+    # Another user's base resume is that application's own version, never the account's base,
+    # and pulling a second user's does not replace the first's.
+    first = await pull(api, h, "app_other_1")
+    assert first["resume"]["kind"] == "tailored"
+    fake.apps["u1"]["app_acme_1"]["resume_version"] = None
+    second = await pull(api, h, "app_acme_1")
+    assert second["resume"]["kind"] == "tailored"
+    refs = {
+        r["application_id"]: r["career_os_ref"]
+        for r in await api.admin.fetch(
+            "select application_id, career_os_ref from app.resume_versions where user_id = $1", uid
+        )
+    }
+    assert refs == {uuid.UUID(first["id"]): "base:career-os:u2",
+                    uuid.UUID(second["id"]): "base:career-os:u1"}  # fmt: skip
+    assert (await api.client.get("/v1/resumes", headers=h)).json()["base"] is None
+
+    # Unlinked in Career-OS: gone from the users and the search at once.
+    fake.admin_users["a1"] = ["u1"]
+    users = (await api.client.get("/v1/career-os/users", headers=h)).json()["items"]
+    assert [u["id"] for u in users] == ["u1"]
+    assert (await get("u2")).status_code == 404
+
+
 async def test_disconnect_revokes_on_both_sides(api: Api, fake: FakeCareerOs) -> None:
     uid, h = api.user()
     await connect(api, fake, h)

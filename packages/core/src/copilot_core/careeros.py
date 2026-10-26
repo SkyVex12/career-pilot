@@ -1,9 +1,12 @@
 """The Career-OS client (ARCHITECTURE.md, "Career-OS link"). The contract is Career-OS's
 `/v1/career-pilot/*` API (docs/career-pilot-api.md in Career-OS):
 
-- `POST /link {code, client_label}`: the one-time code a Career-OS user generated while
-  signed in, exchanged once for a read-only token bound to that user.
-- With `Authorization: Bearer <token>`: `GET /me`, `GET /applications` (search),
+- `POST /link {code, client_label}`: the one-time code a Career-OS user, admin or super admin
+  generated while signed in, exchanged once for a read-only token bound to that account
+  (`account_type`). A user's token reads that user's applications; an admin's reads those of
+  the users linked to that admin.
+- With `Authorization: Bearer <token>`: `GET /me`, `GET /users` (the users the token reads),
+  `GET /applications` (search, optionally for one of those users),
   `GET /applications/{id}` (with its JD and resume as text), `GET /applications/{id}/resume-file`,
   and `DELETE /link` (revoke).
 
@@ -77,7 +80,8 @@ class CareerOsClient:
         return data  # pyright: ignore[reportUnknownVariableType]
 
     async def link(self, code: str, client_label: str) -> dict[str, Any]:
-        """Exchange a one-time code: `{token, link_id, user: {id, name}, scopes}`."""
+        """Exchange a one-time code: `{token, link_id, user: {id, name}, account_type, scopes}`.
+        `user` is the linked account: the admin, for an admin link."""
         data = await self._json("POST", "/link", json={"code": code, "client_label": client_label})
         if not isinstance(data.get("token"), str) or not isinstance(data.get("user"), dict):
             raise CareerOsError(502, "Career-OS answered the link without a token")
@@ -94,8 +98,13 @@ class CareerOsClient:
     async def me(self, token: str) -> dict[str, Any]:
         return await self._json("GET", "/me", token)
 
+    async def users(self, token: str) -> dict[str, Any]:
+        """`{items: [{id, name}]}`: the users whose applications the token reads."""
+        return await self._json("GET", "/users", token)
+
     async def search(self, token: str, params: dict[str, str]) -> dict[str, Any]:
-        """`{items: [...], next_cursor}`: the linked user's own applications."""
+        """`{items: [...], next_cursor}`: the applications in the token's scope; `user_id` in
+        `params` narrows to one of its users. Each item names its `user`."""
         return await self._json("GET", "/applications", token, params=params)
 
     async def application(self, token: str, application_id: str) -> dict[str, Any]:

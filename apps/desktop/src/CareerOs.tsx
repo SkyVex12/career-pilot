@@ -2,7 +2,7 @@
 // one-time code made in Career-OS, and the dialog that searches Career-OS and pulls one
 // application on demand. Nothing syncs by itself.
 import { useEffect, useState } from "react";
-import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type Stage } from "./api";
+import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type CareerOsUser, type Stage } from "./api";
 import { STAGES, pullState, stageLabel } from "./pairing";
 import { Chip, when } from "./ui";
 
@@ -41,6 +41,7 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
               <Chip state="ok">Connected</Chip>
               <span>
                 as {conn.user?.name || conn.user?.id}
+                {conn.account_type && conn.account_type !== "user" ? " (admin: their users' applications)" : ""}
                 {conn.connected_at ? `, since ${when(conn.connected_at)}` : ""}
               </span>
               <button
@@ -72,8 +73,8 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
                 </button>
               </div>
               <p className="note">
-                Sign in to Career-OS as yourself, open your profile, and make a Career Pilot code (valid 10 minutes). Career Pilot can then read
-                your own applications, their job descriptions and resumes, read-only, and only when you pull one.
+                Sign in to Career-OS, open your profile, and make a Career Pilot code (valid 10 minutes). Career Pilot can then read your own
+                applications (or, for an admin, those of your users), their job descriptions and resumes, read-only, and only when you pull one.
               </p>
             </>
           )}
@@ -86,18 +87,22 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
 
 export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulled: (app: ApplicationDetail) => void }) {
   const [q, setQ] = useState("");
+  const [userId, setUserId] = useState("");
   const [stage, setStage] = useState<Stage | "">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [users, setUsers] = useState<CareerOsUser[]>([]);
   const [items, setItems] = useState<CareerOsItem[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // More than one Career-OS user (an admin link): pick whose applications, and show whose.
+  const several = users.length > 1;
 
-  const search = async () => {
+  const search = async (who = userId) => {
     setBusy("search");
     setMessage(null);
     try {
-      setItems((await rest.searchCareerOs({ q: q.trim(), stage, from, to })).items);
+      setItems((await rest.searchCareerOs({ user_id: who, q: q.trim(), stage, from, to })).items);
     } catch (e) {
       setMessage(String(e));
     } finally {
@@ -106,6 +111,10 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
   };
   useEffect(() => {
     search();
+    rest.careerOsUsers().then(
+      (out) => setUsers(out.items),
+      () => setUsers([]),
+    );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pull = async (item: CareerOsItem) => {
@@ -133,6 +142,23 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
         </button>
       </div>
       <div className="row">
+        {several && (
+          <select
+            value={userId}
+            onChange={(e) => {
+              setUserId(e.target.value);
+              search(e.target.value);
+            }}
+            title="Whose applications"
+          >
+            <option value="">All users</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name || u.id}
+              </option>
+            ))}
+          </select>
+        )}
         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Company or role" />
         <select value={stage} onChange={(e) => setStage(e.target.value as Stage | "")}>
           <option value="">Any stage</option>
@@ -144,7 +170,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
         </select>
         <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="Applied from" />
         <input type="date" value={to} onChange={(e) => setTo(e.target.value)} title="Applied until" />
-        <button disabled={busy !== null} onClick={search}>
+        <button disabled={busy !== null} onClick={() => search()}>
           {busy === "search" ? "Searching…" : "Search"}
         </button>
       </div>
@@ -160,6 +186,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
                 <td>
                   <b>{i.company}</b> · {i.role}
                 </td>
+                {several && <td className="muted">{i.user?.name || i.user?.id || ""}</td>}
                 <td className="muted">{when(i.created_at)}</td>
                 <td>{stageLabel(i.stage)}</td>
                 <td className="muted">{i.resume === "tailored" ? "Tailored resume" : i.resume === "base" ? "Base resume" : "No resume"}</td>
