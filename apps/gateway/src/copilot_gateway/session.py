@@ -277,6 +277,8 @@ class Session:
     # Messages to the client.
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
+        if fields.get("question_type") == "respond" and not self.knows_respond:
+            fields["question_type"] = "other"
         self.seq += 1
         message = cls.model_validate({"type": _type_of(cls), "seq": self.seq, **fields})
         data = message.model_dump_json(exclude_none=True, by_alias=True)
@@ -1190,7 +1192,7 @@ class Session:
             case models.AuthRefresh():
                 await self._auth_refresh(message.access_token)
             case models.QuestionForce():
-                self._force(message.text)
+                self._force(message.text, respond=message.kind == "respond")
             case models.Screenshot():
                 self.error("not_implemented", "screenshots are not supported yet")
             case models.AnswerExpand():
@@ -1246,7 +1248,13 @@ class Session:
         self.principal = principal
         self.auth_warned = False
 
-    def _force(self, text: str | None) -> None:
+    @property
+    def knows_respond(self) -> bool:
+        return versions.knows_respond(self.info.client_version)
+
+    def _force(self, text: str | None, respond: bool = False) -> None:
+        """The hotkey, a typed question, or the Respond button (`respond`): a suggested reply
+        to what was just said, for a remark that needs one but is not a question."""
         now = time.monotonic()
         wait_s = self.settings.force_min_interval_s - (now - self.last_force)
         if wait_s > 0:
@@ -1270,7 +1278,7 @@ class Session:
         q = Question(
             qid=uuid7(),
             text=text,
-            qtype="other",
+            qtype="respond" if respond else "other",
             confidence=1.0,
             addressed=True,
             speculative=False,

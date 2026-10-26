@@ -331,7 +331,9 @@ impl Pass {
     }
 }
 
-/// Question type from the detector.
+/// Question type from the detector. respond: not a question, but said to the user and needing a
+/// reply (a request, a reminder, "makes sense?"); also what the Respond button forces. Clients
+/// before desktop 0.1.5 get other instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QuestionType {
     #[serde(rename = "behavioral")]
@@ -346,6 +348,8 @@ pub enum QuestionType {
     StandupStatus,
     #[serde(rename = "small_talk")]
     SmallTalk,
+    #[serde(rename = "respond")]
+    Respond,
     #[serde(rename = "other")]
     Other,
 }
@@ -359,6 +363,7 @@ impl QuestionType {
             Self::Coding => "coding",
             Self::StandupStatus => "standup_status",
             Self::SmallTalk => "small_talk",
+            Self::Respond => "respond",
             Self::Other => "other",
         }
     }
@@ -580,6 +585,10 @@ impl Validate for AuthRefresh {
 pub struct QuestionForce {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// answer (the default): answer it as a question. respond: suggest a reply to what was just
+    /// said (or to text), as the detector's respond type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<QuestionForceKind>,
 }
 
 impl Validate for QuestionForce {
@@ -1097,6 +1106,25 @@ impl Validate for AudioFrameHeader {
             check::max_int("flags", u64::from(*v), 3)?;
         }
         Ok(())
+    }
+}
+
+/// answer (the default): answer it as a question. respond: suggest a reply to what was just said
+/// (or to text), as the detector's respond type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum QuestionForceKind {
+    #[serde(rename = "answer")]
+    Answer,
+    #[serde(rename = "respond")]
+    Respond,
+}
+
+impl QuestionForceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Answer => "answer",
+            Self::Respond => "respond",
+        }
     }
 }
 

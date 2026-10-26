@@ -22,6 +22,9 @@ QUESTION_TYPES = (
     "coding",
     "standup_status",
     "small_talk",
+    # Not a question, but said to the user and needing a reply: a request, a reminder, a
+    # concern aimed at them, "makes sense?" after they spoke. Answered with a short reply.
+    "respond",
     "other",
 )
 
@@ -79,6 +82,8 @@ not sentences to read out.
 """
     + _RULES
     + """
+- A remark that needs a reply rather than a question (type respond): 2 or 3 cues for a short
+  reply: acknowledge it, what {user_name} will do or thinks, a question back if it is unclear.
 - Each cue is a fragment of 3 to 10 words, in the order {user_name} would say them. The first
   cue carries the core of the answer: the direct answer, the approach, or the name of a story
   that shows what was asked. "Tell me about a time you X" with no story that shows X: the
@@ -123,6 +128,11 @@ DEEP_SHAPES: dict[str, str] = {
     ),
     "standup_status": (
         "Yesterday, today and blockers from the standup pack only: one line each, under 40 words."
+    ),
+    "respond": (
+        "A short reply to what was just said to the user: acknowledge it, then what they will "
+        "do (and by when, if it is a task) or their view, and a question back only if something "
+        "is unclear. Facts from the data only where they answer it. 2 or 3 lines, under 40 words."
     ),
     "other": (
         "Fit it to the job and company context. Why this company or role: the job summary "
@@ -227,6 +237,9 @@ DETECTOR_SYSTEM = (
 - The question type when it is a complete question for {user_name} that needs an answer now.
   small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
   questions for us?" is other.
+- respond: not a question, but said to {user_name} and needing a reply now: a request or a
+  task for them, a reminder or a concern aimed at them, or a check right after they spoke
+  ("makes sense?", "your thoughts?"). The same rules on whom it is for apply.
 - wait: it would be one, but the utterance stops mid-sentence or mid-thought.
 - none: anything else. A request to do something right now (share your screen, wait a
   moment, unmute), an audio check ("can you hear me?"), and a short reaction to something on
@@ -354,20 +367,39 @@ def deep_pass(
     )
 
 
+# Standups and meetings are group calls, but every remote speaker is one "Them" in the
+# transcript, so a manager questioning a presenter reads like a one-on-one with the user: in
+# the 2026-10-26 standup, 5 of 7 answers fired on questions to a teammate.
+DETECTOR_GROUP_RULE = """
+- This is a group call. "Them" is several people, and most of what they say is to each
+  other. Something is for {user_name} only if they are addressed by name ({names}), "you"
+  comes right after {user_name} spoke, or it is plainly {user_name}'s turn (the round of
+  updates reaches them, "what about you?"). A question that follows someone else presenting
+  or answering is for that person. Being mentioned ("I'll check with {first}") is not being
+  addressed."""
+
+GROUP_MODES = ("standup", "meeting")
+
+
+def first_name(user_name: str) -> str:
+    """What people call the user in a call: the first word of the name."""
+    parts = user_name.split()
+    return parts[0] if parts else user_name
+
+
 def detector(
     user_name: str, transcript: str, utterance: str, max_tokens: int, mode: str = "interview"
 ) -> LLMRequest:
     user = "\n\n".join(
         [_data("transcript", transcript or "(empty)"), _data("utterance", utterance)]
     )
+    system = DETECTOR_SYSTEM.format(user_name=user_name, mode=MODE_PHRASES.get(mode, f"a {mode}"))
+    if mode in GROUP_MODES:
+        first = first_name(user_name)
+        names = user_name if first == user_name else f"{user_name}, or {first}"
+        system += DETECTOR_GROUP_RULE.format(user_name=user_name, names=names, first=first)
     return LLMRequest(
-        system=[
-            SystemBlock(
-                DETECTOR_SYSTEM.format(
-                    user_name=user_name, mode=MODE_PHRASES.get(mode, f"a {mode}")
-                )
-            )
-        ],
+        system=[SystemBlock(system)],
         content=user,
         max_tokens=max_tokens,
         json_schema=DETECTOR_SCHEMA,

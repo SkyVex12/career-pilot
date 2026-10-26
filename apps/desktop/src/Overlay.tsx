@@ -234,9 +234,9 @@ function CopyButton({ text }: { text: string }) {
 function AskBox({ disabled }: { disabled: boolean }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const send = (value: string | null) => {
+  const send = (value: string | null, respond = false) => {
     setError(null);
-    api.forceQuestion(value).then(
+    (respond ? api.respond(value) : api.forceQuestion(value)).then(
       () => setText(""),
       (e) => setError(String(e)),
     );
@@ -257,6 +257,14 @@ function AskBox({ disabled }: { disabled: boolean }) {
       />
       <button type="submit" disabled={disabled}>
         Ask
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => send(text.trim() || null, true)}
+        title="Suggest a reply to what was just said: a request, a reminder, a check-in"
+      >
+        Respond
       </button>
       {error && <span className="note warn">{error}</span>}
     </form>

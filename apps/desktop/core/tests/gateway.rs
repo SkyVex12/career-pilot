@@ -18,7 +18,9 @@ use copilot_client::net::client::{
 };
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::audio::{CHANNEL_ME, CHANNEL_THEM, FLAG_SPEECH_END, FLAG_SPEECH_START};
-use copilot_client::protocol::{Channel, ClientMessage, Mode, Pass, QuestionForce, ServerMessage};
+use copilot_client::protocol::{
+    Channel, ClientMessage, Mode, Pass, QuestionForce, QuestionForceKind, QuestionType, ServerMessage,
+};
 use support::{Gateway, TOKEN, free_port};
 use tokio::sync::mpsc::UnboundedReceiver;
 use uuid::Uuid;
@@ -245,6 +247,7 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
     call.handle
         .send(ClientMessage::QuestionForce(QuestionForce {
             text: Some("How would you shard the ledger table?".into()),
+            kind: None,
         }))
         .await;
     let (q2, text) = call.question().await;
@@ -264,7 +267,7 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
 
     // The hotkey: no text, so the gateway answers what it heard.
     tokio::time::sleep(Duration::from_millis(1_100)).await;
-    call.handle.send(ClientMessage::QuestionForce(QuestionForce { text: None })).await;
+    call.handle.send(ClientMessage::QuestionForce(QuestionForce { text: None, kind: None })).await;
     let (q3, _) = call.question().await;
     call.answer_done(q3, Pass::Fast).await;
 
@@ -297,6 +300,24 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
     assert!(stats.frames_resent >= 2, "{stats:?}");
     assert!(stats.pings_sent >= 3, "{stats:?}");
     assert_eq!(stats.close_codes.last(), Some(&Some(1000)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_respond_button_gets_a_reply_typed_respond() {
+    let gw = Gateway::start(0, &[TOKEN], None);
+    let mut call = Call::start(&gw.url(), tokens(TOKEN), None);
+    call.live().await;
+    call.handle
+        .send(ClientMessage::QuestionForce(QuestionForce {
+            text: Some("Can you send me the migration numbers by Friday?".into()),
+            kind: Some(QuestionForceKind::Respond),
+        }))
+        .await;
+    let detected =
+        call.server("question.detected", |m| matches!(m, ServerMessage::QuestionDetected(_))).await;
+    let ServerMessage::QuestionDetected(q) = detected else { unreachable!() };
+    assert_eq!(q.question_type, QuestionType::Respond);
+    call.answer_done(q.question_id, Pass::Fast).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -388,6 +409,7 @@ async fn auth_expiring_is_answered_with_auth_refresh() {
     call.handle
         .send(ClientMessage::QuestionForce(QuestionForce {
             text: Some("What is your biggest strength?".into()),
+            kind: None,
         }))
         .await;
     let (q, _) = call.question().await;

@@ -1,0 +1,108 @@
+# A group standup for the detector eval (copilot-detector-eval --script ... --mode standup).
+#
+# Written after the 2026-10-26 standup, where a manager questioned a teammate about their
+# design for half an hour and 5 of 7 answers fired for the teammate. Everyone here is
+# fictional: the user is Alex Rivera (profile.toml), Dana runs the standup, Sam presents a
+# design. Every remote speaker is "Them" in the transcript, as in a live call; the user's own
+# lines (speaker = "me") are context and are not scored.
+#
+# expect "answer" with a type: for Alex, should fire. "none": for someone else, or no answer.
+
+[defaults]
+voice = "cedar"
+style = "A colleague on a video standup. Natural pace."
+pause_s = 0.0
+
+[[utterance]]
+id = "open"
+parts = ["Morning everyone. Sam, do you want to start with the rate cache design?"]
+gap_s = 1.0
+expect = "none"
+case = "names someone else"
+
+[[utterance]]
+id = "sam_presents"
+parts = ["Sure. So each carrier's rates get cached per lane for an hour, and a quote reads the cache before it calls the carrier."]
+gap_s = 1.0
+expect = "none"
+case = "a presentation"
+
+[[utterance]]
+id = "dana_asks_sam"
+parts = ["Where does the cache live, in Redis or in the service's memory?"]
+gap_s = 1.5
+expect = "none"
+case = "a question to the presenter right after they presented (5 of 7 false fires were this)"
+
+[[utterance]]
+id = "sam_answers"
+parts = ["In Redis, keyed by carrier and lane, so every instance shares it."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_challenges_sam"
+parts = ["Does it work across all carriers, or only the three big ones? Isn't that limiting?"]
+gap_s = 1.5
+expect = "none"
+case = "a challenge to the presenter's design"
+
+[[utterance]]
+id = "dana_how"
+parts = ["Okay. How would you do that in your design?"]
+gap_s = 2.0
+expect = "none"
+case = "\"you\" with the presenter mid-discussion"
+
+[[utterance]]
+id = "sam_mentions_alex"
+parts = ["I'll go through the open questions with Alex later this week."]
+gap_s = 1.0
+expect = "none"
+case = "the user mentioned, not addressed"
+
+[[utterance]]
+id = "dana_turns_to_alex"
+parts = ["Thanks Sam. Alex, what are you working on right now?"]
+gap_s = 2.0
+expect = "answer"
+type = "standup_status"
+case = "the user's turn, by name"
+
+[[utterance]]
+id = "alex_update"
+speaker = "me"
+parts = ["I'm finishing the label retry fix today, then I'll start on the dispatch alerts."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_week"
+parts = ["Got it. And what's the plan for the rest of the week?"]
+gap_s = 1.0
+expect = "answer"
+type = "standup_status"
+case = "\"you\" right after the user spoke"
+
+[[utterance]]
+id = "dana_reminder"
+parts = ["Alex, remember what I said about not putting carrier-specific code into the shared client library?"]
+gap_s = 2.0
+expect = "answer"
+type = "respond"
+case = "a reminder to the user by name: needs a reply, not a question (missed on 10-26)"
+
+[[utterance]]
+id = "dana_request"
+parts = ["Can you send me the error rates for the old label service by Friday?"]
+gap_s = 1.5
+expect = "answer"
+type = "respond"
+case = "a request right after the exchange with the user"
+
+[[utterance]]
+id = "dana_audio"
+parts = ["Can you hear me okay now?"]
+gap_s = 2.0
+expect = "none"
+case = "an audio check"

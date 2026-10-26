@@ -447,6 +447,35 @@ async def test_typed_answer_command_answers_what_was_just_said(env) -> None:
         assert done["source"] == "model"  # not the first answer replayed from the cache
 
 
+async def test_respond_button_suggests_a_reply_to_what_was_just_said(env) -> None:
+    await seed_memory(env)
+    provider = env.providers[0]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Remember not to put report code in the shared libs folder", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "libs" in m["text"])
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected")
+        assert q["question_type"] == "respond"
+        assert "shared libs folder" in q["text"]
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+    fast = [req for job, req in provider.requests if job == "fast"][-1]
+    assert "Question (respond): Remember not to put report code" in str(fast.content)
+
+
+async def test_an_app_before_respond_gets_other(env) -> None:
+    # Desktop 0.1.4 cannot parse a question_type it does not know.
+    await seed_memory(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(client_version="desktop-0.1.4")
+        await c.send({"type": "question.force", "text": "Can you send the numbers by Friday?",
+                      "kind": "respond"})  # fmt: skip
+        q = await c.wait_type("question.detected")
+        assert q["question_type"] == "other"
+
+
 async def test_short_questions_skip_the_repeat_cache(env) -> None:
     await seed_memory(env)
     provider = env.providers[0]

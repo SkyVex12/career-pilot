@@ -50,7 +50,7 @@ export type ServerMessage =
  */
 export type Seq = number;
 /**
- * Question type from the detector.
+ * Question type from the detector. respond: not a question, but said to the user and needing a reply (a request, a reminder, "makes sense?"); also what the Respond button forces. Clients before desktop 0.1.5 get other instead.
  */
 export type QuestionType =
   | "behavioral"
@@ -59,6 +59,7 @@ export type QuestionType =
   | "coding"
   | "standup_status"
   | "small_talk"
+  | "respond"
   | "other";
 /**
  * Audio source: them = system output (the other side), me = microphone (the user).
@@ -130,6 +131,10 @@ export interface AuthRefresh {
 export interface QuestionForce {
   type: "question.force";
   text?: string;
+  /**
+   * answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.
+   */
+  kind?: "answer" | "respond";
 }
 /**
  * Coding question from the screen. The whole message is at most 2 MB.

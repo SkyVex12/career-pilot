@@ -689,7 +689,10 @@ class AnswerEngine:
         return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory)
 
     def _prepared(self, q: Question) -> PreparedAnswer | None:
-        """The prepared answer, if the question's match has finished with a hit."""
+        """The prepared answer, if the question's match has finished with a hit. A reply to a
+        remark (respond) is never a prepared standup answer."""
+        if q.qtype == "respond":
+            return None
         result = self._match_result(q)
         return result.answer if result is not None else None
 

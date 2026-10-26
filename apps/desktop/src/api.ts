@@ -205,6 +205,8 @@ export const api = {
   endSession: () => invoke<void>("end_session"),
   endOtherSession: () => invoke<string>("end_other_session"),
   forceQuestion: (text: string | null) => invoke<void>("force_question", { text }),
+  /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */
+  respond: (text: string | null) => invoke<void>("respond", { text }),
   expandAnswer: (questionId: string) => invoke<void>("expand_answer", { questionId }),
   sendFeedback: (questionId: string, up: boolean) =>
     invoke<void>("send_feedback", { questionId, up, reason: null }),
