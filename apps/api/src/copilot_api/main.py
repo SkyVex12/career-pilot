@@ -22,6 +22,7 @@ from copilot_api.routes import (
     documents,
     employers,
     me,
+    profiles,
     resumes,
     sessions,
 )
@@ -140,7 +141,9 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
-    for module in (auth, me, documents, applications, resumes, career_os, sessions, employers):
+    for module in (
+        auth, me, profiles, documents, applications, resumes, career_os, sessions, employers,
+    ):  # fmt: skip
         app.include_router(module.router, prefix="/v1")
     return app
 

@@ -5,14 +5,17 @@ The Career-OS account approves the link itself: signed in to Career-OS, it gener
 code, and Career Pilot exchanges it for a read-only token bound to that account
 (`copilot_core.careeros`). A user's token reads that user's applications; an admin's reads
 those of the users linked to that admin in Career-OS (`/career-os/users` lists them, and search
-can narrow to one). The token is sealed with
-the user's data key in `app.integrations`, like every tool token. Disconnecting revokes it on
-Career-OS first, then deletes it here.
+can narrow to one). The link is the account's (`AccountDep`), whichever profile the app has
+switched to: the token is sealed with the account's data key in `app.integrations`, like
+every tool token. Disconnecting revokes it on Career-OS first, then deletes it here.
 
-Nothing syncs on its own. The user searches their Career-OS applications and pulls one: a
-copy of the application with its JD and its resume version (or base resume), recorded with
-the Career-OS id, its content hash and the pull time. Search marks applications that changed
-in Career-OS since they were pulled; pulling again replaces the pulled fields, JD and resume.
+Nothing syncs on its own. The user searches Career-OS applications and pulls one: a copy of
+the application with its JD and its resume version (or base resume), recorded with the
+Career-OS id, its content hash and the pull time. A pulled application lives with its
+Career-OS user (ARCHITECTURE.md, "Profiles"): in the account itself for the linked user's own
+(a user link), else in that user's profile, made on the first pull. Search, switched to a
+profile, shows that profile's Career-OS user only. Search marks applications that changed in
+Career-OS since they were pulled; pulling again replaces the pulled fields, JD and resume.
 """
 
 import hashlib
@@ -24,9 +27,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from copilot_api.deps import Services, SvcDep, UserDep
+from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
 from copilot_api.routes.applications import application_out, enqueue_packs
-from copilot_core import jobs, resumes
+from copilot_core import jobs, profiles, resumes
 from copilot_core.auth import Principal
 from copilot_core.careeros import CareerOsClient, CareerOsError, ResumeFile
 from copilot_core.db import Conn
@@ -116,7 +119,7 @@ def connection_out(row: Any | None, available: bool) -> dict[str, Any]:
 
 
 @router.get("/career-os/connection")
-async def get_connection(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def get_connection(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
             "select status, external_id, external_label, external_kind, connected_at,"
@@ -127,7 +130,7 @@ async def get_connection(svc: SvcDep, user: UserDep) -> dict[str, Any]:
 
 
 @router.post("/career-os/connect", status_code=201)
-async def connect(body: ConnectIn, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     client = client_of(svc)
     uid = user.user_id
     async with svc.tx(user) as conn:
@@ -182,7 +185,7 @@ async def connect(body: ConnectIn, svc: SvcDep, user: UserDep) -> dict[str, Any]
 
 
 @router.delete("/career-os/connection", status_code=204)
-async def disconnect(svc: SvcDep, user: UserDep) -> Response:
+async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
     """Revoke the token on Career-OS, then delete it here. If Career-OS cannot be reached the
     link stays, so it is never left valid there while gone here."""
     uid = user.user_id
@@ -206,7 +209,7 @@ async def disconnect(svc: SvcDep, user: UserDep) -> Response:
 
 
 @router.get("/career-os/users")
-async def users(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def users(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     """The Career-OS users the link reads: the linked user, or an admin's linked users. Their
     ids narrow search (`user_id`)."""
     client = client_of(svc)
@@ -225,49 +228,104 @@ def user_out(raw: dict[str, Any]) -> dict[str, str]:
     return {"id": str(raw.get("id") or ""), "name": str(raw.get("name") or "")[:200]}
 
 
+class Homes:
+    """Where each Career-OS user's applications live here: the account for the linked user
+    itself (a user link), else that user's profile."""
+
+    def __init__(self, svc: Services, account: Principal, linked_id: str | None, kind: str):
+        self.svc, self.account = svc, account
+        self.self_id = linked_id if kind == "user" else None
+        self.by_cos: dict[str, Principal] = {}
+        self.cos_of: dict[UUID, str] = {}
+
+    @classmethod
+    async def load(cls, svc: Services, account: Principal) -> "Homes":
+        async with svc.tx(account) as conn:
+            row = await conn.fetchrow(
+                "select external_id, external_kind from app.integrations where provider = $1",
+                PROVIDER,
+            )
+        linked_id = None if row is None else cast(str | None, row["external_id"])
+        kind = "user" if row is None else str(row["external_kind"] or "user")
+        homes = cls(svc, account, linked_id, kind)
+        if homes.self_id:
+            homes.by_cos[homes.self_id] = account
+            homes.cos_of[account.user_id] = homes.self_id
+        for p in await profiles.listed(svc.pool, account):
+            pid = UUID(p["id"])
+            homes.by_cos.setdefault(
+                p["career_os_user_id"], Principal(pid, p["name"], account.expires_at)
+            )
+            homes.cos_of[pid] = p["career_os_user_id"]
+        return homes
+
+    def of(self, cos_user_id: str | None) -> Principal | None:
+        """The home of a Career-OS user's applications, if it exists yet."""
+        if not cos_user_id:
+            return self.account
+        return self.by_cos.get(cos_user_id)
+
+    async def make(self, cos_user: dict[str, Any]) -> Principal:
+        """The home of a Career-OS user's applications, its profile made on first use."""
+        cos_id = str(cos_user.get("id") or "")
+        found = self.of(cos_id)
+        if found is not None:
+            return found
+        name = str(cos_user.get("name") or "")
+        pid = await profiles.ensure(self.svc.pool, self.account, cos_id, name)
+        made = Principal(pid, name or cos_id, self.account.expires_at)
+        self.by_cos[cos_id], self.cos_of[pid] = made, cos_id
+        return made
+
+
 @router.get("/career-os/applications")
 async def search(
     svc: SvcDep,
+    account: AccountDep,
     user: UserDep,
     user_id: str | None = Query(default=None, pattern=COS_ID),
     q: str | None = Query(default=None, max_length=200),
     stage: Literal["applied", "interview", "offer", "rejected"] | None = None,
-    date_from: str | None = Query(default=None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    date_to: str | None = Query(default=None, alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     cursor: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=25, ge=1, le=50),
 ) -> dict[str, Any]:
-    """The Career-OS applications the link reads (company, role, date, stage, whose), each
-    marked with whether it was pulled here and whether it changed in Career-OS since.
-    `user_id` (from `/career-os/users`) narrows to one Career-OS user."""
+    """The Career-OS applications the link reads (company, role, stage, whose), each marked
+    with whether it was pulled here and whether it changed in Career-OS since. Switched to a
+    profile: that profile's Career-OS user only. Otherwise `user_id` (from `/career-os/users`)
+    narrows to one Career-OS user."""
     client = client_of(svc)
-    async with svc.tx(user) as conn:
-        token = await token_of(svc, conn, user.user_id)
-        pulled = {
-            r["career_os_application_id"]: r
-            for r in await conn.fetch(
-                "select id, career_os_application_id, career_os_hash, pulled_at"
-                " from app.applications where career_os_application_id is not null"
-            )
-        }
+    async with svc.tx(account) as conn:
+        token = await token_of(svc, conn, account.user_id)
+    homes = await Homes.load(svc, account)
+    if user is not account:
+        user_id = homes.cos_of.get(user.user_id) or user_id
     params = {k: v for k, v in (("user_id", user_id), ("q", q), ("stage", stage),
-                                ("from", date_from),
-                                ("to", date_to), ("cursor", cursor)) if v}  # fmt: skip
+                                ("cursor", cursor)) if v}  # fmt: skip
     params["limit"] = str(limit)
     try:
         found = await client.search(token, params)
     except CareerOsError as e:
-        raise await remote_failed(svc, user, e) from e
+        raise await remote_failed(svc, account, e) from e
+    raws = [r for r in (obj(e) for e in cast(list[object], found.get("items") or [])) if r]
+    # What was pulled, from each home the results belong to.
+    pulled: dict[tuple[UUID, str], Any] = {}
+    wanted = {h.user_id: h for r in raws if (h := homes.of(obj(r.get("user")).get("id")))}
+    for home in wanted.values():
+        async with svc.tx(home) as conn:
+            for r in await conn.fetch(
+                "select id, career_os_application_id, career_os_hash, pulled_at"
+                " from app.applications where career_os_application_id is not null"
+            ):
+                pulled[(home.user_id, r["career_os_application_id"])] = r
     items: list[dict[str, Any]] = []
-    for entry in cast(list[object], found.get("items") or []):
-        raw = obj(entry)
-        if not raw:
-            continue
+    for raw in raws:
         item: dict[str, Any] = {k: raw.get(k) for k in (
             "id", "company", "role", "stage", "source_site", "url", "created_at", "updated_at",
             "resume")}  # fmt: skip
         item["user"] = user_out(obj(raw.get("user"))) if raw.get("user") else None
-        here = pulled.get(str(raw.get("id")))
+        home = homes.of(obj(raw.get("user")).get("id"))
+        item["profile_id"] = None if home is None else str(home.user_id)
+        here = None if home is None else pulled.get((home.user_id, str(raw.get("id"))))
         item["pulled"] = (
             None
             if here is None
@@ -282,12 +340,13 @@ async def search(
 
 
 @router.get("/career-os/applications/{cos_id}/status")
-async def status(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
-    """Whether a pulled application changed in Career-OS since it was pulled."""
+async def status(cos_id: str, svc: SvcDep, account: AccountDep, user: UserDep) -> dict[str, Any]:
+    """Whether a pulled application (of the switched profile) changed in Career-OS since."""
     _check_id(cos_id)
     client = client_of(svc)
+    async with svc.tx(account) as conn:
+        token = await token_of(svc, conn, account.user_id)
     async with svc.tx(user) as conn:
-        token = await token_of(svc, conn, user.user_id)
         row = await conn.fetchrow(
             "select career_os_hash, pulled_at from app.applications"
             " where career_os_application_id = $1",
@@ -298,7 +357,7 @@ async def status(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
     try:
         detail = await client.application(token, cos_id)
     except CareerOsError as e:
-        raise await remote_failed(svc, user, e) from e
+        raise await remote_failed(svc, account, e) from e
     return {
         "changed": detail.get("content_hash") != row["career_os_hash"],
         "pulled_at": row["pulled_at"].isoformat(),
@@ -319,15 +378,16 @@ def _check_id(cos_id: str) -> None:
 
 
 @router.post("/career-os/applications/{cos_id}/pull")
-async def pull(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
     """Copy one Career-OS application here with its JD and its resume version (or base
     resume), or pull it again: the pulled fields, JD and resume are replaced, the application
-    keeps its id, interviews and a still-valid pairing."""
+    keeps its id, interviews and a still-valid pairing. It goes to its Career-OS user's home
+    (the account, or that user's profile, made now if needed), whichever profile is switched
+    to; the response names it (`profile_id`)."""
     _check_id(cos_id)
     client = client_of(svc)
-    uid = user.user_id
-    async with svc.tx(user) as conn:
-        token = await token_of(svc, conn, uid)
+    async with svc.tx(account) as conn:
+        token = await token_of(svc, conn, account.user_id)
     try:
         detail = await client.application(token, cos_id)
         try:
@@ -344,9 +404,12 @@ async def pull(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
             if file is not None and file.content_type not in FILE_TYPES:
                 file = None
     except CareerOsError as e:
-        raise await remote_failed(svc, user, e) from e
+        raise await remote_failed(svc, account, e) from e
     if app.id != cos_id:
         raise HTTPException(502, "Career-OS sent another application than the one asked for")
+    homes = await Homes.load(svc, account)
+    user = await homes.make(obj(detail.get("user")))
+    uid = user.user_id
     jd = str(obj(detail.get("job_description")).get("text") or "")[:50_000]
     stage = app.stage if app.stage in STAGES else "applied"
     content_hash = str(detail.get("content_hash") or "")
@@ -381,36 +444,31 @@ async def pull(cos_id: str, svc: SvcDep, user: UserDep) -> dict[str, Any]:
                 str(version.get("text") or ""), file,
             )  # fmt: skip
         elif base is not None and str(base.get("text") or "").strip():
-            # The linked user's Career-OS base resume: this account's base if it has none (or
-            # its base is an earlier copy of the same), otherwise this application's own
-            # version, so the account's base is never overwritten. Another Career-OS user's
-            # base (through an admin link) is always the application's own version.
+            # The Career-OS base resume: the home's base if it has none (or its base is an
+            # earlier copy of the same), otherwise this application's own version, so a base
+            # made here is never overwritten. Each Career-OS user has its own home, so one
+            # user's base never meets another's.
             mine = await conn.fetchrow(
                 "select id, career_os_ref from app.resume_versions where kind = 'base'"
             )
-            linked_id = await conn.fetchval(
-                "select external_id from app.integrations where provider = $1", PROVIDER
-            )
-            owner = str(obj(detail.get("user")).get("id") or "")
-            if not owner or owner == linked_id:
-                ref = "base:career-os"
-                kind = "base" if mine is None or mine["career_os_ref"] == ref else "tailored"
-            else:
-                ref, kind = f"base:career-os:{owner}", "tailored"
+            ref = "base:career-os"
+            kind = "base" if mine is None or mine["career_os_ref"] == ref else "tailored"
             extract = await _pull_resume(
                 svc, conn, uid, app_id, kind, ref,
                 _label("Career-OS base resume", base.get("updated_at")),
                 str(base["text"]), None,
             )  # fmt: skip
+        await enqueue_packs(svc, conn, uid, app_id)
+        out = await application_out(svc, conn, uid, app_id, detail=True)
+    async with svc.tx(account) as conn:
         await conn.execute(
             "update app.integrations set last_sync_at = now() where provider = $1", PROVIDER
         )
-        await enqueue_packs(svc, conn, uid, app_id)
-        out = await application_out(svc, conn, uid, app_id, detail=True)
     if extract is not None:
         await svc.queue.send(jobs.resume_extract(uid, *extract))
     assert out is not None
     out["pulled"] = "new" if existing is None else "again"
+    out["profile_id"] = str(uid)
     return out
 
 

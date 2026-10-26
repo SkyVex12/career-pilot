@@ -1,14 +1,21 @@
-"""`GET /me`, `PATCH /me`, `PATCH /me/settings`, `DELETE /me`, `GET /usage`."""
+"""`GET /me`, `PATCH /me`, `PATCH /me/settings`, `DELETE /me`, `GET /usage`.
+
+All of them are the signed-in account's, whichever profile the app has switched to
+(ARCHITECTURE.md, "Profiles"): settings are copied to the profiles, usage counts them too, and
+deleting the account deletes its profiles."""
 
 import re
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, cast
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from copilot_api.deps import SvcDep, UserDep
+from copilot_api.deps import AccountDep, SvcDep
+from copilot_core import profiles
+from copilot_core.auth import Principal
 
 router = APIRouter()
 
@@ -68,7 +75,7 @@ ME_SQL = "select id, email, display_name, plan, settings, created_at from app.us
 
 
 @router.get("/me")
-async def get_me(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def get_me(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(ME_SQL, user.user_id)
     if row is None:
@@ -77,7 +84,7 @@ async def get_me(svc: SvcDep, user: UserDep) -> dict[str, Any]:
 
 
 @router.patch("/me")
-async def patch_me(body: MePatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def patch_me(body: MePatch, svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         if body.display_name is not None:
             await conn.execute(
@@ -90,7 +97,7 @@ async def patch_me(body: MePatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
 
 
 @router.patch("/me/settings")
-async def patch_settings(body: SettingsPatch, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def patch_settings(body: SettingsPatch, svc: SvcDep, user: AccountDep) -> dict[str, Any]:
     changes = body.model_dump(exclude_unset=True)
     async with svc.tx(user) as conn:
         if changes:
@@ -109,19 +116,23 @@ async def patch_settings(body: SettingsPatch, svc: SvcDep, user: UserDep) -> dic
                 "update app.users set settings = $2 where id = $1", user.user_id, current
             )
         row = await conn.fetchrow(ME_SQL, user.user_id)
+    if changes and row is not None:
+        settings = cast(dict[str, Any], row["settings"] or {})
+        await profiles.sync_settings(svc.pool, user, settings)
     return _me(row)
 
 
 @router.delete("/me", status_code=202)
-async def delete_me(svc: SvcDep, user: UserDep) -> dict[str, str]:
-    """Account deletion runs as the `user.delete` job (rows, files, data keys)."""
+async def delete_me(svc: SvcDep, user: AccountDep) -> dict[str, str]:
+    """Account deletion runs as the `user.delete` job (rows, files, data keys, profiles)."""
     await svc.enqueue("user.delete", f"user.delete:{user.user_id}", user.user_id, {})
     return {"status": "deleting"}
 
 
 @router.get("/usage")
-async def usage(svc: SvcDep, user: UserDep, month: str | None = None) -> dict[str, Any]:
-    """Live minutes this calendar month (UTC), from the sessions' billed seconds."""
+async def usage(svc: SvcDep, user: AccountDep, month: str | None = None) -> dict[str, Any]:
+    """Live minutes this calendar month (UTC), from the sessions' billed seconds: the
+    account's and its profiles'."""
     try:
         first = (
             date.fromisoformat(f"{month}-01") if month else datetime.now(UTC).date().replace(day=1)
@@ -131,25 +142,33 @@ async def usage(svc: SvcDep, user: UserDep, month: str | None = None) -> dict[st
     nxt = (first + timedelta(days=32)).replace(day=1)
     start = datetime.combine(first, time(), UTC)
     end = datetime.combine(nxt, time(), UTC)
-    async with svc.tx(user) as conn:
-        rows = await conn.fetch(
-            "select (started_at at time zone 'UTC')::date as day, count(*) as sessions,"
-            " sum(billed_seconds)::int as seconds from app.sessions"
-            " where user_id = $1 and started_at >= $2 and started_at < $3"
-            " and ended_at is not null group by 1 order by 1",
-            user.user_id,
-            start,
-            end,
-        )
-    seconds = sum(int(r["seconds"] or 0) for r in rows)
+    who = [user] + [
+        Principal(UUID(p["id"]), p["name"], user.expires_at)
+        for p in await profiles.listed(svc.pool, user)
+    ]
+    by_day: dict[date, list[int]] = {}
+    for principal in who:
+        async with svc.tx(principal) as conn:
+            for r in await conn.fetch(
+                "select (started_at at time zone 'UTC')::date as day, count(*) as sessions,"
+                " sum(billed_seconds)::int as seconds from app.sessions"
+                " where user_id = $1 and started_at >= $2 and started_at < $3"
+                " and ended_at is not null group by 1",
+                principal.user_id,
+                start,
+                end,
+            ):
+                day = by_day.setdefault(r["day"], [0, 0])
+                day[0] += int(r["sessions"])
+                day[1] += int(r["seconds"] or 0)
+    days = sorted(by_day.items())
+    seconds = sum(v[1] for _, v in days)
     return {
         "period": first.strftime("%Y-%m"),
         "period_start": start.isoformat(),
         "period_end": end.isoformat(),
         "live_seconds": seconds,
         "live_minutes": -(-seconds // 60),
-        "sessions": sum(int(r["sessions"]) for r in rows),
-        "days": [
-            {"day": r["day"].isoformat(), "live_seconds": int(r["seconds"] or 0)} for r in rows
-        ],
+        "sessions": sum(v[0] for _, v in days),
+        "days": [{"day": d.isoformat(), "live_seconds": v[1]} for d, v in days],
     }

@@ -128,6 +128,40 @@ class FakeUserPool:
         self.users.discard(kwargs["Username"])
 
 
+async def test_user_delete_takes_the_accounts_profiles(stack: Stack) -> None:
+    """ARCHITECTURE.md, "Profiles": a profile's users row cascades with the account's, and
+    the job removes its objects, Valkey keys and data keys too; another account's stay."""
+    uid = await stack.new_user()
+    other = await stack.new_user("Someone Else")
+    profiles = []
+    for owner in (uid, other):
+        pid = await stack.new_user("Blair Roe")
+        await stack.admin.execute("update app.users set owner_id = $2 where id = $1", pid, owner)
+        await stack.admin.execute(
+            "insert into app.profiles (id, user_id, career_os_user_id, name)"
+            " values ($1, $2, 'u2', 'Blair Roe')",
+            pid, owner,
+        )  # fmt: skip
+        await stack.upload(pid, "resume", FIXTURES / "inputs" / "resume.md", "text/markdown")
+        await stack.ctx.valkey.set(keys.qa(pid, "abc"), "{}")
+        profiles.append(pid)
+    mine, theirs = profiles
+    assert await stack.ctx.store.list_keys(user_prefix(mine))
+
+    await stack.run(jobs.envelope("user.delete", f"user.delete:{uid}", uid, {}))
+
+    for gone in (uid, mine):
+        assert await stack.admin.fetchval("select count(*) from app.users where id = $1", gone) == 0
+        assert await stack.ctx.store.list_keys(user_prefix(gone)) == []
+    assert await stack.ctx.valkey.get(keys.qa(mine, "abc")) is None
+    assert await stack.admin.fetchval(
+        "select count(*) from app.profiles where user_id = $1", uid) == 0  # fmt: skip
+    for kept in (other, theirs):
+        assert await stack.admin.fetchval("select count(*) from app.users where id = $1", kept) == 1
+    assert await stack.ctx.store.list_keys(user_prefix(theirs))
+    assert await stack.ctx.valkey.get(keys.qa(theirs, "abc")) is not None
+
+
 async def test_user_delete_removes_the_cognito_user(stack: Stack) -> None:
     uid = await stack.new_user()
     pool = FakeUserPool({str(uid)})
