@@ -156,7 +156,7 @@ async def world() -> AsyncIterator[World]:
         jobs=queue,
         router=gateway_router(gw_settings, [ScriptedProvider("anthropic")]),
         verifier=verifier,
-        stt_providers=[("text", lambda: TextSTT(control, "text"))],
+        stt_providers=[("text", lambda _: TextSTT(control, "text"))],
     )
     async with GatewayServer(gw_svc) as gw:
         try:
