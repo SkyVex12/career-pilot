@@ -182,7 +182,11 @@ async def worklog_extract(job: Job, ctx: Ctx) -> None:
     )
     try:
         data = await complete_json(ctx.router, "worklog", req)
-    except ModelOutputError as e:
+    except Exception as e:
+        # Marked failed whatever went wrong, so the log never sits at "Reading" for good (a
+        # provider outage on 2026-10-22 left one there for four days). A bad answer is final;
+        # anything else is raised again, so the queue retries it, and the scheduler retries
+        # failed logs every hour after that.
         log.warning("work log %s: extraction failed (%s)", log_id, e)
         async with ctx.user(uid) as conn:
             await conn.execute(
@@ -190,7 +194,9 @@ async def worklog_extract(job: Job, ctx: Ctx) -> None:
                 log_id,
                 sha,
             )
-        return
+        if isinstance(e, ModelOutputError):
+            return
+        raise
     async with ctx.user(uid) as conn:
         current = await conn.fetchval(
             "select content_sha256 from app.work_logs where id = $1 for update", log_id

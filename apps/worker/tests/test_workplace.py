@@ -495,3 +495,30 @@ async def test_search_reports_a_tickets_newest_entry(stack: Stack) -> None:
     assert [(h.day, h.text) for h in hits if h.kind == "work_item"] == [
         ("2026-10-13", "PSP-412: Deployed to production at 10:00")
     ]
+
+
+async def test_a_provider_outage_marks_the_log_failed_and_it_is_retried(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 2026-10-22 on Stage 0: every route failed (no credits) and the log said "Reading" for
+    # four days, so that day's work never reached a standup pack.
+    from copilot_core.llm import AllRoutesFailedError
+    from copilot_worker import workplace
+
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    log_id, sha = await seed_log(stack, uid, eid, (INPUTS / "worklog.md").read_text("utf-8"))
+
+    async def outage(*_: Any, **__: Any) -> Any:
+        raise AllRoutesFailedError("worklog", ["openai:gpt-6.1-sol: no credits remaining"])
+
+    with monkeypatch.context() as m:
+        m.setattr(workplace, "complete_json", outage)
+        with pytest.raises(AllRoutesFailedError):  # raised again, so the queue retries it
+            await stack.run(extract_job(uid, log_id, sha))
+    status = await stack.admin.fetchval("select status from app.work_logs where id = $1", log_id)
+    assert status == "failed"
+    await stack.run(extract_job(uid, log_id, sha))  # the provider is back
+    status = await stack.admin.fetchval("select status from app.work_logs where id = $1", log_id)
+    assert status == "extracted"
+    assert await nodes_of(stack, eid)

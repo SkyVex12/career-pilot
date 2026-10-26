@@ -118,6 +118,15 @@ async def test_work_log_is_sealed_and_extracted_once_per_content(api: Api) -> No
     )
     assert r.json()["id"] == entry["id"]
     assert len(api.take("worklog.extract")) == 1
+    # A log whose extraction failed is tried again when saved unchanged ("save again").
+    await api.admin.execute(
+        "update app.work_logs set status = 'failed' where id = $1", uuid.UUID(entry["id"])
+    )
+    r = await api.client.put(
+        f"/v1/employers/{eid}/logs/{DAY}", headers=h, json={"text": text + " Blocked on QA."}
+    )
+    assert r.json()["status"] == "extracting"
+    assert len(api.take("worklog.extract")) == 1
     listed = (await api.client.get(f"/v1/employers/{eid}/logs", headers=h)).json()
     assert [e["day"] for e in listed["logs"]] == [DAY]
     assert (
