@@ -66,6 +66,8 @@ export interface Settings {
   hotkey: string;
   show_debug: boolean;
   last_session_id: string | null;
+  /** The profile the app acts for (set with `api.setProfile`); null is the account ("Me"). */
+  profile: string | null;
   /** Release builds: install updates by themselves when no session runs, or ask first. */
   update_mode: "auto" | "ask";
   /** Kept by the app for the "Updated to" note; the screen sends them back unchanged. */
@@ -174,6 +176,8 @@ export const api = {
   noteActivity: () => invoke<void>("note_activity"),
   signIn: () => invoke<string>("sign_in"),
   signOut: () => invoke<void>("sign_out"),
+  /** The profile switch: every API call and the next session act for it (null: "Me"). */
+  setProfile: (profile: string | null) => invoke<void>("set_profile", { profile }),
   saveSettings: (settings: Settings, devToken: string | null) =>
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),
@@ -304,6 +308,16 @@ export interface ResumeVersion {
   text?: string | null;
 }
 
+// Profiles (routes/profiles.py): "Me" and one per Career-OS user an admin link reads.
+
+export interface Profile {
+  id: string;
+  name: string;
+  career_os_user_id: string | null;
+  /** The account itself. */
+  me: boolean;
+}
+
 // The Career-OS link (routes/career_os.py).
 
 export interface CareerOsConnection {
@@ -332,19 +346,16 @@ export interface CareerOsItem {
   url: string | null;
   created_at: string;
   updated_at: string;
-  /** Whose application it is in Career-OS. */
+  /** Whose application it is in Career-OS, and the profile it is (or would be) pulled into. */
   user: CareerOsUser | null;
+  profile_id: string | null;
   resume: "tailored" | "base" | "none";
   pulled: { application_id: string; pulled_at: string; changed: boolean } | null;
 }
 
 export interface CareerOsQuery {
-  /** One of `careerOsUsers()`; empty for all of them. */
-  user_id?: string;
   q?: string;
   stage?: Stage | "";
-  from?: string;
-  to?: string;
 }
 
 export interface DigestInfo {
@@ -554,9 +565,11 @@ export const rest = {
   connectCareerOs: (code: string) => call<CareerOsConnection>("POST", "/career-os/connect", { code }),
   disconnectCareerOs: () => call<null>("DELETE", "/career-os/connection"),
   careerOsUsers: () => call<{ items: CareerOsUser[] }>("GET", "/career-os/users"),
+  profiles: () => call<{ items: Profile[]; career_os: "user" | "admin" | "super_admin" | null }>("GET", "/profiles"),
   searchCareerOs: (query: CareerOsQuery) =>
     call<{ items: CareerOsItem[]; next_cursor: string | null }>("GET", `/career-os/applications${queryString(query)}`),
-  pullCareerOs: (id: string) => call<ApplicationDetail>("POST", `/career-os/applications/${encodeURIComponent(id)}/pull`),
+  pullCareerOs: (id: string) =>
+    call<ApplicationDetail & { profile_id: string }>("POST", `/career-os/applications/${encodeURIComponent(id)}/pull`),
   scheduleInterview: (jobId: string, round: Round, startsAt: string) =>
     call<InterviewItem>("POST", "/interviews", { job_id: jobId, round, starts_at: startsAt }),
   sessions: (before?: string | null) =>

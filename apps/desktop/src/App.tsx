@@ -30,6 +30,7 @@ import { SessionDetail } from "./SessionDetail";
 import { badge, useSession, type SessionView } from "./session";
 import { Work } from "./Work";
 import { defaultEmployer, packLabel } from "./workday";
+import { ProfileContext, showSwitch, useProfiles, type ProfileState } from "./profiles";
 
 type Tab = "start" | "resumes" | "applications" | "work" | "history" | "settings" | "debug";
 
@@ -50,6 +51,12 @@ export default function App() {
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
   const tokenSet = view?.ready ?? false;
   const environment = view?.settings.environment ?? "local";
+  const profiles = useProfiles(tokenSet, view?.settings.profile ?? null);
+  // Back from Settings (a Career-OS link made or removed): the profiles may have changed.
+  const { reload: reloadProfiles } = profiles;
+  useEffect(() => {
+    if (tab !== "settings") reloadProfiles();
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = () => {
     api.getSettings().then((v) => {
@@ -100,20 +107,59 @@ export default function App() {
           </button>
         )}
         <span className="spacer" />
+        <ProfileSwitch state={profiles.state} running={session.running} onSwitch={profiles.switchTo} />
         <StatusBadge session={session} />
       </nav>
       <UpdateBanner running={session.running} />
-      {tab === "start" && (
-        <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
-      )}
-      {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
-      {!needsToken && tab === "resumes" && <Resumes />}
-      {!needsToken && tab === "applications" && <Applications />}
-      {!needsToken && tab === "work" && <Work />}
-      {!needsToken && tab === "history" && <History />}
+      {/* A switch remounts every screen, so each one loads the new profile's data. */}
+      <ProfileContext.Provider value={profiles.state} key={profiles.state.here ?? "me"}>
+        {tab === "start" && (
+          <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
+        )}
+        {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
+        {!needsToken && tab === "resumes" && <Resumes />}
+        {!needsToken && tab === "applications" && <Applications />}
+        {!needsToken && tab === "work" && <Work />}
+        {!needsToken && tab === "history" && <History />}
+      </ProfileContext.Provider>
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
     </main>
+  );
+}
+
+/** Top right: whom the app works for, "Me" or one of the Career-OS users an admin link reads.
+ * Locked while a session runs: a session keeps the profile it started with. */
+function ProfileSwitch({
+  state,
+  running,
+  onSwitch,
+}: {
+  state: ProfileState;
+  running: boolean;
+  onSwitch: (id: string | null) => Promise<void>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  if (!showSwitch(state.profiles)) return null;
+  return (
+    <span className="row" title={running ? "End the session to switch" : "Whose applications, resumes and sessions"}>
+      <select
+        aria-label="Profile"
+        value={state.here ?? ""}
+        disabled={running}
+        onChange={(e) => {
+          setError(null);
+          onSwitch(e.target.value || null).catch((err) => setError(String(err)));
+        }}
+      >
+        {state.profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.me ? `Me (${p.name})` : p.name}
+          </option>
+        ))}
+      </select>
+      {error && <span className="warn">{error}</span>}
+    </span>
   );
 }
 

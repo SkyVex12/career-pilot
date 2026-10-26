@@ -1,8 +1,9 @@
 // The Career-OS link (ARCHITECTURE.md, "Career-OS link"): the settings item that connects with a
 // one-time code made in Career-OS, and the dialog that searches Career-OS and pulls one
 // application on demand. Nothing syncs by itself.
-import { useEffect, useState } from "react";
-import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type CareerOsUser, type Stage } from "./api";
+import { useContext, useEffect, useState } from "react";
+import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type Stage } from "./api";
+import { ProfileContext } from "./profiles";
 import { STAGES, pullState, stageLabel } from "./pairing";
 import { Chip, when } from "./ui";
 
@@ -86,23 +87,20 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
 }
 
 export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulled: (app: ApplicationDetail) => void }) {
+  const { here } = useContext(ProfileContext);
   const [q, setQ] = useState("");
-  const [userId, setUserId] = useState("");
   const [stage, setStage] = useState<Stage | "">("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [users, setUsers] = useState<CareerOsUser[]>([]);
   const [items, setItems] = useState<CareerOsItem[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  // More than one Career-OS user (an admin link): pick whose applications, and show whose.
-  const several = users.length > 1;
+  // Results of more than one Career-OS user ("Me" on an admin link): say whose each one is.
+  const several = new Set((items ?? []).map((i) => i.user?.id ?? "")).size > 1;
 
-  const search = async (who = userId) => {
+  const search = async () => {
     setBusy("search");
     setMessage(null);
     try {
-      setItems((await rest.searchCareerOs({ user_id: who, q: q.trim(), stage, from, to })).items);
+      setItems((await rest.searchCareerOs({ q: q.trim(), stage })).items);
     } catch (e) {
       setMessage(String(e));
     } finally {
@@ -111,10 +109,6 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
   };
   useEffect(() => {
     search();
-    rest.careerOsUsers().then(
-      (out) => setUsers(out.items),
-      () => setUsers([]),
-    );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pull = async (item: CareerOsItem) => {
@@ -122,8 +116,14 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
     setMessage(null);
     try {
       const app = await rest.pullCareerOs(item.id);
-      setMessage(`${app.pulled === "again" ? "Pulled again" : "Pulled"}: ${app.company} · ${app.role}.`);
-      onPulled(app);
+      const verb = app.pulled === "again" ? "Pulled again" : "Pulled";
+      if (app.profile_id === here) {
+        setMessage(`${verb}: ${app.company} · ${app.role}.`);
+        onPulled(app);
+      } else {
+        // An application lives with its Career-OS user: switch to them to work on it.
+        setMessage(`${verb} into ${item.user?.name || "their"} profile: ${app.company} · ${app.role}.`);
+      }
       await search();
     } catch (e) {
       setMessage(String(e));
@@ -142,23 +142,6 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
         </button>
       </div>
       <div className="row">
-        {several && (
-          <select
-            value={userId}
-            onChange={(e) => {
-              setUserId(e.target.value);
-              search(e.target.value);
-            }}
-            title="Whose applications"
-          >
-            <option value="">All users</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name || u.id}
-              </option>
-            ))}
-          </select>
-        )}
         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Company or role" />
         <select value={stage} onChange={(e) => setStage(e.target.value as Stage | "")}>
           <option value="">Any stage</option>
@@ -168,13 +151,14 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
             </option>
           ))}
         </select>
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="Applied from" />
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} title="Applied until" />
         <button disabled={busy !== null} onClick={() => search()}>
           {busy === "search" ? "Searching…" : "Search"}
         </button>
       </div>
-      <p className="note">A pull copies the application, its job description and its resume (or your Career-OS base resume). Nothing else is imported.</p>
+      <p className="note">
+        A pull copies the application, its job description and its resume (or the Career-OS base resume) into its Career-OS user&apos;s profile.
+        Nothing else is imported.
+      </p>
       {message && <p className="note">{message}</p>}
       {items?.length === 0 && <p className="note">No applications match.</p>}
       <table className="list">

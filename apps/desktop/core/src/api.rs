@@ -26,6 +26,8 @@ const JSON_TIMEOUT: Duration = Duration::from_secs(30);
 /// The header that names the app and its version to the API (protocol.schema.json,
 /// `ClientOutdated`).
 pub const CLIENT_HEADER: &str = "x-copilot-client";
+/// The profile a request acts for (ARCHITECTURE.md, "Profiles"); absent for the account.
+pub const PROFILE_HEADER: &str = "x-copilot-profile";
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ApiError {
@@ -93,6 +95,8 @@ pub struct ApiClient {
     tokens: Arc<dyn TokenProvider>,
     /// `desktop-<version>`, sent as [`CLIENT_HEADER`].
     client: Option<String>,
+    /// The profile's id, sent as [`PROFILE_HEADER`].
+    profile: Option<String>,
 }
 
 impl ApiClient {
@@ -106,7 +110,7 @@ impl ApiClient {
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| ApiError::Invalid(e.to_string()))?;
-        Ok(Self { base, http, tokens, client: None })
+        Ok(Self { base, http, tokens, client: None, profile: None })
     }
 
     /// Name the app on every request (`desktop-0.1.1`), for the server's version guard.
@@ -115,9 +119,19 @@ impl ApiClient {
         self
     }
 
+    /// Act for one of the account's profiles; None (or empty) is the account itself.
+    pub fn with_profile(mut self, profile: Option<String>) -> Self {
+        self.profile = profile.filter(|p| !p.trim().is_empty());
+        self
+    }
+
     fn named(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.client {
+        let req = match &self.client {
             Some(c) => req.header(CLIENT_HEADER, c),
+            None => req,
+        };
+        match &self.profile {
+            Some(p) => req.header(PROFILE_HEADER, p),
             None => req,
         }
     }

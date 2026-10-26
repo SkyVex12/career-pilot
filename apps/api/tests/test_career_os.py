@@ -224,22 +224,30 @@ async def test_an_admin_link_reads_its_users_and_filters_by_user(
                                   headers=h)).status_code == 404  # fmt: skip
     assert (await get("../users")).status_code == 422
 
-    # Another user's base resume is that application's own version, never the account's base,
-    # and pulling a second user's does not replace the first's.
+    # Each pull lands in its Career-OS user's profile (made on the first pull), with that
+    # user's base resume as the profile's base; the account itself gets nothing.
     first = await pull(api, h, "app_other_1")
-    assert first["resume"]["kind"] == "tailored"
+    assert first["resume"]["kind"] == "base"
     fake.apps["u1"]["app_acme_1"]["resume_version"] = None
     second = await pull(api, h, "app_acme_1")
-    assert second["resume"]["kind"] == "tailored"
-    refs = {
-        r["application_id"]: r["career_os_ref"]
-        for r in await api.admin.fetch(
-            "select application_id, career_os_ref from app.resume_versions where user_id = $1", uid
-        )
-    }
-    assert refs == {uuid.UUID(first["id"]): "base:career-os:u2",
-                    uuid.UUID(second["id"]): "base:career-os:u1"}  # fmt: skip
+    assert second["resume"]["kind"] == "base"
+    owned = {r["career_os_user_id"]: r["id"] for r in await api.admin.fetch(
+        "select id, career_os_user_id from app.profiles where user_id = $1", uid)}  # fmt: skip
+    assert set(owned) == {"u1", "u2"}
+    assert (first["profile_id"], second["profile_id"]) == (str(owned["u2"]), str(owned["u1"]))
     assert (await api.client.get("/v1/resumes", headers=h)).json()["base"] is None
+    assert (await api.client.get("/v1/applications", headers=h)).json()["applications"] == []
+    as_u2 = {**h, "x-copilot-profile": str(owned["u2"])}
+    base = (await api.client.get("/v1/resumes", headers=as_u2)).json()["base"]
+    assert base["career_os"]["ref"] == "base:career-os"
+    [mine] = (await api.client.get("/v1/applications", headers=as_u2)).json()["applications"]
+    assert mine["id"] == first["id"]
+    # Search marks each pull, wherever it lives; switched to a profile it shows its user only.
+    items = (await api.client.get("/v1/career-os/applications", headers=h)).json()["items"]
+    assert all(i["pulled"] is not None for i in items)
+    assert {i["profile_id"] for i in items} == {str(owned["u1"]), str(owned["u2"])}
+    items = (await api.client.get("/v1/career-os/applications", headers=as_u2)).json()["items"]
+    assert [i["id"] for i in items] == ["app_other_1"]
 
     # Unlinked in Career-OS: gone from the users and the search at once.
     fake.admin_users["a1"] = ["u1"]

@@ -49,6 +49,9 @@ pub struct Settings {
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
+    /// The profile the app acts for (ARCHITECTURE.md, "Profiles"): one of the account's, by
+    /// id; None is the account itself ("Me"). Sent on every API call and session.
+    pub profile: Option<String>,
     /// Release builds: install updates by themselves (when no session runs), or ask first.
     pub update_mode: UpdateMode,
     /// The version that last ran, and the update being installed when the app exited: for
@@ -72,6 +75,7 @@ impl Default for Settings {
             hotkey: "CommandOrControl+Shift+Space".into(),
             show_debug: false,
             last_session_id: None,
+            profile: None,
             update_mode: UpdateMode::Auto,
             last_version: None,
             pending_update: None,
@@ -111,6 +115,24 @@ impl Settings {
             Environment::Cloud => (&self.cloud_gateway_url, &self.cloud_api_url),
         }
     }
+
+    /// The gateway's session URL, naming the profile the session acts for, if any.
+    pub fn session_url(&self) -> String {
+        let url = self.active_urls().0.trim();
+        // Only an id's characters reach the URL.
+        let id: String = self
+            .profile
+            .as_deref()
+            .unwrap_or("")
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit() || *c == '-')
+            .collect();
+        if id.is_empty() {
+            return url.to_string();
+        }
+        let sep = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{sep}profile={id}")
+    }
 }
 
 /// A warning for the settings screen when a URL sends traffic in the clear to another
@@ -145,11 +167,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sessions_name_the_profile() {
+        let mut s =
+            Settings { profile: Some("0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b".into()), ..Settings::default() };
+        assert_eq!(
+            s.session_url(),
+            "ws://127.0.0.1:8081/v1/session?profile=0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b"
+        );
+        // Only an id's characters reach the URL.
+        s.profile = Some("x&y=z".into());
+        assert_eq!(s.session_url(), "ws://127.0.0.1:8081/v1/session");
+        s.profile = Some(String::new());
+        assert_eq!(s.session_url(), "ws://127.0.0.1:8081/v1/session");
+    }
+
+    #[test]
     fn old_settings_files_still_load_as_local() {
         let old = r#"{"gateway_url":"ws://10.0.0.5:8081/v1/session","api_url":"http://10.0.0.5:8080/v1","hotkey":"F9"}"#;
         let s: Settings = serde_json::from_str(old).unwrap();
         assert_eq!(s.environment, Environment::Local);
         assert_eq!(s.active_urls(), ("ws://10.0.0.5:8081/v1/session", "http://10.0.0.5:8080/v1"));
+        assert_eq!(s.session_url(), "ws://10.0.0.5:8081/v1/session");
         assert_eq!(s.hotkey, "F9");
         // Files from before automatic updates install them by themselves.
         assert_eq!(s.update_mode, UpdateMode::Auto);

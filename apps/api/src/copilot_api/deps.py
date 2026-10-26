@@ -4,6 +4,11 @@ Every request carries an access token (Cognito, or the dev token locally). The f
 of a new user creates their `app.users` row from the token. Every handler then runs its
 queries inside `services.tx(user)`, which opens a transaction that sets `app.user_id` first
 (ARCHITECTURE.md, "Row-level security").
+
+A request may name one of the account's profiles (`x-copilot-profile`; ARCHITECTURE.md,
+"Profiles"). `UserDep` is then the profile, so the handler reads and writes the profile's rows;
+`AccountDep` is always the signed-in account, for what belongs to the account (its settings,
+its Career-OS link, its deletion).
 """
 
 import logging
@@ -18,7 +23,7 @@ import httpx2
 from fastapi import Depends, Header, HTTPException, Request
 
 from copilot_api.config import ApiSettings
-from copilot_core import jobs, keys, logs
+from copilot_core import jobs, keys, logs, profiles
 from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
@@ -74,7 +79,7 @@ async def userinfo_email(settings: ApiSettings, token: str) -> str | None:
     return str(email) if email else None
 
 
-async def current_user(
+async def current_account(
     svc: Annotated[Services, Depends(services)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> Principal:
@@ -107,5 +112,21 @@ async def current_user(
     return principal
 
 
+async def current_user(
+    svc: Annotated[Services, Depends(services)],
+    account: Annotated[Principal, Depends(current_account)],
+    x_copilot_profile: Annotated[str | None, Header()] = None,
+) -> Principal:
+    """The principal the request acts for: the account, or the profile it names."""
+    try:
+        principal = await profiles.resolve(svc.pool, account, x_copilot_profile)
+    except profiles.ProfileError as e:
+        raise HTTPException(404, f"profile: {e}") from e
+    if principal is not account:
+        logs.set_ids(user_id=principal.user_id)
+    return principal
+
+
 SvcDep = Annotated[Services, Depends(services)]
+AccountDep = Annotated[Principal, Depends(current_account)]
 UserDep = Annotated[Principal, Depends(current_user)]

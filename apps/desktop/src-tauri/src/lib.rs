@@ -130,8 +130,14 @@ impl AppState {
     }
 
     fn api(&self) -> Result<ApiClient, String> {
-        let url = self.settings.lock().unwrap().active_urls().1.to_string();
-        Ok(ApiClient::new(&url, self.tokens()?).map_err(|e| e.to_string())?.with_client(self.client.clone()))
+        let (url, profile) = {
+            let s = self.settings.lock().unwrap();
+            (s.active_urls().1.to_string(), s.profile.clone())
+        };
+        Ok(ApiClient::new(&url, self.tokens()?)
+            .map_err(|e| e.to_string())?
+            .with_client(self.client.clone())
+            .with_profile(profile))
     }
 }
 
@@ -267,6 +273,7 @@ fn save_settings(
     state.update_settings(|s| {
         *s = Settings {
             last_session_id: kept.last_session_id,
+            profile: kept.profile,
             oauth,
             last_version: kept.last_version,
             pending_update: kept.pending_update,
@@ -404,6 +411,21 @@ async fn sign_out(state: State<'_, AppState>) -> Res<()> {
     if let Some(p) = state.oauth() {
         p.sign_out().await.map_err(|e| e.to_string())?;
     }
+    state.update_settings(|s| s.profile = None);
+    Ok(())
+}
+
+/// The profile switch (ARCHITECTURE.md, "Profiles"): the profile every API call and the next
+/// session act for; None is the account itself. Refused while a session runs or starts, so a
+/// session never changes profile halfway.
+#[tauri::command]
+async fn set_profile(state: State<'_, AppState>, profile: Option<String>) -> Res<()> {
+    let _starting = state.begin_start()?;
+    if state.engine.lock().unwrap().is_some() {
+        return Err("end the session first".into());
+    }
+    let profile = profile.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    state.update_settings(|s| s.profile = profile);
     Ok(())
 }
 
@@ -463,7 +485,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
         me_vad: vad()?,
     };
     let config = ClientConfig::new(
-        settings.active_urls().0.to_string(),
+        settings.session_url(),
         StartParams {
             mode: request.mode,
             job_id: request.job_id,
@@ -528,7 +550,7 @@ async fn end_session(state: State<'_, AppState>) -> Res<()> {
 async fn end_other_session(state: State<'_, AppState>) -> Res<String> {
     let (url, sid) = {
         let s = state.settings.lock().unwrap();
-        (s.active_urls().0.to_string(), s.last_session_id)
+        (s.session_url(), s.last_session_id)
     };
     let Some(sid) = sid else {
         return Err("The other session was not started from this app. Close it there, or wait two \
@@ -806,6 +828,7 @@ pub fn run() {
             delete_account,
             sign_in,
             sign_out,
+            set_profile,
             start_session,
             end_session,
             end_other_session,

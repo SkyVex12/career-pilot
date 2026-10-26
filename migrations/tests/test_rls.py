@@ -34,7 +34,7 @@ APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # Tables each role may read, from the role table in ARCHITECTURE.md.
 # resume_versions: metadata columns only (a column grant), never the text or file.
 GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
-                  "employers", "resume_versions"}  # fmt: skip
+                  "employers", "resume_versions", "profiles"}  # fmt: skip
 # Tables the gateway reads through a table-wide grant (resume_versions has column grants).
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions"}
 # Tables without row-level security, on purpose (system table, workers only).
@@ -76,6 +76,13 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "id": w.user_id if n == 0 else uuid.uuid4(),
         "email": f"{uuid.uuid4().hex}@example.com",
         "display_name": "Test user",
+    },
+    # The profile's own users row is not needed: profiles.id has no foreign key.
+    "profiles": lambda w, n: {
+        "id": uuid.uuid4(),
+        "user_id": w.user_id,
+        "career_os_user_id": f"u{n}",
+        "name": f"Profile {n}",
     },
     "employers": lambda w, n: {
         "id": _id(w, n, w.employer_id),

@@ -26,7 +26,7 @@ import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, logs, prompts, resumes, versions, workplace
+from copilot_core import jobs, logs, profiles, prompts, resumes, versions, workplace
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
@@ -1232,6 +1232,9 @@ class Session:
             reason = str(e)
         else:
             reason = "token is for another user"
+            if principal.user_id != self.principal.user_id:
+                # A session of a profile: the new token must be its account's.
+                principal = await self.manager.as_profile(principal, str(self.principal.user_id))
         if principal is None or principal.user_id != self.principal.user_id:
             self.error("unauthorized", reason, fatal=True)
             ws = self.ws
@@ -1528,6 +1531,14 @@ class SessionManager:
         except AuthError as e:
             await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", str(e))
             return
+        profile = ws.query_params.get(profiles.QUERY)
+        if profile:
+            # The session acts for one of the account's profiles (ARCHITECTURE.md, "Profiles").
+            resolved = await self.as_profile(principal, profile)
+            if resolved is None:
+                await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "unknown profile")
+                return
+            principal = resolved
         logs.set_ids(user_id=principal.user_id)
         try:
             raw = await asyncio.wait_for(ws.receive(), s.first_message_timeout_s)
@@ -1556,6 +1567,19 @@ class SessionManager:
                 "no_start",
                 "the first message must be session.start or session.resume",
             )
+
+    async def as_profile(self, account: Principal, profile: str) -> Principal | None:
+        """The account's profile named `profile` (or the account itself), or None when it is
+        not the account's or cannot be checked (no database, or the database is down)."""
+        if self.svc.pool is None:
+            return None
+        try:
+            return await profiles.resolve(self.svc.pool, account, profile)
+        except profiles.ProfileError:
+            return None
+        except (OSError, asyncpg.PostgresError) as e:
+            log.warning("could not check the profile: %s", e)
+            return None
 
     async def _stale(self, sid: str) -> bool:
         """True if an active-session slot names a session nobody can resume any more."""

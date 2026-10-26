@@ -5,7 +5,7 @@
 - `user.delete`: removes everything the user has: the Cognito user (so no new sign-in can
   start while the rest goes), the S3 prefix, every Valkey key, the data keys (`user_keys`,
   which makes any ciphertext left anywhere unreadable), every row (the users row cascades),
-  and the user's `job_runs`.
+  and the user's `job_runs`; and the same for each of the account's profiles.
 - `sessions.sweep`: ends sessions whose gateway task died and that nobody resumed
   (ARCHITECTURE.md, open question "Abandoned sessions"): no lease, not ended, and no state
   update for longer than the resume window. Also ends sessions whose Valkey state expired
@@ -64,10 +64,28 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
     signin = "none (dev auth)" if ctx.settings.auth == "dev" else f"kept ({ctx.settings.auth})"
     if ctx.users is not None:
         signin = "deleted" if await ctx.users.delete_user(uid) else "already gone"
-    # Objects and live state next: if this run dies halfway, the users row is still there
-    # and the retry finds everything it needs.
-    removed = await ctx.store.delete_prefix(user_prefix(uid))
     career_os = await revoke_career_os(ctx, uid)
+    # The account's profiles (ARCHITECTURE.md, "Profiles") go the same way, before the account:
+    # their users rows would cascade, but not their objects, Valkey keys or data keys.
+    async with ctx.system() as conn:
+        owned = [r["id"] for r in await conn.fetch(
+            "select id from app.users where owner_id = $1", uid
+        )]  # fmt: skip
+    removed = vk = 0
+    for who in (*owned, uid):
+        objects, valkey_keys = await _delete_data(ctx, who)
+        removed, vk = removed + objects, vk + valkey_keys
+    log.info(
+        "user %s deleted: sign-in %s, %d profiles, %d objects, %d Valkey keys, Career-OS link %s",
+        uid, signin, len(owned), removed, vk, career_os,
+    )  # fmt: skip
+
+
+async def _delete_data(ctx: Ctx, uid: UUID) -> tuple[int, int]:
+    """Everything one users row has: objects, live state, data keys, rows. Objects and live
+    state first: if this run dies halfway, the users row is still there and the retry finds
+    everything it needs."""
+    removed = await ctx.store.delete_prefix(user_prefix(uid))
     async with ctx.system() as conn:
         sessions = [r["id"] for r in await conn.fetch(
             "select id from app.sessions where user_id = $1", uid
@@ -90,10 +108,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
         await conn.execute("delete from app.users where id = $1", uid)  # cascades
         await conn.execute("delete from app.job_runs where user_id = $1", uid)
     ctx.crypto.forget(uid)
-    log.info(
-        "user %s deleted: sign-in %s, %d objects, %d Valkey keys, Career-OS link %s",
-        uid, signin, removed, vk, career_os,
-    )  # fmt: skip
+    return removed, vk
 
 
 async def revoke_career_os(ctx: Ctx, uid: UUID) -> str:
