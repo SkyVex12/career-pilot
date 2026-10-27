@@ -110,7 +110,7 @@ class SessionInfo:
     employer_id: UUID | None = None
     agenda: str | None = None
     # The company documents chosen for this call: their facts are read first.
-    material_ids: list[UUID] = field(default_factory=list)
+    material_ids: list[UUID] = field(default_factory=list[UUID])
     # An interview for an application: the resume version its digest and pack come from.
     resume_version_id: UUID | None = None
     resume_is_base: bool = False

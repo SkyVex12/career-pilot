@@ -320,6 +320,7 @@ async def test_a_session_ended_without_a_summary_is_ready_with_no_outputs(stack:
     row = await stack.admin.fetchrow(
         "select outputs_ready_at, billed_seconds from app.sessions where id = $1", log.sid
     )
+    assert row is not None
     assert row["outputs_ready_at"] is not None
     assert row["billed_seconds"] == 60
     assert (
