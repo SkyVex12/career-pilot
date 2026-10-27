@@ -70,6 +70,8 @@ pub struct StartParams {
     pub employer_id: Option<Uuid>,
     /// The meeting's agenda, as typed.
     pub agenda: Option<String>,
+    /// A standup or meeting at a company: the company documents to focus on.
+    pub material_ids: Vec<Uuid>,
     pub platform: String,
     pub client_version: String,
     pub store_transcript: bool,
@@ -84,6 +86,7 @@ impl StartParams {
             meeting_title: self.meeting_title.clone().filter(|t| !t.trim().is_empty()),
             employer_id: self.employer_id,
             agenda: self.agenda.clone().filter(|t| !t.trim().is_empty()),
+            material_ids: (!self.material_ids.is_empty()).then(|| self.material_ids.clone()),
             platform: self.platform.clone(),
             client_version: self.client_version.clone(),
             consent: Consent { store_transcript: self.store_transcript },
@@ -111,8 +114,11 @@ impl ClientConfig {
 pub enum Command {
     Frame(OutFrame),
     Send(ClientMessage),
-    /// Send `session.end` and stop once the gateway closes.
-    End,
+    /// Send `session.end` and stop once the gateway closes; `summarize: false` skips the
+    /// post-call outputs and keeps the transcript only.
+    End {
+        summarize: bool,
+    },
     /// Stop now, leaving the session resumable (the gateway ends it after 120 s).
     Shutdown,
     /// Test hook: drop the socket without a close handshake, as a network failure would.
@@ -393,7 +399,7 @@ impl Client {
                     Some(Command::Send(m)) => self.emit(ClientEvent::Warning {
                         message: format!("not connected; {} not sent", m.type_name()),
                     }),
-                    Some(Command::End) => {
+                    Some(Command::End { .. }) => {
                         // Nothing to tell a gateway we cannot reach; it ends the session after
                         // the resume window.
                         self.ending = true;
@@ -592,13 +598,13 @@ impl Client {
                             return Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                     }
-                    Some(Command::End) => {
+                    Some(Command::End { summarize }) => {
                         self.ending = true;
                         if self.session_id.is_none() {
                             let _ = ws.close(None).await;
                             return Outcome::Shutdown;
                         }
-                        if let Err(e) = Self::send_json(&mut ws, &ClientMessage::SessionEnd(SessionEnd {})).await {
+                        if let Err(e) = Self::send_json(&mut ws, &ClientMessage::SessionEnd(SessionEnd { summarize: Some(summarize) })).await {
                             return Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                         end_deadline = Some(tokio::time::Instant::now() + END_TIMEOUT);
@@ -662,7 +668,7 @@ pub async fn end_session(
     let mut ws = connect(url, &token).await?;
     for m in [
         ClientMessage::SessionResume(SessionResume { session_id, last_seq: 0 }),
-        ClientMessage::SessionEnd(SessionEnd {}),
+        ClientMessage::SessionEnd(SessionEnd { summarize: None }),
     ] {
         Client::send_json(&mut ws, &m).await?;
     }

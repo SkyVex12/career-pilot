@@ -58,6 +58,22 @@ describe("pollSession", () => {
     const final = await pollSession(async () => session(), () => undefined, { ...fakeTime(), cancelled: () => ++n > 2 });
     expect(final.phase).toBe("waiting");
   });
+
+  it("stops at once when the session was deleted (404)", async () => {
+    const time = fakeTime();
+    let calls = 0;
+    const final = await pollSession(
+      async () => {
+        calls++;
+        throw new Error("no such session (HTTP 404)");
+      },
+      () => undefined,
+      time,
+    );
+    expect(final.phase).toBe("gone");
+    expect(calls).toBe(1);
+    expect(waitingText(final, true)).toMatch(/deleted/);
+  });
 });
 
 describe("post-call formatting", () => {

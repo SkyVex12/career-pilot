@@ -175,6 +175,11 @@
           "type": "string",
           "maxLength": 2000
         },
+        "material_ids": {
+          "description": "A standup or meeting at a company: the company documents to focus on. Their approved facts are put in the session pack, read first; live search still covers all of the company's memory. The gateway uses the first 20.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/Uuid" }
+        },
         "platform": {
           "description": "Call platform, for example zoom, meet or teams.",
           "type": "string",
@@ -294,7 +299,11 @@
       "description": "User ends the session.",
       "type": "object",
       "properties": {
-        "type": { "type": "string", "const": "session.end" }
+        "type": { "type": "string", "const": "session.end" },
+        "summarize": {
+          "description": "Whether to write the post-call outputs (summary, standup report, commitments). Absent means true; false keeps the transcript only.",
+          "type": "boolean"
+        }
       },
       "required": ["type"]
     },

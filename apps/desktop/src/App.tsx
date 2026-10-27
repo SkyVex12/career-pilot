@@ -9,6 +9,7 @@ import {
   onSettingsChanged,
   onUpdate,
   rest,
+  type CompanyDocument,
   type DeviceInfo,
   type Employer,
   type LiveStatus,
@@ -252,13 +253,17 @@ function StartScreen({
   const [target, setTarget] = useState("");
   const [title, setTitle] = useState("");
   const [platform, setPlatform] = useState("zoom");
-  const [consent, setConsent] = useState(false);
+  const [consent, setConsent] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [postCall, setPostCall] = useState<string | null>(null);
   const work = useCompanies(tokenSet);
   const [employerId, setEmployerId] = useState("");
   const [agenda, setAgenda] = useState("");
+  // The company documents to focus on in this standup or meeting.
+  const materials = useMaterials(atWorkMode(mode) && tokenSet ? employerId : "");
+  const [materialIds, setMaterialIds] = useState<string[]>([]);
+  useEffect(() => setMaterialIds([]), [employerId]);
   const atWork = mode === "standup" || mode === "meeting";
   useEffect(() => {
     if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, lastCompany()));
@@ -292,6 +297,7 @@ function StartScreen({
         meeting_title: title.trim() || null,
         employer_id: company,
         agenda: mode === "meeting" ? agenda.trim() || null : null,
+        material_ids: company ? materialIds : [],
         platform,
         store_transcript: consent,
       });
@@ -300,6 +306,18 @@ function StartScreen({
     } finally {
       setBusy(false);
     }
+  };
+
+  // Ending asks first: summarize the call, or keep the transcript only.
+  const [ending, setEnding] = useState(false);
+  useEffect(() => {
+    if (!session.running) setEnding(false);
+  }, [session.running]);
+  const endNow = (summarize: boolean) => {
+    api.endSession(summarize).catch((e) => {
+      setMessage(String(e));
+      setEnding(false);
+    });
   };
 
   const endOther = async () => {
@@ -351,6 +369,12 @@ function StartScreen({
               {work.employers?.length === 0 && <p className="note">No company yet: add the one you work at under Work.</p>}
               {work.error && <p className="note warn">{work.error}</p>}
             </div>
+            {employerId && (
+              <>
+                <label>Focus on</label>
+                <MaterialPicker materials={materials} selected={materialIds} disabled={running} onChange={setMaterialIds} />
+              </>
+            )}
           </>
         ) : null}
         <label className={atWork ? "hidden" : ""}>Call for</label>
@@ -431,12 +455,32 @@ function StartScreen({
             Start session
           </button>
         ) : (
-          <button className="danger" onClick={() => api.endSession().catch((e) => setMessage(String(e)))}>
-            End session
+          <button className="danger" disabled={ending} onClick={() => setEnding(true)}>
+            End session…
           </button>
         )}
         <button onClick={() => api.showOverlay(true)}>Show overlay</button>
       </div>
+      {running && ending && (
+        <div className="end-choice">
+          <p>How should this call be saved?</p>
+          <p className="note">
+            {mode === "standup"
+              ? "Summarize if you will need this later: the standup report and your commitments feed the next standup."
+              : "Summarize if you will need this context later, as with standups and recurring meetings. Otherwise keep the transcript only."}
+            {!consent && " The transcript is not being stored for this call, so without a summary only its length is kept."}
+          </p>
+          <div className="actions">
+            <button className="primary" onClick={() => endNow(true)}>
+              Summarize and end
+            </button>
+            <button onClick={() => endNow(false)}>{consent ? "End, keep the transcript only" : "End without a summary"}</button>
+            <button className="link" onClick={() => setEnding(false)}>
+              Keep going
+            </button>
+          </div>
+        </div>
+      )}
 
       {session.stopped === "session_active" && (
         <p className="callout">
@@ -500,6 +544,67 @@ function useCompanies(ready: boolean): { employers: Employer[] | null; error: st
 
 /// Picking a company asks for its pack, so the session starts on a pack built from the
 /// latest notes; a call never waits for it (the gateway renders one itself if needed).
+function atWorkMode(mode: Mode): boolean {
+  return mode === "standup" || mode === "meeting";
+}
+
+/** A company's documents that have approved facts: the ones a call can focus on. */
+function useMaterials(employerId: string): { documents: CompanyDocument[] | null; error: string | null } {
+  const [documents, setDocuments] = useState<CompanyDocument[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setDocuments(null);
+    setError(null);
+    if (!employerId) return;
+    let cancelled = false;
+    rest.companyDocuments(employerId).then(
+      (out) => !cancelled && setDocuments(out.documents.filter((d) => d.status === "ingested" && (d.approved_proposals ?? 0) > 0)),
+      (e) => !cancelled && setError(String(e)),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [employerId]);
+  return { documents, error };
+}
+
+function MaterialPicker({
+  materials,
+  selected,
+  disabled,
+  onChange,
+}: {
+  materials: { documents: CompanyDocument[] | null; error: string | null };
+  selected: string[];
+  disabled: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  const { documents, error } = materials;
+  const toggle = (id: string, on: boolean) => onChange(on ? [...selected, id] : selected.filter((s) => s !== id));
+  return (
+    <div>
+      {error && <p className="note warn">{error}</p>}
+      {documents === null && !error && <p className="note">Loading the company's material…</p>}
+      {documents?.length === 0 && <p className="note">No material with approved facts yet: upload or paste some under Work, Material.</p>}
+      {documents && documents.length > 0 && (
+        <ul className="material-pick">
+          {documents.map((d) => (
+            <li key={d.id}>
+              <label className="check">
+                <input type="checkbox" checked={selected.includes(d.id)} disabled={disabled} onChange={(e) => toggle(d.id, e.target.checked)} />
+                {d.name} <span className="muted">{d.approved_proposals} facts</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="note">
+        Optional. Answers read the chosen material first; everything else the company has is still searched for each question.
+      </p>
+    </div>
+  );
+}
+
 function usePackFor(employerId: string, mode: Mode): PackState | null {
   const [state, setState] = useState<PackState | null>(null);
   useEffect(() => {

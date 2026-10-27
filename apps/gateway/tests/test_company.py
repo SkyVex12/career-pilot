@@ -242,6 +242,76 @@ async def test_live_memory_skips_what_the_pack_shows(env: Env, db: Db) -> None:
     assert "Legacy" not in content
 
 
+async def doc_fact(db: asyncpg.Connection, uid: UUID, eid: UUID, doc: UUID, title: str,
+                   summary: str) -> UUID:  # fmt: skip
+    """An approved fact from a company document, older than the pack's two weeks."""
+    node_id = uuid7()
+    await db.execute(
+        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title, summary,"
+        " body, source, valid_from) values ($1, $2, $3, 'work_item', 'workplace', $4, $5,"
+        ' \'{"state": "done"}\', $6, $7)',
+        node_id,
+        uid,
+        eid,
+        title,
+        summary,
+        json.dumps({"type": "company_document", "ref": str(doc)}),
+        datetime.now(UTC).date() - timedelta(days=60),
+    )
+    return node_id
+
+
+async def test_chosen_material_is_in_the_pack_and_the_rest_is_searched(env: Env, db: Db) -> None:
+    """The documents chosen on the start screen put their facts in the pack, read first; the
+    company's other material is still found by live search; another company's is never used."""
+    chosen, other_doc = uuid7(), uuid7()
+    ids = [
+        await doc_fact(
+            db.admin,
+            USER_A,
+            db.fernhill,
+            chosen,
+            "Sorter firmware rollout",
+            "Rolled the sorter firmware out to all sort centers",
+        ),
+        await doc_fact(
+            db.admin,
+            USER_A,
+            db.fernhill,
+            other_doc,
+            "Dock scheduler rewrite",
+            "Rewrote the dock scheduler around time windows",
+        ),
+        # Same document id at another company: never this call's material.
+        await doc_fact(
+            db.admin, USER_A, db.oldcorp, chosen, "Old Corp firmware", "Old Corp sorter firmware"
+        ),
+    ]
+    cap = Capture()
+    try:
+        async with GatewayServer(services(env, db, cap, memory_fast_wait_ms=2000)) as server:
+            c = ProtocolClient(server.url)
+            await c.start("meeting", employer_id=str(db.fernhill), material_ids=[str(chosen)])
+            await c.send(
+                {"type": "question.force", "text": "How did the dock scheduler rewrite go?"}
+            )
+            await c.wait_type("answer.done", pass_="fast")
+            await c.send({"type": "session.end"})
+            await c.closed()
+    finally:
+        await db.admin.execute("delete from app.memory_nodes where id = any($1)", ids)
+    [fast] = cap.of("fast")
+    pack = fast.system[2].text
+    assert "## Material chosen for this call (look here first)" in pack
+    assert "Rolled the sorter firmware out to all sort centers" in pack
+    assert "Old Corp" not in pack
+    assert "Dock scheduler" not in pack
+    found = MEMORY.search(str(fast.content))
+    assert found is not None
+    assert "Rewrote the dock scheduler" in found.group(1)
+    assert "sorter firmware" not in found.group(1)  # in the pack already
+
+
 async def test_a_company_that_is_not_the_users_is_ignored(env: Env, db: Db) -> None:
     cap = Capture()
     async with GatewayServer(services(env, db, cap)) as server:

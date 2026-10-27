@@ -36,7 +36,7 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
     }
   };
 
-  const session = state.session;
+  const session = state.phase === "gone" ? null : state.session;
   return (
     <section className="panel detail">
       <div className="detail-head">
@@ -61,7 +61,7 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
               Look again
             </button>
           )}
-          {state.phase !== "timeout" && state.error && <p className="note warn">{state.error}</p>}
+          {state.phase === "waiting" && state.error && <p className="note warn">{state.error}</p>}
         </div>
       )}
 
@@ -78,7 +78,7 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
             )}
           </article>
         ))}
-      {state.phase === "ready" && outputsInOrder(state.session).length === 0 && <p className="note">No outputs for this session.</p>}
+      {state.phase === "ready" && outputsInOrder(state.session).length === 0 && <p className="note">No summary: this call was saved with its transcript only.</p>}
 
       {state.phase === "ready" && session?.store_transcript && (
         <article className="output">

@@ -507,7 +507,7 @@ All messages are JSON objects with a `type` field.
 
 | type | Fields | When |
 | --- | --- | --- |
-| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `employer_id?` (a standup or meeting at this company: its pack and its memory; ignored in interviews, and when it is not the user's), `agenda?` (at most 2,000 characters, added to the meeting pack), `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
+| `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `employer_id?` (a standup or meeting at this company: its pack and its memory; ignored in interviews, and when it is not the user's), `agenda?` (at most 2,000 characters, added to the meeting pack), `material_ids?` (a standup or meeting at a company: up to 20 of its documents to focus on; their approved facts go in the session pack under "look here first", and live search still covers the whole company), `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
 | `session.resume` | `session_id`, `last_seq` | First message after a reconnect |
 | `auth.refresh` | `access_token` | Before the current token expires |
 | `question.force` | `text?`, `kind?` | Hotkey pressed (no text) or a typed question (with text); `kind: "respond"` (the Respond button) asks for a reply to a remark instead. A gateway sends desktop apps before 0.1.5 `other` for the `respond` type, which they cannot parse |
@@ -516,7 +516,7 @@ All messages are JSON objects with a `type` field.
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
 | `latency.report` | `question_id`, `pass`, `first_word_ms`, `anchor` (`speech_end`, `forced`, `expand`) | The first non-empty `answer.delta` of a pass arrived; the client's own first-word time, stored with the answer (`client_first_word_ms`). A report for a question the gateway does not hold is dropped without an error |
 | `mode.set` | `mode` | User switches mode mid-call; between standup and meeting at a company, that company's pack for the new mode is loaded |
-| `session.end` | none | User ends the session |
+| `session.end` | `summarize?` | User ends the session. `summarize: false` keeps the transcript only: no post-call outputs, the session is ready at once |
 
 Example:
 

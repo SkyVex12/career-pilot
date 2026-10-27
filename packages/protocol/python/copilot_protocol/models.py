@@ -122,6 +122,10 @@ class SessionStart(BaseModel):
     """
     The meeting's agenda or topic, as the user typed it; added to the meeting pack.
     """
+    material_ids: list[UUID] | None = None
+    """
+    A standup or meeting at a company: the company documents to focus on. Their approved facts are put in the session pack, read first; live search still covers all of the company's memory. The gateway uses the first 20.
+    """
     platform: Annotated[str, Field(min_length=1)]
     """
     Call platform, for example zoom, meet or teams.
@@ -290,6 +294,10 @@ class SessionEnd(BaseModel):
         populate_by_name=True,
     )
     type: Literal["session.end"]
+    summarize: bool | None = None
+    """
+    Whether to write the post-call outputs (summary, standup report, commitments). Absent means true; false keeps the transcript only.
+    """
 
 
 class SessionReady(BaseModel):
