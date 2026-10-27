@@ -10,7 +10,14 @@ export const POLL_TIMEOUT_MS = 5 * 60_000;
 export type PollState =
   | { phase: "waiting"; session: SessionDetail | null; elapsedMs: number; error: string | null }
   | { phase: "ready"; session: SessionDetail }
-  | { phase: "timeout"; session: SessionDetail | null; error: string | null };
+  | { phase: "timeout"; session: SessionDetail | null; error: string | null }
+  /** The session no longer exists (deleted, for example from History): polling stops. */
+  | { phase: "gone" };
+
+/** A 404 from the API: the session is not there, and asking again will not change that. */
+export function isGone(error: unknown): boolean {
+  return /(HTTP 404)/.test(String(error));
+}
 
 export interface PollOptions {
   intervalMs?: number;
@@ -24,7 +31,8 @@ export interface PollOptions {
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /// Fetch until the session is `ready` or the time is up. Errors (the API restarting, a
-/// session not flushed yet) keep the poll going; they show in `error`.
+/// session not flushed yet) keep the poll going; they show in `error`. A 404 means the
+/// session is gone (the API answers a just-ended session from the gateway's state): it stops.
 export async function pollSession(
   fetch: () => Promise<SessionDetail>,
   onUpdate: (s: PollState) => void,
@@ -34,13 +42,20 @@ export async function pollSession(
   let session: SessionDetail | null = null;
   let error: string | null = null;
   for (;;) {
+    let gone = false;
     try {
       session = await fetch();
       error = null;
     } catch (e) {
       error = String(e);
+      gone = isGone(e);
     }
     if (cancelled()) return { phase: "waiting", session, elapsedMs: now() - started, error };
+    if (gone) {
+      const out: PollState = { phase: "gone" };
+      onUpdate(out);
+      return out;
+    }
     if (session?.status === "ready") {
       const ready: PollState = { phase: "ready", session };
       onUpdate(ready);
@@ -103,6 +118,7 @@ export function transcriptRows(segments: Segment[]): TranscriptRow[] {
 /// What the post-call screen says while it waits.
 export function waitingText(state: PollState, storeTranscript: boolean): string {
   if (state.phase === "ready") return "Ready.";
+  if (state.phase === "gone") return "This session no longer exists; it was deleted.";
   if (state.phase === "timeout") return "Not ready after 5 minutes. The workers may be busy or stopped; look again in History.";
   const s = state.session;
   if (!s || s.status === "live") return "Ending the session…";

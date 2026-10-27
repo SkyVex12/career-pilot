@@ -453,6 +453,8 @@ struct StartRequest {
     employer_id: Option<Uuid>,
     #[serde(default)]
     agenda: Option<String>,
+    #[serde(default)]
+    material_ids: Vec<Uuid>,
     platform: String,
     store_transcript: bool,
 }
@@ -493,6 +495,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             meeting_title: request.meeting_title,
             employer_id: request.employer_id,
             agenda: request.agenda,
+            material_ids: request.material_ids,
             platform: request.platform,
             client_version: state.client.clone(),
             store_transcript: request.store_transcript,
@@ -539,9 +542,11 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
     Ok(())
 }
 
+/// End the live session. `summarize` (default true) writes the post-call outputs; false keeps
+/// the transcript only.
 #[tauri::command]
-async fn end_session(state: State<'_, AppState>) -> Res<()> {
-    state.engine()?.request_end().await;
+async fn end_session(state: State<'_, AppState>, summarize: Option<bool>) -> Res<()> {
+    state.engine()?.request_end(summarize.unwrap_or(true)).await;
     Ok(())
 }
 

@@ -227,13 +227,14 @@ impl Engine {
     }
 
     /// Ask for `session.end` without waiting; whoever awaits [`Engine::finish`] sees the stop.
-    pub async fn request_end(&self) {
-        self.client.command(Command::End).await;
+    /// `summarize: false` keeps the transcript only, with no post-call outputs.
+    pub async fn request_end(&self, summarize: bool) {
+        self.client.command(Command::End { summarize }).await;
     }
 
     /// End the session (`session.end`), stop the audio, and wait for the client to finish.
     pub async fn end(&self) -> Option<StopReason> {
-        self.client.command(Command::End).await;
+        self.client.command(Command::End { summarize: true }).await;
         self.finish().await
     }
 

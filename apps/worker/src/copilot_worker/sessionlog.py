@@ -387,7 +387,17 @@ async def session_ended(job: Job, ctx: Ctx) -> None:
             sid,
             ended_at,
         )
-    assert row is not None
+        assert row is not None
+        if result.state.get("summarize") == "0":
+            # The user chose the transcript only: no post-call outputs, so the session is
+            # ready now and nothing is written to the company's memory.
+            await conn.execute(
+                "update app.sessions set outputs_ready_at = coalesce(outputs_ready_at, now())"
+                " where id = $1",
+                sid,
+            )
+            log.info("session %s: ended without a summary, as asked", sid)
+            return
     await ctx.enqueue("session.postcall", f"session.postcall:{sid}", uid, {"session_id": str(sid)})
 
 

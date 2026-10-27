@@ -142,6 +142,8 @@ export interface StartRequest {
   /** A standup or meeting at a company: its pack and its memory. */
   employer_id?: string | null;
   agenda?: string | null;
+  /** A standup or meeting at a company: the company documents to focus on. */
+  material_ids?: string[];
   platform: string;
   store_transcript: boolean;
 }
@@ -202,7 +204,8 @@ export const api = {
     ),
   deleteAccount: () => invoke<{ status: string }>("delete_account"),
   startSession: (request: StartRequest) => invoke<void>("start_session", { request }),
-  endSession: () => invoke<void>("end_session"),
+  /** `summarize: false` keeps the transcript only, with no post-call outputs. */
+  endSession: (summarize = true) => invoke<void>("end_session", { summarize }),
   endOtherSession: () => invoke<string>("end_other_session"),
   forceQuestion: (text: string | null) => invoke<void>("force_question", { text }),
   /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */

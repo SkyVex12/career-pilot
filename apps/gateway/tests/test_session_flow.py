@@ -518,6 +518,28 @@ async def test_flush_job_every_interval(env) -> None:
     assert len(keys_sent) == len(set(keys_sent))
 
 
+async def test_session_end_can_skip_the_summary(env) -> None:
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "session.end", "summarize": False})
+        assert await c.closed() == 1000
+    vk = env.client()
+    state = await vk.hgetall(keys.sess_state(c.session_id))
+    assert state[b"summarize"] == b"0"
+    assert state[b"status"] == b"ended"
+    assert [j for j in env.jobs.sent if j["type"] == "session.ended"]
+
+
+async def test_session_end_summarizes_by_default(env) -> None:
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "session.end"})
+        assert await c.closed() == 1000
+    assert await env.client().hget(keys.sess_state(c.session_id), "summarize") is None
+
+
 async def test_session_ends_without_resume(env) -> None:
     settings = env.settings(resume_window_s=0.5)
     async with GatewayServer(env.services(settings)) as gw:

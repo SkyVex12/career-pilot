@@ -102,6 +102,7 @@ fn start_params(job_id: Option<Uuid>, interview_id: Option<Uuid>, store_transcri
         meeting_title: None,
         employer_id: None,
         agenda: None,
+        material_ids: vec![],
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript,

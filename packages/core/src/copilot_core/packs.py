@@ -125,6 +125,13 @@ class MeetingContext(_Model):
     related: list[PackItem] = []
 
 
+class FocusMaterial(_Model):
+    """A company document chosen for this call, and its approved facts."""
+
+    document_id: UUID
+    items: list[PackItem] = []
+
+
 class EmployerRef(_Model):
     id: UUID
     name: str
@@ -157,6 +164,10 @@ class SessionPack(_Model):
     memory_version: str | None = None
     workplace: WorkplaceBrief | None = None
     meeting: MeetingContext | None = None
+    # A standup or meeting: the company documents the user chose on the start screen, and
+    # every approved fact from them, read before the rest. Set by the gateway on its own
+    # copy of the pack, never stored by workers.
+    focus: list[FocusMaterial] = []
     # Short ids used in prepared talking points that are not ranked stories.
     refs: dict[str, NodeRef] = {}
     # An application's interview pack: the resume version its digest and stories came from.
@@ -197,6 +208,8 @@ def pack_items(pack: SessionPack) -> list[PackItem]:
             items.extend(group)
     if pack.meeting is not None:
         items.extend(pack.meeting.related)
+    for material in pack.focus:
+        items.extend(material.items)
     return items
 
 
@@ -280,6 +293,13 @@ def render_pack(pack: SessionPack) -> str:
             lines.extend(f"- {p}" for p in a.talking_points)
     if pack.standup is not None:
         lines.extend(_render_standup(pack.standup))
+    focus = [m for m in pack.focus if m.items]
+    if focus:
+        lines.append("## Material chosen for this call (look here first)")
+        for n, material in enumerate(focus, 1):
+            if len(focus) > 1:
+                lines.append(f"Document {n}:")
+            lines.extend(render_item(i) for i in material.items)
     if pack.meeting is not None and (pack.meeting.title or pack.meeting.agenda):
         lines.append("## This meeting")
         if pack.meeting.title:

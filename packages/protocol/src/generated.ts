@@ -87,6 +87,10 @@ export interface SessionStart {
    */
   agenda?: string;
   /**
+   * A standup or meeting at a company: the company documents to focus on. Their approved facts are put in the session pack, read first; live search still covers all of the company's memory. The gateway uses the first 20.
+   */
+  material_ids?: Uuid[];
+  /**
    * Call platform, for example zoom, meet or teams.
    */
   platform: string;
@@ -191,6 +195,10 @@ export interface ModeSet {
  */
 export interface SessionEnd {
   type: "session.end";
+  /**
+   * Whether to write the post-call outputs (summary, standup report, commitments). Absent means true; false keeps the transcript only.
+   */
+  summarize?: boolean;
 }
 /**
  * Session accepted; audio may flow.

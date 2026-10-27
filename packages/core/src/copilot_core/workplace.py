@@ -637,6 +637,46 @@ async def search(
     return hits
 
 
+# A call's focus is bounded: at most this many documents, and this many facts in all
+# (about 2,000 tokens), so the pack stays small enough for every answer.
+MAX_FOCUS_DOCUMENTS = 20
+MAX_FOCUS_ITEMS = 60
+
+
+async def material_facts(
+    conn: Conn, user_id: UUID, employer_id: UUID, document_ids: Sequence[UUID]
+) -> list[tuple[UUID, list[PackItem]]]:
+    """The approved facts of the chosen company documents, per document in the order given.
+    A document that is not this company's, or has no approved facts, gets none."""
+    ids = list(dict.fromkeys(document_ids))[:MAX_FOCUS_DOCUMENTS]
+    if not ids:
+        return []
+    rows = await conn.fetch(
+        "select id, kind, title, summary, body, valid_from, source->>'ref' as document_id"
+        " from app.memory_nodes"
+        " where user_id = $1 and employer_id = $2 and status = 'active'"
+        " and domain = 'workplace' and source->>'type' = 'company_document'"
+        " and source->>'ref' = any($3::text[])"
+        " order by id",
+        user_id,
+        employer_id,
+        [str(i) for i in ids],
+    )
+    by_doc: dict[str, list[PackItem]] = {}
+    for r in rows:
+        by_doc.setdefault(str(r["document_id"]), []).append(_item(r, {}, with_date=True))
+    # Every chosen document keeps a share of the budget, in the order chosen.
+    out: list[tuple[UUID, list[PackItem]]] = []
+    left = MAX_FOCUS_ITEMS
+    chosen = [i for i in ids if by_doc.get(str(i))]
+    for n, i in enumerate(chosen):
+        share = max(1, left // (len(chosen) - n))
+        items = by_doc[str(i)][:share]
+        left -= len(items)
+        out.append((i, items))
+    return out
+
+
 def memory_lines(
     hits: Sequence[Hit], refs: dict[str, NodeRef], skip: set[UUID] | None = None
 ) -> list[str]:

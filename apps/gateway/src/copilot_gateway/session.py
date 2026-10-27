@@ -33,6 +33,7 @@ from copilot_core.ids import uuid7
 from copilot_core.llm import LLMDone, ModelRouter
 from copilot_core.packs import (
     Digest,
+    FocusMaterial,
     MeetingContext,
     NodeRef,
     PackItem,
@@ -108,6 +109,8 @@ class SessionInfo:
     # A standup or meeting at a company (company workspaces), and the agenda typed for it.
     employer_id: UUID | None = None
     agenda: str | None = None
+    # The company documents chosen for this call: their facts are read first.
+    material_ids: list[UUID] = field(default_factory=list)
     # An interview for an application: the resume version its digest and pack come from.
     resume_version_id: UUID | None = None
     resume_is_base: bool = False
@@ -757,6 +760,7 @@ class Session:
             "digest_version": self.digest.version if self.digest else "",
             "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
             "agenda": self.info.agenda or "",
+            "material_ids": ",".join(str(i) for i in self.info.material_ids),
             "resume_version_id": str(self.info.resume_version_id)
             if self.info.resume_version_id
             else "",
@@ -872,7 +876,7 @@ class Session:
         if self.info.employer_id is not None and mode in ("standup", "meeting"):
             pack = await self.manager.employer_pack(
                 self.principal.user_id, self.info.employer_id, mode, self.info.title,
-                self.info.agenda,
+                self.info.agenda, self.info.material_ids,
             )  # fmt: skip
             if pack is not None:
                 self.set_pack(pack)
@@ -1223,6 +1227,10 @@ class Session:
                 self.log_entry({"kind": "mode", "mode": message.mode})
                 self._warm = asyncio.create_task(self._mode_changed(message.mode))
             case models.SessionEnd():
+                # The user may skip the post-call outputs and keep the transcript only; the
+                # worker reads this from the state when the session ends.
+                if message.summarize is False:
+                    self.writer.set_state(summarize="0")
                 self.request_end("user", CLOSE_NORMAL)
             case _:
                 self.error("unexpected_message", "unsupported message")
@@ -1324,6 +1332,7 @@ class SessionManager:
         mode: str,
         title: str | None = None,
         agenda: str | None = None,
+        materials: Sequence[UUID] = (),
     ) -> SessionPack | None:
         """The company's pack for this call, never waiting on a model.
 
@@ -1335,7 +1344,9 @@ class SessionManager:
         nothing to load.
 
         A meeting gets its title and agenda, and the company's memory that matches the agenda,
-        on a copy with its own pack id, kept in Valkey for a resume."""
+        and a standup or meeting the approved facts of the documents chosen for it (`materials`,
+        read first; live search still covers the whole company), on a copy with its own pack
+        id, kept in Valkey for a resume."""
         svc, s = self.svc, self.svc.settings
         stored: SessionPack | None = None
         try:
@@ -1345,6 +1356,7 @@ class SessionManager:
         if stored is not None and stored.employer is not None and stored.employer.id != employer_id:
             stored = None
         pack, fresh, related = stored, False, list[PackItem]()
+        focus: list[tuple[UUID, list[PackItem]]] = []
         if svc.pool is not None:
             try:
                 async with asyncio.timeout(s.pack_render_timeout_ms / 1000):
@@ -1381,6 +1393,10 @@ class SessionManager:
                                 for h in hits
                                 if h.node_id not in shown
                             ]
+                        if materials:
+                            focus = await workplace.material_facts(
+                                conn, uid, employer_id, materials
+                            )
             except (TimeoutError, OSError, asyncpg.PostgresError) as e:
                 log.warning("company pack render failed (%s); using the stored pack", e)
                 pack = stored
@@ -1408,6 +1424,22 @@ class SessionManager:
                 item.short_id = assign_short_id(item.node_id, refs)
                 refs[item.short_id] = NodeRef(node_id=item.node_id, label=item.text[:120])
             pack.meeting = MeetingContext(title=title or None, agenda=agenda, related=related)
+            fresh = True
+        if focus:
+            # Every fact of the chosen documents, even one another section shows too: this is
+            # what the user asked to be read first. An agenda match moves here.
+            pack = pack.model_copy(deep=True)
+            chosen = {i.node_id for _, items in focus for i in items}
+            if pack.meeting is not None:
+                pack.meeting.related = [i for i in pack.meeting.related if i.node_id not in chosen]
+            refs = ref_map(None, pack)
+            ids = {r.node_id: sid for sid, r in refs.items()}
+            pack.focus = []
+            for document_id, items in focus:
+                for item in items:
+                    item.short_id = ids.get(item.node_id) or assign_short_id(item.node_id, refs)
+                    refs[item.short_id] = NodeRef(node_id=item.node_id, label=item.text[:120])
+                pack.focus.append(FocusMaterial(document_id=document_id, items=items))
             fresh = True
         if fresh:
             pack.pack_id = uuid7()
@@ -1643,6 +1675,11 @@ class SessionManager:
         at_work = msg.employer_id is not None and msg.mode in ("standup", "meeting")
         employer_id = msg.employer_id if at_work else None
         agenda = (msg.agenda or "").strip() or None
+        material_ids = (
+            list(dict.fromkeys(msg.material_ids or []))[: workplace.MAX_FOCUS_DOCUMENTS]
+            if employer_id is not None
+            else []
+        )
         resume_version_id: UUID | None = None
         resume_is_base = False
         for_application = (
@@ -1668,7 +1705,9 @@ class SessionManager:
             except (*UNAVAILABLE, ValidationError, ValueError) as e:
                 log.warning("could not load digest or pack for %s: %s", uid, e)
         if employer_id is not None:
-            pack = await self.employer_pack(uid, employer_id, msg.mode, msg.meeting_title, agenda)
+            pack = await self.employer_pack(
+                uid, employer_id, msg.mode, msg.meeting_title, agenda, material_ids
+            )
             if pack is None:
                 employer_id = None  # not this user's company, or nothing to load at all
         info = SessionInfo(
@@ -1682,6 +1721,7 @@ class SessionManager:
             started_at=datetime.now(UTC),
             employer_id=employer_id,
             agenda=agenda,
+            material_ids=material_ids if employer_id is not None else [],
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
         )
@@ -1778,6 +1818,7 @@ class SessionManager:
             else datetime.now(UTC),
             employer_id=UUID(state["employer_id"]) if state.get("employer_id") else None,
             agenda=state.get("agenda") or None,
+            material_ids=[UUID(i) for i in (state.get("material_ids") or "").split(",") if i],
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
         )

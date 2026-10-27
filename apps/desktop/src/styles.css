@@ -1,13 +1,21 @@
 :root {
-  --bg: #f6f7f9;
+  --bg: #f4f6f8;
   --panel: #ffffff;
+  --subtle: #f8f9fb;
   --text: #1b1f24;
-  --muted: #6b7280;
-  --line: #e3e6ea;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --line-strong: #d0d5dd;
   --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eef3ff;
   --ok: #16a34a;
   --degraded: #d97706;
   --bad: #dc2626;
+  --warn-soft: #fff8eb;
+  --bad-soft: #fef3f2;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --focus: 0 0 0 3px rgba(37, 99, 235, 0.22);
   --overlay-bg: rgba(20, 23, 28, 0.94);
   --overlay-text: #eef1f5;
   --overlay-muted: #9aa3ae;
@@ -19,11 +27,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15181c;
-    --panel: #1d2126;
+    --bg: #131619;
+    --panel: #1b1f24;
+    --subtle: #171a1f;
     --text: #e8ebef;
     --muted: #8b949e;
-    --line: #2d333a;
+    --line: #2b3138;
+    --line-strong: #3a414a;
+    --accent-hover: #3b74f0;
+    --accent-soft: rgba(37, 99, 235, 0.18);
+    --warn-soft: rgba(217, 119, 6, 0.12);
+    --bad-soft: rgba(220, 38, 38, 0.12);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --focus: 0 0 0 3px rgba(59, 130, 246, 0.35);
   }
 }
 
@@ -37,7 +53,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -94,8 +111,9 @@ input[type="checkbox"] {
 
 .note {
   color: var(--muted);
-  font-size: 12px;
-  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin: 6px 0 0;
 }
 
 .warn {
@@ -109,42 +127,206 @@ input[type="checkbox"] {
 /* Main window */
 
 .page {
-  padding: 16px;
-  max-width: 980px;
+  padding: 20px 24px 48px;
+  max-width: 1000px;
   margin: 0 auto;
+  line-height: 1.5;
 }
 
+/* Controls in the main window: one height, a hover and a visible focus ring. */
+.page button {
+  min-height: 34px;
+  padding: 6px 14px;
+  border-color: var(--line-strong);
+  border-radius: 8px;
+  font-weight: 500;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.page button:not(.primary, .danger, .link, .on):hover:not(:disabled) {
+  background: var(--subtle);
+  border-color: var(--muted);
+}
+
+.page button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.page button.danger:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.page button.link {
+  min-height: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+}
+
+.page button.link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.page button.small {
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 13px;
+}
+
+.page input,
+.page select,
+.page textarea {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.page input:not([type="checkbox"]),
+.page select {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.page input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.page :is(button, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.page :is(input, select, textarea):focus-visible {
+  border-color: var(--accent);
+}
+
+.page ::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.page h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 28px 0 10px;
+}
+
+.page h4 {
+  margin: 20px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The main tabs: one bar, the current tab tinted. */
 .tabs {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
 }
 
-.tabs button.on,
-.segmented button.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.page .tabs > button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.page .tabs > button:not(.on):hover {
+  background: var(--subtle);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.page .tabs > button.on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.tabs select {
+  width: auto;
+  max-width: 220px;
+}
+
+/* A segmented control: modes on the start screen, sections of a company. */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.segmented button {
+  text-transform: capitalize;
+}
+
+.page .segmented button {
+  min-height: 30px;
+  padding: 4px 14px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+}
+
+.page .segmented button:not(.on):hover {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+
+.page .segmented button.on {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: var(--shadow);
+}
+
+.panel > :first-child {
+  margin-top: 0;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 12px 16px;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 14px 20px;
   align-items: start;
 }
 
 .grid > label:not(.check) {
   padding-top: 7px;
   color: var(--muted);
+  font-weight: 500;
 }
 
 .check {
@@ -152,6 +334,7 @@ input[type="checkbox"] {
   gap: 8px;
   align-items: center;
   padding-top: 6px;
+  cursor: pointer;
 }
 
 .row {
@@ -165,27 +348,28 @@ input[type="checkbox"] {
   flex: 1;
 }
 
-.segmented {
-  display: flex;
-  gap: 4px;
-}
-
-.segmented button {
-  text-transform: capitalize;
-}
-
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin-top: 16px;
 }
 
 .callout {
-  border: 1px solid var(--degraded);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 0 0 12px;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: var(--warn-soft);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+
+.callout > p:first-child {
+  margin-top: 0;
+}
+
+.callout input {
+  margin-top: 4px;
 }
 
 .badge {
@@ -197,6 +381,7 @@ input[type="checkbox"] {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 260px;
+  padding: 0 6px;
 }
 
 .badge .dot {
@@ -308,6 +493,25 @@ input[type="checkbox"] {
   background: var(--bg);
   padding: 8px;
   border-radius: 6px;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 12px 12px 32px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .grid > label:not(.check) {
+    padding-top: 8px;
+  }
 }
 
 /* Overlay window */
@@ -641,12 +845,7 @@ html[data-window="overlay"] #root {
 /* Documents, jobs, history and the post-call screen */
 
 .panel + .panel {
-  margin-top: 12px;
-}
-
-.panel h3 {
-  margin: 18px 0 8px;
-  font-size: 14px;
+  margin-top: 16px;
 }
 
 .value {
@@ -656,17 +855,29 @@ html[data-window="overlay"] #root {
 
 table.list {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+table.list:has(tbody:empty) {
+  display: none;
 }
 
 table.list td {
-  padding: 7px 8px;
+  padding: 10px 12px;
   border-top: 1px solid var(--line);
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 table.list tr:first-child td {
   border-top: 0;
+}
+
+table.list td:first-child {
+  white-space: nowrap;
 }
 
 table.list.clickable tr {
@@ -674,7 +885,7 @@ table.list.clickable tr {
 }
 
 table.list.clickable tr:hover td {
-  background: var(--bg);
+  background: var(--subtle);
 }
 
 tr.muted td {
@@ -684,29 +895,35 @@ tr.muted td {
 .chip {
   display: inline-block;
   font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 1px 10px;
   border: 1px solid var(--line);
   white-space: nowrap;
 }
 
 .chip-ok {
   color: var(--ok);
-  border-color: var(--ok);
+  border-color: rgba(22, 163, 74, 0.4);
+  background: rgba(22, 163, 74, 0.08);
 }
 
 .chip-busy {
   color: var(--degraded);
-  border-color: var(--degraded);
+  border-color: rgba(217, 119, 6, 0.4);
+  background: rgba(217, 119, 6, 0.08);
 }
 
 .chip-bad {
   color: var(--bad);
-  border-color: var(--bad);
+  border-color: rgba(220, 38, 38, 0.4);
+  background: var(--bad-soft);
 }
 
 .chip-off {
   color: var(--muted);
+  background: var(--subtle);
 }
 
 .spinner {
@@ -728,16 +945,20 @@ tr.muted td {
 }
 
 .postcall {
-  margin-top: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
 }
 
 .postcall .panel {
   border: 0;
   padding: 0;
+  box-shadow: none;
 }
 
 .detail-head {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -748,31 +969,32 @@ tr.muted td {
 }
 
 .output {
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .output-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 6px;
 }
 
 .output h3 {
-  margin: 0 0 6px;
+  margin: 0;
 }
 
 .output-text {
   white-space: pre-wrap;
-  line-height: 1.5;
+  line-height: 1.55;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: var(--bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--subtle);
 }
 
 .transcript-rows li {
-  padding: 3px 0;
-  line-height: 1.45;
+  padding: 4px 0;
+  line-height: 1.5;
 }
 
 .transcript-rows b.you {
@@ -781,12 +1003,17 @@ tr.muted td {
 
 .usage {
   display: flex;
+  flex-wrap: wrap;
   gap: 32px;
 }
 
 .usage .big {
   font-size: 28px;
   font-weight: 600;
+}
+
+.danger-zone {
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 .danger-zone h3 {
@@ -800,13 +1027,12 @@ tr.muted td {
 }
 
 textarea {
-  font: inherit;
-  color: inherit;
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: var(--panel);
+  line-height: 1.5;
   resize: vertical;
 }
 
@@ -819,14 +1045,23 @@ button.small {
   color: var(--bad);
 }
 
+.page button.link.danger-text {
+  color: var(--bad);
+}
+
 .companies {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
-.companies button.on {
+.page .companies > button:not(.link) {
+  border-radius: 999px;
+}
+
+.page .companies > button.on {
+  background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -835,39 +1070,156 @@ button.small {
   margin-left: 6px;
   font-size: 12px;
   border-radius: 999px;
-  padding: 0 6px;
+  padding: 0 7px;
   background: var(--accent);
   color: #fff;
 }
 
-.company h3 .muted {
-  margin-left: 8px;
+.company {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.company-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.company-head h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.company-head h3 .muted {
+  margin-left: 10px;
   font-weight: normal;
   font-size: 13px;
 }
 
-.company .segmented {
-  margin: 12px 0;
+.company-head .actions {
+  margin-top: 0;
+  gap: 4px 12px;
 }
 
-.files,
+.company > .segmented {
+  margin: 16px 0 20px;
+}
+
+.company .callout {
+  margin-top: 16px;
+}
+
+.form {
+  margin-top: 16px;
+}
+
+.files {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.files li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 6px;
+}
+
 .facts {
-  margin: 6px 0;
-  padding-left: 18px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
 }
 
 .facts li {
-  margin: 4px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.facts li:first-child {
+  border-top: 0;
 }
 
 .facts li input {
+  flex: 1 1 220px;
   width: auto;
-  margin-right: 6px;
+  max-width: none;
+}
+
+/* A vertical list with even spacing. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stack > p {
+  margin: 0;
+}
+
+.material-add {
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--subtle);
+}
+
+.material-add > .actions {
+  margin-top: 0;
+}
+
+.page .material-add button.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.material-text {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.material-text .actions {
+  margin-top: 0;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field > span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.page .field input {
+  max-width: none;
 }
 
 .doc {
-  border-top: 1px solid var(--line);
-  padding: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
 }
 
 .doc-head {
@@ -879,21 +1231,33 @@ button.small {
 
 .proposal {
   display: grid;
-  grid-template-columns: 90px 1fr auto;
-  gap: 8px;
-  padding: 6px 0 6px 12px;
+  grid-template-columns: 100px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 0 0;
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
   align-items: start;
 }
 
 .proposal .kind {
   color: var(--muted);
   font-size: 12px;
+  font-weight: 500;
   padding-top: 2px;
+}
+
+.proposal input {
+  max-width: none;
+  margin-top: 4px;
+}
+
+.proposal .actions {
+  margin-top: 0;
 }
 
 .proposal .evidence {
   font-size: 12px;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 /* The settings screen's update log. */
@@ -902,4 +1266,37 @@ button.small {
   padding-left: 16px;
   max-height: 160px;
   overflow: auto;
+}
+
+/* The choice made when a call ends: summarize, or keep the transcript only. */
+.end-choice {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--subtle);
+}
+
+.end-choice > p:first-child {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+/* The start screen's material checklist. */
+.material-pick {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.material-pick li + li {
+  border-top: 1px solid var(--line);
+}
+
+.material-pick .check {
+  padding: 7px 0;
 }

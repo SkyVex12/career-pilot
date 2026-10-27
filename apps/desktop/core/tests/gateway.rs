@@ -33,6 +33,7 @@ fn start_params() -> StartParams {
         meeting_title: None,
         employer_id: None,
         agenda: None,
+        material_ids: vec![],
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript: true,
@@ -283,7 +284,7 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
     assert_eq!(text, "What is a system you designed?", "words heard once, not twice");
     call.answer_done(q4, Pass::Fast).await;
 
-    call.handle.command(Command::End).await;
+    call.handle.command(Command::End { summarize: true }).await;
     let (reason, _, call) = call.stopped().await;
     assert_eq!(reason, StopReason::Ended);
 
@@ -369,7 +370,7 @@ async fn a_second_session_gets_4409_until_the_other_is_ended() {
     let mut c = Call::start(&gw.url(), tokens(TOKEN), None);
     let (sid_c, _) = c.live().await;
     assert_ne!(sid_c, sid_a);
-    c.handle.command(Command::End).await;
+    c.handle.command(Command::End { summarize: true }).await;
     assert_eq!(c.stopped().await.0, StopReason::Ended);
 }
 
@@ -383,7 +384,7 @@ async fn a_rejected_token_is_refreshed_once() {
     call.live().await;
     assert_eq!(call.handle.stats().close_codes, vec![Some(4401)]);
     assert_eq!(call.handle.stats().token_refreshes, 1);
-    call.handle.command(Command::End).await;
+    call.handle.command(Command::End { summarize: true }).await;
     assert_eq!(call.stopped().await.0, StopReason::Ended);
 
     // A refresh that yields another bad token stops instead of looping.
@@ -415,7 +416,7 @@ async fn auth_expiring_is_answered_with_auth_refresh() {
     let (q, _) = call.question().await;
     call.answer_done(q, Pass::Fast).await;
     assert_eq!(call.handle.stats().token_refreshes, 1);
-    call.handle.command(Command::End).await;
+    call.handle.command(Command::End { summarize: true }).await;
     let (reason, _, call) = call.stopped().await;
     assert_eq!(reason, StopReason::Ended);
     assert_eq!(call.handle.stats().close_codes, vec![Some(1000)]);
@@ -437,7 +438,7 @@ async fn a_gateway_restart_without_session_state_starts_a_new_session() {
     call.say("Tell me about a time you scaled a system?");
     let (q, _) = call.question().await;
     call.answer_done(q, Pass::Fast).await;
-    call.handle.command(Command::End).await;
+    call.handle.command(Command::End { summarize: true }).await;
     let (_, _, call) = call.stopped().await;
     assert!(call.handle.stats().close_codes.contains(&Some(4408)), "{:?}", call.handle.stats());
 }
@@ -475,7 +476,7 @@ async fn a_gateway_restart_mid_call_resumes_the_session() {
     let (q2, text) = call.question().await;
     assert_eq!(text, "How would you shard the ledger table?");
     call.answer_done(q2, Pass::Fast).await;
-    call.handle.command(Command::End).await;
+    call.handle.command(Command::End { summarize: true }).await;
     let (reason, _, call) = call.stopped().await;
     assert_eq!(reason, StopReason::Ended);
     let seqs: Vec<u64> = call.server_messages().iter().map(|m| m.seq()).collect();

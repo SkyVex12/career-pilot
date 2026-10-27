@@ -517,6 +517,11 @@ pub struct SessionStart {
     /// The meeting's agenda or topic, as the user typed it; added to the meeting pack.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agenda: Option<String>,
+    /// A standup or meeting at a company: the company documents to focus on. Their approved facts
+    /// are put in the session pack, read first; live search still covers all of the company's
+    /// memory. The gateway uses the first 20.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_ids: Option<Vec<Uuid>>,
     /// Call platform, for example zoom, meet or teams.
     pub platform: String,
     pub client_version: String,
@@ -691,7 +696,12 @@ impl Validate for ModeSet {
 
 /// User ends the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionEnd {}
+pub struct SessionEnd {
+    /// Whether to write the post-call outputs (summary, standup report, commitments). Absent means
+    /// true; false keeps the transcript only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summarize: Option<bool>,
+}
 
 impl Validate for SessionEnd {
     fn validate(&self) -> Result<(), ValidationError> {

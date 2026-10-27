@@ -306,6 +306,37 @@ async def test_session_ended_without_any_flush_creates_the_row(stack: Stack) -> 
     )
 
 
+async def test_a_session_ended_without_a_summary_is_ready_with_no_outputs(stack: Stack) -> None:
+    """The user chose "keep the transcript only": no post-call job, the session is ready."""
+    uid = await stack.new_user()
+    log = GatewayLog(stack, uid)
+    await log.start()
+    await log.segment("Hello there", 0)
+    await stack.ctx.valkey.hset(keys.sess_state(log.sid), mapping={"summarize": "0"})
+    await log.end(seconds=60)
+    stack.take("session.postcall")  # earlier tests' jobs
+    await stack.run(log.ended_job())
+    assert stack.take("session.postcall") == []
+    row = await stack.admin.fetchrow(
+        "select outputs_ready_at, billed_seconds from app.sessions where id = $1", log.sid
+    )
+    assert row["outputs_ready_at"] is not None
+    assert row["billed_seconds"] == 60
+    assert (
+        await stack.admin.fetchval(
+            "select count(*) from app.session_outputs where session_id = $1", log.sid
+        )
+        == 0
+    )
+    # The transcript is still kept.
+    assert (
+        await stack.admin.fetchval(
+            "select count(*) from app.transcript_segments where session_id = $1", log.sid
+        )
+        == 1
+    )
+
+
 async def test_a_session_of_another_user_is_refused(stack: Stack) -> None:
     uid, intruder = await stack.new_user(), await stack.new_user()
     log = GatewayLog(stack, uid)

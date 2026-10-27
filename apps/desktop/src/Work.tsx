@@ -135,20 +135,22 @@ function Company({ employer, onChanged }: { employer: Employer; onChanged: () =>
   }
   return (
     <div className="company">
-      <h3>
-        {employer.name}
-        <span className="muted">{[employer.title, employer.team].filter(Boolean).join(" · ")}</span>
-      </h3>
-      <div className="actions">
-        <button className="link" onClick={() => setEditing(true)}>
-          Edit
-        </button>
-        <button className="link" onClick={archive}>
-          {employer.status === "archived" ? "Unarchive" : "Archive"}
-        </button>
-        <button className="link danger-text" onClick={() => setDeleting(true)}>
-          Delete all data for this company…
-        </button>
+      <div className="company-head">
+        <h3>
+          {employer.name}
+          <span className="muted">{[employer.title, employer.team].filter(Boolean).join(" · ")}</span>
+        </h3>
+        <div className="actions">
+          <button className="link" onClick={() => setEditing(true)}>
+            Edit
+          </button>
+          <button className="link" onClick={archive}>
+            {employer.status === "archived" ? "Unarchive" : "Archive"}
+          </button>
+          <button className="link danger-text" onClick={() => setDeleting(true)}>
+            Delete all data for this company…
+          </button>
+        </div>
       </div>
       {deleting && <DeleteCompany employer={employer} onCancel={() => setDeleting(false)} onDeleted={onChanged} />}
       {error && <p className="note warn">{error}</p>}
@@ -383,6 +385,9 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
+  const [writing, setWriting] = useState(false);
+  const [textName, setTextName] = useState("");
+  const [text, setText] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -399,13 +404,15 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
   }, [load]);
   usePolling(load, 3000, docs?.some((d) => d.status === "ingesting") ?? false);
 
-  const upload = async (f: File) => {
+  const upload = async (f: File): Promise<boolean> => {
     setBusy(true);
     try {
       await api.uploadCompanyFile(`/employers/${employer.id}/documents`, f);
       await load();
+      return true;
     } catch (e) {
       setError(`${f.name}: ${e}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -419,25 +426,60 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
       setError(String(e));
     }
   };
+  // Pasted text goes through the same upload as a Markdown file, named after the user's title.
+  const saveText = async () => {
+    const title = textName.trim();
+    if (!title || !text.trim()) return;
+    const fileName = /\.(md|markdown|txt)$/i.test(title) ? title : `${title}.md`;
+    if (!(await upload(new File([text], fileName, { type: "text/markdown" })))) return;
+    setTextName("");
+    setText("");
+    setWriting(false);
+  };
 
   return (
-    <div>
-      <div className="actions">
-        <input
-          ref={file}
-          type="file"
-          accept={ACCEPT}
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) upload(f);
-            e.target.value = "";
-          }}
-        />
-        <button disabled={busy} onClick={() => file.current?.click()}>
-          {busy ? "Uploading…" : "Upload a document…"}
-        </button>
-        <span className="note">Architecture notes, wiki pages, meeting notes, specs: PDF, Markdown or text. You review its facts before they are kept.</span>
+    <div className="stack">
+      <div className="material-add">
+        <div className="actions">
+          <input
+            ref={file}
+            type="file"
+            accept={ACCEPT}
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+              e.target.value = "";
+            }}
+          />
+          <button disabled={busy} onClick={() => file.current?.click()}>
+            {busy ? "Saving…" : "Upload a file…"}
+          </button>
+          <button disabled={busy} className={writing ? "on" : ""} onClick={() => setWriting((v) => !v)}>
+            Write or paste text
+          </button>
+        </div>
+        <p className="note">Architecture notes, wiki pages, meeting notes, specs: PDF, Markdown or text. You review its facts before they are kept.</p>
+        {writing && (
+          <div className="material-text">
+            <label className="field">
+              <span>Name</span>
+              <input value={textName} onChange={(e) => setTextName(e.target.value)} placeholder="Payments service architecture" />
+            </label>
+            <label className="field">
+              <span>Text</span>
+              <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste or write the notes here" />
+            </label>
+            <div className="actions">
+              <button className="primary" disabled={busy || !textName.trim() || !text.trim()} onClick={saveText}>
+                {busy ? "Saving…" : "Save"}
+              </button>
+              <button className="link" onClick={() => setWriting(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       {error && <p className="note warn">{error}</p>}
       {docs?.length === 0 && <p className="note">No documents yet.</p>}
@@ -454,6 +496,7 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
               ) : (
                 <Chip state="ok">{d.approved_proposals ?? 0} facts kept</Chip>
               )}
+              <span className="spacer" />
               {mine.length > 0 && (
                 <>
                   <button className="primary small" onClick={() => decide(() => rest.decideDocument(d.id, "approve"))}>
