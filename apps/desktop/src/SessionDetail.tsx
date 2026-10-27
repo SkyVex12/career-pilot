@@ -3,6 +3,7 @@
 // outputs are ready, then shows them and the transcript when it was stored.
 import { useCallback, useEffect, useState } from "react";
 import { rest, type SessionDetail as Detail } from "./api";
+import { when } from "./ui";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 
 export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: string; onDeleted?: () => void; onClose?: () => void }) {
@@ -109,7 +110,7 @@ function heading(s: Detail): string {
 
 function facts(s: Detail): string {
   const parts: string[] = [];
-  if (s.started_at) parts.push(new Date(s.started_at).toLocaleString());
+  if (s.started_at) parts.push(when(s.started_at));
   if (s.billed_seconds != null && s.ended_at) parts.push(`${Math.max(1, Math.round(s.billed_seconds / 60))} min`);
   parts.push(`${s.questions} question${s.questions === 1 ? "" : "s"}`);
   if (s.platform) parts.push(s.platform);

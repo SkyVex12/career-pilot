@@ -73,7 +73,7 @@ export function History() {
           <tbody>
             {sessions?.map((s) => (
               <tr key={s.id} onClick={() => setOpen(s.id)}>
-                <td>{s.started_at ? when(s.started_at) : "–"}</td>
+                <td className="nowrap">{s.started_at ? when(s.started_at) : "–"}</td>
                 <td>
                   {s.mode}
                   {s.employer_id && companies[s.employer_id] ? ` at ${companies[s.employer_id]}` : ""}
@@ -116,9 +116,11 @@ function DeleteAccount() {
       <h3>Delete account</h3>
       <p className="note">Deletes every session, transcript, document and memory fact, and your encryption keys. This cannot be undone.</p>
       {!confirming ? (
-        <button className="danger" onClick={() => setConfirming(true)}>
-          Delete my account…
-        </button>
+        <div className="actions">
+          <button className="danger" onClick={() => setConfirming(true)}>
+            Delete my account…
+          </button>
+        </div>
       ) : (
         <div className="actions">
           <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder='Type "delete" to confirm' />

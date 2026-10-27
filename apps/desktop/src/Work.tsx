@@ -351,7 +351,7 @@ function LogTab({ employer }: { employer: Employer }) {
                 setDirty(false);
               }}
             >
-              <td>{e.day}</td>
+              <td className="nowrap">{e.day}</td>
               <td className="muted">{e.text.split("\n")[0].slice(0, 90)}</td>
               <td>
                 <LogStatus log={e} />
@@ -369,7 +369,7 @@ function LogStatus({ log }: { log: WorkLog }) {
     case "extracting":
       return <Chip state="busy">Reading</Chip>;
     case "extracted":
-      return <Chip state="ok">{log.items?.length ?? 0} facts</Chip>;
+      return <Chip state="ok">{plural(log.items?.length ?? 0, "fact")}</Chip>;
     case "failed":
       return <Chip state="bad">Could not read it; save again</Chip>;
     default:
@@ -494,22 +494,23 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
               ) : d.status === "failed" ? (
                 <Chip state="bad">Could not read it</Chip>
               ) : (
-                <Chip state="ok">{d.approved_proposals ?? 0} facts kept</Chip>
+                <Chip state="ok">{plural(d.approved_proposals ?? 0, "fact")} kept</Chip>
               )}
-              <span className="spacer" />
-              {mine.length > 0 && (
-                <>
-                  <button className="primary small" onClick={() => decide(() => rest.decideDocument(d.id, "approve"))}>
-                    Approve all {mine.length}
-                  </button>
-                  <button className="small" onClick={() => decide(() => rest.decideDocument(d.id, "reject"))}>
-                    Reject all
-                  </button>
-                </>
-              )}
-              <button className="link danger-text" onClick={() => decide(() => rest.deleteCompanyDocument(employer.id, d.id))}>
-                Delete
-              </button>
+              <span className="doc-actions">
+                {mine.length > 0 && (
+                  <>
+                    <button className="primary small" onClick={() => decide(() => rest.decideDocument(d.id, "approve"))}>
+                      Approve all {mine.length}
+                    </button>
+                    <button className="small" onClick={() => decide(() => rest.decideDocument(d.id, "reject"))}>
+                      Reject all
+                    </button>
+                  </>
+                )}
+                <button className="link danger-text" onClick={() => decide(() => rest.deleteCompanyDocument(employer.id, d.id))}>
+                  Delete
+                </button>
+              </span>
             </div>
             {mine.map((p) => (
               <ProposalRow key={p.id} proposal={p} decide={decide} />
@@ -635,4 +636,8 @@ function FactRow({ item, onChanged }: { item: MemoryItem; onChanged: () => void 
       </button>
     </li>
   );
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }

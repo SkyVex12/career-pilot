@@ -15,7 +15,7 @@ import {
 import { STAGES, isTextFile, pairingChoices, pairingValue, resumeLabel, stageLabel } from "./pairing";
 import { upcoming } from "./catalog";
 import { PullDialog } from "./CareerOs";
-import { Chip, PackStatus, when } from "./ui";
+import { PackStatus, when } from "./ui";
 import { usePolling } from "./usePolling";
 
 export const ROUNDS: [Round, string][] = [
@@ -113,12 +113,15 @@ export function Applications() {
           {applications?.map((a) => (
             <tr key={a.id} className={editing === a.id ? "selected" : ""} onClick={() => setEditing(a.id)}>
               <td>
-                <b>{a.company}</b> · {a.role}
+                <div>
+                  <b>{a.company}</b> · {a.role}
+                </div>
+                <div className="meta">
+                  {stageLabel(a.stage)} · {resumeLabel(a)}
+                  {a.career_os ? " · From Career-OS" : ""}
+                </div>
               </td>
-              <td>{stageLabel(a.stage)}</td>
-              <td className="muted">{resumeLabel(a)}</td>
-              <td>{a.career_os ? <Chip state="off">From Career-OS</Chip> : null}</td>
-              <td>
+              <td className="nowrap end">
                 <PackStatus pack={a.pack} />
               </td>
             </tr>
@@ -222,7 +225,7 @@ function ApplicationEditor({
     }, "Added. This application now uses it, unless you picked another resume.");
 
   return (
-    <div className="card">
+    <div className="subpanel">
       <div className="row">
         <h3>{id ? `${app?.company ?? "…"} · ${app?.role ?? ""}` : "New application"}</h3>
         <span className="spacer" />
@@ -411,7 +414,7 @@ function Interviews({
                 <b>{i.company ?? "?"}</b> · {i.title ?? ""}
               </td>
               <td>{roundLabel(i.round)}</td>
-              <td>{when(i.starts_at)}</td>
+              <td className="nowrap">{when(i.starts_at)}</td>
               <td>
                 <PackStatus pack={i.pack} />
               </td>
