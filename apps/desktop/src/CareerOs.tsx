@@ -45,8 +45,12 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
                 {conn.account_type && conn.account_type !== "user" ? " (admin: their users' applications)" : ""}
                 {conn.connected_at ? `, since ${when(conn.connected_at)}` : ""}
               </span>
+            </div>
+          ) : null}
+          {conn.connected ? (
+            <div className="actions">
               <button
-                className="danger"
+                className="small"
                 disabled={busy}
                 onClick={() => act(async () => (await rest.disconnectCareerOs(), null), "Disconnected; the link is revoked in Career-OS too.")}
               >
@@ -133,7 +137,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
   };
 
   return (
-    <div className="card">
+    <div className="subpanel">
       <div className="row">
         <h3>Pull from Career-OS</h3>
         <span className="spacer" />
@@ -141,7 +145,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
           Close
         </button>
       </div>
-      <div className="row">
+      <div className="row search-row">
         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Company or role" />
         <select value={stage} onChange={(e) => setStage(e.target.value as Stage | "")}>
           <option value="">Any stage</option>
@@ -161,6 +165,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
       </p>
       {message && <p className="note">{message}</p>}
       {items?.length === 0 && <p className="note">No applications match.</p>}
+      <div className="table-scroll">
       <table className="list">
         <tbody>
           {items?.map((i) => {
@@ -168,14 +173,22 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
             return (
               <tr key={i.id}>
                 <td>
-                  <b>{i.company}</b> · {i.role}
+                  <div>
+                    <b>{i.company}</b> · {i.role}
+                  </div>
+                  <div className="meta">
+                    {[several ? i.user?.name || i.user?.id : null, when(i.created_at), stageLabel(i.stage), i.resume === "tailored" ? "Tailored resume" : i.resume === "base" ? "Base resume" : "No resume"]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    {state.label && (
+                      <>
+                        {" "}
+                        <Chip state={i.pulled?.changed ? "busy" : "ok"}>{state.label}</Chip>
+                      </>
+                    )}
+                  </div>
                 </td>
-                {several && <td className="muted">{i.user?.name || i.user?.id || ""}</td>}
-                <td className="muted">{when(i.created_at)}</td>
-                <td>{stageLabel(i.stage)}</td>
-                <td className="muted">{i.resume === "tailored" ? "Tailored resume" : i.resume === "base" ? "Base resume" : "No resume"}</td>
-                <td>{state.label && <Chip state={i.pulled?.changed ? "busy" : "ok"}>{state.label}</Chip>}</td>
-                <td>
+                <td className="nowrap end">
                   {state.action && (
                     <button disabled={busy !== null} onClick={() => pull(i)}>
                       {busy === i.id ? "Pulling…" : state.action}
@@ -187,6 +200,7 @@ export function PullDialog({ onClose, onPulled }: { onClose: () => void; onPulle
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

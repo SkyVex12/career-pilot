@@ -97,19 +97,22 @@ export default function App() {
   return (
     <main className="page">
       <nav className="tabs">
-        {TABS.map(([t, label]) => (
-          <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-            {label}
-          </button>
-        ))}
-        {showDebug && (
-          <button className={tab === "debug" ? "on" : ""} onClick={() => setTab("debug")}>
-            Debug
-          </button>
-        )}
-        <span className="spacer" />
-        <ProfileSwitch state={profiles.state} running={session.running} onSwitch={profiles.switchTo} />
-        <StatusBadge session={session} />
+        <div className="tab-list">
+          {TABS.map(([t, label]) => (
+            <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+              {label}
+            </button>
+          ))}
+          {showDebug && (
+            <button className={tab === "debug" ? "on" : ""} onClick={() => setTab("debug")}>
+              Debug
+            </button>
+          )}
+        </div>
+        <div className="tab-meta">
+          <ProfileSwitch state={profiles.state} running={session.running} onSwitch={profiles.switchTo} />
+          <StatusBadge session={session} />
+        </div>
       </nav>
       <UpdateBanner running={session.running} />
       {/* A switch remounts every screen, so each one loads the new profile's data. */}
@@ -335,7 +338,7 @@ function StartScreen({
       {!tokenSet && <SetTokenFirst environment={environment} onSettings={onSettings} />}
       <div className="grid">
         <label>Mode</label>
-        <div className="segmented">
+        <div className="segmented caps">
           {(["interview", "standup", "meeting"] as Mode[]).map((m) => (
             <button
               key={m}
@@ -354,18 +357,20 @@ function StartScreen({
           <>
             <label>Company</label>
             <div>
-              <select value={employerId} disabled={running} onChange={(e) => setEmployerId(e.target.value)}>
-                <option value="">None (no company's notes)</option>
-                {work.employers
-                  ?.filter((e) => e.status === "active")
-                  .map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                      {e.current ? "" : " (past)"}
-                    </option>
-                  ))}
-              </select>{" "}
-              {employerId && <span className={`chip chip-${packLabel(pack).tone}`}>{packLabel(pack).text}</span>}
+              <div className="inline">
+                <select value={employerId} disabled={running} onChange={(e) => setEmployerId(e.target.value)}>
+                  <option value="">None (no company's notes)</option>
+                  {work.employers
+                    ?.filter((e) => e.status === "active")
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                        {e.current ? "" : " (past)"}
+                      </option>
+                    ))}
+                </select>
+                {employerId && <span className={`chip chip-${packLabel(pack).tone}`}>{packLabel(pack).text}</span>}
+              </div>
               {work.employers?.length === 0 && <p className="note">No company yet: add the one you work at under Work.</p>}
               {work.error && <p className="note warn">{work.error}</p>}
             </div>
@@ -379,6 +384,7 @@ function StartScreen({
         ) : null}
         <label className={atWork ? "hidden" : ""}>Call for</label>
         <div className={atWork ? "hidden" : ""}>
+          <div className="inline">
           <select value={target} disabled={running || mode !== "interview"} onChange={(e) => setTarget(e.target.value)}>
             <option value="">No application (your base resume only)</option>
             {interviews.length > 0 && (
@@ -405,6 +411,7 @@ function StartScreen({
           <button className="link" onClick={catalog.reload} disabled={!tokenSet}>
             Refresh
           </button>
+          </div>
           {catalog.error && <p className="note warn">{catalog.error}</p>}
           {catalog.applications?.length === 0 && <p className="note">No applications yet: add one under Applications.</p>}
           {mode === "interview" && <p className="note">The answers use the application's job description and its paired resume only.</p>}
@@ -592,7 +599,7 @@ function MaterialPicker({
             <li key={d.id}>
               <label className="check">
                 <input type="checkbox" checked={selected.includes(d.id)} disabled={disabled} onChange={(e) => toggle(d.id, e.target.checked)} />
-                {d.name} <span className="muted">{d.approved_proposals} facts</span>
+                {d.name} <span className="muted">{d.approved_proposals === 1 ? "1 fact" : `${d.approved_proposals} facts`}</span>
               </label>
             </li>
           ))}
@@ -909,6 +916,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
         {message && <span className="note">{message}</span>}
       </div>
       <CareerOsSettings ready={view.ready} />
+      <h3>Audio levels</h3>
       <Meters />
     </section>
   );

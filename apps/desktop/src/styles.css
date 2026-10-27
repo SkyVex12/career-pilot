@@ -234,7 +234,7 @@ input[type="checkbox"] {
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px 12px;
   align-items: center;
   margin-bottom: 16px;
   padding: 6px;
@@ -244,19 +244,19 @@ input[type="checkbox"] {
   box-shadow: var(--shadow);
 }
 
-.page .tabs > button {
+.page .tab-list > button {
   border-color: transparent;
   background: transparent;
   color: var(--muted);
 }
 
-.page .tabs > button:not(.on):hover {
+.page .tab-list > button:not(.on):hover {
   background: var(--subtle);
   border-color: transparent;
   color: var(--text);
 }
 
-.page .tabs > button.on {
+.page .tab-list > button.on {
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--accent);
@@ -264,7 +264,40 @@ input[type="checkbox"] {
 
 .tabs select {
   width: auto;
-  max-width: 220px;
+  max-width: 200px;
+}
+
+/* The tabs, then whom the app works for and the session's state at the end of the same row;
+   a window too narrow for both puts the second group on its own row, right-aligned. */
+.tab-list {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-list > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.tab-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.tab-meta .row {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.tab-meta .badge {
+  min-width: 0;
 }
 
 /* A segmented control: modes on the start screen, sections of a company. */
@@ -278,7 +311,7 @@ input[type="checkbox"] {
   border-radius: 10px;
 }
 
-.segmented button {
+.segmented.caps button {
   text-transform: capitalize;
 }
 
@@ -321,6 +354,56 @@ input[type="checkbox"] {
   grid-template-columns: 160px minmax(0, 1fr);
   gap: 14px 20px;
   align-items: start;
+}
+
+/* Fields line up: every value cell has the same width, a control only its own. */
+.grid {
+  --field: 640px;
+}
+
+.grid > :not(label) {
+  max-width: var(--field);
+}
+
+.grid > .segmented,
+.grid > button {
+  justify-self: start;
+}
+
+.page .grid :is(input:not([type="checkbox"]), select, textarea) {
+  max-width: 100%;
+}
+
+.page .grid > :is(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
+  max-width: var(--field);
+}
+
+.page .grid input:is([type="date"], [type="datetime-local"], [type="time"]) {
+  max-width: 240px;
+}
+
+/* Controls stacked in one cell keep a small gap. */
+.grid > div > * + :is(input, textarea, select, .inline, .material-pick, .row) {
+  margin-top: 8px;
+}
+
+/* A control with a status beside it, on one line. */
+.inline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.inline > select,
+.inline > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline > .chip,
+.inline > button {
+  flex: none;
 }
 
 .grid > label:not(.check) {
@@ -493,6 +576,13 @@ input[type="checkbox"] {
   background: var(--bg);
   padding: 8px;
   border-radius: 6px;
+}
+
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 12px 14px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -876,8 +966,54 @@ table.list tr:first-child td {
   border-top: 0;
 }
 
-table.list td:first-child {
+table.list .meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+table.list td.nowrap {
   white-space: nowrap;
+}
+
+table.list td.end {
+  text-align: right;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border-radius: 10px;
+}
+
+/* A panel inside a panel: a form or a picker opened from a screen. */
+.subpanel {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--subtle);
+}
+
+.subpanel > .row:first-child {
+  margin-bottom: 12px;
+}
+
+.subpanel > .row:first-child h3 {
+  margin: 0;
+}
+
+.search-row > input {
+  flex: 1 1 220px;
+  max-width: none;
+}
+
+.search-row > select {
+  flex: 0 1 200px;
+  width: auto;
+}
+
+.search-row > button {
+  flex: none;
 }
 
 table.list.clickable tr {
@@ -990,6 +1126,10 @@ tr.muted td {
   border-radius: 10px;
   padding: 12px 14px;
   background: var(--subtle);
+}
+
+.plain.transcript-rows {
+  font-size: 14px;
 }
 
 .transcript-rows li {
@@ -1299,4 +1439,22 @@ button.small {
 
 .material-pick .check {
   padding: 7px 0;
+}
+
+/* A document's own actions stay together, at the end of its header line. */
+.doc-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* Space between a note and the form or list it introduces. */
+:is(.panel, .subpanel) > :is(p, .note) + :is(.grid, .table-scroll, table.list) {
+  margin-top: 14px;
+}
+
+table.list .meta .chip {
+  margin-left: 4px;
+  vertical-align: 1px;
 }

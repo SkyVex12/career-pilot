@@ -114,7 +114,7 @@ function VersionRow({ v, onChanged }: { v: ResumeVersion; onChanged: () => void 
   const state = v.status === "extracted" ? "ok" : v.status === "failed" ? "bad" : v.status === "extracting" ? "busy" : "off";
   const act = (what: () => Promise<unknown>) => what().then(onChanged, (e) => setError(String(e)));
   return (
-    <div className="card">
+    <div className="subpanel">
       <div className="row">
         <input value={label} onChange={(e) => setLabel(e.target.value)} onBlur={() => label.trim() && label !== v.label && act(() => rest.updateResume(v.id, { label: label.trim() }))} />
         <Chip state={state}>{resumeStatusLabel(v.status)}</Chip>
