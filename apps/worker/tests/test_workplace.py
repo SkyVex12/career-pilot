@@ -4,6 +4,7 @@ search scoped to one company, per-company purge, and standup commitments from po
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import date
 from pathlib import Path
@@ -20,6 +21,7 @@ from copilot_core.packs import SessionPack, render_pack
 from copilot_core.storage import company_document_key, employer_prefix
 from copilot_core.teststack import as_role
 from copilot_core.workplace import memory_version, search
+from copilot_worker.sessionlog import replace_session_commitments
 from copilot_worker.testing import FIXTURES, STARTED, GatewayLog, Stack
 from copilot_worker.workplace import write_worklog_nodes
 
@@ -471,6 +473,62 @@ async def test_standup_commitments_go_back_to_the_company(stack: Stack) -> None:
         str(log.sid),
     )
     assert len(stack.take("workplace.refresh")) == 2
+
+
+async def test_a_standup_report_sees_open_commitments_and_closes_them(stack: Stack) -> None:
+    # 2026-10-27: the report stored 6 commitments, mostly steps of one task and repeats of the
+    # 10-26 ones, and closed none; the next pack listed 8 open commitments.
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    earlier = uuid7()
+    await stack.admin.execute(
+        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title, summary,"
+        " body, source, valid_from) values ($1, $2, $3, 'commitment', 'workplace',"
+        " 'Finish the refund report', 'Finish the refund report', $4, $5, $6)",
+        earlier,
+        uid,
+        eid,
+        json.dumps({"state": "open", "due_date": "2026-10-06"}),
+        json.dumps({"type": "session", "ref": str(uuid.uuid4())}),
+        DAY,
+    )
+    log = GatewayLog(stack, uid, mode="standup", employer_id=eid)
+    await log.start()
+    upto = await log.segment("What's your update?", 1000)
+    await stack.run(log.flush_job(upto))
+    await log.end(seconds=300)
+    await stack.run(log.ended_job())
+    await stack.run(
+        jobs.envelope(
+            "session.postcall", f"session.postcall:{log.sid}", uid, {"session_id": str(log.sid)}
+        )
+    )
+    _, body = stack.claude.requests[-1]
+    sent = json.dumps(body["messages"])
+    assert "<open_commitments>" in sent
+    found = re.search(r"\[(n:w[0-9a-z]+)\] Finish the refund report \(due 2026-10-06\)", sent)
+    assert found is not None
+    short = found.group(1)
+
+    async def run(new: list[dict[str, str]], closed: list[str]) -> tuple[int, int]:
+        async with stack.ctx.user(uid) as conn:
+            from copilot_worker.workplace import open_commitments_block
+
+            _, closable = await open_commitments_block(conn, uid, eid, str(log.sid))
+            return await replace_session_commitments(
+                conn, uid, eid, log.sid, DAY, new, closed, closable
+            )
+
+    five = [{"text": f"Step {i} of the refund fix", "due_date": ""} for i in range(5)]
+    assert await run(five, [short]) == (3, 1)  # at most three new ones
+    rows = {r["title"]: json.loads(r["body"]) for r in await nodes_of(stack, eid)}
+    assert rows["Finish the refund report"]["state"] == "done"
+    assert rows["Finish the refund report"]["closed_by"] == str(log.sid)
+    assert sum(1 for t in rows if t.startswith("Step")) == 3
+    # A rerun that closes nothing opens it again (the short id still resolves).
+    assert await run([], []) == (0, 0)
+    rows = {r["title"]: json.loads(r["body"]) for r in await nodes_of(stack, eid)}
+    assert rows == {"Finish the refund report": {"state": "open", "due_date": "2026-10-06"}}
 
 
 def test_fixture_inputs_exist() -> None:

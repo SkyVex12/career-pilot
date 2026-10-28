@@ -158,15 +158,21 @@ POSTCALL_INTERVIEW_SCHEMA: dict[str, Any] = obj(
 )
 
 POSTCALL_STANDUP_SYSTEM = f"""You write the report of a standup the user just finished.
-Return a short summary, what the user did yesterday and will do today, their blockers, and
-every commitment the user made with its due date (YYYY-MM-DD, or an empty string when none
-was said).
+Return a short summary, what the user did yesterday and will do today, their blockers, the
+new commitments the user made with their due dates (YYYY-MM-DD, or an empty string when none
+was said), and which of their open commitments are closed.
 - Work due dates out from the Date line: "today", "tomorrow", "by Friday"; for "today or
   tomorrow" take the later day.
 - A commitment is the promise alone, in a few words as the user would put it ("Send the rate
   cache plan"). Never add remarks about the call, the transcript, the audio or
   missing information to any field.
-- Blockers are what blocks the user's own work, not someone else's trouble in the call.
+- Commitments are new promises only, at most 3. Steps of one task are one commitment ("Fix
+  the blank report values", not one per check). A promise that is already in
+  <open_commitments>, in other words, is not new: leave it out.
+- closed_commitments: the short ids from <open_commitments> that the user said in this call
+  are done or dropped, or that a new commitment replaces. When unsure, leave it open.
+- Blockers are what blocks the user's own work, not someone else's trouble in the call, and
+  not the order the work will go in ("after X, then Y").
 
 {POSTCALL_RULES}"""
 
@@ -177,6 +183,7 @@ POSTCALL_STANDUP_SCHEMA: dict[str, Any] = obj(
         "today": STRS,
         "blockers": STRS,
         "commitments": {"type": "array", "items": obj({"text": STR, "due_date": STR})},
+        "closed_commitments": STRS,
     }
 )
 
@@ -359,19 +366,26 @@ POSTCALL: dict[str, tuple[str, dict[str, Any]]] = {
 
 
 def postcall_request(
-    mode: str, context: Sequence[str], transcript: str, session_log: str
+    mode: str,
+    context: Sequence[str],
+    transcript: str,
+    session_log: str,
+    open_commitments: str | None = None,
 ) -> LLMRequest:
+    """`open_commitments` (a standup at a company): the user's open commitments there, by
+    short id, so the report can leave out what is already promised and close what is done."""
     system, schema = POSTCALL[mode]
+    blocks = ["\n".join(context)]
+    if open_commitments is not None:
+        blocks.append(data_block("open_commitments", open_commitments or "(none)"))
+    blocks += [
+        data_block("transcript", transcript or "(no segments)"),
+        data_block("session_log", session_log or "(no questions)"),
+        "Write the post-call outputs as JSON.",
+    ]
     return LLMRequest(
         system=[SystemBlock(system)],
-        content="\n\n".join(
-            [
-                "\n".join(context),
-                data_block("transcript", transcript or "(no segments)"),
-                data_block("session_log", session_log or "(no questions)"),
-                "Write the post-call outputs as JSON.",
-            ]
-        ),
+        content="\n\n".join(blocks),
         max_tokens=16000,
         json_schema=schema,
     )
