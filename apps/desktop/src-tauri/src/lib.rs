@@ -680,7 +680,7 @@ fn note_activity(app: AppHandle, state: State<'_, AppState>) {
 fn check_updates(app: AppHandle) -> Res<()> {
     #[cfg(feature = "release")]
     {
-        app.state::<release::updater::Updates>().check_now();
+        app.state::<release::updater::Updates>().ask();
         Ok(())
     }
     #[cfg(not(feature = "release"))]

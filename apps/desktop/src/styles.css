@@ -1586,3 +1586,26 @@ table.list .meta .chip {
   margin-left: 4px;
   vertical-align: 1px;
 }
+
+/* Settings → Version: "Check now", then what the check found. */
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 6px;
+}
+
+.check-row button .spinner {
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+}
+
+.check-result {
+  margin: 0;
+}
+
+.check-result.bad {
+  color: var(--bad);
+}
