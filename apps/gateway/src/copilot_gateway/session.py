@@ -49,11 +49,11 @@ from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question, is_a
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
-from copilot_gateway.detector import Detector
+from copilot_gateway.detector import Detector, named_or_model
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
-from copilot_gateway.turn import Detection, TurnDetector, TurnModel
+from copilot_gateway.turn import Detection, TurnDetector, TurnModel, addressed_by_name
 from copilot_protocol import models
 
 log = logging.getLogger(__name__)
@@ -496,7 +496,15 @@ class Session:
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
         transcript = self.conv.recent(self.settings.detector_context_tokens)
-        return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
+        call = asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
+        grace = self.settings.name_address_grace_ms
+        if (
+            grace is not None
+            and self.info.mode in prompts.GROUP_MODES
+            and addressed_by_name(utterance, prompts.first_name(self.principal.display_name))
+        ):
+            return asyncio.ensure_future(named_or_model(call, grace / 1000))
+        return call
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if self._memory_on() and self.company_memory is not None:

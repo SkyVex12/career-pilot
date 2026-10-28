@@ -81,6 +81,36 @@ def likely_question(text: str, min_words: int = 3) -> bool:
     return any(cue in joined for cue in REQUEST_CUES)
 
 
+# A name right after one of these is a mention ("I'll check with Sam"), not an address.
+MENTION_CUES = frozenset(
+    {"with", "to", "from", "for", "ask", "tell", "about", "and", "or", "by", "of", "ping",
+     "cc", "let", "thanks", "thank", "hi", "hello", "hey", "morning", "bye"}
+)  # fmt: skip
+
+
+def addressed_by_name(text: str, first: str) -> bool:
+    """Does the utterance put a question or a check to the user by name ("..., right, Sam?",
+    "Sam, did you get to the review?")? The name must stand as a vocative: followed by a
+    comma or "?", or ending the utterance, and not after a word that makes it a mention or a
+    greeting. And the utterance must look like a question (`likely_question`), so "Hi, Sam."
+    is not one. A local check: it decides when the detector is slow or fails."""
+    first = first.strip().lower()
+    if not first or not likely_question(text, 2):
+        return False
+    tokens = re.findall(r"[\w']+|[,?!.]", text.lower())
+    for i, tok in enumerate(tokens):
+        if tok != first:
+            continue
+        before = next((t for t in reversed(tokens[:i]) if t not in ",.!?"), "")
+        if before in MENTION_CUES:
+            continue
+        after = tokens[i + 1] if i + 1 < len(tokens) else ""
+        last_word = not any(t not in ",.!?" for t in tokens[i + 1 :])
+        if after in (",", "?") or last_word:
+            return True
+    return False
+
+
 def _words(text: str) -> list[str]:
     return re.sub(r"[^\w\s']", " ", text.lower()).split()
 

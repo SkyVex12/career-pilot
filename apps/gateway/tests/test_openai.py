@@ -356,3 +356,18 @@ async def test_openai_session_records_model_tokens_and_cost(env) -> None:
         )  # fmt: skip
         assert price is not None
         assert entry["cost_usd"] == float(price) > 0
+
+
+def test_the_detector_hedge_runs_on_the_priority_tier() -> None:
+    # 2026-10-27: the hedge and the retry went to the same model and tier, so a slow spell on
+    # gpt-6-luna failed 10 detector decisions in 50 s.
+    provider = OpenAIProvider("openai", openai_client([]))
+    routes = build_routes(openai_settings(), [provider])
+    first, second = routes["detector"]
+    assert "service_tier" not in first.params
+    assert second.params["service_tier"] == "priority"
+    req = prompts.detector("Alex", "", "Any blockers?", 80, "standup")
+    assert provider.request(second.model, req, second.params)["service_tier"] == "priority"
+    assert all("service_tier" not in r.params for r in routes["fast"])
+    off = build_routes(openai_settings(openai_detector_retry_tier=None), [provider])
+    assert all("service_tier" not in r.params for r in off["detector"])

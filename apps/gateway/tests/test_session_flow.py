@@ -709,3 +709,63 @@ async def test_an_interview_loads_its_own_pack(env) -> None:
             assert state[b"interview_id"].decode() == extra.get("interview_id", "")
             await c.send({"type": "session.end"})
             assert await c.closed() == 1000
+
+
+def _detector_reply(answer: str, delay_s: float = 0.0, error: bool = False):
+    def reply(job: str, req: Any) -> Reply:
+        if job == "detector":
+            return Reply(
+                [json.dumps({"answer": answer})],
+                first_delay_s=delay_s,
+                error=RuntimeError("scripted detector failure") if error else None,
+            )
+        return default_reply(job, req)
+
+    return reply
+
+
+async def test_a_question_by_name_shows_without_waiting_for_a_slow_detector(env) -> None:
+    # 2026-10-27: a check ending in the user's name waited 2.8 s for a hedged detector.
+    env.providers = [ScriptedProvider(reply=_detector_reply("none", delay_s=4.0))]
+    async with GatewayServer(env.services(env.settings(name_address_grace_ms=300))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        started = time.monotonic()
+        await c.say("That part is clear now, right? Alex?")
+        q = await c.wait_type("question.detected", timeout=3.0)
+        assert q["question_type"] == "respond"
+        assert time.monotonic() - started < 2.0
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+
+
+async def test_a_failed_detector_still_answers_a_question_by_name(env) -> None:
+    env.providers = [ScriptedProvider(reply=_detector_reply("none", error=True))]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("Alex, did you get to the code review with the platform team?")
+        q = await c.wait_type("question.detected", timeout=4.0)
+        assert q["question_type"] == "respond"
+
+
+async def test_a_quick_detector_decides_a_question_by_name(env) -> None:
+    # Within the grace period the model's decision stands, "none" included.
+    env.providers = [ScriptedProvider(reply=_detector_reply("none"))]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("Can you share your screen, Alex?")
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(1.5)
+        assert c.of_type("question.detected") == []
+
+
+async def test_the_name_rule_is_only_for_standups_and_meetings(env) -> None:
+    env.providers = [ScriptedProvider(reply=_detector_reply("none", delay_s=4.0))]
+    async with GatewayServer(env.services(env.settings(name_address_grace_ms=300))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="interview")
+        await c.say("That part is clear now, right? Alex?")
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(1.5)
+        assert c.of_type("question.detected") == []

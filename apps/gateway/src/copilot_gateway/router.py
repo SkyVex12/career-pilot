@@ -8,6 +8,8 @@ alone, so Stage 0 can start with only one set of credentials.
 OpenAI routes take their model and reasoning effort per job from settings
 (`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); the Claude-only settings (between_tools
 thinking, effort, `fallbacks: "default"`, Priority) never reach them.
+The detector's second OpenAI route (the hedge and the retry) runs on OpenAI's own Priority
+tier (`openai_detector_retry_tier`), so a slow spell on the first does not stall both.
 """
 
 from collections.abc import Sequence
@@ -71,7 +73,13 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
                 timeout = settings.openai_first_token_timeout_s(job)
             job_routes.append(Route(provider, primary, params, first_token_timeout_s=timeout))
             if i == 0:
-                job_routes.append(Route(provider, retry, params, first_token_timeout_s=timeout))
+                retry_params = params
+                tier = settings.openai_detector_retry_tier
+                if job == "detector" and provider.name == "openai" and tier:
+                    retry_params = {**params, "service_tier": tier}
+                job_routes.append(
+                    Route(provider, retry, retry_params, first_token_timeout_s=timeout)
+                )
             if job == "deep" and provider.name == "bedrock" and settings.bedrock_refusal_model:
                 # What `fallbacks: "default"` does on the direct API: a refused Sonnet 5.5
                 # request reruns on Sonnet 5 with thinking off.

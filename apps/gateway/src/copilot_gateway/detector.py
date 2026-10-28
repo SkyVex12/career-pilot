@@ -24,6 +24,8 @@ from copilot_gateway.turn import Detection
 log = logging.getLogger(__name__)
 
 NO_QUESTION = Detection("none", "other")
+NAMED = Detection("answer", "respond")
+_running: "set[asyncio.Future[Detection]]" = set()
 
 
 def parse_detection(text: str) -> Detection:
@@ -147,3 +149,26 @@ class Detector:
             self.cache.popitem(last=False)
         self._report(utterance, key, result, done, cached=False)
         return result
+
+
+async def named_or_model(call: "asyncio.Future[Detection]", grace_s: float) -> Detection:
+    """For an utterance that addresses the user by name (`turn.addressed_by_name`): the
+    model's decision if it comes within `grace_s`, else `respond` at once. A failed call
+    counts as `respond` too. In the 2026-10-27 standup a question ending in the user's name
+    waited 2.8 s for a hedged detector, and the answer showed after the user had begun to
+    reply. The call itself runs on after the grace period, so its decision is still logged
+    and cached."""
+    started = time.monotonic()
+    try:
+        await asyncio.wait({call}, timeout=grace_s)
+    except asyncio.CancelledError:
+        call.cancel()
+        raise
+    if call.done() and not call.cancelled() and call.result().error is None:
+        return call.result()
+    if not call.done():  # it runs on, unreferenced by the turn: keep it alive
+        _running.add(call)
+        call.add_done_callback(_running.discard)
+    ms = int((time.monotonic() - started) * 1000)
+    log.info("detector: addressed by name, shown as respond after %d ms", ms)
+    return replace(NAMED, latency_ms=ms)

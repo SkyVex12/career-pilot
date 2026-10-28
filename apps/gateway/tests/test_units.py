@@ -26,6 +26,7 @@ from copilot_gateway.auth import DevTokenVerifier, bearer_token, make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import parse_detection
 from copilot_gateway.offline import parse_token
+from copilot_gateway.turn import addressed_by_name
 from copilot_protocol.audio import encode_frame
 from copilot_protocol.models import AudioFrameHeader
 
@@ -634,3 +635,17 @@ def test_respond_fires_with_its_own_type() -> None:
     assert d.fires
     assert d.qtype == "respond"
     assert "respond" in prompts.DEEP_SHAPES
+
+
+def test_addressed_by_name_is_a_vocative_question() -> None:
+    """The 2026-10-27 standup's named turns (paraphrased): a check ending in the name and a
+    question opening with it are for the user; a greeting or a mention is not."""
+    assert addressed_by_name("That much is clear, right? Sam?", "Sam")
+    assert addressed_by_name("Okay, Sam, if I may ask: did you get to the review?", "Sam")
+    assert addressed_by_name("Can you share the numbers, Sam?", "Sam")
+    assert not addressed_by_name("Hi, Sam. Good morning.", "Sam")
+    assert not addressed_by_name("I'll check with Sam on that, okay?", "Sam")
+    assert not addressed_by_name("Sam is on the migration, right?", "Sam")
+    assert not addressed_by_name("Thanks Sam, what about the rollout?", "Sam")
+    assert not addressed_by_name("Sam?", "Sam")  # too short to be a question by itself
+    assert not addressed_by_name("Samantha, any update?", "Sam")

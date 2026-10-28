@@ -63,6 +63,14 @@ class Settings(CoreSettings):
     # 90% finished within 3.3 s. A hedge costs one more detector call (about $0.0001). None:
     # retry only after the timeout.
     detector_hedge_ms: int | None = 2000
+    # The OpenAI tier of the detector's second route, which the hedge and the retry use. In
+    # the 2026-10-27 standup a slow spell on gpt-6-luna failed 10 decisions in 50 s, because
+    # the hedge went to the same model on the same tier. Priority costs 1.75x on the few calls
+    # that hedge (about $0.0001 each). None: the same tier as the first route.
+    openai_detector_retry_tier: str | None = "priority"
+    # In standups and meetings, a question that addresses the user by name waits this long
+    # for the detector, then shows as `respond` (detector.named_or_model). None: off.
+    name_address_grace_ms: int | None = 1000
     # Per embedding model id (`provider:model@dimensions`); entries given (JSON) are merged
     # over the calibrated defaults. A model without an entry uses
     # prepared_answer_min_similarity and no margin.
