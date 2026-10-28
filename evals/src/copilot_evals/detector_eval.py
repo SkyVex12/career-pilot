@@ -54,13 +54,22 @@ class Case:
     transcript: str
     should_fire: bool | None  # None: not scored
     qtype: str | None
+    turns: str = ""  # the gateway's <turn_taking> block (group calls only)
 
 
 def cases(script: list[Utterance], user_name: str) -> list[Case]:
-    """Each utterance with the transcript of the 60 s before it, timed from the script."""
+    """Each utterance with the transcript of the 60 s before it, timed from the script, and
+    the turn-taking block the gateway would send with it."""
+    from copilot_core import prompts
+
     out: list[Case] = []
     t = 0.0
     history: list[tuple[float, float, str]] = []  # (start, end, line)
+
+    def turns(now: float) -> str:
+        spans = [("them" if line.startswith("Them:") else "me", s, e) for s, e, line in history]
+        return prompts.turn_taking(user_name, spans, now)
+
     for u in script:
         if u.speaker == "me":  # the user's own line: context only, never a case
             t += u.gap_s
@@ -82,8 +91,8 @@ def cases(script: list[Utterance], user_name: str) -> list[Case]:
         if len(u.parts) > 1:
             # Not scored: the first half of a paused question is often a complete question on
             # its own, and only the speaker going on shows it was not; that is turn-taking.
-            out.append(Case(f"{u.id}:first_half", u.parts[0], transcript, None, None))
-        out.append(Case(u.id, u.text, transcript, expect, u.qtype))
+            out.append(Case(f"{u.id}:first_half", u.parts[0], transcript, None, None, turns(start)))
+        out.append(Case(u.id, u.text, transcript, expect, u.qtype, turns(start)))
         t += length
         history.append((start, t, f"Them: {u.text}"))
     return out
@@ -101,7 +110,7 @@ async def detect_once(
     from copilot_core.llm import LLMDone, LLMRequest, SystemBlock
     from copilot_gateway.detector import parse_detection
 
-    req = prompts.detector(user_name, case.transcript, case.text, 80, mode)
+    req = prompts.detector(user_name, case.transcript, case.text, 80, mode, case.turns)
     if system is not None:
         phrase = prompts.MODE_PHRASES.get(mode, f"a {mode}")
         req = LLMRequest(

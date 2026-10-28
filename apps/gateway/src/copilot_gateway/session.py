@@ -49,11 +49,11 @@ from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question, is_a
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
-from copilot_gateway.detector import Detector
+from copilot_gateway.detector import Detector, named_or_model
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
-from copilot_gateway.turn import Detection, TurnDetector, TurnModel
+from copilot_gateway.turn import Detection, TurnDetector, TurnModel, addressed_by_name
 from copilot_protocol import models
 
 log = logging.getLogger(__name__)
@@ -354,8 +354,8 @@ class Session:
         text, done = await self.router.complete("summary", req)
         ms = int((time.monotonic() - started) * 1000)
         log.info(
-            "conversation summary on %s: %s in / %s out tokens in %s ms",
-            done.model, done.usage.input_tokens, done.usage.output_tokens, ms,
+            "conversation summary on %s: %s in / %s out tokens in %s ms, stop=%s",
+            done.model, done.usage.input_tokens, done.usage.output_tokens, ms, done.stop_reason,
         )  # fmt: skip
         self.log_entry(
             {
@@ -364,10 +364,16 @@ class Session:
                 "input_tokens": done.usage.input_tokens,
                 "cached_tokens": done.usage.cached_tokens,
                 "output_tokens": done.usage.output_tokens,
+                "stop_reason": done.stop_reason,
                 "cost_usd": self._cost(done),
                 "latency_ms": ms,
             }
         )
+        if done.stop_reason == "max_tokens":
+            # Cut off at the cap: its end, the newest notes, is missing. The previous summary
+            # stays and the lines stay verbatim until the next try.
+            log.warning("conversation summary hit its cap; kept the previous one")
+            return None
         return text
 
     # AnswerHost.
@@ -496,7 +502,25 @@ class Session:
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
         transcript = self.conv.recent(self.settings.detector_context_tokens)
-        return asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
+        turns = ""
+        if self.info.mode in prompts.GROUP_MODES:
+            turns = prompts.turn_taking(
+                self.principal.display_name,
+                [(ln.channel, ln.start_ms / 1000, ln.end_ms / 1000) for ln in self.conv.lines],
+                # The utterance being decided ended at the other side's last speech end.
+                max(self.capture_now, self.them_spans[-1][1] if self.them_spans else 0) / 1000,
+            )
+        call = asyncio.ensure_future(
+            self.detector.detect(utterance, transcript, self.info.mode, turns)
+        )
+        grace = self.settings.name_address_grace_ms
+        if (
+            grace is not None
+            and self.info.mode in prompts.GROUP_MODES
+            and addressed_by_name(utterance, prompts.first_name(self.principal.display_name))
+        ):
+            return asyncio.ensure_future(named_or_model(call, grace / 1000))
+        return call
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if self._memory_on() and self.company_memory is not None:
@@ -990,9 +1014,9 @@ class Session:
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
         log.info(
-            "session ended: reason=%s minutes=%.1f questions=%d stats=%s",
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            len(self.answers.questions), self.answers.stats,
+            len(self.answers.questions), self.answers.stats, self.detector.stats,
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
@@ -1731,10 +1755,18 @@ class SessionManager:
             await store.take_lease(sid, self.svc.task_id)
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
+        # Which pack was loaded, so an analysis can find it after the next rebuild overwrites
+        # it (twice after the 2026-10-26 and 2026-10-27 standups).
+        loaded = (
+            f"{pack.pack_id} built={pack.built_at} memory={pack.memory_version}"
+            f" keyterms={len(pack.keyterms)}"
+            if pack is not None
+            else "none"
+        )
         log.info(
             "session started: mode=%s platform=%s client=%s consent=%s digest=%s pack=%s",
             info.mode, info.platform, info.client_version, info.store_transcript,
-            digest is not None, pack is not None,
+            digest is not None, loaded,
         )  # fmt: skip
         session.start_core()
         session.warm_models()

@@ -24,6 +24,8 @@ from copilot_gateway.turn import Detection
 log = logging.getLogger(__name__)
 
 NO_QUESTION = Detection("none", "other")
+NAMED = Detection("answer", "respond")
+_running: "set[asyncio.Future[Detection]]" = set()
 
 
 def parse_detection(text: str) -> Detection:
@@ -62,6 +64,13 @@ class Detector:
         self.cost = cost
         self.cache: OrderedDict[str, Detection] = OrderedDict()
         self.calls = 0
+        # Totals for the session's end log line, so an analysis needs no per-call lines:
+        # decisions, cache hits, calls cancelled by newer text, failures, hedges and tokens
+        # (cancelled calls' input estimated).
+        self.stats: dict[str, int] = dict.fromkeys(
+            ("decided", "cached", "cancelled", "failed", "hedged", "input_tokens",
+             "output_tokens"), 0,
+        )  # fmt: skip
 
     def _report(
         self,
@@ -72,6 +81,19 @@ class Detector:
         cached: bool,
         **extra: Any,
     ) -> None:
+        st = self.stats
+        if cached:
+            st["cached"] += 1
+        elif extra.get("cancelled"):
+            st["cancelled"] += 1
+        elif detection.error:
+            st["failed"] += 1
+        else:
+            st["decided"] += 1
+        if done is not None:
+            st["input_tokens"] += done.usage.input_tokens
+            st["output_tokens"] += done.usage.output_tokens
+            st["hedged"] += int(done.hedged)
         if self.on_decision is None:
             return
         entry: dict[str, Any] = {
@@ -105,16 +127,19 @@ class Detector:
         entry.update(extra)
         self.on_decision(entry, utterance)
 
-    async def detect(self, utterance: str, transcript: str, mode: str = "interview") -> Detection:
+    async def detect(
+        self, utterance: str, transcript: str, mode: str = "interview", turns: str = ""
+    ) -> Detection:
         key = text_hash(utterance)
-        cache_key = f"{mode}:{key}"  # the call type is part of the prompt
+        # The call type and the turn-taking block are part of the prompt.
+        cache_key = f"{mode}:{turns}:{key}"
         if (hit := self.cache.get(cache_key)) is not None:
             result = replace(hit, latency_ms=0)
             self._report(utterance, key, result, None, cached=True)
             return result
         started = time.monotonic()
         self.calls += 1
-        req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode)
+        req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode, turns)
         try:
             text, done = await self.router.complete("detector", req)
             detection = parse_detection(text)
@@ -147,3 +172,26 @@ class Detector:
             self.cache.popitem(last=False)
         self._report(utterance, key, result, done, cached=False)
         return result
+
+
+async def named_or_model(call: "asyncio.Future[Detection]", grace_s: float) -> Detection:
+    """For an utterance that addresses the user by name (`turn.addressed_by_name`): the
+    model's decision if it comes within `grace_s`, else `respond` at once. A failed call
+    counts as `respond` too. In the 2026-10-27 standup a question ending in the user's name
+    waited 2.8 s for a hedged detector, and the answer showed after the user had begun to
+    reply. The call itself runs on after the grace period, so its decision is still logged
+    and cached."""
+    started = time.monotonic()
+    try:
+        await asyncio.wait({call}, timeout=grace_s)
+    except asyncio.CancelledError:
+        call.cancel()
+        raise
+    if call.done() and not call.cancelled() and call.result().error is None:
+        return call.result()
+    if not call.done():  # it runs on, unreferenced by the turn: keep it alive
+        _running.add(call)
+        call.add_done_callback(_running.discard)
+    ms = int((time.monotonic() - started) * 1000)
+    log.info("detector: addressed by name, shown as respond after %d ms", ms)
+    return replace(NAMED, latency_ms=ms)

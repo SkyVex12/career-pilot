@@ -90,3 +90,22 @@ def test_group_standup_script_puts_the_users_lines_in_context_only() -> None:
     assert "Alex Rivera: I'm finishing the label retry fix" in week.transcript
     fire = {c.id for c in all_cases if c.should_fire}
     assert fire == {"dana_turns_to_alex", "dana_week", "dana_reminder", "dana_request"}
+
+
+def test_review_standup_cases_carry_the_turn_taking() -> None:
+    # 2026-10-27: in a two-person standup the detector turned down checks seconds after the
+    # user spoke; the gateway now tells it when the user last spoke, and so does the eval.
+    from copilot_evals.benchdata import BENCH_DIR, load_script
+    from copilot_evals.detector_eval import cases
+
+    script = load_script(BENCH_DIR / "review_standup.toml")
+    all_cases = {c.id: c for c in cases(script, "Alex Rivera")}
+    assert all_cases["dana_hello"].turns == "Alex has not spoken yet."
+    move = all_cases["dana_move"]
+    assert move.turns.startswith("Alex last spoke less than 20 s ago.")
+    assert move.should_fire
+    assert all_cases["dana_own_update"].should_fire is False
+    assert "about" in all_cases["dana_bye"].turns or "minute" in all_cases["dana_bye"].turns
+    fire = {c.id for c in all_cases.values() if c.should_fire}
+    assert fire == {"dana_clear", "dana_aware", "dana_rest_review", "dana_plan", "dana_move",
+                    "dana_migration"}  # fmt: skip

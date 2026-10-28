@@ -225,24 +225,35 @@ async def log_context(
     returns, with the map back to their nodes. Commitments this log closed earlier count as
     open again."""
     known = await known_titles(conn, uid, eid, exclude_log=log_id)
+    block, closable = await open_commitments_block(conn, uid, eid, str(log_id))
+    return render_known(known), block, closable
+
+
+async def open_commitments_block(
+    conn: Conn, uid: UUID, eid: UUID, ref: str
+) -> tuple[str, dict[str, UUID]]:
+    """A company's open commitments for a prompt, by short id, with the map back to their
+    nodes. `ref` is the work log or session asking: commitments it closed earlier count as
+    open again, and commitments it made itself are left out (a rerun replaces them)."""
     nodes = await conn.fetch(
         "select id, kind, title, summary, body, valid_from from app.memory_nodes"
-        " where user_id = $1 and employer_id = $2 and status = 'active' and kind = 'commitment'",
+        " where user_id = $1 and employer_id = $2 and status = 'active' and kind = 'commitment'"
+        " and coalesce(source->>'ref', '') <> $3",
         uid,
         eid,
+        ref,
     )
     reopenable = [
         n
         for n in nodes
-        if body_of(n).get("state") in ("", None, "open")
-        or body_of(n).get("closed_by") == str(log_id)
+        if body_of(n).get("state") in ("", None, "open") or body_of(n).get("closed_by") == ref
     ]
     sids = short_ids([n["id"] for n in reopenable], SHORT_PREFIX)
     lines: list[str] = []
     for n in open_commitments(reopenable):
         due = body_of(n).get("due_date")
         lines.append(f"[{sids[n['id']]}] {item_text(n)}" + (f" (due {due})" if due else ""))
-    return render_known(known), "\n".join(lines), {s: n for n, s in sids.items()}
+    return "\n".join(lines), {s: n for n, s in sids.items()}
 
 
 async def write_worklog_nodes(
@@ -257,14 +268,7 @@ async def write_worklog_nodes(
     """Replace the nodes this log produced before with the new extraction's."""
     ref = str(log_id)
     # Commitments the earlier content closed open again; the new content closes its own.
-    await conn.execute(
-        "update app.memory_nodes set body = body - 'closed_by' || '{\"state\": \"open\"}',"
-        " updated_at = now() where user_id = $1 and employer_id = $2 and kind = 'commitment'"
-        " and body->>'closed_by' = $3",
-        uid,
-        eid,
-        ref,
-    )
+    await reopen_commitments(conn, uid, eid, ref)
     await conn.execute(
         "delete from app.memory_nodes where user_id = $1 and employer_id = $2"
         " and source->>'type' = 'worklog' and source->>'ref' = $3"
@@ -380,7 +384,28 @@ async def write_worklog_nodes(
             day,
         )
         count += 1
-    for short in as_list(data.get("closed_commitments")):
+    await close_commitments(conn, as_list(data.get("closed_commitments")), closable, ref)
+    return count
+
+
+async def reopen_commitments(conn: Conn, uid: UUID, eid: UUID, ref: str) -> None:
+    """Commitments that `ref` (a work log or a session) closed are open again."""
+    await conn.execute(
+        "update app.memory_nodes set body = body - 'closed_by' || '{\"state\": \"open\"}',"
+        " updated_at = now() where user_id = $1 and employer_id = $2 and kind = 'commitment'"
+        " and body->>'closed_by' = $3",
+        uid,
+        eid,
+        ref,
+    )
+
+
+async def close_commitments(
+    conn: Conn, shorts: Sequence[Any], closable: Mapping[str, UUID], ref: str
+) -> int:
+    """Mark the commitments the model named by short id done, closed by `ref`."""
+    closed = 0
+    for short in shorts:
         short_id = str(short).strip().strip("[]")
         short_id = short_id if short_id.startswith("n:") else f"n:{short_id}"
         if (node_id := closable.get(short_id)) is not None:
@@ -390,7 +415,8 @@ async def write_worklog_nodes(
                 node_id,
                 {"state": "done", "closed_by": ref},
             )
-    return count
+            closed += 1
+    return closed
 
 
 # --- company_doc.extract ------------------------------------------------------------------

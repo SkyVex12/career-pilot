@@ -287,3 +287,63 @@ async def test_a_long_call_is_summarized_in_the_background(env) -> None:
     summaries = [e for e in log if e["kind"] == "summary"]
     assert len(summaries) == calls
     assert all("text" not in e and e["input_tokens"] > 0 for e in summaries)
+
+
+async def test_a_standup_detector_is_told_when_the_user_last_spoke(env) -> None:
+    # 2026-10-27: in a two-person standup the detector turned down "you're still on X, right?"
+    # seconds after the user spoke, guessing that "Them" were several people talking among
+    # themselves. It now gets the turn-taking as a fact.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("Morning. Anything to raise before I share my screen?", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "them")
+        await c.say_me("I finished the retry fix yesterday", capture_ms=3000, end_ms=3500)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
+        await c.say("So you're still on the label migration, right?", capture_ms=8000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "migration" in m["text"])
+        await asyncio.sleep(0.3)
+        await c.send({"type": "session.end"})
+        await c.closed()
+    first, *_, last = requests_for(provider, "detector")
+    assert "<turn_taking>\nAlex has not spoken yet.\n</turn_taking>" in str(first.content)
+    assert "Alex last spoke less than 20 s ago." in str(last.content)
+    assert "changed between Them and Alex once" in str(last.content)
+    assert "may be one person or several" in last.system[0].text
+
+
+async def test_a_summary_cut_off_at_its_cap_is_not_kept(env) -> None:
+    # 2026-10-27: the 7th summary call ended at exactly its 500-token cap, so its newest
+    # notes were probably cut off and stored that way.
+    def reply(job: str, req: Any) -> Reply:
+        if job == "summary":
+            return Reply(["- Earlier: the first half of a summa"], stop_reason="max_tokens")
+        return default_reply(job, req)
+
+    provider = ScriptedProvider("anthropic", reply=reply)
+    env.providers = [provider]
+    settings = env.settings(
+        conversation_budget_tokens=400,
+        conversation_summary_tokens=100,
+        conversation_answers_tokens=100,
+        conversation_summary_chunk_tokens=60,
+    )
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        for i in range(8):
+            words = " ".join(f"point{i}x{k}" for k in range(12))
+            await c.say_me(f"So {words}", capture_ms=i * 2000, end_ms=i * 2000 + 500)
+            await c.wait(
+                lambda m, i=i: m["type"] == "transcript.final" and f"point{i}x0" in m["text"]
+            )
+        session = next(iter(gw.manager.sessions.values()))
+        await session.conv.wait_folded()
+        assert [j for j, _ in provider.calls].count("summary") >= 1
+        assert session.conv.summary == ""
+        await c.send({"type": "session.end"})
+        await c.closed()
+    log = await session_log(env, c.session_id)
+    assert {e["stop_reason"] for e in log if e["kind"] == "summary"} == {"max_tokens"}

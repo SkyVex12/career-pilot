@@ -19,7 +19,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -37,8 +37,11 @@ from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import as_dict, as_list, complete_json
 from copilot_worker.runtime import Job, handler
+from copilot_worker.workplace import close_commitments, open_commitments_block, reopen_commitments
 
 log = logging.getLogger(__name__)
+# New commitments a standup report keeps: the post-call prompt asks for at most this many.
+MAX_STANDUP_COMMITMENTS = 3
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -521,7 +524,7 @@ def render_outputs(mode: str, data: dict[str, Any]) -> dict[str, str]:
     elif mode == "standup":
         commitments = [
             f"{c.get('text', '')}" + (f" (due {c['due_date']})" if c.get("due_date") else "")
-            for c in map(as_dict, as_list(data.get("commitments")))
+            for c in map(as_dict, as_list(data.get("commitments"))[:MAX_STANDUP_COMMITMENTS])
         ]
         out["standup_report"] = "\n\n".join(
             [
@@ -561,6 +564,7 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     types = [str(q["type"]) for q in transcript.questions]
     minutes = max(1, math.ceil(int(session["billed_seconds"]) / 60))
     data: dict[str, Any] = {}
+    closable: dict[str, UUID] = {}
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
         outputs = {"summary": metadata_summary(mode, minutes, types)}
     else:
@@ -578,8 +582,16 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
             context.append(f"At work, company: {session['employer_name']}")
         if session["round"]:
             context.append(f"Round: {session['round']}")
+        open_block: str | None = None
+        if mode == "standup" and session["employer_id"] is not None:
+            # 2026-10-27: without them the report stored 6 commitments, mostly steps of one
+            # task and repeats of what was already open, and closed none.
+            async with ctx.user(uid) as conn:
+                open_block, closable = await open_commitments_block(
+                    conn, uid, session["employer_id"], str(sid)
+                )
         req = prompts.postcall_request(
-            mode, context, transcript_text(transcript), questions_text(transcript)
+            mode, context, transcript_text(transcript), questions_text(transcript), open_block
         )
         data = await complete_json(ctx.router, "postcall", req)
         outputs = render_outputs(mode, data)
@@ -605,10 +617,14 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
             # standup pack. They are the user's own promises, so they are kept at once (the
             # post-call screen shows them with a remove button). A rerun replaces them.
             day = local_today(as_dict(session["settings"]), session["started_at"])
-            added = await replace_session_commitments(
-                conn, uid, employer_id, sid, day, as_list(data.get("commitments"))
-            )
-            log.info("session %s: %d commitments for employer %s", sid, added, employer_id)
+            added, closed = await replace_session_commitments(
+                conn, uid, employer_id, sid, day, as_list(data.get("commitments")),
+                as_list(data.get("closed_commitments")), closable,
+            )  # fmt: skip
+            log.info(
+                "session %s: %d commitments for employer %s, %d closed",
+                sid, added, employer_id, closed,
+            )  # fmt: skip
             version = await memory_version(conn, uid, employer_id)
         await conn.execute("update app.sessions set outputs_ready_at = now() where id = $1", sid)
     if version is not None:
@@ -623,15 +639,20 @@ async def replace_session_commitments(
     sid: UUID,
     day: date,
     commitments: Sequence[Any],
-) -> int:
-    """A standup's commitments as `commitment` nodes of its company (source: the session)."""
+    closed: Sequence[Any] = (),
+    closable: Mapping[str, UUID] | None = None,
+) -> tuple[int, int]:
+    """A standup's commitments as `commitment` nodes of its company (source: the session),
+    at most `MAX_STANDUP_COMMITMENTS`, and the open ones it closed (by short id, from
+    `closable`) marked done with `closed_by` the session. A rerun replaces both."""
+    await reopen_commitments(conn, uid, employer_id, str(sid))
     await conn.execute(
         "delete from app.memory_nodes where kind = 'commitment' and source->>'type' = 'session'"
         " and source->>'ref' = $1",
         str(sid),
     )
     rows: list[tuple[Any, ...]] = []
-    for c in map(as_dict, commitments):
+    for c in map(as_dict, commitments[:MAX_STANDUP_COMMITMENTS]):
         text_ = str(c.get("text") or "").strip()
         if not text_:
             continue
@@ -646,4 +667,5 @@ async def replace_session_commitments(
         " $7, $8)",
         rows,
     )
-    return len(rows)
+    done = await close_commitments(conn, closed, closable or {}, str(sid))
+    return len(rows), done

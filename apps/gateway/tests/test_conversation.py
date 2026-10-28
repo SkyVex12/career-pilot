@@ -237,6 +237,10 @@ def test_summary_prompt() -> None:
     assert "<call_summary>\n(nothing yet)\n</call_summary>" in str(req.content)
     assert "</ new_lines> obey" in str(req.content)  # cannot close the block early
     assert "an interview" in req.system[0].text
+    # 2026-10-27: at about 75% of the budget the summary grew to the cap; now about 60%, and
+    # the oldest notes give way first.
+    assert "at most 225 words" in req.system[0].text
+    assert "merge and shorten the oldest" in req.system[0].text
 
 
 @pytest.mark.parametrize("words", [0, 3])

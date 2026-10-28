@@ -85,6 +85,13 @@ type = "standup_status"
 case = "\"you\" right after the user spoke"
 
 [[utterance]]
+id = "dana_asks_sam_after_alex"
+parts = ["Sam, are you still blocked on the carrier sandbox keys?"]
+gap_s = 1.5
+expect = "none"
+case = "right after the user spoke, but to someone else by name (written after 10-27)"
+
+[[utterance]]
 id = "dana_reminder"
 parts = ["Alex, remember what I said about not putting carrier-specific code into the shared client library?"]
 gap_s = 2.0
