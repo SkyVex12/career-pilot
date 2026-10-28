@@ -7,10 +7,13 @@
 //! conversation with `snapshot` (see `history`).
 
 mod history;
+mod hotkeys;
+mod layout;
 mod release;
 mod settings;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -26,6 +29,8 @@ use copilot_client::net::close::StopReason;
 use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::Mode;
 use history::History;
+use hotkeys::Action;
+use layout::MonitorLayout;
 use release::UpdateState;
 use release::journal::Journal;
 use release::schedule::{Activity, AfterStart, Gate, Starting};
@@ -33,7 +38,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Environment, Settings, insecure_url_warning};
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
@@ -41,6 +49,9 @@ use uuid::Uuid;
 const EVENT: &str = "copilot://event";
 /// The settings changed without the UI asking (the sign-in settings fetched at startup).
 const SETTINGS_EVENT: &str = "copilot://settings";
+/// The overlay's live comfort prefs (opacity, view, click-through), pushed to the overlay
+/// window when a hotkey or a move between monitors changes them.
+const OVERLAY_EVENT: &str = "copilot://overlay";
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// The Credential Manager entry older versions kept the recordings' key in.
 const OLD_RECORDING_KEY: &str = "me-audio-key";
@@ -61,6 +72,28 @@ struct AppState {
     activity: Mutex<Activity>,
     /// A session starting, or an update installing: never both (release::schedule::Gate).
     gate: Gate,
+    /// The overlay's live state: whether clicks pass through it, the shortcuts registered now
+    /// (so the global-shortcut handler can tell which action fired), and a counter that lets a
+    /// burst of move or resize events settle before the new frame is saved.
+    overlay: OverlayState,
+}
+
+#[derive(Default)]
+struct OverlayState {
+    click_through: AtomicBool,
+    geom_gen: AtomicU64,
+    shortcuts: Mutex<Vec<(Shortcut, Action)>>,
+}
+
+/// The overlay's comfort prefs for the webview: how see-through it is, whether it is compact,
+/// and whether clicks are passing through (so it can show the click-through indicator).
+#[derive(Clone, Serialize)]
+struct OverlayPrefs {
+    opacity: f64,
+    compact: bool,
+    click_through: bool,
+    /// The key that turns click-through off, so the indicator can name it (hotkeys.rs).
+    click_through_off: String,
 }
 
 impl AppState {
@@ -192,6 +225,9 @@ struct SettingsView {
     /// Plain HTTP or WS to another machine, for the active environment.
     warnings: Vec<String>,
     updates: UpdatesView,
+    /// Hotkeys that do not parse, and sets of hotkeys bound to one key (hotkeys.rs), for the
+    /// settings screen to warn about.
+    hotkey_review: hotkeys::Review,
 }
 
 #[tauri::command]
@@ -205,6 +241,7 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
     };
     let (gateway, api) = settings.active_urls();
     let warnings = [gateway, api].into_iter().filter_map(insecure_url_warning).collect();
+    let hotkey_review = hotkeys::review(&settings);
     SettingsView {
         settings,
         version: app.package_info().version.to_string(),
@@ -215,6 +252,7 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
         ready,
         warnings,
         updates: UpdatesView { enabled: release::config().is_some(), checked_at: checked_at(&app) },
+        hotkey_review,
     }
 }
 
@@ -256,12 +294,12 @@ fn save_settings(
     if let Some(token) = dev_token {
         state.dev_tokens.save(&token).map_err(|e| e.to_string())?;
     }
-    let hotkey_changed = state.settings.lock().unwrap().hotkey != settings.hotkey;
     let kept = state.settings.lock().unwrap().clone();
     // The sign-in settings belong to the stage they came from: a new cloud API URL needs a new
     // sign-in.
     let oauth = if settings.cloud_api_url.trim() == kept.cloud_api_url.trim() { kept.oauth } else { None };
-    // What the app keeps for itself, whatever the screen sent.
+    // What the app keeps for itself, whatever the screen sent (the per-monitor overlay layouts
+    // and the monitor it was last on are the app's, not the screen's).
     state.update_settings(|s| {
         *s = Settings {
             last_session_id: kept.last_session_id,
@@ -269,15 +307,16 @@ fn save_settings(
             oauth,
             last_version: kept.last_version,
             pending_update: kept.pending_update,
+            layouts: kept.layouts,
+            overlay_monitor: kept.overlay_monitor,
             ..settings.clone()
         }
     });
     // A waiting update shows the new mode at once.
     #[cfg(feature = "release")]
     release::updater::refresh_ready(&app);
-    if hotkey_changed {
-        register_hotkey(&app, &settings.hotkey)?;
-    }
+    // The hotkeys may have been rebound: register the new set.
+    register_hotkeys(&app);
     Ok(())
 }
 
@@ -681,14 +720,242 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     if show { w.show() } else { w.hide() }.map_err(|e| e.to_string())
 }
 
-fn register_hotkey(app: &AppHandle, accelerator: &str) -> Res<()> {
+/// Register every bound hotkey from settings and remember which action each fired key drives,
+/// so the handler can dispatch. Invalid or unbound accelerators are skipped (the settings
+/// screen flags them); the click-through off switch always keeps a working key (hotkeys.rs).
+fn register_hotkeys(app: &AppHandle) {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    if accelerator.trim().is_empty() {
-        return Ok(());
+    let state = app.state::<AppState>();
+    let to_reg = hotkeys::to_register(&state.settings.lock().unwrap());
+    let mut registered = Vec::new();
+    for (shortcut, action) in to_reg {
+        match gs.register(shortcut) {
+            Ok(()) => registered.push((shortcut, action)),
+            Err(e) => tracing::warn!("hotkey for {action:?} not registered: {e}"),
+        }
     }
-    let shortcut: Shortcut = accelerator.parse().map_err(|e| format!("hotkey {accelerator:?}: {e}"))?;
-    gs.register(shortcut).map_err(|e| format!("hotkey {accelerator:?}: {e}"))
+    *state.overlay.shortcuts.lock().unwrap() = registered;
+}
+
+/// Run the action a hotkey is bound to. Keeps the overlay comfort actions off the force-
+/// question path, which still needs a running session.
+fn dispatch(app: &AppHandle, action: Action) {
+    match action {
+        Action::ForceQuestion => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let engine = app.state::<AppState>().engine.lock().unwrap().clone();
+                if let Some(engine) = engine {
+                    engine.force_question(None).await;
+                }
+            });
+        }
+        Action::ToggleOverlay => toggle_overlay(app),
+        Action::ClickThrough => {
+            let on = !app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
+            apply_click_through(app, on);
+        }
+        Action::ClickThroughOff => apply_click_through(app, false),
+        Action::OpacityUp => nudge_opacity(app, 1),
+        Action::OpacityDown => nudge_opacity(app, -1),
+    }
+}
+
+fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window("overlay")
+}
+
+/// The overlay's outer frame right now (physical pixels).
+fn overlay_frame(w: &WebviewWindow) -> Option<(i32, i32, u32, u32)> {
+    let pos = w.outer_position().ok()?;
+    let size = w.inner_size().ok()?;
+    Some((pos.x, pos.y, size.width, size.height))
+}
+
+/// The monitors that exist now, by their work area (so the overlay never hides under a taskbar).
+fn monitor_infos(w: &WebviewWindow) -> Vec<layout::MonitorInfo> {
+    w.available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let a = m.work_area();
+            layout::MonitorInfo {
+                key: layout::monitor_key(
+                    m.name().map(String::as_str),
+                    a.position.x,
+                    a.position.y,
+                    a.size.width,
+                    a.size.height,
+                ),
+                x: a.position.x,
+                y: a.position.y,
+                w: a.size.width,
+                h: a.size.height,
+            }
+        })
+        .collect()
+}
+
+/// The monitor the overlay is on now and the layout remembered for it, deriving a default from
+/// the current frame when that monitor has none saved yet.
+fn current_layout(app: &AppHandle) -> Option<(String, MonitorLayout)> {
+    let w = overlay_window(app)?;
+    let (x, y, fw, fh) = overlay_frame(&w)?;
+    let monitors = monitor_infos(&w);
+    let idx = layout::monitor_for_window(&monitors, x, y, fw, fh)?;
+    let key = monitors[idx].key.clone();
+    let saved = app.state::<AppState>().settings.lock().unwrap().layouts.get(&key).copied();
+    let l =
+        saved.unwrap_or(MonitorLayout { x, y, w: fw, h: fh, opacity: layout::MAX_OPACITY, compact: false });
+    Some((key, l))
+}
+
+fn store_layout(app: &AppHandle, key: &str, l: MonitorLayout) {
+    app.state::<AppState>().update_settings(|s| {
+        s.layouts.insert(key.to_string(), l);
+        s.overlay_monitor = Some(key.to_string());
+    });
+}
+
+/// Push the overlay's current prefs to the overlay window (opacity and view it renders, and
+/// whether to show the click-through indicator).
+fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
+    let state = app.state::<AppState>();
+    let click_through = state.overlay.click_through.load(Ordering::SeqCst);
+    let click_through_off = hotkeys::click_through_off(&state.settings.lock().unwrap());
+    let _ = app.emit_to(
+        "overlay",
+        OVERLAY_EVENT,
+        OverlayPrefs { opacity: l.opacity, compact: l.compact, click_through, click_through_off },
+    );
+}
+
+fn toggle_overlay(app: &AppHandle) {
+    let Some(w) = overlay_window(app) else { return };
+    if matches!(w.is_visible(), Ok(true)) {
+        let _ = w.hide();
+    } else {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Let clicks pass through the overlay to the window underneath, or stop that. Turning it on
+/// also shows the overlay, so the indicator and its "off" key are on screen; turning it off is
+/// always reachable from the keyboard (hotkeys.rs), the escape hatch from a click-through state.
+fn apply_click_through(app: &AppHandle, on: bool) {
+    let Some(w) = overlay_window(app) else { return };
+    if on {
+        let _ = w.show();
+    }
+    let _ = w.set_ignore_cursor_events(on);
+    app.state::<AppState>().overlay.click_through.store(on, Ordering::SeqCst);
+    let l = current_layout(app).map(|(_, l)| l).unwrap_or(MonitorLayout {
+        x: 0,
+        y: 0,
+        w: layout::DEFAULT_W,
+        h: layout::DEFAULT_H,
+        opacity: layout::MAX_OPACITY,
+        compact: false,
+    });
+    emit_prefs(app, l);
+}
+
+fn nudge_opacity(app: &AppHandle, steps: i32) {
+    let Some((key, mut l)) = current_layout(app) else { return };
+    l.opacity = layout::step_opacity(l.opacity, steps);
+    store_layout(app, &key, l);
+    emit_prefs(app, l);
+}
+
+/// Debounced save of the overlay's frame as it is dragged or resized: a burst of events bumps
+/// a counter, and only the last one (after a short quiet) writes, so settings are not churned.
+fn schedule_remember(app: &AppHandle) {
+    let generation = app.state::<AppState>().overlay.geom_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        if app.state::<AppState>().overlay.geom_gen.load(Ordering::SeqCst) == generation {
+            remember_geometry(&app);
+        }
+    });
+}
+
+/// File the overlay's current frame under the monitor it now sits on, keeping that monitor's
+/// remembered opacity and view. When it has crossed to a different monitor, that monitor's
+/// saved opacity and view are applied so each screen keeps its own feel.
+fn remember_geometry(app: &AppHandle) {
+    let Some(w) = overlay_window(app) else { return };
+    let Some((x, y, fw, fh)) = overlay_frame(&w) else { return };
+    let monitors = monitor_infos(&w);
+    let Some(idx) = layout::monitor_for_window(&monitors, x, y, fw, fh) else { return };
+    let key = monitors[idx].key.clone();
+    let (prev_monitor, saved) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.overlay_monitor.clone(), s.layouts.get(&key).copied())
+    };
+    let mut l =
+        saved.unwrap_or(MonitorLayout { x, y, w: fw, h: fh, opacity: layout::MAX_OPACITY, compact: false });
+    l.x = x;
+    l.y = y;
+    l.w = fw;
+    l.h = fh;
+    store_layout(app, &key, l);
+    if prev_monitor.as_deref() != Some(key.as_str()) {
+        emit_prefs(app, l);
+    }
+}
+
+/// Place the overlay where it was last left, recovering onto a monitor that still exists when
+/// the one it was on is gone (layout.rs). Called once at startup, before the overlay is shown.
+fn place_overlay(app: &AppHandle) {
+    let Some(w) = overlay_window(app) else { return };
+    let monitors = monitor_infos(&w);
+    let (layouts, prefer) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.layouts.clone(), s.overlay_monitor.clone())
+    };
+    if let Some(p) = layout::place(&layouts, &monitors, prefer.as_deref()) {
+        let _ = w.set_size(PhysicalSize::new(p.layout.w, p.layout.h));
+        let _ = w.set_position(PhysicalPosition::new(p.layout.x, p.layout.y));
+        store_layout(app, &p.key, p.layout);
+    }
+}
+
+/// The overlay's starting prefs, which the overlay window asks for as it mounts.
+#[tauri::command]
+fn overlay_prefs(app: AppHandle, state: State<'_, AppState>) -> OverlayPrefs {
+    let click_through = state.overlay.click_through.load(Ordering::SeqCst);
+    let click_through_off = hotkeys::click_through_off(&state.settings.lock().unwrap());
+    let (opacity, compact) =
+        current_layout(&app).map(|(_, l)| (l.opacity, l.compact)).unwrap_or((layout::MAX_OPACITY, false));
+    OverlayPrefs { opacity, compact, click_through, click_through_off }
+}
+
+/// The opacity slider in settings, and the overlay's opacity hotkeys through `nudge_opacity`.
+#[tauri::command]
+fn set_overlay_opacity(app: AppHandle, value: f64) {
+    let Some((key, mut l)) = current_layout(&app) else { return };
+    l.opacity = layout::clamp_opacity(value);
+    store_layout(&app, &key, l);
+    emit_prefs(&app, l);
+}
+
+/// The overlay's compact toggle: remember the view for the monitor it is on.
+#[tauri::command]
+fn set_overlay_view(app: AppHandle, compact: bool) {
+    let Some((key, mut l)) = current_layout(&app) else { return };
+    l.compact = compact;
+    store_layout(&app, &key, l);
+}
+
+/// The overlay's click-through button (turning it on; the off switch is a hotkey).
+#[tauri::command]
+fn set_click_through(app: AppHandle, on: bool) {
+    apply_click_through(&app, on);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -705,18 +972,23 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    // The hotkey forces a question when detection missed one.
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let engine = app.state::<AppState>().engine.lock().unwrap().clone();
-                        if let Some(engine) = engine {
-                            engine.force_question(None).await;
-                        }
-                    });
+                    // Find which action this key is bound to now, then run it.
+                    let action = app
+                        .state::<AppState>()
+                        .overlay
+                        .shortcuts
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|(sc, _)| sc == shortcut)
+                        .map(|(_, a)| *a);
+                    if let Some(action) = action {
+                        dispatch(app, action);
+                    }
                 })
                 .build(),
         )
@@ -756,7 +1028,6 @@ pub fn run() {
                 tracing::warn!("could not save settings: {e}");
             }
             let needs_auth_config = release::config().is_some() && settings.oauth.is_none();
-            let hotkey = settings.hotkey.clone();
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             // Versions before live transcription recorded the user's audio for an upload after
             // the call; the gateway no longer takes those, so what is left goes, with its key.
@@ -777,14 +1048,13 @@ pub fn run() {
                 started: Instant::now(),
                 activity: Mutex::new(Activity::default()),
                 gate: Gate::default(),
+                overlay: OverlayState::default(),
             });
             #[cfg(feature = "release")]
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
-            if let Err(e) = register_hotkey(app.handle(), &hotkey) {
-                tracing::warn!("{e}");
-            }
+            register_hotkeys(app.handle());
             // GET /me first (it woke Aurora when Stage 0 was to scale it to zero; now it checks
             // the sign-in).
             let handle = app.handle().clone();
@@ -809,15 +1079,28 @@ pub fn run() {
                     tracing::info!("GET /me at startup: {}", api_error(&handle, e));
                 }
             });
-            WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
-                .title("Copilot overlay")
-                .inner_size(440.0, 620.0)
-                .min_inner_size(320.0, 240.0)
-                .always_on_top(true)
-                .decorations(false)
-                .skip_taskbar(true)
-                .visible(false)
-                .build()?;
+            // Transparent so the opacity setting can make the overlay see-through to the window
+            // underneath (the panel paints its own translucent background in styles.css).
+            let overlay =
+                WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
+                    .title("Copilot overlay")
+                    .inner_size(440.0, 620.0)
+                    .min_inner_size(320.0, 240.0)
+                    .always_on_top(true)
+                    .decorations(false)
+                    .skip_taskbar(true)
+                    .transparent(true)
+                    .visible(false)
+                    .build()?;
+            // Save the overlay's frame per monitor as it is dragged or resized (debounced).
+            let handle = app.handle().clone();
+            overlay.on_window_event(move |event| {
+                if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                    schedule_remember(&handle);
+                }
+            });
+            // Reopen where it was last left, recovering onto a monitor that still exists.
+            place_overlay(app.handle());
             #[cfg(feature = "release")]
             release::updater::start(app.handle());
             Ok(())
@@ -844,6 +1127,10 @@ pub fn run() {
             snapshot,
             live_status,
             show_overlay,
+            overlay_prefs,
+            set_overlay_opacity,
+            set_overlay_view,
+            set_click_through,
             update_status,
             install_update,
             check_updates,

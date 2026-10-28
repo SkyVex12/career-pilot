@@ -63,7 +63,17 @@ export interface Settings {
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
+  /** The force-question hotkey, and the overlay's comfort hotkeys (all rebindable). */
   hotkey: string;
+  toggle_overlay_hotkey: string;
+  click_through_hotkey: string;
+  click_through_off_hotkey: string;
+  opacity_up_hotkey: string;
+  opacity_down_hotkey: string;
+  /** Per-monitor overlay frame/opacity/view and the monitor last used: the app manages these,
+   * the settings screen sends them back unchanged. */
+  layouts: Record<string, MonitorLayout>;
+  overlay_monitor: string | null;
   show_debug: boolean;
   last_session_id: string | null;
   /** The profile the app acts for (set with `api.setProfile`); null is the account ("Me"). */
@@ -73,6 +83,39 @@ export interface Settings {
   /** Kept by the app for the "Updated to" note; the screen sends them back unchanged. */
   last_version: string | null;
   pending_update: string | null;
+}
+
+export interface MonitorLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  opacity: number;
+  compact: boolean;
+}
+
+/** The overlay's comfort hotkeys (src-tauri/src/hotkeys.rs). Each maps to a settings field. */
+export type HotkeyAction =
+  | "force_question"
+  | "toggle_overlay"
+  | "click_through"
+  | "click_through_off"
+  | "opacity_up"
+  | "opacity_down";
+
+/** Hotkeys that do not parse, and sets of hotkeys sharing one key (hotkeys.rs `Review`). */
+export interface HotkeyReview {
+  invalid: { action: HotkeyAction; accelerator: string; error: string }[];
+  conflicts: { accelerator: string; actions: HotkeyAction[] }[];
+}
+
+/** The overlay's live comfort prefs, from `overlay_prefs` and the `copilot://overlay` event. */
+export interface OverlayPrefs {
+  opacity: number;
+  compact: boolean;
+  click_through: boolean;
+  /** The key that turns click-through off, shown in the indicator. */
+  click_through_off: string;
 }
 
 // src-tauri get_settings
@@ -95,6 +138,8 @@ export interface SettingsView {
     /** The last update check, Unix milliseconds. */
     checked_at: number | null;
   };
+  /** Hotkeys that do not parse, and sets of hotkeys bound to one key. */
+  hotkey_review: HotkeyReview;
 }
 
 export interface DeviceInfo {
@@ -223,7 +268,20 @@ export const api = {
   snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
   showOverlay: (show: boolean) => invoke<void>("show_overlay", { show }),
+  /** The overlay's starting opacity, view and click-through (the overlay asks on mount). */
+  overlayPrefs: () => invoke<OverlayPrefs>("overlay_prefs"),
+  /** Set the overlay's opacity for the monitor it is on (the settings slider). */
+  setOverlayOpacity: (value: number) => invoke<void>("set_overlay_opacity", { value }),
+  /** Remember the overlay's view (compact or full) for the monitor it is on. */
+  setOverlayView: (compact: boolean) => invoke<void>("set_overlay_view", { compact }),
+  /** Turn click-through on (clicks pass to the window below). Off is a hotkey, always working. */
+  setClickThrough: (on: boolean) => invoke<void>("set_click_through", { on }),
 };
+
+/** The overlay's comfort prefs changed (a hotkey, or a move to another monitor). */
+export function onOverlayPrefs(handler: (p: OverlayPrefs) => void): Promise<UnlistenFn> {
+  return listen<OverlayPrefs>("copilot://overlay", (e) => handler(e.payload));
+}
 
 /// `n` numbers events within a session, from 0.
 export interface Numbered {

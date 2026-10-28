@@ -604,11 +604,51 @@ input[type="checkbox"] {
   }
 }
 
+/* Settings: the overlay hotkey list */
+
+.hotkeys {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hotkey {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.hotkey-label {
+  grid-column: 1;
+}
+
+.hotkey input {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.hotkey-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.hotkey .warn {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+input.bad {
+  border-color: var(--bad);
+}
+
 /* Overlay window */
 
+/* The overlay window is transparent (src-tauri sets it so), so the panel paints its own
+   translucent background and the opacity setting dims the whole panel toward the desktop. */
 html[data-window="overlay"],
 html[data-window="overlay"] body {
-  background: var(--overlay-bg);
+  background: transparent;
   color: var(--overlay-text);
   height: 100%;
 }
@@ -621,6 +661,24 @@ html[data-window="overlay"] #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: var(--overlay-bg);
+}
+
+/* Shown while clicks pass through the overlay; it names the key that turns click-through off,
+   since the mouse cannot reach the app while it is on. */
+.clickthrough {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #fff;
+  background: #8a5a00;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
 }
 
 .overlay .muted,

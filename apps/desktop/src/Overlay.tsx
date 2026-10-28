@@ -7,7 +7,7 @@
 // thumbs and the status badge as before; a compact mode for a small window.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, inTauri } from "./api";
+import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { badge, conversation, deepStartsAlone, useSession, type ConversationItem, type QuestionView, type SessionView } from "./session";
@@ -30,6 +30,49 @@ function saveCompact(on: boolean) {
   }
 }
 
+/** The overlay's comfort prefs, kept by the Rust core per monitor: opacity and view it renders,
+ * and whether clicks are passing through it. The core pushes changes (a hotkey, or a move to
+ * another monitor); the overlay asks once on mount. `compact` keeps a localStorage copy so the
+ * first paint matches, before the core answers. */
+function useOverlayPrefs() {
+  const [opacity, setOpacity] = useState(1);
+  const [compact, setCompactState] = useState(loadCompact);
+  const [clickThrough, setClickThrough] = useState(false);
+  const [offHotkey, setOffHotkey] = useState("");
+
+  useEffect(() => {
+    if (!inTauri) return;
+    let live = false;
+    const apply = (p: OverlayPrefs) => {
+      setOpacity(p.opacity);
+      setCompactState(p.compact);
+      saveCompact(p.compact);
+      setClickThrough(p.click_through);
+      setOffHotkey(p.click_through_off);
+    };
+    const off = onOverlayPrefs((p) => {
+      live = true;
+      apply(p);
+    });
+    api
+      .overlayPrefs()
+      .then((p) => {
+        if (!live) apply(p);
+      })
+      .catch(() => undefined);
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
+
+  const setCompact = (on: boolean) => {
+    setCompactState(on);
+    saveCompact(on);
+    if (inTauri) api.setOverlayView(on).catch(() => undefined);
+  };
+  return { opacity, compact, clickThrough, offHotkey, setCompact };
+}
+
 /// Changes whenever anything shown grows, so the view can follow it.
 function contentSize(items: ConversationItem[]): string {
   let chars = 0;
@@ -43,7 +86,7 @@ function contentSize(items: ConversationItem[]): string {
 export default function Overlay() {
   const [s, dispatch] = useSession();
   const items = useMemo(() => conversation(s), [s]);
-  const [compact, setCompact] = useState(loadCompact);
+  const { opacity, compact, clickThrough, offHotkey, setCompact } = useOverlayPrefs();
   const shown = useMemo(() => (compact ? items.filter((i) => i.kind === "question") : items), [items, compact]);
   const size = contentSize(shown);
   const body = useRef<HTMLDivElement>(null);
@@ -70,15 +113,15 @@ export default function Overlay() {
     follower.current.jump(el);
     setJump(false);
   };
-  const toggleCompact = () => {
-    setCompact((c) => {
-      saveCompact(!c);
-      return !c;
-    });
-  };
+  const toggleCompact = () => setCompact(!compact);
 
   return (
-    <div className={compact ? "overlay compact" : "overlay"}>
+    <div className={compact ? "overlay compact" : "overlay"} style={{ opacity }}>
+      {clickThrough && (
+        <div className="clickthrough" role="status">
+          Click-through on{offHotkey ? ` — ${offHotkey} to turn off` : " — use your turn-off hotkey"}
+        </div>
+      )}
       <header className="overlay-head" data-tauri-drag-region>
         <span className={`badge badge-${b.state}`} title={b.text} data-tauri-drag-region>
           <span className="dot" />
@@ -91,6 +134,13 @@ export default function Overlay() {
         <span className="spacer" data-tauri-drag-region />
         <button className="icon" title={compact ? "Show the whole conversation" : "Compact: answers only"} onClick={toggleCompact}>
           {compact ? "☰" : "▭"}
+        </button>
+        <button
+          className="icon"
+          title="Click-through: let clicks pass to the window underneath (a hotkey turns it back off)"
+          onClick={() => inTauri && api.setClickThrough(true).catch(() => undefined)}
+        >
+          ⇲
         </button>
         <button className="icon" title="Hide overlay" onClick={() => inTauri && getCurrentWindow().hide()}>
           ×
