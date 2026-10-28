@@ -63,6 +63,8 @@ pub struct Settings {
     /// last on so it reopens there (layout.rs). Managed by the app, not the settings screen.
     pub layouts: BTreeMap<String, MonitorLayout>,
     pub overlay_monitor: Option<String>,
+    /// The overlay stays above other windows (the overlay's "Keep on top" toggle).
+    pub overlay_on_top: bool,
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
@@ -97,6 +99,7 @@ impl Default for Settings {
             opacity_down_hotkey: "CommandOrControl+Shift+Down".into(),
             layouts: BTreeMap::new(),
             overlay_monitor: None,
+            overlay_on_top: true,
             show_debug: false,
             last_session_id: None,
             profile: None,

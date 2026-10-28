@@ -74,6 +74,8 @@ export interface Settings {
    * the settings screen sends them back unchanged. */
   layouts: Record<string, MonitorLayout>;
   overlay_monitor: string | null;
+  /** The overlay stays above other windows ("Keep on top"). */
+  overlay_on_top: boolean;
   show_debug: boolean;
   last_session_id: string | null;
   /** The profile the app acts for (set with `api.setProfile`); null is the account ("Me"). */
@@ -109,13 +111,23 @@ export interface HotkeyReview {
   conflicts: { accelerator: string; actions: HotkeyAction[] }[];
 }
 
+/** The overlay's hotkeys shown as chips on its settings menu. */
+export interface OverlayHotkeys {
+  toggle_overlay: string;
+  click_through: string;
+  click_through_off: string;
+  opacity_up: string;
+  opacity_down: string;
+}
+
 /** The overlay's live comfort prefs, from `overlay_prefs` and the `copilot://overlay` event. */
 export interface OverlayPrefs {
   opacity: number;
   compact: boolean;
   click_through: boolean;
-  /** The key that turns click-through off, shown in the indicator. */
-  click_through_off: string;
+  /** The overlay stays above other windows. */
+  on_top: boolean;
+  hotkeys: OverlayHotkeys;
 }
 
 // src-tauri get_settings
@@ -276,11 +288,22 @@ export const api = {
   setOverlayView: (compact: boolean) => invoke<void>("set_overlay_view", { compact }),
   /** Turn click-through on (clicks pass to the window below). Off is a hotkey, always working. */
   setClickThrough: (on: boolean) => invoke<void>("set_click_through", { on }),
+  /** The overlay "Keep on top" toggle. */
+  setOverlayOnTop: (on: boolean) => invoke<void>("set_overlay_on_top", { on }),
+  /** Bring the main window forward on its Settings screen ("All settings…"). */
+  openMainSettings: () => invoke<void>("open_main_settings"),
+  /** Quit the whole app. */
+  quitApp: () => invoke<void>("quit_app"),
 };
 
 /** The overlay's comfort prefs changed (a hotkey, or a move to another monitor). */
 export function onOverlayPrefs(handler: (p: OverlayPrefs) => void): Promise<UnlistenFn> {
   return listen<OverlayPrefs>("copilot://overlay", (e) => handler(e.payload));
+}
+
+/** The overlay asked the main window to open its Settings screen ("All settings…"). */
+export function onOpenSettings(handler: () => void): Promise<UnlistenFn> {
+  return listen("copilot://open-settings", () => handler());
 }
 
 /// `n` numbers events within a session, from 0.

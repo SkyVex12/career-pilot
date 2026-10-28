@@ -6,6 +6,7 @@ import type { Mode } from "@copilot/protocol";
 import {
   api,
   inTauri,
+  onOpenSettings,
   onSettingsChanged,
   onUpdate,
   rest,
@@ -70,8 +71,11 @@ export default function App() {
     if (!inTauri) return;
     reload();
     const off = onSettingsChanged(reload);
+    // The overlay's "All settings…" opens this window on the Settings screen.
+    const offOpen = onOpenSettings(() => setTab("settings"));
     return () => {
       off.then((f) => f());
+      offOpen.then((f) => f());
     };
   }, []);
   useEffect(() => {
