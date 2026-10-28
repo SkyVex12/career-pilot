@@ -970,6 +970,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
