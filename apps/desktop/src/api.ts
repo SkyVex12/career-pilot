@@ -94,8 +94,6 @@ export interface SettingsView {
     enabled: boolean;
     /** The last update check, Unix milliseconds. */
     checked_at: number | null;
-    /** The newest lines of updates.log, oldest first. */
-    log: { at_ms: number; message: string }[];
   };
 }
 
@@ -151,8 +149,15 @@ export interface StartRequest {
 /** src-tauri release.rs UpdateState (release builds). */
 export type UpdateState =
   | { state: "none" }
-  /** Downloaded and verified. auto: installs by itself when no session runs. */
-  | { state: "ready"; version: string; notes: string | null; auto: boolean }
+  | { state: "checking" }
+  /** The last check found nothing newer than this (the running) version. */
+  | { state: "up_to_date"; version: string; checked_at: number }
+  | { state: "check_failed"; message: string; checked_at: number }
+  /** percent: null until the size is known. */
+  | { state: "downloading"; version: string; percent: number | null }
+  /** Downloaded and verified. auto: installs by itself when no session runs; install_in_s:
+   * seconds until it does if nothing changes (null: not by itself, or a session runs). */
+  | { state: "ready"; version: string; notes: string | null; auto: boolean; install_in_s: number | null }
   | { state: "installing"; version: string }
   /** The app restarted into this version. */
   | { state: "updated"; version: string }

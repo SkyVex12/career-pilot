@@ -19,7 +19,7 @@ import {
   type UpdateState,
 } from "./api";
 import { cloudUrlsFor } from "./urls";
-import { ago, banner } from "./updates";
+import { ago, bar, settingsLine } from "./updates";
 import { parseTarget, upcoming } from "./catalog";
 import { Applications, roundLabel, useCatalog } from "./Applications";
 import { applicationOption } from "./pairing";
@@ -114,7 +114,7 @@ export default function App() {
           <StatusBadge session={session} />
         </div>
       </nav>
-      <UpdateBanner running={session.running} />
+      <UpdateBar running={session.running} />
       {/* A switch remounts every screen, so each one loads the new profile's data. */}
       <ProfileContext.Provider value={profiles.state} key={profiles.state.here ?? "me"}>
         {tab === "start" && (
@@ -167,48 +167,67 @@ function ProfileSwitch({
   );
 }
 
-/** Release builds update themselves (src-tauri/src/release.rs). The banner says when that
- * happened, and in "ask me first" mode offers the install. */
-function UpdateBanner({ running }: { running: boolean }) {
+/** The updater's state, live: every step the Rust side takes arrives as an event. */
+function useUpdate(): UpdateState {
   const [update, setUpdate] = useState<UpdateState>({ state: "none" });
-  const [error, setError] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
-    api.updateStatus().then(setUpdate);
+    if (!inTauri) return;
+    let live = false;
     const off = onUpdate((u) => {
+      live = true;
       setUpdate(u);
-      setDismissed(false);
     });
+    // The state before this window listened; an event that came first wins.
+    api
+      .updateStatus()
+      .then((u) => {
+        if (!live) setUpdate(u);
+      })
+      .catch(() => {});
     return () => {
       off.then((f) => f());
     };
   }, []);
-  const b = banner(update, running);
-  if (b.kind === "none" || dismissed) return null;
-  if (b.kind === "note") {
-    return (
-      <p className="callout">
-        {b.text}{" "}
-        {b.dismissible && (
-          <button className="link" onClick={() => setDismissed(true)}>
-            OK
-          </button>
-        )}
-      </p>
-    );
-  }
+  return update;
+}
+
+/** Release builds update themselves (src-tauri/src/release.rs). While an update downloads,
+ * waits or installs, this bar under the tabs says what is happening, with its progress. */
+function UpdateBar({ running }: { running: boolean }) {
+  const update = useUpdate();
+  const [error, setError] = useState<string | null>(null);
+  // Dismissing hides this state only; the next step shows again.
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const key = JSON.stringify(update);
+  useEffect(() => setError(null), [update.state]);
+  const b = bar(update, running);
+  if (b.kind === "none" || dismissed === key) return null;
   const install = () => {
     setError(null);
     api.installUpdate().catch((e) => setError(String(e)));
   };
   return (
-    <p className="callout">
-      {b.text}{" "}
-      <button className="primary" onClick={install} disabled={!b.canInstall}>
-        Install and restart
-      </button>
-      {error && <span className="note"> {error}</span>}
-    </p>
+    <div className={`update-bar update-${b.tone}`} role="status" aria-live="polite">
+      <div className="update-row">
+        <span className="update-text">{b.text}</span>
+        {error && <span className="update-error">{error}</span>}
+        {b.action && (
+          <button className="primary small" onClick={install} disabled={!b.action.enabled}>
+            {b.action.label}
+          </button>
+        )}
+        {b.dismissible && (
+          <button className="link" onClick={() => setDismissed(key)}>
+            OK
+          </button>
+        )}
+      </div>
+      {b.progress !== undefined && (
+        <div className={`update-track${b.progress === null ? " moving" : ""}`}>
+          <div className="update-fill" style={b.progress === null ? undefined : { width: `${b.progress}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -651,6 +670,7 @@ function packNote(pack: { available: boolean } | null | undefined): string {
 function SettingsScreen({ view, running, onSaved }: { view: SettingsView; running: boolean; onSaved: () => void }) {
   const settings = view.settings;
   const tokenSet = view.dev_token_set;
+  const update = useUpdate();
   const [draft, setDraft] = useState(settings);
   const [token, setToken] = useState("");
   const [host, setHost] = useState("");
@@ -711,13 +731,10 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
 
   const release = view.release;
   const updates = view.updates;
+  const updateLine = settingsLine(update);
   const checkNow = () => {
     setMessage(null);
-    api
-      .checkUpdates()
-      .then(() => setMessage("Checking for updates…"))
-      .catch((e) => setMessage(String(e)));
-    setTimeout(onSaved, 5000); // the check's result lands in the log
+    api.checkUpdates().catch((e) => setMessage(String(e)));
   };
   return (
     <section className="panel">
@@ -727,8 +744,9 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
           <span>{view.version}</span>
           {updates.enabled ? (
             <p className="note">
-              Last checked {updates.checked_at ? ago(updates.checked_at) : "not yet"}. Checks at start and every four hours.{" "}
-              <button className="link" onClick={checkNow}>
+              {updateLine ?? `Last checked ${updates.checked_at ? ago(updates.checked_at) : "not yet"}.`} Checks at start and
+              every four hours.{" "}
+              <button className="link" onClick={checkNow} disabled={update.state === "checking" || update.state === "downloading"}>
                 Check now
               </button>
             </p>
@@ -746,24 +764,9 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
                 <option value="ask">Ask me first</option>
               </select>
               <p className="note">
-                Never during a call. Automatic updates install at start, a minute after a session ends, or after ten quiet
-                minutes, then the app restarts and says “Updated to …”.
+                Never during a call. Automatic updates install as soon as they are downloaded if you have not used the app
+                yet, otherwise after two minutes without a click or key press; the app then restarts and says “Updated to …”.
               </p>
-              {updates.log.length > 0 && (
-                <details>
-                  <summary className="note">Update log</summary>
-                  <ul className="note update-log">
-                    {updates.log
-                      .slice()
-                      .reverse()
-                      .map((e, i) => (
-                        <li key={i}>
-                          {new Date(e.at_ms).toLocaleString()}: {e.message}
-                        </li>
-                      ))}
-                  </ul>
-                </details>
-              )}
             </div>
           </>
         )}
