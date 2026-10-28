@@ -7,12 +7,15 @@
 //! browser sign-in: Google on GCP, Cognito on AWS). Switching does not lose the other's URLs.
 //! Files from before the rename (`aws`, `aws_*_url`, `cognito`) still load.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use copilot_client::oauth::OAuthConfig;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::hotkeys;
+use crate::layout::MonitorLayout;
 use crate::release::ReleaseConfig;
 use crate::release::schedule::UpdateMode;
 
@@ -44,8 +47,22 @@ pub struct Settings {
     pub mic_device: Option<String>,
     pub output_device: Option<String>,
     pub echo_cancellation: bool,
-    /// Global hotkey for question.force, in Tauri's accelerator syntax.
+    /// Global hotkey for question.force, in Tauri's accelerator syntax. The overlay's other
+    /// hotkeys are below; all are rebindable and checked for clashes (hotkeys.rs).
     pub hotkey: String,
+    /// Hide or show the overlay without ending the session.
+    pub toggle_overlay_hotkey: String,
+    /// Let clicks pass through the overlay to the window underneath, and turn that off again.
+    /// The off switch always keeps a working key (hotkeys::click_through_off).
+    pub click_through_hotkey: String,
+    pub click_through_off_hotkey: String,
+    /// Step the overlay's opacity.
+    pub opacity_up_hotkey: String,
+    pub opacity_down_hotkey: String,
+    /// The overlay's frame, opacity and view remembered per monitor, and the monitor it was
+    /// last on so it reopens there (layout.rs). Managed by the app, not the settings screen.
+    pub layouts: BTreeMap<String, MonitorLayout>,
+    pub overlay_monitor: Option<String>,
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
@@ -73,6 +90,13 @@ impl Default for Settings {
             output_device: None,
             echo_cancellation: true,
             hotkey: "CommandOrControl+Shift+Space".into(),
+            toggle_overlay_hotkey: "CommandOrControl+Shift+H".into(),
+            click_through_hotkey: "CommandOrControl+Shift+T".into(),
+            click_through_off_hotkey: hotkeys::CLICK_THROUGH_OFF_FALLBACK.into(),
+            opacity_up_hotkey: "CommandOrControl+Shift+Up".into(),
+            opacity_down_hotkey: "CommandOrControl+Shift+Down".into(),
+            layouts: BTreeMap::new(),
+            overlay_monitor: None,
             show_debug: false,
             last_session_id: None,
             profile: None,
@@ -239,6 +263,31 @@ mod tests {
         .unwrap();
         s.pin_to_release(&release);
         assert!(s.oauth.is_some());
+    }
+
+    #[test]
+    fn overlay_comfort_fields_default_in_old_files_and_round_trip() {
+        // A file from before overlay comfort has none of the new fields: they take defaults,
+        // and the force-question hotkey the file does set is kept.
+        let old = r#"{"hotkey":"F9"}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(s.hotkey, "F9");
+        assert_eq!(s.toggle_overlay_hotkey, "CommandOrControl+Shift+H");
+        assert_eq!(s.click_through_off_hotkey, crate::hotkeys::CLICK_THROUGH_OFF_FALLBACK);
+        assert!(s.layouts.is_empty());
+        assert!(s.overlay_monitor.is_none());
+
+        // The per-monitor layout and the chosen monitor survive a save/load round-trip.
+        let mut s = Settings::default();
+        s.layouts.insert(
+            "DISPLAY1".into(),
+            MonitorLayout { x: 40, y: 50, w: 480, h: 640, opacity: 0.7, compact: true },
+        );
+        s.overlay_monitor = Some("DISPLAY1".into());
+        let text = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(back.layouts["DISPLAY1"].opacity, 0.7);
     }
 
     #[test]

@@ -12,6 +12,7 @@ import {
   type CompanyDocument,
   type DeviceInfo,
   type Employer,
+  type HotkeyAction,
   type LiveStatus,
   type PackState,
   type Settings,
@@ -667,6 +668,48 @@ function packNote(pack: { available: boolean } | null | undefined): string {
   return pack.available ? "" : " (pack expired)";
 }
 
+/** The overlay's hotkeys, each tied to its settings field and action, in the order shown. */
+const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string; hint?: string }[] = [
+  { key: "hotkey", action: "force_question", label: "Answer the last thing said", hint: "When detection missed a question. Example: CommandOrControl+Shift+Space." },
+  { key: "toggle_overlay_hotkey", action: "toggle_overlay", label: "Hide or show the overlay", hint: "Hides and shows the overlay instantly; the session keeps running." },
+  { key: "click_through_hotkey", action: "click_through", label: "Click-through on or off", hint: "Lets clicks pass to the window underneath." },
+  { key: "click_through_off_hotkey", action: "click_through_off", label: "Turn click-through off", hint: "The way back. Always works: if cleared or mistyped it falls back to CommandOrControl+Shift+G." },
+  { key: "opacity_up_hotkey", action: "opacity_up", label: "Overlay more opaque" },
+  { key: "opacity_down_hotkey", action: "opacity_down", label: "Overlay more see-through" },
+];
+
+/** A rough normalization matching the Rust parser (hotkeys.rs), for live duplicate hints as the
+ * user types. The saved settings are also checked on the Rust side (view.hotkey_review), which
+ * additionally catches keys that do not parse. */
+function normAccel(a: string): string | null {
+  const parts = a.trim().split("+").map((p) => p.trim().toUpperCase()).filter(Boolean);
+  if (!parts.length) return null;
+  const mods = new Set<string>();
+  let key = "";
+  for (const p of parts) {
+    if (["CONTROL", "CTRL", "COMMANDORCONTROL", "COMMANDORCTRL", "CMDORCTRL", "CMDORCONTROL"].includes(p)) mods.add("CTRL");
+    else if (["COMMAND", "CMD", "SUPER"].includes(p)) mods.add("SUPER");
+    else if (["ALT", "OPTION"].includes(p)) mods.add("ALT");
+    else if (p === "SHIFT") mods.add("SHIFT");
+    else key = p;
+  }
+  if (!key) return null;
+  return [...[...mods].sort(), key].join("+");
+}
+
+/** The settings keys that share a hotkey with another, from the live draft. */
+function duplicateHotkeys(draft: Settings): Set<keyof Settings> {
+  const seen = new Map<string, (keyof Settings)[]>();
+  for (const { key } of HOTKEYS) {
+    const n = normAccel(String(draft[key] ?? ""));
+    if (!n) continue;
+    seen.set(n, [...(seen.get(n) ?? []), key]);
+  }
+  const dup = new Set<keyof Settings>();
+  for (const keys of seen.values()) if (keys.length > 1) keys.forEach((k) => dup.add(k));
+  return dup;
+}
+
 function SettingsScreen({ view, running, onSaved }: { view: SettingsView; running: boolean; onSaved: () => void }) {
   const settings = view.settings;
   const tokenSet = view.dev_token_set;
@@ -677,9 +720,13 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
   const [signingIn, setSigningIn] = useState(false);
   const [devices, setDevices] = useState<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // The overlay's opacity for the monitor it is on now; the slider sets it live.
+  const [opacity, setOpacity] = useState<number | null>(null);
   useEffect(() => {
     api.listDevices().then(setDevices);
+    api.overlayPrefs().then((p) => setOpacity(p.opacity)).catch(() => undefined);
   }, []);
+  const dupes = duplicateHotkeys(draft);
 
   const save = async () => {
     setMessage(null);
@@ -900,10 +947,51 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
           Remove the call's sound from the microphone (needed without headphones)
         </label>
 
-        <label>Hotkey</label>
+        <label>Overlay opacity</label>
         <div>
-          <input value={draft.hotkey} onChange={(e) => set("hotkey", e.target.value)} />
-          <p className="note">Answers the last thing said when detection missed it. Example: CommandOrControl+Shift+Space.</p>
+          <div className="row">
+            <input
+              type="range"
+              min={0.3}
+              max={1}
+              step={0.05}
+              value={opacity ?? 1}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setOpacity(v);
+                api.setOverlayOpacity(v).catch(() => undefined);
+              }}
+            />
+            <span>{Math.round((opacity ?? 1) * 100)}%</span>
+          </div>
+          <p className="note">How see-through the overlay is. Step it any time with the opacity hotkeys; remembered per monitor.</p>
+        </div>
+
+        <label>Hotkeys</label>
+        <div className="hotkeys">
+          {HOTKEYS.map(({ key, action, label, hint }) => {
+            const invalid = view.hotkey_review.invalid.find((i) => i.action === action);
+            const clash = dupes.has(key);
+            return (
+              <div className="hotkey" key={key}>
+                <span className="hotkey-label">{label}</span>
+                <input
+                  value={String(draft[key] ?? "")}
+                  spellCheck={false}
+                  placeholder="Unbound"
+                  className={clash || invalid ? "bad" : ""}
+                  onChange={(e) => set(key, e.target.value as Settings[typeof key])}
+                />
+                {hint && <span className="note hotkey-hint">{hint}</span>}
+                {clash && <span className="note warn">Shares a key with another action.</span>}
+                {invalid && <span className="note warn">Not a valid key ({invalid.error}).</span>}
+              </div>
+            );
+          })}
+          <p className="note">
+            Each action can have its own key, in Tauri's accelerator form (e.g. CommandOrControl+Shift+H). Leave one blank to unbind
+            it. Conflicts are flagged here and re-checked when you save.
+          </p>
         </div>
 
         <label>Debug panel</label>
