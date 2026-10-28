@@ -354,8 +354,8 @@ class Session:
         text, done = await self.router.complete("summary", req)
         ms = int((time.monotonic() - started) * 1000)
         log.info(
-            "conversation summary on %s: %s in / %s out tokens in %s ms",
-            done.model, done.usage.input_tokens, done.usage.output_tokens, ms,
+            "conversation summary on %s: %s in / %s out tokens in %s ms, stop=%s",
+            done.model, done.usage.input_tokens, done.usage.output_tokens, ms, done.stop_reason,
         )  # fmt: skip
         self.log_entry(
             {
@@ -364,10 +364,16 @@ class Session:
                 "input_tokens": done.usage.input_tokens,
                 "cached_tokens": done.usage.cached_tokens,
                 "output_tokens": done.usage.output_tokens,
+                "stop_reason": done.stop_reason,
                 "cost_usd": self._cost(done),
                 "latency_ms": ms,
             }
         )
+        if done.stop_reason == "max_tokens":
+            # Cut off at the cap: its end, the newest notes, is missing. The previous summary
+            # stays and the lines stay verbatim until the next try.
+            log.warning("conversation summary hit its cap; kept the previous one")
+            return None
         return text
 
     # AnswerHost.

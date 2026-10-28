@@ -312,3 +312,38 @@ async def test_a_standup_detector_is_told_when_the_user_last_spoke(env) -> None:
     assert "Alex last spoke less than 20 s ago." in str(last.content)
     assert "changed between Them and Alex once" in str(last.content)
     assert "may be one person or several" in last.system[0].text
+
+
+async def test_a_summary_cut_off_at_its_cap_is_not_kept(env) -> None:
+    # 2026-10-27: the 7th summary call ended at exactly its 500-token cap, so its newest
+    # notes were probably cut off and stored that way.
+    def reply(job: str, req: Any) -> Reply:
+        if job == "summary":
+            return Reply(["- Earlier: the first half of a summa"], stop_reason="max_tokens")
+        return default_reply(job, req)
+
+    provider = ScriptedProvider("anthropic", reply=reply)
+    env.providers = [provider]
+    settings = env.settings(
+        conversation_budget_tokens=400,
+        conversation_summary_tokens=100,
+        conversation_answers_tokens=100,
+        conversation_summary_chunk_tokens=60,
+    )
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        for i in range(8):
+            words = " ".join(f"point{i}x{k}" for k in range(12))
+            await c.say_me(f"So {words}", capture_ms=i * 2000, end_ms=i * 2000 + 500)
+            await c.wait(
+                lambda m, i=i: m["type"] == "transcript.final" and f"point{i}x0" in m["text"]
+            )
+        session = next(iter(gw.manager.sessions.values()))
+        await session.conv.wait_folded()
+        assert [j for j, _ in provider.calls].count("summary") >= 1
+        assert session.conv.summary == ""
+        await c.send({"type": "session.end"})
+        await c.closed()
+    log = await session_log(env, c.session_id)
+    assert {e["stop_reason"] for e in log if e["kind"] == "summary"} == {"max_tokens"}
