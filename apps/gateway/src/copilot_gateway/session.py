@@ -1014,9 +1014,9 @@ class Session:
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
         log.info(
-            "session ended: reason=%s minutes=%.1f questions=%d stats=%s",
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            len(self.answers.questions), self.answers.stats,
+            len(self.answers.questions), self.answers.stats, self.detector.stats,
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
@@ -1755,10 +1755,18 @@ class SessionManager:
             await store.take_lease(sid, self.svc.task_id)
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
+        # Which pack was loaded, so an analysis can find it after the next rebuild overwrites
+        # it (twice after the 2026-10-26 and 2026-10-27 standups).
+        loaded = (
+            f"{pack.pack_id} built={pack.built_at} memory={pack.memory_version}"
+            f" keyterms={len(pack.keyterms)}"
+            if pack is not None
+            else "none"
+        )
         log.info(
             "session started: mode=%s platform=%s client=%s consent=%s digest=%s pack=%s",
             info.mode, info.platform, info.client_version, info.store_transcript,
-            digest is not None, pack is not None,
+            digest is not None, loaded,
         )  # fmt: skip
         session.start_core()
         session.warm_models()

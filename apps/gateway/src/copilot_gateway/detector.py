@@ -64,6 +64,13 @@ class Detector:
         self.cost = cost
         self.cache: OrderedDict[str, Detection] = OrderedDict()
         self.calls = 0
+        # Totals for the session's end log line, so an analysis needs no per-call lines:
+        # decisions, cache hits, calls cancelled by newer text, failures, hedges and tokens
+        # (cancelled calls' input estimated).
+        self.stats: dict[str, int] = dict.fromkeys(
+            ("decided", "cached", "cancelled", "failed", "hedged", "input_tokens",
+             "output_tokens"), 0,
+        )  # fmt: skip
 
     def _report(
         self,
@@ -74,6 +81,19 @@ class Detector:
         cached: bool,
         **extra: Any,
     ) -> None:
+        st = self.stats
+        if cached:
+            st["cached"] += 1
+        elif extra.get("cancelled"):
+            st["cancelled"] += 1
+        elif detection.error:
+            st["failed"] += 1
+        else:
+            st["decided"] += 1
+        if done is not None:
+            st["input_tokens"] += done.usage.input_tokens
+            st["output_tokens"] += done.usage.output_tokens
+            st["hedged"] += int(done.hedged)
         if self.on_decision is None:
             return
         entry: dict[str, Any] = {

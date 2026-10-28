@@ -769,3 +769,27 @@ async def test_the_name_rule_is_only_for_standups_and_meetings(env) -> None:
         await c.wait_type("transcript.final")
         await asyncio.sleep(1.5)
         assert c.of_type("question.detected") == []
+
+
+async def test_the_log_names_the_pack_and_counts_the_detector(env, caplog) -> None:
+    # 2026-10-26 and 10-27: the pack as loaded was overwritten by the next rebuild, and
+    # detector totals had to be pieced together from hundreds of lines.
+    import logging
+
+    caplog.set_level(logging.INFO, logger="copilot_gateway.session")
+    pack = await seed_memory(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        await c.wait_type("answer.done", pass_="fast")
+        await c.say("Thanks for that.", capture_ms=5000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "Thanks" in m["text"])
+        await asyncio.sleep(0.5)
+        await c.send({"type": "session.end"})
+        await c.closed()
+    started = next(r.getMessage() for r in caplog.records if "session started" in r.getMessage())
+    assert f"pack={pack.pack_id} built=2026-10-05T14:00:00Z" in started
+    assert "keyterms=0" in started
+    ended = next(r.getMessage() for r in caplog.records if "session ended" in r.getMessage())
+    assert "detector={'decided': 2, 'cached': 0, 'cancelled': 0, 'failed': 0" in ended
