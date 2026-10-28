@@ -34,11 +34,20 @@ function saveCompact(on: boolean) {
  * and whether clicks are passing through it. The core pushes changes (a hotkey, or a move to
  * another monitor); the overlay asks once on mount. `compact` keeps a localStorage copy so the
  * first paint matches, before the core answers. */
+const NO_HOTKEYS: OverlayPrefs["hotkeys"] = {
+  toggle_overlay: "",
+  click_through: "",
+  click_through_off: "",
+  opacity_up: "",
+  opacity_down: "",
+};
+
 function useOverlayPrefs() {
   const [opacity, setOpacity] = useState(1);
   const [compact, setCompactState] = useState(loadCompact);
   const [clickThrough, setClickThrough] = useState(false);
-  const [offHotkey, setOffHotkey] = useState("");
+  const [onTop, setOnTopState] = useState(true);
+  const [hotkeys, setHotkeys] = useState<OverlayPrefs["hotkeys"]>(NO_HOTKEYS);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -48,7 +57,8 @@ function useOverlayPrefs() {
       setCompactState(p.compact);
       saveCompact(p.compact);
       setClickThrough(p.click_through);
-      setOffHotkey(p.click_through_off);
+      setOnTopState(p.on_top);
+      setHotkeys(p.hotkeys);
     };
     const off = onOverlayPrefs((p) => {
       live = true;
@@ -70,7 +80,15 @@ function useOverlayPrefs() {
     saveCompact(on);
     if (inTauri) api.setOverlayView(on).catch(() => undefined);
   };
-  return { opacity, compact, clickThrough, offHotkey, setCompact };
+  const setOpacityLive = (v: number) => {
+    setOpacity(v);
+    if (inTauri) api.setOverlayOpacity(v).catch(() => undefined);
+  };
+  const setOnTop = (on: boolean) => {
+    setOnTopState(on);
+    if (inTauri) api.setOverlayOnTop(on).catch(() => undefined);
+  };
+  return { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop };
 }
 
 /// Changes whenever anything shown grows, so the view can follow it.
@@ -86,12 +104,13 @@ function contentSize(items: ConversationItem[]): string {
 export default function Overlay() {
   const [s, dispatch] = useSession();
   const items = useMemo(() => conversation(s), [s]);
-  const { opacity, compact, clickThrough, offHotkey, setCompact } = useOverlayPrefs();
+  const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const shown = useMemo(() => (compact ? items.filter((i) => i.kind === "question") : items), [items, compact]);
   const size = contentSize(shown);
   const body = useRef<HTMLDivElement>(null);
   const follower = useRef(new Follower());
   const [jump, setJump] = useState(false);
+  const [menu, setMenu] = useState(false);
   const b = badge(s);
 
   useLayoutEffect(() => {
@@ -119,7 +138,7 @@ export default function Overlay() {
     <div className={compact ? "overlay compact" : "overlay"} style={{ opacity }}>
       {clickThrough && (
         <div className="clickthrough" role="status">
-          Click-through on{offHotkey ? ` — ${offHotkey} to turn off` : " — use your turn-off hotkey"}
+          Click-through on{hotkeys.click_through_off ? ` — ${hotkeys.click_through_off} to turn off` : " — use your turn-off hotkey"}
         </div>
       )}
       <header className="overlay-head" data-tauri-drag-region>
@@ -137,15 +156,32 @@ export default function Overlay() {
         </button>
         <button
           className="icon"
-          title="Click-through: let clicks pass to the window underneath (a hotkey turns it back off)"
-          onClick={() => inTauri && api.setClickThrough(true).catch(() => undefined)}
+          title="Drag to resize"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            if (inTauri) getCurrentWindow().startResizeDragging("SouthEast");
+          }}
         >
-          ⇲
+          ⤡
+        </button>
+        <button className={menu ? "icon on" : "icon"} title="Overlay settings" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
+          ⚙
         </button>
         <button className="icon" title="Hide overlay" onClick={() => inTauri && getCurrentWindow().hide()}>
           ×
         </button>
       </header>
+      {menu && (
+        <OverlayMenu
+          opacity={opacity}
+          onOpacity={setOpacityLive}
+          onTop={onTop}
+          onToggleOnTop={setOnTop}
+          clickThrough={clickThrough}
+          hotkeys={hotkeys}
+          onClose={() => setMenu(false)}
+        />
+      )}
 
       <main className="overlay-body" ref={body} onScroll={onScroll}>
         {shown.length === 0 ? (
@@ -170,6 +206,119 @@ export default function Overlay() {
       <AskBox disabled={!s.running} />
       <span className="grip" title="Resize" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
     </div>
+  );
+}
+
+const KEY_LABELS: Record<string, string> = {
+  CommandOrControl: "Ctrl",
+  CommandOrCtrl: "Ctrl",
+  CmdOrCtrl: "Ctrl",
+  Control: "Ctrl",
+  Command: "Cmd",
+  Super: "Win",
+  Up: "↑",
+  Down: "↓",
+};
+
+/** A readable chip for an accelerator, e.g. "CommandOrControl+Shift+H" -> "Ctrl+Shift+H". */
+function prettyKey(accel: string): string {
+  return accel
+    .split("+")
+    .map((p) => KEY_LABELS[p.trim()] ?? p.trim())
+    .join("+");
+}
+
+function Hotkey({ accel }: { accel: string }) {
+  if (!accel) return null;
+  return <kbd className="key">{prettyKey(accel)}</kbd>;
+}
+
+/** The overlay's own settings menu (the gear dropdown): quick comfort toggles without opening
+ * the main window. "All settings…" brings the main window forward; the rest live here. */
+function OverlayMenu({
+  opacity,
+  onOpacity,
+  onTop,
+  onToggleOnTop,
+  clickThrough,
+  hotkeys,
+  onClose,
+}: {
+  opacity: number;
+  onOpacity: (v: number) => void;
+  onTop: boolean;
+  onToggleOnTop: (on: boolean) => void;
+  clickThrough: boolean;
+  hotkeys: OverlayPrefs["hotkeys"];
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div className="menu-backdrop" onClick={onClose} />
+      <div className="overlay-menu" role="menu">
+        <div className="menu-row col">
+          <span className="menu-label">Transparency</span>
+          <div className="menu-slider">
+            <input
+              type="range"
+              min={0.3}
+              max={1}
+              step={0.05}
+              value={opacity}
+              onChange={(e) => onOpacity(Number(e.target.value))}
+            />
+            <span className="menu-value">{Math.round(opacity * 100)}%</span>
+          </div>
+          <span className="menu-hint">
+            Step it anytime <Hotkey accel={hotkeys.opacity_up} /> <Hotkey accel={hotkeys.opacity_down} />
+          </span>
+        </div>
+
+        <button className="menu-row" role="menuitemcheckbox" aria-checked={onTop} onClick={() => onToggleOnTop(!onTop)}>
+          <span className="menu-main">
+            <span className="menu-label">Keep on top</span>
+            <span className="menu-hint">Overlay stays above other apps</span>
+          </span>
+          <span className={onTop ? "switch on" : "switch"} />
+        </button>
+
+        <button
+          className="menu-row"
+          role="menuitemcheckbox"
+          aria-checked={clickThrough}
+          title={clickThrough ? "Turn off with the hotkey" : "Clicks pass to the window underneath"}
+          onClick={() => inTauri && !clickThrough && api.setClickThrough(true).catch(() => undefined)}
+        >
+          <span className="menu-main">
+            <span className="menu-label">
+              Click-through <Hotkey accel={hotkeys.click_through} />
+            </span>
+            <span className="menu-hint">
+              {clickThrough ? `On — ${prettyKey(hotkeys.click_through_off)} to turn off` : "Clicks pass through (top bar stays usable)"}
+            </span>
+          </span>
+          <span className={clickThrough ? "switch on" : "switch"} />
+        </button>
+
+        <div className="menu-sep" />
+
+        <button
+          className="menu-row link-row"
+          onClick={() => {
+            onClose();
+            if (inTauri) api.openMainSettings().catch(() => undefined);
+          }}
+        >
+          All settings…
+        </button>
+        <button
+          className="menu-row link-row danger"
+          onClick={() => inTauri && api.quitApp().catch(() => undefined)}
+        >
+          Quit Copilot
+        </button>
+      </div>
+    </>
   );
 }
 

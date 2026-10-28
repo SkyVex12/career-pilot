@@ -52,6 +52,8 @@ const SETTINGS_EVENT: &str = "copilot://settings";
 /// The overlay's live comfort prefs (opacity, view, click-through), pushed to the overlay
 /// window when a hotkey or a move between monitors changes them.
 const OVERLAY_EVENT: &str = "copilot://overlay";
+/// The overlay asked to open the main window's Settings screen ("All settings…").
+const OPEN_SETTINGS_EVENT: &str = "copilot://open-settings";
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// The Credential Manager entry older versions kept the recordings' key in.
 const OLD_RECORDING_KEY: &str = "me-audio-key";
@@ -86,14 +88,26 @@ struct OverlayState {
 }
 
 /// The overlay's comfort prefs for the webview: how see-through it is, whether it is compact,
-/// and whether clicks are passing through (so it can show the click-through indicator).
+/// whether clicks pass through it, whether it stays on top, and the hotkeys to show on the
+/// overlay's own settings menu.
 #[derive(Clone, Serialize)]
 struct OverlayPrefs {
     opacity: f64,
     compact: bool,
     click_through: bool,
-    /// The key that turns click-through off, so the indicator can name it (hotkeys.rs).
+    on_top: bool,
+    hotkeys: OverlayHotkeys,
+}
+
+/// The overlay's hotkeys as chips on its settings menu (and the key its click-through indicator
+/// names). Mirrors the bindings in settings (hotkeys.rs).
+#[derive(Clone, Serialize)]
+struct OverlayHotkeys {
+    toggle_overlay: String,
+    click_through: String,
     click_through_off: String,
+    opacity_up: String,
+    opacity_down: String,
 }
 
 impl AppState {
@@ -309,6 +323,7 @@ fn save_settings(
             pending_update: kept.pending_update,
             layouts: kept.layouts,
             overlay_monitor: kept.overlay_monitor,
+            overlay_on_top: kept.overlay_on_top,
             ..settings.clone()
         }
     });
@@ -820,15 +835,29 @@ fn store_layout(app: &AppHandle, key: &str, l: MonitorLayout) {
 
 /// Push the overlay's current prefs to the overlay window (opacity and view it renders, and
 /// whether to show the click-through indicator).
-fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
+/// The overlay's current prefs for the given opacity and view: click-through and on-top from
+/// the live window state, the hotkeys from settings.
+fn build_prefs(app: &AppHandle, opacity: f64, compact: bool) -> OverlayPrefs {
     let state = app.state::<AppState>();
     let click_through = state.overlay.click_through.load(Ordering::SeqCst);
-    let click_through_off = hotkeys::click_through_off(&state.settings.lock().unwrap());
-    let _ = app.emit_to(
-        "overlay",
-        OVERLAY_EVENT,
-        OverlayPrefs { opacity: l.opacity, compact: l.compact, click_through, click_through_off },
-    );
+    let (on_top, hotkeys) = {
+        let s = state.settings.lock().unwrap();
+        (
+            s.overlay_on_top,
+            OverlayHotkeys {
+                toggle_overlay: s.toggle_overlay_hotkey.trim().to_string(),
+                click_through: s.click_through_hotkey.trim().to_string(),
+                click_through_off: hotkeys::click_through_off(&s),
+                opacity_up: s.opacity_up_hotkey.trim().to_string(),
+                opacity_down: s.opacity_down_hotkey.trim().to_string(),
+            },
+        )
+    };
+    OverlayPrefs { opacity, compact, click_through, on_top, hotkeys }
+}
+
+fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
+    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, l.opacity, l.compact));
 }
 
 fn toggle_overlay(app: &AppHandle) {
@@ -927,12 +956,10 @@ fn place_overlay(app: &AppHandle) {
 
 /// The overlay's starting prefs, which the overlay window asks for as it mounts.
 #[tauri::command]
-fn overlay_prefs(app: AppHandle, state: State<'_, AppState>) -> OverlayPrefs {
-    let click_through = state.overlay.click_through.load(Ordering::SeqCst);
-    let click_through_off = hotkeys::click_through_off(&state.settings.lock().unwrap());
+fn overlay_prefs(app: AppHandle) -> OverlayPrefs {
     let (opacity, compact) =
         current_layout(&app).map(|(_, l)| (l.opacity, l.compact)).unwrap_or((layout::MAX_OPACITY, false));
-    OverlayPrefs { opacity, compact, click_through, click_through_off }
+    build_prefs(&app, opacity, compact)
 }
 
 /// The opacity slider in settings, and the overlay's opacity hotkeys through `nudge_opacity`.
@@ -956,6 +983,35 @@ fn set_overlay_view(app: AppHandle, compact: bool) {
 #[tauri::command]
 fn set_click_through(app: AppHandle, on: bool) {
     apply_click_through(&app, on);
+}
+
+/// The overlay's "Keep on top" toggle: stay above other windows, remembered between runs.
+#[tauri::command]
+fn set_overlay_on_top(app: AppHandle, on: bool) {
+    if let Some(w) = overlay_window(&app) {
+        let _ = w.set_always_on_top(on);
+    }
+    app.state::<AppState>().update_settings(|s| s.overlay_on_top = on);
+    if let Some((_, l)) = current_layout(&app) {
+        emit_prefs(&app, l);
+    }
+}
+
+/// The overlay's "All settings…": bring the main window forward on its Settings screen.
+#[tauri::command]
+fn open_main_settings(app: AppHandle) -> Res<()> {
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    w.show().map_err(|e| e.to_string())?;
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+    let _ = app.emit_to("main", OPEN_SETTINGS_EVENT, ());
+    Ok(())
+}
+
+/// The overlay's "Quit": close the whole app.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1029,6 +1085,7 @@ pub fn run() {
                 tracing::warn!("could not save settings: {e}");
             }
             let needs_auth_config = release::config().is_some() && settings.oauth.is_none();
+            let overlay_on_top = settings.overlay_on_top;
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             // Versions before live transcription recorded the user's audio for an upload after
             // the call; the gateway no longer takes those, so what is left goes, with its key.
@@ -1087,7 +1144,7 @@ pub fn run() {
                     .title("Copilot overlay")
                     .inner_size(440.0, 620.0)
                     .min_inner_size(320.0, 240.0)
-                    .always_on_top(true)
+                    .always_on_top(overlay_on_top)
                     .decorations(false)
                     .skip_taskbar(true)
                     .transparent(true)
@@ -1132,6 +1189,9 @@ pub fn run() {
             set_overlay_opacity,
             set_overlay_view,
             set_click_through,
+            set_overlay_on_top,
+            open_main_settings,
+            quit_app,
             update_status,
             install_update,
             check_updates,
