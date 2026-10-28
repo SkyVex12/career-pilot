@@ -100,7 +100,7 @@ impl Default for Settings {
             show_debug: false,
             last_session_id: None,
             profile: None,
-            update_mode: UpdateMode::Auto,
+            update_mode: UpdateMode::Ask,
             last_version: None,
             pending_update: None,
         }
@@ -213,8 +213,8 @@ mod tests {
         assert_eq!(s.active_urls(), ("ws://10.0.0.5:8081/v1/session", "http://10.0.0.5:8080/v1"));
         assert_eq!(s.session_url(), "ws://10.0.0.5:8081/v1/session");
         assert_eq!(s.hotkey, "F9");
-        // Files from before automatic updates install them by themselves.
-        assert_eq!(s.update_mode, UpdateMode::Auto);
+        // A file without the field takes the default: ask before installing.
+        assert_eq!(s.update_mode, UpdateMode::Ask);
         assert!(s.last_version.is_none() && s.pending_update.is_none());
         let cloud = Settings {
             environment: Environment::Cloud,

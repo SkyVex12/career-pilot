@@ -112,6 +112,18 @@ pub mod schedule {
     pub const CHECK_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
     /// After a check, download or install that failed.
     pub const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
+    /// A check can fail for a moment (the network is not up yet at launch, a blip reaching the
+    /// bucket), so a failed check is tried again a few times in quick succession before the app
+    /// gives up and waits [`RETRY_AFTER`]. Total tries, including the first.
+    pub const CHECK_ATTEMPTS: u32 = 3;
+    /// Between those quick retries.
+    pub const RECHECK_DELAY: Duration = Duration::from_secs(10);
+
+    /// After attempt number `attempt` (1-based) failed, how long to wait before trying the
+    /// check again, or `None` when all [`CHECK_ATTEMPTS`] are used up.
+    pub fn recheck_delay(attempt: u32) -> Option<Duration> {
+        (attempt < CHECK_ATTEMPTS).then_some(RECHECK_DELAY)
+    }
     /// "Quiet": no session, and no click, key or scroll in the app (nor a session's end) for
     /// this long. Short enough to come while the app is open, long enough not to restart
     /// under someone typing.
@@ -125,9 +137,10 @@ pub mod schedule {
     #[serde(rename_all = "snake_case")]
     pub enum UpdateMode {
         /// Install by itself when no session is running.
-        #[default]
         Auto,
-        /// Download, then wait for "Install and restart".
+        /// Download, then ask (a prompt at launch, and the update bar) before installing. The
+        /// default: the app does not restart into a new version without the user's say-so.
+        #[default]
         Ask,
     }
 
@@ -335,6 +348,7 @@ pub mod updater {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use tauri::{AppHandle, Emitter, Manager};
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::{Update, UpdaterExt};
 
     use super::UpdateState;
@@ -356,6 +370,9 @@ pub mod updater {
         /// Check now (urgent, "Check now", a retry after a failed install).
         wake: tokio::sync::Notify,
         checked_at: Mutex<Option<u64>>,
+        /// The version the launch prompt has already asked about, so the dialog is shown once
+        /// per version, not again at every four-hour check.
+        offered: Mutex<Option<String>>,
         /// This run started right after an update to this version: the "Updated to" note,
         /// kept until something newer is under way.
         updated_to: Option<String>,
@@ -375,6 +392,7 @@ pub mod updater {
                 asked: AtomicBool::new(false),
                 wake: tokio::sync::Notify::new(),
                 checked_at: Mutex::new(None),
+                offered: Mutex::new(None),
                 updated_to,
                 journal,
             }
@@ -491,6 +509,81 @@ pub mod updater {
         }
     }
 
+    /// When a newer version has been downloaded and is waiting, ask the user with a native
+    /// dialog (once per version). "Update now" installs and restarts; "Later" leaves it in the
+    /// update bar to install whenever they like. Skipped for an urgent update (the server
+    /// refused this version, so it installs by itself) and in auto mode (which installs on its
+    /// own at a quiet moment).
+    fn prompt_to_update(app: &AppHandle, version: &str, notes: Option<&str>) {
+        let updates = app.state::<Updates>();
+        if updates.urgent.load(Ordering::SeqCst) || mode(app) != UpdateMode::Ask {
+            return;
+        }
+        {
+            // Ask once per version, not again at every four-hour check.
+            let mut offered = updates.offered.lock().unwrap();
+            if offered.as_deref() == Some(version) {
+                return;
+            }
+            *offered = Some(version.to_string());
+        }
+        let running = app.package_info().version.to_string();
+        let mut body = format!("Version {version} is available (you have {running}).");
+        if let Some(notes) = notes.map(str::trim).filter(|n| !n.is_empty()) {
+            // Keep the dialog small: the first few lines of the release notes.
+            let short = notes.lines().take(6).collect::<Vec<_>>().join("\n");
+            body.push_str("\n\n");
+            body.push_str(&short);
+        }
+        body.push_str("\n\nUpdate now? The app will restart to install it.");
+        let app = app.clone();
+        let version = version.to_string();
+        app.dialog()
+            .message(body)
+            .title("Update available")
+            .buttons(MessageDialogButtons::OkCancelCustom("Update now".into(), "Later".into()))
+            .show(move |update_now| {
+                if !update_now {
+                    app.state::<Updates>().journal.write(&format!("{version} offered; user chose Later"));
+                    return;
+                }
+                if let Err(e) = install(&app, true) {
+                    // The only likely reason at the prompt is a session running; tell the user.
+                    app.dialog().message(e).title("Could not update now").show(|_| {});
+                }
+            });
+    }
+
+    /// Ask the bucket for the newest version, retrying a failed check a few times in quick
+    /// succession ([`schedule::CHECK_ATTEMPTS`]) before giving up to the longer
+    /// [`schedule::RETRY_AFTER`] wait — a check often fails only because the network is not up
+    /// yet right after launch.
+    async fn check_updater(app: &AppHandle) -> Result<Option<Update>, tauri_plugin_updater::Error> {
+        let updates = app.state::<Updates>();
+        let mut attempt = 1;
+        loop {
+            let result = match app.updater() {
+                Ok(u) => u.check().await,
+                Err(e) => Err(e),
+            };
+            let Err(e) = result else {
+                return result;
+            };
+            match schedule::recheck_delay(attempt) {
+                Some(delay) => {
+                    updates.journal.write(&format!(
+                        "check attempt {attempt} of {} failed: {e}; retrying in {}s",
+                        schedule::CHECK_ATTEMPTS,
+                        delay.as_secs()
+                    ));
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+                None => return Err(e),
+            }
+        }
+    }
+
     /// Ask the releases bucket; download and verify anything newer. False on a failure, for
     /// an earlier retry.
     async fn check_once(app: &AppHandle) -> bool {
@@ -502,10 +595,7 @@ pub mod updater {
         if asked || updates.state().settled() {
             updates.set(app, UpdateState::Checking);
         }
-        let found = match app.updater() {
-            Ok(u) => u.check().await,
-            Err(e) => Err(e),
-        };
+        let found = check_updater(app).await;
         let checked_at = now_ms();
         *updates.checked_at.lock().unwrap() = Some(checked_at);
         let urgent = updates.urgent.load(Ordering::SeqCst);
@@ -574,11 +664,14 @@ pub mod updater {
         match update.download(progress, || {}).await {
             Ok(bytes) => {
                 updates.journal.write(&format!("{version} downloaded and verified"));
+                let notes = update.body.clone();
                 let state = ready_state(app, &update);
                 *updates.ready.lock().unwrap() = Some((update, bytes));
                 updates.set(app, state);
                 // At once if this is a good moment (or the server insists), not a tick later.
+                // In ask mode this installs nothing by itself; the prompt below asks instead.
                 let _ = install(app, false);
+                prompt_to_update(app, &version, notes.as_deref());
                 true
             }
             Err(e) => {
@@ -760,6 +853,24 @@ mod tests {
     fn checks_every_four_hours_and_retry_sooner() {
         assert_eq!(next_check(true), Duration::from_secs(4 * 3600));
         assert_eq!(next_check(false), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn a_failed_check_is_retried_a_few_times_then_gives_up() {
+        // Three attempts total: after the first and second failure it waits and tries again,
+        // after the third it stops (and the caller falls back to the 30-minute retry).
+        assert_eq!(CHECK_ATTEMPTS, 3);
+        assert_eq!(recheck_delay(1), Some(RECHECK_DELAY));
+        assert_eq!(recheck_delay(2), Some(RECHECK_DELAY));
+        assert_eq!(recheck_delay(3), None);
+        assert_eq!(recheck_delay(4), None);
+    }
+
+    #[test]
+    fn ask_is_the_default_so_nothing_installs_unasked() {
+        assert_eq!(UpdateMode::default(), UpdateMode::Ask);
+        // Ask never installs by itself (only the prompt or the button does), whatever the timing.
+        assert!(!may_install(10 * S, &idle(), UpdateMode::default(), false));
     }
 
     #[test]
