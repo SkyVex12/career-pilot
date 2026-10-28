@@ -1400,12 +1400,82 @@ button.small {
   margin-top: 4px;
 }
 
-/* The settings screen's update log. */
-.update-log {
-  margin: 4px 0 0;
-  padding-left: 16px;
-  max-height: 160px;
-  overflow: auto;
+/* The update status bar under the tabs: what the updater is doing, with its progress. */
+.update-bar {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+
+.update-bar.update-done {
+  border-left-color: var(--ok);
+}
+
+.update-bar.update-error {
+  border-left-color: var(--bad);
+  background: var(--bad-soft);
+}
+
+.update-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.update-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.update-error {
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.update-track {
+  position: relative;
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.update-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* Under way, size unknown: a segment that slides across. */
+.update-track.moving .update-fill {
+  position: absolute;
+  width: 35%;
+  animation: update-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes update-slide {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-track.moving .update-fill {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
 }
 
 /* The choice made when a call ends: summarize, or keep the transcript only. */

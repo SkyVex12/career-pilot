@@ -5,11 +5,12 @@
 //!
 //! Updates (README.md, "Installing the desktop app"): the app checks at start and every four
 //! hours, downloads a newer version in the background and verifies its signature, and installs
-//! it only when no session is running or starting ([`schedule`]): at start, a minute after a
-//! session ends, or after ten quiet minutes. The setting `update_mode: ask` waits for the
-//! user's click instead. A server that needs a newer app (close 4426, HTTP 426) makes it update
-//! at once, still never during a session. Every check and install is written to
-//! `updates.log` in the app's log folder ([`journal`]) and shown in the settings.
+//! it only when no session is running or starting ([`schedule`]): at once if the user has not
+//! touched the app yet, else after two quiet minutes. The setting `update_mode: ask` waits for
+//! the user's click instead. A server that needs a newer app (close 4426, HTTP 426) makes it
+//! update at once, still never during a session. Each step reaches the windows as it happens
+//! (`copilot://update`, the status bar) and is written to `updates.log` in the app's log
+//! folder ([`journal`]) for support.
 
 use serde::{Deserialize, Serialize};
 
@@ -40,19 +41,39 @@ pub fn config() -> Option<&'static ReleaseConfig> {
     None
 }
 
-/// What the update banner and the settings show (`copilot://update`, `update_status`).
+/// What the update status bar and the settings show (`copilot://update`, `update_status`),
+/// sent again at every step.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 #[cfg_attr(not(feature = "release"), allow(dead_code))]
 pub enum UpdateState {
-    /// Not a release build, nothing new, or the check has not finished.
+    /// Not a release build, or no check has finished yet.
     None,
+    /// Asking the releases bucket.
+    Checking,
+    /// The last check found nothing newer than `version` (the running one).
+    UpToDate {
+        version: String,
+        checked_at: u64,
+    },
+    /// The last check could not reach the bucket; retried in half an hour.
+    CheckFailed {
+        message: String,
+        checked_at: u64,
+    },
+    /// Downloading `version`; `percent` once the size is known.
+    Downloading {
+        version: String,
+        percent: Option<u8>,
+    },
     /// Downloaded and its signature verified. `auto`: it installs by itself when no session is
-    /// running; otherwise ("ask me first") it waits for the button.
+    /// running; otherwise ("ask me first") it waits for the button. `install_in_s`: seconds
+    /// until it installs by itself, if nothing changes (None: not by itself, or a session runs).
     Ready {
         version: String,
         notes: Option<String>,
         auto: bool,
+        install_in_s: Option<u64>,
     },
     Installing {
         version: String,
@@ -65,9 +86,18 @@ pub enum UpdateState {
     Outdated {
         message: String,
     },
+    /// A download or an install failed; retried in half an hour.
     Failed {
         message: String,
     },
+}
+
+impl UpdateState {
+    /// Nothing under way or waiting: a new check may show "checking" over it.
+    #[cfg_attr(not(feature = "release"), allow(dead_code))]
+    pub fn settled(&self) -> bool {
+        matches!(self, Self::None | Self::UpToDate { .. } | Self::CheckFailed { .. } | Self::Failed { .. })
+    }
 }
 
 /// When to look for, and when to install, an update. Pure functions of the app's clock (the
@@ -82,13 +112,12 @@ pub mod schedule {
     pub const CHECK_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
     /// After a check, download or install that failed.
     pub const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
-    /// "At start": until the user first touches the app, within this long of starting.
-    pub const START_WINDOW: Duration = Duration::from_secs(2 * 60);
-    /// "Right after a session ends": this long after the end, if the user has not touched
-    /// the app since (time to glance at the post-call screen).
-    pub const AFTER_SESSION: Duration = Duration::from_secs(60);
-    /// "When idle": no session, and no click, key or scroll in the app, for this long.
-    pub const IDLE: Duration = Duration::from_secs(10 * 60);
+    /// "Quiet": no session, and no click, key or scroll in the app (nor a session's end) for
+    /// this long. Short enough to come while the app is open, long enough not to restart
+    /// under someone typing.
+    pub const QUIET: Duration = Duration::from_secs(2 * 60);
+    /// Between "installing" reaching the windows and the installer taking over.
+    pub const SHOW_INSTALLING: Duration = Duration::from_millis(1500);
     /// How often the installer looks at the clock.
     pub const TICK: Duration = Duration::from_secs(10);
 
@@ -114,29 +143,29 @@ pub mod schedule {
 
     /// Whether a downloaded update may be installed now (`now` is the time since start).
     /// Never while a session runs or starts, whatever else holds. `urgent`: the server refused
-    /// this version, so it installs as soon as no session runs, in either mode.
+    /// this version, so it installs as soon as no session runs, in either mode. Automatic: at
+    /// once if the user has not touched the app (nor ended a session) since it started, else
+    /// after [`QUIET`].
     pub fn may_install(now: Duration, a: &Activity, mode: UpdateMode, urgent: bool) -> bool {
+        install_in(now, a, mode, urgent) == Some(Duration::ZERO)
+    }
+
+    /// How long until [`may_install`] holds if nothing else happens; None when it will not by
+    /// itself (ask mode, or a session runs). The status bar's "installs in about a minute".
+    pub fn install_in(now: Duration, a: &Activity, mode: UpdateMode, urgent: bool) -> Option<Duration> {
         if a.session {
-            return false;
+            return None;
         }
         if urgent {
-            return true;
+            return Some(Duration::ZERO);
         }
         if mode == UpdateMode::Ask {
-            return false;
+            return None;
         }
-        let touched_since = |t: Duration| a.last_input.is_some_and(|i| i >= t);
-        if now < START_WINDOW && a.last_input.is_none() && a.last_session_end.is_none() {
-            return true;
-        }
-        if let Some(end) = a.last_session_end
-            && !touched_since(end)
-            && now.saturating_sub(end) >= AFTER_SESSION
-        {
-            return true;
-        }
-        let quiet_since = a.last_input.max(a.last_session_end).unwrap_or(Duration::ZERO);
-        now.saturating_sub(quiet_since) >= IDLE
+        Some(match a.last_input.max(a.last_session_end) {
+            None => Duration::ZERO,
+            Some(t) => QUIET.saturating_sub(now.saturating_sub(t)),
+        })
     }
 
     /// The wait before the next check: four hours after one that worked, half an hour after
@@ -324,17 +353,25 @@ pub mod updater {
         /// Check now (urgent, "Check now", a retry after a failed install).
         wake: tokio::sync::Notify,
         checked_at: Mutex<Option<u64>>,
+        /// This run started right after an update to this version: the "Updated to" note,
+        /// kept until something newer is under way.
+        updated_to: Option<String>,
         pub journal: Journal,
     }
 
     impl Updates {
-        pub fn new(journal: Journal) -> Self {
+        pub fn new(journal: Journal, updated_to: Option<String>) -> Self {
+            let state = match &updated_to {
+                Some(version) => UpdateState::Updated { version: version.clone() },
+                None => UpdateState::None,
+            };
             Self {
                 ready: Mutex::new(None),
-                state: Mutex::new(UpdateState::None),
+                state: Mutex::new(state),
                 urgent: AtomicBool::new(false),
                 wake: tokio::sync::Notify::new(),
                 checked_at: Mutex::new(None),
+                updated_to,
                 journal,
             }
         }
@@ -347,13 +384,29 @@ pub mod updater {
             *self.checked_at.lock().unwrap()
         }
 
+        /// Sends the state to the windows only when it changed.
         pub fn set(&self, app: &AppHandle, state: UpdateState) {
-            *self.state.lock().unwrap() = state.clone();
+            {
+                let mut cur = self.state.lock().unwrap();
+                if *cur == state {
+                    return;
+                }
+                *cur = state.clone();
+            }
             let _ = app.emit(EVENT, state);
         }
 
         pub fn check_now(&self) {
             self.wake.notify_one();
+        }
+
+        /// After a check that found nothing: the "Updated to" note if this run has one, else
+        /// "up to date".
+        fn nothing_new(&self, running: String, checked_at: u64) -> UpdateState {
+            match &self.updated_to {
+                Some(version) => UpdateState::Updated { version: version.clone() },
+                None => UpdateState::UpToDate { version: running, checked_at },
+            }
         }
     }
 
@@ -379,11 +432,39 @@ pub mod updater {
         tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(schedule::TICK).await;
+                refresh_ready(&a);
                 if let Err(e) = install(&a, false) {
                     tracing::debug!("update not installed: {e}");
                 }
             }
         });
+    }
+
+    /// The downloaded update's state as of now: the mode (the setting may have changed) and
+    /// the time until it installs by itself (the status bar counts down with it).
+    fn ready_state(app: &AppHandle, update: &Update) -> UpdateState {
+        let state = app.state::<AppState>();
+        let urgent = app.state::<Updates>().urgent.load(Ordering::SeqCst);
+        let mode = mode(app);
+        let install_in = schedule::install_in(state.clock(), &state.activity(), mode, urgent);
+        UpdateState::Ready {
+            version: update.version.clone(),
+            notes: update.body.clone(),
+            auto: mode == UpdateMode::Auto || urgent,
+            install_in_s: install_in.map(|d| d.as_secs()),
+        }
+    }
+
+    /// Re-sends "ready" if the mode, a session or the countdown changed it.
+    pub fn refresh_ready(app: &AppHandle) {
+        let updates = app.state::<Updates>();
+        let next = match updates.ready.lock().unwrap().as_ref() {
+            Some((update, _)) => ready_state(app, update),
+            None => return,
+        };
+        if matches!(updates.state(), UpdateState::Ready { .. }) {
+            updates.set(app, next);
+        }
     }
 
     /// The server refused this version (4426, HTTP 426): check and install at once.
@@ -393,6 +474,7 @@ pub mod updater {
             updates.journal.write(&format!("the server needs a newer version ({why}); updating now"));
         }
         if updates.ready.lock().unwrap().is_some() {
+            refresh_ready(app);
             let _ = install(app, false);
         } else {
             updates.check_now();
@@ -404,12 +486,18 @@ pub mod updater {
     async fn check_once(app: &AppHandle) -> bool {
         let updates = app.state::<Updates>();
         let running = app.package_info().version.to_string();
+        // Over a settled state only: the "Updated to" note or a waiting update stays shown.
+        if updates.state().settled() {
+            updates.set(app, UpdateState::Checking);
+        }
         let found = match app.updater() {
             Ok(u) => u.check().await,
             Err(e) => Err(e),
         };
-        *updates.checked_at.lock().unwrap() = Some(now_ms());
+        let checked_at = now_ms();
+        *updates.checked_at.lock().unwrap() = Some(checked_at);
         let urgent = updates.urgent.load(Ordering::SeqCst);
+        let was_checking = updates.state() == UpdateState::Checking;
         let update = match found {
             Ok(Some(update)) => update,
             Ok(None) => {
@@ -421,11 +509,24 @@ pub mod updater {
                              yet. Download the installer again, or wait for the next release."
                         ),
                     });
+                } else if was_checking {
+                    updates.set(app, updates.nothing_new(running, checked_at));
                 }
                 return true;
             }
             Err(e) => {
                 updates.journal.write(&format!("check failed: {e}; retrying in 30 minutes"));
+                if was_checking {
+                    updates.set(
+                        app,
+                        UpdateState::CheckFailed {
+                            message: format!(
+                                "Could not check for updates ({e}). Trying again in 30 minutes."
+                            ),
+                            checked_at,
+                        },
+                    );
+                }
                 return false;
             }
         };
@@ -433,34 +534,53 @@ pub mod updater {
         if have.as_deref() == Some(update.version.as_str()) {
             return true;
         }
-        updates.journal.write(&format!("found {} (running {running}); downloading", update.version));
+        let version = update.version.clone();
+        updates.journal.write(&format!("found {version} (running {running}); downloading"));
+        updates.set(app, UpdateState::Downloading { version: version.clone(), percent: None });
         // download() verifies the signature (and the signed version) before it returns.
-        match update.download(|_, _| {}, || {}).await {
+        let progress = {
+            let app = app.clone();
+            let version = version.clone();
+            let mut got: u64 = 0;
+            move |chunk: usize, total: Option<u64>| {
+                got += chunk as u64;
+                let percent = total.filter(|t| *t > 0).map(|t| (got.min(t) * 100 / t) as u8);
+                // set() sends only when the percent moves.
+                app.state::<Updates>()
+                    .set(&app, UpdateState::Downloading { version: version.clone(), percent });
+            }
+        };
+        match update.download(progress, || {}).await {
             Ok(bytes) => {
-                updates.journal.write(&format!("{} downloaded and verified", update.version));
-                let auto = mode(app) == UpdateMode::Auto || urgent;
-                let state =
-                    UpdateState::Ready { version: update.version.clone(), notes: update.body.clone(), auto };
+                updates.journal.write(&format!("{version} downloaded and verified"));
+                let state = ready_state(app, &update);
                 *updates.ready.lock().unwrap() = Some((update, bytes));
                 updates.set(app, state);
-                if urgent {
-                    let _ = install(app, false);
-                }
+                // At once if this is a good moment (or the server insists), not a tick later.
+                let _ = install(app, false);
                 true
             }
             Err(e) => {
-                updates
-                    .journal
-                    .write(&format!("download of {} failed: {e}; retrying in 30 minutes", update.version));
+                updates.journal.write(&format!("download of {version} failed: {e}; retrying in 30 minutes"));
+                let older = updates.ready.lock().unwrap().as_ref().map(|(u, _)| ready_state(app, u));
+                // An older download still waits: show that one instead.
+                updates.set(
+                    app,
+                    older.unwrap_or(UpdateState::Failed {
+                        message: format!(
+                            "The download of version {version} failed ({e}). Trying again in 30 minutes."
+                        ),
+                    }),
+                );
                 false
             }
         }
     }
 
     /// Install the downloaded update if this is a good moment (`by_user`: the button, which
-    /// skips the timing but not the session check). On Windows a successful install starts
-    /// the installer and exits; the installer restarts the app. A failure leaves this
-    /// version running and retries later.
+    /// skips the timing but not the session check). "Installing" reaches the windows first;
+    /// then, on Windows, the installer starts and the app exits, and the installer restarts
+    /// it. A failure leaves this version running and retries later.
     pub fn install(app: &AppHandle, by_user: bool) -> Result<(), String> {
         let state = app.state::<AppState>();
         let updates = app.state::<Updates>();
@@ -493,23 +613,33 @@ pub mod updater {
         ));
         updates.set(app, UpdateState::Installing { version: version.clone() });
         state.update_settings(|s| s.pending_update = Some(version.clone()));
-        match update.install(&bytes) {
-            Ok(()) => app.restart(),
-            Err(e) => {
-                let message =
-                    format!("the update to {version} failed: {e}; still on {}", app.package_info().version);
-                updates.journal.write(&format!("{message}; retrying in 30 minutes"));
-                state.update_settings(|s| s.pending_update = None);
-                state.gate.install_failed();
-                updates.set(app, UpdateState::Failed { message: message.clone() });
-                let a = app.clone();
-                tauri::async_runtime::spawn(async move {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // Time for the status bar to say so before the installer takes over.
+            tokio::time::sleep(schedule::SHOW_INSTALLING).await;
+            let result = update.install(&bytes);
+            let state = app.state::<AppState>();
+            let updates = app.state::<Updates>();
+            match result {
+                Ok(()) => app.restart(),
+                Err(e) => {
+                    let running = app.package_info().version.to_string();
+                    updates.journal.write(&format!(
+                        "the update to {version} failed: {e}; still on {running}; retrying in 30 minutes"
+                    ));
+                    state.update_settings(|s| s.pending_update = None);
+                    state.gate.install_failed();
+                    updates.set(&app, UpdateState::Failed {
+                        message: format!(
+                            "The update to version {version} failed ({e}); still on {running}. Trying again in 30 minutes."
+                        ),
+                    });
                     tokio::time::sleep(schedule::RETRY_AFTER).await;
-                    a.state::<Updates>().check_now();
-                });
-                Err(message)
+                    updates.check_now();
+                }
             }
-        }
+        });
+        Ok(())
     }
 }
 
@@ -542,41 +672,46 @@ mod tests {
     }
 
     #[test]
-    fn at_start_before_the_user_does_anything() {
+    fn at_once_before_the_user_does_anything() {
         assert!(may_install(10 * S, &idle(), UpdateMode::Auto, false));
-        // Once they click, the start window is over: wait for a quiet moment.
-        let touched = Activity { last_input: Some(5 * S), ..idle() };
-        assert!(!may_install(10 * S, &touched, UpdateMode::Auto, false));
-        // A download that finishes after the start window waits for idle.
-        assert!(!may_install(START_WINDOW + S, &touched, UpdateMode::Auto, false));
+        // Long after start too: an app left open and untouched updates.
+        assert!(may_install(3 * 3600 * S, &idle(), UpdateMode::Auto, false));
+        assert_eq!(install_in(10 * S, &idle(), UpdateMode::Auto, false), Some(Duration::ZERO));
     }
 
     #[test]
-    fn a_minute_after_a_session_ends_if_untouched() {
+    fn after_two_quiet_minutes() {
+        let used = Activity { last_input: Some(100 * S), ..idle() };
+        assert!(!may_install(100 * S + QUIET - S, &used, UpdateMode::Auto, false));
+        assert_eq!(install_in(130 * S, &used, UpdateMode::Auto, false), Some(QUIET - 30 * S));
+        assert!(may_install(100 * S + QUIET, &used, UpdateMode::Auto, false));
+        // A click starts the wait again.
+        let again = Activity { last_input: Some(100 * S + QUIET - S), ..used };
+        assert!(!may_install(100 * S + QUIET, &again, UpdateMode::Auto, false));
+    }
+
+    #[test]
+    fn after_a_session_ends_the_same_quiet_time() {
         let end = 600 * S;
         let ended = Activity { last_input: Some(end - 30 * S), last_session_end: Some(end), ..idle() };
         assert!(!may_install(end + 10 * S, &ended, UpdateMode::Auto, false));
-        assert!(may_install(end + AFTER_SESSION, &ended, UpdateMode::Auto, false));
+        assert!(may_install(end + QUIET, &ended, UpdateMode::Auto, false));
         // The user is reading the post-call screen: wait until they stop.
         let reading = Activity { last_input: Some(end + 20 * S), ..ended };
-        assert!(!may_install(end + AFTER_SESSION, &reading, UpdateMode::Auto, false));
-        assert!(may_install(end + 20 * S + IDLE, &reading, UpdateMode::Auto, false));
-    }
-
-    #[test]
-    fn when_idle() {
-        let used = Activity { last_input: Some(100 * S), ..idle() };
-        assert!(!may_install(100 * S + IDLE - S, &used, UpdateMode::Auto, false));
-        assert!(may_install(100 * S + IDLE, &used, UpdateMode::Auto, false));
+        assert!(!may_install(end + QUIET, &reading, UpdateMode::Auto, false));
+        assert!(may_install(end + 20 * S + QUIET, &reading, UpdateMode::Auto, false));
     }
 
     #[test]
     fn ask_mode_waits_for_the_button_unless_the_server_insists() {
         assert!(!may_install(10 * S, &idle(), UpdateMode::Ask, false));
-        assert!(!may_install(10 * IDLE, &idle(), UpdateMode::Ask, false));
+        assert!(!may_install(10 * QUIET, &idle(), UpdateMode::Ask, false));
+        assert_eq!(install_in(10 * S, &idle(), UpdateMode::Ask, false), None);
         let used = Activity { last_input: Some(9 * S), ..idle() };
         assert!(may_install(10 * S, &used, UpdateMode::Ask, true));
         assert!(may_install(10 * S, &used, UpdateMode::Auto, true));
+        let busy = Activity { session: true, ..idle() };
+        assert_eq!(install_in(10 * S, &busy, UpdateMode::Auto, true), None);
     }
 
     #[test]

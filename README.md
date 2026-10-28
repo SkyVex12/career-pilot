@@ -596,13 +596,15 @@ For teammates (Windows 10 or 11). The installer is built on every merge that cha
 **Updates** install by themselves. The app asks the releases bucket for a newer version at
 start and every four hours, downloads it in the background and checks its signature (only
 installers signed with the release key are installed). It never installs during a call: only
-when no session is running or starting, at start (before you click anything), a minute after a
-session ends (if you have not touched the app since), or after ten quiet minutes. Then it
-restarts and says **Updated to x.y.z**. Settings → Updates → **Ask me first** downloads but waits
-for your **Install and restart** instead. A failed download or install is retried after half an
-hour; the running version keeps working meanwhile. Settings shows the version, the last check
-(**Check now**) and the update log, which is also in
-`%LOCALAPPDATA%\com.copilot.desktop\logs\updates.log`.
+when no session is running or starting, at once if you have not touched the app since it
+started, otherwise after two minutes without a click, key press or scroll in it (a session's end
+counts as activity too). A status bar under the tabs shows each step as it happens:
+downloading (with its percentage), ready (with the time left and **Restart now**), installing,
+then **Updated to x.y.z** after the restart. Settings → Updates → **Ask me first** downloads
+but waits for your **Install and restart** instead. A failed download or install shows in the
+bar and is retried after half an hour; the running version keeps working meanwhile. Settings
+shows the version and the live check status (**Check now**). For support, every step is also
+written to `%LOCALAPPDATA%\com.copilot.desktop\logs\updates.log`.
 
 If the server no longer supports your version (see "The minimum app version"), the session
 stops with a note and the app updates at once, in either mode.
@@ -755,9 +757,9 @@ uv run pyright
   backend, docs, tests and infrastructure skip; changes add up across skipped releases; hand
   tags; a published version whose tag is missing; an older commit; the notes);
   `apps/desktop/src-tauri/src/release.rs` tests the update schedule (never during a session,
-  even when the server insists; at start, after a session, when idle; ask mode; a session
+  even when the server insists; at once when untouched, after two quiet minutes; ask mode; a session
   start and an install never overlap; the restart note) and the update log;
-  `apps/desktop/tests/updates.test.ts` the banner. `tests/test_ci_changes.py`: which CI jobs
+  `apps/desktop/tests/updates.test.ts` the status bar. `tests/test_ci_changes.py`: which CI jobs
   and whether a deploy each kind of change needs. The version guard:
   `apps/gateway/tests/test_version_guard.py` (4426, and 4410 for 0.1.0),
   `apps/api/tests/test_version_guard.py` (426) and, end to end, the client stopping on 4426

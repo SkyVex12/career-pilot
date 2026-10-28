@@ -27,7 +27,7 @@ use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::Mode;
 use history::History;
 use release::UpdateState;
-use release::journal::{Entry, Journal};
+use release::journal::Journal;
 use release::schedule::{Activity, AfterStart, Gate, Starting};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -61,8 +61,6 @@ struct AppState {
     activity: Mutex<Activity>,
     /// A session starting, or an update installing: never both (release::schedule::Gate).
     gate: Gate,
-    /// updates.log (release::journal).
-    journal: Journal,
 }
 
 impl AppState {
@@ -177,8 +175,6 @@ struct UpdatesView {
     enabled: bool,
     /// The last check, Unix milliseconds.
     checked_at: Option<u64>,
-    /// The newest lines of updates.log, oldest first.
-    log: Vec<Entry>,
 }
 
 #[derive(Serialize)]
@@ -218,11 +214,7 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
         signed_in_as,
         ready,
         warnings,
-        updates: UpdatesView {
-            enabled: release::config().is_some(),
-            checked_at: checked_at(&app),
-            log: state.journal.lines(20),
-        },
+        updates: UpdatesView { enabled: release::config().is_some(), checked_at: checked_at(&app) },
     }
 }
 
@@ -280,6 +272,9 @@ fn save_settings(
             ..settings.clone()
         }
     });
+    // A waiting update shows the new mode at once.
+    #[cfg(feature = "release")]
+    release::updater::refresh_ready(&app);
     if hotkey_changed {
         register_hotkey(&app, &settings.hotkey)?;
     }
@@ -631,9 +626,14 @@ fn live_status(state: State<'_, AppState>) -> Live {
 
 /// A click, key or scroll in a window (throttled by the UI): an update waits for quiet.
 #[tauri::command]
-fn note_activity(state: State<'_, AppState>) {
+fn note_activity(app: AppHandle, state: State<'_, AppState>) {
     let now = state.clock();
     state.activity.lock().unwrap().last_input = Some(now);
+    // A waiting update's countdown starts again.
+    #[cfg(feature = "release")]
+    release::updater::refresh_ready(&app);
+    #[cfg(not(feature = "release"))]
+    let _ = app;
 }
 
 /// Look for an update now (the settings' "Check now").
@@ -777,16 +777,9 @@ pub fn run() {
                 started: Instant::now(),
                 activity: Mutex::new(Activity::default()),
                 gate: Gate::default(),
-                journal: journal.clone(),
             });
             #[cfg(feature = "release")]
-            {
-                let updates = release::updater::Updates::new(journal);
-                if updated {
-                    updates.set(app.handle(), UpdateState::Updated { version: version.clone() });
-                }
-                app.manage(updates);
-            }
+            app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
             if let Err(e) = register_hotkey(app.handle(), &hotkey) {
