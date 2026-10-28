@@ -350,6 +350,9 @@ pub mod updater {
         state: Mutex<UpdateState>,
         /// The server refused this version: install as soon as no session runs.
         urgent: AtomicBool,
+        /// The user asked for this check ("Check now"): it shows "checking" and its result
+        /// whatever was showing.
+        asked: AtomicBool,
         /// Check now (urgent, "Check now", a retry after a failed install).
         wake: tokio::sync::Notify,
         checked_at: Mutex<Option<u64>>,
@@ -369,6 +372,7 @@ pub mod updater {
                 ready: Mutex::new(None),
                 state: Mutex::new(state),
                 urgent: AtomicBool::new(false),
+                asked: AtomicBool::new(false),
                 wake: tokio::sync::Notify::new(),
                 checked_at: Mutex::new(None),
                 updated_to,
@@ -397,6 +401,12 @@ pub mod updater {
         }
 
         pub fn check_now(&self) {
+            self.wake.notify_one();
+        }
+
+        /// "Check now": a check that reports itself.
+        pub fn ask(&self) {
+            self.asked.store(true, Ordering::SeqCst);
             self.wake.notify_one();
         }
 
@@ -486,8 +496,10 @@ pub mod updater {
     async fn check_once(app: &AppHandle) -> bool {
         let updates = app.state::<Updates>();
         let running = app.package_info().version.to_string();
-        // Over a settled state only: the "Updated to" note or a waiting update stays shown.
-        if updates.state().settled() {
+        // Over a settled state only, unless the user asked: the "Updated to" note or a
+        // waiting update stays shown.
+        let asked = updates.asked.swap(false, Ordering::SeqCst);
+        if asked || updates.state().settled() {
             updates.set(app, UpdateState::Checking);
         }
         let found = match app.updater() {
@@ -509,6 +521,8 @@ pub mod updater {
                              yet. Download the installer again, or wait for the next release."
                         ),
                     });
+                } else if asked {
+                    updates.set(app, UpdateState::UpToDate { version: running, checked_at });
                 } else if was_checking {
                     updates.set(app, updates.nothing_new(running, checked_at));
                 }
@@ -516,7 +530,11 @@ pub mod updater {
             }
             Err(e) => {
                 updates.journal.write(&format!("check failed: {e}; retrying in 30 minutes"));
-                if was_checking {
+                let waiting = updates.ready.lock().unwrap().as_ref().map(|(u, _)| ready_state(app, u));
+                if let Some(state) = waiting.filter(|_| was_checking) {
+                    // A downloaded update still waits: show it again.
+                    updates.set(app, state);
+                } else if was_checking {
                     updates.set(
                         app,
                         UpdateState::CheckFailed {
@@ -532,6 +550,9 @@ pub mod updater {
         };
         let have = updates.ready.lock().unwrap().as_ref().map(|(u, _)| u.version.clone());
         if have.as_deref() == Some(update.version.as_str()) {
+            if updates.state() == UpdateState::Checking {
+                updates.set(app, ready_state(app, &update));
+            }
             return true;
         }
         let version = update.version.clone();

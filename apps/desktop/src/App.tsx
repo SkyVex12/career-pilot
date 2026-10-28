@@ -192,6 +192,43 @@ function useUpdate(): UpdateState {
   return update;
 }
 
+/** "Check now": busy from the click until the check's result arrives (shown for at least a
+ * moment, so a fast check is still seen), or an error if the check could not start. */
+function useCheckNow(update: UpdateState) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [since, setSince] = useState(0);
+  // The result: any state after "checking" (the updater always sends both for this check).
+  const [sawChecking, setSawChecking] = useState(false);
+  useEffect(() => {
+    if (!busy) return;
+    if (update.state === "checking") {
+      setSawChecking(true);
+      return;
+    }
+    if (!sawChecking) return;
+    const t = setTimeout(() => setBusy(false), Math.max(0, since + 700 - Date.now()));
+    return () => clearTimeout(t);
+  }, [busy, update, sawChecking, since]);
+  // Never spin forever (a check that hangs is cut off by the server's timeout anyway).
+  useEffect(() => {
+    if (!busy) return;
+    const t = setTimeout(() => setBusy(false), 60_000);
+    return () => clearTimeout(t);
+  }, [busy]);
+  const start = () => {
+    setError(null);
+    setSawChecking(false);
+    setSince(Date.now());
+    setBusy(true);
+    api.checkUpdates().catch((e) => {
+      setBusy(false);
+      setError(String(e));
+    });
+  };
+  return { busy, error, start };
+}
+
 /** Release builds update themselves (src-tauri/src/release.rs). While an update downloads,
  * waits or installs, this bar under the tabs says what is happening, with its progress. */
 function UpdateBar({ running }: { running: boolean }) {
@@ -779,10 +816,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
   const release = view.release;
   const updates = view.updates;
   const updateLine = settingsLine(update);
-  const checkNow = () => {
-    setMessage(null);
-    api.checkUpdates().catch((e) => setMessage(String(e)));
-  };
+  const check = useCheckNow(update);
   return (
     <section className="panel">
       <div className="grid">
@@ -790,13 +824,23 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
         <div>
           <span>{view.version}</span>
           {updates.enabled ? (
-            <p className="note">
-              {updateLine ?? `Last checked ${updates.checked_at ? ago(updates.checked_at) : "not yet"}.`} Checks at start and
-              every four hours.{" "}
-              <button className="link" onClick={checkNow} disabled={update.state === "checking" || update.state === "downloading"}>
-                Check now
+            <div className="check-row">
+              <button
+                className="small"
+                onClick={check.start}
+                disabled={check.busy || update.state === "downloading" || update.state === "installing"}
+              >
+                {check.busy && <span className="spinner" />}
+                {check.busy ? "Checking…" : "Check now"}
               </button>
-            </p>
+              <span className={`note check-result${check.error || update.state === "check_failed" ? " bad" : ""}`} aria-live="polite">
+                {check.busy
+                  ? "Asking the release server for a newer version…"
+                  : (check.error ??
+                    updateLine ??
+                    `Last checked ${updates.checked_at ? ago(updates.checked_at) : "not yet"}. Checks at start and every four hours.`)}
+              </span>
+            </div>
           ) : (
             <p className="note">A development build: it does not update itself.</p>
           )}
