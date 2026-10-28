@@ -107,16 +107,19 @@ class Detector:
         entry.update(extra)
         self.on_decision(entry, utterance)
 
-    async def detect(self, utterance: str, transcript: str, mode: str = "interview") -> Detection:
+    async def detect(
+        self, utterance: str, transcript: str, mode: str = "interview", turns: str = ""
+    ) -> Detection:
         key = text_hash(utterance)
-        cache_key = f"{mode}:{key}"  # the call type is part of the prompt
+        # The call type and the turn-taking block are part of the prompt.
+        cache_key = f"{mode}:{turns}:{key}"
         if (hit := self.cache.get(cache_key)) is not None:
             result = replace(hit, latency_ms=0)
             self._report(utterance, key, result, None, cached=True)
             return result
         started = time.monotonic()
         self.calls += 1
-        req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode)
+        req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode, turns)
         try:
             text, done = await self.router.complete("detector", req)
             detection = parse_detection(text)

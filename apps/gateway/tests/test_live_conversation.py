@@ -287,3 +287,28 @@ async def test_a_long_call_is_summarized_in_the_background(env) -> None:
     summaries = [e for e in log if e["kind"] == "summary"]
     assert len(summaries) == calls
     assert all("text" not in e and e["input_tokens"] > 0 for e in summaries)
+
+
+async def test_a_standup_detector_is_told_when_the_user_last_spoke(env) -> None:
+    # 2026-10-27: in a two-person standup the detector turned down "you're still on X, right?"
+    # seconds after the user spoke, guessing that "Them" were several people talking among
+    # themselves. It now gets the turn-taking as a fact.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("Morning. Anything to raise before I share my screen?", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "them")
+        await c.say_me("I finished the retry fix yesterday", capture_ms=3000, end_ms=3500)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
+        await c.say("So you're still on the label migration, right?", capture_ms=8000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "migration" in m["text"])
+        await asyncio.sleep(0.3)
+        await c.send({"type": "session.end"})
+        await c.closed()
+    first, *_, last = requests_for(provider, "detector")
+    assert "<turn_taking>\nAlex has not spoken yet.\n</turn_taking>" in str(first.content)
+    assert "Alex last spoke less than 20 s ago." in str(last.content)
+    assert "changed between Them and Alex once" in str(last.content)
+    assert "may be one person or several" in last.system[0].text

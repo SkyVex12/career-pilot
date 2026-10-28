@@ -11,6 +11,7 @@ every line, never touches the cached prefix.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 from copilot_core.llm import LLMRequest, SystemBlock
@@ -369,16 +370,28 @@ def deep_pass(
 
 # Standups and meetings are group calls, but every remote speaker is one "Them" in the
 # transcript, so a manager questioning a presenter reads like a one-on-one with the user: in
-# the 2026-10-26 standup, 5 of 7 answers fired on questions to a teammate.
+# the 2026-10-26 standup, 5 of 7 answers fired on questions to a teammate. The first version
+# of this rule then said "Them" was several people talking mostly to each other, and in the
+# 2026-10-27 standup, a review with one teammate, 5 of 8 turns for the user got nothing: the
+# model turned down "you ..., right?" checks seconds after the user had spoken. The gateway
+# now states the turn-taking (`turn_taking`) instead of leaving the model to guess it.
 DETECTOR_GROUP_RULE = """
-- This is a group call. "Them" is several people, and most of what they say is to each
-  other. Something is for {user_name} only if they are addressed by name ({names}), "you"
-  comes right after {user_name} spoke, or it is plainly {user_name}'s turn (the round of
-  updates reaches them, "what about you?"). A question that follows someone else presenting
-  or answering is for that person. Being mentioned ("I'll check with {first}") is not being
-  addressed."""
+- This is a group call. "Them" may be one person or several, all under one label.
+  <turn_taking> says when {user_name} last spoke and how often the speaker changed between
+  Them and {user_name} lately. Something is for {user_name} when:
+  - they are addressed by name ({names});
+  - it comes soon after {user_name} spoke, or in a back-and-forth with them, and it asks
+    them something or checks something with them ("you", "right?", "does that change your
+    plan?", "should I move the dates?");
+  - it is plainly their turn (the round of updates reaches them, "what about you?").
+  A question that follows someone else presenting or answering, while {user_name} has not
+  spoken for a while, is for that person. Being mentioned ("I'll check with {first}") is not
+  being addressed.
+- A check about {user_name}'s own work or plan ("you're still on the migration, right?",
+  "so the rest goes to review?") needs a reply: standup_status in a standup, else respond."""
 
 GROUP_MODES = ("standup", "meeting")
+TURN_RECENT_S = 120
 
 
 def first_name(user_name: str) -> str:
@@ -387,12 +400,43 @@ def first_name(user_name: str) -> str:
     return parts[0] if parts else user_name
 
 
-def detector(
-    user_name: str, transcript: str, utterance: str, max_tokens: int, mode: str = "interview"
-) -> LLMRequest:
-    user = "\n\n".join(
-        [_data("transcript", transcript or "(empty)"), _data("utterance", utterance)]
+def turn_taking(user_name: str, turns: Sequence[tuple[str, float, float]], now_s: float) -> str:
+    """The detector's <turn_taking> block in a group call: when the user last spoke, and how
+    often the speaker changed in the last two minutes. `turns` are (channel "them" or "me",
+    start s, end s), oldest first. Coarse on purpose, so the detector's cache still hits."""
+    first = first_name(user_name)
+    mine = [t for t in turns if t[0] == "me"]
+    if not mine:
+        return f"{first} has not spoken yet."
+    ago = max(0.0, now_s - mine[-1][2])
+    if ago < 20:
+        when = "less than 20 s ago"
+    elif ago < 60:
+        when = "less than a minute ago"
+    else:
+        when = f"about {int(ago // 60)} min ago"
+    recent = [t for t in turns if t[2] >= now_s - TURN_RECENT_S]
+    switches = sum(1 for a, b in pairwise(recent) if a[0] != b[0])
+    times = "once" if switches == 1 else f"{switches} times"
+    return (
+        f"{first} last spoke {when}. The speaker changed between Them and {first} "
+        f"{times} in the last 2 minutes."
     )
+
+
+def detector(
+    user_name: str,
+    transcript: str,
+    utterance: str,
+    max_tokens: int,
+    mode: str = "interview",
+    turns: str = "",
+) -> LLMRequest:
+    """`turns` is the `turn_taking` block, sent in group calls only."""
+    blocks = [_data("transcript", transcript or "(empty)"), _data("utterance", utterance)]
+    if mode in GROUP_MODES and turns:
+        blocks.insert(0, _data("turn_taking", turns))
+    user = "\n\n".join(blocks)
     system = DETECTOR_SYSTEM.format(user_name=user_name, mode=MODE_PHRASES.get(mode, f"a {mode}"))
     if mode in GROUP_MODES:
         first = first_name(user_name)

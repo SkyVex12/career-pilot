@@ -1,0 +1,141 @@
+# A two-person standup for the detector eval
+# (copilot-detector-eval --script evals/bench/review_standup.toml --mode standup).
+#
+# Written after the 2026-10-27 standup: a tester went through the user's report for a while,
+# gave their own update, then put questions and checks to the user. Under the first group-call
+# rule ("Them is several people talking to each other"), 5 of 8 turns for the user got
+# nothing. Everyone here is fictional and the lines are paraphrased: the user is Alex Rivera
+# (profile.toml), Dana tests Alex's label retry work. Every remote speaker is "Them", as in a
+# live call; the user's own lines (speaker = "me") are context and are not scored.
+#
+# expect "answer" with a type: for Alex, should fire. "none": no answer needed.
+
+[defaults]
+voice = "cedar"
+style = "A colleague on a video call, reviewing work. Natural pace."
+pause_s = 0.0
+
+[[utterance]]
+id = "dana_hello"
+parts = ["Hi Alex, good morning. Anything you want to raise before I share my screen?"]
+gap_s = 1.0
+expect = "either"
+case = "an opener; a plain no is enough"
+
+[[utterance]]
+id = "alex_no"
+speaker = "me"
+parts = ["No, go ahead."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_walks"
+parts = ["Okay. So I tested the label retries on staging, and when the carrier times out twice the second retry never gets logged."]
+gap_s = 1.0
+expect = "none"
+case = "the tester walking through what they found"
+
+[[utterance]]
+id = "dana_more"
+parts = ["The backoff numbers look right otherwise. It's just that one path, and the dashboard shows a blank count for it."]
+gap_s = 1.0
+expect = "none"
+case = "more walkthrough"
+
+[[utterance]]
+id = "dana_clear"
+parts = ["I hope that much is clear. Right? Alex?"]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+case = "a check by name (fired on 10-27, 2.8 s late)"
+
+[[utterance]]
+id = "alex_ack"
+speaker = "me"
+parts = ["Yes, that makes sense. I'll double check the second retry path."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_aware"
+parts = ["Do you already know whether the count should be per attempt or per label?"]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+case = "a question right after the user spoke (missed on 10-27)"
+
+[[utterance]]
+id = "alex_not_sure"
+speaker = "me"
+parts = ["Not sure, I'd have to check the ticket."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_own_update"
+parts = ["Fine. For my own updates, I've been reviewing the carrier onboarding reports and I need to sort out some gaps with the support team."]
+gap_s = 2.0
+expect = "none"
+case = "the tester's own update"
+
+[[utterance]]
+id = "dana_own_more"
+parts = ["They asked for a submitter column, which we already have, so I'll follow up with them on what they actually need."]
+gap_s = 1.0
+expect = "none"
+case = "more of the tester's own update"
+
+[[utterance]]
+id = "dana_rest_review"
+parts = ["Apart from the retries and the migration, everything else you moved to ready for review, right?"]
+gap_s = 2.0
+expect = "answer"
+type = "standup_status"
+case = "a check about the user's own work after the tester's update (missed on 10-27)"
+
+[[utterance]]
+id = "alex_yes"
+speaker = "me"
+parts = ["Yes, the rest is in review."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_plan"
+parts = ["Does this change the plan for the dispatch alerts? Should I move the dates on the roadmap, or is it okay?"]
+gap_s = 1.5
+expect = "answer"
+type = "standup_status"
+case = "a plan question in a back-and-forth (missed four ways on 10-27)"
+
+[[utterance]]
+id = "alex_after"
+speaker = "me"
+parts = ["I'll start the alerts once the retry fix is done."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "dana_move"
+parts = ["So I leave it as it is, or do you want me to move it?"]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+case = "\"you\" right after the user spoke (missed on 10-27)"
+
+[[utterance]]
+id = "dana_migration"
+parts = ["And you're still to do the migration of the old labels, right?"]
+gap_s = 3.0
+expect = "answer"
+type = "standup_status"
+case = "a check about the user's own work (missed on 10-27)"
+
+[[utterance]]
+id = "dana_bye"
+parts = ["Cool, that's all from me. Have a good one."]
+gap_s = 4.0
+expect = "none"
+case = "a goodbye"

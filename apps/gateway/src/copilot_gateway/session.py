@@ -496,7 +496,17 @@ class Session:
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
         transcript = self.conv.recent(self.settings.detector_context_tokens)
-        call = asyncio.ensure_future(self.detector.detect(utterance, transcript, self.info.mode))
+        turns = ""
+        if self.info.mode in prompts.GROUP_MODES:
+            turns = prompts.turn_taking(
+                self.principal.display_name,
+                [(ln.channel, ln.start_ms / 1000, ln.end_ms / 1000) for ln in self.conv.lines],
+                # The utterance being decided ended at the other side's last speech end.
+                max(self.capture_now, self.them_spans[-1][1] if self.them_spans else 0) / 1000,
+            )
+        call = asyncio.ensure_future(
+            self.detector.detect(utterance, transcript, self.info.mode, turns)
+        )
         grace = self.settings.name_address_grace_ms
         if (
             grace is not None

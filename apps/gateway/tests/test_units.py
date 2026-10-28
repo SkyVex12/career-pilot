@@ -625,8 +625,15 @@ def test_detector_knows_a_group_call_and_the_users_first_name() -> None:
     assert "This is a group call" in system
     assert "addressed by name (Jordan Rivera, or Jordan)" in system
     assert "A question that follows someone else presenting" in system
-    interview = prompts.detector("Jordan Rivera", "", "Why us?", 80, "interview")
+    # 2026-10-27: a two-person standup; the rule no longer assumes several speakers, and a
+    # check about the user's own work needs a reply.
+    assert '"Them" may be one person or several' in system
+    assert "you're still on the migration, right?" in system
+    with_turns = prompts.detector("Jordan Rivera", "", "Right?", 80, "standup", "Jordan ...")
+    assert "<turn_taking>\nJordan ...\n</turn_taking>" in str(with_turns.content)
+    interview = prompts.detector("Jordan Rivera", "", "Why us?", 80, "interview", "Jordan ...")
     assert "This is a group call" not in interview.system[0].text
+    assert "turn_taking" not in str(interview.content)  # one-on-one prompts are unchanged
     assert "- respond:" in system  # remarks that need a reply, in every mode
 
 
@@ -649,3 +656,16 @@ def test_addressed_by_name_is_a_vocative_question() -> None:
     assert not addressed_by_name("Thanks Sam, what about the rollout?", "Sam")
     assert not addressed_by_name("Sam?", "Sam")  # too short to be a question by itself
     assert not addressed_by_name("Samantha, any update?", "Sam")
+
+
+def test_turn_taking_says_when_the_user_last_spoke() -> None:
+    turns = [("them", 0.0, 5.0), ("me", 6.0, 8.0), ("them", 9.0, 12.0)]
+    assert prompts.turn_taking("Sam Lee", [], 10) == "Sam has not spoken yet."
+    assert prompts.turn_taking("Sam Lee", turns, 12) == (
+        "Sam last spoke less than 20 s ago. The speaker changed between Them and Sam 2 times "
+        "in the last 2 minutes."
+    )
+    assert prompts.turn_taking("Sam Lee", turns, 50).startswith("Sam last spoke less than a")
+    late = prompts.turn_taking("Sam Lee", turns, 400)
+    assert late.startswith("Sam last spoke about 6 min ago.")
+    assert "0 times" in late  # nothing in the last two minutes
