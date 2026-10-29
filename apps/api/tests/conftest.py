@@ -58,3 +58,13 @@ async def api() -> AsyncIterator[Api]:
         await svc.pool.close()
         await svc.valkey.aclose()
         await db.__aexit__(None, None, None)
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def fresh_people(request: pytest.FixtureRequest) -> AsyncIterator[None]:
+    """Career-OS people are shared across accounts (copilot_core.profiles), and the fake's
+    user ids repeat from test to test: each test starts without any."""
+    if "api" in request.fixturenames:
+        api: Api = request.getfixturevalue("api")
+        await api.admin.execute("delete from app.career_os_people")
+    yield

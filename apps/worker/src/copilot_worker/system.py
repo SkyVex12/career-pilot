@@ -66,11 +66,23 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
         signin = "deleted" if await ctx.users.delete_user(uid) else "already gone"
     career_os = await revoke_career_os(ctx, uid)
     # The account's profiles (ARCHITECTURE.md, "Profiles") go the same way, before the account:
-    # their users rows would cascade, but not their objects, Valkey keys or data keys.
+    # their users rows would cascade, but not their objects, Valkey keys or data keys. A
+    # profile is a Career-OS person's shared workspace: one another account still lists passes
+    # to that account instead.
     async with ctx.system() as conn:
-        owned = [r["id"] for r in await conn.fetch(
-            "select id from app.users where owner_id = $1", uid
-        )]  # fmt: skip
+        owned: list[UUID] = []
+        for r in await conn.fetch("select id from app.users where owner_id = $1", uid):
+            heir = await conn.fetchval(
+                "select user_id from app.profiles where id = $1 and user_id <> $2"
+                " order by created_at limit 1",
+                r["id"], uid,
+            )  # fmt: skip
+            if heir is None:
+                owned.append(r["id"])
+            else:
+                await conn.execute(
+                    "update app.users set owner_id = $2 where id = $1", r["id"], heir
+                )
     removed = vk = 0
     for who in (*owned, uid):
         objects, valkey_keys = await _delete_data(ctx, who)
@@ -105,6 +117,8 @@ async def _delete_data(ctx: Ctx, uid: UUID) -> tuple[int, int]:
         # Data keys go first and explicitly: with them gone, ciphertext is unreadable even if
         # a backup of the other tables survives.
         await conn.execute("delete from app.user_keys where user_id = $1", uid)
+        # Other accounts' listings of this row (a shared workspace) go with it.
+        await conn.execute("delete from app.profiles where id = $1", uid)
         await conn.execute("delete from app.users where id = $1", uid)  # cascades
         await conn.execute("delete from app.job_runs where user_id = $1", uid)
     ctx.crypto.forget(uid)

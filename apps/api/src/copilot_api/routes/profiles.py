@@ -37,6 +37,8 @@ async def list_profiles(svc: SvcDep, account: AccountDep) -> dict[str, Any]:
         return {"items": [me, *await profiles.listed(svc.pool, account)], "career_os": None}
     if kind == "user":
         me["career_os_user_id"] = link["external_id"]
+        if link["external_id"]:
+            await profiles.claim_me(svc.pool, account, str(link["external_id"]))
         return {"items": [me], "career_os": "user"}
     if svc.career_os is None:
         return {"items": [me, *await profiles.listed(svc.pool, account)], "career_os": kind}

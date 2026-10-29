@@ -208,6 +208,8 @@ One account can work for several people: an admin linked to Career-OS prepares a
 - **Switching.** The desktop app keeps the choice in its settings, refuses to switch while a session runs (a session keeps the profile it started with), and remounts every screen on a switch. A chosen profile that is no longer listed falls back to Me.
 - **Deletion.** `user.delete` of the account removes each profile like the account: objects, Valkey keys, data keys and rows.
 
+- **One workspace per Career-OS person, shared (migration 0013).** `app.career_os_people` names each Career-OS user's one `app.users` row: the first that held their data, an admin's profile row or the user's own account row. Every account linked to that person works in it: an admin link lists it in its `app.profiles` (several accounts may list one row), a user link reaches it as "Me" (`profiles.me_of`; the account's own things stay `AccountDep`'s). Settings sync only to the rows an account owns; deleting an account hands a workspace another account still lists to that account instead of deleting it.
+
 #### Company workspaces
 
 Standups and meetings answer from the user's work at a company. The companies the user works at (**employers**, `app.employers`) are kept apart from the applications they apply to (`app.applications`); usually one is current, sometimes more, and a past one can be archived.
