@@ -205,6 +205,14 @@ class Settings(CoreSettings):
     first_message_timeout_s: float = 5.0
     resume_window_s: float = 120.0
     idle_end_s: float = 600.0
+    # An interview whose other side said goodbye ends after this long with no speech on either
+    # side (2026-10-29: a session outlived its call by an hour, the next call starting 7.2
+    # minutes later, and answered another candidate's interview). None: idle_end_s only.
+    idle_end_after_close_s: float | None = 90.0
+    # With no speech from the mic at all once the other side has talked this long, the status
+    # badge says the mic is not heard (2026-10-29: one computer sent none for two whole
+    # interviews). None: off.
+    mic_silent_warn_s: float | None = 120.0
     max_session_minutes: int = 240
     events_maxlen: int = 2000
     state_ttl_s: int = 7200

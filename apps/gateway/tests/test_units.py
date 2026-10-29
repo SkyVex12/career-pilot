@@ -826,3 +826,15 @@ def test_fast_cues_are_specific_and_answer_every_part() -> None:
         assert "answer each, in the order asked." in system
         assert "states its length in brackets" in system
         assert "Never add up roles yourself into a new total." in system
+
+
+def test_a_goodbye_is_told_from_an_opening() -> None:
+    from copilot_gateway.turn import is_closing
+
+    for line in ("Bye bye.", "Okay, take care!", "Thank you so much for your time today",
+                 "I hope you have a wonderful afternoon. Okay?", "Goodbye, Alex",
+                 "You'll be hearing from us soon"):  # fmt: skip
+        assert is_closing(line), line
+    for line in ("Nice to meet you.", "Thanks a lot.", "We'd buy a new tool for that",
+                 "Let's talk about byte order", "Have a look at the second diagram"):  # fmt: skip
+        assert not is_closing(line), line

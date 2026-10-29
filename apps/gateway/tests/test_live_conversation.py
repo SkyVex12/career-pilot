@@ -538,3 +538,81 @@ async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> N
         assert q3["question_id"] != q2["question_id"]
     deep = [str(r.content) for r in requests_for(provider, "deep")]
     assert any("deploy fifty services on AWS? And how would you watch them" in d for d in deep)
+
+
+# 2026-10-29: a session outlived its interview by an hour (the next call started 7.2 minutes
+# later), and one computer sent no mic speech for two interviews without anyone noticing.
+
+
+async def test_an_interview_ends_soon_after_the_goodbye(env) -> None:
+    settings = env.settings(idle_end_after_close_s=0.6)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Great talking with you, have a wonderful afternoon. Bye bye", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "Bye" in m["text"])
+        code = await c.closed(timeout=4.0)
+        assert code == 1000
+        session = gw.manager.sessions.get(c.session_id)
+        assert session is None or session.ending
+
+
+async def test_no_early_end_without_a_goodbye_or_outside_an_interview(env) -> None:
+    settings = env.settings(idle_end_after_close_s=0.6)
+    async with GatewayServer(env.services(settings)) as gw:
+        talk = ProtocolClient(gw.url)
+        await talk.start()
+        await talk.say("Let me look at your resume for a moment", capture_ms=0)
+        await talk.wait(lambda m: m["type"] == "transcript.final" and "resume" in m["text"])
+        standup = ProtocolClient(gw.url, token="token-b")
+        await standup.start(mode="standup")
+        await standup.say("Thanks everyone, bye", capture_ms=0)
+        await standup.wait(lambda m: m["type"] == "transcript.final" and "bye" in m["text"])
+        await asyncio.sleep(1.6)
+        assert talk.close_code is None
+        assert standup.close_code is None
+
+
+async def test_the_badge_says_when_the_mic_is_not_heard(env) -> None:
+    settings = env.settings(mic_silent_warn_s=0.15)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("So tell me about the payments platform you ran", capture_ms=0)
+        await c.say("And what was the hardest part of it", capture_ms=3000)
+        warn = await c.wait(lambda m: m["type"] == "status" and "microphone" in m["message"])
+        assert (warn["component"], warn["state"]) == ("stt", "degraded")
+        await c.say_me("The hardest part was the ledger cutover", capture_ms=6000, end_ms=7000)
+        ok = await c.wait(lambda m: m["type"] == "status" and m["state"] == "ok"
+                          and "microphone" in m["message"])  # fmt: skip
+        assert ok["component"] == "stt"
+
+
+async def test_the_end_line_counts_the_whole_call_across_a_resume(env, monkeypatch, caplog) -> None:
+    # 2026-10-29: two deploys resumed live sessions on new gateway tasks, and their end lines
+    # said 0 questions and 0 detector calls.
+    import logging
+
+    from copilot_gateway import session as session_mod
+
+    monkeypatch.setattr(session_mod, "TOTALS_SAVE_S", 0.1)
+    async with GatewayServer(env.services()) as gw1:
+        c = ProtocolClient(gw1.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "What did you build?"})
+        await c.wait_type("answer.done", pass_="fast")
+        await asyncio.sleep(0.8)  # the totals reach the live state
+        await c.drop()
+        await gw1.manager.shutdown()
+    caplog.set_level(logging.INFO, logger="copilot_gateway.session")
+    async with GatewayServer(env.services()) as gw2:
+        c.url = gw2.url
+        await c.resume()
+        await c.send({"type": "question.force", "text": "And what changed after?"})
+        q = await c.wait(lambda m: m["type"] == "question.detected" and "after" in m["text"])
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    ended = [r.getMessage() for r in caplog.records if "session ended:" in r.getMessage()]
+    assert ended
+    assert "questions=2" in ended[-1]

@@ -19,7 +19,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, get_args
+from typing import Any, cast, get_args
 from uuid import UUID
 
 import asyncpg
@@ -58,6 +58,7 @@ from copilot_gateway.turn import (
     TurnDetector,
     TurnModel,
     addressed_by_name,
+    is_closing,
     substantive_words,
 )
 from copilot_protocol import models
@@ -139,6 +140,7 @@ class ApplicationMemory:
 # status badge to a headphones hint, until ECHO_WINDOW_S passes without one.
 ECHO_WARN_COUNT = 3
 ECHO_WINDOW_S = 120.0
+TOTALS_SAVE_S = 10.0  # how often the end line's running totals go into the live state
 # The other side's speech counts as "around the same time" as a line of the user's this close.
 ECHO_NEAR_MS = 500
 ECHO_TEXT_MS = 1500
@@ -257,6 +259,18 @@ class Session:
         self.them_open: int | None = None
         self.echo_at: deque[float] = deque(maxlen=ECHO_WARN_COUNT)
         self.echo_warned = False
+        # No mic speech at all while the other side has talked for a while (2026-10-29: one
+        # computer sent none for two whole interviews and nothing said so).
+        self.them_speech_ms = 0
+        self.me_heard = False
+        self.mic_warned = False
+        # The other side's last line was a goodbye: an interview ends sooner once it is quiet.
+        self.them_closing = False
+        # The end line's totals from earlier gateway tasks of this session (a resume).
+        self.prior_totals: dict[str, Any] = {}
+        with contextlib.suppress(ValueError, TypeError):
+            self.prior_totals = dict(json.loads(restored.get("totals") or "{}"))
+        self.totals_saved_at = 0.0
         self._settling: set[asyncio.Task[None]] = set()
         self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
         self._followed: set[int] = set()  # ends (capture ms) of the turns already followed
@@ -661,6 +675,7 @@ class Session:
                     end_ms=r.end_ms,
                 )
                 self.conv.add(Line("them", r.start_ms, r.end_ms, r.text))
+                self.them_closing = is_closing(r.text)
                 if self.info.store_transcript:
                     self.log_entry(
                         {
@@ -859,6 +874,41 @@ class Session:
             self.set_status(
                 "stt", "degraded", "Your mic is picking up the other side; headphones help"
             )
+
+    def _check_mic(self) -> None:
+        s = self.settings
+        if self.me_heard or self.mic_warned or not s.mic_silent_warn_s:
+            return
+        if self.them_speech_ms >= s.mic_silent_warn_s * 1000:
+            self.mic_warned = True
+            log.info("no mic speech after %d s of the other side's", self.them_speech_ms // 1000)
+            self.set_status(
+                "stt", "degraded", "We can't hear your microphone: check it in Settings"
+            )
+
+    def _mic_heard(self) -> None:
+        self.me_heard = True
+        if self.mic_warned:
+            self.mic_warned = False
+            self.set_status("stt", "ok", "Your microphone is coming through")
+
+    def totals(self) -> dict[str, Any]:
+        """The end line's counts for the whole session, earlier gateway tasks included."""
+        prior = self.prior_totals
+
+        def add(mine: Mapping[str, int], before: Any) -> dict[str, int]:
+            out = dict(mine)
+            if isinstance(before, dict):
+                for k, v in cast(dict[str, Any], before).items():
+                    if isinstance(v, int):
+                        out[k] = out.get(k, 0) + v
+            return out
+
+        return {
+            "questions": len(self.answers.questions) + int(prior.get("questions") or 0),
+            "stats": add(self.answers.stats, prior.get("stats")),
+            "detector": add(self.detector.stats, prior.get("detector")),
+        }
 
     # Lifecycle.
 
@@ -1085,6 +1135,19 @@ class Session:
             if now - self.last_speech > s.idle_end_s:
                 self.request_end("idle", CLOSE_NORMAL)
                 return
+            after_close = s.idle_end_after_close_s
+            if (
+                after_close
+                and self.info.mode == "interview"
+                and self.them_closing
+                and now - self.last_speech > after_close
+            ):
+                log.info("ending: quiet for %.0f s after the other side's goodbye", after_close)
+                self.request_end("idle", CLOSE_NORMAL)
+                return
+            if now - self.totals_saved_at > TOTALS_SAVE_S:
+                self.totals_saved_at = now
+                self.writer.set_state(totals=json.dumps(self.totals()))
             gone_since = self.disconnected_at if self.ws is None else None
             if gone_since is not None and now - gone_since > s.resume_window_s:
                 self.request_end("no_resume", CLOSE_NORMAL)
@@ -1117,10 +1180,11 @@ class Session:
         self.turns.cancel()
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
+        totals = self.totals()
         log.info(
             "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            len(self.answers.questions), self.answers.stats, self.detector.stats,
+            totals["questions"], totals["stats"], totals["detector"],
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
@@ -1270,7 +1334,9 @@ class Session:
         if frame.speech_end:
             if self.them_open is not None:
                 self.them_spans.append((self.them_open, frame.capture_ms))
+                self.them_speech_ms += max(0, frame.capture_ms - self.them_open)
                 self.them_open = None
+                self._check_mic()
             if self.stt is not None:
                 self.stt.speech(False)
             self.turns.on_speech_end()
@@ -1283,6 +1349,7 @@ class Session:
         or me_stt off) leaves only its timing, as "(name spoke for N s)"."""
         stt = self.stt_me
         if frame.speech_start:
+            self._mic_heard()
             self.me_since = frame.capture_ms
             self.me_audio_seen = False
             if stt is not None:
