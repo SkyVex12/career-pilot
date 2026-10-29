@@ -28,13 +28,17 @@ and stories their project by key. Stories are STAR episodes the candidate could 
 interview, each with the competencies it shows (ownership, technical depth, leadership,
 collaboration, ...). Dates are as written in the resume ("2021", "Mar 2019", "now").
 
-Lose no fact. The live copilot sees only what you return:
-- A role's highlights are its bullets that none of that role's projects or stories covers,
-  one per bullet, each at most 25 words in the resume's own words. Keep platform, product and
-  tool names exactly as written (a CRM, a cloud service, a framework), and keep the bullet's
-  own verb and qualifiers ("proposed", "evaluated", "helped", "led"): never make a claim
-  stronger or weaker than the resume does. Work with clients, customers, stakeholders or
-  business teams is a fact to keep, like any technical one.
+Every role has a one-sentence summary. Projects and stories come first: the resume's main
+pieces of work become projects (a few per role, the larger ones), and the episodes with an
+action and an outcome become stories (up to 8 in all, the strongest first).
+
+Then lose no fact, since the live copilot sees only what you return:
+- A role's highlights are the bullets of that role that none of its projects or stories
+  already covers: only those, one per bullet, each shortened to at most 25 words. Keep
+  platform, product and tool names exactly as written (a CRM, a cloud service, a framework),
+  and keep the bullet's own verb and qualifiers ("proposed", "evaluated", "helped", "led"):
+  never make a claim stronger or weaker than the resume does. Work with clients, customers,
+  stakeholders or business teams is a fact to keep, like any technical one.
 - headline: the resume's summary or profile section as facts, in one or two sentences:
   years of experience, seniority, focus areas, as written. Empty when there is none.
 

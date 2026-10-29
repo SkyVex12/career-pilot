@@ -181,7 +181,13 @@ def test_extraction_asks_for_highlights_and_a_headline() -> None:
     role = schema["properties"]["roles"]["items"]
     assert role["properties"]["highlights"] == {"type": "array", "items": {"type": "string"}}
     system = worker_prompts.EXTRACT_SYSTEM
-    for rule in ("Lose no fact", "names exactly as written", '"proposed"', "clients, customers"):
+    # 2026-10-28, live: without "projects and stories come first" every bullet became a
+    # highlight and the resume gave no stories at all.
+    rules = (
+        "Projects and stories come first", "lose no fact", "names exactly as written",
+        '"proposed"', "clients, customers", "none of its projects or stories",
+    )  # fmt: skip
+    for rule in rules:
         assert rule in system
 
 
