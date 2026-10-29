@@ -138,6 +138,7 @@ async def eval_model(
     latencies: list[float] = []
     false_fires: dict[str, int] = {}
     misses: dict[str, int] = {}
+    wrong_types: dict[str, list[str]] = {}  # case id: the types it got instead of its own
     type_right = type_total = errors = 0
     scored = 0
     for _ in range(reps):
@@ -160,6 +161,8 @@ async def eval_model(
             elif fired and case.qtype:
                 type_total += 1
                 type_right += int(detection.qtype == case.qtype)
+                if detection.qtype != case.qtype:
+                    wrong_types.setdefault(case.id, []).append(detection.qtype)
     wrong = sum(false_fires.values()) + sum(misses.values())
     return {
         "model": model,
@@ -170,6 +173,7 @@ async def eval_model(
         "false_fires": false_fires,
         "misses": misses,
         "type_accuracy": round(type_right / type_total, 3) if type_total else None,
+        "wrong_types": wrong_types,
         "latency_p50_ms": round(float(np.percentile(latencies, 50))) if latencies else None,
         "latency_p95_ms": round(float(np.percentile(latencies, 95))) if latencies else None,
         "latency_mean_ms": round(statistics.mean(latencies)) if latencies else None,

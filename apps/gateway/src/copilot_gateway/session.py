@@ -19,7 +19,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, get_args
+from typing import Any, cast, get_args
 from uuid import UUID
 
 import asyncpg
@@ -58,6 +58,7 @@ from copilot_gateway.turn import (
     TurnDetector,
     TurnModel,
     addressed_by_name,
+    is_closing,
     substantive_words,
 )
 from copilot_protocol import models
@@ -139,6 +140,7 @@ class ApplicationMemory:
 # status badge to a headphones hint, until ECHO_WINDOW_S passes without one.
 ECHO_WARN_COUNT = 3
 ECHO_WINDOW_S = 120.0
+TOTALS_SAVE_S = 10.0  # how often the end line's running totals go into the live state
 # The other side's speech counts as "around the same time" as a line of the user's this close.
 ECHO_NEAR_MS = 500
 ECHO_TEXT_MS = 1500
@@ -257,6 +259,18 @@ class Session:
         self.them_open: int | None = None
         self.echo_at: deque[float] = deque(maxlen=ECHO_WARN_COUNT)
         self.echo_warned = False
+        # No mic speech at all while the other side has talked for a while (2026-10-29: one
+        # computer sent none for two whole interviews and nothing said so).
+        self.them_speech_ms = 0
+        self.me_heard = False
+        self.mic_warned = False
+        # The other side's last line was a goodbye: an interview ends sooner once it is quiet.
+        self.them_closing = False
+        # The end line's totals from earlier gateway tasks of this session (a resume).
+        self.prior_totals: dict[str, Any] = {}
+        with contextlib.suppress(ValueError, TypeError):
+            self.prior_totals = dict(json.loads(restored.get("totals") or "{}"))
+        self.totals_saved_at = 0.0
         self._settling: set[asyncio.Task[None]] = set()
         self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
         self._followed: set[int] = set()  # ends (capture ms) of the turns already followed
@@ -561,6 +575,7 @@ class Session:
         t0: float,
         match: "asyncio.Task[object] | None",
     ) -> UUID:
+        text = self._continued(text)
         q = Question(
             qid=uuid7(),
             text=text,
@@ -584,9 +599,22 @@ class Session:
         self.answers.add(q)
         return q.qid
 
+    def _continued(self, text: str) -> str:
+        # Only a question the other side was saying goes on: a forced one (the hotkey, Respond,
+        # a typed question) carries what was heard earlier, and its end is not theirs.
+        last = self.conv.asked[-1] if self.conv.asked else None
+        shown = self.answers.questions.get(UUID(last.qid)) if last is not None else None
+        if shown is not None and shown.forced:
+            return text
+        starts = [a for a, _ in self.them_spans]
+        if self.them_open is not None:
+            starts.append(self.them_open)
+        return self.conv.continued(text, self.settings.continuation_gap_ms, starts)
+
     def confirm_question(
         self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
     ) -> None:
+        text = self._continued(text)
         self.answers.confirm(qid, text, turn_end_ms, final_ms)
         # Paired with what the user says after the question's own words, which may already
         # have started by the time the turn is confirmed.
@@ -598,7 +626,7 @@ class Session:
     def start_held(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> UUID:
         q = Question(
             qid=uuid7(),
-            text=text,
+            text=self._continued(text),
             qtype="other",
             confidence=0.0,
             addressed=False,
@@ -618,6 +646,7 @@ class Session:
         q = self.answers.questions.get(qid)
         if q is None:
             return
+        text = self._continued(text)
         q.text = text
         q.qtype = detection.qtype
         q.confidence = DETECTED_CONFIDENCE
@@ -652,6 +681,7 @@ class Session:
                     end_ms=r.end_ms,
                 )
                 self.conv.add(Line("them", r.start_ms, r.end_ms, r.text))
+                self.them_closing = is_closing(r.text)
                 if self.info.store_transcript:
                     self.log_entry(
                         {
@@ -754,9 +784,9 @@ class Session:
 
     def _maybe_follow(self, line: Line) -> None:
         """Follow the user: once they have said `follow_min_words` real words in reply to the
-        other side's last turn, a card continues from what they are saying, whether a
-        question was shown for that turn or not (2026-10-28: the user wanted the answer to
-        follow them, and four of seven questions came after the user had started). Once per
+        other side's last turn, a card continues from what they are saying when no answer
+        was shown for that turn (2026-10-28: the user wanted the answer to follow them; since
+        2026-10-29 only where nothing answered, so a turn is never paid for twice). Once per
         turn of the other side; not while the detector is still deciding it, not for small
         talk, and not for pleasantries."""
         s = self.settings
@@ -778,20 +808,18 @@ class Session:
         if substantive_words(said) < s.follow_min_words:
             return
         asked = next((a for a in reversed(self.conv.asked) if a.at_ms >= anchor - 1500), None)
-        last = self._last_detection
-        if asked is None and last is not None and last.qtype == "small_talk":
-            return
         if asked is not None:
-            shown = self.answers.questions.get(UUID(asked.qid))
-            if shown is not None and not shown.fast_ended:
-                return  # its cues are still coming; follow once they are in
-            text = asked.text
-        else:
-            mine = [
-                ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms
-            ]
-            since = mine[-1] if mine else 0
-            text = " ".join(self.conv.them_text_between(since, anchor))
+            # The turn already has an answer on screen, and its deep pass continues it. In the
+            # 2026-10-29 interviews 15 of 18 follow cards were on such turns and mostly
+            # restated the answer, each with its own deep pass.
+            self._followed.add(anchor)
+            return
+        last = self._last_detection
+        if last is not None and last.qtype == "small_talk":
+            return
+        mine = [ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms]
+        since = mine[-1] if mine else 0
+        text = " ".join(self.conv.them_text_between(since, anchor))
         words = text.split()
         if len(words) < 3:
             return
@@ -819,8 +847,7 @@ class Session:
         )
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None, supersede=False)
-        log.info("following the user after %d words (%s)", len(said.split()),
-                 "answered" if asked is not None else "no question shown")  # fmt: skip
+        log.info("following the user after %d words (no question shown)", len(said.split()))
 
     def _echo(self, seg: int, line: Line, share: float) -> None:
         self.emit(
@@ -853,6 +880,41 @@ class Session:
             self.set_status(
                 "stt", "degraded", "Your mic is picking up the other side; headphones help"
             )
+
+    def _check_mic(self) -> None:
+        s = self.settings
+        if self.me_heard or self.mic_warned or not s.mic_silent_warn_s:
+            return
+        if self.them_speech_ms >= s.mic_silent_warn_s * 1000:
+            self.mic_warned = True
+            log.info("no mic speech after %d s of the other side's", self.them_speech_ms // 1000)
+            self.set_status(
+                "stt", "degraded", "We can't hear your microphone: check it in Settings"
+            )
+
+    def _mic_heard(self) -> None:
+        self.me_heard = True
+        if self.mic_warned:
+            self.mic_warned = False
+            self.set_status("stt", "ok", "Your microphone is coming through")
+
+    def totals(self) -> dict[str, Any]:
+        """The end line's counts for the whole session, earlier gateway tasks included."""
+        prior = self.prior_totals
+
+        def add(mine: Mapping[str, int], before: Any) -> dict[str, int]:
+            out = dict(mine)
+            if isinstance(before, dict):
+                for k, v in cast(dict[str, Any], before).items():
+                    if isinstance(v, int):
+                        out[k] = out.get(k, 0) + v
+            return out
+
+        return {
+            "questions": len(self.answers.questions) + int(prior.get("questions") or 0),
+            "stats": add(self.answers.stats, prior.get("stats")),
+            "detector": add(self.detector.stats, prior.get("detector")),
+        }
 
     # Lifecycle.
 
@@ -1079,6 +1141,19 @@ class Session:
             if now - self.last_speech > s.idle_end_s:
                 self.request_end("idle", CLOSE_NORMAL)
                 return
+            after_close = s.idle_end_after_close_s
+            if (
+                after_close
+                and self.info.mode == "interview"
+                and self.them_closing
+                and now - self.last_speech > after_close
+            ):
+                log.info("ending: quiet for %.0f s after the other side's goodbye", after_close)
+                self.request_end("idle", CLOSE_NORMAL)
+                return
+            if now - self.totals_saved_at > TOTALS_SAVE_S:
+                self.totals_saved_at = now
+                self.writer.set_state(totals=json.dumps(self.totals()))
             gone_since = self.disconnected_at if self.ws is None else None
             if gone_since is not None and now - gone_since > s.resume_window_s:
                 self.request_end("no_resume", CLOSE_NORMAL)
@@ -1111,10 +1186,11 @@ class Session:
         self.turns.cancel()
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
+        totals = self.totals()
         log.info(
             "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            len(self.answers.questions), self.answers.stats, self.detector.stats,
+            totals["questions"], totals["stats"], totals["detector"],
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
@@ -1264,7 +1340,9 @@ class Session:
         if frame.speech_end:
             if self.them_open is not None:
                 self.them_spans.append((self.them_open, frame.capture_ms))
+                self.them_speech_ms += max(0, frame.capture_ms - self.them_open)
                 self.them_open = None
+                self._check_mic()
             if self.stt is not None:
                 self.stt.speech(False)
             self.turns.on_speech_end()
@@ -1277,6 +1355,7 @@ class Session:
         or me_stt off) leaves only its timing, as "(name spoke for N s)"."""
         stt = self.stt_me
         if frame.speech_start:
+            self._mic_heard()
             self.me_since = frame.capture_ms
             self.me_audio_seen = False
             if stt is not None:

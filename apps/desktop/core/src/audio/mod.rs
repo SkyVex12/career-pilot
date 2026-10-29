@@ -7,6 +7,7 @@
 
 pub mod aec;
 pub mod capture;
+pub mod check;
 pub mod clock;
 pub mod framer;
 pub mod pipeline;

@@ -131,6 +131,22 @@ def substantive_words(text: str) -> int:
     return sum(1 for w in _words(text) if w.strip("'") not in PLEASANTRIES)
 
 
+# How the other side ends a call. "Nice to meet you" is left out: it opens calls as often.
+CLOSING = re.compile(
+    r"\b(?:good-?bye|bye(?:-bye| bye| now)?|take care|talk (?:to you )?soon"
+    r"|have a (?:great|good|nice|wonderful|lovely) (?:day|afternoon|evening|night|weekend|one)"
+    r"|thanks? (?:you )?(?:so much |again )?for your time|you'll be hearing from (?:us|me))\b",
+    re.IGNORECASE,
+)
+
+
+def is_closing(text: str) -> bool:
+    """Is this line of the other side's a goodbye? An interview that has gone quiet after one
+    ends sooner (`idle_end_after_close_s`): on 2026-10-29 a session outlived its call by an
+    hour and answered the next candidate's interview from the wrong profile."""
+    return bool(CLOSING.search(text))
+
+
 def _words(text: str) -> list[str]:
     return re.sub(r"[^\w\s']", " ", text.lower()).split()
 

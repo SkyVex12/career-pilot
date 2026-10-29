@@ -26,7 +26,7 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 QUESTION_WORDS = 40  # of a question, in the earlier answers
 SAID_WORDS = 60  # of what the user said after it
 ASKED_KEEP = 50
+CONTINUED_WORDS = 80  # of a question joined to the one before it
 # Without a summary model, or while it keeps failing, lines are still capped: this many times
 # the recent window, oldest first.
 LINES_CAP_FACTOR = 4
@@ -190,6 +191,32 @@ class Conversation:
         self.asked.append(asked)
         del self.asked[:-ASKED_KEEP]
         self._changed()
+
+    def continued(self, text: str, gap_ms: int, them_starts: Sequence[int] = ()) -> str:
+        """`text`, or the previous question followed by it when this is the same question
+        going on: the other side started speaking again within `gap_ms` of the previous
+        question's end, and the user has not spoken since. `them_starts` are the capture ms
+        where the other side's speech started (the client's speech flags), which are in
+        before the new words' STT final is. In the 2026-10-29 technical round an interviewer
+        who paused mid-question got 15 answers for 6 questions, each on its own fragment
+        ("for the big set of services, yes"), and one answered the topic before."""
+        if not self.asked or gap_ms <= 0:
+            return text
+        prev = self.asked[-1]
+        if any(ln.channel == "me" and ln.end_ms > prev.at_ms for ln in self.lines):
+            return text
+        starts = [*them_starts]
+        starts += [ln.start_ms for ln in self.lines if ln.channel == "them"]
+        # The next words start after the question's end; its own speech started before it.
+        after = [t for t in starts if t > prev.at_ms]
+        if not after or min(after) - prev.at_ms > gap_ms:
+            return text
+        said = " ".join(text.split())
+        if not said:
+            return text
+        if said in prev.text:
+            return prev.text
+        return " ".join(f"{prev.text} {said}".split()[-CONTINUED_WORDS:])
 
     @staticmethod
     def _said(asked: Asked, text: str) -> None:

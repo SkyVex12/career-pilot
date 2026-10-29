@@ -1,0 +1,67 @@
+{
+  "fast": {
+    "answers": 2,
+    "grounded": 1.0,
+    "no_invented_facts": 1.0,
+    "complete_mean": 4.5,
+    "correct_mean": 5,
+    "spoken_mean": 4.5,
+    "shape_mean": 4,
+    "words_mean": 29.5,
+    "words_per_line_mean": 8.2,
+    "cited_share_mean": 0.75,
+    "unknown_citations": 0,
+    "stock_phrases_per_answer": 0,
+    "sentence_lines_per_answer": 0
+  },
+  "deep": {
+    "answers": 2,
+    "grounded": 1.0,
+    "no_invented_facts": 1.0,
+    "complete_mean": 5,
+    "correct_mean": 5,
+    "spoken_mean": 4,
+    "shape_mean": 4,
+    "words_mean": 67.5,
+    "words_per_line_mean": 11.2,
+    "cited_share_mean": 0.92,
+    "unknown_citations": 0,
+    "stock_phrases_per_answer": 0,
+    "sentence_lines_per_answer": 6
+  },
+  "uncovered": {
+    "fast": {
+      "answers": 2,
+      "grounded": 1.0,
+      "no_invented_facts": 1.0,
+      "complete_mean": 4.5,
+      "correct_mean": 5,
+      "spoken_mean": 4.5,
+      "shape_mean": 4,
+      "words_mean": 29.5,
+      "words_per_line_mean": 8.2,
+      "cited_share_mean": 0.75,
+      "unknown_citations": 0,
+      "stock_phrases_per_answer": 0,
+      "sentence_lines_per_answer": 0
+    },
+    "deep": {
+      "answers": 2,
+      "grounded": 1.0,
+      "no_invented_facts": 1.0,
+      "complete_mean": 5,
+      "correct_mean": 5,
+      "spoken_mean": 4,
+      "shape_mean": 4,
+      "words_mean": 67.5,
+      "words_per_line_mean": 11.2,
+      "cited_share_mean": 0.92,
+      "unknown_citations": 0,
+      "stock_phrases_per_answer": 0,
+      "sentence_lines_per_answer": 6
+    }
+  },
+  "cost_usd": 0.0372,
+  "grader": "gpt-6.1-sol",
+  "reps": 2
+}

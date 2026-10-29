@@ -200,3 +200,39 @@ key_points = [
   "at most a useful question back, such as whether the role is remote, hybrid or on site",
 ]
 trap = "no placeholder or fill-in bracket, and no location presented as the candidate's"
+
+# Added after the 2026-10-29 mock interviews (paraphrased; docs/analysis/2026-10-29-mock-interviews.md):
+# asked for years in one area, the fast pass summed every role and gave nearly twice the right
+# number; a turn that opened with thanks and asked two things got half an answer; and asked a
+# yes-or-no question about the candidate's own past, the fast pass answered it for them.
+
+[[question]]
+id = "years_one_domain"
+question = "And how many years have you worked on payments specifically?"
+type = "technical"
+key_points = [
+  "only the payments role counts: Senior Backend Engineer at Larkspur Commerce, 2022 to now, about four years",
+  "the logistics role before it is not payments, so it is not added",
+]
+trap = "a total that adds the Tidewater logistics years to the payments years, or any number of years the profile does not support"
+
+[[question]]
+id = "two_part"
+question = "Thanks, that's clear. So if you had fifty services on AWS, what would you use to deploy them, and which tool do you like most for watching them in production?"
+type = "technical"
+key_points = [
+  "deployment: one standard pipeline and service template, ECS (Fargate) or EKS, infrastructure as code with Terraform, health checks and rollback",
+  "watching them: one telemetry standard (OpenTelemetry) into a backend such as CloudWatch or X-Ray, with dashboards and alerts per service",
+  "answers both parts, in the order asked",
+]
+trap = "no AWS projects beyond the profile's ECS, RDS, S3 and SQS presented as the candidate's"
+
+[[question]]
+id = "worked_here_before"
+question = "Have you ever worked for Northwind Payments before, as an employee or a contractor?"
+type = "other"
+key_points = [
+  "no yes or no from the profile, which does not say: the candidate answers it",
+  "at most a short question back, such as whether contract work through an agency counts",
+]
+trap = "says yes or no for the candidate, or names any past work with Northwind"

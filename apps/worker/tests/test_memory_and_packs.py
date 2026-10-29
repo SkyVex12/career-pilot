@@ -116,8 +116,34 @@ def test_digest_is_deterministic_and_short_ids_are_stable() -> None:
     assert b is not None
     assert a.text == b.text
     assert a.version == b.version
-    assert "Engineer, Acme, 2020 to now. Team: Core. Builds." in a.text
+    assert "Engineer, Acme, 2020 to now (about 6 yr). Team: Core. Builds." in a.text
     assert render_digest("Alex", []) is None
+
+
+def test_each_role_states_its_length() -> None:
+    """2026-10-29: asked for years with one platform, the fast pass summed three roles' dates
+    itself (one of them not on that platform) and said thirteen where the two that fit made
+    about seven. The digest gives each role's length, both end months included."""
+    from copilot_worker.memory import role_length
+
+    today = "2026-10-29"
+    assert role_length("Feb 2019", "Oct 2022", today) == "3 yr 9 mo"
+    assert role_length("Nov 2022", "May 2026", today) == "3 yr 7 mo"
+    assert role_length("November 2022", "Present", today) == "4 yr"
+    assert role_length("2019-02", "2022-10", today) == "3 yr 9 mo"
+    assert role_length("02/2019", "10/2022", today) == "3 yr 9 mo"
+    assert role_length("Jun 2026", "", today) == "5 mo"
+    assert role_length("2015", "2018", today) == "about 3 yr"
+    assert role_length("2026", "2026", today) is None
+    assert role_length("summer", "2020", today) is None
+    assert role_length("May 2026", "Feb 2019", today) is None
+    nodes = [
+        {"id": UUID(int=1), "kind": "role", "title": "Front-End Engineer, Northwind",
+         "summary": "Themes.", "body": {"start": "Feb 2019", "end": "Oct 2022"}},
+    ]  # fmt: skip
+    digest = render_digest("Alex", nodes, today=today)
+    assert digest is not None
+    assert "Front-End Engineer, Northwind, Feb 2019 to Oct 2022 (3 yr 9 mo). Themes." in digest.text
 
 
 # A resume shaped like the one in the 2026-10-28 interview (paraphrased, fictional): the
@@ -163,7 +189,7 @@ async def test_resume_highlights_and_headline_reach_the_digest(stack: Stack) -> 
     sid = short_ids([n["id"] for n in nodes])
     assert f"## Profile\n[{sid[profile['id']]}] Senior engineer with 12 years" in text
     # The highlights sit under their role's short id, with the resume's own qualifier.
-    role_line = f"[{sid[role['id']]}] Senior Engineer, Portline, 2024 to 2026. Built API"
+    role_line = f"[{sid[role['id']]}] Senior Engineer, Portline, 2024 to 2026 (about 2 yr). Built"
     assert role_line in text
     after = text.split(role_line, 1)[1]
     assert "\n  - Proposed HubSpot workflows with programmable automation" in after

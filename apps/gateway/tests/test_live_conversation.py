@@ -209,8 +209,9 @@ async def test_a_newer_question_means_no_deep_tokens_for_the_old_one(env) -> Non
         await c.wait(
             lambda m: m["type"] == "answer.delta" and m["question_id"] == q1["question_id"]
         )
-        # Confirmed while the first question's fast pass still streams.
-        await c.say("What would you change?", capture_ms=5000)
+        # Confirmed while the first question's fast pass still streams; asked more than
+        # continuation_gap_ms after it, so it is a question of its own.
+        await c.say("What would you change?", capture_ms=8000)
         q2 = await c.wait(
             lambda m: (
                 m["type"] == "question.detected"
@@ -418,7 +419,9 @@ async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
         assert c.of_type("question.detected") == []
 
 
-async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None:
+async def test_no_follow_card_on_a_turn_that_was_answered(env) -> None:
+    # 2026-10-29: 15 of 18 follow cards came on turns whose answer was already on screen, mostly
+    # restating it, each with its own fast and deep pass. A turn is answered once.
     provider = ScriptedProvider("anthropic")
     env.providers = [provider]
     async with GatewayServer(env.services()) as gw:
@@ -431,18 +434,12 @@ async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None
             "We split the ledger by account and moved the reads onto replicas behind a cache",
             capture_ms=2000, end_ms=5000,
         )  # fmt: skip
-        q2 = await c.wait(
-            lambda m: m["type"] == "question.detected" and m["question_id"] != q1["question_id"]
-        )
-        assert q2["text"] == "How did you scale the ledger?"
-        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
-        # The follow does not cut off the answer the user was reading.
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
         await c.wait_type("answer.done", question_id=q1["question_id"], pass_="deep")
-        cancelled = [m for m in c.of_type("answer.error") if m["question_id"] == q1["question_id"]]
-        assert cancelled == []
-    # Never served from the exact-repeat cache: it continues the user, not the question.
-    fast = requests_for(provider, "fast")
-    assert any("Question (follow): How did you scale the ledger?" in str(r.content) for r in fast)
+        await asyncio.sleep(0.6)
+        ids = {m["question_id"] for m in c.of_type("question.detected")}
+        assert ids == {q1["question_id"]}
+    assert not any("Question (follow)" in str(r.content) for r in requests_for(provider, "fast"))
 
 
 async def test_the_detailed_answer_follows_the_chosen_style_and_the_shown_cues(env) -> None:
@@ -491,3 +488,155 @@ async def test_a_reply_gets_its_detailed_answer_without_a_tap(env) -> None:
         await c.send({"type": "question.force", "kind": "respond"})
         q = await c.wait_type("question.detected")
         await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
+
+
+async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> None:
+    # 2026-10-29: an interviewer who paused mid-question got 15 answers for 6 questions, each
+    # on its own fragment, and one fast answer took up the topic before. A question that goes
+    # on before the user speaks is now the same question: its passes get both parts.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("What would you use to deploy fifty services on AWS?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="fast")
+        await c.say("And how would you watch them, which tool is your favorite?", capture_ms=2000)
+        q2 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["question_id"] != q1["question_id"]
+            )
+        )
+        assert q2["text"] == (
+            "What would you use to deploy fifty services on AWS? "
+            "And how would you watch them, which tool is your favorite?"
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
+        # Once the user answers, the next question stands on its own again.
+        await c.say_me("I'd use ECS with one pipeline per service", capture_ms=4000, end_ms=6000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
+        await c.say("What about the database?", capture_ms=7000)
+        q3 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "What about the database?"
+            )
+        )
+        # And so does one asked long after the last.
+        await c.say("How do you like to review pull requests?", capture_ms=20000)
+        await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "How do you like to review pull requests?"
+            )
+        )
+        assert q3["question_id"] != q2["question_id"]
+    deep = [str(r.content) for r in requests_for(provider, "deep")]
+    assert any("deploy fifty services on AWS? And how would you watch them" in d for d in deep)
+
+
+# 2026-10-29: a session outlived its interview by an hour (the next call started 7.2 minutes
+# later), and one computer sent no mic speech for two interviews without anyone noticing.
+
+
+async def test_an_interview_ends_soon_after_the_goodbye(env) -> None:
+    settings = env.settings(idle_end_after_close_s=0.6)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Great talking with you, have a wonderful afternoon. Bye bye", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "Bye" in m["text"])
+        code = await c.closed(timeout=4.0)
+        assert code == 1000
+        session = gw.manager.sessions.get(c.session_id)
+        assert session is None or session.ending
+
+
+async def test_no_early_end_without_a_goodbye_or_outside_an_interview(env) -> None:
+    settings = env.settings(idle_end_after_close_s=0.6)
+    async with GatewayServer(env.services(settings)) as gw:
+        talk = ProtocolClient(gw.url)
+        await talk.start()
+        await talk.say("Let me look at your resume for a moment", capture_ms=0)
+        await talk.wait(lambda m: m["type"] == "transcript.final" and "resume" in m["text"])
+        standup = ProtocolClient(gw.url, token="token-b")
+        await standup.start(mode="standup")
+        await standup.say("Thanks everyone, bye", capture_ms=0)
+        await standup.wait(lambda m: m["type"] == "transcript.final" and "bye" in m["text"])
+        await asyncio.sleep(1.6)
+        assert talk.close_code is None
+        assert standup.close_code is None
+
+
+async def test_the_badge_says_when_the_mic_is_not_heard(env) -> None:
+    settings = env.settings(mic_silent_warn_s=0.15)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("So tell me about the payments platform you ran", capture_ms=0)
+        await c.say("And what was the hardest part of it", capture_ms=3000)
+        warn = await c.wait(lambda m: m["type"] == "status" and "microphone" in m["message"])
+        assert (warn["component"], warn["state"]) == ("stt", "degraded")
+        await c.say_me("The hardest part was the ledger cutover", capture_ms=6000, end_ms=7000)
+        ok = await c.wait(lambda m: m["type"] == "status" and m["state"] == "ok"
+                          and "microphone" in m["message"])  # fmt: skip
+        assert ok["component"] == "stt"
+
+
+async def test_the_end_line_counts_the_whole_call_across_a_resume(env, monkeypatch, caplog) -> None:
+    # 2026-10-29: two deploys resumed live sessions on new gateway tasks, and their end lines
+    # said 0 questions and 0 detector calls.
+    import logging
+
+    from copilot_gateway import session as session_mod
+
+    monkeypatch.setattr(session_mod, "TOTALS_SAVE_S", 0.1)
+    async with GatewayServer(env.services()) as gw1:
+        c = ProtocolClient(gw1.url)
+        await c.start()
+        await c.send({"type": "question.force", "text": "What did you build?"})
+        await c.wait_type("answer.done", pass_="fast")
+        await asyncio.sleep(0.8)  # the totals reach the live state
+        await c.drop()
+        await gw1.manager.shutdown()
+    caplog.set_level(logging.INFO, logger="copilot_gateway.session")
+    async with GatewayServer(env.services()) as gw2:
+        c.url = gw2.url
+        await c.resume()
+        await c.send({"type": "question.force", "text": "And what changed after?"})
+        q = await c.wait(lambda m: m["type"] == "question.detected" and "after" in m["text"])
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    ended = [r.getMessage() for r in caplog.records if "session ended:" in r.getMessage()]
+    assert ended
+    assert "questions=2" in ended[-1]
+
+
+async def test_a_question_after_a_forced_one_stands_on_its_own(env) -> None:
+    # The hotkey answers what was heard: it is not the other side's question going on, so the
+    # next spoken question is not joined to it (the client core's dropped-socket test).
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Tell me about a time you scaled a system?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="fast")
+        await c.send({"type": "question.force"})
+        q2 = await c.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != q1["question_id"]
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
+        await c.say("What is a system you designed?", capture_ms=1500)
+        await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "What is a system you designed?"
+            )
+        )

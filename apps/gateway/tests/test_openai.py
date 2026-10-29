@@ -368,7 +368,7 @@ def test_the_detector_hedge_runs_on_the_priority_tier() -> None:
     assert second.params["service_tier"] == "priority"
     req = prompts.detector("Alex", "", "Any blockers?", 80, "standup")
     assert provider.request(second.model, req, second.params)["service_tier"] == "priority"
-    assert all("service_tier" not in r.params for r in routes["deep"])
+    assert all("service_tier" not in r.params for r in routes["summary"])
     off = build_routes(openai_settings(openai_detector_retry_tier=None), [provider])
     assert all("service_tier" not in r.params for r in off["detector"])
 
@@ -383,7 +383,21 @@ def test_the_fast_pass_hedges_on_the_priority_tier() -> None:
     assert second.params["service_tier"] == "priority"
     assert first.model == second.model == "gpt-6-luna"
     router = build_router(settings, [provider])
-    assert router.hedge_after_s == {"detector": 2.0, "fast": 1.2}
-    off = openai_settings(fast_hedge_ms=None, openai_fast_retry_tier=None)
+    assert router.hedge_after_s == {"detector": 2.0, "fast": 1.2, "deep": 4.5}
+    off = openai_settings(fast_hedge_ms=None, openai_fast_retry_tier=None, deep_hedge_ms=None)
     assert build_router(off, [provider]).hedge_after_s == {"detector": 2.0}
     assert all("service_tier" not in r.params for r in build_routes(off, [provider])["fast"])
+
+
+def test_the_deep_pass_hedges_on_the_priority_tier() -> None:
+    # 2026-10-29: 7 deep passes got no first token within their timeout and retried on the
+    # same model and tier; their first words came at 9.7 to 11 s instead of about 4 s.
+    provider = OpenAIProvider("openai", openai_client([]))
+    settings = openai_settings()
+    first, second = build_routes(settings, [provider])["deep"][:2]
+    assert "service_tier" not in first.params
+    assert second.params["service_tier"] == "priority"
+    assert first.model == second.model
+    assert build_router(settings, [provider]).hedge_after_s["deep"] == 4.5
+    off = openai_settings(openai_deep_retry_tier=None)
+    assert all("service_tier" not in r.params for r in build_routes(off, [provider])["deep"])

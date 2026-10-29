@@ -69,7 +69,12 @@ class ScriptSTT:
 def services() -> Services:
     from fakeredis import FakeAsyncValkey
 
-    overrides: dict[str, Any] = {"env": "test", "llm_providers": ["anthropic"], "embedder": "none"}
+    # Two separate questions back to back, with no mic audio: the gateway would join the second
+    # to the first (continuation_gap_ms), which this latency test is not about.
+    overrides: dict[str, Any] = {
+        "env": "test", "llm_providers": ["anthropic"], "embedder": "none",
+        "continuation_gap_ms": 0,
+    }  # fmt: skip
     settings = Settings(_env_file=None, **overrides)  # pyright: ignore[reportCallIssue]
     uid = "0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b"
     from uuid import UUID

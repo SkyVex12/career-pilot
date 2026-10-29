@@ -246,3 +246,24 @@ def test_summary_prompt() -> None:
 @pytest.mark.parametrize("words", [0, 3])
 def test_tokens(words: int) -> None:
     assert tokens("abcd" * words) == words
+
+
+def test_a_question_continued_after_a_pause_joins_the_one_before() -> None:
+    """2026-10-29: an interviewer paused mid-question; each piece fired on its own."""
+    conv = Conversation("Alex", Budget())
+    conv.add(Line("them", 0, 3000, "Which AWS tools would you use for fifty services?"))
+    conv.question("q1", "Which AWS tools would you use for fifty services?", 3000)
+    joined = "Which AWS tools would you use for fifty services? And which is your favorite?"
+    # Speech started again 1.5 s later (the speech flag), before its STT final is in.
+    assert conv.continued("And which is your favorite?", 5000, [0, 4500]) == joined
+    # Not with the gap past the limit, nor with the setting off, nor with no new speech.
+    assert conv.continued("Next topic?", 5000, [0, 9000]) == "Next topic?"
+    assert conv.continued("And which?", 0, [4500]) == "And which?"
+    assert conv.continued("And which?", 5000, [0]) == "And which?"
+    # The same words again (an interim, then its final) do not repeat.
+    assert conv.continued("for fifty services?", 5000, [4500]) == conv.asked[-1].text
+    # Once the user has spoken, a new question stands on its own.
+    conv.add(Line("me", 4000, 4400, "Mostly ECS"))
+    assert conv.continued("And which is your favorite?", 5000, [4500]) == (
+        "And which is your favorite?"
+    )

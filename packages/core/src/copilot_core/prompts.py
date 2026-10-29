@@ -65,7 +65,14 @@ _RULES = """Rules:
 - Never write a placeholder or a fill-in bracket ("[your city]", "[X years]"). A personal
   detail the data does not have (where {user_name} lives, availability, notice, work
   authorization, their pay expectation, whether an offered range suits them) is theirs to
-  say: give no cue for it, only a useful question back where one fits.
+  say: give no cue for it, only a useful question back where one fits. The same for a yes or
+  no about their own situation (worked here before, relatives or friends here, holds a
+  certification, needs sponsorship): never answer it for them, in either direction.
+- How long {user_name} has done something ("how many years of X"): each role in <digest>
+  states its length in brackets. Count only the roles whose title or text names X, give
+  their lengths or the span they cover, or the headline figure in the profile when the
+  question is about the whole career. Never add up roles yourself into a new total. A role
+  with no length: give its dates ("since 2022"), not a number of years.
 - Reuse the wording, story names and exact numbers in <digest> and <session_pack>: they come
   from {user_name}'s own documents and approved memory, so they are words {user_name} knows.
   Don't rephrase them into polished prose.
@@ -73,7 +80,9 @@ _RULES = """Rules:
   phrases ("leverage", "robust", "ensure", "seamless", "passionate", "high-pressure",
   "I'm excited").
 - The question comes from speech recognition and may have a misheard word; answer the
-  question that was most likely asked.
+  question that was most likely asked. It is everything the speaker said in that turn, so it
+  may open with remarks ("thanks, good... so"); answer the question in it. When it asks two
+  or three things, answer each, in the order asked.
 - The call so far: <transcript> has the latest lines word for word, "Them" for the other side
   and {user_name}'s own lines under their name; <call_summary> sums up what came before, and
   <earlier_answers> pairs earlier questions with what {user_name} actually said. Use them: a
@@ -157,11 +166,17 @@ not sentences to read out.
   <transcript> show where they are going. Continue from there, in their direction, even where
   it goes beyond the data (what they say is true): the next 3 or 4 cues, with specifics, none
   repeating what they already said.
-- Each cue is a fragment of 3 to 10 words, in the order {user_name} would say them. The first
+- Each cue is a fragment of 4 to 12 words, in the order {user_name} would say them. The first
   cue carries the core of the answer: the direct answer, the approach, or the name of a story
   that shows what was asked. "Tell me about a time you X" with no story that shows X: the
   first cues are how {user_name} handles X. A fact from the data keeps its number and
   citation; a reasoning cue may start with "I'd". No full sentences, no full stops.
+- Every cue says something specific to this question: a name, a number, a step, a reason, a
+  tool. Never a cue that would fit any question ("strong fit for the role", "interested in
+  bringing that experience", "answer based on your situation", "happy to clarify"). A cue
+  that only restates the question is wrong.
+- These cues are the answer's outline: the detailed answer that follows develops them in the
+  same order, so put the points in the order the full answer should take.
 - No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
   output only a question back.
 - Output only the bullet list."""
@@ -175,9 +190,14 @@ given for the question type and in the style the request asks for.
 """
     + _RULES
     + """
-- The cues in <shown_cues> are already on {user_name}'s screen. Go beyond them: the how and
-  the why, the specifics (names, settings, numbers), a concrete example with what came of it,
-  the tradeoff or pitfall. Never restate a cue; build on it.
+- The cues in <shown_cues> are already on {user_name}'s screen, and {user_name} has started
+  speaking from them. Your answer is the same answer, developed: take their points in their
+  order and develop each one (the how and the why, the specifics: names, settings, numbers,
+  an example with what came of it), then add what they lack (the tradeoff or pitfall).
+  {user_name} must recognize each cue in your answer, so never switch to other points, but
+  don't repeat a cue's words either: say more than it does. If a cue is wrong (a fact the
+  data does not hold, a wrong number, off the question), don't build on it: give the right
+  point in its place.
 - No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
   output only a question back.
 - Output only the answer, with no preamble or heading."""
@@ -189,14 +209,15 @@ given for the question type and in the style the request asks for.
 # the cues on screen, and a paragraph reads end to end.
 DEEP_STYLES: dict[str, str] = {
     "bullets": (
-        "Style: bullets. 6 to 10 lines, one idea each, 8 to 18 words, in the order the user "
-        "would say them; each line a full thought the user can say, citations and [~] at its "
+        "Style: bullets. 6 to 10 lines, one idea each, 8 to 18 words, in the order of the cues "
+        "on screen; each line a full thought the user can say, citations and [~] at its "
         "end. This replaces the shape's line count and word limit."
     ),
     "paragraph": (
         "Style: paragraph. One or two connected paragraphs, 120 to 180 words, that the user "
         "can say nearly as written: first person, plain spoken words, each sentence leading "
-        "into the next (so, because, which meant, that's why), following the shape's order. "
+        "into the next (so, because, which meant, that's why), in the order of the cues on "
+        "screen (the shape's order when there are none). "
         "No bullets or line breaks inside a paragraph. Citations and [~] go at the end of the "
         "sentence they belong to. This replaces the shape's line count and word limit."
     ),
@@ -343,17 +364,21 @@ DETECTOR_SYSTEM = (
   small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
   questions for us?" is other. behavioral asks for a past situation ("tell me about a
   time...", "how did you handle..."). Why {user_name} is looking or leaving, why this role or
-  company, pay, location, availability, notice, work authorization and the hiring process
-  are other, never behavioral. Experience with a named tool or platform is technical.
+  company, pay, location, availability, notice and the hiring process are other, never
+  behavioral. Experience with a named tool or platform is technical.
 - respond: not a question, but said to {user_name} and needing a reply now: a request or a
   task for them, a reminder or a concern aimed at them, or a check right after they spoke
   ("makes sense?", "your thoughts?"). The same rules on whom it is for apply.
 - wait: it would be one, but the utterance stops mid-sentence or mid-thought.
 - none: anything else. A request to do something right now (share your screen, wait a
   moment, unmute), an audio check ("can you hear me?"), and a short reaction to something on
-  screen or just said ("what is that?", "oh really?") are none: they need no talking points. A
-  question can be phrased as a statement or a request ("I'm curious how you handled X", "walk
-  me through Y") and still be a question.
+  screen or just said ("what is that?", "oh really?") are none: they need no talking points.
+  So is a yes-or-no check of {user_name}'s own situation, answered in a word: are you
+  authorized to work here, will you need sponsorship, have you worked for us before, do
+  relatives or friends work here, do you hold a certification, "is that right?" about a fact
+  from their resume. {user_name} knows the answer. A question can be phrased as a
+  statement or a request ("I'm curious how you handled X", "walk me through Y") and still be
+  a question.
 - In a one-on-one call, such as most interviews, a question from the other side is for
   {user_name} unless it names someone else. With several people in the call, it is for
   {user_name} only if their name is used, "you" follows something {user_name} just said, or it

@@ -78,6 +78,13 @@ class Settings(CoreSettings):
     # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
     fast_hedge_ms: int | None = 1200
     openai_fast_retry_tier: str | None = "priority"
+    # The same for the deep pass. In the 2026-10-29 interviews 7 deep passes got no first token
+    # within their timeout and retried on the same model and tier: their first words came at
+    # 9.7 to 11 s instead of about 4 s (two more were lost in a runaway session). Its first
+    # token normally comes within 4.2 s. A hedge costs one more deep call, 1.75x on Priority,
+    # on the few that stall. None: retry only after the timeout, on the same tier.
+    deep_hedge_ms: int | None = 4500
+    openai_deep_retry_tier: str | None = "priority"
     # In standups and meetings, a question that addresses the user by name waits this long
     # for the detector, then shows as `respond` (detector.named_or_model). None: off.
     name_address_grace_ms: int | None = 1000
@@ -163,6 +170,10 @@ class Settings(CoreSettings):
     follow_user: bool = True
     follow_min_words: int = 8
     follow_window_ms: int = 12000
+    # A question that goes on after a pause (2026-10-29): when the other side starts speaking
+    # again within this long of a question's end and the user has not spoken, the next
+    # question is the same one continued, and its passes get both parts. 0: off.
+    continuation_gap_ms: int = 5000
     # Passes whose prompt cache is written at session start (and on a mode change), so the
     # first question is not cold. Only the fast pass by default: the first word waits on it.
     prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(
@@ -194,6 +205,14 @@ class Settings(CoreSettings):
     first_message_timeout_s: float = 5.0
     resume_window_s: float = 120.0
     idle_end_s: float = 600.0
+    # An interview whose other side said goodbye ends after this long with no speech on either
+    # side (2026-10-29: a session outlived its call by an hour, the next call starting 7.2
+    # minutes later, and answered another candidate's interview). None: idle_end_s only.
+    idle_end_after_close_s: float | None = 90.0
+    # With no speech from the mic at all once the other side has talked this long, the status
+    # badge says the mic is not heard (2026-10-29: one computer sent none for two whole
+    # interviews). None: off.
+    mic_silent_warn_s: float | None = 120.0
     max_session_minutes: int = 240
     events_maxlen: int = 2000
     state_ttl_s: int = 7200

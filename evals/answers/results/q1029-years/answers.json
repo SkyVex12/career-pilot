@@ -1,0 +1,114 @@
+[
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.006691,
+  "answer": "- About four years at Larkspur\u2019s checkout platform, owning payments adapters [n:a1]\n- Payments work centers on the order pipeline and provider integrations [n:a1]\n- I\u2019d count that checkout-platform work as my payments experience\n- How do you define payments work across the team?",
+  "metrics": {
+   "words": 38,
+   "lines": 4,
+   "words_per_line": 9.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Answers four years correctly, but repeats the scope and adds an unnecessary clarifying question instead of distinguishing the earlier logistics role."
+  }
+ },
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.015158000000000001,
+  "answer": "- About four years, at Larkspur Commerce, from 2022 to now. [n:a1]\n- I'm a Senior Backend Engineer on the Checkout Platform team, with nine engineers. [n:a1]\n- I own the order pipeline and the payments adapter layer. [n:a1]\n- That includes moving order reconciliation from nightly batch to Kafka streaming. [n:s2]\n- Reconciliation lag went from 24 hours to under 2 minutes. [n:s2]\n- Before Larkspur, my work was shipment tracking APIs and event ingestion at Tidewater. [n:a2]",
+  "metrics": {
+   "words": 67,
+   "lines": 6,
+   "words_per_line": 11.2,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Accurate and well grounded, but team size and reconciliation metrics add unnecessary detail to a simple tenure question."
+  }
+ },
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 1,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.006302,
+  "answer": "- Payments adapter layer at Larkspur since 2022 [n:a1]\n- Owned the order pipeline and payments adapter layer [n:a1]\n- About four years in that role [n:a1]",
+  "metrics": {
+   "words": 21,
+   "lines": 3,
+   "words_per_line": 7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Accurate and concise, but the first two cues are redundant; lead with about four years in payments."
+  }
+ },
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 1,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.009069,
+  "answer": "- About four years, since 2022, on Larkspur Commerce\u2019s Checkout Platform team. [n:a1]\n- I own the order pipeline and the payments adapter layer. [n:a1]\n- That includes moving order reconciliation from nightly batch to Kafka streaming. [n:s2]\n- Reconciliation lag went from 24 hours to under 2 minutes. [n:s2]\n- Before Larkspur, my work was shipment tracking APIs and event ingestion at Tidewater. [n:a2]\n- For payments, I\u2019d prioritize safe retries: a timeout doesn\u2019t mean the charge failed.",
+  "metrics": {
+   "words": 68,
+   "lines": 6,
+   "words_per_line": 11.3,
+   "cited_share": 0.83,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 4,
+   "notes": "Answers the years accurately, but the migration detail and unsolicited retries advice overextend a simple experience question."
+  }
+ }
+]

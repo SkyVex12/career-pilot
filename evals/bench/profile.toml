@@ -11,8 +11,8 @@ job_summary = "Payments platform team moving batch settlement jobs to streaming;
 digest = """
 # Career digest (version 2026-10-12)
 ## Roles
-[n:a1] Senior Backend Engineer, Larkspur Commerce, 2022 to now. Team: Checkout Platform, 9 engineers. Owns the order pipeline and the payments adapter layer.
-[n:a2] Backend Engineer, Tidewater Logistics, 2018 to 2022. Built shipment tracking APIs and the event ingestion service.
+[n:a1] Senior Backend Engineer, Larkspur Commerce, 2022 to now (about 4 yr). Team: Checkout Platform, 9 engineers. Owns the order pipeline and the payments adapter layer.
+[n:a2] Backend Engineer, Tidewater Logistics, 2018 to 2022 (about 4 yr). Built shipment tracking APIs and the event ingestion service.
 [n:a3] Software Engineer intern, Brightfield Labs, summer 2017. Data tooling in Python.
 ## Top stories
 [n:s1] Checkout outage on Black Friday: the payments adapter exhausted its connection pool at 6x normal traffic; led the incident, shed load with a feature flag in 12 minutes, then added pool limits per provider and load tests in CI. Revenue loss held under 0.3% of the day. Competencies: ownership, calm under pressure, incident response.

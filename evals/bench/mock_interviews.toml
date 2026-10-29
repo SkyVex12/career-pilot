@@ -1,0 +1,213 @@
+# Mock interviews for the detector eval
+# (copilot-detector-eval --script evals/bench/mock_interviews.toml --mode interview).
+#
+# Written after the 2026-10-29 batch (docs/analysis/2026-10-29-mock-interviews.md): a technical
+# round whose interviewer paused mid-question, a screen with an engineer, and a recruiter screen
+# that ended in eligibility and conflict-of-interest checks. Everyone here is fictional and
+# every line is paraphrased: the candidate is Alex Rivera (profile.toml), and the platforms
+# stand in for the ones the calls asked about. The user's own lines (speaker = "me") are
+# context and are not scored.
+#
+# expect "answer" with a type: should fire with that type. "none": no answer needed.
+# "either": not scored for detection.
+#
+# What the batch got wrong, and these turns check: yes-or-no checks of the candidate's own
+# situation fired and got invented answers (now none); a question asked in two pieces fired
+# twice (each piece is scored on its own here; the gateway joins them); a rhetorical worry
+# fired; a question interrupted by "go ahead" was missed.
+
+[defaults]
+voice = "cedar"
+style = "An interviewer on a video call. Natural pace, some pauses."
+pause_s = 0.0
+
+[[utterance]]
+id = "hello"
+parts = ["Hi Alex, can you hear me all right?"]
+gap_s = 1.0
+expect = "none"
+case = "an audio check"
+
+[[utterance]]
+id = "alex_hello"
+speaker = "me"
+parts = ["Yes, loud and clear. Hi."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "before_we_start"
+parts = ["My connection has been a bit shaky today, so we may turn cameras off. Anything you want to ask before we get going?"]
+gap_s = 1.0
+expect = "either"
+case = "a courtesy question the candidate answered with a no before it ended (fired late on 10-29)"
+
+[[utterance]]
+id = "why_role"
+parts = ["Great. So to start, what made you apply for this particular role?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "why this role"
+
+[[utterance]]
+id = "alex_why"
+speaker = "me"
+parts = ["Mostly the move from batch to streaming, it's what I did on the order pipeline at Larkspur."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "remote_before"
+parts = ["Have any of your previous jobs been remote?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "working style"
+
+[[utterance]]
+id = "alex_remote"
+speaker = "me"
+parts = ["Yes, the last two years fully remote."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "deploy_part1"
+parts = ["Okay. Say you had to run fifty services on AWS, really hard to deploy and keep track of. Which tools would make your life easier?"]
+gap_s = 1.5
+expect = "answer"
+type = "technical"
+case = "first piece of a question asked in two (10-29: 6 questions became 15 fires); typed system_design on the call, technical 2 of 2 on 10-29's re-run, either fits"
+
+[[utterance]]
+id = "deploy_part2"
+parts = ["Deployment automation, observability, maybe a gateway or a queue, which of those AWS offers is your favorite?"]
+gap_s = 1.0
+expect = "answer"
+type = "technical"
+case = "second piece, right after the first with no answer between: the gateway joins it to the first"
+
+[[utterance]]
+id = "alex_deploy"
+speaker = "me"
+parts = ["ECS on Fargate with one pipeline template, and OpenTelemetry into CloudWatch."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "rhetorical"
+parts = ["We've been careful with AI tools. If you tick the box saying don't train on our data, do they actually not? I honestly don't know."]
+gap_s = 1.0
+expect = "either"
+case = "the interviewer thinking aloud (fired on 10-29; the candidate only said right)"
+
+[[utterance]]
+id = "integration_interrupted"
+parts = ["I saw on your resume you built the shipment tracking APIs. Can you talk a little about that, I mean, you obviously know event ingestion, go ahead."]
+gap_s = 1.0
+expect = "answer"
+type = "technical"
+case = "a question that ends in an invitation after the candidate's 'yes' (missed on 10-29)"
+
+[[utterance]]
+id = "alex_tracking"
+speaker = "me"
+parts = ["Sure, at Tidewater I owned the tracking APIs and the ingestion service behind them."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "years_payments"
+parts = ["And how many years have you worked on payments specifically?"]
+gap_s = 1.0
+expect = "answer"
+type = "technical"
+case = "years in one domain (10-29: the fast pass summed every role and gave nearly twice the right number)"
+
+[[utterance]]
+id = "hard_bug"
+parts = ["Walk me through a hard production issue you fixed yourself. What happened and how did you fix it?"]
+gap_s = 1.0
+expect = "answer"
+type = "behavioral"
+case = "a story"
+
+[[utterance]]
+id = "search_status"
+parts = ["How's your search going so far? Anything else in progress?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "the job search (missed on 10-29; a follow card covered it)"
+
+[[utterance]]
+id = "alex_search"
+speaker = "me"
+parts = ["A couple of processes, both early."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "work_authorized"
+parts = ["A few formalities I ask everyone. Are you legally authorized to work in the United States?"]
+gap_s = 1.0
+expect = "none"
+case = "a yes-or-no check of the candidate's own situation (10-29: fired, and the fast pass answered for the user)"
+
+[[utterance]]
+id = "sponsorship"
+parts = ["And will you now or in the future need visa sponsorship?"]
+gap_s = 1.0
+expect = "none"
+case = "a yes-or-no check"
+
+[[utterance]]
+id = "worked_here"
+parts = ["Have you ever worked for Northwind before?"]
+gap_s = 1.0
+expect = "none"
+case = "a yes-or-no check (10-29: the fast pass said no for the user)"
+
+[[utterance]]
+id = "relatives"
+parts = ["Any close family or friends who work here?"]
+gap_s = 1.0
+expect = "none"
+case = "a yes-or-no check"
+
+[[utterance]]
+id = "certification"
+parts = ["Do you hold or are you studying for any of our certifications?"]
+gap_s = 1.0
+expect = "none"
+case = "a yes-or-no check"
+
+[[utterance]]
+id = "school_check"
+parts = ["I see you went to State University, is that right?"]
+gap_s = 1.0
+expect = "none"
+case = "'is that right?' about a resume fact"
+
+[[utterance]]
+id = "your_questions"
+parts = ["That's all from me. What questions do you have for me?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "questions for them"
+
+[[utterance]]
+id = "process"
+parts = ["Next is a technical round with me, about an hour, and then a panel. I'll get back to you early next week."]
+gap_s = 1.0
+expect = "none"
+case = "the process, explained"
+
+[[utterance]]
+id = "bye"
+parts = ["Great talking with you, Alex. Have a great afternoon, bye."]
+gap_s = 1.0
+expect = "none"
+case = "the goodbye (the gateway now ends an interview 90 s after it goes quiet)"

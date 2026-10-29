@@ -229,6 +229,28 @@ export function onSettingsChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("copilot://settings", () => handler());
 }
 
+/** The audio test's result per side (audio::check in the Rust core). */
+export interface AudioVerdict {
+  ok: boolean;
+  message: string;
+  peak_db: number;
+  sound_ms: number;
+}
+export interface AudioCheckResult {
+  mic: AudioVerdict;
+  call: AudioVerdict;
+}
+/** The live meter while the test runs: "speak" first, then "tone" on the output. */
+export interface AudioCheckMeter {
+  phase: "speak" | "tone";
+  mic_db: number;
+  call_db: number;
+}
+
+export function onAudioCheck(handler: (m: AudioCheckMeter) => void): Promise<UnlistenFn> {
+  return listen<AudioCheckMeter>("copilot://audio-check", (e) => handler(e.payload));
+}
+
 export function onUpdate(handler: (u: UpdateState) => void): Promise<UnlistenFn> {
   return listen<UpdateState>("copilot://update", (e) => handler(e.payload));
 }
@@ -247,6 +269,9 @@ export const api = {
   saveSettings: (settings: Settings, devToken: string | null) =>
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),
+  /** About five seconds: speak for three, then a test sound plays on the output. */
+  audioCheck: (micDevice: string | null, outputDevice: string | null) =>
+    invoke<AudioCheckResult>("audio_check", { micDevice, outputDevice }),
   /** `target`: a tailored resume's application, a version whose content it replaces, a label;
    * or the application a job description belongs to. */
   uploadDocument: (kind: DocumentKind, file: File, target?: UploadTarget) =>

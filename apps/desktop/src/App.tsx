@@ -27,6 +27,7 @@ import { ago, bar, settingsLine } from "./updates";
 import { parseTarget, upcoming } from "./catalog";
 import { Applications, roundLabel, useCatalog } from "./Applications";
 import { applicationOption } from "./pairing";
+import { AudioCheck } from "./AudioCheck";
 import { CareerOsSettings } from "./CareerOs";
 import { History, LiveNow } from "./History";
 import { Resumes } from "./Resumes";
@@ -139,7 +140,14 @@ export default function App() {
       <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
         {link.locked && tab !== "settings" && tab !== "debug" && <LinkCareerOsFirst onSettings={() => setTab("settings")} />}
         {!link.locked && tab === "start" && (
-          <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} onOpenLive={openLive} />
+          <StartScreen
+            session={session}
+            tokenSet={tokenSet}
+            environment={environment}
+            devices={{ mic: view?.settings.mic_device ?? null, output: view?.settings.output_device ?? null }}
+            onSettings={() => setTab("settings")}
+            onOpenLive={openLive}
+          />
         )}
         {!link.locked && needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
         {!link.locked && !needsToken && tab === "resumes" && <Resumes />}
@@ -359,12 +367,15 @@ function StartScreen({
   session,
   tokenSet,
   environment,
+  devices,
   onSettings,
   onOpenLive,
 }: {
   session: SessionView;
   tokenSet: boolean;
   environment: string;
+  /** The saved microphone and call-audio device, for "Test audio" before the call. */
+  devices: { mic: string | null; output: string | null };
   onSettings: () => void;
   onOpenLive: (live: LiveSession) => Promise<void>;
 }) {
@@ -614,6 +625,14 @@ function StartScreen({
         )}
         <button onClick={() => api.showOverlay(true)}>Show overlay</button>
       </div>
+      {!running && (
+        <AudioCheck
+          micDevice={devices.mic}
+          outputDevice={devices.output}
+          disabled={busy}
+          note="Uses the devices saved in Settings."
+        />
+      )}
       {running && ending && (
         <div className="end-choice">
           <p>How should this call be saved?</p>
@@ -1096,6 +1115,14 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
           {deviceSelect(devices?.outputs, draft.output_device, "output_device")}
           <p className="note">The speakers or headset the call plays on; captured in loopback.</p>
         </div>
+
+        <label>Audio test</label>
+        <AudioCheck
+          micDevice={draft.mic_device}
+          outputDevice={draft.output_device}
+          disabled={running}
+          note={running ? "Not during a call: the call is using the devices." : undefined}
+        />
 
         <label>Echo cancellation</label>
         <label className="check">
