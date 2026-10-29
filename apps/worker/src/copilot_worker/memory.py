@@ -210,7 +210,8 @@ def render_digest(
             summary = f" {n['summary']}" if n["summary"] != n["title"] else ""
             lines.append(f"{cite(n)} {n['title']}{when}.{team}{summary}".rstrip())
             # Under the role's short id: citing the role cites its highlights.
-            lines += [f"  - {h}" for h in b.get("highlights") or []]
+            highlights = cast(list[str], b.get("highlights") or [])
+            lines += [f"  - {h}" for h in highlights]
     if by_kind.get("project"):
         lines.append("## Projects")
         for n in by_kind["project"][:MAX_PROJECTS]:
