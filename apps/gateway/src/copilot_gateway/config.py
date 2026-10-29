@@ -163,6 +163,10 @@ class Settings(CoreSettings):
     follow_user: bool = True
     follow_min_words: int = 8
     follow_window_ms: int = 12000
+    # A question that goes on after a pause (2026-10-29): when the other side starts speaking
+    # again within this long of a question's end and the user has not spoken, the next
+    # question is the same one continued, and its passes get both parts. 0: off.
+    continuation_gap_ms: int = 5000
     # Passes whose prompt cache is written at session start (and on a mode change), so the
     # first question is not cold. Only the fast pass by default: the first word waits on it.
     prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(

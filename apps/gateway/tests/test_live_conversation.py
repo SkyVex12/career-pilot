@@ -209,8 +209,9 @@ async def test_a_newer_question_means_no_deep_tokens_for_the_old_one(env) -> Non
         await c.wait(
             lambda m: m["type"] == "answer.delta" and m["question_id"] == q1["question_id"]
         )
-        # Confirmed while the first question's fast pass still streams.
-        await c.say("What would you change?", capture_ms=5000)
+        # Confirmed while the first question's fast pass still streams; asked more than
+        # continuation_gap_ms after it, so it is a question of its own.
+        await c.say("What would you change?", capture_ms=8000)
         q2 = await c.wait(
             lambda m: (
                 m["type"] == "question.detected"
@@ -487,3 +488,53 @@ async def test_a_reply_gets_its_detailed_answer_without_a_tap(env) -> None:
         await c.send({"type": "question.force", "kind": "respond"})
         q = await c.wait_type("question.detected")
         await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
+
+
+async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> None:
+    # 2026-10-29: an interviewer who paused mid-question got 15 answers for 6 questions, each
+    # on its own fragment, and one fast answer took up the topic before. A question that goes
+    # on before the user speaks is now the same question: its passes get both parts.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("What would you use to deploy fifty services on AWS?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="fast")
+        await c.say("And how would you watch them, which tool is your favorite?", capture_ms=2000)
+        q2 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["question_id"] != q1["question_id"]
+            )
+        )
+        assert q2["text"] == (
+            "What would you use to deploy fifty services on AWS? "
+            "And how would you watch them, which tool is your favorite?"
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
+        # Once the user answers, the next question stands on its own again.
+        await c.say_me("I'd use ECS with one pipeline per service", capture_ms=4000, end_ms=6000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
+        await c.say("What about the database?", capture_ms=7000)
+        q3 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "What about the database?"
+            )
+        )
+        # And so does one asked long after the last.
+        await c.say("How do you like to review pull requests?", capture_ms=20000)
+        await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "How do you like to review pull requests?"
+            )
+        )
+        assert q3["question_id"] != q2["question_id"]
+    deep = [str(r.content) for r in requests_for(provider, "deep")]
+    assert any("deploy fifty services on AWS? And how would you watch them" in d for d in deep)

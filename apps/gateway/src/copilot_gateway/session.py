@@ -561,6 +561,7 @@ class Session:
         t0: float,
         match: "asyncio.Task[object] | None",
     ) -> UUID:
+        text = self._continued(text)
         q = Question(
             qid=uuid7(),
             text=text,
@@ -584,9 +585,16 @@ class Session:
         self.answers.add(q)
         return q.qid
 
+    def _continued(self, text: str) -> str:
+        starts = [a for a, _ in self.them_spans]
+        if self.them_open is not None:
+            starts.append(self.them_open)
+        return self.conv.continued(text, self.settings.continuation_gap_ms, starts)
+
     def confirm_question(
         self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
     ) -> None:
+        text = self._continued(text)
         self.answers.confirm(qid, text, turn_end_ms, final_ms)
         # Paired with what the user says after the question's own words, which may already
         # have started by the time the turn is confirmed.
@@ -598,7 +606,7 @@ class Session:
     def start_held(self, text: str, t0: float, match: "asyncio.Task[object] | None") -> UUID:
         q = Question(
             qid=uuid7(),
-            text=text,
+            text=self._continued(text),
             qtype="other",
             confidence=0.0,
             addressed=False,
@@ -618,6 +626,7 @@ class Session:
         q = self.answers.questions.get(qid)
         if q is None:
             return
+        text = self._continued(text)
         q.text = text
         q.qtype = detection.qtype
         q.confidence = DETECTED_CONFIDENCE
