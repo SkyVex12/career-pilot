@@ -77,8 +77,8 @@ async def claim_me(pool: asyncpg.Pool, account: Principal, career_os_user_id: st
 
 
 async def resolve(pool: asyncpg.Pool, account: Principal, profile: str | None) -> Principal:
-    """The principal to act as: "Me" when no profile (or the account's own id) is named,
-    else the account's profile with that id."""
+    """The principal to act as: "Me" when no profile (or the account's own id, or "Me"'s
+    shared workspace id) is named, else the account's profile with that id."""
     if not profile or profile.strip() in ("", "me", str(account.user_id)):
         return await me_of(pool, account)
     try:
@@ -88,6 +88,9 @@ async def resolve(pool: asyncpg.Pool, account: Principal, profile: str | None) -
     async with user_tx(pool, account.user_id) as conn:
         name = await conn.fetchval("select name from app.profiles where id = $1", pid)
     if name is None:
+        me = await me_of(pool, account)
+        if me.user_id == pid:  # a user link's shared workspace, named by its id
+            return me
         raise ProfileError("no such profile for this account")
     return Principal(pid, str(name) or account.display_name, account.expires_at, email=None)
 

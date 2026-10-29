@@ -31,6 +31,7 @@ CLOSE_REPLACED = 4410
 class Db:
     pool: asyncpg.Pool
     profile: UUID  # USER_A's profile
+    admin: asyncpg.Connection
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="session")
@@ -61,7 +62,7 @@ async def db() -> AsyncIterator[Db]:
     )  # fmt: skip
     pool = await create_pool(as_role(url, "app_gateway"), 1, 3)
     try:
-        yield Db(pool, profile)
+        yield Db(pool, profile, admin)
     finally:
         await pool.close()
         await admin.close()
@@ -89,6 +90,33 @@ async def test_a_session_runs_as_the_profile(env, db: Db) -> None:
         assert state[b"digest_version"].decode() == mine.version
         await c.send({"type": "session.end"})
         assert await c.closed() == 1000
+
+
+async def test_a_user_links_me_is_the_persons_shared_workspace(env, db: Db) -> None:
+    # USER_B is Casey on Career-OS (a user link), and USER_A's profile is Casey's workspace:
+    # USER_B's "Me" is that workspace, with or without naming it.
+    await db.admin.execute(
+        "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
+        " external_id, external_kind) values ($1, 'career_os', 'sealed', 1, '{}', 'u3', 'user')",
+        USER_B,
+    )  # fmt: skip
+    await db.admin.execute(
+        "insert into app.career_os_people (career_os_user_id, user_id) values ('u3', $1)",
+        db.profile,
+    )  # fmt: skip
+    try:
+        vk = env.client()
+        async with GatewayServer(env.services(env.settings(), pool=db.pool)) as gw:
+            for url in (gw.url, f"{gw.url}?profile=me", f"{gw.url}?profile={db.profile}"):
+                c = ProtocolClient(url, token="token-b")
+                await c.start()
+                state = await vk.hgetall(keys.sess_state(c.session_id))
+                assert state[b"user_id"].decode() == str(db.profile), url
+                await c.send({"type": "session.end"})
+                assert await c.closed() == 1000
+    finally:
+        await db.admin.execute("delete from app.career_os_people where career_os_user_id = 'u3'")
+        await db.admin.execute("delete from app.integrations where user_id = $1", USER_B)
 
 
 async def test_another_accounts_or_an_unknown_profile_is_refused(env, db: Db) -> None:
