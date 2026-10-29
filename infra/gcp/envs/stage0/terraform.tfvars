@@ -71,3 +71,7 @@ github_repo        = "SkyVex12/career-pilot"
 # accounts and pulling applications (ARCHITECTURE.md, "Career-OS link"). Its web app is
 # https://career-os-delta.vercel.app, where users make the link code.
 career_os_url = "https://career-os-backend-27mjonenmq-ue.a.run.app"
+
+# Every account must link a Career-OS account before it can use the app (decided 2026-10-29,
+# with sign-in open to any Google account).
+require_career_os = true

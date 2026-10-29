@@ -184,13 +184,15 @@ def google_claims(**over: Any) -> dict[str, Any]:
     return {k: v for k, v in base.items() if v is not None}
 
 
-def google_verifier(key: KeyPair) -> GoogleVerifier:
+def google_verifier(key: KeyPair, allowed: list[str] | None = None) -> GoogleVerifier:
     async def fetch(url: str) -> Mapping[str, Any]:
         assert url == GOOGLE_JWKS_URL
         return {"keys": [key.jwk()]}
 
     return GoogleVerifier(
-        [GOOGLE_CLIENT], ["alex@example.com"], JwksCache(GOOGLE_JWKS_URL, fetch=fetch)
+        [GOOGLE_CLIENT],
+        ["alex@example.com"] if allowed is None else allowed,
+        JwksCache(GOOGLE_JWKS_URL, fetch=fetch),
     )
 
 
@@ -223,16 +225,28 @@ async def test_google_rejects(over: dict[str, Any], message: str) -> None:
         await google_verifier(key).verify(key.sign(google_claims(**over)))
 
 
+async def test_google_without_an_allow_list_takes_any_verified_email() -> None:
+    key = KeyPair("g1")
+    open_to_all = google_verifier(key, allowed=[])
+    p = await open_to_all.verify(key.sign(google_claims(email="mallory@example.com")))
+    assert p.email == "mallory@example.com"
+    with pytest.raises(AuthError, match="verified email"):
+        await open_to_all.verify(key.sign(google_claims(email_verified=False)))
+
+
 async def test_google_rejects_a_key_google_did_not_publish() -> None:
     key, forged = KeyPair("g1"), KeyPair("g1")
     with pytest.raises(AuthError, match="invalid token"):
         await google_verifier(key).verify(forged.sign(google_claims()))
 
 
-def test_make_verifier_for_google_needs_a_client_and_an_allow_list() -> None:
+def test_make_verifier_for_google_takes_an_optional_allow_list() -> None:
     base = {"env": "staging", "auth": "google", "google_client_ids": GOOGLE_CLIENT}
-    with pytest.raises(RuntimeError, match="ALLOWED_EMAILS"):
-        make_verifier(CoreSettings(_env_file=None, **base))  # pyright: ignore[reportCallIssue]
+    with pytest.raises(RuntimeError, match="CLIENT_IDS"):
+        make_verifier(CoreSettings(_env_file=None, env="staging", auth="google"))  # pyright: ignore[reportCallIssue]
+    open_to_all = make_verifier(CoreSettings(_env_file=None, **base))  # pyright: ignore[reportCallIssue]
+    assert isinstance(open_to_all, GoogleVerifier)
+    assert open_to_all.allowed == set()
     s = CoreSettings(_env_file=None, **base, google_allowed_emails="a@x.io, b@y.io")  # pyright: ignore[reportCallIssue]
     v = make_verifier(s)
     assert isinstance(v, GoogleVerifier)

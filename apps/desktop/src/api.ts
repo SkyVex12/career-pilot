@@ -418,6 +418,8 @@ export interface CareerOsConnection {
   connected: boolean;
   /** This server has Career-OS set up. */
   available: boolean;
+  /** The stage requires a link before the app does anything else (Settings stays open). */
+  required?: boolean;
   status?: "active" | "revoked";
   /** The linked Career-OS account: a user, or an admin (who reads their users' applications). */
   user?: CareerOsUser;

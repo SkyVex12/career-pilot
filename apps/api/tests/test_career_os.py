@@ -40,7 +40,7 @@ async def pull(api: Api, h: dict[str, str], cos_id: str = "app_acme_1") -> dict[
 async def test_connect_with_a_one_time_code(api: Api, fake: FakeCareerOs) -> None:
     uid, h = api.user()
     assert (await api.client.get("/v1/career-os/connection", headers=h)).json() == {
-        "connected": False, "available": True}  # fmt: skip
+        "connected": False, "available": True, "required": False}  # fmt: skip
     r = await api.client.post("/v1/career-os/connect", headers=h, json={"code": "WRONG-CODE"})
     assert r.status_code == 400
     code = fake.code_for("u1")
@@ -292,6 +292,38 @@ async def test_a_link_revoked_in_career_os_asks_to_connect_again(
 async def test_without_career_os_configured(api: Api) -> None:
     _, h = api.user()
     assert (await api.client.get("/v1/career-os/connection", headers=h)).json() == {
-        "connected": False, "available": False}  # fmt: skip
+        "connected": False, "available": False, "required": False}  # fmt: skip
     r = await api.client.post("/v1/career-os/connect", headers=h, json={"code": "ABCDEFGH"})
     assert r.status_code == 503
+
+
+@pytest.fixture
+def required(api: Api) -> Iterator[None]:
+    api.svc.settings.require_career_os = True
+    try:
+        yield
+    finally:
+        api.svc.settings.require_career_os = False
+
+
+async def test_a_required_link_gates_the_work_until_connected(
+    api: Api, fake: FakeCareerOs, required: None
+) -> None:
+    _, h = api.user()
+    # Without a link: the work is refused with a message asking to link the account.
+    for path in ("/v1/applications", "/v1/resumes", "/v1/sessions", "/v1/employers"):
+        r = await api.client.get(path, headers=h)
+        assert r.status_code == 403, (path, r.text)
+        assert "link your Career-OS account" in r.json()["detail"]
+    # Settings, profiles and the link itself stay open, so the app can link the account.
+    for path in ("/v1/me", "/v1/profiles", "/v1/career-os/connection"):
+        assert (await api.client.get(path, headers=h)).status_code == 200, path
+    conn = (await api.client.get("/v1/career-os/connection", headers=h)).json()
+    assert (conn["connected"], conn["required"]) == (False, True)
+
+    await connect(api, fake, h)
+    assert (await api.client.get("/v1/applications", headers=h)).status_code == 200
+    # A link Career-OS no longer accepts counts as none.
+    fake.revoked.update(fake.tokens)
+    assert (await api.client.get("/v1/career-os/applications", headers=h)).status_code == 409
+    assert (await api.client.get("/v1/applications", headers=h)).status_code == 403

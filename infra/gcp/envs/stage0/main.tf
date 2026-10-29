@@ -53,6 +53,7 @@ locals {
     COPILOT_GOOGLE_CLIENT_IDS     = var.google_oauth_client_id
     COPILOT_GOOGLE_ALLOWED_EMAILS = join(",", var.allowed_emails)
     COPILOT_MIN_CLIENT_VERSION    = var.min_desktop_version
+    COPILOT_REQUIRE_CAREER_OS     = tostring(var.require_career_os)
   }
   model_env = merge(
     {

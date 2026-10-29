@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
 from copilot_api.routes.applications import application_out, enqueue_packs
-from copilot_core import jobs, profiles, resumes
+from copilot_core import careeros, jobs, profiles, resumes
 from copilot_core.auth import Principal
 from copilot_core.careeros import CareerOsClient, CareerOsError, ResumeFile
 from copilot_core.db import Conn
@@ -38,7 +38,7 @@ from copilot_core.storage import resume_file_key
 
 router = APIRouter()
 
-PROVIDER = "career_os"
+PROVIDER = careeros.PROVIDER
 COS_ID = r"^[A-Za-z0-9_.:-]{1,128}$"
 STAGES = ("applied", "interview", "offer", "rejected")
 ACCOUNT_TYPES = ("user", "admin", "super_admin")
@@ -132,12 +132,16 @@ async def kind_of(svc: Services, account: Principal, row: Any | None) -> str:
     return kind
 
 
-def connection_out(row: Any | None, available: bool, kind: str = "user") -> dict[str, Any]:
+def connection_out(
+    row: Any | None, available: bool, kind: str = "user", required: bool = False
+) -> dict[str, Any]:
+    # required: the stage needs an active link before the app does anything else.
     if row is None:
-        return {"connected": False, "available": available}
+        return {"connected": False, "available": available, "required": required}
     return {
         "connected": row["status"] == "active",
         "available": available,
+        "required": required,
         "status": row["status"],
         "user": {"id": row["external_id"], "name": row["external_label"]},
         "account_type": kind,
@@ -154,7 +158,12 @@ async def get_connection(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
             " last_sync_at from app.integrations where provider = $1",
             PROVIDER,
         )
-    return connection_out(row, svc.career_os is not None, await kind_of(svc, user, row))
+    return connection_out(
+        row,
+        svc.career_os is not None,
+        await kind_of(svc, user, row),
+        svc.settings.require_career_os,
+    )
 
 
 @router.post("/career-os/connect", status_code=201)
@@ -209,7 +218,7 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
         # Never leave a token on Career-OS that this account does not hold.
         await client.revoke(str(linked["token"]))
         raise
-    return connection_out(row, True, kind)
+    return connection_out(row, True, kind, svc.settings.require_career_os)
 
 
 @router.delete("/career-os/connection", status_code=204)

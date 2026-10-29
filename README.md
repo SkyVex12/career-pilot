@@ -332,7 +332,8 @@ account's organization policy blocks it (`infra/README.md`).
 **No TLS in Stage 0.** The app talks to the VM over plain HTTP and WebSocket on its IP. Your
 sign-in token and call text cross the internet unencrypted on that hop; the settings screen
 says so. Port 80 can be limited to an IP allow-list (`stage.py allow`); it is open to every
-address at the moment, so the Google sign-in allow-list is what keeps strangers out. Document
+address at the moment, and the Google sign-in allow-list is empty (any Google account may sign
+in), so nothing keeps strangers out: anyone can sign in and use the models on our bill. Document
 and audio uploads go straight to Cloud Storage over HTTPS. TLS (a domain and a certificate) is
 required before anyone outside the team uses it.
 
@@ -365,8 +366,8 @@ Done once, by hand, in this order.
    `infra/gcp/envs/stage0/terraform.tfvars` (`google_oauth_client_id`); keep the secret for
    step 7.
 5. **Allow-lists.** In `infra/gcp/envs/stage0/allowlist.auto.tfvars` (gitignored): the Google
-   accounts that may sign in, and the addresses that may reach port 80 (or
-   `open_to_internet = true`):
+   accounts that may sign in (empty or left out: any Google account with a verified email), and
+   the addresses that may reach port 80 (or `open_to_internet = true`):
 
    ```hcl
    allowed_emails   = ["you@gmail.com", "alex@gmail.com"]
@@ -550,8 +551,8 @@ uv run infra/gcp/scripts/stage.py allow --any                   # every address 
 ```
 
 It changes the firewall rule at once; Terraform sets it only when it creates the rule. Who may
-sign in is `allowed_emails` in `allowlist.auto.tfvars`: change it, then `terraform apply` and
-`stage.py restart`.
+sign in is `allowed_emails` in `allowlist.auto.tfvars` (empty: any Google account): change it,
+then `terraform apply` and `stage.py restart`.
 
 ### Tearing it all down
 
@@ -572,8 +573,9 @@ skips the GCP jobs again.
 For teammates (Windows 10 or 11). The installer is built on every merge that changes the app
 (and from `desktop-v*` tags) and points at the Stage 0 server; it updates itself.
 
-1. **Get on the allow-list first.** Only listed Google accounts can sign in. Send the owner the
-   Google account email you will use; they add it to `allowed_emails` in
+1. **Get on the allow-list first, if there is one.** At the moment `allowed_emails` is empty, so
+   any Google account can sign in and you can skip this step. With a list, only listed accounts
+   can: send the owner the Google account email you will use; they add it to `allowed_emails` in
    `infra/gcp/envs/stage0/allowlist.auto.tfvars` and run:
 
    ```sh
@@ -589,8 +591,11 @@ For teammates (Windows 10 or 11). The installer is built on every merge that cha
    the file: choose Keep.) It installs for your user only, without an administrator prompt,
    and adds Copilot Desktop to the Start menu.
 4. **Sign in.** Open Copilot Desktop → Settings → **Sign in**. Your browser opens Google's sign-in;
-   choose the allow-listed account and allow access. "Signed in as you@…" appears in the app.
-   An account not on the list gets "not allowed" from the server.
+   choose your account and allow access. "Signed in as you@…" appears in the app.
+   With an allow-list, an account not on it gets "not allowed" from the server.
+   Then link your Career-OS account: Settings → Career-OS, with a one-time code from Career-OS.
+   Until it is linked, every tab but Settings says "Please link your Career-OS account to use
+   this app".
 5. Settings: pick the microphone and the speakers the call plays on.
 
 **Updates** install by themselves. The app asks the releases bucket for a newer version at

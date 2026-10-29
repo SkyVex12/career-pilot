@@ -92,6 +92,10 @@ class CoreSettings(BaseSettings):
     google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
     google_client_secret: SecretStr | None = None
     google_allowed_emails: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
+    # On: an account works only once it has an active Career-OS link (ARCHITECTURE.md,
+    # "Career-OS link"). The API refuses everything but sign-in, settings and the link itself,
+    # and the gateway refuses sessions. Off (the default, and the local stack): no check.
+    require_career_os: bool = False
 
     # Model providers in fallback order; the first gets one retry before the next. Claude
     # (bedrock, anthropic) is the design default; openai is a supported alternative.

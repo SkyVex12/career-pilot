@@ -9,6 +9,11 @@ A request may name one of the account's profiles (`x-copilot-profile`; ARCHITECT
 "Profiles"). `UserDep` is then the profile, so the handler reads and writes the profile's rows;
 `AccountDep` is always the signed-in account, for what belongs to the account (its settings,
 its Career-OS link, its deletion).
+
+With `require_career_os` on, the routers that do the work (documents, applications, resumes,
+sessions, employers) also take `require_link`: an account without an active Career-OS link gets
+a 403 asking to link it there. Sign-in, settings, profiles and the link itself stay open, so
+the app can still link the account.
 """
 
 import logging
@@ -23,7 +28,7 @@ import httpx2
 from fastapi import Depends, Header, HTTPException, Request
 
 from copilot_api.config import ApiSettings
-from copilot_core import jobs, keys, logs, profiles
+from copilot_core import careeros, jobs, keys, logs, profiles
 from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
@@ -125,6 +130,20 @@ async def current_user(
     if principal is not account:
         logs.set_ids(user_id=principal.user_id)
     return principal
+
+
+async def require_link(
+    svc: Annotated[Services, Depends(services)],
+    account: Annotated[Principal, Depends(current_account)],
+) -> None:
+    """403 for an account without an active Career-OS link, when the
+    stage requires one. The link is the account's, whichever profile the request names."""
+    if not svc.settings.require_career_os:
+        return
+    async with svc.tx(account) as conn:
+        linked = await careeros.is_linked(conn)
+    if not linked:
+        raise HTTPException(403, careeros.REQUIRED_MESSAGE)
 
 
 SvcDep = Annotated[Services, Depends(services)]

@@ -1,7 +1,7 @@
 // The main window: the session (start screen, then the post-call screen), resumes,
 // applications and interviews, work (the companies the user works at), history, settings, and the debug
 // panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import {
   api,
@@ -19,6 +19,7 @@ import {
   type Settings,
   type SettingsView,
   type UpdateState,
+  type CareerOsConnection,
 } from "./api";
 import { cloudUrlsFor } from "./urls";
 import { ago, bar, settingsLine } from "./updates";
@@ -33,7 +34,7 @@ import { SessionDetail } from "./SessionDetail";
 import { badge, useSession, type SessionView } from "./session";
 import { Work } from "./Work";
 import { defaultEmployer, packLabel } from "./workday";
-import { ProfileContext, showSwitch, useProfiles, type ProfileState } from "./profiles";
+import { ProfileContext, accountOf, isLocked, showSwitch, useProfiles, type ProfileState } from "./profiles";
 
 type Tab = "start" | "resumes" | "applications" | "work" | "history" | "settings" | "debug";
 
@@ -54,11 +55,18 @@ export default function App() {
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
   const tokenSet = view?.ready ?? false;
   const environment = view?.settings.environment ?? "local";
-  const profiles = useProfiles(tokenSet, view?.settings.profile ?? null);
-  // Back from Settings (a Career-OS link made or removed): the profiles may have changed.
+  // Whose data the screens show: everything loaded is dropped when this changes.
+  const account = accountOf(view);
+  const profiles = useProfiles(tokenSet, view?.settings.profile ?? null, account);
+  const link = useLinkRequired(tokenSet, account);
+  // Back from Settings (a Career-OS link made or removed): the profiles and the lock may have changed.
   const { reload: reloadProfiles } = profiles;
+  const { reload: reloadLink } = link;
   useEffect(() => {
-    if (tab !== "settings") reloadProfiles();
+    if (tab !== "settings") {
+      reloadProfiles();
+      reloadLink();
+    }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = () => {
@@ -120,16 +128,17 @@ export default function App() {
         </div>
       </nav>
       <UpdateBar running={session.running} />
-      {/* A switch remounts every screen, so each one loads the new profile's data. */}
-      <ProfileContext.Provider value={profiles.state} key={profiles.state.here ?? "me"}>
-        {tab === "start" && (
+      {/* A profile switch or another account remounts every screen, so each one loads its data. */}
+      <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
+        {link.locked && tab !== "settings" && tab !== "debug" && <LinkCareerOsFirst onSettings={() => setTab("settings")} />}
+        {!link.locked && tab === "start" && (
           <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
         )}
-        {needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
-        {!needsToken && tab === "resumes" && <Resumes />}
-        {!needsToken && tab === "applications" && <Applications />}
-        {!needsToken && tab === "work" && <Work />}
-        {!needsToken && tab === "history" && <History />}
+        {!link.locked && needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
+        {!link.locked && !needsToken && tab === "resumes" && <Resumes />}
+        {!link.locked && !needsToken && tab === "applications" && <Applications />}
+        {!link.locked && !needsToken && tab === "work" && <Work />}
+        {!link.locked && !needsToken && tab === "history" && <History />}
       </ProfileContext.Provider>
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
@@ -281,6 +290,38 @@ function StatusBadge({ session }: { session: SessionView }) {
       {b.text}
     </span>
   );
+}
+
+/** The stage requires a Career-OS link and this account has none: everything but Settings waits. */
+function LinkCareerOsFirst({ onSettings }: { onSettings: () => void }) {
+  return (
+    <p className="callout">
+      Please link your Career-OS account to use this app.{" "}
+      <button className="link" onClick={onSettings}>
+        Open settings
+      </button>
+    </p>
+  );
+}
+
+/** Whether the app is locked until a Career-OS link: the server says the stage requires one and
+ * the signed-in account has none. Loaded per account; until it answers, nothing is locked (the
+ * server refuses the work anyway). */
+function useLinkRequired(ready: boolean, account: string) {
+  const [conn, setConn] = useState<CareerOsConnection | null>(null);
+  const reload = useCallback(async () => {
+    if (!ready) return;
+    try {
+      setConn(await rest.careerOs());
+    } catch {
+      setConn(null);
+    }
+  }, [ready]);
+  useEffect(() => {
+    setConn(null);
+    reload();
+  }, [ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { locked: ready && isLocked(conn), reload };
 }
 
 function SetTokenFirst({ environment, onSettings }: { environment: string; onSettings: () => void }) {
@@ -1103,7 +1144,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
         </button>
         {message && <span className="note">{message}</span>}
       </div>
-      <CareerOsSettings ready={view.ready} />
+      <CareerOsSettings key={accountOf(view)} ready={view.ready} />
       <h3>Audio levels</h3>
       <Meters />
     </section>
