@@ -637,6 +637,61 @@ def test_detector_knows_a_group_call_and_the_users_first_name() -> None:
     assert "- respond:" in system  # remarks that need a reply, in every mode
 
 
+def test_live_prompts_show_fluency_with_a_named_tool_and_write_no_placeholders() -> None:
+    """2026-10-28 interview: asked about a platform the resume names, both passes framed it as
+    new to the user ("I'd approach it through its documentation") and stayed generic; asked
+    where the user lives, both wrote "[your city, state]"; asked about the pay band, the fast
+    pass said it suited the user."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    deep = prompts.deep_pass(ctx, "", "Your experience with Kafka?", "technical", 800)
+    for system in (fast, deep.system[0].text):
+        assert "experience with a named platform, product or technology" in system
+        assert "its real APIs, objects, auth, limits" in system
+        assert 'Never frame X as\n  new to Alex ("I\'d start from the docs"' in system
+        assert "with no remark on the gap" in system
+        assert 'Never write a placeholder or a fill-in bracket ("[your city]"' in system
+        assert "whether an offered range suits them) is theirs to\n  say" in system
+    assert "the user's facts on it first, as written" in str(deep.content)
+    # Standups and meetings keep their own technical shape; the rules apply there too.
+    work = prompts.PromptContext("Alex", "meeting", "# digest", "pack", company="Acme")
+    work_fast = prompts.fast_pass(work, "", "q?", None, 250).system[0].text
+    assert "Never write a placeholder" in work_fast
+
+
+def test_detector_types_motivation_and_logistics_as_other() -> None:
+    # 2026-10-28: "what's making you look for something new?" came back behavioral (3 of 3 on
+    # replay) and got the no-story fallback instead of the role-and-goals shape.
+    for mode in ("interview", "standup"):
+        system = prompts.detector("Alex", "", "Why are you looking?", 80, mode).system[0].text
+        assert "Why Alex is looking or leaving, why this role or\n  company, pay" in system
+        assert "are other, never behavioral" in system
+        assert "Experience with a named tool or platform is technical." in system
+        assert 'behavioral asks for a past situation ("tell me about a\n  time..."' in system
+
+
+def test_recruiter_screen_script_scores_the_10_28_turns() -> None:
+    """The 2026-10-28 interview, paraphrased with a fictional candidate, for
+    copilot-detector-eval: the types it got wrong (motivation) and the turns it must not fire
+    on (an offer to describe the role, explanations, the process)."""
+    import tomllib
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "evals" / "bench" / "recruiter_screen.toml"
+    script = tomllib.loads(path.read_text("utf-8"))["utterance"]
+    them = [u for u in script if u.get("speaker", "them") == "them"]
+    fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
+    assert fire == {
+        "latest_role": "behavioral", "named_platform": "technical", "client_work": "behavioral",
+        "why_looking": "other", "pay_band": "other", "location": "other",
+        "your_questions": "other",
+    }  # fmt: skip
+    assert {u["id"] for u in them if u["expect"] == "none"} == {
+        "hello", "offer_overview", "overview", "team_answer", "next_steps", "bye",
+    }  # fmt: skip
+    assert next(u for u in them if u["id"] == "all_clear")["expect"] == "either"
+
+
 def test_respond_fires_with_its_own_type() -> None:
     d = parse_detection('{"answer": "respond"}')
     assert d.fires

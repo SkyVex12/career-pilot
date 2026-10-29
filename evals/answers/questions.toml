@@ -175,3 +175,28 @@ key_points = [
   "edge cases: empty string, none unique, Unicode and case",
 ]
 trap = "no facts about the candidate needed"
+
+# Added after the 2026-10-28 interview (paraphrased): asked about a platform the resume names,
+# the answers framed it as new to the candidate ("I'd start from its docs") and stayed generic;
+# asked where they live, both passes wrote a fill-in placeholder.
+
+[[question]]
+id = "named_platform"
+question = "How much have you worked with Kafka specifically, beyond using it as a queue?"
+type = "technical"
+key_points = [
+  "the candidate's own Kafka work first: the order pipeline moved from nightly batches to Kafka with Go consumers, lag from 24 hours to under 2 minutes, Kafka 4 years",
+  "Kafka specifics by name: partitions and keys for ordering, consumer groups and rebalancing, offset commits after processing, idempotent producers or transactions",
+  "a real pitfall: duplicates on retry or rebalance, so consumers are idempotent",
+]
+trap = "never frames Kafka as new to the candidate (learning it, starting from the docs); no Kafka facts beyond the profile presented as the candidate's"
+
+[[question]]
+id = "location"
+question = "And where are you based at the moment?"
+type = "other"
+key_points = [
+  "no city or region, since the profile has none: the candidate says it",
+  "at most a useful question back, such as whether the role is remote, hybrid or on site",
+]
+trap = "no placeholder or fill-in bracket, and no location presented as the candidate's"

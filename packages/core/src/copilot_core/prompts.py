@@ -54,10 +54,22 @@ _RULES = """Rules:
   match, give how {user_name} handles that situation, as a plan with its reasoning. Add the
   closest real story only if it shows the same thing, said to be the closest, with its facts
   as written. Never make up a situation, an action or an outcome.
+- A question about {user_name}'s experience with a named platform, product or technology
+  ("your experience with X", "have you worked with X's API"): first what the data says about
+  X (a role's highlight, a project, a story, a skill), with its own verbs and qualifiers;
+  then show fluency with X itself, specifically: its real APIs, objects, auth, limits,
+  tooling and pitfalls, by name, the way someone who works with it talks. Never frame X as
+  new to {user_name} ("I'd start from the docs", "I'd learn it", "my concrete experience is
+  only...") unless the data says so; with nothing on X in the data, give the closest real
+  work and X's specifics, with no remark on the gap.
 - Questions about this job, company, culture, pay or the future: build on the company, role
   and job summary in <session_pack>, what the other side said in <transcript>, and
   {user_name}'s goals in <digest>. Add no facts about the company beyond those. Name no pay
   figure unless {user_name}'s data has one.
+- Never write a placeholder or a fill-in bracket ("[your city]", "[X years]"). A personal
+  detail the data does not have (where {user_name} lives, availability, notice, work
+  authorization, their pay expectation, whether an offered range suits them) is theirs to
+  say: give no cue for it, only a useful question back where one fits.
 - Reuse the wording, story names and exact numbers in <digest> and <session_pack>: they come
   from {user_name}'s own documents and approved memory, so they are words {user_name} knows.
   Don't rephrase them into polished prose.
@@ -115,8 +127,10 @@ DEEP_SHAPES: dict[str, str] = {
     ),
     "technical": (
         "The direct answer in one line, how it works in 2 or 3 with the specifics, the main "
-        "tradeoff or pitfall; one line from the user's work only if it fits: 4 to 7 lines, "
-        "under 80 words."
+        "tradeoff or pitfall; one line from the user's work only if it fits. Asked about the "
+        "user's experience with a named tool or platform: the user's facts on it first, as "
+        "written, then 2 or 3 lines of its specifics by name (APIs, objects, auth, limits), "
+        "then a pitfall. 4 to 7 lines, under 80 words."
     ),
     "system_design": (
         "2 clarifying questions, then the user's design as 'I'd' lines: components, data flow, "
@@ -238,7 +252,10 @@ DETECTOR_SYSTEM = (
 {{"answer": "behavioral|technical|system_design|coding|standup_status|small_talk|other|wait|none"}}
 - The question type when it is a complete question for {user_name} that needs an answer now.
   small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
-  questions for us?" is other.
+  questions for us?" is other. behavioral asks for a past situation ("tell me about a
+  time...", "how did you handle..."). Why {user_name} is looking or leaving, why this role or
+  company, pay, location, availability, notice, work authorization and the hiring process
+  are other, never behavioral. Experience with a named tool or platform is technical.
 - respond: not a question, but said to {user_name} and needing a reply now: a request or a
   task for them, a reminder or a concern aimed at them, or a check right after they spoke
   ("makes sense?", "your thoughts?"). The same rules on whom it is for apply.
