@@ -133,6 +133,10 @@ class SessionStart(BaseModel):
     client_version: Annotated[str, Field(min_length=1)]
     consent: Consent
     audio: AudioFormat
+    answer_style: Literal["bullets", "paragraph"] | None = None
+    """
+    The detailed answer's style; absent means bullets.
+    """
 
 
 class SessionResume(BaseModel):
@@ -282,6 +286,21 @@ class ModeSet(BaseModel):
     mode: Literal["interview", "standup", "meeting"]
     """
     Session mode; picks the session pack and prompt template.
+    """
+
+
+class AnswerStyleSet(BaseModel):
+    """
+    User switches the detailed answer's style mid-call; applies to the next answers.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["answer_style.set"]
+    answer_style: Literal["bullets", "paragraph"]
+    """
+    How the detailed (deep) answer is written: bullets = short lines to speak from, deeper than the talking points; paragraph = connected spoken prose. The talking points stay bullets either way.
     """
 
 
@@ -636,6 +655,7 @@ class ClientMessage(
         | AnswerFeedback
         | LatencyReport
         | ModeSet
+        | AnswerStyleSet
         | SessionEnd
     ]
 ):
@@ -649,6 +669,7 @@ class ClientMessage(
         | AnswerFeedback
         | LatencyReport
         | ModeSet
+        | AnswerStyleSet
         | SessionEnd,
         Field(discriminator="type"),
     ]

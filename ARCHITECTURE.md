@@ -221,7 +221,7 @@ What decides between kept-at-once and approval is whose statement it is: the use
 **Packs, built when the company is picked.** The start screen asks for the company's pack when the user picks it (`POST /employers/{id}/packs/{mode}`), and a worker builds it unless one already matches the company's memory (a hash of its active nodes, `memory_version`) and, for a standup, today. Both packs are rendered from the company's nodes with no model call, so a build takes milliseconds and the same memory gives the same bytes (prompt caching):
 
 - **Standup pack:** "yesterday" is the last log day before today (a Monday standup gets Friday's), with its done and in-progress items and decisions; "today" is today's log plus that day's plans; blockers from the last week that no later log moved on; open commitments with due dates; the rest of the week for "what about X?". It carries prepared answers for the fixed standup questions ("What did you work on yesterday?", "What's your update?"): each point is an item's name and state ("Done: PR #412 label retry fix"), at most 12 words and 3 a section, tracked items (a ticket or PR id) first, citing the item, since the user reads them at a glance; the deep pass gets the full items. Their vectors are made once per embedding model and carried from pack to pack.
-- **Keyterms:** both packs carry the company's name and its projects, systems, terms and people (at most 40, four words each at most), which the gateway sends to Deepgram as keyterms on both live streams.
+- **Keyterms:** both packs carry the company's name and its projects, systems, terms and people (at most 40, four words each at most), which the gateway sends to Deepgram as keyterms on both live streams. An application's interview pack carries them too: the hiring company, then the paired resume version's employers, skills and short project titles (until 2026-10-28 it had none, and the mic transcript misheard HubSpot three times and the user's latest employer once).
 - **Meeting pack:** a brief of the company's projects, systems and stack, people, recent decisions, terms, the last two weeks of work and open commitments (about 3,000 tokens at most). At session start the gateway adds the meeting's title and agenda and the company's memory that matches the agenda, on its own copy of the pack.
 
 **A pack that is not ready.** Session start never waits on a model: if no stored pack matches the company's memory and day (the worker has not built it yet, or the memory changed since), the gateway renders the same pack from Postgres itself (tens of milliseconds, read only), with the standup questions' vectors carried over from the stored pack, and asks a worker to build it for next time. Without a database the stored pack is used as it is; without either, the call runs on the career digest alone.
@@ -267,7 +267,7 @@ The routing layer is provider-neutral. Claude is the design default, and the tab
 - **Cache prewarm at session start:** once the digest and pack are loaded (and again after `mode.set`, which changes the prefix), the gateway writes the fast pass's prompt cache before the first question (`ModelRouter.prewarm`, on the job's first route): on OpenAI a `prompt_cache_options.prewarm: true` request, which writes the cache without generating output; on Claude a `max_tokens: 0` request with the route's own settings, which runs prefill only. In October 2026 a cold gpt-6-luna fast pass took 4 to 5 s to its first token against about 1 s cached, and the live test's first question was its only uncached one. It costs one cache write per session (about $0.0002 on gpt-6-luna) and is logged as a `prewarm` entry with its cost. Setting `prewarm_jobs` (default: fast only). Claude Haiku 4.5 caches only prefixes of 4,096 tokens or more, so a shorter digest and pack never cache on it, prewarm or not. Documents map to OpenAI input parts (a PDF becomes an `input_file`).
 - **Structured output:** a JSON schema becomes a strict `json_schema` text format. The detector's output goes through the same parsing as Claude's, and worker outputs through the same validation.
 - **First token:** the same router timeout and fallback. OpenAI live routes can have their own timeouts (`COPILOT_OPENAI_FIRST_TOKEN_TIMEOUT_MS`, `COPILOT_OPENAI_DEEP_FIRST_TOKEN_TIMEOUT_MS`), because measured first tokens came later than the 1.5 s live default: warm and cached, 0.8 to 2.5 s on the gpt-6-luna fast pass and 2 to 4.3 s on the gpt-6.1-sol deep pass, which reasons first (October 2026, from a desktop). OpenAI as the only provider misses the 0.9 s first-word target.
-- **Hedged detector requests:** a detector request with no first token after `detector_hedge_ms` (2 s) gets its retry route started alongside it, and the first to answer is used; the other is cancelled. Any provider order. In the October 2026 benchmark logs 90% of gpt-6-luna detector calls finished within 3.3 s, but 5% stalled until the 3 s first-token timeout and then ran the retry (5 to 6 s, or a missed question when the retry stalled too); the retry usually answered at normal speed, so the stalls are per request. A hedge costs one more detector call (about $0.0001); the entry logs `hedged` and the losing request's estimated input cost. On OpenAI the second route runs on the Priority tier (`openai_detector_retry_tier`, 1.75x on the roughly 10% of calls that hedge): in the 2026-10-27 standup a 50-second slow spell on gpt-6-luna failed 10 decisions because the hedge and the retry went to the same model on the same tier. The fast pass is not hedged: its first-token tail is smooth (p50 1.3 s, max 2.9 s), so a second request started at 2 s would rarely finish first.
+- **Hedged detector requests:** a detector request with no first token after `detector_hedge_ms` (2 s) gets its retry route started alongside it, and the first to answer is used; the other is cancelled. Any provider order. In the October 2026 benchmark logs 90% of gpt-6-luna detector calls finished within 3.3 s, but 5% stalled until the 3 s first-token timeout and then ran the retry (5 to 6 s, or a missed question when the retry stalled too); the retry usually answered at normal speed, so the stalls are per request. A hedge costs one more detector call (about $0.0001); the entry logs `hedged` and the losing request's estimated input cost. On OpenAI the second route runs on the Priority tier (`openai_detector_retry_tier`, 1.75x on the roughly 10% of calls that hedge): in the 2026-10-27 standup a 50-second slow spell on gpt-6-luna failed 10 decisions because the hedge and the retry went to the same model on the same tier. The fast pass hedges the same way, at `fast_hedge_ms` (1.2 s), with its second OpenAI route on Priority (`openai_fast_retry_tier`): in the October 2026 benchmark its first-token tail was smooth (p50 1.3 s, max 2.9 s), but in the 2026-10-28 interview three fast passes in a row got no first token within the 3 s timeout and the retry on the same model and tier stalled too, so first words came at 6.4 to 8.1 s and one pass was lost while the detector, hedged, kept to about 1.1 s.
 - **Cost:** `answers.model`, tier, tokens and `cost_usd` are filled as for Claude, from prices in `COPILOT_MODEL_PRICES` (only Claude prices are built in).
 - **Embeddings:** OpenAI embeddings (`text-embedding-3-large` suggested) shortened to 1024 dimensions, so prepared-answer matching works with only an OpenAI key. Every stored vector names the model that made it (`provider:model@1024`, on session packs and in `memory_nodes.embedding_model`); vectors from different models are never compared, and a pack whose vectors came from another model is rebuilt (by the next digest rebuild, or when the gateway loads it). An OpenAI embedding took 0.5 to 3.5 s in the measurements; the fast pass does not wait for it, and a match that arrives before the model's first text takes over (see Turn detection, step 2). OpenAI embeddings score paraphrases much lower than Cohere's: `text-embedding-3-large` put paraphrases of a prepared question at 0.40 to 0.88 and unrelated interview questions at up to 0.57, so the match threshold is set per embedding model from a calibration set (`evals/prepared/`). OpenAI has no reranker; rerank stays on Bedrock.
 
@@ -403,6 +403,8 @@ Assumed cache hit rate: 95% on the fast pass's prefix (prewarmed, a question eve
 
 **Measured in talk-heavy standups (Stage 0, October 2026):** two real standups ran the detector about 930 and 950 times a live hour (every final and interim the turn logic sends, plus hedges and calls cancelled by newer text) and threw away about 400 and 330 held fast passes an hour, against the 250 and 20 assumed above, while answering only 3 to 11 questions. On gpt-6-luna that is about $0.07 an hour each for the detector and the held passes, and both calls came to about $0.62 to $0.64 a live hour in all, under the estimate because few questions were answered. On Claude the same rates would add roughly $0.70 (detector) and $0.50 (held passes) an hour, so before routing standups to Claude the held pass needs a tighter gate (a question cue in standups and meetings) and the estimate a talk-heavy row. Analyses: `docs/analysis/2026-10-26-standup.md`, `docs/analysis/2026-10-27-standup.md`.
 
+**Measured in an interview (Stage 0, 2026-10-28):** a 15.6-minute recruiter screen ran about 235 detector calls and threw away about 110 held fast passes per session hour (31 questions an hour), against the 250 and 20 assumed: the held-pass rate is a third of the standups' but still five times the estimate. It cost about $0.47 per session hour and $0.76 per hour of actual talk, the deep pass $0.040 of the $0.041 the answers cost. Analysis: `docs/analysis/2026-10-28-interview.md`.
+
 **The biggest new cost is the deep pass on every type with the conversation in it:** +$0.17 to $0.19 an hour, about 2,700 uncached tokens on the larger model 36 times. The setting to turn it down is `deep_pass_auto_types`: back to behavioral, technical and system_design saves about $0.12 an hour (the others then wait for expand), and `deep_pass_auto` off makes every deep answer wait for a tap. `conversation_budget_tokens` at 1,500 saves about $0.10 (OpenAI) to $0.17 (Claude) more on every pass, for less context. The user's live STT (+$0.09) is the second-largest; `me_stt` off drops it and the user's words with it.
 
 | User type | Live hours per month | Live cost | Background jobs | Total per month |
@@ -518,6 +520,7 @@ All messages are JSON objects with a `type` field.
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
 | `latency.report` | `question_id`, `pass`, `first_word_ms`, `anchor` (`speech_end`, `forced`, `expand`) | The first non-empty `answer.delta` of a pass arrived; the client's own first-word time, stored with the answer (`client_first_word_ms`). A report for a question the gateway does not hold is dropped without an error |
 | `mode.set` | `mode` | User switches mode mid-call; between standup and meeting at a company, that company's pack for the new mode is loaded |
+| `answer_style.set` | `answer_style` (bullets, paragraph) | User switches the detailed answer's style on the Session tab mid-call; applies to the next answers. `session.start` carries the starting `answer_style?` (absent: bullets) |
 | `session.end` | `summarize?` | User ends the session. `summarize: false` keeps the transcript only: no post-call outputs, the session is ready at once |
 
 Example:
@@ -671,7 +674,8 @@ create table app.memory_nodes (
   id          uuid primary key,
   user_id     uuid not null references app.users(id) on delete cascade,
   kind        text not null check (kind in
-                ('role','project','story','skill','work_item','commitment','company','person')),
+                ('profile','role','project','story','skill','work_item','commitment','company',
+                 'person','decision','system','term')),
   domain      text not null check (domain in ('career','workplace')),
   title       text not null,
   summary     text not null,                   -- one line, used in the digest and in search
@@ -1083,7 +1087,8 @@ The semantic cache is not a separate store: each session pack carries prepared a
   "built_at": "2026-10-05T14:00:00Z",
   "digest_version": "sha256:9b1f...",
   "context": {"company": "Acme", "role_title": "Senior Backend Engineer",
-              "round": "technical", "job_summary": "..."},
+              "round": "technical", "job_summary": "...",
+              "requirements": ["Kafka streaming", "PostgreSQL", "on-call ownership"]},
   "ranked_stories": [
     {"node_id": "...", "short_id": "n:3f2a", "title": "Payments migration",
      "one_liner": "...", "competencies": ["ownership", "technical depth"]}
@@ -1114,15 +1119,19 @@ An application's interview pack adds `resume_version_id` (the version its digest
 
 ```
 # Career digest (version 2026-10-05)
+## Profile
+[n:2d90] Senior backend engineer with 9 years in payments and data platforms.
 ## Roles
-[n:7c1e] Senior Backend Engineer, Acme Payments, 2021 to now. Team: Payments Platform.
+[n:7c1e] Senior Backend Engineer, Acme Payments, 2021 to now. Team: Payments Platform. Owns the ledger and payouts.
+  - Proposed moving partner payouts to an event-driven flow on Kafka
+  - Worked with finance and partner teams to turn reconciliation needs into service designs
 ## Top stories
 [n:3f2a] Payments migration: moved the ledger to a new store with zero downtime; p95 latency down 40%. Competencies: ownership, technical depth.
 ## Skills
 Python (9 y), PostgreSQL (8 y), AWS (6 y), Go (3 y)
 ```
 
-Short ids like `n:3f2a` are unique within one digest and pack; the gateway keeps the map back to full node ids and turns cited short ids into `memory_refs`.
+Short ids like `n:3f2a` are unique within one digest and pack; the gateway keeps the map back to full node ids and turns cited short ids into `memory_refs`. A role's highlights (its resume bullets that no project or story covers, in the resume's own words and qualifiers) sit under the role and cite its id; the `profile` node holds the resume's summary facts. Until 2026-10-28 a role kept one sentence, and that day's interview lost the resume's two HubSpot bullets, its two bullets on client work and its years of experience: the two topics the interviewer asked about.
 
 ### SQS job catalog
 
@@ -1249,10 +1258,11 @@ Answers run outside the group, one task per question, so a new question can canc
 3. If speech starts again before confirmation, cancel the speculative work (a held pass silently; a released one with `question.cancelled`) and keep accumulating text. The next speech-end starts again at step 1. This holds only while the speaker could still be mid-sentence: when speech starts after a pause longer than the silence timer and the STT final is in, the speaker had finished, so the turn keeps deciding on its own text and the new speech starts a new utterance (otherwise a detector slower than the gap between two sentences glues them into one question).
 4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`; the deep pass starts with the retrieval results once the fast pass has ended (or at once, if it already has), for every type in `deep_pass_auto_types`; with `deep_pass_auto` off it waits until the user taps expand. The question joins the conversation memory, which pairs it with what the user says next. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
 5. If the detector says it is not a question for the user, nothing is shown; the text stays in the conversation memory as context.
+6. **Follow the user.** Once the user has said `follow_min_words` real words (fillers and pleasantries do not count) in reply to the other side's last turn, within `follow_window_ms` of its end, a card continues from what they are saying, whether a question was shown for that turn or not: type `follow` on the gateway (sent as `other`), the turn's text as its question, the user's lines in the transcript. Once per turn of the other side; not while the detector is still deciding it, not after small talk. It never takes a prepared answer or the exact-repeat cache, and it does not cancel the answer the user is reading.
 
 **One detector call per turn.** The decision on the interim text stands unless the STT final changes it materially: other words, or a "?" the interim lacked (an interim often lacks the last words and the question mark; case and other punctuation do not count). When the final does, the detector, the prepared match and the held fast pass restart on the final the moment it arrives, and the call on the interim is cancelled; the turn then goes on from step 2 with the final's decision. So a turn never waits for two detector calls in a row (in the October 2026 live test that double call was the p95: 1.3 to 2.1 s extra on 3 of 8 questions). When no text has arrived by the speech end, the turn starts on the first interim or final that does, rather than waiting for the final.
 
-`question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript; typed text that only asks for an answer ("answer", "answer every question now") counts as none. Its type is `other` (`respond` with `kind: "respond"`, which never takes a prepared answer), and both get their deep pass on their own like every answered type.
+`question.force` skips detection and uses the typed text, or the last 20 seconds of the "them" transcript; typed text that only asks for an answer ("answer", "answer every question now") counts as none. Its type is `other` (`respond` with `kind: "respond"`, which never takes a prepared answer), and both get their deep pass on their own like every answered type. With no typed text while the latest utterance's turn is still deciding and its held pass has not been shown, the force takes that turn over instead (`TurnDetector.take_over`): the held pass is shown at once, with its prepared answer if the match found one, and the detector's type, if it comes within `force_type_wait_ms`, shapes the deep pass. In an interview a Respond press on a question counts as a question (so it may take a prepared answer); in a standup or meeting it stays `respond`. In the 2026-10-28 interview a Respond press 0.7 s after a question had cancelled a detector that fires on it and a held pass with a matching prepared answer, and the new pass showed at 7.8 s.
 
 **Prepared answers need embeddings.** With no embeddings provider (the direct Claude API only, since it has none), the gateway logs at startup that prepared-answer matching is off, and every question goes to the fast pass. With only OpenAI, OpenAI embeddings do the matching. A pack whose vectors came from another embedding model than the gateway's is not matched against, and the gateway enqueues its rebuild.
 
@@ -1267,6 +1277,10 @@ Answers run outside the group, one task per question, so a new question can canc
 | `stage1_min_score` | 0.3 |
 | `detector_hedge_ms` | 2000 (a detector request with no first token by then gets its retry route alongside it; the first to answer wins) |
 | `openai_detector_retry_tier` | priority (the OpenAI tier of the detector's second route, used by the hedge and the retry; empty: the first route's) |
+| `fast_hedge_ms` | 1200 (the same hedge for the fast pass; empty: retry only after the first-token timeout) |
+| `openai_fast_retry_tier` | priority (the OpenAI tier of the fast pass's second route; empty: the first route's) |
+| `force_type_wait_ms` | 1500 (a forced question that took over a deciding turn waits this long for its detector's type) |
+| `follow_user`, `follow_min_words`, `follow_window_ms` | on, 8, 12000 (step 6: follow the user once they are answering) |
 | `name_address_grace_ms` | 1000 (standups and meetings: how long a question by name waits for the detector before it shows as `respond`; empty: off) |
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |
 | `prepared_answer_thresholds` | per embedding model: `openai:text-embedding-3-large@1024` 0.63 with a 0.05 margin over the runner-up; `bedrock:cohere.embed-v4:0@1024` 0.85 (not yet calibrated). Set from `copilot-calibrate-prepared` on `evals/prepared/calibration.toml`: the lowest threshold with no wrong match, plus 0.03, since a wrong match shows points for another question |
@@ -1274,7 +1288,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `fast_pass` | Haiku 4.5, Standard tier (Priority by flag), max_tokens 250 |
 | `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800, thinking `between_tools` (or `adaptive`) at effort `low` |
 | `deep_pass_auto` | on: the deep pass starts once the question is confirmed and its fast pass has ended |
-| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other (every type that gets an answer; the three of before turn the cost down) |
+| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other, respond, follow (every type that gets an answer; the three of before turn the cost down) |
 | `rerank_keep` | 6 |
 | `retrieval_budget_ms` | 100 |
 | `first_token_timeout_ms` | 1500, then the next route (OpenAI live routes may set their own) |
@@ -1318,7 +1332,20 @@ no story that shows what it asks gets the user's approach as a plan, and the clo
 only if it shows the same thing, said to be the closest. Questions about the job, company, pay,
 culture or the future build on the pack's company, role and job summary, what the interviewer
 said, and the user's goals; no salary figure unless the user's data has one. The same policy
-holds in every mode (interview, standup, meeting).
+holds in every mode (interview, standup, meeting), with one exception since 2026-10-28.
+
+**Suggested details (interviews).** A resume never holds all of someone's experience, and the
+user cannot type it all in either. So in an interview, where the data is thin, the answer
+suggests specific details that are probably true of the user's real work and close to it (how
+they did it, the tools and APIs, a concrete example, a typical scale), aimed at what the job
+asks for (the pack's job summary and requirements), and ends every cue or line holding one with
+`[~]`. The overlay dims those lines and tags them "check": the user says what is theirs and
+drops the rest. Asked about something the job names that the data mentions only lightly (a
+proposal, an evaluation, a skill), the answer adds one or two hands-on details from the user's
+own past work, marked. Never a new employer, title, degree, date or pay figure, and never a
+bracketed placeholder. What the user has said in the call counts as fact. Standups and meetings
+keep the strict rule: a made-up ticket or status misleads the team. Prepared answers in the
+pack stay strict too. The user chose this (the 2026-10-28 analysis).
 
 **Fast pass system prompt:**
 
@@ -1348,10 +1375,22 @@ Rules:
   match, give how {user_name} handles that situation, as a plan with its reasoning. Add the
   closest real story only if it shows the same thing, said to be the closest, with its facts
   as written. Never make up a situation, an action or an outcome.
+- A question about {user_name}'s experience with a named platform, product or technology
+  ("your experience with X", "have you worked with X's API"): first what the data says about
+  X (a role's highlight, a project, a story, a skill), with its own verbs and qualifiers;
+  then show fluency with X itself, specifically: its real APIs, objects, auth, limits,
+  tooling and pitfalls, by name, the way someone who works with it talks. Never frame X as
+  new to {user_name} ("I'd start from the docs", "I'd learn it", "my concrete experience is
+  only...") unless the data says so; with nothing on X in the data, give the closest real
+  work and X's specifics, with no remark on the gap.
 - Questions about this job, company, culture, pay or the future: build on the company, role
   and job summary in <session_pack>, what the other side said in <transcript>, and
   {user_name}'s goals in <digest>. Add no facts about the company beyond those. Name no pay
   figure unless {user_name}'s data has one.
+- Never write a placeholder or a fill-in bracket ("[your city]", "[X years]"). A personal
+  detail the data does not have (where {user_name} lives, availability, notice, work
+  authorization, their pay expectation, whether an offered range suits them) is theirs to
+  say: give no cue for it, only a useful question back where one fits.
 - Reuse the wording, story names and exact numbers in <digest> and <session_pack>: they come
   from {user_name}'s own documents and approved memory, so they are words {user_name} knows.
   Don't rephrase them into polished prose.
@@ -1376,7 +1415,7 @@ Rules:
 - Output only the bullet list.
 ```
 
-**Deep pass** uses the same rules, its own opening and last rules, and a shape per question type:
+**Deep pass** uses the same rules, its own opening and last rules, and a shape per question type. It also gets the talking points already on screen (`<shown_cues>`), with a rule to go beyond them (the how and why, specifics, an example with its outcome, the tradeoff) and never restate one, and a style the user picks on the Session tab (`answer_style`): **bullets**, 6 to 10 lines of 8 to 18 words, or **paragraph**, one or two connected paragraphs of 120 to 180 words the user can say nearly as written; the style replaces the shape's line count. The system prompt is the same in both styles, so the cached prefix is shared, and the exact-repeat cache keeps a paragraph answer apart from a bulleted one. After the 2026-10-28 interview the user found the deep answer nearly the same as the talking points and its lines unconnected; on that call's real questions the bulleted deep pass now adds marked hands-on details and API specifics the cues did not have, and the paragraph reads end to end. The deep pass runs on its own for every answered type, `respond` included (a Respond press in that interview left the detailed answer behind a tap).
 
 ```
 You help {user_name} answer a question live in {mode}. {user_name} has started from
@@ -1391,7 +1430,7 @@ speak from, in the shape given for the question type, not sentences to read out.
 | Type | Shape |
 | --- | --- |
 | behavioral | If a story in the data matches: its name, the situation, what the user did and the result with its number, as written. If none matches: how the user handles that situation, as 'I'd' lines with the reasoning, and the closest real story only if it shows the same thing. 4 to 6 lines, under 70 words. |
-| technical | The direct answer in one line, how it works in 2 or 3 with the specifics, the main tradeoff or pitfall; one line from the user's work only if it fits: 4 to 7 lines, under 80 words. |
+| technical | The direct answer in one line, how it works in 2 or 3 with the specifics, the main tradeoff or pitfall; one line from the user's work only if it fits. Asked about the user's experience with a named tool or platform: the user's facts on it first, as written, then 2 or 3 lines of its specifics by name (APIs, objects, auth, limits), then a pitfall. 4 to 7 lines, under 80 words. |
 | system_design | 2 clarifying questions, then the user's design as 'I'd' lines: components, data flow, consistency and failure handling, scaling, tradeoffs; a past system of the user's only where it fits. One short line each, under 110 words. |
 | coding | Approach, complexity, edge cases: one short line each; code only when a screenshot shows the problem. |
 | standup_status | Yesterday, today and blockers from the standup pack only: one line each, under 40 words. |
@@ -1405,6 +1444,8 @@ speak from, in the shape given for the question type, not sentences to read out.
 
 **At work.** In a standup or meeting at a company the system block gets a paragraph more (only then, so interview prompts stay byte-identical): facts about the user's work there (tasks, tickets, decisions, commitments, the company's systems, people and terms) follow the rule for personal facts: only from `<session_pack>` or `<memory>`, cited, never invented, and when entries on one item have different dates the newest is its status. The interview rule on questions about the company, pay or culture does not apply. A standup gives the user's update from the standup section; a meeting is technical and open, not a status report: the company's systems, stack and decisions where they apply, general knowledge for the rest. The technical, system design, standup and "other" deep shapes have work versions (`prompts.WORKPLACE_SHAPES`).
 
+**Named tools and missing details, measured.** In the 2026-10-28 interview a question on the user's experience with the HubSpot API, which the resume names, got "my concrete experience is CRM-oriented REST APIs" and "I'd approach HubSpot through its documentation": grounded, but it undersold the user and named nothing specific; asked where the user lives, both passes wrote "[your city, state]". On a fictional profile shaped like that call (live, gpt-6-luna and gpt-6.1-sol, old prompts and digest against new): the new fast pass led with the resume's HubSpot workflow and webhook line, cited, then CRM objects, associations, private-app tokens and OAuth scopes, rate limits and webhook signatures; the deep pass added v3 objects, batch upserts, 429 backoff and idempotent webhook handling. The old pair named HubSpot only as something to approach. Location: no placeholder in 3 of 3 new answers (old: 4 of 4 had one). Pay: neither new answer said the band suits the user (old: 1 of 2 did). The detector typed the motivation, HubSpot and location questions `other`, `technical` and `other` 3 of 3 each.
+
 **Company workspaces, measured.** `copilot-company-eval` (evals/README.md) answers 8 standup and 12 meeting questions for the benchmark candidate at a fictional employer, from two weeks of work logs and three documents run through the real extraction, and grades each answer against the company's own material. Before (the career digest only, as before company workspaces) and after (company packs and live search), 2 answers per question and pass, October 2026, gpt-6-luna and gpt-6.1-sol: answers with no invented facts went from 31% to 94% (fast) and 25% to 100% (deep) on standups, 83% to 100% in meetings; completeness from 1.1 to 3.6 and 4.0 of 5 on standups, 2.0 to 3.5 and 3.8 in meetings, with correctness 4.9 to 5.0 and "sounds spoken" 4.6 to 5.0 (3.5 to 4.9 before). Two misses in the first after-run changed the code: an outdated ticket status (newest entry per ticket in search) and a document's owner dropped by extraction (summaries say who owns a system). Latency is not measured yet: the benchmark on the Stage 0 VM (`copilot-bench run --company`, which reports the memory stages, and the interview script interleaved with main) stopped when the OpenAI account ran out of credits; until it runs, the 30 ms and 150 ms waits are the design bounds, and the full-text query is a local Postgres call over one company's few hundred nodes.
 
 **Detector prompt** (`{mode}` is "an interview", "a standup" or "a meeting"):
@@ -1417,7 +1458,10 @@ Return JSON only:
 {"answer": "behavioral|technical|system_design|coding|standup_status|small_talk|respond|other|wait|none"}
 - The question type when it is a complete question for {user_name} that needs an answer now.
   small_talk is greetings and pleasantries ("how's your week been?"). "Do you have any
-  questions for us?" is other.
+  questions for us?" is other. behavioral asks for a past situation ("tell me about a
+  time...", "how did you handle..."). Why {user_name} is looking or leaving, why this role or
+  company, pay, location, availability, notice, work authorization and the hiring process
+  are other, never behavioral. Experience with a named tool or platform is technical.
 - respond: not a question, but said to {user_name} and needing a reply now: a request or a
   task for them, a reminder or a concern aimed at them, or a check right after they spoke
   ("makes sense?", "your thoughts?"). The same rules on whom it is for apply.

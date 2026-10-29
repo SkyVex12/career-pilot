@@ -347,3 +347,147 @@ async def test_a_summary_cut_off_at_its_cap_is_not_kept(env) -> None:
         await c.closed()
     log = await session_log(env, c.session_id)
     assert {e["stop_reason"] for e in log if e["kind"] == "summary"} == {"max_tokens"}
+
+
+# Following the user (2026-10-28, the user's call): once the user is answering, the answer
+# follows them, whether or not a question was detected.
+
+
+async def test_the_answer_follows_the_user_when_no_question_fired(env) -> None:
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        # A statement: the scripted detector says none, so nothing is shown.
+        await c.say("So each client pod has one integrations engineer on it", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "them")
+        await asyncio.sleep(0.6)
+        assert c.of_type("question.detected") == []
+        await c.say_me(
+            "Right, at my last job I owned the CRM sync for four client accounts myself",
+            capture_ms=3000, end_ms=6000,
+        )  # fmt: skip
+        q = await c.wait_type("question.detected", timeout=3.0)
+        assert q["question_type"] == "other"  # "follow" on the gateway; the protocol has none
+        assert q["text"] == "So each client pod has one integrations engineer on it"
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
+        # One card per turn of the other side, however long the user keeps talking.
+        await c.say_me(
+            "and I wrote the field mappings and the retry jobs for every one of those accounts",
+            capture_ms=6500, end_ms=9000,
+        )  # fmt: skip
+        await asyncio.sleep(0.6)
+        assert len(c.of_type("question.detected")) == 1
+    fast = requests_for(provider, "fast")[-1]
+    content = str(fast.content)
+    assert "Question (follow): So each client pod has one integrations engineer" in content
+    assert "I owned the CRM sync for four client accounts" in content
+    assert "type follow" in fast.system[0].text
+    deep = requests_for(provider, "deep")[-1]
+    assert "continue from where their lines in the transcript" in str(deep.content)
+
+
+async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
+    def reply(job: str, req: LLMRequest) -> Reply:
+        if job == "detector" and "how are you" in str(req.content).lower():
+            return Reply([json.dumps({"answer": "small_talk"})])
+        return default_reply(job, req)
+
+    env.providers = [ScriptedProvider("anthropic", reply=reply)]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Hi Alex, how are you doing today", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "them")
+        await asyncio.sleep(0.6)
+        await c.say_me(
+            "Doing really well thanks, busy week with the migration work and two releases",
+            capture_ms=2500, end_ms=5000,
+        )  # fmt: skip
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
+        await c.say("Well it was great talking with you today", capture_ms=8000)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "great talking" in m["text"])
+        await asyncio.sleep(0.6)
+        await c.say_me(
+            "Yeah thank you so much, it was great talking with you too, have a great day",
+            capture_ms=11000, end_ms=13000,
+        )  # fmt: skip
+        await asyncio.sleep(1.0)
+        assert c.of_type("question.detected") == []
+
+
+async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None:
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="fast")
+        await c.say_me(
+            "We split the ledger by account and moved the reads onto replicas behind a cache",
+            capture_ms=2000, end_ms=5000,
+        )  # fmt: skip
+        q2 = await c.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != q1["question_id"]
+        )
+        assert q2["text"] == "How did you scale the ledger?"
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
+        # The follow does not cut off the answer the user was reading.
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="deep")
+        cancelled = [m for m in c.of_type("answer.error") if m["question_id"] == q1["question_id"]]
+        assert cancelled == []
+    # Never served from the exact-repeat cache: it continues the user, not the question.
+    fast = requests_for(provider, "fast")
+    assert any("Question (follow): How did you scale the ledger?" in str(r.content) for r in fast)
+
+
+async def test_the_detailed_answer_follows_the_chosen_style_and_the_shown_cues(env) -> None:
+    # The Session tab's choice: paragraph from the start, then bullets mid-call. The deep pass
+    # sees the talking points already on screen, so it goes beyond them.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(answer_style="paragraph")
+        await c.say("How did you scale the ledger?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="deep")
+        await c.send({"type": "answer_style.set", "answer_style": "bullets"})
+        await c.say("What did you change in the payout service?", capture_ms=8000)
+        q2 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["question_id"] != q1["question_id"]
+            )
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    first, second = [str(r.content) for r in requests_for(provider, "deep")][:2]
+    assert "Style: paragraph" in first
+    assert "Style: bullets" in second
+    assert "<shown_cues>\n- Led the payments migration [n:3f2a]" in first
+    log = await session_log(env, c.session_id)
+    assert {"kind": "answer_style", "answer_style": "bullets"}.items() <= next(
+        e for e in log if e["kind"] == "answer_style"
+    ).items()
+
+
+async def test_a_reply_gets_its_detailed_answer_without_a_tap(env) -> None:
+    # 2026-10-28: the HubSpot question went in as a Respond, which was not an automatic deep
+    # type, so the detailed answer waited behind "Get the detailed answer".
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        ready = await c.start()
+        assert "respond" in ready["deep_auto_types"]
+        assert "follow" not in ready["deep_auto_types"]  # the client knows no such type
+        await c.say("Remember to send the numbers by Friday", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "Friday" in m["text"])
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")

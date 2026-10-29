@@ -17,11 +17,12 @@ Prepared answers carry vectors from the worker's embedder, and the pack names it
 
 import logging
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from copilot_core import jobs, keys, resumes
+from copilot_core import jobs, keys, resumes, workplace
 from copilot_core.ids import uuid7
 from copilot_core.packs import SHORT_ID, Digest, NodeRef, SessionPack, encode_embedding, render_pack
 from copilot_core.valkey_client import Valkey, text
@@ -236,16 +237,14 @@ async def build_interview_pack(
             return None
         paired = await resumes.pairing(conn, row["job_id"])
         assert paired is not None
-        stories = {
-            r["id"]: r
-            for r in await conn.fetch(
-                "select id, title, summary, body from app.memory_nodes"
-                " where user_id = $1 and resume_version_id = $2 and kind = 'story'"
-                " and status = 'active' order by id",
-                uid,
-                paired.resume_version_id,
-            )
-        }
+        version_nodes = await conn.fetch(
+            "select id, kind, title, summary, body from app.memory_nodes"
+            " where user_id = $1 and resume_version_id = $2 and status = 'active'"
+            " and kind in ('role', 'project', 'story', 'skill') order by id",
+            uid,
+            paired.resume_version_id,
+        )
+        stories = {r["id"]: r for r in version_nodes if r["kind"] == "story"}
     digest = await resumes.version_digest(ctx.valkey, uid, paired.resume_version_id, paired.is_base)
     round_ = str(row["round"] or "general")
     req = prompts.pack_request(
@@ -307,15 +306,46 @@ async def build_interview_pack(
                 "role_title": row["role"],
                 "round": row["round"],
                 "job_summary": str(data.get("job_summary", "")),
+                "requirements": [
+                    " ".join(str(r).split())[:80]
+                    for r in as_list(data.get("job_requirements"))[:10]
+                    if str(r).strip()
+                ],
             },
             "ranked_stories": ranked,
             "prepared_answers": prepared,
             "resume_version_id": str(version) if version else None,
             "pairing": resumes.pairing_tag(paired),
+            "keyterms": interview_keyterms(str(row["company"]), version_nodes),
         }
     )
     await embed_prepared(ctx, pack)
     return pack, row["job_id"], row["interview_id"], paired, digest
+
+
+def interview_keyterms(company: str, nodes: Sequence[Any]) -> list[str]:
+    """The names speech to text should expect in an interview for this application: the
+    hiring company, then the user's employers, skills and projects from the paired resume
+    version, short ones only, at most `workplace.KEYTERMS_MAX`. Before 2026-10-28 only company
+    packs had keyterms; that day the mic transcript misheard HubSpot three times and the
+    user's latest employer once, so the answers could not see what the user had claimed."""
+    names = [company]
+    for kind in ("role", "skill", "project"):
+        for n in nodes:
+            if n["kind"] == kind:
+                name = as_dict(n["body"]).get("company") if kind == "role" else n["title"]
+                names.append(str(name or ""))
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        name = " ".join(name.split())
+        if not name or name.lower() in seen or len(name.split()) > workplace.KEYTERM_MAX_WORDS:
+            continue
+        seen.add(name.lower())
+        out.append(name)
+        if len(out) == workplace.KEYTERMS_MAX:
+            break
+    return out
 
 
 def short_id(value: object) -> str:

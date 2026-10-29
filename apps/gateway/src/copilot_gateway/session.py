@@ -53,7 +53,13 @@ from copilot_gateway.detector import Detector, named_or_model
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
-from copilot_gateway.turn import Detection, TurnDetector, TurnModel, addressed_by_name
+from copilot_gateway.turn import (
+    Detection,
+    TurnDetector,
+    TurnModel,
+    addressed_by_name,
+    substantive_words,
+)
 from copilot_protocol import models
 
 log = logging.getLogger(__name__)
@@ -114,6 +120,8 @@ class SessionInfo:
     # An interview for an application: the resume version its digest and pack come from.
     resume_version_id: UUID | None = None
     resume_is_base: bool = False
+    # How the detailed answer is written: "bullets" or "paragraph" (answer_style.set).
+    answer_style: str = "bullets"
 
 
 @dataclass
@@ -250,6 +258,9 @@ class Session:
         self.echo_at: deque[float] = deque(maxlen=ECHO_WARN_COUNT)
         self.echo_warned = False
         self._settling: set[asyncio.Task[None]] = set()
+        self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
+        self._followed: set[int] = set()  # ends (capture ms) of the turns already followed
+        self._last_detection: Detection | None = None
         self._refs = ref_map(digest, pack)
         self._prompt_ctx = self._build_prompt_ctx()
         # Company workspaces: live search over the chosen company's memory, and the question
@@ -281,6 +292,8 @@ class Session:
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
         if fields.get("question_type") == "respond" and not self.knows_respond:
+            fields["question_type"] = "other"
+        if fields.get("question_type") == "follow":  # the protocol has no such type
             fields["question_type"] = "other"
         self.seq += 1
         message = cls.model_validate({"type": _type_of(cls), "seq": self.seq, **fields})
@@ -452,6 +465,9 @@ class Session:
         stats["memory_hits"] = len(lines)
         return lines, stats
 
+    def answer_style(self) -> str:
+        return self.info.answer_style
+
     def cache_extra(self) -> dict[str, str]:
         """Stored with exact-repeat answers, so deleting a company deletes its answers."""
         return {"employer": str(self.info.employer_id)} if self.info.employer_id else {}
@@ -513,6 +529,7 @@ class Session:
         call = asyncio.ensure_future(
             self.detector.detect(utterance, transcript, self.info.mode, turns)
         )
+        call.add_done_callback(self._remember_detection)
         grace = self.settings.name_address_grace_ms
         if (
             grace is not None
@@ -521,6 +538,10 @@ class Session:
         ):
             return asyncio.ensure_future(named_or_model(call, grace / 1000))
         return call
+
+    def _remember_detection(self, call: "asyncio.Future[Detection]") -> None:
+        if not call.cancelled() and call.exception() is None:
+            self._last_detection = call.result()
 
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if self._memory_on() and self.company_memory is not None:
@@ -713,6 +734,7 @@ class Session:
             end_ms=line.end_ms,
         )
         self.conv.add(line)
+        self._maybe_follow(line)
         if self.info.store_transcript:  # the user's words follow the same consent
             self.log_entry(
                 {
@@ -729,6 +751,76 @@ class Session:
         ):
             self.echo_warned = False
             self.set_status("stt", "ok", "Transcription back to normal")
+
+    def _maybe_follow(self, line: Line) -> None:
+        """Follow the user: once they have said `follow_min_words` real words in reply to the
+        other side's last turn, a card continues from what they are saying, whether a
+        question was shown for that turn or not (2026-10-28: the user wanted the answer to
+        follow them, and four of seven questions came after the user had started). Once per
+        turn of the other side; not while the detector is still deciding it, not for small
+        talk, and not for pleasantries."""
+        s = self.settings
+        if not s.follow_user or not line.text:
+            return
+        lines = self.conv.lines
+        them = [ln for ln in lines if ln.channel == "them" and ln.end_ms <= line.start_ms + 300]
+        if not them:
+            return
+        anchor = them[-1].end_ms
+        if anchor in self._followed or line.start_ms - anchor > s.follow_window_ms:
+            return
+        task = self.turns.task
+        if task is not None and not task.done():
+            return  # the turn is still being decided; the next line looks again
+        said = " ".join(
+            ln.text for ln in lines if ln.channel == "me" and ln.start_ms >= anchor - 300
+        )
+        if substantive_words(said) < s.follow_min_words:
+            return
+        asked = next((a for a in reversed(self.conv.asked) if a.at_ms >= anchor - 1500), None)
+        last = self._last_detection
+        if asked is None and last is not None and last.qtype == "small_talk":
+            return
+        if asked is not None:
+            shown = self.answers.questions.get(UUID(asked.qid))
+            if shown is not None and not shown.fast_ended:
+                return  # its cues are still coming; follow once they are in
+            text = asked.text
+        else:
+            mine = [
+                ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms
+            ]
+            since = mine[-1] if mine else 0
+            text = " ".join(self.conv.them_text_between(since, anchor))
+        words = text.split()
+        if len(words) < 3:
+            return
+        self._followed.add(anchor)
+        text = " ".join(words[-80:])
+        q = Question(
+            qid=uuid7(),
+            text=text,
+            qtype="follow",
+            confidence=1.0,
+            addressed=True,
+            speculative=False,
+            forced=False,
+            t0=time.monotonic(),
+            detector_ms=None,
+            match=None,
+        )
+        self.emit(
+            models.QuestionDetected,
+            question_id=q.qid,
+            text=text,
+            question_type=q.qtype,
+            confidence=q.confidence,
+            speculative=False,
+        )
+        self.answers.add(q)
+        self.answers.confirm(q.qid, text, None, supersede=False)
+        log.info("following the user after %d words (%s)", len(said.split()),
+                 "answered" if asked is not None else "no question shown")  # fmt: skip
 
     def _echo(self, seg: int, line: Line, share: float) -> None:
         self.emit(
@@ -766,7 +858,9 @@ class Session:
 
     def deep_auto_types(self) -> list[str]:
         s = self.settings
-        return list(s.deep_pass_auto_types) if s.deep_pass_auto else []
+        # The client knows no "follow": a follow card reaches it as "other".
+        types = [t for t in s.deep_pass_auto_types if t != "follow"]
+        return types if s.deep_pass_auto else []
 
     def state_fields(self) -> dict[str, Any]:
         return {
@@ -785,6 +879,7 @@ class Session:
             "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
             "agenda": self.info.agenda or "",
             "material_ids": ",".join(str(i) for i in self.info.material_ids),
+            "answer_style": self.info.answer_style,
             "resume_version_id": str(self.info.resume_version_id)
             if self.info.resume_version_id
             else "",
@@ -1250,6 +1345,10 @@ class Session:
                 self.writer.set_state(mode=message.mode)
                 self.log_entry({"kind": "mode", "mode": message.mode})
                 self._warm = asyncio.create_task(self._mode_changed(message.mode))
+            case models.AnswerStyleSet():
+                self.info.answer_style = message.answer_style
+                self.writer.set_state(answer_style=message.answer_style)
+                self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
             case models.SessionEnd():
                 # The user may skip the post-call outputs and keep the transcript only; the
                 # worker reads this from the state when the session ends.
@@ -1299,6 +1398,9 @@ class Session:
         self.last_force = now
         if text and is_answer_command(text):
             text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
+        if not text and (taken := self.turns.take_over()) is not None:
+            self._force_taken(*taken, respond=respond)
+            return
         if not text:
             heard = self.transcript_text(self.settings.force_context_s)
             text = " ".join(p for p in (heard, self.turns.interim) if p).strip()
@@ -1330,6 +1432,37 @@ class Session:
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None)
         self.conv.question(str(q.qid), text, self.capture_now)
+
+    def _force_taken(
+        self, qid: UUID, text: str, detection: "asyncio.Future[Detection]", *, respond: bool
+    ) -> None:
+        """A forced question that took over the turn still deciding (`TurnDetector.take_over`):
+        its held fast pass is shown at once, with its prepared answer if one matched, and the
+        detector's type, if it comes within `force_type_wait_ms`, decides the deep pass's
+        shape. In an interview a Respond press on a question counts as one, so it may take a
+        prepared answer; in a standup or meeting it stays a reply."""
+        q = self.answers.questions.get(qid)
+        if q is None:
+            return
+        reply = respond and self.info.mode in prompts.GROUP_MODES
+        self.release_question(qid, text, Detection("answer", "respond" if reply else "other"),
+                              speculative=False)  # fmt: skip
+        q.forced, q.confidence, q.detector_ms = True, 1.0, None
+        wait_s = self.settings.force_type_wait_ms / 1000
+
+        async def typed() -> None:
+            await asyncio.wait({detection}, timeout=wait_s)
+            ok = detection.done() and not detection.cancelled() and not detection.exception()
+            found = detection.result() if ok else None
+            if found is not None and found.fires() and not reply:
+                q.qtype, q.detector_ms = found.qtype, found.latency_ms
+            if not (q.cancelled or q.discarded):
+                self.answers.confirm(qid, q.text, None)
+                self.conv.question(str(qid), q.text, self.capture_now)
+
+        task = asyncio.create_task(typed())
+        self._forced.add(task)
+        task.add_done_callback(self._forced.discard)
 
     def transcript_text(self, seconds: float) -> str:
         return self.conv.them_text_since(self.capture_now - int(seconds * 1000))
@@ -1748,6 +1881,7 @@ class SessionManager:
             material_ids=material_ids if employer_id is not None else [],
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
+            answer_style=msg.answer_style or "bullets",
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -1853,6 +1987,7 @@ class SessionManager:
             material_ids=[UUID(i) for i in (state.get("material_ids") or "").split(",") if i],
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
+            answer_style=state.get("answer_style") or "bullets",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

@@ -7,7 +7,7 @@ import pytest
 
 from copilot_core import jobs, keys
 from copilot_core.packs import SHORT_ID, Digest, SessionPack, cited_refs, ref_map, short_ids
-from copilot_worker.memory import render_digest
+from copilot_worker.memory import load_digest_nodes, render_digest, replace_resume_nodes
 from copilot_worker.testing import FIXTURES, Stack
 
 pytestmark = pytest.mark.stack
@@ -120,6 +120,77 @@ def test_digest_is_deterministic_and_short_ids_are_stable() -> None:
     assert render_digest("Alex", []) is None
 
 
+# A resume shaped like the one in the 2026-10-28 interview (paraphrased, fictional): the
+# platform bullets and the client bullet are covered by no project or story.
+CRM_RESUME = {
+    "user_name": "Alex Doe",
+    "headline": "Senior engineer with 12 years in API integrations and data quality.",
+    "roles": [
+        {
+            "key": "r1", "company": "Portline", "title": "Senior Engineer", "start": "2024",
+            "end": "2026", "team": "", "summary": "Built API integrations.",
+            "highlights": [
+                "Proposed HubSpot workflows with programmable automation and webhooks to sync"
+                " customer records",
+                "Worked with business teams and clients to turn requirements into integration"
+                " designs",
+                "  ",
+            ],
+        },
+    ],
+    "projects": [],
+    "stories": [],
+    "skills": [{"name": "HubSpot CRM", "years": 0, "level": ""}],
+}  # fmt: skip
+
+
+async def test_resume_highlights_and_headline_reach_the_digest(stack: Stack) -> None:
+    """2026-10-28: a role kept one summary sentence, so the resume's HubSpot and client bullets
+    and its years of experience never reached the interview's answers."""
+    uid = await stack.new_user()
+    doc = await ingest_resume(stack, uid)
+    version = await stack.admin.fetchval(
+        "select resume_version_id from app.documents where id = $1", doc
+    )
+    async with stack.ctx.user(uid) as conn:
+        assert await replace_resume_nodes(conn, uid, version, CRM_RESUME) == 3
+        nodes = await load_digest_nodes(conn, uid, version)
+    digest = render_digest("Alex Doe", nodes, today="2026-10-28")
+    assert digest is not None
+    text = digest.text
+    profile = next(n for n in nodes if n["kind"] == "profile")
+    role = next(n for n in nodes if n["kind"] == "role")
+    sid = short_ids([n["id"] for n in nodes])
+    assert f"## Profile\n[{sid[profile['id']]}] Senior engineer with 12 years" in text
+    # The highlights sit under their role's short id, with the resume's own qualifier.
+    role_line = f"[{sid[role['id']]}] Senior Engineer, Portline, 2024 to 2026. Built API"
+    assert role_line in text
+    after = text.split(role_line, 1)[1]
+    assert "\n  - Proposed HubSpot workflows with programmable automation" in after
+    assert "\n  - Worked with business teams and clients" in after
+    assert after.count("\n  - ") == 2  # the blank bullet is dropped
+    assert text.index("## Profile") < text.index("## Roles") < text.index("## Skills")
+    assert {sid[profile["id"]], sid[role["id"]]} <= set(digest.refs)
+
+
+def test_extraction_asks_for_highlights_and_a_headline() -> None:
+    from copilot_worker import prompts as worker_prompts
+
+    schema = worker_prompts.EXTRACT_SCHEMA
+    assert "headline" in schema["required"]
+    role = schema["properties"]["roles"]["items"]
+    assert role["properties"]["highlights"] == {"type": "array", "items": {"type": "string"}}
+    system = worker_prompts.EXTRACT_SYSTEM
+    # 2026-10-28, live: without "projects and stories come first" every bullet became a
+    # highlight and the resume gave no stories at all.
+    rules = (
+        "Projects and stories come first", "lose no fact", "names exactly as written",
+        '"proposed"', "clients, customers", "none of its projects or stories",
+    )  # fmt: skip
+    for rule in rules:
+        assert rule in system
+
+
 async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     uid = await stack.new_user()
     await ingest_resume(stack, uid)
@@ -151,6 +222,19 @@ async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     )
     assert pack.digest_version == digest.version
     assert pack.context.company == "Globex"
+    # Keyterms for speech to text (2026-10-28: an interview pack had none, and the mic
+    # transcript misheard the platform and the employer): the hiring company, then the
+    # resume version's employers, skills and short project titles.
+    rows = await stack.admin.fetch(
+        "select kind, title, body->>'company' as company from app.memory_nodes"
+        " where user_id = $1 and status = 'active' order by id",
+        uid,
+    )
+    employers = [r["company"] for r in rows if r["kind"] == "role"]
+    skills = [r["title"] for r in rows if r["kind"] == "skill"]
+    assert pack.keyterms[0] == "Globex"
+    assert pack.keyterms[1 : 1 + len(employers) + len(skills)] == employers + skills
+    assert all(len(k.split()) <= 4 for k in pack.keyterms)
     assert [s.title for s in pack.ranked_stories][:1] == ["Zero-downtime ledger migration"]
     assert len(pack.ranked_stories) == 3
     assert len(pack.prepared_answers) == 4
@@ -263,3 +347,32 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
     await stack.run(again)
     pack = await pack_for(stack, uid, f"job:{doc}")
     assert pack.digest_version == digest.version
+
+
+def test_a_pack_carries_the_jobs_requirements_for_the_live_prompts() -> None:
+    # 2026-10-28: interview answers may suggest details close to the user's work, aimed at
+    # what the job asks for; the live prompts see the pack, not the job description.
+    from copilot_core.packs import render_pack
+    from copilot_worker import prompts as worker_prompts
+
+    assert "job_requirements" in worker_prompts.PACK_SCHEMA["required"]
+    assert "job_requirements: the description's key requirements" in worker_prompts.PACK_SYSTEM
+    pack = SessionPack.model_validate(
+        {
+            "pack_id": "01a18300-0000-7000-8000-000000000001",
+            "user_id": "01a18300-0000-7000-8000-000000000002",
+            "mode": "interview",
+            "built_at": "2026-10-28T14:19:53Z",
+            "digest_version": "",
+            "context": {
+                "company": "Northgate",
+                "job_summary": "A CRM integrations role.",
+                "requirements": ["HubSpot Operations Hub workflows", "client meetings"],
+            },
+        }
+    )
+    text = render_pack(pack)
+    assert "Job summary: A CRM integrations role.\n" in text
+    assert "Job requirements: HubSpot Operations Hub workflows; client meetings" in text
+    old = SessionPack.model_validate({**pack.model_dump(mode="json"), "context": {"company": "X"}})
+    assert "Job requirements" not in render_pack(old)  # packs from before carry none

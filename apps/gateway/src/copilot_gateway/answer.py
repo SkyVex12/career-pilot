@@ -125,6 +125,8 @@ class Question:
     # the automatic deep pass.
     confirmed: bool = False
     fast_ended: bool = False
+    # The talking points as shown, so the deep pass goes beyond them instead of repeating.
+    fast_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,9 @@ class AnswerHost(Protocol):
 
     def cache_version(self) -> str: ...
 
+    def answer_style(self) -> str:
+        return "bullets"
+
     def cache_extra(self) -> dict[str, str]:
         """Fields stored with an exact-repeat answer (the company it was given at)."""
         ...
@@ -255,8 +260,16 @@ class AnswerEngine:
         self.start_pass(q, "fast")
 
     def confirm(
-        self, qid: UUID, text: str, turn_end_ms: int | None, final_ms: int | None = None
+        self,
+        qid: UUID,
+        text: str,
+        turn_end_ms: int | None,
+        final_ms: int | None = None,
+        *,
+        supersede: bool = True,
     ) -> None:
+        """`supersede` False (a card that follows the user) leaves older answers running: the
+        follow continues the answer the user is reading, it does not replace it."""
         q = self.questions.get(qid)
         if q is None:
             return
@@ -280,7 +293,8 @@ class AnswerEngine:
         for pass_ in q.logged:
             self._late_latency(q, pass_, {k: v for k, v in late.items() if v is not None})
         q.confirmed = True
-        self.supersede(keep=qid)
+        if supersede:
+            self.supersede(keep=qid)
         self._log_question(q, kept=True)
         self._auto_deep(q)
 
@@ -449,6 +463,8 @@ class AnswerEngine:
         ) -> None:
             usage = done_info.usage if done_info else None
             tier = done_info.service_tier if done_info else "standard"
+            if pass_ == "fast":
+                q.fast_text = "".join(state["parts"])
             lat: dict[str, Any] = latency(first_token_ms)
             m = self._match_result(q) if pass_ == "fast" else None
             if m is not None and m.similarity is not None:
@@ -529,7 +545,12 @@ class AnswerEngine:
                     await prepared(answer)
                     return
             qhash = question_hash(q.text)
-            cached = await self._cached(qhash, pass_) if cacheable(q.text) else None
+            # A follow has the question's text but continues the user: never the cache.
+            reuse = cacheable(q.text) and q.qtype != "follow"
+            # A paragraph deep answer is cached apart from a bulleted one.
+            style = host.answer_style()
+            slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
+            cached = await self._cached(qhash, slot) if reuse else None
             if cached is not None:
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -589,8 +610,8 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs())
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded and host.store_text() and cacheable(q.text):
-                task = asyncio.create_task(self._cache_put(qhash, pass_, text, refs))
+            if not q.cancelled and not q.superseded and host.store_text() and reuse:
+                task = asyncio.create_task(self._cache_put(qhash, slot, text, refs))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
         except AllRoutesFailedError as e:
@@ -686,12 +707,15 @@ class AnswerEngine:
             # A held pass starts before the detector has typed the question.
             qtype = None if q.held else q.qtype
             return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory)
-        return prompts.deep_pass(ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory)
+        return prompts.deep_pass(
+            ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory,
+            style=self.host.answer_style(), shown=q.fast_text,
+        )  # fmt: skip
 
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit. A reply to a
         remark (respond) is never a prepared standup answer."""
-        if q.qtype == "respond":
+        if q.qtype in ("respond", "follow"):
             return None
         result = self._match_result(q)
         return result.answer if result is not None else None

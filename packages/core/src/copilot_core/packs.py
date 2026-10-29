@@ -49,6 +49,10 @@ class PackContext(_Model):
     role_title: str | None = None
     round: str | None = None
     job_summary: str | None = None
+    # The job description's key requirements (platforms, tools, duties), so an interview
+    # answer's suggestions can aim at what the job asks for. The live prompts carry the pack,
+    # not the description itself.
+    requirements: list[str] = []
 
 
 class RankedStory(_Model):
@@ -281,6 +285,8 @@ def render_pack(pack: SessionPack) -> str:
     ):
         if value:
             lines.append(f"{label}: {value}")
+    if ctx.requirements:
+        lines.append("Job requirements: " + "; ".join(ctx.requirements))
     if pack.ranked_stories:
         lines.append("## Stories ranked for this call")
         for s in pack.ranked_stories:

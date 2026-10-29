@@ -17,6 +17,7 @@ export type ClientMessage =
   | AnswerFeedback
   | LatencyReport
   | ModeSet
+  | AnswerStyleSet
   | SessionEnd;
 /**
  * Session mode; picks the session pack and prompt template.
@@ -30,6 +31,10 @@ export type Uuid = string;
  * Answer pass: fast (Haiku talking points) or deep (Sonnet).
  */
 export type Pass = "fast" | "deep";
+/**
+ * How the detailed (deep) answer is written: bullets = short lines to speak from, deeper than the talking points; paragraph = connected spoken prose. The talking points stay bullets either way.
+ */
+export type AnswerStyle = "bullets" | "paragraph";
 /**
  * Any JSON message the gateway sends to the client. Every server message carries seq.
  */
@@ -97,6 +102,10 @@ export interface SessionStart {
   client_version: string;
   consent: Consent;
   audio: AudioFormat;
+  /**
+   * The detailed answer's style; absent means bullets.
+   */
+  answer_style?: "bullets" | "paragraph";
 }
 export interface Consent {
   /**
@@ -189,6 +198,13 @@ export interface LatencyReport {
 export interface ModeSet {
   type: "mode.set";
   mode: Mode;
+}
+/**
+ * User switches the detailed answer's style mid-call; applies to the next answers.
+ */
+export interface AnswerStyleSet {
+  type: "answer_style.set";
+  answer_style: AnswerStyle;
 }
 /**
  * User ends the session.

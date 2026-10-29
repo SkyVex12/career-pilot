@@ -1033,6 +1033,23 @@ kbd.key {
   margin-left: 2px;
 }
 
+/* A suggested detail ([~]): not from the user's data, to check before saying it. */
+.suggested {
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.suggest-tag {
+  font-size: 9px;
+  font-style: normal;
+  color: var(--overlay-muted);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+
 .deep {
   margin-top: 8px;
   border-top: 1px solid #2b4466;

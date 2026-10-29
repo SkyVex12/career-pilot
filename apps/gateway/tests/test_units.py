@@ -466,6 +466,7 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     assert s.deep_pass_auto
     assert s.deep_pass_auto_types == [
         "behavioral", "technical", "system_design", "coding", "standup_status", "other",
+        "respond", "follow",
     ]  # fmt: skip
     assert (s.conversation_summary_tokens, s.conversation_answers_tokens) == (500, 600)
     assert (s.detector_context_tokens, s.me_stt) == (300, True)
@@ -568,11 +569,32 @@ def test_live_prompts_ask_for_spoken_cues() -> None:
     fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
     deep = prompts.deep_pass(ctx, "", "q?", "behavioral", 800)
     for system in (fast, deep.system[0].text):
-        assert "not sentences to read out" in system
         assert "Reuse the wording, story names and exact numbers" in system
         assert "may have a misheard word" in system
+    assert "not sentences to read out" in fast
     assert "fragment of 3 to 10 words" in fast
-    assert "under 70 words" in str(deep.content)
+
+
+def test_the_deep_answer_goes_beyond_the_cues_in_the_chosen_style() -> None:
+    """After the 2026-10-28 interview the user found the deep answer nearly the same as the
+    talking points, and its lines unconnected. It now sees the cues on screen and builds on
+    them, as deeper bullets or as one connected paragraph (the Session tab's choice)."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    cues = "- Proposed HubSpot workflows [n:93b7]"
+    bullets = prompts.deep_pass(ctx, "", "q?", "technical", 800, shown=cues)
+    content = str(bullets.content)
+    assert "<shown_cues>" in content
+    assert "- Proposed HubSpot workflows [n:93b7]" in content
+    assert "Style: bullets. 6 to 10 lines" in content
+    system = bullets.system[0].text
+    assert "already on Alex's screen. Go beyond them" in system
+    assert "Never restate a cue" in system
+    paragraph = prompts.deep_pass(ctx, "", "q?", "technical", 800, style="paragraph")
+    assert "Style: paragraph. One or two connected paragraphs" in str(paragraph.content)
+    assert "<shown_cues>\n(none yet)\n</shown_cues>" in str(paragraph.content)
+    # The system prompt is the same in both styles, so the cached prefix is shared.
+    assert paragraph.system[0].text == system
+    assert set(prompts.DEEP_STYLES) == {"bullets", "paragraph"}
 
 
 def test_live_prompts_split_personal_facts_from_knowledge() -> None:
@@ -583,14 +605,32 @@ def test_live_prompts_split_personal_facts_from_knowledge() -> None:
     ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
     fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
     deep = prompts.deep_pass(ctx, "", "q?", "other", 800)
-    for system in (fast, deep.system[0].text):
+    work = prompts.PromptContext("Alex", "standup", "# digest", "pack", company="Acme")
+    standup = prompts.fast_pass(work, "", "q?", None, 250).system[0].text
+    for system in (fast, deep.system[0].text, standup):
         assert "come only from <digest>, <session_pack> or <memory>" in system
-        assert "never embellish" in system
         assert "phrased as Alex's thinking" in system
         assert "never as something Alex did, built or used" in system
         assert "Answer the question that was asked, fully and correctly, first" in system
-        assert "Never make up a situation, an action or an outcome" in system
         assert "Name no pay\n  figure unless" in system
+    # 2026-10-28, the user's call: a resume never holds all of someone's experience, so in an
+    # interview the answer suggests close details, aimed at the job, each marked [~] for the
+    # user to check; at work a made-up status misleads the team, and the strict rule stays.
+    for system in (fast, deep.system[0].text):
+        assert "Suggestions: a resume never holds all of Alex's experience" in system
+        assert "what the job asks for" in system
+        assert "End every cue or line that holds one with [~]" in system
+        assert "never a new employer, title, degree or date" in system
+        assert "What Alex has said in this call is a fact" in system
+        assert "suggest a close story built on Alex's real roles" in system
+        assert "two hands-on details from their own past work with it" in system
+        assert 'No bracketed placeholder ever ("[your location]")' in system
+        assert "never embellish" not in system
+    assert "never embellish" in standup
+    assert "Never make up a situation, an action or an outcome" in standup
+    assert "Suggestions:" not in standup
+    assert "{" not in fast  # every placeholder filled
+    assert "{" not in standup
     # "Other" questions build on the job and company context, never a made-up salary.
     assert "Pay: no figure unless the data has one" in str(deep.content)
     for qtype in prompts.QUESTION_TYPES:
@@ -635,6 +675,79 @@ def test_detector_knows_a_group_call_and_the_users_first_name() -> None:
     assert "This is a group call" not in interview.system[0].text
     assert "turn_taking" not in str(interview.content)  # one-on-one prompts are unchanged
     assert "- respond:" in system  # remarks that need a reply, in every mode
+
+
+def test_live_prompts_show_fluency_with_a_named_tool_and_write_no_placeholders() -> None:
+    """2026-10-28 interview: asked about a platform the resume names, both passes framed it as
+    new to the user ("I'd approach it through its documentation") and stayed generic; asked
+    where the user lives, both wrote "[your city, state]"; asked about the pay band, the fast
+    pass said it suited the user."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    deep = prompts.deep_pass(ctx, "", "Your experience with Kafka?", "technical", 800)
+    for system in (fast, deep.system[0].text):
+        assert "experience with a named platform, product or technology" in system
+        assert "its real APIs, objects, auth, limits" in system
+        assert 'Never frame X as\n  new to Alex ("I\'d start from the docs"' in system
+        assert "with no remark on the gap" in system
+        assert 'Never write a placeholder or a fill-in bracket ("[your city]"' in system
+        assert "whether an offered range suits them) is theirs to\n  say" in system
+    assert "the user's facts on it first, as written" in str(deep.content)
+    # Standups and meetings keep their own technical shape; the rules apply there too.
+    work = prompts.PromptContext("Alex", "meeting", "# digest", "pack", company="Acme")
+    work_fast = prompts.fast_pass(work, "", "q?", None, 250).system[0].text
+    assert "Never write a placeholder" in work_fast
+
+
+def test_detector_types_motivation_and_logistics_as_other() -> None:
+    # 2026-10-28: "what's making you look for something new?" came back behavioral (3 of 3 on
+    # replay) and got the no-story fallback instead of the role-and-goals shape.
+    for mode in ("interview", "standup"):
+        system = prompts.detector("Alex", "", "Why are you looking?", 80, mode).system[0].text
+        assert "Why Alex is looking or leaving, why this role or\n  company, pay" in system
+        assert "are other, never behavioral" in system
+        assert "Experience with a named tool or platform is technical." in system
+        assert 'behavioral asks for a past situation ("tell me about a\n  time..."' in system
+
+
+def test_recruiter_screen_script_scores_the_10_28_turns() -> None:
+    """The 2026-10-28 interview, paraphrased with a fictional candidate, for
+    copilot-detector-eval: the types it got wrong (motivation) and the turns it must not fire
+    on (an offer to describe the role, explanations, the process)."""
+    import tomllib
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "evals" / "bench" / "recruiter_screen.toml"
+    script = tomllib.loads(path.read_text("utf-8"))["utterance"]
+    them = [u for u in script if u.get("speaker", "them") == "them"]
+    fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
+    assert fire == {
+        "latest_role": "behavioral", "named_platform": "technical", "client_work": "behavioral",
+        "why_looking": "other", "pay_band": "other", "location": "other",
+        "your_questions": "other",
+    }  # fmt: skip
+    assert {u["id"] for u in them if u["expect"] == "none"} == {
+        "hello", "offer_overview", "overview", "team_answer", "next_steps", "bye",
+    }  # fmt: skip
+    assert next(u for u in them if u["id"] == "all_clear")["expect"] == "either"
+
+
+def test_a_follow_continues_what_the_user_is_saying() -> None:
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q", "follow", 250)
+    assert "type follow" in fast.system[0].text
+    assert "Question (follow): q" in str(fast.content)
+    deep = prompts.deep_pass(ctx, "", "q", "follow", 800)
+    assert "continue from where their lines in the transcript leave off" in str(deep.content)
+    assert "follow" not in prompts.DETECTOR_ANSWERS  # the gateway's, never the detector's
+
+
+def test_substantive_words_skip_fillers_and_pleasantries() -> None:
+    from copilot_gateway.turn import substantive_words
+
+    assert substantive_words("Yeah, thank you so much, have a great day!") == 1  # "much"
+    assert substantive_words("Mhmm. Yeah. For sure. So") == 0
+    assert substantive_words("I owned the CRM sync for four client accounts") == 6
 
 
 def test_respond_fires_with_its_own_type() -> None:

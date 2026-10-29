@@ -1,0 +1,151 @@
+# A recruiter screen for the detector eval
+# (copilot-detector-eval --script evals/bench/recruiter_screen.toml --mode interview).
+#
+# Written after the 2026-10-28 interview: one recruiter described the role, asked about the
+# candidate's latest role, a named platform's API, client work, why they are looking, pay,
+# location and their questions, then explained the team and the next steps. Everyone here is
+# fictional and every line is paraphrased: the candidate is Alex Rivera (profile.toml), and
+# Kafka stands in for the platform the real call asked about. The user's own lines
+# (speaker = "me") are context and are not scored.
+#
+# expect "answer" with a type: should fire with that type. "none": no answer needed.
+# "either": not scored for detection.
+
+[defaults]
+voice = "cedar"
+style = "A friendly recruiter on a video call. Natural pace."
+pause_s = 0.0
+
+[[utterance]]
+id = "hello"
+parts = ["Hi Alex, how are you doing today?"]
+gap_s = 1.0
+expect = "none"
+case = "small talk"
+
+[[utterance]]
+id = "alex_hello"
+speaker = "me"
+parts = ["Doing well, thanks. And you?"]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "offer_overview"
+parts = ["Good, thanks. Shall I start by giving you an overview of the role?"]
+gap_s = 1.0
+expect = "none"
+case = "an offer to describe the role, not a question needing talking points"
+
+[[utterance]]
+id = "overview"
+parts = ["So we're a small consultancy, around thirty people, and this is a senior engineer seat on the platform team. It's client facing: you'd meet clients every week and be the go-to person for the other two engineers."]
+gap_s = 1.0
+expect = "none"
+case = "the role overview"
+
+[[utterance]]
+id = "latest_role"
+parts = ["That's the role in short. I'd like to hear about you. Maybe start with your current job: what does a normal day look like, and what kind of systems do you work on?"]
+gap_s = 1.0
+expect = "answer"
+type = "behavioral"
+prepared = "background"
+case = "the latest role (fired on 10-28, prepared answer at 1.9 s)"
+
+[[utterance]]
+id = "alex_latest"
+speaker = "me"
+parts = ["I'm a senior backend engineer at Larkspur, I own the order pipeline and the payments adapters."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "named_platform"
+parts = ["Okay. And how much have you worked with the Kafka APIs specifically?"]
+gap_s = 1.0
+expect = "answer"
+type = "technical"
+case = "experience with a named platform (10-28: Respond pressed, detector cancelled; replay: technical 5 of 5)"
+
+[[utterance]]
+id = "alex_platform"
+speaker = "me"
+parts = ["Quite a lot, we moved the order pipeline from nightly batches to Kafka with Go consumers."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "client_work"
+parts = ["Got it. Tell me about your experience working with clients directly: in which jobs did you do that, and what kinds of clients were they?"]
+gap_s = 1.0
+expect = "answer"
+type = "behavioral"
+case = "client work, two parts (10-28: fired early on the first part, then again at the end)"
+
+[[utterance]]
+id = "why_looking"
+parts = ["Thanks. So what's making you look for something new right now?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "motivation (10-28: typed behavioral, 3 of 3 on replay)"
+
+[[utterance]]
+id = "pay_band"
+parts = ["On compensation, the band for this seat is set. Does that fit what you're after, and is there a number you have in mind?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "pay"
+
+[[utterance]]
+id = "location"
+parts = ["Okay. Where are you based?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "location (10-28: a placeholder answer)"
+
+[[utterance]]
+id = "your_questions"
+parts = ["Great. So what questions do you have for me?"]
+gap_s = 1.0
+expect = "answer"
+type = "other"
+case = "questions for them"
+
+[[utterance]]
+id = "alex_asks"
+speaker = "me"
+parts = ["How do the engineers usually work with the client teams?"]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "team_answer"
+parts = ["Sales scopes most projects, and for the complex integrations an engineer joins early to check feasibility. After that each client has a small pod with a strategist who leads communication, and the engineer joins their calls."]
+gap_s = 1.0
+expect = "none"
+case = "the recruiter explaining, at length"
+
+[[utterance]]
+id = "all_clear"
+parts = ["Okay?"]
+gap_s = 1.0
+expect = "either"
+case = "a one-word check after explaining (10-28: fired as respond; replay none 2 of 3)"
+
+[[utterance]]
+id = "next_steps"
+parts = ["So I'm talking to a few people this week, then I'll pass notes to the hiring manager, and the next step would be a call with him."]
+gap_s = 1.0
+expect = "none"
+case = "the process, unasked"
+
+[[utterance]]
+id = "bye"
+parts = ["Well, it was great talking with you, Alex. Have a good day."]
+gap_s = 1.0
+expect = "none"
+case = "goodbye"

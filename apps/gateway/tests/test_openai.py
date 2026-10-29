@@ -27,7 +27,7 @@ from copilot_core.pricing import cost_usd
 from copilot_core.providers import openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import Detector, parse_detection
-from copilot_gateway.router import build_routes, job_params
+from copilot_gateway.router import build_router, build_routes, job_params
 from copilot_gateway.testing import GatewayServer, ProtocolClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -368,6 +368,22 @@ def test_the_detector_hedge_runs_on_the_priority_tier() -> None:
     assert second.params["service_tier"] == "priority"
     req = prompts.detector("Alex", "", "Any blockers?", 80, "standup")
     assert provider.request(second.model, req, second.params)["service_tier"] == "priority"
-    assert all("service_tier" not in r.params for r in routes["fast"])
+    assert all("service_tier" not in r.params for r in routes["deep"])
     off = build_routes(openai_settings(openai_detector_retry_tier=None), [provider])
     assert all("service_tier" not in r.params for r in off["detector"])
+
+
+def test_the_fast_pass_hedges_on_the_priority_tier() -> None:
+    # 2026-10-28 interview: three fast passes in a row got no first token within 3 s, and the
+    # retry went to the same model and tier: first words at 6.4 to 8.1 s, one pass lost.
+    provider = OpenAIProvider("openai", openai_client([]))
+    settings = openai_settings()
+    first, second = build_routes(settings, [provider])["fast"]
+    assert "service_tier" not in first.params
+    assert second.params["service_tier"] == "priority"
+    assert first.model == second.model == "gpt-6-luna"
+    router = build_router(settings, [provider])
+    assert router.hedge_after_s == {"detector": 2.0, "fast": 1.2}
+    off = openai_settings(fast_hedge_ms=None, openai_fast_retry_tier=None)
+    assert build_router(off, [provider]).hedge_after_s == {"detector": 2.0}
+    assert all("service_tier" not in r.params for r in build_routes(off, [provider])["fast"])
