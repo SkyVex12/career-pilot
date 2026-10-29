@@ -28,6 +28,12 @@ from copilot_core.packs import Digest, NodeRef, short_ids
 DIGEST_MAX_CHARS = 14_000  # about 3,500 tokens; the doc's limit is 4,000
 MAX_STORIES = 12
 MAX_PROJECTS = 12
+# A role's highlights: its resume bullets that no project or story picked up. Before
+# 2026-10-28 a role kept one summary sentence, and the interview that day lost both HubSpot
+# bullets and both on client work, the two topics the interviewer asked about.
+MAX_HIGHLIGHTS = 10
+HIGHLIGHT_MAX_CHARS = 240
+HEADLINE_MAX_CHARS = 400
 
 
 class _Item(BaseModel):
@@ -42,6 +48,7 @@ class RoleItem(_Item):
     end: str = ""
     team: str = ""
     summary: str = ""
+    highlights: list[str] = []
 
 
 class ProjectItem(_Item):
@@ -111,10 +118,15 @@ async def replace_resume_nodes(
         rows.append((node_id, user_id, kind, title, summary, body, source, resume_version_id))
         return node_id
 
+    headline = " ".join(str(data.get("headline") or "").split())[:HEADLINE_MAX_CHARS]
+    if headline:
+        node("profile", None, "Profile", headline, {})
     for r in roles:
         label = f"{r.title}, {r.company}"
+        highlights = [" ".join(h.split())[:HIGHLIGHT_MAX_CHARS] for h in r.highlights]
         body = {"company": r.company, "title": r.title, "start": r.start, "end": r.end,
-                "team": r.team, "manager_name": ""}  # fmt: skip
+                "team": r.team, "manager_name": "",
+                "highlights": [h for h in highlights if h][:MAX_HIGHLIGHTS]}  # fmt: skip
         node("role", r.key, label, r.summary or label, body)
     for p in projects:
         body = {"goal": p.summary, "contribution": p.contribution, "stack": p.stack,
@@ -187,6 +199,8 @@ def render_digest(
         refs[sids[n["id"]]] = NodeRef(node_id=n["id"], label=n["title"])
         return f"[{sids[n['id']]}]"
 
+    for n in by_kind.get("profile", [])[:1]:
+        lines += ["## Profile", f"{cite(n)} {n['summary']}"]
     if by_kind.get("role"):
         lines.append("## Roles")
         for n in by_kind["role"]:
@@ -195,6 +209,8 @@ def render_digest(
             team = f" Team: {b['team']}." if b.get("team") else ""
             summary = f" {n['summary']}" if n["summary"] != n["title"] else ""
             lines.append(f"{cite(n)} {n['title']}{when}.{team}{summary}".rstrip())
+            # Under the role's short id: citing the role cites its highlights.
+            lines += [f"  - {h}" for h in b.get("highlights") or []]
     if by_kind.get("project"):
         lines.append("## Projects")
         for n in by_kind["project"][:MAX_PROJECTS]:
@@ -241,7 +257,8 @@ async def load_digest_nodes(conn: Conn, user_id: UUID, resume_version_id: UUID) 
         await conn.fetch(
             "select id, kind, title, summary, body from app.memory_nodes"
             " where user_id = $1 and resume_version_id = $2 and status = 'active'"
-            " and domain = 'career' and kind in ('role', 'project', 'story', 'skill') order by id",
+            " and domain = 'career' and kind in ('profile', 'role', 'project', 'story', 'skill')"
+            " order by id",
             user_id,
             resume_version_id,
         )

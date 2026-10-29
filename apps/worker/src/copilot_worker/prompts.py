@@ -28,11 +28,22 @@ and stories their project by key. Stories are STAR episodes the candidate could 
 interview, each with the competencies it shows (ownership, technical depth, leadership,
 collaboration, ...). Dates are as written in the resume ("2021", "Mar 2019", "now").
 
+Lose no fact. The live copilot sees only what you return:
+- A role's highlights are its bullets that none of that role's projects or stories covers,
+  one per bullet, each at most 25 words in the resume's own words. Keep platform, product and
+  tool names exactly as written (a CRM, a cloud service, a framework), and keep the bullet's
+  own verb and qualifiers ("proposed", "evaluated", "helped", "led"): never make a claim
+  stronger or weaker than the resume does. Work with clients, customers, stakeholders or
+  business teams is a fact to keep, like any technical one.
+- headline: the resume's summary or profile section as facts, in one or two sentences:
+  years of experience, seniority, focus areas, as written. Empty when there is none.
+
 {DATA_RULE}"""
 
 EXTRACT_SCHEMA: dict[str, Any] = obj(
     {
         "user_name": STR,
+        "headline": STR,
         "roles": {
             "type": "array",
             "items": obj(
@@ -44,6 +55,7 @@ EXTRACT_SCHEMA: dict[str, Any] = obj(
                     "end": STR,
                     "team": STR,
                     "summary": STR,
+                    "highlights": STRS,
                 }
             ),
         },
@@ -105,11 +117,22 @@ how well they fit this job and round, and write prepared answers for the {{n}} q
 interviewer is most likely to ask in a {{round}} round.
 
 Rules:
-- Each prepared answer has 3 or 4 talking points: first person, plain spoken, each under 15
-  words, which the candidate can say in their own words.
-- Use only facts from <digest>. Never invent experience, employers, numbers or dates.
-- Cite each talking point's source with its short id from the digest, like [n:3f2a].
+- Each prepared answer has 3 or 4 talking points: cues the candidate speaks from, first
+  person, each under 15 words, plain words, no full stop.
+- Use only facts from <digest> about the candidate: roles and their highlights, projects,
+  stories, skills, the profile. Never invent experience, employers, numbers or dates, and keep
+  each fact's own verbs and qualifiers ("proposed", "evaluated").
+- For the platforms, tools and skills the job names, write questions that ask about them
+  directly ("your experience with X's API"). Their talking points give the candidate's facts on
+  X first, then one specific point about X itself (an API, object, limit or pitfall by name)
+  as "I'd..." or "I check...", never as experience the digest does not state.
+- Cite each fact's source with its short id from the digest, like [n:3f2a]; a highlight cites
+  its role.
 - ranked_story_ids lists short ids of stories from the digest, best fit first.
+- job_summary: what the role needs and what this round will probe, then which of the
+  candidate's facts fit it best, in at most four sentences. Say nothing about what the digest
+  lacks: the live copilot reads this before every answer, and a list of gaps makes it
+  undersell facts the candidate has.
 
 {DATA_RULE}"""
 
