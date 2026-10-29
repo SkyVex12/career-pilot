@@ -838,3 +838,32 @@ def test_a_goodbye_is_told_from_an_opening() -> None:
     for line in ("Nice to meet you.", "Thanks a lot.", "We'd buy a new tool for that",
                  "Let's talk about byte order", "Have a look at the second diagram"):  # fmt: skip
         assert not is_closing(line), line
+
+
+def test_mock_interview_script_scores_the_10_29_turns() -> None:
+    """The 2026-10-29 mock interviews, paraphrased with the fictional candidate, for
+    copilot-detector-eval: the screening checks that must not fire, the question asked in two
+    pieces, and the turns that were missed."""
+    import tomllib
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "evals" / "bench" / "mock_interviews.toml"
+    script = tomllib.loads(path.read_text("utf-8"))["utterance"]
+    them = [u for u in script if u.get("speaker", "them") == "them"]
+    assert {u["id"] for u in them if u["expect"] == "none"} >= {
+        "work_authorized", "sponsorship", "worked_here", "relatives", "certification",
+        "school_check", "bye",
+    }  # fmt: skip
+    fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
+    assert fire["deploy_part1"] == "system_design"
+    assert fire["deploy_part2"] == "technical"
+    assert fire["integration_interrupted"] == "technical"
+    assert fire["search_status"] == "other"
+    assert {u["id"] for u in them if u["expect"] == "either"} == {"before_we_start", "rhetorical"}
+    for u in them:
+        assert u["expect"] in ("answer", "none", "either"), u["id"]
+        assert (u["expect"] == "answer") == ("type" in u), u["id"]
+        assert u.get("type", "other") in prompts.QUESTION_TYPES, u["id"]
+    # Fictional: the candidate of evals/bench/profile.toml, and no name from the real calls.
+    text = path.read_text("utf-8")
+    assert "Alex" in text
