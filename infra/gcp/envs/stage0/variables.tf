@@ -101,10 +101,11 @@ variable "google_oauth_client_id" {
 
 variable "allowed_emails" {
   type        = list(string)
-  description = "Google accounts that may sign in. Kept out of git, in allowlist.auto.tfvars"
+  description = "Google accounts that may sign in; empty lets any Google account with a verified email in. Kept out of git, in allowlist.auto.tfvars"
+  default     = []
   validation {
-    condition     = length(var.allowed_emails) > 0 && alltrue([for e in var.allowed_emails : can(regex("^[^@\\s]+@[^@\\s]+$", e))])
-    error_message = "List at least one email."
+    condition     = alltrue([for e in var.allowed_emails : can(regex("^[^@\\s]+@[^@\\s]+$", e))])
+    error_message = "Each entry must be an email."
   }
 }
 
@@ -164,6 +165,12 @@ variable "budget_emails" {
 
 variable "github_repo" {
   type = string
+}
+
+variable "require_career_os" {
+  description = "An account works only once it has linked a Career-OS account (the API and the gateway refuse it before)"
+  type        = bool
+  default     = false
 }
 
 variable "career_os_url" {

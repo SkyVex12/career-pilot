@@ -8,7 +8,8 @@ Three verifiers behind one interface:
   (Cognito access tokens carry it as `client_id`, not `aud`).
 - `GoogleVerifier` (Stage 0 on GCP): a Google ID token (Google's access tokens are opaque),
   checked against Google's JWKS the same way: signature, issuer, expiry, the desktop OAuth
-  client as `aud`, a verified email, and that email on the allow-list. Google's `sub` is not a
+  client as `aud`, a verified email, and that email on the allow-list when there is one (an
+  empty list lets every verified Google account in). Google's `sub` is not a
   UUID, so the user id is a UUIDv5 of it: stable, and the same on every service.
 - `DevTokenVerifier`: a static dev token for one dev user. It refuses to start outside
   COPILOT_ENV=dev, and refuses on cloud compute (ECS, Lambda, Compute Engine) even then.
@@ -224,13 +225,9 @@ class GoogleVerifier:
     ) -> None:
         if not client_ids:
             raise RuntimeError("COPILOT_GOOGLE_CLIENT_IDS must list the desktop OAuth client id")
-        if not allowed_emails:
-            raise RuntimeError(
-                "COPILOT_GOOGLE_ALLOWED_EMAILS is empty: nobody could sign in. List the team's "
-                "Google account emails"
-            )
         self.client_ids = list(client_ids)
-        self.allowed = {e.strip().lower() for e in allowed_emails}
+        # Empty: any Google account with a verified email may sign in.
+        self.allowed = {e.strip().lower() for e in allowed_emails if e.strip()}
         self.jwks = jwks or JwksCache(GOOGLE_JWKS_URL)
         self.leeway_s = leeway_s
 
@@ -262,7 +259,7 @@ class GoogleVerifier:
         email = str(claims.get("email") or "").lower()
         if not email or claims.get("email_verified") is not True:
             raise AuthError("the Google account has no verified email")
-        if email not in self.allowed:
+        if self.allowed and email not in self.allowed:
             raise AuthError("this Google account is not on the allow-list")
         return Principal(
             user_id=google_user_id(str(claims["sub"])),
