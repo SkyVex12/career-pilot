@@ -115,15 +115,33 @@ def ssh_args(command: str) -> list[str]:
     return args
 
 
+# ssh's own exit code: it could not log in or lost the connection, so the command did not run
+# (or not to its end). The CI runner's key is new each run, and the VM now and then refuses it
+# for a few seconds after accepting it ("Permission denied (publickey)", 2026-10-29), so an
+# ssh failure is tried again; the command's own failures are not.
+SSH_FAILED = 255
+SSH_TRIES = 4
+
+
 def on_vm(command: str) -> None:
-    gcloud(*ssh_args(command))
+    code, _ = on_vm_rc(command)
+    if code != 0:
+        sys.exit(f"command on {NAME} failed ({code})")
 
 
 def on_vm_rc(command: str, capture: bool = False) -> tuple[int, str]:
-    """Run on the VM without exiting on failure: (exit code, stdout if captured)."""
+    """Run on the VM without exiting on failure: (exit code, stdout if captured). Every
+    command copilotctl runs is safe to run again, so an ssh failure is retried."""
     cmd = [gcloud_bin(), *ssh_args(command), f"--project={PROJECT}"]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE if capture else None, check=False)
-    return result.returncode, (result.stdout or b"").decode()
+    for attempt in range(1, SSH_TRIES + 1):
+        result = subprocess.run(cmd, stdout=subprocess.PIPE if capture else None, check=False)
+        if result.returncode != SSH_FAILED or attempt == SSH_TRIES:
+            return result.returncode, (result.stdout or b"").decode()
+        print(
+            f"ssh to {NAME} failed (attempt {attempt}/{SSH_TRIES}); trying again", file=sys.stderr
+        )
+        time.sleep(5 * attempt)
+    raise AssertionError("unreachable")
 
 
 CTL = "sudo bash /var/lib/copilot/copilotctl.sh"
@@ -172,6 +190,19 @@ def deploy(tag: str | None, start: bool, check: bool) -> None:
     on_vm_rc("sudo docker image prune -af >/dev/null")
     print(f"deploying {tag} (was {before})")
     code, _ = on_vm_rc(f"{CTL} deploy {tag}")
+    if code == SSH_FAILED:
+        summary(
+            "failed",
+            tag,
+            before,
+            [
+                *notes,
+                f"Could not reach `{NAME}` over ssh after {SSH_TRIES} tries; nothing was "
+                "deployed. Re-run the job.",
+                f"`{deployed_tag()}` is deployed now.",
+            ],
+        )
+        sys.exit(f"could not reach {NAME}; {tag} was not deployed")
     if code != 0:
         healthy = health(quiet=True) if check else None
         summary(
