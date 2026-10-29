@@ -754,9 +754,9 @@ class Session:
 
     def _maybe_follow(self, line: Line) -> None:
         """Follow the user: once they have said `follow_min_words` real words in reply to the
-        other side's last turn, a card continues from what they are saying, whether a
-        question was shown for that turn or not (2026-10-28: the user wanted the answer to
-        follow them, and four of seven questions came after the user had started). Once per
+        other side's last turn, a card continues from what they are saying when no answer
+        was shown for that turn (2026-10-28: the user wanted the answer to follow them; since
+        2026-10-29 only where nothing answered, so a turn is never paid for twice). Once per
         turn of the other side; not while the detector is still deciding it, not for small
         talk, and not for pleasantries."""
         s = self.settings
@@ -778,20 +778,18 @@ class Session:
         if substantive_words(said) < s.follow_min_words:
             return
         asked = next((a for a in reversed(self.conv.asked) if a.at_ms >= anchor - 1500), None)
-        last = self._last_detection
-        if asked is None and last is not None and last.qtype == "small_talk":
-            return
         if asked is not None:
-            shown = self.answers.questions.get(UUID(asked.qid))
-            if shown is not None and not shown.fast_ended:
-                return  # its cues are still coming; follow once they are in
-            text = asked.text
-        else:
-            mine = [
-                ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms
-            ]
-            since = mine[-1] if mine else 0
-            text = " ".join(self.conv.them_text_between(since, anchor))
+            # The turn already has an answer on screen, and its deep pass continues it. In the
+            # 2026-10-29 interviews 15 of 18 follow cards were on such turns and mostly
+            # restated the answer, each with its own deep pass.
+            self._followed.add(anchor)
+            return
+        last = self._last_detection
+        if last is not None and last.qtype == "small_talk":
+            return
+        mine = [ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms]
+        since = mine[-1] if mine else 0
+        text = " ".join(self.conv.them_text_between(since, anchor))
         words = text.split()
         if len(words) < 3:
             return
@@ -819,8 +817,7 @@ class Session:
         )
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None, supersede=False)
-        log.info("following the user after %d words (%s)", len(said.split()),
-                 "answered" if asked is not None else "no question shown")  # fmt: skip
+        log.info("following the user after %d words (no question shown)", len(said.split()))
 
     def _echo(self, seg: int, line: Line, share: float) -> None:
         self.emit(

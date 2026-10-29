@@ -418,7 +418,9 @@ async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
         assert c.of_type("question.detected") == []
 
 
-async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None:
+async def test_no_follow_card_on_a_turn_that_was_answered(env) -> None:
+    # 2026-10-29: 15 of 18 follow cards came on turns whose answer was already on screen, mostly
+    # restating it, each with its own fast and deep pass. A turn is answered once.
     provider = ScriptedProvider("anthropic")
     env.providers = [provider]
     async with GatewayServer(env.services()) as gw:
@@ -431,18 +433,12 @@ async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None
             "We split the ledger by account and moved the reads onto replicas behind a cache",
             capture_ms=2000, end_ms=5000,
         )  # fmt: skip
-        q2 = await c.wait(
-            lambda m: m["type"] == "question.detected" and m["question_id"] != q1["question_id"]
-        )
-        assert q2["text"] == "How did you scale the ledger?"
-        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
-        # The follow does not cut off the answer the user was reading.
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "me")
         await c.wait_type("answer.done", question_id=q1["question_id"], pass_="deep")
-        cancelled = [m for m in c.of_type("answer.error") if m["question_id"] == q1["question_id"]]
-        assert cancelled == []
-    # Never served from the exact-repeat cache: it continues the user, not the question.
-    fast = requests_for(provider, "fast")
-    assert any("Question (follow): How did you scale the ledger?" in str(r.content) for r in fast)
+        await asyncio.sleep(0.6)
+        ids = {m["question_id"] for m in c.of_type("question.detected")}
+        assert ids == {q1["question_id"]}
+    assert not any("Question (follow)" in str(r.content) for r in requests_for(provider, "fast"))
 
 
 async def test_the_detailed_answer_follows_the_chosen_style_and_the_shown_cues(env) -> None:
