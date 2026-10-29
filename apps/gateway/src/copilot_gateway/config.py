@@ -147,6 +147,10 @@ class Settings(CoreSettings):
     final_wait_max_ms: int = 1500
     # Seconds of "them" transcript a hotkey question.force without text uses.
     force_context_s: int = 20
+    # A forced question that takes over the turn still deciding (the hotkey, Enter or Respond
+    # with nothing typed): how long it waits for that turn's detector to type it, for the deep
+    # pass's shape. Its fast pass shows at once either way.
+    force_type_wait_ms: int = 1500
     # Passes whose prompt cache is written at session start (and on a mode change), so the
     # first question is not cold. Only the fast pass by default: the first word waits on it.
     prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(

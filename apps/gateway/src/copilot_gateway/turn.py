@@ -199,6 +199,8 @@ class _Turn:
     text: str | None = None  # frozen when the turn is detached from the live text
     held_qid: UUID | None = None  # a held fast pass not released yet
     speculative_qid: UUID | None = None  # a question shown speculatively, not confirmed yet
+    cand: _Candidate | None = None  # the text being decided, with its detector call
+    taken: bool = False  # a forced question took the held pass and the detector call over
 
 
 class TurnDetector:
@@ -289,6 +291,31 @@ class TurnDetector:
                 task.cancel()
         self.task = None
 
+    def take_over(self) -> "tuple[UUID, str, asyncio.Future[Detection]] | None":
+        """A forced question with nothing typed, while the latest utterance's turn is still
+        deciding and its held fast pass has not been shown: hand over that pass (with its
+        prepared-answer match) and the detector call still running, instead of throwing both
+        away. Returns the held question's id, its text and the detector call; None when there
+        is nothing to take over. In the 2026-10-28 interview a Respond press 0.7 s after a
+        question cancelled a detector that fires on it 5 of 5 times and a held pass with a
+        prepared answer, and the new pass from scratch showed at 7.8 s."""
+        turn, task = self.turn, self.task
+        if (
+            turn is None
+            or task is None
+            or task.done()
+            or turn.held_qid is None
+            or turn.speculative_qid is not None
+            or turn.cand is None
+        ):
+            return None
+        held, turn.held_qid = turn.held_qid, None
+        turn.taken = True
+        cand = turn.cand
+        self.cancel()
+        self.reset()
+        return held, cand.text, cand.detection
+
     def _text(self, turn: _Turn) -> str:
         return turn.text if turn.text is not None else self.utterance()
 
@@ -366,7 +393,8 @@ class TurnDetector:
         detection = asyncio.ensure_future(self.host.detect(text))
         match = self.host.start_match(text)
         self._hold(turn, text, match)
-        return _Candidate(text, detection, match)
+        turn.cand = _Candidate(text, detection, match)
+        return turn.cand
 
     async def _wait_text(self, deadline: float) -> None:
         with contextlib.suppress(TimeoutError):
@@ -438,7 +466,7 @@ class TurnDetector:
             self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
             self._done(turn)
         except asyncio.CancelledError:
-            if cand is not None:
+            if cand is not None and not turn.taken:
                 cand.cancel()
             self._discard_held(turn)
             if turn.speculative_qid is not None:

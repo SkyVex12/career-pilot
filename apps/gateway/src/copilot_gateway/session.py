@@ -250,6 +250,7 @@ class Session:
         self.echo_at: deque[float] = deque(maxlen=ECHO_WARN_COUNT)
         self.echo_warned = False
         self._settling: set[asyncio.Task[None]] = set()
+        self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
         self._refs = ref_map(digest, pack)
         self._prompt_ctx = self._build_prompt_ctx()
         # Company workspaces: live search over the chosen company's memory, and the question
@@ -1299,6 +1300,9 @@ class Session:
         self.last_force = now
         if text and is_answer_command(text):
             text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
+        if not text and (taken := self.turns.take_over()) is not None:
+            self._force_taken(*taken, respond=respond)
+            return
         if not text:
             heard = self.transcript_text(self.settings.force_context_s)
             text = " ".join(p for p in (heard, self.turns.interim) if p).strip()
@@ -1330,6 +1334,37 @@ class Session:
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None)
         self.conv.question(str(q.qid), text, self.capture_now)
+
+    def _force_taken(
+        self, qid: UUID, text: str, detection: "asyncio.Future[Detection]", *, respond: bool
+    ) -> None:
+        """A forced question that took over the turn still deciding (`TurnDetector.take_over`):
+        its held fast pass is shown at once, with its prepared answer if one matched, and the
+        detector's type, if it comes within `force_type_wait_ms`, decides the deep pass's
+        shape. In an interview a Respond press on a question counts as one, so it may take a
+        prepared answer; in a standup or meeting it stays a reply."""
+        q = self.answers.questions.get(qid)
+        if q is None:
+            return
+        reply = respond and self.info.mode in prompts.GROUP_MODES
+        self.release_question(qid, text, Detection("answer", "respond" if reply else "other"),
+                              speculative=False)  # fmt: skip
+        q.forced, q.confidence, q.detector_ms = True, 1.0, None
+        wait_s = self.settings.force_type_wait_ms / 1000
+
+        async def typed() -> None:
+            await asyncio.wait({detection}, timeout=wait_s)
+            ok = detection.done() and not detection.cancelled() and not detection.exception()
+            found = detection.result() if ok else None
+            if found is not None and found.fires() and not reply:
+                q.qtype, q.detector_ms = found.qtype, found.latency_ms
+            if not (q.cancelled or q.discarded):
+                self.answers.confirm(qid, q.text, None)
+                self.conv.question(str(qid), q.text, self.capture_now)
+
+        task = asyncio.create_task(typed())
+        self._forced.add(task)
+        task.add_done_callback(self._forced.discard)
 
     def transcript_text(self, seconds: float) -> str:
         return self.conv.them_text_since(self.capture_now - int(seconds * 1000))

@@ -378,6 +378,58 @@ async def test_prepared_answer_skips_the_model(env) -> None:
     assert ("fast", "claude-haiku-4-5") not in provider.calls
 
 
+async def test_respond_during_a_question_takes_over_its_turn(env) -> None:
+    """2026-10-28 interview: Respond, pressed 0.7 s after a question, cancelled a detector that
+    fires on it 5 of 5 times and a held fast pass with a prepared answer, and started a new
+    pass from scratch, which showed at 7.8 s. Now the press takes the turn over: the held pass
+    shows at once with its prepared answer, and the detector's type shapes the deep pass."""
+    await seed_memory(env, [scaled_answer()], embedding_model=FixedEmbedder.model_id)
+    provider = ScriptedProvider(reply=_detector_reply("technical", delay_s=0.8))
+    env.providers = [provider]
+    async with GatewayServer(env.services(embedder=FixedEmbedder())) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How much have you worked with the ledger APIs specifically?", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "ledger" in m["text"])
+        pressed = time.monotonic()
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected", timeout=2.0)
+        assert q["speculative"] is False
+        assert q["text"] == "How much have you worked with the ledger APIs specifically?"
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        assert fast["source"] == "prepared"
+        assert time.monotonic() - pressed < 1.0
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep", timeout=5.0)
+        # One question, not the held one plus a new one.
+        assert {m["question_id"] for m in c.of_type("question.detected")} == {q["question_id"]}
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert sum(1 for job, _ in provider.calls if job == "detector") == 1
+    deep = [req for job, req in provider.requests if job == "deep"][-1]
+    assert "Question (technical): How much have you worked" in str(deep.content)
+    log = [json.loads(f[b"e"]) for _, f in await env.client().xrange(keys.sess_log(c.session_id))]
+    [question] = [e for e in log if e["kind"] == "question"]
+    assert question["forced_by_hotkey"] is True
+    assert question["type"] == "technical"
+
+
+async def test_respond_in_a_standup_takes_over_but_stays_a_reply(env) -> None:
+    provider = ScriptedProvider(reply=_detector_reply("technical", delay_s=0.8))
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("What do you think about moving the retries to the queue?", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "retries" in m["text"])
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected", timeout=2.0)
+        assert q["question_type"] == "respond"
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await asyncio.sleep(1.0)
+        assert {m["question_id"] for m in c.of_type("question.detected")} == {q["question_id"]}
+    assert sum(1 for job, _ in provider.calls if job == "fast") == 1
+
+
 async def test_vectors_from_another_embedding_model_are_never_compared(env) -> None:
     # The same vectors, but the pack says another model made them: no match, the model
     # answers, and the pack is rebuilt for the gateway's embedding model.
