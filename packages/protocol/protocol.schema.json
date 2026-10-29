@@ -21,6 +21,7 @@
         { "$ref": "#/$defs/AnswerFeedback" },
         { "$ref": "#/$defs/LatencyReport" },
         { "$ref": "#/$defs/ModeSet" },
+        { "$ref": "#/$defs/AnswerStyleSet" },
         { "$ref": "#/$defs/SessionEnd" }
       ],
       "discriminator": { "propertyName": "type" }
@@ -58,6 +59,11 @@
       "description": "Session mode; picks the session pack and prompt template.",
       "type": "string",
       "enum": ["interview", "standup", "meeting"]
+    },
+    "AnswerStyle": {
+      "description": "How the detailed (deep) answer is written: bullets = short lines to speak from, deeper than the talking points; paragraph = connected spoken prose. The talking points stay bullets either way.",
+      "type": "string",
+      "enum": ["bullets", "paragraph"]
     },
     "Channel": {
       "description": "Audio source: them = system output (the other side), me = microphone (the user).",
@@ -187,7 +193,11 @@
         },
         "client_version": { "type": "string", "minLength": 1 },
         "consent": { "$ref": "#/$defs/Consent" },
-        "audio": { "$ref": "#/$defs/AudioFormat" }
+        "audio": { "$ref": "#/$defs/AudioFormat" },
+        "answer_style": {
+          "description": "The detailed answer's style; absent means bullets.",
+          "$ref": "#/$defs/AnswerStyle"
+        }
       },
       "required": ["type", "mode", "platform", "client_version", "consent", "audio"]
     },
@@ -294,6 +304,15 @@
         "mode": { "$ref": "#/$defs/Mode" }
       },
       "required": ["type", "mode"]
+    },
+    "AnswerStyleSet": {
+      "description": "User switches the detailed answer's style mid-call; applies to the next answers.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "answer_style.set" },
+        "answer_style": { "$ref": "#/$defs/AnswerStyle" }
+      },
+      "required": ["type", "answer_style"]
     },
     "SessionEnd": {
       "description": "User ends the session.",

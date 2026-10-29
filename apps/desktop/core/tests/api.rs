@@ -106,6 +106,7 @@ fn start_params(job_id: Option<Uuid>, interview_id: Option<Uuid>, store_transcri
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript,
+        answer_style: None,
     }
 }
 

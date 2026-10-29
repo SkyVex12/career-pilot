@@ -37,6 +37,7 @@ fn start_params() -> StartParams {
         platform: "zoom".into(),
         client_version: "test".into(),
         store_transcript: true,
+        answer_style: Some(copilot_protocol::AnswerStyle::Paragraph),
     }
 }
 

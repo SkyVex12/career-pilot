@@ -466,7 +466,7 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     assert s.deep_pass_auto
     assert s.deep_pass_auto_types == [
         "behavioral", "technical", "system_design", "coding", "standup_status", "other",
-        "follow",
+        "respond", "follow",
     ]  # fmt: skip
     assert (s.conversation_summary_tokens, s.conversation_answers_tokens) == (500, 600)
     assert (s.detector_context_tokens, s.me_stt) == (300, True)
@@ -569,11 +569,32 @@ def test_live_prompts_ask_for_spoken_cues() -> None:
     fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
     deep = prompts.deep_pass(ctx, "", "q?", "behavioral", 800)
     for system in (fast, deep.system[0].text):
-        assert "not sentences to read out" in system
         assert "Reuse the wording, story names and exact numbers" in system
         assert "may have a misheard word" in system
+    assert "not sentences to read out" in fast
     assert "fragment of 3 to 10 words" in fast
-    assert "under 70 words" in str(deep.content)
+
+
+def test_the_deep_answer_goes_beyond_the_cues_in_the_chosen_style() -> None:
+    """After the 2026-10-28 interview the user found the deep answer nearly the same as the
+    talking points, and its lines unconnected. It now sees the cues on screen and builds on
+    them, as deeper bullets or as one connected paragraph (the Session tab's choice)."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    cues = "- Proposed HubSpot workflows [n:93b7]"
+    bullets = prompts.deep_pass(ctx, "", "q?", "technical", 800, shown=cues)
+    content = str(bullets.content)
+    assert "<shown_cues>" in content
+    assert "- Proposed HubSpot workflows [n:93b7]" in content
+    assert "Style: bullets. 6 to 10 lines" in content
+    system = bullets.system[0].text
+    assert "already on Alex's screen. Go beyond them" in system
+    assert "Never restate a cue" in system
+    paragraph = prompts.deep_pass(ctx, "", "q?", "technical", 800, style="paragraph")
+    assert "Style: paragraph. One or two connected paragraphs" in str(paragraph.content)
+    assert "<shown_cues>\n(none yet)\n</shown_cues>" in str(paragraph.content)
+    # The system prompt is the same in both styles, so the cached prefix is shared.
+    assert paragraph.system[0].text == system
+    assert set(prompts.DEEP_STYLES) == {"bullets", "paragraph"}
 
 
 def test_live_prompts_split_personal_facts_from_knowledge() -> None:

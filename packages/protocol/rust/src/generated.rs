@@ -27,6 +27,8 @@ pub enum ClientMessage {
     LatencyReport(LatencyReport),
     #[serde(rename = "mode.set")]
     ModeSet(ModeSet),
+    #[serde(rename = "answer_style.set")]
+    AnswerStyleSet(AnswerStyleSet),
     #[serde(rename = "session.end")]
     SessionEnd(SessionEnd),
 }
@@ -44,6 +46,7 @@ impl ClientMessage {
             Self::AnswerFeedback(_) => "answer.feedback",
             Self::LatencyReport(_) => "latency.report",
             Self::ModeSet(_) => "mode.set",
+            Self::AnswerStyleSet(_) => "answer_style.set",
             Self::SessionEnd(_) => "session.end",
         }
     }
@@ -61,6 +64,7 @@ impl Validate for ClientMessage {
             Self::AnswerFeedback(m) => m.validate(),
             Self::LatencyReport(m) => m.validate(),
             Self::ModeSet(m) => m.validate(),
+            Self::AnswerStyleSet(m) => m.validate(),
             Self::SessionEnd(m) => m.validate(),
         }
     }
@@ -117,6 +121,12 @@ impl From<LatencyReport> for ClientMessage {
 impl From<ModeSet> for ClientMessage {
     fn from(m: ModeSet) -> Self {
         Self::ModeSet(m)
+    }
+}
+
+impl From<AnswerStyleSet> for ClientMessage {
+    fn from(m: AnswerStyleSet) -> Self {
+        Self::AnswerStyleSet(m)
     }
 }
 
@@ -291,6 +301,25 @@ impl Mode {
             Self::Interview => "interview",
             Self::Standup => "standup",
             Self::Meeting => "meeting",
+        }
+    }
+}
+
+/// How the detailed (deep) answer is written: bullets = short lines to speak from, deeper than the
+/// talking points; paragraph = connected spoken prose. The talking points stay bullets either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AnswerStyle {
+    #[serde(rename = "bullets")]
+    Bullets,
+    #[serde(rename = "paragraph")]
+    Paragraph,
+}
+
+impl AnswerStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bullets => "bullets",
+            Self::Paragraph => "paragraph",
         }
     }
 }
@@ -527,6 +556,9 @@ pub struct SessionStart {
     pub client_version: String,
     pub consent: Consent,
     pub audio: AudioFormat,
+    /// The detailed answer's style; absent means bullets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_style: Option<AnswerStyle>,
 }
 
 impl Validate for SessionStart {
@@ -689,6 +721,18 @@ pub struct ModeSet {
 }
 
 impl Validate for ModeSet {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// User switches the detailed answer's style mid-call; applies to the next answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnswerStyleSet {
+    pub answer_style: AnswerStyle,
+}
+
+impl Validate for AnswerStyleSet {
     fn validate(&self) -> Result<(), ValidationError> {
         Ok(())
     }

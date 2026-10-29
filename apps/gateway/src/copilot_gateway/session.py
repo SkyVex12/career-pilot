@@ -120,6 +120,8 @@ class SessionInfo:
     # An interview for an application: the resume version its digest and pack come from.
     resume_version_id: UUID | None = None
     resume_is_base: bool = False
+    # How the detailed answer is written: "bullets" or "paragraph" (answer_style.set).
+    answer_style: str = "bullets"
 
 
 @dataclass
@@ -462,6 +464,9 @@ class Session:
         lines = workplace.memory_lines(hits, self._refs, in_pack)
         stats["memory_hits"] = len(lines)
         return lines, stats
+
+    def answer_style(self) -> str:
+        return self.info.answer_style
 
     def cache_extra(self) -> dict[str, str]:
         """Stored with exact-repeat answers, so deleting a company deletes its answers."""
@@ -874,6 +879,7 @@ class Session:
             "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
             "agenda": self.info.agenda or "",
             "material_ids": ",".join(str(i) for i in self.info.material_ids),
+            "answer_style": self.info.answer_style,
             "resume_version_id": str(self.info.resume_version_id)
             if self.info.resume_version_id
             else "",
@@ -1339,6 +1345,10 @@ class Session:
                 self.writer.set_state(mode=message.mode)
                 self.log_entry({"kind": "mode", "mode": message.mode})
                 self._warm = asyncio.create_task(self._mode_changed(message.mode))
+            case models.AnswerStyleSet():
+                self.info.answer_style = message.answer_style
+                self.writer.set_state(answer_style=message.answer_style)
+                self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
             case models.SessionEnd():
                 # The user may skip the post-call outputs and keep the transcript only; the
                 # worker reads this from the state when the session ends.
@@ -1871,6 +1881,7 @@ class SessionManager:
             material_ids=material_ids if employer_id is not None else [],
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
+            answer_style=msg.answer_style or "bullets",
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -1976,6 +1987,7 @@ class SessionManager:
             material_ids=[UUID(i) for i in (state.get("material_ids") or "").split(",") if i],
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
+            answer_style=state.get("answer_style") or "bullets",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

@@ -2,7 +2,7 @@
 // applications and interviews, work (the companies the user works at), history, settings, and the debug
 // panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
 import { useEffect, useState } from "react";
-import type { Mode } from "@copilot/protocol";
+import type { AnswerStyle, Mode } from "@copilot/protocol";
 import {
   api,
   inTauri,
@@ -313,6 +313,7 @@ function StartScreen({
   onSettings: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("interview");
+  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(lastAnswerStyle);
   const catalog = useCatalog(tokenSet);
   const [target, setTarget] = useState("");
   const [title, setTitle] = useState("");
@@ -364,6 +365,7 @@ function StartScreen({
         material_ids: company ? materialIds : [],
         platform,
         store_transcript: consent,
+        answer_style: answerStyle,
       });
     } catch (e) {
       setMessage(String(e));
@@ -412,6 +414,31 @@ function StartScreen({
               {m}
             </button>
           ))}
+        </div>
+
+        <label>Detailed answer</label>
+        <div>
+          <div className="segmented">
+            {ANSWER_STYLES.map(([style, label]) => (
+              <button
+                key={style}
+                className={answerStyle === style ? "on" : ""}
+                onClick={() => {
+                  setAnswerStyle(style);
+                  rememberAnswerStyle(style);
+                  if (running) api.setAnswerStyle(style).catch(() => undefined);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="note">
+            {answerStyle === "paragraph"
+              ? "The talking points stay short; the detailed answer is a connected paragraph you can say as it is."
+              : "The talking points stay short; the detailed answer is more lines, going deeper than the points."}
+            {running ? " A change applies to the next answers." : ""}
+          </p>
         </div>
 
         {atWork ? (
@@ -577,6 +604,28 @@ function StartScreen({
 }
 
 const LAST_COMPANY = "copilot.lastCompany";
+const LAST_ANSWER_STYLE = "copilot.answerStyle";
+
+const ANSWER_STYLES: [AnswerStyle, string][] = [
+  ["bullets", "Bulleted"],
+  ["paragraph", "Paragraph"],
+];
+
+function lastAnswerStyle(): AnswerStyle {
+  try {
+    return localStorage.getItem(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets";
+  } catch {
+    return "bullets";
+  }
+}
+
+function rememberAnswerStyle(style: AnswerStyle) {
+  try {
+    localStorage.setItem(LAST_ANSWER_STYLE, style);
+  } catch {
+    // a convenience only
+  }
+}
 
 function lastCompany(): string | null {
   try {

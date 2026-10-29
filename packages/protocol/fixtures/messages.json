@@ -17,7 +17,8 @@
       "platform": "meet",
       "client_version": "1.4.0",
       "consent": { "store_transcript": false },
-      "audio": { "sample_rate": 16000, "encoding": "pcm16" }
+      "audio": { "sample_rate": 16000, "encoding": "pcm16" },
+      "answer_style": "paragraph"
     },
     { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "last_seq": 411 },
     { "type": "session.resume", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "last_seq": 0 },
@@ -53,6 +54,7 @@
       "reason": "Wrong project"
     },
     { "type": "mode.set", "mode": "meeting" },
+    { "type": "answer_style.set", "answer_style": "paragraph" },
     { "type": "session.end" }
   ],
   "server": [

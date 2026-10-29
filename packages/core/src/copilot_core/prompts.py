@@ -169,18 +169,38 @@ not sentences to read out.
 
 DEEP_SYSTEM = (
     """You help {user_name} answer a question live in {mode}. {user_name} has started from
-short cues and glances at your notes to keep going: give the fuller answer as short lines to
-speak from, in the shape given for the question type, not sentences to read out.
+short cues and glances at your notes to keep going: give the fuller, deeper answer in the shape
+given for the question type and in the style the request asks for.
 
 """
     + _RULES
     + """
-- One idea per line, 4 to 12 words, as notes: fragments {user_name} turns into speech, not
-  finished sentences, with no full stop at the end.
+- The cues in <shown_cues> are already on {user_name}'s screen. Go beyond them: the how and
+  the why, the specifics (names, settings, numbers), a concrete example with what came of it,
+  the tradeoff or pitfall. Never restate a cue; build on it.
 - No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
   output only a question back.
-- Output only the lines, with no preamble."""
+- Output only the answer, with no preamble or heading."""
 )
+
+# The detailed answer's style (answer_style in session.start and answer_style.set), chosen by
+# the user on the Session tab. After the 2026-10-28 interview the user found the deep answer
+# nearly the same as the talking points and its lines unconnected: bullets now go deeper than
+# the cues on screen, and a paragraph reads end to end.
+DEEP_STYLES: dict[str, str] = {
+    "bullets": (
+        "Style: bullets. 6 to 10 lines, one idea each, 8 to 18 words, in the order the user "
+        "would say them; each line a full thought the user can say, citations and [~] at its "
+        "end. This replaces the shape's line count and word limit."
+    ),
+    "paragraph": (
+        "Style: paragraph. One or two connected paragraphs, 120 to 180 words, that the user "
+        "can say nearly as written: first person, plain spoken words, each sentence leading "
+        "into the next (so, because, which meant, that's why), following the shape's order. "
+        "No bullets or line breaks inside a paragraph. Citations and [~] go at the end of the "
+        "sentence they belong to. This replaces the shape's line count and word limit."
+    ),
+}
 
 DEEP_SHAPES: dict[str, str] = {
     "behavioral": (
@@ -448,14 +468,21 @@ def deep_pass(
     qtype: str,
     max_tokens: int,
     memory: Sequence[str] = (),
+    *,
+    style: str = "bullets",
+    shown: str = "",
 ) -> LLMRequest:
+    """`style` is the detailed answer's (DEEP_STYLES); `shown` the talking points already on
+    screen, which the deep pass builds on and never restates."""
     parts: list[str] = []
     if memory:
         parts.append(_data("memory", "\n".join(memory)))
     parts += _call_blocks(transcript)
+    parts.append(_data("shown_cues", shown.strip() or "(none yet)"))
     shapes = {**DEEP_SHAPES, **WORKPLACE_SHAPES} if ctx.at_work else DEEP_SHAPES
     shape = shapes.get(qtype, shapes["other"])
-    parts.append(f"Question ({qtype}): {question}\nShape: {shape}")
+    how = DEEP_STYLES.get(style, DEEP_STYLES["bullets"])
+    parts.append(f"Question ({qtype}): {question}\nShape: {shape}\n{how}")
     return LLMRequest(
         system=_system(DEEP_SYSTEM, ctx), content="\n\n".join(parts), max_tokens=max_tokens
     )

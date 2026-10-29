@@ -3,7 +3,7 @@
 // live in Rust. `rest` below is the API (ARCHITECTURE.md, "REST API") through `api_call`.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@copilot/protocol";
+import type { AnswerStyle, Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@copilot/protocol";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -201,6 +201,8 @@ export interface StartRequest {
   material_ids?: string[];
   platform: string;
   store_transcript: boolean;
+  /** How the detailed answer is written (the Session tab). */
+  answer_style?: AnswerStyle;
 }
 
 /** src-tauri release.rs UpdateState (release builds). */
@@ -276,6 +278,7 @@ export const api = {
   sendFeedback: (questionId: string, up: boolean) =>
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
+  setAnswerStyle: (style: AnswerStyle) => invoke<void>("set_answer_style", { style }),
   /** The session's events so far (compacted), whether one is running, and the next event's n. */
   snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),

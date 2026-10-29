@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM, encode_frame};
 use copilot_protocol::{
-    AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ServerMessage, SessionEnd,
-    SessionResume, SessionStart, parse_server,
+    AnswerStyle, AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ServerMessage,
+    SessionEnd, SessionResume, SessionStart, parse_server,
 };
 use futures_util::{SinkExt, StreamExt};
 use rand::SeedableRng;
@@ -75,6 +75,8 @@ pub struct StartParams {
     pub platform: String,
     pub client_version: String,
     pub store_transcript: bool,
+    /// How the detailed answer is written (the Session tab); None: the gateway's default.
+    pub answer_style: Option<AnswerStyle>,
 }
 
 impl StartParams {
@@ -91,6 +93,7 @@ impl StartParams {
             client_version: self.client_version.clone(),
             consent: Consent { store_transcript: self.store_transcript },
             audio: AudioFormat { sample_rate: 16_000, encoding: "pcm16".into() },
+            answer_style: self.answer_style,
         })
     }
 }

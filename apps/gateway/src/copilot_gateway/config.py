@@ -105,6 +105,7 @@ class Settings(CoreSettings):
             "coding",
             "standup_status",
             "other",
+            "respond",
             "follow",
         ]
     )

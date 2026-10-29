@@ -443,3 +443,51 @@ async def test_a_follow_after_an_answered_question_keeps_its_answer(env) -> None
     # Never served from the exact-repeat cache: it continues the user, not the question.
     fast = requests_for(provider, "fast")
     assert any("Question (follow): How did you scale the ledger?" in str(r.content) for r in fast)
+
+
+async def test_the_detailed_answer_follows_the_chosen_style_and_the_shown_cues(env) -> None:
+    # The Session tab's choice: paragraph from the start, then bullets mid-call. The deep pass
+    # sees the talking points already on screen, so it goes beyond them.
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(answer_style="paragraph")
+        await c.say("How did you scale the ledger?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="deep")
+        await c.send({"type": "answer_style.set", "answer_style": "bullets"})
+        await c.say("What did you change in the payout service?", capture_ms=8000)
+        q2 = await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["question_id"] != q1["question_id"]
+            )
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    first, second = [str(r.content) for r in requests_for(provider, "deep")][:2]
+    assert "Style: paragraph" in first
+    assert "Style: bullets" in second
+    assert "<shown_cues>\n- Led the payments migration [n:3f2a]" in first
+    log = await session_log(env, c.session_id)
+    assert {"kind": "answer_style", "answer_style": "bullets"}.items() <= next(
+        e for e in log if e["kind"] == "answer_style"
+    ).items()
+
+
+async def test_a_reply_gets_its_detailed_answer_without_a_tap(env) -> None:
+    # 2026-10-28: the HubSpot question went in as a Respond, which was not an automatic deep
+    # type, so the detailed answer waited behind "Get the detailed answer".
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        ready = await c.start()
+        assert "respond" in ready["deep_auto_types"]
+        assert "follow" not in ready["deep_auto_types"]  # the client knows no such type
+        await c.say("Remember to send the numbers by Friday", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and "Friday" in m["text"])
+        await c.send({"type": "question.force", "kind": "respond"})
+        q = await c.wait_type("question.detected")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")

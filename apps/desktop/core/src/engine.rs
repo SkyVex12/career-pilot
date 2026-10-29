@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use copilot_protocol::{
-    AnswerExpand, AnswerFeedback, AnswerFeedbackRating, Channel, ClientMessage, Mode, ModeSet, QuestionForce,
-    QuestionForceKind,
+    AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerStyle, AnswerStyleSet, Channel, ClientMessage,
+    Mode, ModeSet, QuestionForce, QuestionForceKind,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -219,6 +219,11 @@ impl Engine {
 
     pub async fn set_mode(&self, mode: Mode) {
         self.send(ClientMessage::ModeSet(ModeSet { mode })).await;
+    }
+
+    /// The Session tab's detailed-answer style, changed mid-call: applies to the next answers.
+    pub async fn set_answer_style(&self, answer_style: AnswerStyle) {
+        self.send(ClientMessage::AnswerStyleSet(AnswerStyleSet { answer_style })).await;
     }
 
     /// Test hook: drop the socket as a network failure would.

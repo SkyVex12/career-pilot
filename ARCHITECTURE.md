@@ -520,6 +520,7 @@ All messages are JSON objects with a `type` field.
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
 | `latency.report` | `question_id`, `pass`, `first_word_ms`, `anchor` (`speech_end`, `forced`, `expand`) | The first non-empty `answer.delta` of a pass arrived; the client's own first-word time, stored with the answer (`client_first_word_ms`). A report for a question the gateway does not hold is dropped without an error |
 | `mode.set` | `mode` | User switches mode mid-call; between standup and meeting at a company, that company's pack for the new mode is loaded |
+| `answer_style.set` | `answer_style` (bullets, paragraph) | User switches the detailed answer's style on the Session tab mid-call; applies to the next answers. `session.start` carries the starting `answer_style?` (absent: bullets) |
 | `session.end` | `summarize?` | User ends the session. `summarize: false` keeps the transcript only: no post-call outputs, the session is ready at once |
 
 Example:
@@ -1287,7 +1288,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `fast_pass` | Haiku 4.5, Standard tier (Priority by flag), max_tokens 250 |
 | `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800, thinking `between_tools` (or `adaptive`) at effort `low` |
 | `deep_pass_auto` | on: the deep pass starts once the question is confirmed and its fast pass has ended |
-| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other, follow (every type that gets an answer; the three of before turn the cost down) |
+| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other, respond, follow (every type that gets an answer; the three of before turn the cost down) |
 | `rerank_keep` | 6 |
 | `retrieval_budget_ms` | 100 |
 | `first_token_timeout_ms` | 1500, then the next route (OpenAI live routes may set their own) |
@@ -1414,7 +1415,7 @@ Rules:
 - Output only the bullet list.
 ```
 
-**Deep pass** uses the same rules, its own opening and last rules, and a shape per question type:
+**Deep pass** uses the same rules, its own opening and last rules, and a shape per question type. It also gets the talking points already on screen (`<shown_cues>`), with a rule to go beyond them (the how and why, specifics, an example with its outcome, the tradeoff) and never restate one, and a style the user picks on the Session tab (`answer_style`): **bullets**, 6 to 10 lines of 8 to 18 words, or **paragraph**, one or two connected paragraphs of 120 to 180 words the user can say nearly as written; the style replaces the shape's line count. The system prompt is the same in both styles, so the cached prefix is shared, and the exact-repeat cache keeps a paragraph answer apart from a bulleted one. After the 2026-10-28 interview the user found the deep answer nearly the same as the talking points and its lines unconnected; on that call's real questions the bulleted deep pass now adds marked hands-on details and API specifics the cues did not have, and the paragraph reads end to end. The deep pass runs on its own for every answered type, `respond` included (a Respond press in that interview left the detailed answer behind a tap).
 
 ```
 You help {user_name} answer a question live in {mode}. {user_name} has started from

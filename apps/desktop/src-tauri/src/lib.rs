@@ -27,7 +27,7 @@ use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
 use copilot_client::oauth::{self, OAuthTokenProvider};
-use copilot_client::protocol::Mode;
+use copilot_client::protocol::{AnswerStyle, Mode};
 use history::History;
 use hotkeys::Action;
 use layout::MonitorLayout;
@@ -506,6 +506,9 @@ struct StartRequest {
     material_ids: Vec<Uuid>,
     platform: String,
     store_transcript: bool,
+    /// The Session tab's detailed-answer style; absent from older windows.
+    #[serde(default)]
+    answer_style: Option<AnswerStyle>,
 }
 
 /// Events are numbered per session (`n`), so a window that replays the snapshot applies only
@@ -548,6 +551,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             platform: request.platform,
             client_version: state.client.clone(),
             store_transcript: request.store_transcript,
+            answer_style: request.answer_style,
         },
     );
     let sink = {
@@ -649,6 +653,13 @@ async fn send_feedback(
 #[tauri::command]
 async fn set_mode(state: State<'_, AppState>, mode: Mode) -> Res<()> {
     state.engine()?.set_mode(mode).await;
+    Ok(())
+}
+
+/// The Session tab's detailed-answer style, changed during a call.
+#[tauri::command]
+async fn set_answer_style(state: State<'_, AppState>, style: AnswerStyle) -> Res<()> {
+    state.engine()?.set_answer_style(style).await;
     Ok(())
 }
 
@@ -1182,6 +1193,7 @@ pub fn run() {
             expand_answer,
             send_feedback,
             set_mode,
+            set_answer_style,
             snapshot,
             live_status,
             show_overlay,
