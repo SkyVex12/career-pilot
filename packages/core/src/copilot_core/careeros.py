@@ -18,7 +18,23 @@ from typing import Any
 
 import httpx2
 
+from copilot_core.db import Conn
+
 PREFIX = "/v1/career-pilot"
+PROVIDER = "career_os"  # app.integrations.provider
+REQUIRED_CODE = "career_os_required"
+REQUIRED_MESSAGE = "Please link your Career-OS account to use this app (Settings → Career-OS)."
+
+
+async def is_linked(conn: Conn) -> bool:
+    """The account (the transaction's user) has an active Career-OS link. A link Career-OS
+    stopped accepting is marked revoked, and counts as none."""
+    found = await conn.fetchval(
+        "select 1 from app.integrations where provider = $1 and status = 'active'", PROVIDER
+    )
+    return found is not None
+
+
 MAX_FILE_BYTES = 10 * 1024 * 1024
 
 

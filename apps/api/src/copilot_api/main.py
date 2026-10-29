@@ -9,12 +9,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from copilot_api.config import ApiSettings
-from copilot_api.deps import Services
+from copilot_api.deps import Services, require_link
 from copilot_api.routes import (
     applications,
     auth,
@@ -141,10 +141,12 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
-    for module in (
-        auth, me, profiles, documents, applications, resumes, career_os, sessions, employers,
-    ):  # fmt: skip
+    # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
+    for module in (auth, me, profiles, career_os):
         app.include_router(module.router, prefix="/v1")
+    # The work itself needs the link when the stage requires one (`require_link`).
+    for module in (documents, applications, resumes, sessions, employers):
+        app.include_router(module.router, prefix="/v1", dependencies=[Depends(require_link)])
     return app
 
 

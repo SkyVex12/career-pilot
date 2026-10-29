@@ -34,9 +34,10 @@ APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # Tables each role may read, from the role table in ARCHITECTURE.md.
 # resume_versions: metadata columns only (a column grant), never the text or file.
 GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
-                  "employers", "resume_versions", "profiles"}  # fmt: skip
-# Tables the gateway reads through a table-wide grant (resume_versions has column grants).
-GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions"}
+                  "employers", "resume_versions", "profiles", "integrations"}  # fmt: skip
+# integrations: the Career-OS link's status only (a column grant), never the token.
+# Tables the gateway reads through a table-wide grant (the other two have column grants).
+GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
 # Tables without row-level security, on purpose (system table, workers only).
 NO_RLS_TABLES = {"job_runs"}
 
@@ -466,6 +467,15 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
     assert {c["privilege_type"] for c in columns} == {"SELECT"}
     readable = {c["column_name"] for c in columns}
     assert not readable & {"text_enc", "file_s3_key", "file_name_enc", "document_id"}
+    columns = await db.conn.fetch(
+        "select column_name, privilege_type from information_schema.column_privileges"
+        " where grantee = 'app_gateway' and table_schema = 'app' and table_name = 'integrations'"
+    )
+    assert {(c["column_name"], c["privilege_type"]) for c in columns} == {
+        ("user_id", "SELECT"),
+        ("provider", "SELECT"),
+        ("status", "SELECT"),
+    }
     # job_runs: workers and system jobs only.
     for role, allowed in (("app_api", False), ("app_gateway", False), ("app_worker", True)):
         _, _, err = await as_user(db, role, db.a, "select 1 from app.job_runs")

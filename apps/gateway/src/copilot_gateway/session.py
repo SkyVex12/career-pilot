@@ -26,7 +26,7 @@ import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import jobs, logs, profiles, prompts, resumes, versions, workplace
+from copilot_core import careeros, jobs, logs, profiles, prompts, resumes, versions, workplace
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.ids import uuid7
@@ -1731,6 +1731,10 @@ class SessionManager:
         except AuthError as e:
             await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", str(e))
             return
+        if s.require_career_os and not await self.linked(principal):
+            # 4410: the app stops and does not reconnect; the error says why.
+            await self.reject(ws, CLOSE_REPLACED, careeros.REQUIRED_CODE, careeros.REQUIRED_MESSAGE)
+            return
         profile = ws.query_params.get(profiles.QUERY)
         if profile:
             # The session acts for one of the account's profiles (ARCHITECTURE.md, "Profiles").
@@ -1767,6 +1771,18 @@ class SessionManager:
                 "no_start",
                 "the first message must be session.start or session.resume",
             )
+
+    async def linked(self, account: Principal) -> bool:
+        """The account has an active Career-OS link (the stage requires one). Without a
+        database to ask, or with it down, the session is refused."""
+        if self.svc.pool is None:
+            return False
+        try:
+            async with user_tx(self.svc.pool, account.user_id) as conn:
+                return await careeros.is_linked(conn)
+        except (OSError, asyncpg.PostgresError) as e:
+            log.warning("could not check the Career-OS link: %s", e)
+            return False
 
     async def as_profile(self, account: Principal, profile: str) -> Principal | None:
         """The account's profile named `profile` (or the account itself), or None when it is

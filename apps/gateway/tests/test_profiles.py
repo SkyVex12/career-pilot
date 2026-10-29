@@ -24,6 +24,7 @@ from .test_resume_pairing import digest_of
 pytestmark = pytest.mark.stack
 
 CLOSE_UNAUTHORIZED = 4401
+CLOSE_REPLACED = 4410
 
 
 @dataclass
@@ -51,6 +52,12 @@ async def db() -> AsyncIterator[Db]:
         "insert into app.profiles (id, user_id, career_os_user_id, name)"
         " values ($1, $2, 'u3', 'Casey Poe')",
         profile, USER_A,
+    )  # fmt: skip
+    # USER_A has linked Career-OS; USER_B has not (test_a_required_link_gates_sessions).
+    await admin.execute(
+        "insert into app.integrations (user_id, provider, token_enc, key_version, scopes)"
+        " values ($1, 'career_os', 'sealed', 1, '{}')",
+        USER_A,
     )  # fmt: skip
     pool = await create_pool(as_role(url, "app_gateway"), 1, 3)
     try:
@@ -98,3 +105,25 @@ async def test_profiles_need_the_database(env, db: Db) -> None:
         c = ProtocolClient(f"{gw.url}?profile={db.profile}")
         await c.connect()
         assert await c.closed() == CLOSE_UNAUTHORIZED
+
+
+async def test_a_required_link_gates_sessions(env, db: Db) -> None:
+    settings = env.settings(require_career_os=True)
+    async with GatewayServer(env.services(settings, pool=db.pool)) as gw:
+        # Linked: the account and its profile both start (the link is the account's).
+        for url in (gw.url, f"{gw.url}?profile={db.profile}"):
+            c = ProtocolClient(url)
+            await c.start()
+            await c.send({"type": "session.end"})
+            assert await c.closed() == 1000
+        # Not linked: refused with the reason, and a close the app does not reconnect after.
+        c = ProtocolClient(gw.url, token="token-b")
+        await c.connect()
+        assert await c.closed() == CLOSE_REPLACED
+        [error] = [m for m in c.messages if m.get("type") == "error"]
+        assert error["code"] == "career_os_required"
+    # Without a database to ask, nobody starts.
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.connect()
+        assert await c.closed() == CLOSE_REPLACED

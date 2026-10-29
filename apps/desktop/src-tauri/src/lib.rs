@@ -519,12 +519,25 @@ fn emit(app: &AppHandle, history: &Mutex<History>, event: &UiEvent) {
     let _ = app.emit(EVENT, serde_json::json!({ "n": n, "event": event }));
 }
 
+/// The server's message when the stage requires a Career-OS link (copilot_core.careeros).
+const CAREER_OS_REQUIRED: &str = "Please link your Career-OS account to use this app (Settings → Career-OS).";
+
 #[tauri::command]
 async fn start_session(app: AppHandle, state: State<'_, AppState>, request: StartRequest) -> Res<()> {
     let _starting = state.begin_start()?;
     let tokens = state.tokens()?;
     tokens.current().await.map_err(|e| e.to_string())?;
     let settings = state.settings.lock().unwrap().clone();
+    if settings.environment == Environment::Cloud {
+        // A stage that requires a Career-OS link refuses the session anyway; say why first.
+        // The check is best effort: when it cannot be made, the gateway decides.
+        if let Ok(conn) = state.api()?.get("/career-os/connection").await
+            && conn["required"] == Value::Bool(true)
+            && conn["connected"] != Value::Bool(true)
+        {
+            return Err(CAREER_OS_REQUIRED.into());
+        }
+    }
     state.history.lock().unwrap().clear();
 
     let vad = || -> Res<ChannelVad> {
