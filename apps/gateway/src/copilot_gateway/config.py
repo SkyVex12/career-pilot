@@ -78,6 +78,13 @@ class Settings(CoreSettings):
     # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
     fast_hedge_ms: int | None = 1200
     openai_fast_retry_tier: str | None = "priority"
+    # The same for the deep pass. In the 2026-10-29 interviews 7 deep passes got no first token
+    # within their timeout and retried on the same model and tier: their first words came at
+    # 9.7 to 11 s instead of about 4 s (two more were lost in a runaway session). Its first
+    # token normally comes within 4.2 s. A hedge costs one more deep call, 1.75x on Priority,
+    # on the few that stall. None: retry only after the timeout, on the same tier.
+    deep_hedge_ms: int | None = 4500
+    openai_deep_retry_tier: str | None = "priority"
     # In standups and meetings, a question that addresses the user by name waits this long
     # for the detector, then shows as `respond` (detector.named_or_model). None: off.
     name_address_grace_ms: int | None = 1000

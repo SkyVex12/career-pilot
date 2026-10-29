@@ -8,10 +8,11 @@ alone, so Stage 0 can start with only one set of credentials.
 OpenAI routes take their model and reasoning effort per job from settings
 (`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); the Claude-only settings (between_tools
 thinking, effort, `fallbacks: "default"`, Priority) never reach them.
-The detector's and the fast pass's second OpenAI route (the hedge and the retry) runs on
-OpenAI's own Priority tier (`openai_detector_retry_tier`, `openai_fast_retry_tier`), so a slow
-spell on the first does not stall both. Both jobs hedge (`detector_hedge_ms`,
-`fast_hedge_ms`): with no first token by then, the second route starts alongside the first.
+The detector's, the fast pass's and the deep pass's second OpenAI route (the hedge and the
+retry) runs on OpenAI's own Priority tier (`openai_detector_retry_tier`,
+`openai_fast_retry_tier`, `openai_deep_retry_tier`), so a slow spell on the first does not
+stall both. All three hedge (`detector_hedge_ms`, `fast_hedge_ms`, `deep_hedge_ms`): with no
+first token by then, the second route starts alongside the first.
 """
 
 from collections.abc import Sequence
@@ -68,6 +69,7 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
     retry_tiers = {
         "detector": settings.openai_detector_retry_tier,
         "fast": settings.openai_fast_retry_tier,
+        "deep": settings.openai_deep_retry_tier,
     }
     for job, family in JOBS.items():
         job_routes: list[Route] = []
@@ -106,7 +108,11 @@ def build_router(
     on_fallback: FallbackHook | None = None,
 ) -> ModelRouter:
     providers = make_providers(settings) if providers is None else providers
-    hedges = {"detector": settings.detector_hedge_ms, "fast": settings.fast_hedge_ms}
+    hedges = {
+        "detector": settings.detector_hedge_ms,
+        "fast": settings.fast_hedge_ms,
+        "deep": settings.deep_hedge_ms,
+    }
     return ModelRouter(
         build_routes(settings, providers),
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
