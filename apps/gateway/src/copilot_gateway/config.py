@@ -68,6 +68,13 @@ class Settings(CoreSettings):
     # the hedge went to the same model on the same tier. Priority costs 1.75x on the few calls
     # that hedge (about $0.0001 each). None: the same tier as the first route.
     openai_detector_retry_tier: str | None = "priority"
+    # The same for the fast pass. In the 2026-10-28 interview three questions in a row got no
+    # fast-pass first token within the 3 s timeout, and the retry went to the same model and
+    # tier: first words at 6.4 to 8.1 s, one fast pass lost, while the user had started
+    # answering at about 1.6 s. A hedge costs one more fast call (about $0.0003, 1.75x on
+    # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
+    fast_hedge_ms: int | None = 1200
+    openai_fast_retry_tier: str | None = "priority"
     # In standups and meetings, a question that addresses the user by name waits this long
     # for the detector, then shows as `respond` (detector.named_or_model). None: off.
     name_address_grace_ms: int | None = 1000

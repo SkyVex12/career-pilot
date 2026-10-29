@@ -8,8 +8,10 @@ alone, so Stage 0 can start with only one set of credentials.
 OpenAI routes take their model and reasoning effort per job from settings
 (`COPILOT_OPENAI_<JOB>_MODEL`, `..._REASONING`); the Claude-only settings (between_tools
 thinking, effort, `fallbacks: "default"`, Priority) never reach them.
-The detector's second OpenAI route (the hedge and the retry) runs on OpenAI's own Priority
-tier (`openai_detector_retry_tier`), so a slow spell on the first does not stall both.
+The detector's and the fast pass's second OpenAI route (the hedge and the retry) runs on
+OpenAI's own Priority tier (`openai_detector_retry_tier`, `openai_fast_retry_tier`), so a slow
+spell on the first does not stall both. Both jobs hedge (`detector_hedge_ms`,
+`fast_hedge_ms`): with no first token by then, the second route starts alongside the first.
 """
 
 from collections.abc import Sequence
@@ -63,6 +65,10 @@ def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
 
 def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[str, list[Route]]:
     routes: dict[str, list[Route]] = {}
+    retry_tiers = {
+        "detector": settings.openai_detector_retry_tier,
+        "fast": settings.openai_fast_retry_tier,
+    }
     for job, family in JOBS.items():
         job_routes: list[Route] = []
         for i, provider in enumerate(providers):
@@ -74,8 +80,8 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
             job_routes.append(Route(provider, primary, params, first_token_timeout_s=timeout))
             if i == 0:
                 retry_params = params
-                tier = settings.openai_detector_retry_tier
-                if job == "detector" and provider.name == "openai" and tier:
+                tier = retry_tiers.get(job)
+                if provider.name == "openai" and tier:
                     retry_params = {**params, "service_tier": tier}
                 job_routes.append(
                     Route(provider, retry, retry_params, first_token_timeout_s=timeout)
@@ -100,11 +106,10 @@ def build_router(
     on_fallback: FallbackHook | None = None,
 ) -> ModelRouter:
     providers = make_providers(settings) if providers is None else providers
+    hedges = {"detector": settings.detector_hedge_ms, "fast": settings.fast_hedge_ms}
     return ModelRouter(
         build_routes(settings, providers),
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
         on_fallback=on_fallback,
-        hedge_after_s={"detector": settings.detector_hedge_ms / 1000}
-        if settings.detector_hedge_ms
-        else None,
+        hedge_after_s={job: ms / 1000 for job, ms in hedges.items() if ms} or None,
     )
