@@ -616,3 +616,27 @@ async def test_the_end_line_counts_the_whole_call_across_a_resume(env, monkeypat
     ended = [r.getMessage() for r in caplog.records if "session ended:" in r.getMessage()]
     assert ended
     assert "questions=2" in ended[-1]
+
+
+async def test_a_question_after_a_forced_one_stands_on_its_own(env) -> None:
+    # The hotkey answers what was heard: it is not the other side's question going on, so the
+    # next spoken question is not joined to it (the client core's dropped-socket test).
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("Tell me about a time you scaled a system?", capture_ms=0)
+        q1 = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q1["question_id"], pass_="fast")
+        await c.send({"type": "question.force"})
+        q2 = await c.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != q1["question_id"]
+        )
+        await c.wait_type("answer.done", question_id=q2["question_id"], pass_="fast")
+        await c.say("What is a system you designed?", capture_ms=1500)
+        await c.wait(
+            lambda m: (
+                m["type"] == "question.detected"
+                and not m["speculative"]
+                and m["text"] == "What is a system you designed?"
+            )
+        )

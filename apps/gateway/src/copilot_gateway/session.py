@@ -600,6 +600,12 @@ class Session:
         return q.qid
 
     def _continued(self, text: str) -> str:
+        # Only a question the other side was saying goes on: a forced one (the hotkey, Respond,
+        # a typed question) carries what was heard earlier, and its end is not theirs.
+        last = self.conv.asked[-1] if self.conv.asked else None
+        shown = self.answers.questions.get(UUID(last.qid)) if last is not None else None
+        if shown is not None and shown.forced:
+            return text
         starts = [a for a, _ in self.them_spans]
         if self.them_open is not None:
             starts.append(self.them_open)
