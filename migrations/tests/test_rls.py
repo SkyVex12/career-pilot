@@ -39,7 +39,7 @@ GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes",
 # Tables the gateway reads through a table-wide grant (the other two have column grants).
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
 # Tables without row-level security, on purpose (system table, workers only).
-NO_RLS_TABLES = {"job_runs"}
+NO_RLS_TABLES = {"job_runs", "career_os_people"}
 
 
 @dataclass
@@ -458,7 +458,7 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
         " where grantee = 'app_gateway' and table_schema = 'app'"
     )
     assert {(g["table_name"], g["privilege_type"]) for g in grants} == {
-        (t, "SELECT") for t in GATEWAY_TABLE_GRANTS
+        (t, "SELECT") for t in GATEWAY_TABLE_GRANTS | {"career_os_people"}
     }
     columns = await db.conn.fetch(
         "select column_name, privilege_type from information_schema.column_privileges"
@@ -472,9 +472,7 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
         " where grantee = 'app_gateway' and table_schema = 'app' and table_name = 'integrations'"
     )
     assert {(c["column_name"], c["privilege_type"]) for c in columns} == {
-        ("user_id", "SELECT"),
-        ("provider", "SELECT"),
-        ("status", "SELECT"),
+        (c, "SELECT") for c in ("user_id", "provider", "status", "external_id", "external_kind")
     }
     # job_runs: workers and system jobs only.
     for role, allowed in (("app_api", False), ("app_gateway", False), ("app_worker", True)):

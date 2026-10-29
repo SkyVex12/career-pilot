@@ -218,6 +218,9 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
         # Never leave a token on Career-OS that this account does not hold.
         await client.revoke(str(linked["token"]))
         raise
+    if kind == "user" and cos_user.get("id"):
+        # The person's workspace: this account's own row, unless another account has one.
+        await profiles.claim_me(svc.pool, user, str(cos_user["id"]))
     return connection_out(row, True, kind, svc.settings.require_career_os)
 
 
@@ -266,8 +269,9 @@ def user_out(raw: dict[str, Any]) -> dict[str, str]:
 
 
 class Homes:
-    """Where each Career-OS user's applications live here: the account for the linked user
-    itself (a user link), else that user's profile."""
+    """Where each Career-OS user's applications live here: the person's shared workspace
+    (`copilot_core.profiles`), which is "Me" for the linked user itself (a user link) and a
+    profile otherwise."""
 
     def __init__(self, svc: Services, account: Principal, linked_id: str | None, kind: str):
         self.svc, self.account = svc, account
@@ -286,8 +290,10 @@ class Homes:
         linked_id = None if row is None else cast(str | None, row["external_id"])
         homes = cls(svc, account, linked_id, await kind_of(svc, account, row))
         if homes.self_id:
-            homes.by_cos[homes.self_id] = account
-            homes.cos_of[account.user_id] = homes.self_id
+            await profiles.claim_me(svc.pool, account, homes.self_id)
+            me = await profiles.me_of(svc.pool, account)
+            homes.by_cos[homes.self_id] = me
+            homes.cos_of[me.user_id] = homes.self_id
         for p in await profiles.listed(svc.pool, account):
             pid = UUID(p["id"])
             homes.by_cos.setdefault(

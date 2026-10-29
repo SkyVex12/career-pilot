@@ -150,8 +150,8 @@ async def test_search_and_pull_then_pull_again(api: Api, fake: FakeCareerOs) -> 
 
 
 async def test_base_resume_when_career_os_has_no_version(api: Api, fake: FakeCareerOs) -> None:
-    detail = fake.apps["u1"]["app_acme_1"]
-    detail["resume_version"] = None
+    for who, cos_id in (("u1", "app_acme_1"), ("u2", "app_other_1")):
+        fake.apps[who][cos_id]["resume_version"] = None
     # No base here yet: the Career-OS base becomes this account's base.
     _, h = api.user()
     await connect(api, fake, h)
@@ -160,8 +160,8 @@ async def test_base_resume_when_career_os_has_no_version(api: Api, fake: FakeCar
     # An account with its own base keeps it; the Career-OS base is this application's own.
     _, h2 = api.user()
     await api.client.post("/v1/resumes", headers=h2, json={"kind": "base", "text": "Mine"})
-    await connect(api, fake, h2)
-    app = await pull(api, h2)
+    await connect(api, fake, h2, "u2")  # another person (one person's accounts share a base)
+    app = await pull(api, h2, "app_other_1")
     assert app["resume"]["kind"] == "tailored"
     assert app["resume"]["label"].startswith("Career-OS base resume")
     base = (await api.client.get("/v1/resumes", headers=h2)).json()["base"]
@@ -327,3 +327,30 @@ async def test_a_required_link_gates_the_work_until_connected(
     fake.revoked.update(fake.tokens)
     assert (await api.client.get("/v1/career-os/applications", headers=h)).status_code == 409
     assert (await api.client.get("/v1/applications", headers=h)).status_code == 403
+
+
+async def test_accounts_linked_to_one_person_share_their_workspace(
+    api: Api, fake: FakeCareerOs
+) -> None:
+    # Account one (admin a1) pulls Blair's (u2) application into Blair's profile.
+    _, first = api.user()
+    await connect(api, fake, first, "a1")
+    pulled = await pull(api, first, "app_other_1")
+    blair = pulled["profile_id"]
+    # Account two, the same admin, lists the same profile and sees the application.
+    _, second = api.user()
+    await connect(api, fake, second, "a1")
+    listed = (await api.client.get("/v1/profiles", headers=second)).json()["items"]
+    assert blair in [p["id"] for p in listed if not p["me"]]
+    as_blair = {**second, "x-copilot-profile": blair}
+    apps = (await api.client.get("/v1/applications", headers=as_blair)).json()["applications"]
+    assert [a["company"] for a in apps] == [pulled["company"]]
+    # Account three is Blair (a user link): its "Me" is the same workspace.
+    _, third = api.user()
+    await connect(api, fake, third, "u2")
+    assert (await api.client.get("/v1/profiles", headers=third)).status_code == 200
+    apps = (await api.client.get("/v1/applications", headers=third)).json()["applications"]
+    assert [a["company"] for a in apps] == [pulled["company"]]
+    # A pull from Blair's own account lands there too, for all three.
+    again = await pull(api, third, "app_other_1")
+    assert again["pulled"] != "new"
