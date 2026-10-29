@@ -1736,9 +1736,10 @@ class SessionManager:
             await self.reject(ws, CLOSE_REPLACED, careeros.REQUIRED_CODE, careeros.REQUIRED_MESSAGE)
             return
         profile = ws.query_params.get(profiles.QUERY)
-        if profile:
-            # The session acts for one of the account's profiles (ARCHITECTURE.md, "Profiles").
-            resolved = await self.as_profile(principal, profile)
+        if profile or self.svc.pool is not None:
+            # The session acts for one of the account's profiles, or for "Me", which for a
+            # user link is the person's shared workspace (ARCHITECTURE.md, "Profiles").
+            resolved = await self.as_profile(principal, profile or "me")
             if resolved is None:
                 await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "unknown profile")
                 return
