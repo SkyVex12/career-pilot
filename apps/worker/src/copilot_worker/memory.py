@@ -14,6 +14,7 @@ same across rebuilds and match the session packs.
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -180,6 +181,48 @@ def _body(row: Any) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(body) if isinstance(body, str) else body)
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
+)}  # fmt: skip
+_NOW = ("now", "present", "current", "today")
+
+
+def _month(text: str | None, today: str) -> tuple[int, int | None] | None:
+    """A resume date as (year, month): "Nov 2022", "November 2022", "2022-11", "11/2022", or
+    "2022" (month None); an empty end or "Present" is `today`."""
+    t = (text or "").strip().lower()
+    if not t or t in _NOW:
+        t = today[:7]
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})(?:-\d{1,2})?", t) or re.fullmatch(r"(\d{1,2})/(\d{4})", t)
+    if m:
+        a, b = int(m[1]), int(m[2])
+        year, month = (a, b) if a > 12 else (b, a)
+        return (year, month) if 1 <= month <= 12 else None
+    m = re.fullmatch(r"([a-z]{3})[a-z]*\.?\s+(\d{4})", t)
+    if m and m[1] in _MONTHS:
+        return int(m[2]), _MONTHS[m[1]]
+    m = re.fullmatch(r"(\d{4})", t)
+    return (int(m[1]), None) if m else None
+
+
+def role_length(start: str | None, end: str | None, today: str) -> str | None:
+    """How long a role ran, as a resume reader counts it (both months included): "3 yr 9 mo";
+    "about 6 yr" when a date has only its year. In the 2026-10-29 interviews the fast pass
+    summed role dates itself and said thirteen years where the two roles that fit made about
+    seven; the digest now states each role's length, so no answer has to work it out."""
+    a, b = _month(start, today), _month(end, today)
+    if a is None or b is None:
+        return None
+    if a[1] is None or b[1] is None:
+        years = b[0] - a[0]
+        return f"about {years} yr" if years > 0 else None
+    months = (b[0] * 12 + b[1]) - (a[0] * 12 + a[1]) + 1
+    if months < 1:
+        return None
+    years, rest = divmod(months, 12)
+    return " ".join(([f"{years} yr"] if years else []) + ([f"{rest} mo"] if rest else []))
+
+
 def render_digest(
     display_name: str, nodes: Sequence[Any], today: str | None = None
 ) -> Digest | None:
@@ -205,7 +248,11 @@ def render_digest(
         lines.append("## Roles")
         for n in by_kind["role"]:
             b = _body(n)
-            when = f", {b.get('start')} to {b.get('end') or 'now'}" if b.get("start") else ""
+            when = ""
+            if b.get("start"):
+                length = role_length(b.get("start"), b.get("end"), day)
+                when = f", {b.get('start')} to {b.get('end') or 'now'}"
+                when += f" ({length})" if length else ""
             team = f" Team: {b['team']}." if b.get("team") else ""
             summary = f" {n['summary']}" if n["summary"] != n["title"] else ""
             lines.append(f"{cite(n)} {n['title']}{when}.{team}{summary}".rstrip())

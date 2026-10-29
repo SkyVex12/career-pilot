@@ -572,13 +572,15 @@ def test_live_prompts_ask_for_spoken_cues() -> None:
         assert "Reuse the wording, story names and exact numbers" in system
         assert "may have a misheard word" in system
     assert "not sentences to read out" in fast
-    assert "fragment of 3 to 10 words" in fast
+    assert "fragment of 4 to 12 words" in fast
 
 
-def test_the_deep_answer_goes_beyond_the_cues_in_the_chosen_style() -> None:
+def test_the_deep_answer_develops_the_cues_in_the_chosen_style() -> None:
     """After the 2026-10-28 interview the user found the deep answer nearly the same as the
-    talking points, and its lines unconnected. It now sees the cues on screen and builds on
-    them, as deeper bullets or as one connected paragraph (the Session tab's choice)."""
+    talking points, and its lines unconnected; after 2026-10-29, that the two were unrelated:
+    told to go beyond the cues, the deep pass switched to other points. It now develops the
+    cues on screen in their order, says more than each, and replaces a wrong one, as deeper
+    bullets or one connected paragraph (the Session tab's choice)."""
     ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
     cues = "- Proposed HubSpot workflows [n:93b7]"
     bullets = prompts.deep_pass(ctx, "", "q?", "technical", 800, shown=cues)
@@ -587,10 +589,18 @@ def test_the_deep_answer_goes_beyond_the_cues_in_the_chosen_style() -> None:
     assert "- Proposed HubSpot workflows [n:93b7]" in content
     assert "Style: bullets. 6 to 10 lines" in content
     system = bullets.system[0].text
-    assert "already on Alex's screen. Go beyond them" in system
-    assert "Never restate a cue" in system
+    assert (
+        "Your answer is the same answer, developed: take their points in their\n  order" in system
+    )
+    assert "never switch to other points" in system
+    assert "If a cue is wrong" in system
+    assert "Go beyond them" not in system
+    assert "in the order of the cues on screen" in content
     paragraph = prompts.deep_pass(ctx, "", "q?", "technical", 800, style="paragraph")
     assert "Style: paragraph. One or two connected paragraphs" in str(paragraph.content)
+    assert "in the order of the cues on screen" in str(paragraph.content)
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    assert "These cues are the answer's outline" in fast
     assert "<shown_cues>\n(none yet)\n</shown_cues>" in str(paragraph.content)
     # The system prompt is the same in both styles, so the cached prefix is shared.
     assert paragraph.system[0].text == system
@@ -705,7 +715,7 @@ def test_detector_types_motivation_and_logistics_as_other() -> None:
     for mode in ("interview", "standup"):
         system = prompts.detector("Alex", "", "Why are you looking?", 80, mode).system[0].text
         assert "Why Alex is looking or leaving, why this role or\n  company, pay" in system
-        assert "are other, never behavioral" in system
+        assert "are other, never\n  behavioral" in system
         assert "Experience with a named tool or platform is technical." in system
         assert 'behavioral asks for a past situation ("tell me about a\n  time..."' in system
 
@@ -782,3 +792,37 @@ def test_turn_taking_says_when_the_user_last_spoke() -> None:
     late = prompts.turn_taking("Sam Lee", turns, 400)
     assert late.startswith("Sam last spoke about 6 min ago.")
     assert "0 times" in late  # nothing in the last two minutes
+
+
+def test_a_yes_or_no_screening_check_needs_no_card() -> None:
+    """2026-10-29: 8 yes-or-no checks of the user's own situation (authorized to work,
+    sponsorship, worked here before, relatives here, a certification, "you went to that school,
+    right?") fired; the user answered each in about a second, the fast pass answered four of
+    them for the user with facts no data held, and the deep pass came back with a question."""
+    text = prompts.detector("Alex", "", "Are you authorized?", 80, "interview").system[0].text
+    assert "a yes-or-no check of Alex's own situation, answered in a word" in text
+    assert "will you need sponsorship" in text
+    assert "from their resume. Alex knows the answer." in text
+    assert "work authorization" not in text.split("- respond:")[0]  # no longer an "other"
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    for system in (
+        prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text,
+        prompts.deep_pass(ctx, "", "q?", "other", 800).system[0].text,
+    ):
+        assert "never answer it for them, in either direction" in system
+
+
+def test_fast_cues_are_specific_and_answer_every_part() -> None:
+    """2026-10-29: fast cues such as "strong fit for the role" or "answer based on your
+    situation" fit any question; a turn that opened with thanks and asked two things got one
+    answer; and asked for years with one platform, the fast pass added up three roles itself."""
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
+    assert "Every cue says something specific to this question" in fast
+    assert '"strong fit for the role"' in fast
+    assert "only restates the question is wrong." in fast
+    deep = prompts.deep_pass(ctx, "", "q?", "technical", 800).system[0].text
+    for system in (fast, deep):
+        assert "answer each, in the order asked." in system
+        assert "states its length in brackets" in system
+        assert "Never add up roles yourself into a new total." in system
