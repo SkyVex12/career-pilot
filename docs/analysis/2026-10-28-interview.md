@@ -309,3 +309,59 @@ Ranked by effect on the user in a real interview.
 and 4, which decide whether what shows is the user's own experience (2 needs your OK for the
 re-extraction on Stage 0). 5 and 6 are small prompt changes. 8 is a doc change; 7 is no change.
 Everything is backend and worker only; no desktop release is needed.
+
+## 6. What this branch changed
+
+You asked for the fixes and better answers on questions like the HubSpot one. Fixes 1 to 6
+and 8 are in, each with its own commit and a test that fails on the old code; 7 is not
+changed. Backend, worker and one migration (0011, expand only); no desktop release.
+
+| Fix | Commit | Tests |
+| --- | --- | --- |
+| 1. Fast-pass hedge on Priority | Fast pass: hedge a stalled first token on the Priority tier | `test_the_fast_pass_hedges_on_the_priority_tier` |
+| 2. Resume facts reach the answers | Resume facts reach the answers: role highlights, a headline, no gap list; Extraction: projects and stories first, highlights for the rest | `test_resume_highlights_and_headline_reach_the_digest`, `test_extraction_asks_for_highlights_and_a_headline` |
+| 3. A forced question takes over the deciding turn | A forced question takes over the turn still deciding | `test_respond_during_a_question_takes_over_its_turn`, `test_respond_in_a_standup_takes_over_but_stays_a_reply` |
+| 4. Interview keyterms | Interview packs: keyterms for speech to text | the keyterm assertions in `test_job_description_becomes_a_job_and_a_pack` |
+| 5, 6 and answer quality | Answers: specific on a named tool, no placeholders; motivation is 'other' | `test_live_prompts_show_fluency_with_a_named_tool_and_write_no_placeholders`, `test_detector_types_motivation_and_logistics_as_other`, `test_recruiter_screen_script_scores_the_10_28_turns` |
+| 8. Cost estimate | ARCHITECTURE.md, "Cost estimate" | — |
+
+The quality work for the HubSpot question is three changes together: the facts (fix 2: the
+two HubSpot bullets now reach the digest, as hedged as the resume has them), the pack (no
+"the digest does not establish HubSpot" in every prompt; prepared questions on the platforms
+the job names), and the live rule (the user's facts on the named tool first, then its
+specifics by name, never framed as new to the user). Paraphrased fixtures from this call:
+`evals/bench/recruiter_screen.toml` for `copilot-detector-eval`, and two questions in
+`evals/answers/questions.toml` (a named platform, location) for `copilot-answer-eval`.
+
+**Checked live** on the Stage 0 VM, branch prompts loaded beside the deployed code, on a
+fictional profile shaped like this call (no call text):
+
+- The HubSpot question, old prompts and digest against new: the new fast pass led with the
+  resume's HubSpot workflow-and-webhook line, cited, then CRM objects, associations,
+  private-app tokens against OAuth scopes, rate limits and webhook signatures; the new deep
+  pass added v3 objects, batch upserts, 429 backoff and idempotent webhook handling. The old
+  ones kept HubSpot at arm's length ("my core experience: REST integrations"; "I'd distinguish
+  integration depth from HubSpot-specific depth").
+- Location: no placeholder in 3 of 3 new answers (old: 4 of 4). Pay: neither new answer said
+  the band suits the user (old: 1 of 2).
+- Detector, new prompt: motivation `other`, the HubSpot question `technical`, location `other`,
+  3 of 3 each.
+- Extraction, new prompt, on the paired resume itself (printed only, nothing stored): the first
+  wording put all 23 bullets into highlights and returned no projects or stories, which is why
+  the last commit says projects and stories come first. With it: 4 role summaries, 7 projects,
+  4 stories, 13 highlights including both HubSpot bullets and the client bullets, and the
+  15-year headline.
+
+**Spend on re-runs:** 11 detector replays (about $0.001), 27 live prompt calls ($0.019), two
+extraction calls on gpt-6-sol (3.6k tokens in, 4.7k out: about $0.05 at gpt-6.1-sol prices;
+gpt-6-sol has no entry in Stage 0's price table). About $0.07 in all. No new infrastructure.
+
+**After merge (needs your OK):** the deploy on merge applies migration 0011 and the new code,
+but this profile's memory and pack still come from the old extraction. Re-extracting the
+paired resume version (one gpt-6-sol call) rebuilds its digest and then its pack (one
+gpt-6.1-sol call), about $0.10, and replaces that version's 33 memory nodes. Until then, a
+new interview for this application still has no HubSpot facts in its answers.
+
+Not measured live: the fast-pass hedge and the forced take-over (tested with scripted models
+only; whether Priority is faster in a slow spell shows in the next real call), and the
+keyterms' effect on the mic transcript.
