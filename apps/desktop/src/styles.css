@@ -1799,3 +1799,14 @@ details.output > summary {
 details.output > summary h3 {
   display: inline;
 }
+
+/* "Test audio" (AudioCheck.tsx): two level meters and the verdicts. */
+.audio-check { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.audio-meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.audio-meter { opacity: 0.55; }
+.audio-meter.active { opacity: 1; }
+.audio-meter-bar { height: 8px; border-radius: 4px; background: var(--border, #ccc); overflow: hidden; }
+.audio-meter-fill { height: 100%; background: var(--accent, #2a7); transition: width 80ms linear; }
+.audio-verdicts { margin: 0; padding-left: 18px; }
+.audio-verdicts li.ok { color: var(--ok, #2a7); }
+.audio-verdicts li.bad { color: var(--bad, #c33); }

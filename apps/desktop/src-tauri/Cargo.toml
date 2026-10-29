@@ -29,6 +29,8 @@ tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
+# One running app per computer: a second launch focuses the first (lib.rs, run).
+tauri-plugin-single-instance = "2"
 tauri-plugin-updater = { version = "2", optional = true }
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"

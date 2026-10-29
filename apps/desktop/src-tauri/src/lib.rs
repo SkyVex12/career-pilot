@@ -20,7 +20,9 @@ use std::time::{Duration, Instant};
 use copilot_client::api::{ApiClient, ApiError};
 use copilot_client::audio::aec::{EchoCanceller, NoEchoCancellation, WebRtcAec};
 use copilot_client::audio::capture::{self, DeviceInfo, DeviceSource};
+use copilot_client::audio::check;
 use copilot_client::audio::pipeline::Levels;
+use copilot_client::audio::source::{AudioSource, Packet};
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
@@ -333,6 +335,67 @@ fn save_settings(
     // The hotkeys may have been rebound: register the new set.
     register_hotkeys(&app);
     Ok(())
+}
+
+/// The audio test (Settings and the Session tab, before a call; audio::check): the speaking
+/// phase, then the tone on the output. The microphone is judged only while the user speaks, so
+/// a mic that hears the speakers does not pass on the tone.
+const AUDIO_CHECK_SPEAK: Duration = Duration::from_millis(3_000);
+const AUDIO_CHECK_AFTER_TONE: Duration = Duration::from_millis(300);
+const AUDIO_CHECK_EVENT: &str = "copilot://audio-check";
+
+#[derive(Clone, Serialize)]
+struct AudioCheckMeter {
+    phase: &'static str,
+    #[serde(flatten)]
+    meter: check::Meter,
+}
+
+/// Opens the chosen microphone and output (loopback) for about five seconds: three for the
+/// user to speak, then a short tone on the output. Refused while a session runs or starts, and
+/// no session starts meanwhile, since both would open the same devices.
+#[tauri::command]
+async fn audio_check(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mic_device: Option<String>,
+    output_device: Option<String>,
+) -> Res<check::AudioCheck> {
+    let _starting = state.begin_start()?;
+    tauri::async_runtime::spawn_blocking(move || run_audio_check(&app, mic_device, output_device))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn run_audio_check(app: &AppHandle, mic: Option<String>, output: Option<String>) -> Res<check::AudioCheck> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(512);
+    let mut source = DeviceSource::new(mic, output.clone());
+    source.start(tx).map_err(|e| e.to_string())?;
+    let mut result = check::Check::new();
+    let started = Instant::now();
+    let tone_ms = Duration::from_millis(u64::from(check::TONE_MS));
+    let mut tone: Option<std::thread::JoinHandle<bool>> = None;
+    let mut emitted = Instant::now();
+    while started.elapsed() < AUDIO_CHECK_SPEAK + tone_ms + AUDIO_CHECK_AFTER_TONE {
+        let speaking = started.elapsed() < AUDIO_CHECK_SPEAK;
+        if !speaking && tone.is_none() {
+            let out = output.clone();
+            tone = Some(std::thread::spawn(move || capture::play_tone(out.as_deref()).is_ok()));
+        }
+        if let Ok(packet) = rx.recv_timeout(Duration::from_millis(20))
+            && (speaking || matches!(packet, Packet::Them(_)))
+        {
+            result.push(&packet);
+        }
+        if emitted.elapsed() >= Duration::from_millis(100) {
+            emitted = Instant::now();
+            let phase = if speaking { "speak" } else { "tone" };
+            let _ = app.emit(AUDIO_CHECK_EVENT, AudioCheckMeter { phase, meter: result.meter() });
+        }
+    }
+    source.stop();
+    let played = tone.is_some_and(|t| t.join().unwrap_or(false));
+    Ok(result.result(played))
 }
 
 #[derive(Serialize)]
@@ -1129,7 +1192,16 @@ pub fn run() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
-    let builder = tauri::Builder::default();
+    // One app per computer (2026-10-29: two copies on one computer ran two sessions on the
+    // same microphone and speakers, under two profiles). A second launch brings the running
+    // app's window forward instead.
+    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+    }));
     #[cfg(feature = "release")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
@@ -1275,6 +1347,7 @@ pub fn run() {
             get_settings,
             save_settings,
             list_devices,
+            audio_check,
             api_call,
             upload_document,
             upload_company_file,

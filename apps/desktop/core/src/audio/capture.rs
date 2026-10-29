@@ -182,3 +182,50 @@ impl AudioSource for DeviceSource {
         }
     }
 }
+
+/// Plays the audio test's tone ([`super::check::tone`]) once on an output device, on the
+/// calling thread, and returns when it has played.
+pub fn play_tone(output_id: Option<&str>) -> Result<(), CaptureError> {
+    let device = find(output_id, true)?;
+    let dev_err = |e: cpal::Error| CaptureError::Device(e.to_string());
+    let supported = device.default_output_config().map_err(dev_err)?;
+    let config = supported.config();
+    let channels = usize::from(config.channels.max(1));
+    let samples = super::check::tone(super::check::TONE_MS, config.sample_rate);
+    let mut at = 0usize;
+    let mut next = move || {
+        let s = samples.get(at).copied().unwrap_or(0.0);
+        at += 1;
+        s
+    };
+    let on_error = |e: cpal::Error| tracing::warn!("test tone: {e}");
+    let stream = match supported.sample_format() {
+        SampleFormat::F32 => device.build_output_stream::<f32, _, _>(
+            config,
+            move |out, _| {
+                for frame in out.chunks_mut(channels) {
+                    frame.fill(next());
+                }
+            },
+            on_error,
+            None,
+        ),
+        SampleFormat::I16 => device.build_output_stream::<i16, _, _>(
+            config,
+            move |out, _| {
+                for frame in out.chunks_mut(channels) {
+                    #[allow(clippy::cast_possible_truncation)]
+                    frame.fill((next() * 32767.0) as i16);
+                }
+            },
+            on_error,
+            None,
+        ),
+        other => return Err(CaptureError::Device(format!("unsupported sample format {other:?}"))),
+    }
+    .map_err(dev_err)?;
+    stream.play().map_err(dev_err)?;
+    std::thread::sleep(std::time::Duration::from_millis(u64::from(super::check::TONE_MS) + 150));
+    drop(stream);
+    Ok(())
+}
