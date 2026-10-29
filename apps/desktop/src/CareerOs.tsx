@@ -12,10 +12,23 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Settings mounts this per account (keyed), so a link shown is always the signed-in account's.
   useEffect(() => {
+    setConn(null);
+    setMessage(null);
     if (ready) rest.careerOs().then(setConn, (e) => setMessage(String(e)));
   }, [ready]);
-  if (!ready || !conn || !conn.available) return null;
+  if (!ready) return null;
+  if (!conn) {
+    // The link could not be loaded: say why instead of showing nothing (or an older answer).
+    return message ? (
+      <>
+        <h3>Career-OS</h3>
+        <p className="note warn">{message}</p>
+      </>
+    ) : null;
+  }
+  if (!conn.available) return null;
 
   const act = async (what: () => Promise<CareerOsConnection | null>, done: string) => {
     setBusy(true);

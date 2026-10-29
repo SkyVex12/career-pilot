@@ -1,9 +1,10 @@
 // The profile switch (ARCHITECTURE.md, "Profiles"): "Me" (the account) and one profile per
 // Career-OS user an admin link reads. The chosen profile is kept by the core (settings.profile),
 // which names it on every API call and session; every screen reads and writes that profile's
-// applications, resumes, interviews, sessions and work. The app remounts the screens on a switch.
-import { createContext, useCallback, useEffect, useState } from "react";
-import { api, rest, type Profile } from "./api";
+// applications, resumes, interviews, sessions and work. The app remounts the screens on a switch,
+// and on a sign-in to another account.
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
+import { api, rest, type CareerOsConnection, type Profile, type SettingsView } from "./api";
 
 export interface ProfileState {
   profiles: Profile[];
@@ -25,26 +26,43 @@ export function isStale(profiles: Profile[], current: string | null): boolean {
   return current !== null && profiles.length > 0 && !profiles.some((p) => !p.me && p.id === current);
 }
 
+/** The signed-in account: the environment and, in the cloud, the email signed in with. */
+export function accountOf(view: SettingsView | null): string {
+  if (!view) return "";
+  return `${view.settings.environment}:${view.signed_in_as ?? ""}`;
+}
+
+/** Locked until a Career-OS link: the stage requires one and the account has no active link. */
+export function isLocked(conn: CareerOsConnection | null): boolean {
+  return conn?.required === true && !conn.connected;
+}
+
 /** The switch shows when there is someone besides "Me". */
 export function showSwitch(profiles: Profile[]): boolean {
   return profiles.some((p) => !p.me);
 }
 
-export function useProfiles(ready: boolean, saved: string | null) {
+export function useProfiles(ready: boolean, saved: string | null, account: string) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [current, setCurrent] = useState<string | null>(saved);
   useEffect(() => setCurrent(saved), [saved]);
+  // Bumped on every account change, so a list loaded for the previous account is dropped.
+  const generation = useRef(0);
 
   const reload = useCallback(async () => {
     if (!ready) return;
+    const gen = generation.current;
     try {
       const out = await rest.profiles();
+      if (gen !== generation.current) return;
       setProfiles(out.items);
       if (isStale(out.items, current)) {
         await api.setProfile(null);
         setCurrent(null);
       }
     } catch {
+      if (gen !== generation.current) return;
+      setProfiles([]);
       // A profile this account no longer has makes every call fail: back to "Me".
       if (current !== null) {
         await api.setProfile(null).catch(() => undefined);
@@ -53,9 +71,12 @@ export function useProfiles(ready: boolean, saved: string | null) {
     }
   }, [ready, current]);
 
+  // Signed out, or another account signed in: forget the old account's profiles, then load.
   useEffect(() => {
+    generation.current += 1;
+    setProfiles([]);
     reload();
-  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchTo = async (id: string | null) => {
     const me = profiles.find((p) => p.me);
