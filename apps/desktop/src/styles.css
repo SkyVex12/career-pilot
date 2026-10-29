@@ -1776,3 +1776,26 @@ table.list .meta .chip {
 .check-result.bad {
   color: var(--bad);
 }
+
+/* A past call in History, drawn as the overlay was (SessionDetail): a window-sized panel in
+   the main window, in the overlay's colors. */
+.overlay.replay {
+  height: min(70vh, 640px);
+  color: var(--overlay-text);
+  border: 1px solid #2c323a;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.overlay.replay .overlay-head {
+  cursor: default;
+}
+
+details.output > summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+details.output > summary h3 {
+  display: inline;
+}

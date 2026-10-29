@@ -189,11 +189,7 @@ export default function Overlay() {
             {s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
           </p>
         ) : (
-          <ol className="conversation">
-            {shown.map((it) => (
-              <Item key={it.key} item={it} s={s} compact={compact} onExpand={(id) => dispatch({ type: "deep_requested", id })} />
-            ))}
-          </ol>
+          <Conversation items={shown} s={s} compact={compact} onExpand={(id) => dispatch({ type: "deep_requested", id })} />
         )}
       </main>
 
@@ -322,7 +318,43 @@ function OverlayMenu({
   );
 }
 
-function Item({ item, s, compact, onExpand }: { item: ConversationItem; s: SessionView; compact: boolean; onExpand: (id: string) => void }) {
+/** The conversation list, as the overlay shows it. History passes `ratings` for a past call:
+ * read only, with the thumbs the user gave during the call. */
+export function Conversation({
+  items,
+  s,
+  compact,
+  onExpand,
+  ratings,
+}: {
+  items: ConversationItem[];
+  s: SessionView;
+  compact: boolean;
+  onExpand?: (id: string) => void;
+  ratings?: Record<string, "up" | "down" | null>;
+}) {
+  return (
+    <ol className="conversation">
+      {items.map((it) => (
+        <Item key={it.key} item={it} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />
+      ))}
+    </ol>
+  );
+}
+
+function Item({
+  item,
+  s,
+  compact,
+  onExpand,
+  ratings,
+}: {
+  item: ConversationItem;
+  s: SessionView;
+  compact: boolean;
+  onExpand?: (id: string) => void;
+  ratings?: Record<string, "up" | "down" | null>;
+}) {
   switch (item.kind) {
     case "them":
       return (
@@ -341,14 +373,33 @@ function Item({ item, s, compact, onExpand }: { item: ConversationItem; s: Sessi
     case "question":
       return (
         <li className="msg answer">
-          <QuestionCard q={item.question} s={s} compact={compact} onExpand={() => onExpand(item.question.id)} />
+          <QuestionCard
+            q={item.question}
+            s={s}
+            compact={compact}
+            onExpand={() => onExpand?.(item.question.id)}
+            past={ratings ? { rating: ratings[item.question.id] ?? null } : null}
+          />
         </li>
       );
   }
 }
 
-function QuestionCard({ q, s, compact, onExpand }: { q: QuestionView; s: SessionView; compact: boolean; onExpand: () => void }) {
-  const [rating, setRating] = useState<"up" | "down" | null>(null);
+function QuestionCard({
+  q,
+  s,
+  compact,
+  onExpand,
+  past,
+}: {
+  q: QuestionView;
+  s: SessionView;
+  compact: boolean;
+  onExpand: () => void;
+  /** A past call (History): nothing can be asked or rated any more. */
+  past: { rating: "up" | "down" | null } | null;
+}) {
+  const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
   const deepStarted = q.deep.text.length > 0 || q.deep.done || q.deepRequested;
 
   const expand = () => {
@@ -356,6 +407,7 @@ function QuestionCard({ q, s, compact, onExpand }: { q: QuestionView; s: Session
     api.expandAnswer(q.id).catch(() => undefined);
   };
   const rate = (up: boolean) => {
+    if (past) return;
     setRating(up ? "up" : "down");
     api.sendFeedback(q.id, up).catch(() => undefined);
   };
@@ -385,19 +437,21 @@ function QuestionCard({ q, s, compact, onExpand }: { q: QuestionView; s: Session
             {q.deep.error === "cancelled" && <p className="note">Stopped for a newer question</p>}
             {q.deep.error && q.deep.error !== "cancelled" && <p className="note warn">Detailed answer failed ({q.deep.error})</p>}
           </>
+        ) : past ? (
+          !compact && <p className="note">No detailed answer was asked for.</p>
         ) : (
           <button className="link" onClick={expand}>
             Get the detailed answer ▾
           </button>
         )}
-        {!deepStarted && !deepStartsAlone(s, q.type) && !compact && <p className="note">Only on request for this question type.</p>}
+        {!past && !deepStarted && !deepStartsAlone(s, q.type) && !compact && <p className="note">Only on request for this question type.</p>}
       </section>
 
       <footer className="thumbs">
-        <button className={rating === "up" ? "on" : ""} onClick={() => rate(true)} title="Helpful">
+        <button className={rating === "up" ? "on" : ""} disabled={Boolean(past)} onClick={() => rate(true)} title="Helpful">
           👍
         </button>
-        <button className={rating === "down" ? "on" : ""} onClick={() => rate(false)} title="Not helpful">
+        <button className={rating === "down" ? "on" : ""} disabled={Boolean(past)} onClick={() => rate(false)} title="Not helpful">
           👎
         </button>
         {!compact && q.fast.refs.length > 0 && (

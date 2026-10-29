@@ -4,7 +4,7 @@
 // src-tauri/src/history.rs).
 import { useEffect, useReducer } from "react";
 import type { MemoryRef, QuestionType } from "@copilot/protocol";
-import { api, inTauri, onEvent, type ConnectionState, type Numbered, type QuestionLatency, type StopReason, type UiEvent } from "./api";
+import { api, inTauri, onEvent, type ConnectionState, type Numbered, type QuestionLatency, type Replay, type ReplayPass, type StopReason, type UiEvent } from "./api";
 
 export interface PassView {
   text: string;
@@ -207,6 +207,38 @@ export function conversation(s: SessionView): ConversationItem[] {
     }
   }
   return out;
+}
+
+/// A past call rebuilt as the overlay showed it (History): every line and question in the
+/// order it appeared, by time from the start of the call. A line appeared when it started; a
+/// question when it was detected, so it follows the line it answers. Nothing is live.
+export function fromReplay(r: Replay): SessionView {
+  // A missing deep pass was never asked for (not done, so the card says so); a missing fast
+  // pass simply has nothing to show.
+  const passOf = (p: ReplayPass | null, missingDone: boolean): PassView =>
+    p ? { text: p.text, done: true, error: null, source: p.source, refs: p.refs } : { ...emptyPass(), done: missingDone };
+  const transcript: TranscriptLine[] = r.segments
+    .filter((seg) => seg.text)
+    .map((seg) => ({ key: `${seg.channel}:${seg.seg_id}`, channel: seg.channel, text: seg.text, final: true }));
+  const questions: QuestionView[] = r.questions.map((q) => ({
+    id: q.id,
+    text: q.text,
+    type: q.type as QuestionType,
+    confidence: 1,
+    speculative: false,
+    cancelled: false,
+    fast: passOf(q.fast, true),
+    deep: passOf(q.deep, false),
+    deepRequested: Boolean(q.deep),
+  }));
+  const timed: { at: number; order: number; ref: TimelineRef }[] = [
+    ...r.segments
+      .filter((seg) => seg.text)
+      .map((seg, i) => ({ at: seg.start_ms, order: i, ref: { kind: "line", key: `${seg.channel}:${seg.seg_id}` } as TimelineRef })),
+    ...r.questions.map((q, i) => ({ at: q.offset_ms, order: r.segments.length + i, ref: { kind: "question", id: q.id } as TimelineRef })),
+  ];
+  timed.sort((a, b) => a.at - b.at || a.order - b.order);
+  return { ...initial, sessionId: r.session_id, transcript, questions, timeline: timed.map((t) => t.ref) };
 }
 
 /// Apply the core's snapshot, then live events from its `next` number on. A live event numbered

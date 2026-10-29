@@ -529,6 +529,35 @@ export interface Segment {
   text: string;
 }
 
+/** One pass of a question's answer, as it was shown in the overlay. */
+export interface ReplayPass {
+  text: string;
+  source: "model" | "prepared";
+  refs: { node_id: string; label: string }[];
+  expanded: boolean;
+}
+
+/** A question the overlay showed, timed from the start of the call. */
+export interface ReplayQuestion {
+  id: string;
+  text: string;
+  type: string;
+  forced: boolean;
+  offset_ms: number;
+  feedback: "up" | "down" | null;
+  fast: ReplayPass | null;
+  deep: ReplayPass | null;
+}
+
+/** GET /sessions/{id}/replay: the call as the overlay showed it. */
+export interface Replay {
+  session_id: string;
+  stored: boolean;
+  started_at: string | null;
+  segments: Segment[];
+  questions: ReplayQuestion[];
+}
+
 export interface Usage {
   period: string;
   live_seconds: number;
@@ -675,6 +704,7 @@ export const rest = {
     ),
   session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
+  replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
 
   employers: () => call<{ employers: Employer[] }>("GET", "/employers"),

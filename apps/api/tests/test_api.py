@@ -325,6 +325,46 @@ async def test_sessions_list_detail_transcript_and_delete(api: Api) -> None:
     assert await api.svc.store.head(me_audio_key(uid, ready)) is None
 
 
+async def test_a_replay_is_what_the_overlay_showed(api: Api) -> None:
+    uid, h = api.user()
+    await api.client.get("/v1/me", headers=h)
+    sid = await seed_session(api, uid)
+    started = await api.admin.fetchval("select started_at from app.sessions where id = $1", sid)
+    kept, dropped = uuid.uuid4(), uuid.uuid4()
+    async with api.svc.tx(Principal(uid, "x", None)) as conn:
+        for qid, keep, text in ((kept, True, "Why Globex?"), (dropped, False, "Why?")):
+            enc, v = await api.svc.crypto.encrypt(conn, uid, "questions", str(qid), text)
+            await conn.execute(
+                "insert into app.questions (id, session_id, user_id, text_enc, key_version, type,"
+                " addressed_to_user, speculative_kept, detected_at)"
+                " values ($1, $2, $3, $4, $5, 'behavioral', true, $6, $7)",
+                qid, sid, uid, enc, v, keep, started + timedelta(milliseconds=1500),
+            )  # fmt: skip
+        for pass_, model, text in (("fast", "prepared", "- Payments"), ("deep", "m", "Because.")):
+            aid = uuid.uuid4()
+            enc, v = await api.svc.crypto.encrypt(conn, uid, "answers", str(aid), text)
+            await conn.execute(
+                "insert into app.answers (id, question_id, user_id, pass, model, tier, text_enc,"
+                " key_version, latency_ms, feedback) values ($1, $2, $3, $4, $5, 'standard',"
+                " $6, $7, '{}', 'up')",
+                aid, kept, uid, pass_, model, enc, v,
+            )  # fmt: skip
+    r = await api.client.get(f"/v1/sessions/{sid}/replay", headers=h)
+    assert r.status_code == 200, r.text
+    replay = r.json()
+    assert [(s["channel"], s["text"], s["start_ms"]) for s in replay["segments"]] == [
+        ("them", "Why Globex?", 0), ("me", "Payments.", 1000),
+    ]  # fmt: skip
+    [q] = replay["questions"]
+    assert (q["id"], q["text"], q["type"], q["offset_ms"]) == (str(kept), "Why Globex?",
+                                                               "behavioral", 1500)  # fmt: skip
+    assert q["feedback"] == "up"
+    assert (q["fast"]["text"], q["fast"]["source"]) == ("- Payments", "prepared")
+    assert (q["deep"]["text"], q["deep"]["source"]) == ("Because.", "model")
+    _, other = api.user()
+    assert (await api.client.get(f"/v1/sessions/{sid}/replay", headers=other)).status_code == 404
+
+
 async def test_a_live_session_is_reported_and_cannot_be_deleted(api: Api) -> None:
     uid, h = api.user()
     sid = uuid.uuid4()

@@ -1,8 +1,11 @@
 // One session after its call: the post-call screen right after a session ends, and a past
 // session opened from History. Polls GET /sessions/{id} for up to 5 minutes until the
-// outputs are ready, then shows them and the transcript when it was stored.
-import { useCallback, useEffect, useState } from "react";
-import { rest, type SessionDetail as Detail } from "./api";
+// outputs are ready, then shows them and, when the transcript was stored, the call as the
+// overlay showed it (both sides and every suggestion), with the plain transcript below.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { rest, type Replay, type SessionDetail as Detail } from "./api";
+import { Conversation } from "./Overlay";
+import { conversation, fromReplay } from "./session";
 import { when } from "./ui";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 
@@ -10,15 +13,21 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
   const [state, setState] = useState<PollState>({ phase: "waiting", session: null, elapsedMs: 0, error: null });
   const [round, setRound] = useState(0); // bumped by "Look again"
   const [transcript, setTranscript] = useState<TranscriptRow[] | null>(null);
+  const [replay, setReplay] = useState<Replay | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setTranscript(null);
+    setReplay(null);
     pollSession(() => rest.session(sessionId), (s) => !cancelled && setState(s), { cancelled: () => cancelled }).then((final) => {
       if (cancelled || final.phase !== "ready" || !final.session.store_transcript) return;
-      rest.transcript(sessionId).then(
-        (t) => !cancelled && setTranscript(transcriptRows(t.segments)),
+      rest.replay(sessionId).then(
+        (r) => {
+          if (cancelled) return;
+          setReplay(r);
+          setTranscript(transcriptRows(r.segments));
+        },
         (e) => !cancelled && setMessage(`Transcript: ${e}`),
       );
     });
@@ -83,23 +92,64 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
 
       {state.phase === "ready" && session?.store_transcript && (
         <article className="output">
-          <h3>Transcript</h3>
-          {transcript === null && <p className="note">Loading…</p>}
-          {transcript?.length === 0 && <p className="note">Nothing was transcribed.</p>}
+          <h3>The call</h3>
+          {replay === null && !message && <p className="note">Loading…</p>}
+          {replay && <CallReplay replay={replay} />}
+        </article>
+      )}
+      {state.phase === "ready" && session?.store_transcript && transcript && transcript.length > 0 && (
+        <details className="output">
+          <summary>
+            <h3>Transcript</h3>
+          </summary>
           <ul className="plain transcript-rows">
-            {transcript?.map((r) => (
+            {transcript.map((r) => (
               <li key={r.key}>
                 <span className="muted">{r.at}</span> <b className={r.who === "You" ? "you" : ""}>{r.who}</b> {r.text}
               </li>
             ))}
           </ul>
-        </article>
+        </details>
       )}
       {state.phase === "ready" && session && !session.store_transcript && (
         <p className="note">No transcript: it was not stored for this call (no consent).</p>
       )}
       {message && <p className="note warn">{message}</p>}
     </section>
+  );
+}
+
+/** The overlay as it was during the call: the same conversation, cards and compact view, read
+ * only (the thumbs show what was rated). */
+function CallReplay({ replay }: { replay: Replay }) {
+  const s = useMemo(() => fromReplay(replay), [replay]);
+  const items = useMemo(() => conversation(s), [s]);
+  const [compact, setCompact] = useState(false);
+  const shown = compact ? items.filter((i) => i.kind === "question") : items;
+  const ratings = useMemo(() => Object.fromEntries(replay.questions.map((q) => [q.id, q.feedback])), [replay]);
+  return (
+    <div className={compact ? "overlay replay compact" : "overlay replay"}>
+      <header className="overlay-head">
+        <span className="badge badge-off">
+          <span className="dot" />
+          Replay
+        </span>
+        <span className="muted">
+          {replay.questions.length} suggestion{replay.questions.length === 1 ? "" : "s"}
+        </span>
+        <span className="spacer" />
+        <button className="icon" title={compact ? "Show the whole conversation" : "Compact: answers only"} onClick={() => setCompact(!compact)}>
+          {compact ? "☰" : "▭"}
+        </button>
+      </header>
+      <main className="overlay-body">
+        {shown.length === 0 ? (
+          <p className="muted empty">Nothing was said or suggested in this call.</p>
+        ) : (
+          <Conversation items={shown} s={s} compact={compact} ratings={ratings} />
+        )}
+      </main>
+    </div>
   );
 }
 

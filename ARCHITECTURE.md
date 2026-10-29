@@ -1516,6 +1516,7 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `POST /interviews`, `GET /interviews` | Schedule an interview (enqueues `pack.build`); list interviews with their job and pack |
 | `GET /sessions`, `GET /sessions/{id}` | Session list; one session's status and outputs |
 | `GET /sessions/{id}/transcript` | Decrypted transcript, if stored |
+| `GET /sessions/{id}/replay` | The call as the overlay showed it: transcript, kept questions, their answers and ratings, timed from the start (History) |
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |
 | `POST /integrations/{provider}/connect`, `GET .../callback`, `DELETE` | Connect and disconnect GitHub, Jira, Slack, calendars |
 | `GET /usage` | Minutes used this period |

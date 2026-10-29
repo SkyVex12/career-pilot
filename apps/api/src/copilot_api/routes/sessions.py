@@ -1,7 +1,11 @@
-"""Sessions: list, detail with post-call outputs, transcript, and delete.
+"""Sessions: list, detail with post-call outputs, transcript, replay, and delete.
 
 The user's own words are transcribed live by the gateway (ARCHITECTURE.md, "Desktop client"),
 so there is no audio upload after the call any more.
+
+`GET /sessions/{id}/replay` is what the overlay showed during the call: both sides' lines and
+each question with its talking points and detailed answer, timed from the start of the call,
+so History can show the same window afterwards.
 
 `GET /sessions/{id}` reports `status`: `live` while the call runs, `processing` after it ends
 until the post-call outputs are written, then `ready` with the outputs. The desktop app polls
@@ -143,6 +147,92 @@ async def get_transcript(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[s
                              "start_ms": s["start_ms"], "end_ms": s["end_ms"],
                              "text": segment_text})  # fmt: skip
     return {"session_id": str(session_id), "stored": row["store_transcript"], "segments": segments}
+
+
+def _offset_ms(at: datetime | None, started_at: datetime | None) -> int:
+    if at is None or started_at is None:
+        return 0
+    return max(0, int((at - started_at).total_seconds() * 1000))
+
+
+@router.get("/sessions/{session_id}/replay")
+async def get_replay(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    """The call as the overlay showed it. Questions the gateway dropped (a speculative one it
+    did not keep) are left out, as the overlay left them out. Without transcript consent no
+    text was stored, so there is nothing but the questions' types."""
+    transcript = await get_transcript(session_id, svc, user)
+    async with svc.tx(user) as conn:
+        started_at = await conn.fetchval(
+            "select started_at from app.sessions where id = $1", session_id
+        )
+        questions: list[dict[str, Any]] = []
+        by_id: dict[UUID, dict[str, Any]] = {}
+        for q in await conn.fetch(
+            "select id, text_enc, key_version, type, forced_by_hotkey, detected_at"
+            " from app.questions where session_id = $1 and speculative_kept"
+            " order by detected_at, id",
+            session_id,
+        ):
+            q_text = ""
+            if q["text_enc"] is not None:
+                q_text = await svc.crypto.decrypt(
+                    conn, user.user_id, "questions", str(q["id"]), q["text_enc"], q["key_version"]
+                )
+            item: dict[str, Any] = {
+                "id": str(q["id"]),
+                "text": q_text,
+                "type": q["type"],
+                "forced": q["forced_by_hotkey"],
+                "offset_ms": _offset_ms(q["detected_at"], started_at),
+                "feedback": None,
+                "fast": None,
+                "deep": None,
+            }
+            questions.append(item)
+            by_id[q["id"]] = item
+        answers = await conn.fetch(
+            "select a.id, a.question_id, a.pass, a.model, a.text_enc, a.key_version,"
+            " a.memory_node_ids, a.expanded, a.feedback from app.answers a"
+            " join app.questions q on q.id = a.question_id where q.session_id = $1",
+            session_id,
+        )
+        node_ids = {n for a in answers for n in a["memory_node_ids"]}
+        labels: dict[UUID, str] = {}
+        if node_ids:
+            labels = {
+                r["id"]: r["title"]
+                for r in await conn.fetch(
+                    "select id, title from app.memory_nodes where id = any($1::uuid[])",
+                    list(node_ids),
+                )
+            }
+        for a in answers:
+            found = by_id.get(a["question_id"])
+            if found is None:
+                continue
+            a_text = ""
+            if a["text_enc"] is not None:
+                a_text = await svc.crypto.decrypt(
+                    conn, user.user_id, "answers", str(a["id"]), a["text_enc"], a["key_version"]
+                )
+            found[a["pass"]] = {
+                "text": a_text,
+                "source": "prepared" if a["model"] == "prepared" else "model",
+                "refs": [
+                    {"node_id": str(n), "label": labels[n]}
+                    for n in a["memory_node_ids"]
+                    if n in labels
+                ],
+                "expanded": a["expanded"],
+            }
+            found["feedback"] = found["feedback"] or a["feedback"]
+    return {
+        "session_id": str(session_id),
+        "stored": transcript["stored"],
+        "started_at": _iso(started_at),
+        "segments": transcript["segments"],
+        "questions": questions,
+    }
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
