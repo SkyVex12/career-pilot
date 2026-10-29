@@ -20,6 +20,7 @@ import {
   type SettingsView,
   type UpdateState,
   type CareerOsConnection,
+  type LiveSession,
 } from "./api";
 import { cloudUrlsFor } from "./urls";
 import { ago, bar, settingsLine } from "./updates";
@@ -27,7 +28,7 @@ import { parseTarget, upcoming } from "./catalog";
 import { Applications, roundLabel, useCatalog } from "./Applications";
 import { applicationOption } from "./pairing";
 import { CareerOsSettings } from "./CareerOs";
-import { History } from "./History";
+import { History, LiveNow } from "./History";
 import { Resumes } from "./Resumes";
 import { when } from "./ui";
 import { SessionDetail } from "./SessionDetail";
@@ -106,6 +107,12 @@ export default function App() {
     );
   }
 
+  // "Open" on the profile's running call (Session and History, "Live now"): take it over here.
+  const openLive = async (live: LiveSession) => {
+    await api.openSession(live);
+    setTab("start");
+  };
+
   const needsToken = !tokenSet && (tab === "resumes" || tab === "applications" || tab === "work" || tab === "history");
   return (
     <main className="page">
@@ -132,13 +139,19 @@ export default function App() {
       <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
         {link.locked && tab !== "settings" && tab !== "debug" && <LinkCareerOsFirst onSettings={() => setTab("settings")} />}
         {!link.locked && tab === "start" && (
-          <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} />
+          <StartScreen session={session} tokenSet={tokenSet} environment={environment} onSettings={() => setTab("settings")} onOpenLive={openLive} />
         )}
         {!link.locked && needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
         {!link.locked && !needsToken && tab === "resumes" && <Resumes />}
         {!link.locked && !needsToken && tab === "applications" && <Applications />}
         {!link.locked && !needsToken && tab === "work" && <Work />}
-        {!link.locked && !needsToken && tab === "history" && <History />}
+        {!link.locked && !needsToken && tab === "history" && (
+          <History
+            running={session.running}
+            liveId={session.running ? session.sessionId : null}
+            onOpenLive={openLive}
+          />
+        )}
       </ProfileContext.Provider>
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
       {tab === "debug" && <DebugPanel session={session} />}
@@ -347,11 +360,13 @@ function StartScreen({
   tokenSet,
   environment,
   onSettings,
+  onOpenLive,
 }: {
   session: SessionView;
   tokenSet: boolean;
   environment: string;
   onSettings: () => void;
+  onOpenLive: (live: LiveSession) => Promise<void>;
 }) {
   const [mode, setMode] = useState<Mode>("interview");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(lastAnswerStyle);
@@ -438,6 +453,8 @@ function StartScreen({
 
   const running = session.running;
   return (
+    <>
+    {tokenSet && <LiveNow running={running} liveId={running ? session.sessionId : null} onOpen={onOpenLive} />}
     <section className="panel">
       {!tokenSet && <SetTokenFirst environment={environment} onSettings={onSettings} />}
       <div className="grid">
@@ -641,6 +658,7 @@ function StartScreen({
         </div>
       )}
     </section>
+    </>
   );
 }
 

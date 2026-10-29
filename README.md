@@ -144,7 +144,9 @@ The API (base path `/v1`, bearer token on every request):
 | `POST /jobs`, `GET /jobs` | Save a job (builds its pack); list jobs with their packs |
 | `POST /interviews`, `GET /interviews` | Schedule an interview (builds its pack for the round) |
 | `GET /sessions`, `GET /sessions/{id}` | Sessions; one session's status (`live`, `processing`, `ready`) and outputs |
+| `GET /sessions/live` | The profile's call still running, so the Session and History tabs can open (take over) or end it |
 | `GET /sessions/{id}/transcript`, `DELETE /sessions/{id}` | The decrypted transcript, if stored; delete a session and its log |
+| `GET /sessions/{id}/replay` | The call as the overlay showed it (both sides and every suggestion), for History |
 | `GET /usage` | Live minutes this month (`?month=YYYY-MM` for another) |
 
 ### Running the gateway locally

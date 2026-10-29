@@ -14,7 +14,7 @@ use std::time::Duration;
 use copilot_client::audio::OutFrame;
 use copilot_client::auth::{StaticTokens, Token};
 use copilot_client::net::client::{
-    self, ClientConfig, ClientEvent, ClientHandle, Command, ConnectionState, StartParams,
+    self, Adopt, ClientConfig, ClientEvent, ClientHandle, Command, ConnectionState, StartParams,
 };
 use copilot_client::net::close::StopReason;
 use copilot_client::protocol::audio::{CHANNEL_ME, CHANNEL_THEM, FLAG_SPEECH_END, FLAG_SPEECH_START};
@@ -335,6 +335,53 @@ async fn a_replaced_connection_stops_without_reconnecting() {
     let stats = a.handle.stats();
     assert_eq!(stats.close_codes, vec![Some(4410)]);
     assert_eq!(stats.connects, 1, "no reconnect after 4410");
+}
+
+impl Call {
+    /// Take over a running call, as "Open" in History does after the app lost it.
+    fn adopt(url: &str, adopt: Adopt) -> Self {
+        let mut config = ClientConfig::new(url, start_params());
+        config.adopt = Some(adopt);
+        let (tx, events) = tokio::sync::mpsc::unbounded_channel();
+        let (handle, task) = client::spawn(config, tokens(TOKEN), tx);
+        Self { handle, events, task, seen: Vec::new(), capture_ms: adopt.capture_offset_ms }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_call_is_taken_over_and_keeps_its_audio() {
+    let gw = Gateway::start(0, &[TOKEN], None);
+    let mut a = Call::start(&gw.url(), tokens(TOKEN), None);
+    let (sid, _) = a.live().await;
+    a.say("Tell me about a time you scaled a system?");
+    a.question().await;
+
+    // Another run of the app takes it over, continuing the frame numbers (two "them" frames
+    // so far): the first client is replaced, the second is live in the same call.
+    let adopt =
+        Adopt { session_id: sid, next_frame: [2, 0], me_audio: true, capture_offset_ms: a.capture_ms };
+    let mut b = Call::adopt(&gw.url(), adopt);
+    assert_eq!(b.live().await, (sid, true));
+    assert_eq!(a.stopped().await.0, StopReason::Replaced);
+    // It gets the whole call replayed (the first question too), and its own audio is not
+    // dropped as a repeat: a new question is heard.
+    b.say("How would you design a rate limiter?");
+    let mut heard = vec![b.question().await.1];
+    if !heard[0].contains("rate limiter") {
+        heard.push(b.question().await.1);
+    }
+    // (The offline detector may join it to the earlier turn; the new words are what count.)
+    assert!(heard.last().unwrap().ends_with("How would you design a rate limiter?"), "{heard:?}");
+    assert_eq!(heard[0], "Tell me about a time you scaled a system?", "the call is replayed");
+    b.handle.command(Command::End { summarize: true }).await;
+    assert_eq!(b.stopped().await.0, StopReason::Ended);
+
+    // A call that is no longer running: stop, and never start a new one in its place.
+    let gone = Call::adopt(&gw.url(), adopt);
+    let (reason, _, gone) = gone.stopped().await;
+    assert_eq!(reason, StopReason::Ended);
+    let stats = gone.handle.stats();
+    assert_eq!((stats.connects, stats.new_sessions), (1, 0));
 }
 
 #[tokio::test(flavor = "multi_thread")]

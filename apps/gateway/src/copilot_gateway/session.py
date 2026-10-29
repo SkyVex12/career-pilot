@@ -884,6 +884,9 @@ class Session:
             if self.info.resume_version_id
             else "",
             "resume_base": "1" if self.info.resume_is_base else "0",
+            # The client sends the mic's speech audio (session.ready me_audio): a client that
+            # takes the call over later (GET /sessions/live) needs to know.
+            "me_audio": "1" if self.me_audio else "0",
             "task_id": self.svc.task_id,
         }
 
