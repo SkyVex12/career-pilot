@@ -216,6 +216,19 @@ async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     )
     assert pack.digest_version == digest.version
     assert pack.context.company == "Globex"
+    # Keyterms for speech to text (2026-10-28: an interview pack had none, and the mic
+    # transcript misheard the platform and the employer): the hiring company, then the
+    # resume version's employers, skills and short project titles.
+    rows = await stack.admin.fetch(
+        "select kind, title, body->>'company' as company from app.memory_nodes"
+        " where user_id = $1 and status = 'active' order by id",
+        uid,
+    )
+    employers = [r["company"] for r in rows if r["kind"] == "role"]
+    skills = [r["title"] for r in rows if r["kind"] == "skill"]
+    assert pack.keyterms[0] == "Globex"
+    assert pack.keyterms[1 : 1 + len(employers) + len(skills)] == employers + skills
+    assert all(len(k.split()) <= 4 for k in pack.keyterms)
     assert [s.title for s in pack.ranked_stories][:1] == ["Zero-downtime ledger migration"]
     assert len(pack.ranked_stories) == 3
     assert len(pack.prepared_answers) == 4
