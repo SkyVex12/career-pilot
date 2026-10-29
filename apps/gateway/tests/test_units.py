@@ -855,7 +855,7 @@ def test_mock_interview_script_scores_the_10_29_turns() -> None:
         "school_check", "bye",
     }  # fmt: skip
     fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
-    assert fire["deploy_part1"] == "system_design"
+    assert fire["deploy_part1"] == "technical"
     assert fire["deploy_part2"] == "technical"
     assert fire["integration_interrupted"] == "technical"
     assert fire["search_status"] == "other"

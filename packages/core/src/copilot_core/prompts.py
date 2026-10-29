@@ -71,7 +71,8 @@ _RULES = """Rules:
 - How long {user_name} has done something ("how many years of X"): each role in <digest>
   states its length in brackets. Count only the roles whose title or text names X, give
   their lengths or the span they cover, or the headline figure in the profile when the
-  question is about the whole career. Never add up roles yourself into a new total.
+  question is about the whole career. Never add up roles yourself into a new total. A role
+  with no length: give its dates ("since 2022"), not a number of years.
 - Reuse the wording, story names and exact numbers in <digest> and <session_pack>: they come
   from {user_name}'s own documents and approved memory, so they are words {user_name} knows.
   Don't rephrase them into polished prose.

@@ -77,8 +77,8 @@ id = "deploy_part1"
 parts = ["Okay. Say you had to run fifty services on AWS, really hard to deploy and keep track of. Which tools would make your life easier?"]
 gap_s = 1.5
 expect = "answer"
-type = "system_design"
-case = "first piece of a question asked in two (10-29: 6 questions became 15 fires)"
+type = "technical"
+case = "first piece of a question asked in two (10-29: 6 questions became 15 fires); typed system_design on the call, technical 2 of 2 on 10-29's re-run, either fits"
 
 [[utterance]]
 id = "deploy_part2"

@@ -1,0 +1,347 @@
+[
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.00669,
+  "answer": "- Order reconciliation: moved nightly batch processing to Kafka streaming [n:s2]\n- I ran old and new pipelines side by side for six weeks [n:s2]\n- I\u2019d ramp up on unfamiliar APIs through a small end-to-end slice first\n- Then validate behavior under load before committing to cutover",
+  "metrics": {
+   "words": 42,
+   "lines": 4,
+   "words_per_line": 10.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [
+    "end-to-end"
+   ],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Uses a real adjacent project but does not acknowledge the missing deadline-learning story or explain enough of the learning approach."
+  }
+ },
+ {
+  "id": "learn_fast",
+  "qtype": "behavioral",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Tell me about a time you had to learn a new technology quickly to hit a deadline.",
+  "cost_usd": 0.016112,
+  "answer": "- I replaced nightly batch reconciliation with a streaming pipeline using Kafka, Go consumers, and PostgreSQL. [n:s2]\n- I had to get comfortable with Kafka quickly to meet our cutover deadline. [~]\n- I focused first on consumer groups, offset commits, and what happens when consumers restart. [~]\n- I built a small test consumer and deliberately crashed it to check replay behavior. [~]\n- I used idempotent database writes so replaying an event wouldn't apply the same change twice. [~]\n- We ran old and new side by side for 6 weeks before cutover. [n:s2]\n- Reconciliation lag went from 24 hours to under 2 minutes. [n:s2]\n- My takeaway is to learn the failure modes first, not just the happy-path API.",
+  "metrics": {
+   "words": 112,
+   "lines": 8,
+   "words_per_line": 14,
+   "cited_share": 0.38,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 4
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Had to learn Kafka quickly to meet a cutover deadline.",
+    "Focused learning on consumer groups, offset commits, and consumer restarts.",
+    "Built and deliberately crashed a test consumer to check replay behavior.",
+    "Used idempotent database writes to prevent duplicate changes during replay."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 2,
+   "notes": "Invents deadline-driven learning and implementation details; [~] does not justify them, and eight lines exceed the requested length."
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.00624,
+  "answer": "- Northwind\u2019s batch-to-streaming move matches my Kafka migration work [n:s2]\n- Larkspur\u2019s checkout platform gave me payments adapter ownership [n:a1]\n- I want larger-scale payments and more system design ownership\n- How are the four squads splitting the streaming work?",
+  "metrics": {
+   "words": 34,
+   "lines": 4,
+   "words_per_line": 8.5,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 4,
+   "notes": "Strong fit and goals cues, but the closing question uses a slot that could strengthen why Northwind specifically."
+  }
+ },
+ {
+  "id": "why_company",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Why do you want to work at Northwind Payments specifically?",
+  "cost_usd": 0.009599,
+  "answer": "- Your move from batch jobs to streaming is the main draw for me.\n- I moved order reconciliation from nightly batch to Kafka streaming at Larkspur. [n:s2]\n- That brought reconciliation lag from 24 hours to under 2 minutes. [n:s2]\n- I want a larger-scale payments role with more system design ownership.\n- My current team's roadmap is shifting to frontend work; I want to stay deep in backend.\n- The Go, PostgreSQL, Kafka, and AWS stack also fits my background. [n:s2] [n:s7]\n- How far along is the streaming migration, and what's been hardest so far?\n- How do the four squads split ownership of shared payment services?",
+  "metrics": {
+   "words": 98,
+   "lines": 8,
+   "words_per_line": 12.2,
+   "cited_share": 0.38,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Strong, grounded company fit, but eight lines exceed the 3\u20135-line, under-60-word limit; drop the unsolicited questions and combine the migration details."
+  }
+ },
+ {
+  "id": "named_platform",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "How much have you worked with Kafka specifically, beyond using it as a queue?",
+  "cost_usd": 0.007494,
+  "answer": "- Four years with Kafka; moved reconciliation to streaming [n:s2]\n- Go consumers wrote events into PostgreSQL\n- Ran batch and streaming side by side for six weeks [n:s2]\n- Added Avro compatibility checks; 140 schema changes, no breaks [n:s3]",
+  "metrics": {
+   "words": 33,
+   "lines": 4,
+   "words_per_line": 8.2,
+   "cited_share": 0.75,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Good project cues, but missing Kafka ordering, consumer groups, offset handling and duplicate pitfalls; the Go/PostgreSQL point also needs a citation."
+  }
+ },
+ {
+  "id": "named_platform",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "How much have you worked with Kafka specifically, beyond using it as a queue?",
+  "cost_usd": 0.010393,
+  "answer": "- I have four years with Kafka, including replacing nightly batch reconciliation with a streaming pipeline. [n:s2]\n- That used Kafka, Go consumers, and PostgreSQL; reconciliation lag went from 24 hours to under 2 minutes. [n:s2]\n- I introduced backward-compatible Avro schemas and a CI check; zero consumer breakages after 140 schema changes. [n:s3]\n- I\u2019d choose partition keys around ordering requirements; Kafka guarantees ordering within partitions, not across topics.\n- I\u2019d use consumer groups for parallelism and retained offsets for replay, rather than destructive queue reads.\n- The main pitfall is duplicate side effects: I\u2019d make PostgreSQL writes idempotent before committing consumer offsets.",
+  "metrics": {
+   "words": 95,
+   "lines": 6,
+   "words_per_line": 15.8,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 6
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Solid, grounded answer, but exceeds 80 words, reads as full sentences rather than cues, and omits rebalancing and producer idempotence or transactions."
+  }
+ },
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.006494000000000001,
+  "answer": "- Five years at Larkspur on the checkout platform [n:a1]\n- I own the order pipeline and payments adapter layer [n:a1]\n- Before that, shipment tracking and event ingestion at Tidewater [n:a2]",
+  "metrics": {
+   "words": 26,
+   "lines": 3,
+   "words_per_line": 8.7,
+   "cited_share": 1.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": false,
+   "invented": [
+    "Five years at Larkspur; the supported payments tenure is about four years, from 2022 to 2026."
+   ],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Direct, usable cues, but the payments tenure is overstated by one year."
+  }
+ },
+ {
+  "id": "years_one_domain",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "And how many years have you worked on payments specifically?",
+  "cost_usd": 0.009653,
+  "answer": "- I\u2019ve worked on payments specifically since 2022, on Larkspur Commerce\u2019s Checkout Platform. [n:a1]\n- I\u2019m a Senior Backend Engineer, owning the order pipeline and payments adapter layer. [n:a1]\n- Before that, I built shipment tracking APIs and event ingestion at Tidewater Logistics. [n:a2]\n- My payments work includes moving order reconciliation from nightly batch to Kafka streaming. [n:s2]\n- That brought reconciliation lag from 24 hours to under 2 minutes. [n:s2]\n- The main pitfall I\u2019d watch for is treating a payment timeout as a definite failure.\n- I\u2019d use idempotency keys and reconciliation to resolve uncertain outcomes without duplicate charges.",
+  "metrics": {
+   "words": 90,
+   "lines": 7,
+   "words_per_line": 12.9,
+   "cited_share": 0.71,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 7
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Supported facts, but say about four years directly and omit the unrelated timeout and idempotency discussion."
+  }
+ },
+ {
+  "id": "two_part",
+  "qtype": "technical",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Thanks, that's clear. So if you had fifty services on AWS, what would you use to deploy them, and which tool do you like most for watching them in production?",
+  "cost_usd": 0.008449,
+  "answer": "- ECS on AWS, with Terraform managing service infrastructure [n:a1]\n- GitHub Actions building images and deploying by environment [~]\n- OpenTelemetry traces and metrics, CloudWatch for AWS signals [n:a1]\n- I like Grafana dashboards; page on actionable SLO alerts [~]",
+  "metrics": {
+   "words": 35,
+   "lines": 4,
+   "words_per_line": 8.8,
+   "cited_share": 0.5,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 3,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "Answers both parts clearly, but omits a shared pipeline/service template, health checks, and rollback."
+  }
+ },
+ {
+  "id": "two_part",
+  "qtype": "technical",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Thanks, that's clear. So if you had fifty services on AWS, what would you use to deploy them, and which tool do you like most for watching them in production?",
+  "cost_usd": 0.010207,
+  "answer": "- I\u2019d deploy those services on ECS with Fargate, using Terraform for the infrastructure.\n- My AWS experience includes ECS, RDS, S3, and SQS; Terraform is also in my stack.\n- I\u2019d give each service its own task definition, IAM task role, and autoscaling policy.\n- I\u2019d deploy immutable images through CI, with health checks and automatic rollback on failed deployments.\n- For watching production, I\u2019d pick Grafana, with OpenTelemetry connecting metrics and traces across services.\n- I\u2019d alert on error rates, latency, and consumer lag, rather than CPU alone.\n- The main pitfalls are uncontrolled telemetry cardinality and treating healthy containers as healthy payment flows.",
+  "metrics": {
+   "words": 99,
+   "lines": 7,
+   "words_per_line": 14.1,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 7
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 4,
+   "correct": 5,
+   "spoken": 3,
+   "shape": 3,
+   "notes": "Answers both parts well, but exceeds 80 words, uses full sentences rather than glanceable cues, and leaves the shared service template and telemetry backend implicit."
+  }
+ },
+ {
+  "id": "worked_here_before",
+  "qtype": "other",
+  "pass": "fast",
+  "rep": 0,
+  "covered": false,
+  "question": "Have you ever worked for Northwind Payments before, as an employee or a contractor?",
+  "cost_usd": 0.006835,
+  "answer": "- Did I hear whether contractors count as prior employment too?\n- Were you asking about any Northwind engagement, not just employment?",
+  "metrics": {
+   "words": 20,
+   "lines": 2,
+   "words_per_line": 10,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 2,
+   "correct": 5,
+   "spoken": 4,
+   "shape": 2,
+   "notes": "Two redundant clarifying questions avoid the candidate's answer even though the interviewer explicitly included contractor work."
+  }
+ },
+ {
+  "id": "worked_here_before",
+  "qtype": "other",
+  "pass": "deep",
+  "rep": 0,
+  "covered": false,
+  "question": "Have you ever worked for Northwind Payments before, as an employee or a contractor?",
+  "cost_usd": 0.008033,
+  "answer": "- Does that also include work through a third-party vendor, rather than a direct contract?",
+  "metrics": {
+   "words": 14,
+   "lines": 1,
+   "words_per_line": 14,
+   "cited_share": 0.0,
+   "unknown_citations": [],
+   "stock_phrases": [],
+   "sentence_lines": 0
+  },
+  "grade": {
+   "grounded": true,
+   "invented": [],
+   "complete": 5,
+   "correct": 5,
+   "spoken": 5,
+   "shape": 5,
+   "notes": "ok"
+  }
+ }
+]
