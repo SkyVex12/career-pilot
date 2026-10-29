@@ -111,6 +111,26 @@ def addressed_by_name(text: str, first: str) -> bool:
     return False
 
 
+# Words that carry no answer: fillers, acknowledgements, pleasantries and the goodbye.
+PLEASANTRIES = frozenset(
+    {"yeah", "yes", "yep", "no", "ok", "okay", "so", "um", "uh", "mhmm", "hmm", "right",
+     "sure", "well", "like", "you", "know", "i", "mean", "a", "the", "and", "to", "it", "is",
+     "that", "for", "me", "too", "thanks", "thank", "great", "good", "nice", "day", "have",
+     "bye", "sounds", "meet", "meeting", "talking", "speaking", "with", "was", "doing", "how",
+     "about", "hi", "hello", "hey", "morning", "afternoon", "fine", "of", "course", "totally",
+     "absolutely", "cool", "awesome", "perfect", "alright", "all", "works", "same", "as",
+     "appreciate", "your", "time", "care", "take", "see", "soon", "again", "got",
+     "makes", "sense", "exactly", "definitely", "in", "touch", "be", "will"}
+)  # fmt: skip
+
+
+def substantive_words(text: str) -> int:
+    """How many words of the user's say something: fillers, acknowledgements and
+    pleasantries ("yeah, for sure, thank you, have a great day") do not count. Gates
+    following the user (`Session._maybe_follow`)."""
+    return sum(1 for w in _words(text) if w.strip("'") not in PLEASANTRIES)
+
+
 def _words(text: str) -> list[str]:
     return re.sub(r"[^\w\s']", " ", text.lower()).split()
 

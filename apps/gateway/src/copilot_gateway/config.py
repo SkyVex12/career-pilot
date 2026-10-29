@@ -39,6 +39,9 @@ QuestionType = Literal[
     "small_talk",
     "respond",
     "other",
+    # Not from the detector: the user has started answering, and the answer follows them
+    # (Session._maybe_follow). Sent to the client as "other".
+    "follow",
 ]
 
 
@@ -102,6 +105,7 @@ class Settings(CoreSettings):
             "coding",
             "standup_status",
             "other",
+            "follow",
         ]
     )
     rerank_keep: int = 6
@@ -151,6 +155,13 @@ class Settings(CoreSettings):
     # with nothing typed): how long it waits for that turn's detector to type it, for the deep
     # pass's shape. Its fast pass shows at once either way.
     force_type_wait_ms: int = 1500
+    # Follow the user (2026-10-28, the user's call): once the user has said this many words in
+    # reply to the other side, the answer follows what they are saying, whether or not a
+    # question was detected: a new card that continues in their direction. Once per turn of
+    # the other side, within follow_window_ms of its end. Off: answers only on detection.
+    follow_user: bool = True
+    follow_min_words: int = 8
+    follow_window_ms: int = 12000
     # Passes whose prompt cache is written at session start (and on a mode change), so the
     # first question is not cold. Only the fast pass by default: the first word waits on it.
     prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(

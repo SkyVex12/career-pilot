@@ -306,6 +306,11 @@ async def build_interview_pack(
                 "role_title": row["role"],
                 "round": row["round"],
                 "job_summary": str(data.get("job_summary", "")),
+                "requirements": [
+                    " ".join(str(r).split())[:80]
+                    for r in as_list(data.get("job_requirements"))[:10]
+                    if str(r).strip()
+                ],
             },
             "ranked_stories": ranked,
             "prepared_answers": prepared,

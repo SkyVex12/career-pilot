@@ -255,8 +255,16 @@ class AnswerEngine:
         self.start_pass(q, "fast")
 
     def confirm(
-        self, qid: UUID, text: str, turn_end_ms: int | None, final_ms: int | None = None
+        self,
+        qid: UUID,
+        text: str,
+        turn_end_ms: int | None,
+        final_ms: int | None = None,
+        *,
+        supersede: bool = True,
     ) -> None:
+        """`supersede` False (a card that follows the user) leaves older answers running: the
+        follow continues the answer the user is reading, it does not replace it."""
         q = self.questions.get(qid)
         if q is None:
             return
@@ -280,7 +288,8 @@ class AnswerEngine:
         for pass_ in q.logged:
             self._late_latency(q, pass_, {k: v for k, v in late.items() if v is not None})
         q.confirmed = True
-        self.supersede(keep=qid)
+        if supersede:
+            self.supersede(keep=qid)
         self._log_question(q, kept=True)
         self._auto_deep(q)
 
@@ -529,7 +538,9 @@ class AnswerEngine:
                     await prepared(answer)
                     return
             qhash = question_hash(q.text)
-            cached = await self._cached(qhash, pass_) if cacheable(q.text) else None
+            # A follow has the question's text but continues the user: never the cache.
+            reuse = cacheable(q.text) and q.qtype != "follow"
+            cached = await self._cached(qhash, pass_) if reuse else None
             if cached is not None:
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -589,7 +600,7 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs())
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded and host.store_text() and cacheable(q.text):
+            if not q.cancelled and not q.superseded and host.store_text() and reuse:
                 task = asyncio.create_task(self._cache_put(qhash, pass_, text, refs))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
@@ -691,7 +702,7 @@ class AnswerEngine:
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit. A reply to a
         remark (respond) is never a prepared standup answer."""
-        if q.qtype == "respond":
+        if q.qtype in ("respond", "follow"):
             return None
         result = self._match_result(q)
         return result.answer if result is not None else None

@@ -466,6 +466,7 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     assert s.deep_pass_auto
     assert s.deep_pass_auto_types == [
         "behavioral", "technical", "system_design", "coding", "standup_status", "other",
+        "follow",
     ]  # fmt: skip
     assert (s.conversation_summary_tokens, s.conversation_answers_tokens) == (500, 600)
     assert (s.detector_context_tokens, s.me_stt) == (300, True)
@@ -583,14 +584,30 @@ def test_live_prompts_split_personal_facts_from_knowledge() -> None:
     ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
     fast = prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text
     deep = prompts.deep_pass(ctx, "", "q?", "other", 800)
-    for system in (fast, deep.system[0].text):
+    work = prompts.PromptContext("Alex", "standup", "# digest", "pack", company="Acme")
+    standup = prompts.fast_pass(work, "", "q?", None, 250).system[0].text
+    for system in (fast, deep.system[0].text, standup):
         assert "come only from <digest>, <session_pack> or <memory>" in system
-        assert "never embellish" in system
         assert "phrased as Alex's thinking" in system
         assert "never as something Alex did, built or used" in system
         assert "Answer the question that was asked, fully and correctly, first" in system
-        assert "Never make up a situation, an action or an outcome" in system
         assert "Name no pay\n  figure unless" in system
+    # 2026-10-28, the user's call: a resume never holds all of someone's experience, so in an
+    # interview the answer suggests close details, aimed at the job, each marked [~] for the
+    # user to check; at work a made-up status misleads the team, and the strict rule stays.
+    for system in (fast, deep.system[0].text):
+        assert "Suggestions: a resume never holds all of Alex's experience" in system
+        assert "what the job asks for" in system
+        assert "End every cue or line that holds one with [~]" in system
+        assert "never a new employer, title, degree or date" in system
+        assert "What Alex has said in this call is a fact" in system
+        assert "suggest a close story built on Alex's real roles" in system
+        assert "never embellish" not in system
+    assert "never embellish" in standup
+    assert "Never make up a situation, an action or an outcome" in standup
+    assert "Suggestions:" not in standup
+    assert "{" not in fast  # every placeholder filled
+    assert "{" not in standup
     # "Other" questions build on the job and company context, never a made-up salary.
     assert "Pay: no figure unless the data has one" in str(deep.content)
     for qtype in prompts.QUESTION_TYPES:
@@ -690,6 +707,24 @@ def test_recruiter_screen_script_scores_the_10_28_turns() -> None:
         "hello", "offer_overview", "overview", "team_answer", "next_steps", "bye",
     }  # fmt: skip
     assert next(u for u in them if u["id"] == "all_clear")["expect"] == "either"
+
+
+def test_a_follow_continues_what_the_user_is_saying() -> None:
+    ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
+    fast = prompts.fast_pass(ctx, "", "q", "follow", 250)
+    assert "type follow" in fast.system[0].text
+    assert "Question (follow): q" in str(fast.content)
+    deep = prompts.deep_pass(ctx, "", "q", "follow", 800)
+    assert "continue from where their lines in the transcript leave off" in str(deep.content)
+    assert "follow" not in prompts.DETECTOR_ANSWERS  # the gateway's, never the detector's
+
+
+def test_substantive_words_skip_fillers_and_pleasantries() -> None:
+    from copilot_gateway.turn import substantive_words
+
+    assert substantive_words("Yeah, thank you so much, have a great day!") == 1  # "much"
+    assert substantive_words("Mhmm. Yeah. For sure. So") == 0
+    assert substantive_words("I owned the CRM sync for four client accounts") == 6
 
 
 def test_respond_fires_with_its_own_type() -> None:

@@ -133,6 +133,9 @@ Rules:
 - Cite each fact's source with its short id from the digest, like [n:3f2a]; a highlight cites
   its role.
 - ranked_story_ids lists short ids of stories from the digest, best fit first.
+- job_requirements: the description's key requirements, at most 10, each a short phrase
+  naming a platform, tool, skill or duty as the description names it ("HubSpot Operations
+  Hub workflows", "custom API integrations", "client meetings").
 - job_summary: what the role needs and what this round will probe, then which of the
   candidate's facts fit it best, in at most four sentences. Say nothing about what the digest
   lacks: the live copilot reads this before every answer, and a list of gaps makes it
@@ -143,6 +146,7 @@ Rules:
 PACK_SCHEMA: dict[str, Any] = obj(
     {
         "job_summary": STR,
+        "job_requirements": STRS,
         "ranked_story_ids": STRS,
         "prepared_answers": {
             "type": "array",

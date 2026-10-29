@@ -347,3 +347,32 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
     await stack.run(again)
     pack = await pack_for(stack, uid, f"job:{doc}")
     assert pack.digest_version == digest.version
+
+
+def test_a_pack_carries_the_jobs_requirements_for_the_live_prompts() -> None:
+    # 2026-10-28: interview answers may suggest details close to the user's work, aimed at
+    # what the job asks for; the live prompts see the pack, not the job description.
+    from copilot_core.packs import render_pack
+    from copilot_worker import prompts as worker_prompts
+
+    assert "job_requirements" in worker_prompts.PACK_SCHEMA["required"]
+    assert "job_requirements: the description's key requirements" in worker_prompts.PACK_SYSTEM
+    pack = SessionPack.model_validate(
+        {
+            "pack_id": "01a18300-0000-7000-8000-000000000001",
+            "user_id": "01a18300-0000-7000-8000-000000000002",
+            "mode": "interview",
+            "built_at": "2026-10-28T14:19:53Z",
+            "digest_version": "",
+            "context": {
+                "company": "Northgate",
+                "job_summary": "A CRM integrations role.",
+                "requirements": ["HubSpot Operations Hub workflows", "client meetings"],
+            },
+        }
+    )
+    text = render_pack(pack)
+    assert "Job summary: A CRM integrations role.\n" in text
+    assert "Job requirements: HubSpot Operations Hub workflows; client meetings" in text
+    old = SessionPack.model_validate({**pack.model_dump(mode="json"), "context": {"company": "X"}})
+    assert "Job requirements" not in render_pack(old)  # packs from before carry none
