@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from copilot_api.testing import Api, FakeCareerOs
+from copilot_core import keys
 
 pytestmark = pytest.mark.stack
 
@@ -175,3 +176,41 @@ async def test_account_things_stay_the_accounts(api: Api, fake: FakeCareerOs) ->
     assert r.status_code == 202
     [job] = api.take("user.delete")
     assert job["user_id"] == str(uid)
+
+
+async def test_live_sessions_are_the_profiles_own(api: Api, fake: FakeCareerOs) -> None:
+    uid, h = await admin_account(api, fake)
+    _, alex, blair = await listed(api, h)
+    other, _ = api.user()
+    vk = api.svc.valkey
+    calls = {
+        uid: ("active", {"hw_them": "41", "hw_me": "9", "me_audio": "1"}),
+        uuid.UUID(blair["id"]): ("reconnecting", {}),
+        other: ("active", {}),  # another account's: never listed
+    }
+    sids: dict[uuid.UUID, str] = {}
+    for owner, (status, extra) in calls.items():
+        sid = str(uuid.uuid4())
+        sids[owner] = sid
+        await vk.set(keys.user_active_session(owner), sid)
+        await vk.hset(keys.sess_state(sid), mapping={
+            "user_id": str(owner), "status": status, "mode": "interview", "platform": "zoom",
+            "started_at": "2026-10-29T16:56:10+00:00", **extra,
+        })  # fmt: skip
+    # A profile whose slot names a call that has ended: not live.
+    ended = str(uuid.uuid4())
+    await vk.set(keys.user_active_session(uuid.UUID(alex["id"])), ended)
+    await vk.hset(keys.sess_state(ended), mapping={"user_id": alex["id"], "status": "ended"})
+
+    async def live(headers: dict[str, str]) -> list[dict[str, Any]]:
+        r = await api.client.get("/v1/sessions/live", headers=headers)
+        assert r.status_code == 200, r.text
+        return r.json()["sessions"]
+
+    [mine] = await live(h)
+    assert (mine["id"], mine["connected"], mine["next_frame"], mine["me_audio"]) == (
+        sids[uid], True, {"them": 42, "me": 10}, True)  # fmt: skip
+    [theirs] = await live(as_profile(h, blair))
+    assert (theirs["id"], theirs["connected"]) == (sids[uuid.UUID(blair["id"])], False)
+    assert theirs["next_frame"] == {"them": 0, "me": 0}
+    assert await live(as_profile(h, alex)) == []

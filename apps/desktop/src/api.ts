@@ -271,6 +271,20 @@ export const api = {
   /** `summarize: false` keeps the transcript only, with no post-call outputs. */
   endSession: (summarize = true) => invoke<void>("end_session", { summarize }),
   endOtherSession: () => invoke<string>("end_other_session"),
+  /** Take over the profile's running call in this app (Session and History, "Live now"). */
+  openSession: (live: LiveSession) =>
+    invoke<void>("open_session", {
+      request: {
+        session_id: live.id,
+        mode: live.mode,
+        platform: live.platform ?? "",
+        next_frame: [Math.max(0, live.next_frame.them), Math.max(0, live.next_frame.me)],
+        me_audio: live.me_audio,
+        elapsed_ms: live.started_at ? Math.max(0, Date.now() - Date.parse(live.started_at)) : 0,
+      },
+    }),
+  /** End the profile's running call wherever it runs; `profile` is the app's (null: "Me"). */
+  endLiveSession: (sessionId: string, profile: string | null) => invoke<string>("end_live_session", { sessionId, profile }),
   forceQuestion: (text: string | null) => invoke<void>("force_question", { text }),
   /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */
   respond: (text: string | null) => invoke<void>("respond", { text }),
@@ -521,6 +535,19 @@ export interface SessionDetail extends Partial<SessionItem> {
   questions: number;
 }
 
+/** GET /sessions/live: the profile's call still running on the gateway. */
+export interface LiveSession {
+  id: string;
+  mode: Mode;
+  title: string | null;
+  platform: string | null;
+  started_at: string | null;
+  /** False while the gateway waits for an app to come back. */
+  connected: boolean;
+  next_frame: { them: number; me: number };
+  me_audio: boolean;
+}
+
 export interface Segment {
   channel: "them" | "me";
   seg_id: number;
@@ -702,6 +729,7 @@ export const rest = {
       "GET",
       `/sessions?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}`,
     ),
+  liveSessions: () => call<{ sessions: LiveSession[] }>("GET", "/sessions/live"),
   session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
   replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),

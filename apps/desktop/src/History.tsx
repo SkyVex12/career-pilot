@@ -1,11 +1,22 @@
-// History: past sessions (open one, delete one), live minutes this period, and account
-// deletion behind a confirmation.
-import { useCallback, useEffect, useState } from "react";
-import { api, rest, type SessionItem, type Usage } from "./api";
+// History: calls still running (open one here, or end it), past sessions (open one, delete
+// one), live minutes this period, and account deletion behind a confirmation.
+import { useCallback, useContext, useEffect, useState } from "react";
+import { api, rest, type LiveSession, type SessionItem, type Usage } from "./api";
 import { Chip, when } from "./ui";
 import { SessionDetail } from "./SessionDetail";
+import { ProfileContext } from "./profiles";
 
-export function History() {
+export function History({
+  running,
+  liveId,
+  onOpenLive,
+}: {
+  /** A call runs in this app now. */
+  running: boolean;
+  /** That call's id. */
+  liveId: string | null;
+  onOpenLive: (live: LiveSession) => Promise<void>;
+}) {
   const [sessions, setSessions] = useState<SessionItem[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -55,6 +66,7 @@ export function History() {
 
   return (
     <>
+      <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />
       <section className="panel">
         <div className="usage">
           <div>
@@ -95,6 +107,110 @@ export function History() {
       </section>
       <DeleteAccount />
     </>
+  );
+}
+
+/** The profile's call still running on the server: after the app quit or crashed mid-call, or
+ * on another computer. Open takes the call over here (this computer's audio from now on); End
+ * ends it wherever it runs. Each profile sees its own. */
+export function LiveNow({
+  running,
+  liveId,
+  onOpen,
+  onEnded,
+}: {
+  running: boolean;
+  liveId: string | null;
+  onOpen: (live: LiveSession) => Promise<void>;
+  onEnded?: () => void;
+}) {
+  const { current } = useContext(ProfileContext);
+  const [live, setLive] = useState<LiveSession[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLive((await rest.liveSessions()).sessions);
+    } catch {
+      setLive([]); // an older server: no list
+    }
+  }, []);
+  useEffect(() => {
+    load();
+    const t = window.setInterval(load, 10_000);
+    return () => window.clearInterval(t);
+  }, [load]);
+
+  if (live.length === 0) return null;
+
+  const open = async (l: LiveSession) => {
+    setBusy(l.id);
+    setMessage(null);
+    try {
+      await onOpen(l);
+    } catch (e) {
+      setMessage(String(e));
+      setBusy(null);
+    }
+  };
+  const end = async (l: LiveSession) => {
+    if (!window.confirm(`End this ${l.mode}? Its summary is written as usual.`)) return;
+    setBusy(l.id);
+    setMessage(null);
+    try {
+      await api.endLiveSession(l.id, current);
+      setMessage("Ended. The summary appears below in a minute.");
+      await load();
+      onEnded?.();
+    } catch (e) {
+      setMessage(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <h3>Live now</h3>
+      <table className="list">
+        <tbody>
+          {live.map((l) => {
+            const here = l.id === liveId;
+            return (
+              <tr key={l.id}>
+                <td className="nowrap">{l.started_at ? when(l.started_at) : "–"}</td>
+                <td>
+                  {l.mode}
+                  {l.title ? `: ${l.title}` : ""}
+                </td>
+                <td>
+                  <Chip state={here || l.connected ? "busy" : "off"}>{here ? "in this app" : l.connected ? "connected" : "waiting"}</Chip>
+                </td>
+                <td className="actions nowrap">
+                  {!here && (
+                    <button
+                      disabled={running || busy !== null}
+                      title={running ? "End the call running in this app first" : "Continue this call here, with this computer's audio"}
+                      onClick={() => open(l)}
+                    >
+                      Open
+                    </button>
+                  )}
+                  <button className="danger" disabled={busy !== null} onClick={() => end(l)}>
+                    End
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="note">
+        This profile's call is still running, here or on another computer. Open continues it in this app; the app running it stops. End ends it and writes its summary.
+      </p>
+      {message && <p className="note warn">{message}</p>}
+    </section>
   );
 }
 

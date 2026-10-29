@@ -1515,6 +1515,7 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `POST /jobs`, `GET /jobs` | Desktop builds from before applications: the same rows, as jobs (until 0009) |
 | `POST /interviews`, `GET /interviews` | Schedule an interview (enqueues `pack.build`); list interviews with their job and pack |
 | `GET /sessions`, `GET /sessions/{id}` | Session list; one session's status and outputs |
+| `GET /sessions/live` | The profile's call still running on the gateway, with the next frame numbers a client taking it over continues from (Session and History, "Live now": Open, End) |
 | `GET /sessions/{id}/transcript` | Decrypted transcript, if stored |
 | `GET /sessions/{id}/replay` | The call as the overlay showed it: transcript, kept questions, their answers and ratings, timed from the start (History) |
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |

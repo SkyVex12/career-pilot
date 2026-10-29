@@ -105,11 +105,27 @@ pub struct ClientConfig {
     pub start: StartParams,
     pub ping_interval: Duration,
     pub ring_seconds: u32,
+    /// Take over a call that is already running (another run of the app, or another computer)
+    /// instead of starting one.
+    pub adopt: Option<Adopt>,
+}
+
+/// A running call to resume from scratch (`GET /sessions/live`): the client continues the
+/// gateway's frame numbering and capture clock, so its audio is not dropped as a repeat.
+#[derive(Debug, Clone, Copy)]
+pub struct Adopt {
+    pub session_id: Uuid,
+    /// The next frame number the gateway accepts, them and me.
+    pub next_frame: [u32; 2],
+    /// The gateway takes the mic's speech audio (`session.ready` `me_audio`).
+    pub me_audio: bool,
+    /// Milliseconds since the call started: added to this client's capture clock.
+    pub capture_offset_ms: u32,
 }
 
 impl ClientConfig {
     pub fn new(url: impl Into<String>, start: StartParams) -> Self {
-        Self { url: url.into(), start, ping_interval: PING_INTERVAL, ring_seconds: 10 }
+        Self { url: url.into(), start, ping_interval: PING_INTERVAL, ring_seconds: 10, adopt: None }
     }
 }
 
@@ -223,6 +239,7 @@ pub fn spawn(
 ) -> (ClientHandle, tokio::task::JoinHandle<StopReason>) {
     let (tx, rx) = mpsc::channel(2048);
     let stats = Arc::new(Mutex::new(ClientStats::default()));
+    let adopt = config.adopt;
     let client = Client {
         ring: FrameRing::new(config.ring_seconds),
         config,
@@ -230,11 +247,13 @@ pub fn spawn(
         events,
         rx,
         stats: stats.clone(),
-        session_id: None,
+        session_id: adopt.map(|a| a.session_id),
         last_seq: 0,
-        frame_seq: [0, 0],
-        me_audio: false,
+        frame_seq: adopt.map_or([0, 0], |a| a.next_frame),
+        me_audio: adopt.is_some_and(|a| a.me_audio),
         capture_base_ms: 0,
+        capture_offset_ms: adopt.map_or(0, |a| a.capture_offset_ms),
+        adopting: adopt.is_some(),
         last_capture_ms: 0,
         ending: false,
         backoff: Backoff::new(),
@@ -259,6 +278,11 @@ struct Client {
     ring: FrameRing,
     /// Stream position where the current session started (non-zero after a 4408 restart).
     capture_base_ms: u32,
+    /// An adopted call's age when this client took it over (`Adopt`); 0 otherwise.
+    capture_offset_ms: u32,
+    /// Taking over a call the gateway has not accepted yet: if it is gone, stop rather than
+    /// start a new one.
+    adopting: bool,
     last_capture_ms: u32,
     ending: bool,
     backoff: Backoff,
@@ -343,6 +367,13 @@ impl Client {
                 retry_after_ms,
                 refreshed_after_401,
             };
+            if self.adopting
+                && code.and_then(copilot_protocol::CloseCode::from_code)
+                    == Some(copilot_protocol::CloseCode::NoStart)
+            {
+                self.emit(ClientEvent::Warning { message: "that call is no longer running".into() });
+                return self.stop(StopReason::Ended);
+            }
             match close::on_close(code, ctx) {
                 CloseAction::Stop(reason) => return self.stop(reason),
                 CloseAction::Reconnect { resume, delay: d, refresh_token } => {
@@ -389,6 +420,8 @@ impl Client {
         self.me_audio = false;
         self.ring.clear();
         self.capture_base_ms = self.last_capture_ms;
+        self.capture_offset_ms = 0;
+        self.adopting = false;
     }
 
     /// Wait out a reconnect delay while still buffering audio. True if told to stop.
@@ -425,7 +458,10 @@ impl Client {
             channel: if ch == 1 { CHANNEL_ME } else { CHANNEL_THEM },
             flags: f.flags,
             frame_seq: self.frame_seq[ch],
-            capture_ms: f.capture_ms.saturating_sub(self.capture_base_ms),
+            capture_ms: f
+                .capture_ms
+                .saturating_sub(self.capture_base_ms)
+                .saturating_add(self.capture_offset_ms),
         };
         let bytes = match encode_frame(&header, &f.audio_bytes()) {
             Ok(b) => b,
@@ -476,7 +512,8 @@ impl Client {
         }
     }
 
-    fn announce_resumed(&self) {
+    fn announce_resumed(&mut self) {
+        self.adopting = false;
         if let Some(session_id) = self.session_id {
             self.state(ConnectionState::Live { session_id, resumed: true });
         }
@@ -537,7 +574,9 @@ impl Client {
                             continue; // replayed on resume, already processed
                         }
                         self.last_seq = message.seq();
-                        if announce_resume {
+                        // A takeover's refusal comes as an error before the close: not accepted.
+                        let refusal = self.adopting && matches!(message, ServerMessage::ServerError(_));
+                        if announce_resume && !refusal {
                             announce_resume = false;
                             self.announce_resumed();
                         }
@@ -626,7 +665,7 @@ impl Client {
                     }
                     self.stats().pings_sent += 1;
                 }
-                _ = tokio::time::sleep_until(settle_at), if announce_resume => {
+                _ = tokio::time::sleep_until(settle_at), if announce_resume && !self.adopting => {
                     announce_resume = false;
                     self.announce_resumed();
                 }

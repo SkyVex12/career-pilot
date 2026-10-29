@@ -24,7 +24,7 @@ use copilot_client::audio::pipeline::Levels;
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
-use copilot_client::net::client::{self, ClientConfig, ClientStats, ConnectionState, StartParams};
+use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
 use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::{AnswerStyle, Mode};
@@ -524,6 +524,89 @@ const CAREER_OS_REQUIRED: &str = "Please link your Career-OS account to use this
 
 #[tauri::command]
 async fn start_session(app: AppHandle, state: State<'_, AppState>, request: StartRequest) -> Res<()> {
+    launch(app, state, request, None).await
+}
+
+/// "Open" on the profile's running call (Session and History, "Live now"; GET /sessions/live):
+/// take it over in this app, with this computer's audio, from wherever it was running. The
+/// call is the current profile's, so the session URL names it.
+#[derive(Debug, Deserialize)]
+struct OpenRequest {
+    session_id: Uuid,
+    mode: Mode,
+    platform: String,
+    /// The next frame numbers the gateway accepts, them and me.
+    next_frame: [u32; 2],
+    me_audio: bool,
+    /// How long the call has been running, to continue its capture clock.
+    elapsed_ms: u64,
+}
+
+#[tauri::command]
+async fn open_session(app: AppHandle, state: State<'_, AppState>, request: OpenRequest) -> Res<()> {
+    let adopt = Adopt {
+        session_id: request.session_id,
+        next_frame: request.next_frame,
+        me_audio: request.me_audio,
+        capture_offset_ms: u32::try_from(request.elapsed_ms).unwrap_or(u32::MAX),
+    };
+    // The start parameters are what the gateway already has; they are only sent if the call
+    // is gone, and then the client stops instead (Adopt).
+    let start = StartRequest {
+        mode: request.mode,
+        job_id: None,
+        interview_id: None,
+        meeting_title: None,
+        employer_id: None,
+        agenda: None,
+        material_ids: vec![],
+        platform: request.platform,
+        store_transcript: true,
+        answer_style: None,
+    };
+    launch(app, state, start, Some(adopt)).await
+}
+
+/// "End" on the profile's running call: this app's own live call ends as usual; any other is
+/// resumed from here and ended, which stops the app still holding it (4410). `profile` is the
+/// app's current profile (None: "Me").
+#[tauri::command]
+async fn end_live_session(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    profile: Option<String>,
+) -> Res<String> {
+    let mine = state
+        .engine
+        .lock()
+        .unwrap()
+        .clone()
+        .filter(|_| state.settings.lock().unwrap().last_session_id == Some(session_id));
+    if let Some(engine) = mine {
+        engine.request_end(true).await;
+        return Ok(format!("ending session {session_id}"));
+    }
+    let url = {
+        let mut s = state.settings.lock().unwrap().clone();
+        s.profile = profile;
+        s.session_url()
+    };
+    let tokens = state.tokens()?;
+    let code = client::end_session(&url, tokens.as_ref(), session_id).await?;
+    state.update_settings(|s| {
+        if s.last_session_id == Some(session_id) {
+            s.last_session_id = None;
+        }
+    });
+    Ok(format!("ended session {session_id} (close {code:?})"))
+}
+
+async fn launch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: StartRequest,
+    adopt: Option<Adopt>,
+) -> Res<()> {
     let _starting = state.begin_start()?;
     let tokens = state.tokens()?;
     tokens.current().await.map_err(|e| e.to_string())?;
@@ -551,7 +634,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
         them_vad: vad()?,
         me_vad: vad()?,
     };
-    let config = ClientConfig::new(
+    let mut config = ClientConfig::new(
         settings.session_url(),
         StartParams {
             mode: request.mode,
@@ -567,6 +650,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, request: Star
             answer_style: request.answer_style,
         },
     );
+    config.adopt = adopt;
     let sink = {
         let app = app.clone();
         let history = state.history.clone();
@@ -1201,6 +1285,8 @@ pub fn run() {
             start_session,
             end_session,
             end_other_session,
+            open_session,
+            end_live_session,
             force_question,
             respond,
             expand_answer,

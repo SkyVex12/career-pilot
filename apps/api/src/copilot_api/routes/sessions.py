@@ -7,6 +7,10 @@ so there is no audio upload after the call any more.
 each question with its talking points and detailed answer, timed from the start of the call,
 so History can show the same window afterwards.
 
+`GET /sessions/live` is the profile's call still running on the gateway, so the app can open
+(resume) or end one it lost track of, after a restart or from another computer. It reports
+where the call's audio numbering stands, which a client taking it over continues from.
+
 `GET /sessions/{id}` reports `status`: `live` while the call runs, `processing` after it ends
 until the post-call outputs are written, then `ready` with the outputs. The desktop app polls
 it after a call. Text is decrypted in memory only for the response.
@@ -80,6 +84,43 @@ async def list_sessions(
         "sessions": items,
         "next_before": items[-1]["started_at"] if len(items) == limit else None,
     }
+
+
+def _int(value: str | None, default: int = -1) -> int:
+    try:
+        return int(value) if value not in (None, "") else default
+    except ValueError:
+        return default
+
+
+@router.get("/sessions/live")
+async def live_sessions(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    """The running call of the profile asked for ("Me" or one profile), if any. `connected` is
+    false while the gateway waits for a client to come back (it ends the call after the
+    resume window)."""
+    items: list[dict[str, Any]] = []
+    sid = await svc.valkey.get(keys.user_active_session(user.user_id))
+    if sid:
+        sid = text(sid)
+        raw = await svc.valkey.hgetall(keys.sess_state(sid))
+        state = {text(k): text(v) for k, v in raw.items()}
+        if state.get("user_id") == str(user.user_id) and state.get("status") not in (
+            None,
+            "ended",
+        ):
+            items.append({
+                "id": sid,
+                "mode": state.get("mode"),
+                "title": state.get("title") or None,
+                "platform": state.get("platform") or None,
+                "started_at": state.get("started_at"),
+                "connected": state.get("status") == "active",
+                # The next frame numbers the gateway accepts (its high water + 1).
+                "next_frame": {ch: _int(state.get(f"hw_{ch}")) + 1 for ch in ("them", "me")},
+                # Calls from before the gateway saved it: the stage transcribes the mic live.
+                "me_audio": state.get("me_audio", "1") == "1",
+            })  # fmt: skip
+    return {"sessions": items}
 
 
 async def _live_owner(svc: Services, user: Principal, sid: UUID) -> dict[str, str] | None:
