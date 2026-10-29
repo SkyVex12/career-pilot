@@ -602,6 +602,8 @@ def test_live_prompts_split_personal_facts_from_knowledge() -> None:
         assert "never a new employer, title, degree or date" in system
         assert "What Alex has said in this call is a fact" in system
         assert "suggest a close story built on Alex's real roles" in system
+        assert "two hands-on details from their own past work with it" in system
+        assert 'No bracketed placeholder ever ("[your location]")' in system
         assert "never embellish" not in system
     assert "never embellish" in standup
     assert "Never make up a situation, an action or an outcome" in standup

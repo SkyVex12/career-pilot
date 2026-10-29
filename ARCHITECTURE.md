@@ -1086,7 +1086,8 @@ The semantic cache is not a separate store: each session pack carries prepared a
   "built_at": "2026-10-05T14:00:00Z",
   "digest_version": "sha256:9b1f...",
   "context": {"company": "Acme", "role_title": "Senior Backend Engineer",
-              "round": "technical", "job_summary": "..."},
+              "round": "technical", "job_summary": "...",
+              "requirements": ["Kafka streaming", "PostgreSQL", "on-call ownership"]},
   "ranked_stories": [
     {"node_id": "...", "short_id": "n:3f2a", "title": "Payments migration",
      "one_liner": "...", "competencies": ["ownership", "technical depth"]}
@@ -1256,6 +1257,7 @@ Answers run outside the group, one task per question, so a new question can canc
 3. If speech starts again before confirmation, cancel the speculative work (a held pass silently; a released one with `question.cancelled`) and keep accumulating text. The next speech-end starts again at step 1. This holds only while the speaker could still be mid-sentence: when speech starts after a pause longer than the silence timer and the STT final is in, the speaker had finished, so the turn keeps deciding on its own text and the new speech starts a new utterance (otherwise a detector slower than the gap between two sentences glues them into one question).
 4. Confirm at `t0 + 400 ms`, or earlier if the turn-detection model says the turn is complete, once the STT final has arrived (waiting at most `final_wait_max_ms` more, then using the interim text). Send `question.detected` with `speculative: false` and the same `question_id`; the deep pass starts with the retrieval results once the fast pass has ended (or at once, if it already has), for every type in `deep_pass_auto_types`; with `deep_pass_auto` off it waits until the user taps expand. The question joins the conversation memory, which pairs it with what the user says next. Confirmation also stops generation for every older question (`answer.error` with code `cancelled`); a speculative start does not, so a false start never cuts off the answer the user is reading.
 5. If the detector says it is not a question for the user, nothing is shown; the text stays in the conversation memory as context.
+6. **Follow the user.** Once the user has said `follow_min_words` real words (fillers and pleasantries do not count) in reply to the other side's last turn, within `follow_window_ms` of its end, a card continues from what they are saying, whether a question was shown for that turn or not: type `follow` on the gateway (sent as `other`), the turn's text as its question, the user's lines in the transcript. Once per turn of the other side; not while the detector is still deciding it, not after small talk. It never takes a prepared answer or the exact-repeat cache, and it does not cancel the answer the user is reading.
 
 **One detector call per turn.** The decision on the interim text stands unless the STT final changes it materially: other words, or a "?" the interim lacked (an interim often lacks the last words and the question mark; case and other punctuation do not count). When the final does, the detector, the prepared match and the held fast pass restart on the final the moment it arrives, and the call on the interim is cancelled; the turn then goes on from step 2 with the final's decision. So a turn never waits for two detector calls in a row (in the October 2026 live test that double call was the p95: 1.3 to 2.1 s extra on 3 of 8 questions). When no text has arrived by the speech end, the turn starts on the first interim or final that does, rather than waiting for the final.
 
@@ -1277,6 +1279,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `fast_hedge_ms` | 1200 (the same hedge for the fast pass; empty: retry only after the first-token timeout) |
 | `openai_fast_retry_tier` | priority (the OpenAI tier of the fast pass's second route; empty: the first route's) |
 | `force_type_wait_ms` | 1500 (a forced question that took over a deciding turn waits this long for its detector's type) |
+| `follow_user`, `follow_min_words`, `follow_window_ms` | on, 8, 12000 (step 6: follow the user once they are answering) |
 | `name_address_grace_ms` | 1000 (standups and meetings: how long a question by name waits for the detector before it shows as `respond`; empty: off) |
 | `detector` | Haiku 4.5, Standard tier, max_tokens 80, JSON output |
 | `prepared_answer_thresholds` | per embedding model: `openai:text-embedding-3-large@1024` 0.63 with a 0.05 margin over the runner-up; `bedrock:cohere.embed-v4:0@1024` 0.85 (not yet calibrated). Set from `copilot-calibrate-prepared` on `evals/prepared/calibration.toml`: the lowest threshold with no wrong match, plus 0.03, since a wrong match shows points for another question |
@@ -1284,7 +1287,7 @@ Answers run outside the group, one task per question, so a new question can canc
 | `fast_pass` | Haiku 4.5, Standard tier (Priority by flag), max_tokens 250 |
 | `deep_pass` | Sonnet 5.5, Standard tier, max_tokens 800, thinking `between_tools` (or `adaptive`) at effort `low` |
 | `deep_pass_auto` | on: the deep pass starts once the question is confirmed and its fast pass has ended |
-| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other (every type that gets an answer; the three of before turn the cost down) |
+| `deep_pass_auto_types` | behavioral, technical, system_design, coding, standup_status, other, follow (every type that gets an answer; the three of before turn the cost down) |
 | `rerank_keep` | 6 |
 | `retrieval_budget_ms` | 100 |
 | `first_token_timeout_ms` | 1500, then the next route (OpenAI live routes may set their own) |
@@ -1328,7 +1331,20 @@ no story that shows what it asks gets the user's approach as a plan, and the clo
 only if it shows the same thing, said to be the closest. Questions about the job, company, pay,
 culture or the future build on the pack's company, role and job summary, what the interviewer
 said, and the user's goals; no salary figure unless the user's data has one. The same policy
-holds in every mode (interview, standup, meeting).
+holds in every mode (interview, standup, meeting), with one exception since 2026-10-28.
+
+**Suggested details (interviews).** A resume never holds all of someone's experience, and the
+user cannot type it all in either. So in an interview, where the data is thin, the answer
+suggests specific details that are probably true of the user's real work and close to it (how
+they did it, the tools and APIs, a concrete example, a typical scale), aimed at what the job
+asks for (the pack's job summary and requirements), and ends every cue or line holding one with
+`[~]`. The overlay dims those lines and tags them "check": the user says what is theirs and
+drops the rest. Asked about something the job names that the data mentions only lightly (a
+proposal, an evaluation, a skill), the answer adds one or two hands-on details from the user's
+own past work, marked. Never a new employer, title, degree, date or pay figure, and never a
+bracketed placeholder. What the user has said in the call counts as fact. Standups and meetings
+keep the strict rule: a made-up ticket or status misleads the team. Prepared answers in the
+pack stay strict too. The user chose this (the 2026-10-28 analysis).
 
 **Fast pass system prompt:**
 

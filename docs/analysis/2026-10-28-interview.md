@@ -365,3 +365,22 @@ new interview for this application still has no HubSpot facts in its answers.
 Not measured live: the fast-pass hedge and the forced take-over (tested with scripted models
 only; whether Priority is faster in a slow spell shows in the next real call), and the
 keyterms' effect on the mic transcript.
+
+## 7. After review: suggestions and following the user
+
+Your call after reading section 6: a resume never holds all of your experience, so interview
+answers should suggest close, related details for you to check, and follow you once you start
+talking, even when no question was detected. Both are in (ARCHITECTURE.md, "Suggested details"
+and Turn detection step 6). Suggested lines end in `[~]`, and the overlay dims them and tags
+them "check". Standups and meetings keep the strict rule.
+
+Checked on your real data this time: the paired resume through the new extraction, the real JD
+through the new pack prompt, the call's own questions with the transcript up to each, on the
+Stage 0 VM (results kept off the repository). The pack now lists the job's requirements and has
+HubSpot-specific prepared answers (CRM API, Data Sync, webhooks, programmable automation).
+On the HubSpot question the deep pass gives the two resume facts, cited, then hands-on
+suggestions marked `[~]` (v3 object endpoints, private-app tokens with scoped permissions),
+then batch upserts, 429s, duplicate webhooks and field ownership against sync loops. The
+location question gave no placeholder in 2 of 2 runs after the last rule change (one before
+it). Follow cards built on what you said (a HubSpot sync claim, consulting client work). Spend
+for these runs: about $0.09 (one pack build on gpt-6.1-sol, 26 live passes).

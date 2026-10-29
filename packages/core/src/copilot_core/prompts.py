@@ -125,7 +125,10 @@ SUGGEST = _Policy(
         " cue or line that holds one with [~]. Stay close to\n    the data: its employers,"
         " projects, stack and dates; never a new employer, title, degree or date,\n    and no"
         " pay figure. What {user_name} has said in this call is a fact, not a\n    suggestion:"
-        " build on it."
+        " build on it. Asked about their experience with something the job names, when the\n"
+        "    data holds only a light mention (a proposal, an evaluation, a skill name), add one"
+        " or\n    two hands-on details from their own past work with it, first person and past"
+        ' tense,\n    each marked [~], rather than only "I\'d" lines.'
     ),
     no_match_rule=(
         "With no\n  match, suggest a close story built on {user_name}'s real roles, projects"
@@ -159,6 +162,8 @@ not sentences to read out.
   that shows what was asked. "Tell me about a time you X" with no story that shows X: the
   first cues are how {user_name} handles X. A fact from the data keeps its number and
   citation; a reasoning cue may start with "I'd". No full sentences, no full stops.
+- No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
+  output only a question back.
 - Output only the bullet list."""
 )
 
@@ -172,6 +177,8 @@ speak from, in the shape given for the question type, not sentences to read out.
     + """
 - One idea per line, 4 to 12 words, as notes: fragments {user_name} turns into speech, not
   finished sentences, with no full stop at the end.
+- No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
+  output only a question back.
 - Output only the lines, with no preamble."""
 )
 
