@@ -101,8 +101,12 @@ select {
   max-width: 420px;
 }
 
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: auto;
+  padding: 0;
+  margin: 0;
+  flex: none;
 }
 
 .muted {
@@ -614,7 +618,7 @@ input[type="checkbox"] {
 
 .hotkey {
   display: grid;
-  grid-template-columns: 1fr 220px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   align-items: center;
   gap: 4px 10px;
 }
@@ -626,6 +630,9 @@ input[type="checkbox"] {
 .hotkey input {
   grid-column: 2;
   grid-row: 1;
+  max-width: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .hotkey-hint {
@@ -1520,8 +1527,51 @@ tr.muted td {
 }
 
 .danger-zone h3 {
-  margin-top: 0;
+  margin: 0 0 4px;
   color: var(--bad);
+}
+
+.danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.danger-row .note {
+  margin: 0;
+}
+
+.danger-row button {
+  flex: none;
+}
+
+/* Settings: headed sections on one label column, the Save bar at the end. */
+.settings > h3 {
+  margin: 28px 0 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings > h3:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings > h3 + .grid {
+  margin-top: 0;
+}
+
+.save-bar {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  align-items: center;
 }
 
 /* Work: companies, the work log, material and facts. */

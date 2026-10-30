@@ -15,7 +15,7 @@ import {
 import { STAGES, isTextFile, pairingChoices, pairingValue, resumeLabel, stageLabel } from "./pairing";
 import { upcoming } from "./catalog";
 import { PullDialog } from "./CareerOs";
-import { PackStatus, when } from "./ui";
+import { PackStatus, when, Loading, LoadError, useOnShow } from "./ui";
 import { usePolling } from "./usePolling";
 
 export const ROUNDS: [Round, string][] = [
@@ -65,8 +65,9 @@ function soon(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function Applications() {
+export function Applications({ active = true }: { active?: boolean }) {
   const { applications, interviews, error, reload } = useCatalog();
+  useOnShow(active, reload);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [pulling, setPulling] = useState(false);
   const [careerOs, setCareerOs] = useState<CareerOsConnection | null>(null);
@@ -85,7 +86,7 @@ export function Applications() {
           <span className="note">Connect Career-OS under Settings to pull applications from it.</span>
         )}
       </div>
-      {error && <p className="note warn">{error}</p>}
+      {error && <LoadError error={error} onRetry={reload} />}
       {pulling && (
         <PullDialog
           onClose={() => setPulling(false)}
@@ -107,6 +108,7 @@ export function Applications() {
       )}
 
       <h3>Applications</h3>
+      {applications === null && !error && <Loading what="applications" />}
       {applications?.length === 0 && <p className="note">None yet: add one, or pull one from Career-OS.</p>}
       <table className="list">
         <tbody>
