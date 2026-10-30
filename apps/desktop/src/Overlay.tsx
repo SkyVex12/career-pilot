@@ -4,9 +4,10 @@
 //   lines joined into blocks (transcript.ts), and the suggested answers in the right two
 //   thirds. Each pane scrolls on its own and follows its newest content while the reader is at
 //   its bottom; scrolled up, it stays put and offers "Jump to latest". A narrow window stacks
-//   the panes. Compact keeps the split, tighter.
+//   the panes.
 // - one column: the whole conversation in order, the other side on the left, the answers on
-//   the right, and in History the user's own words ("You said"). Compact shows the answers only.
+//   the right, and in History the user's own words ("You said").
+// Compact shows the answers only, tighter, in either layout. Compact shows the answers only.
 // Text size steps with the A-/A+ buttons or Ctrl+plus/minus/0. Hotkey, typed question, thumbs
 // and the status badge as before.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
@@ -250,7 +251,7 @@ export function ViewControls({ view, compact, onCompact }: { view: ViewPrefs; co
       </button>
       <button
         className="icon"
-        title={compact ? "Leave compact view" : split ? "Compact: tighter, both panes kept" : "Compact: answers only"}
+        title={compact ? "Leave compact view" : "Compact: answers only"}
         aria-pressed={compact}
         onClick={onCompact}
       >
@@ -292,7 +293,8 @@ export function ConversationView({
   const answersPane = useRef<HTMLDivElement>(null);
   const scale = { "--text-scale": textScale } as CSSProperties;
 
-  if (layout === "stacked") {
+  // Compact is the answers only, whichever the layout.
+  if (compact || layout === "stacked") {
     const shown = compact ? answers : items;
     return (
       <div className="overlay-single" style={scale}>
@@ -310,11 +312,11 @@ export function ConversationView({
   const transcriptSize = `${blocks.length}:${blocks.reduce((n, b) => n + blockText(b).length, 0)}`;
   return (
     <div className="overlay-split" style={scale}>
-      <ScrollPane className="pane-transcript" title={compact ? undefined : "Transcript"} size={transcriptSize} live={live}>
+      <ScrollPane className="pane-transcript" title="Transcript" size={transcriptSize} live={live}>
         {blocks.length === 0 ? <p className="muted empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} />}
       </ScrollPane>
-      <ScrollPane className="pane-answers" title={compact ? undefined : "Suggestions"} size={contentSize(answers)} live={live} paneRef={answersPane}>
-        {answers.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={answers} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />}
+      <ScrollPane className="pane-answers" title="Suggestions" size={contentSize(answers)} live={live} paneRef={answersPane}>
+        {answers.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={answers} s={s} compact={false} onExpand={onExpand} ratings={ratings} />}
       </ScrollPane>
     </div>
   );

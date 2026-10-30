@@ -1240,8 +1240,7 @@ kbd.key {
   background: linear-gradient(135deg, transparent 55%, #4a525c 55%, #4a525c 65%, transparent 65%, transparent 75%, #4a525c 75%, #4a525c 85%, transparent 85%);
 }
 
-/* Compact: tighter, for a small window. One column shows the answers only; split keeps both
-   panes. */
+/* Compact: the answers only, tighter, for a small window (either layout). */
 .overlay.compact .pane-body {
   padding: 4px 6px;
 }
