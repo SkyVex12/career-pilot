@@ -1,11 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
-import Overlay from "./Overlay";
 import { api, inTauri } from "./api";
 import { throttled } from "./updates";
 import "./ui/tokens.css";
-import "./styles.css";
+import "./overlay.css";
 import "./ui/ui.css";
 import "./screens.css";
 import { startTheme } from "./ui/theme";
@@ -27,6 +25,10 @@ if (inTauri) {
   }
 }
 
+// Each window loads only its own screens: the overlay starts without the main window's code.
+const Root = isOverlay ? (await import("./Overlay")).default : (await import("./App")).default;
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>{isOverlay ? <Overlay /> : <App />}</React.StrictMode>,
+  <React.StrictMode>
+    <Root />
+  </React.StrictMode>,
 );

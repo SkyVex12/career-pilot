@@ -1,7 +1,6 @@
-// Dialogs and toasts (Radix): focus trap, Esc, focus returned on close, live announcements.
+// Dialogs (Radix: focus trap, Esc, focus returned on close) and toasts (a live region).
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as RadixDialog from "@radix-ui/react-dialog";
-import * as RadixToast from "@radix-ui/react-toast";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, cx } from "./Button";
 import { Input } from "./Field";
@@ -121,7 +120,7 @@ export function ConfirmDialog({
     <AlertDialog.Root open={open} onOpenChange={change}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="ui-scrim" />
-        <AlertDialog.Content className="ui-dialog ui-dialog-sm" onCloseAutoFocus={returnFocus}>
+        <AlertDialog.Content className={extra ? "ui-dialog ui-dialog-md" : "ui-dialog ui-dialog-sm"} onCloseAutoFocus={returnFocus}>
           <AlertDialog.Title className="ui-dialog-title">{title}</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="ui-dialog-desc">{children}</div>
@@ -166,49 +165,80 @@ interface ToastItem {
 
 const ToastContext = createContext<(t: Omit<ToastItem, "id">) => void>(() => {});
 
-/** `toast({ tone, text, action })`: success and info leave after 5 s, errors stay until dismissed. */
+/** `toast({ tone, text, action })`: success and info leave after 5 s (paused while hovered or
+ * focused), errors stay until dismissed. Announced politely; errors assertively. */
 export function useToast() {
   return useContext(ToastContext);
 }
 
 let nextToast = 1;
+const TOAST_MS = 5000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const push = useCallback((t: Omit<ToastItem, "id">) => {
     setItems((cur) => [...cur.slice(-2), { ...t, id: nextToast++ }]);
   }, []);
-  const remove = (id: number) => setItems((cur) => cur.filter((t) => t.id !== id));
+  const remove = useCallback((id: number) => setItems((cur) => cur.filter((t) => t.id !== id)), []);
   return (
     <ToastContext.Provider value={push}>
-      <RadixToast.Provider swipeDirection="right" label="Notification">
-        {children}
-        {items.map((t) => (
-          <RadixToast.Root
-            key={t.id}
-            className={cx("ui-toast", `ui-toast-${t.tone}`)}
-            type={t.tone === "error" ? "foreground" : "background"}
-            duration={t.tone === "error" ? Infinity : 5000}
-            onOpenChange={(o) => !o && remove(t.id)}
-          >
-            <span className="ui-toast-icon" aria-hidden="true">
-              {t.tone === "success" ? "✓" : t.tone === "error" ? "✕" : "ℹ"}
-            </span>
-            <RadixToast.Description className="ui-toast-text">{t.text}</RadixToast.Description>
-            {t.action && (
-              <RadixToast.Action asChild altText={t.action.label}>
-                <button type="button" className="ui-btn ui-btn-link ui-btn-sm" onClick={t.action.onClick}>
-                  <span className="ui-btn-label">{t.action.label}</span>
-                </button>
-              </RadixToast.Action>
-            )}
-            <RadixToast.Close className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost" aria-label="Dismiss">
-              <span aria-hidden="true">✕</span>
-            </RadixToast.Close>
-          </RadixToast.Root>
-        ))}
-        <RadixToast.Viewport className="ui-toast-viewport" />
-      </RadixToast.Provider>
+      {children}
+      <section className="ui-toast-viewport" aria-label="Notifications">
+        <div aria-live="polite" className="ui-toast-region">
+          {items
+            .filter((t) => t.tone !== "error")
+            .map((t) => (
+              <Toast key={t.id} item={t} onClose={() => remove(t.id)} />
+            ))}
+        </div>
+        <div aria-live="assertive" className="ui-toast-region">
+          {items
+            .filter((t) => t.tone === "error")
+            .map((t) => (
+              <Toast key={t.id} item={t} onClose={() => remove(t.id)} />
+            ))}
+        </div>
+      </section>
     </ToastContext.Provider>
+  );
+}
+
+function Toast({ item, onClose }: { item: ToastItem; onClose: () => void }) {
+  const [paused, setPaused] = useState(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (item.tone === "error" || paused) return;
+    const t = setTimeout(() => closeRef.current(), TOAST_MS);
+    return () => clearTimeout(t);
+  }, [item.tone, paused]);
+  return (
+    <div
+      className={cx("ui-toast", `ui-toast-${item.tone}`)}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+    >
+      <span className="ui-toast-icon" aria-hidden="true">
+        {item.tone === "success" ? "✓" : item.tone === "error" ? "✕" : "ℹ"}
+      </span>
+      <div className="ui-toast-text">{item.text}</div>
+      {item.action && (
+        <button
+          type="button"
+          className="ui-btn ui-btn-link ui-btn-sm"
+          onClick={() => {
+            item.action?.onClick();
+            onClose();
+          }}
+        >
+          <span className="ui-btn-label">{item.action.label}</span>
+        </button>
+      )}
+      <button type="button" className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost" aria-label="Dismiss" onClick={onClose}>
+        <span aria-hidden="true">✕</span>
+      </button>
+    </div>
   );
 }

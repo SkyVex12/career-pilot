@@ -9,7 +9,7 @@ import { fromReplay } from "./session";
 import { when } from "./shared";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 import { Banner, Button, Card, ConfirmDialog, EmptyState, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, useToast } from "./ui";
-import { MODE_LABEL } from "./History";
+import { MODE_LABEL } from "./calls";
 
 export function SessionDetail({
   sessionId,
