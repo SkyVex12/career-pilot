@@ -1939,13 +1939,16 @@ details.output > summary h3 {
   display: inline;
 }
 
-/* "Test audio" (AudioCheck.tsx): two level meters and the verdicts. */
-.audio-check { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.audio-meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.audio-meter { opacity: 0.55; }
-.audio-meter.active { opacity: 1; }
-.audio-meter-bar { height: 8px; border-radius: 4px; background: var(--border, #ccc); overflow: hidden; }
+/* A device row with its Test button (AudioCheck.tsx): the dropdown narrower, Test on its
+   right, the level bar and the verdict under the row. */
+.device-test { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.device-row { display: flex; align-items: center; gap: 8px; }
+.device-control { flex: 0 1 340px; min-width: 0; }
+.device-control select { width: 100%; }
+.device-test > .note { margin: 0; }
+.device-test .note.ok { color: var(--ok, #2a7); }
+.device-test .note.bad { color: var(--bad, #c33); }
+.audio-meter-bar { height: 6px; max-width: 420px; border-radius: 3px; background: var(--border, #ccc); overflow: hidden; }
 .audio-meter-fill { height: 100%; background: var(--accent, #2a7); transition: width 80ms linear; }
-.audio-verdicts { margin: 0; padding-left: 18px; }
-.audio-verdicts li.ok { color: var(--ok, #2a7); }
-.audio-verdicts li.bad { color: var(--bad, #c33); }
+.quick-tests { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-width: 420px; }
+.quick-tests .device-control { flex: 1 1 auto; }

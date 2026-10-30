@@ -1,8 +1,9 @@
-// The audio test's meter and messages (src/audiotest.ts).
+// The audio test's meter and messages (src/audiotest.ts): one Test button per device row.
 import { describe, expect, it } from "vitest";
-import { CEIL_DB, checkLine, FLOOR_DB, meterFill } from "../src/audiotest";
+import { CEIL_DB, FLOOR_DB, meterFill, partLevel, partLine } from "../src/audiotest";
 
-const verdict = (ok: boolean, message = "m") => ({ ok, message, peak_db: -20, sound_ms: 900 });
+const verdict = (ok: boolean, message: string) => ({ ok, message, peak_db: -20, sound_ms: 900 });
+const result = { mic: verdict(true, "Your voice comes through."), call: verdict(false, "Nothing was heard from this output.") };
 
 describe("audio check", () => {
   it("fills the meter between its floor and ceiling", () => {
@@ -14,15 +15,19 @@ describe("audio check", () => {
     expect(meterFill(Number.NaN)).toBe(0);
   });
 
-  it("asks the user to speak, then says the test sound plays", () => {
-    expect(checkLine({ state: "running", meter: null })).toMatch(/^Speak now/);
-    expect(checkLine({ state: "running", meter: { phase: "speak", mic_db: -30, call_db: -90 } })).toMatch(/^Speak now/);
-    expect(checkLine({ state: "running", meter: { phase: "tone", mic_db: -30, call_db: -20 } })).toMatch(/test sound/);
+  it("shows each row's own level", () => {
+    const meter = { phase: "speak" as const, mic_db: -30, call_db: -90 };
+    expect(partLevel("mic", meter)).toBe(-30);
+    expect(partLevel("call", meter)).toBe(-90);
+    expect(partLevel("mic", null)).toBe(-100);
   });
 
-  it("says ready only when both sides pass", () => {
-    expect(checkLine({ state: "done", result: { mic: verdict(true), call: verdict(true) } })).toMatch(/ready for a call/);
-    expect(checkLine({ state: "done", result: { mic: verdict(false), call: verdict(true) } })).toMatch(/Fix what is marked/);
-    expect(checkLine({ state: "failed", message: "a session is already running" })).toBe("a session is already running");
+  it("says nothing before a test, then what to do, then that row's verdict", () => {
+    expect(partLine("mic", { state: "idle" })).toBe("");
+    expect(partLine("mic", { state: "running", meter: null })).toMatch(/^Speak now/);
+    expect(partLine("call", { state: "running", meter: null })).toMatch(/test sound/);
+    expect(partLine("mic", { state: "done", result })).toBe("Your voice comes through.");
+    expect(partLine("call", { state: "done", result })).toBe("Nothing was heard from this output.");
+    expect(partLine("call", { state: "failed", message: "a session is already running" })).toBe("a session is already running");
   });
 });
