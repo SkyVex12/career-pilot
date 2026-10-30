@@ -72,13 +72,6 @@
   overflow-wrap: anywhere;
 }
 
-/* The replay keeps the overlay's look (always dark) inside the page, filling the tab. */
-.session-detail .overlay.replay {
-  height: min(70vh, 640px);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-
 /* --- Account danger zone (Settings, Account) --- */
 
 .account-danger {

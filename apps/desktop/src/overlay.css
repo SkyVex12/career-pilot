@@ -1,833 +1,665 @@
-/* The overlay's styles (and History's replay, drawn as the overlay was), kept from the old
-   stylesheet until stage 4 rebuilds the overlay on the design tokens. The main window no longer
-   uses anything here. */
-:root {
-  --l-bg: #f4f6f8;
-  --l-panel: #ffffff;
-  --l-subtle: #f8f9fb;
-  --l-text: #1b1f24;
-  --l-muted: #667085;
-  --l-line: #e4e7ec;
-  --l-line-strong: #d0d5dd;
-  --l-accent: #2563eb;
-  --l-accent-hover: #1d4ed8;
-  --l-accent-soft: #eef3ff;
-  --l-ok: #16a34a;
-  --l-degraded: #d97706;
-  --l-bad: #dc2626;
-  --l-warn-soft: #fff8eb;
-  --l-bad-soft: #fef3f2;
-  --l-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --l-focus: 0 0 0 3px rgba(37, 99, 235, 0.22);
-  --l-overlay-bg: rgba(20, 23, 28, 0.94);
-  --l-overlay-text: #eef1f5;
-  --l-overlay-muted: #9aa3ae;
-}
+/* The overlay (Overlay.tsx) and History's replay of a call, drawn the same way. Always dark: it
+   floats over whatever is on screen. Tokens only (ui/tokens.css, the --ov-* set).
+   Opacity: --ov-alpha (the setting, 0.3 to 1) fades the window's background and chrome; each
+   answer card keeps a backing of at least 62% and opaque text, so it stays readable over light
+   content (docs/design/ui-proposal.md, "Overlay rules", 4). Type: --ov-scale (A-/A+) multiplies
+   every size through calc(), so wrapping is computed at the real size; nothing is under 12 px. */
 
-:root[data-theme="dark"] {
-  --l-bg: #131619;
-  --l-panel: #1b1f24;
-  --l-subtle: #171a1f;
-  --l-text: #e8ebef;
-  --l-muted: #8b949e;
-  --l-line: #2b3138;
-  --l-line-strong: #3a414a;
-  --l-accent-hover: #3b74f0;
-  --l-accent-soft: rgba(37, 99, 235, 0.18);
-  --l-warn-soft: rgba(217, 119, 6, 0.12);
-  --l-bad-soft: rgba(220, 38, 38, 0.12);
-  --l-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --l-focus: 0 0 0 3px rgba(59, 130, 246, 0.35);
-}
-
-:is([data-window="overlay"], .overlay) * {
-  box-sizing: border-box;
-}
-
-:is([data-window="overlay"], .overlay) body {
-  margin: 0;
-}
-
-:is([data-window="overlay"], .overlay) button,
-:is([data-window="overlay"], .overlay) input,
-:is([data-window="overlay"], .overlay) select,
-:is([data-window="overlay"], .overlay) textarea {
-  font: inherit;
-  color: inherit;
-}
-
-:is([data-window="overlay"], .overlay) button {
-  border: 1px solid var(--l-line);
-  background: var(--l-panel);
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-:is([data-window="overlay"], .overlay) button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-:is([data-window="overlay"], .overlay) button.primary {
-  background: var(--l-accent);
-  border-color: var(--l-accent);
-  color: #fff;
-}
-
-:is([data-window="overlay"], .overlay) button.danger {
-  background: var(--l-bad);
-  border-color: var(--l-bad);
-  color: #fff;
-}
-
-:is([data-window="overlay"], .overlay) button.link {
-  border: 0;
-  background: none;
-  padding: 0 4px;
-  color: var(--l-accent);
-}
-
-:is([data-window="overlay"], .overlay) input,
-:is([data-window="overlay"], .overlay) select {
-  border: 1px solid var(--l-line);
-  background: var(--l-panel);
-  border-radius: 6px;
-  padding: 6px 8px;
-  width: 100%;
-  max-width: 420px;
-}
-
-:is([data-window="overlay"], .overlay) input[type="checkbox"],
-:is([data-window="overlay"], .overlay) input[type="radio"] {
-  width: auto;
-  padding: 0;
-  margin: 0;
-  flex: none;
-}
-
-.muted {
-  color: var(--l-muted);
-}
-
-.note {
-  color: var(--l-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-  margin: 6px 0 0;
-}
-
-.warn {
-  color: var(--l-bad);
-}
-
-.spacer {
-  flex: 1;
-}
-
-
-.badge {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
-  padding: 0 6px;
-}
-
-.badge .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--l-muted);
-  flex: none;
-}
-
-.badge-ok .dot {
-  background: var(--l-ok);
-}
-
-.badge-degraded .dot {
-  background: var(--l-degraded);
-}
-
-.badge-reconnecting .dot {
-  background: var(--l-bad);
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-/* Overlay window */
-
-/* The overlay window is transparent (src-tauri sets it so), so the panel paints its own
-   translucent background and the opacity setting dims the whole panel toward the desktop. */
 html[data-window="overlay"],
 html[data-window="overlay"] body {
+  /* The window is transparent (src-tauri sets it so): the panel paints its own background. */
   background: transparent;
-  color: var(--l-overlay-text);
   height: 100%;
+  overflow: hidden;
 }
-
 html[data-window="overlay"] #root {
   height: 100%;
 }
 
-.overlay {
+.ov {
+  --ov-alpha: 1;
+  --ov-scale: 1;
+}
+/* The sizes are computed where the text scale is set (each layout's body), so A-/A+ apply. */
+.ov,
+.ov-body {
+  --fs-fast: calc(18px * var(--ov-scale));
+  --fs-fast-earlier: calc(16px * var(--ov-scale));
+  --fs-deep: calc(15px * var(--ov-scale));
+  --fs-question: calc(14px * var(--ov-scale));
+  --fs-tx: calc(14px * var(--ov-scale));
+  --fs-meta: calc(12px * var(--ov-scale));
+}
+.ov {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--l-overlay-bg);
-}
-
-/* Shown while clicks pass through the overlay; it names the key that turns click-through off,
-   since the mouse cannot reach the app while it is on. */
-.clickthrough {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 5;
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-size: 11px;
-  color: #fff;
-  background: #8a5a00;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-}
-
-/* The overlay's settings menu (the gear dropdown) */
-
-.overlay-head .icon.on {
-  background: #2c333d;
-  border-radius: 6px;
-}
-
-.menu-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-}
-
-.overlay-menu {
-  position: absolute;
-  top: 40px;
-  right: 8px;
-  z-index: 9;
-  width: 260px;
-  max-width: calc(100% - 16px);
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  border: 1px solid #333b45;
-  border-radius: 10px;
-  background: #1b1f25;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-.menu-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--l-overlay-text);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-
-button.menu-row:hover {
-  background: #262c34;
-}
-
-.menu-row.col {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  cursor: default;
-}
-
-.menu-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.menu-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.menu-hint {
-  font-size: 11px;
-  color: var(--l-overlay-muted);
-}
-
-.menu-slider {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.menu-slider input[type="range"] {
-  flex: 1;
-}
-
-.menu-value {
-  font-size: 12px;
-  color: var(--l-overlay-muted);
-  min-width: 34px;
-  text-align: right;
-}
-
-.menu-sep {
-  height: 1px;
-  margin: 6px 4px;
-  background: #333b45;
-}
-
-.link-row {
-  font-size: 13px;
-}
-
-.link-row.danger {
-  color: #ff6b6b;
-}
-
-/* A small on/off switch */
-.switch {
-  flex: none;
-  width: 34px;
-  height: 18px;
-  border-radius: 10px;
-  background: #3a424c;
-  position: relative;
-  transition: background 0.12s;
-}
-
-.switch::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #cdd3da;
-  transition: transform 0.12s;
-}
-
-.switch.on {
-  background: var(--l-accent, #3b82f6);
-}
-
-.switch.on::after {
-  transform: translateX(16px);
-  background: #fff;
-}
-
-/* A hotkey chip */
-kbd.key {
-  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding: 1px 5px;
-  border: 1px solid #3a424c;
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: #262c34;
-  color: var(--l-overlay-muted);
-  white-space: nowrap;
-}
-
-.overlay .muted,
-.overlay .note {
-  color: var(--l-overlay-muted);
-}
-
-.overlay button {
-  background: transparent;
-  border-color: #3a414a;
-  padding: 2px 8px;
-}
-
-.overlay-head {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 8px;
-  border-bottom: 1px solid #2c323a;
-  cursor: move;
-  user-select: none;
-}
-
-.overlay-head .icon {
-  border: 0;
-  font-size: 16px;
-}
-
-.nav {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  font-size: 12px;
-}
-
-.pill {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: #1f6f43;
-}
-
-.pill-me {
-  background: #5b3a99;
-}
-
-.overlay {
-  position: relative;
-  /* The panes stack when the overlay (or History's replay) is narrow. */
+  background: rgb(var(--ov-panel) / calc(0.94 * var(--ov-alpha)));
+  color: var(--ov-text);
+  font-family: var(--font);
   container: overlay / inline-size;
 }
 
-/* The two layouts (Overlay.tsx): one column, or split into the transcript (a third) and the
-   suggestions (two thirds). Each pane scrolls on its own. */
-.overlay-single,
-.overlay-split {
+/* Chrome (header, transcript, ask box) fades with the setting, never below 45%. */
+.ov-head,
+.ov-ask,
+.ov-pane-transcript,
+.ov-clickthrough {
+  opacity: max(0.45, calc(0.35 + 0.65 * var(--ov-alpha)));
+}
+
+/* --- Header --- */
+
+.ov-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--ov-line);
+  cursor: move;
+  user-select: none;
+}
+.ov-head .ui-icon-btn {
+  color: var(--ov-text-2);
+  cursor: pointer;
+}
+.ov-head .ui-icon-btn:hover:not(:disabled) {
+  background: var(--ov-raise);
+  color: var(--ov-text);
+}
+.ov-head .ui-icon-btn[aria-pressed="true"],
+.ov-head .ui-icon-btn[aria-expanded="true"] {
+  background: rgb(141 180 255 / 0.16);
+  color: var(--ov-fast);
+}
+.ov-text-size {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ov-view {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+.ov-spacer {
+  flex: 1;
+  align-self: stretch;
+}
+.ov-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 260px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ov-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-status-ok .ov-status-icon {
+  color: var(--ov-live);
+}
+.ov-status-degraded,
+.ov-status-reconnecting {
+  color: var(--ov-warn);
+}
+.ov-status-off {
+  color: var(--ov-text-2);
+}
+.ov-status-reconnecting .ov-status-icon {
+  animation: ov-pulse 1s infinite;
+}
+@keyframes ov-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.ov-speaking {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.ov-pill {
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgb(91 208 138 / 0.18);
+  color: var(--ov-live);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.ov-pill-me {
+  background: rgb(141 180 255 / 0.18);
+  color: var(--ov-fast);
+}
+
+.ov-clickthrough {
+  padding: var(--space-2) var(--space-4);
+  background: rgb(242 184 75 / 0.16);
+  border-bottom: 1px solid rgb(242 184 75 / 0.4);
+  color: var(--ov-warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ov-clickthrough .ui-kbd {
+  background: transparent;
+  color: var(--ov-text);
+  border-color: rgb(242 184 75 / 0.6);
+}
+
+/* --- The gear's panel --- */
+
+.ov-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.ov-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 300px;
+  padding: var(--space-4);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--ov-panel));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+  cursor: default;
+}
+.ov-menu-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.ov-menu-label {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.ov-menu-value {
+  color: var(--ov-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ov-menu input[type="range"] {
+  width: 100%;
+  accent-color: var(--ov-fast);
+}
+.ov-menu-hint {
+  color: var(--ov-text-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.ov-menu .ui-field-hint {
+  color: var(--ov-text-3);
+}
+.ov-menu-sep {
+  height: 1px;
+  background: var(--ov-line);
+}
+.ov-menu-item {
+  justify-content: flex-start;
+}
+
+/* --- Panes --- */
+
+.ov-body {
+  display: flex;
   flex: 1;
   min-height: 0;
-  display: grid;
 }
-
-.overlay-single {
-  grid-template-columns: minmax(0, 1fr);
+.ov-split {
+  flex-direction: row;
 }
-
-.overlay-split {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+.ov-stacked,
+.ov-single {
+  flex-direction: column;
 }
-
-.pane {
+.ov-pane {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  flex: 1;
 }
-
-.pane-transcript {
-  border-right: 1px solid #2c323a;
-  background: rgba(0, 0, 0, 0.12);
+.ov-pane-transcript {
+  flex: 0 0 34%;
+  border-right: 1px solid var(--ov-line);
 }
-
-.pane-head {
+.ov-pane-head {
   margin: 0;
-  padding: 5px 10px 4px;
-  font-size: 10px;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--ov-text-3);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--l-overlay-muted);
-  border-bottom: 1px solid #22282f;
+  letter-spacing: 0.02em;
 }
-
-.pane-body {
+.ov-pane-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 8px 10px;
-  overscroll-behavior: contain;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-5);
+  /* Content inserted above what is being read does not move it (Chromium's scroll anchoring). */
+  overflow-anchor: auto;
 }
-
-/* The text size control scales what the panes show, not the header or the ask box. */
-.pane-content {
-  zoom: var(--text-scale, 1);
+.ov-follow {
+  overflow-anchor: none;
+}
+.ov-empty {
+  margin: var(--space-6) 0;
+  color: var(--ov-text-2);
+  font-size: var(--fs-tx);
+  text-align: center;
+}
+.ov-jump {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-pill);
+  background: rgb(var(--ov-panel));
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+}
+.ov-jump-top {
+  top: calc(var(--space-8) + var(--space-2));
+  bottom: auto;
+  background: var(--ov-fast);
+  color: #0b1020;
+  border-color: transparent;
 }
 
 @container overlay (max-width: 559px) {
-  .overlay-split {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 2fr) minmax(0, 5fr);
+  .ov-split {
+    flex-direction: column;
   }
-
-  .pane-transcript {
+  .ov-pane-transcript {
+    flex: 0 0 30%;
     border-right: 0;
-    border-bottom: 1px solid #2c323a;
+    border-bottom: 1px solid var(--ov-line);
   }
 }
 
-/* The transcript pane: each side's lines joined into blocks, both full width. */
-.tx {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* --- Transcript --- */
+
+.tx,
+.ov-flow,
+.ov-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.tx .line {
-  line-height: 1.45;
-  font-size: 13px;
-  padding: 4px 8px;
-  border-left: 2px solid #3d8a63;
-}
-
-.tx .line.me {
-  border-left-color: #8b6fd6;
-}
-
-.tx .line p {
+  gap: var(--space-4);
   margin: 0;
-  overflow-wrap: anywhere;
+  padding: 0;
+  list-style: none;
 }
-
-.tx .who {
-  display: block;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #7fc8a0;
-  margin-bottom: 1px;
+.tx .line {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--ov-live);
 }
-
-.tx .line.me .who {
-  color: #b9a5f0;
+.tx .line.me {
+  border-left-color: var(--ov-fast);
 }
-
-.tx .partial {
-  color: var(--l-overlay-muted);
+.tx .line p,
+.ov-flow .msg p {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-tx);
+  line-height: 1.5;
+}
+.tx .who,
+.ov-flow .who {
+  color: var(--ov-text-3);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.partial {
+  color: var(--ov-text-3);
   font-style: italic;
 }
-
-.overlay button.asked {
-  margin-top: 3px;
+.asked {
+  margin-top: var(--space-1);
   padding: 0;
   border: 0;
-  font-size: 11px;
-  color: #8ab4ff;
-}
-
-/* Suggestions take the pane's whole width. */
-.pane-answers .msg.answer {
-  width: 100%;
-  max-width: 100%;
-}
-
-.overlay-head .icon.text-size {
-  font-size: 12px;
+  background: none;
+  color: var(--ov-fast);
+  font: inherit;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  padding: 2px 4px;
+  cursor: pointer;
 }
-
-.overlay-head .icon[aria-pressed="true"] {
-  color: #8ab4ff;
+.ov-flow .msg {
+  max-width: 90%;
 }
-
-.empty {
-  margin-top: 24px;
-  text-align: center;
-}
-
-/* The conversation: the other side on the left, answers and the user's own words on the right. */
-
-.conversation {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.msg {
-  max-width: 92%;
-  line-height: 1.4;
-}
-
-.msg p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.msg .who {
-  display: block;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--l-overlay-muted);
-  margin-bottom: 2px;
-}
-
-.msg.them {
-  align-self: flex-start;
-  background: #262b32;
-  border-radius: 10px 10px 10px 2px;
-  padding: 6px 10px;
-}
-
-.msg .partial {
-  color: var(--l-overlay-muted);
-  font-style: italic;
-}
-
-/* The user's own words: plain quoted text, no panel, a purple rule: never like an answer. */
-.msg.me {
+.ov-flow .msg.me {
   align-self: flex-end;
   text-align: right;
-  border-right: 2px solid #8b6fd6;
-  padding: 2px 8px 2px 0;
-  font-size: 13px;
 }
 
-.msg.me .who {
-  color: #b9a5f0;
-}
+/* --- Answers: text first. No boxes or labels; the newest is the largest and brightest, the
+   earlier ones quieter below it, a rule between them. Tools stay faint until wanted. --- */
 
-.msg.answer {
-  align-self: flex-end;
-  width: 92%;
+.ov-cards {
+  gap: 0;
 }
-
 .card {
-  background: #18263a;
-  border: 1px solid #2b4466;
-  border-radius: 10px 10px 2px 10px;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-3);
+  border-radius: var(--radius-md);
+  /* Its own backing: readable over light content however low the opacity setting goes. */
+  background: rgb(var(--ov-panel) / max(0.62, var(--ov-alpha)));
 }
-
-.card-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
+.ov-cards > li + li .card,
+.ov-flow > li + li > .card {
+  border-top: 1px solid var(--ov-line);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
-
-.card-head .label {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8ab4ff;
+.card.is-earlier {
+  color: var(--ov-text-2);
 }
-
-.card .question {
-  font-size: 12px;
-  color: var(--l-overlay-muted);
-  margin: 0 0 6px;
-  line-height: 1.35;
+.question {
+  margin: 0 0 var(--space-3);
+  color: var(--ov-text-3);
+  font-size: var(--fs-question);
+  line-height: 1.4;
 }
-
-.tag {
-  font-size: 10px;
-  font-weight: 400;
-  margin-left: 4px;
-  padding: 0 5px;
-  border: 1px solid #3a414a;
-  border-radius: 6px;
-  color: var(--l-overlay-muted);
-  text-transform: capitalize;
-}
-
-.pass-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 2px;
-}
-
-.pass-title {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--l-overlay-muted);
-}
-
-.overlay button.copy {
-  font-size: 11px;
-  padding: 0 6px;
-  min-width: 52px;
-}
-
-.points .bullets {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 15px;
-  line-height: 1.45;
-}
-
-.points .bullets li {
-  margin-bottom: 3px;
-}
-
-.prose p {
-  margin: 0 0 6px;
-  line-height: 1.45;
-}
-
-.cite {
-  font-size: 9px;
-  color: var(--l-overlay-muted);
-  margin-left: 2px;
-}
-
-/* A suggested detail ([~]): not from the user's data, to check before saying it. */
-.suggested {
-  opacity: 0.8;
+.card.is-speculative .question {
   font-style: italic;
 }
 
-.suggest-tag {
-  font-size: 9px;
-  font-style: normal;
-  color: var(--l-overlay-muted);
-  border: 1px solid currentColor;
-  border-radius: 3px;
-  padding: 0 3px;
-  margin-left: 4px;
-  vertical-align: 1px;
+.pass {
+  position: relative;
 }
-
-.deep {
-  margin-top: 8px;
-  border-top: 1px solid #2b4466;
-  padding-top: 6px;
-  font-size: 13px;
+.pass-deep {
+  margin-top: var(--space-4);
+  padding-left: var(--space-4);
+  border-left: 2px solid rgb(195 166 255 / 0.45);
 }
-
-.deep .bullets {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  line-height: 1.45;
+.pass-fast.is-held {
+  /* Held for three lines of talking points while they are written. */
+  min-height: calc(var(--fs-fast) * 1.45 * 3);
 }
-
-.overlay button.link {
-  color: #8ab4ff;
-  border: 0;
-  padding: 0;
-}
-
-.thumbs {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-top: 6px;
-}
-
-.thumbs button.on {
-  background: #2c323a;
-}
-
-.refs {
-  font-size: 11px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.overlay button.jump {
-  position: absolute;
-  left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
-  background: #2563eb;
-  border: 0;
-  border-radius: 12px;
-  padding: 3px 12px;
+.pass-title {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--ov-deep);
   font-size: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  font-weight: 600;
+}
+.pass-status {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--ov-text-3);
+}
+.pass-state-warn {
+  color: var(--ov-warn);
 }
 
-.grip {
+.card-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  opacity: 0.35;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.card:hover .card-tools,
+.card-tools:focus-within {
+  opacity: 1;
+}
+.copy {
+  padding: 0 var(--space-3);
+  min-height: 24px;
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ov-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.copy:hover:not(:disabled) {
+  color: var(--ov-text);
+  background: var(--ov-raise);
+}
+.copy:disabled {
+  display: none;
+}
+
+.bullets {
+  margin: 0;
+  padding-left: 1.1em;
+}
+.bullets li + li {
+  margin-top: 0.3em;
+}
+.prose p {
+  margin: 0 0 0.45em;
+}
+.points .bullets,
+.points .prose {
+  max-width: 72ch;
+  color: var(--ov-text);
+  font-size: var(--fs-fast);
+  line-height: 1.45;
+  font-weight: 500;
+}
+.card.is-earlier .points .bullets,
+.card.is-earlier .points .prose,
+.card.is-earlier .deep .bullets,
+.card.is-earlier .deep .prose {
+  color: var(--ov-text-2);
+}
+.card.is-earlier .points .bullets,
+.card.is-earlier .points .prose {
+  font-size: var(--fs-fast-earlier);
+  font-weight: 400;
+}
+.deep .bullets,
+.deep .prose {
+  max-width: 76ch;
+  color: var(--ov-text);
+  font-size: var(--fs-deep);
+  line-height: 1.5;
+}
+.cite {
+  margin-left: 2px;
+  color: var(--ov-text-3);
+  font-size: 12px;
+}
+.suggested {
+  color: var(--ov-text-2);
+  font-style: italic;
+}
+.suggest-tag {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-sm);
+  color: var(--ov-warn);
+  font-size: 12px;
+  font-style: normal;
+}
+.ov-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  opacity: 0.7;
+  animation: ov-blink 1s steps(2, start) infinite;
+}
+@keyframes ov-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-caret {
+    animation: none;
+  }
+}
+.ov-reserve {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+.ov-reserve span {
+  display: block;
+  height: calc(var(--fs-deep) * 0.8);
+  border-radius: var(--radius-sm);
+  background: var(--ov-raise);
+}
+.ov-reserve span:last-child {
+  width: 70%;
+}
+.ov-get-deep {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid rgb(195 166 255 / 0.5);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ov-deep);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-get-deep:hover {
+  background: rgb(195 166 255 / 0.12);
+}
+.ov-thumb {
+  min-width: 32px;
+  min-height: 28px;
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+.ov-thumb[aria-pressed="true"] {
+  border-color: var(--ov-fast);
+  background: rgb(141 180 255 / 0.16);
+}
+.ov-thumb:disabled {
+  cursor: default;
+}
+.ov-thumb:disabled:not([aria-pressed="true"]) {
+  opacity: 0.4;
+}
+.refs {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ov-text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One column: the conversation scrolls; the current card is pinned under it. */
+.ov-pane-flow {
+  flex: 1;
+}
+.ov-now-pinned {
+  flex: none;
+  max-height: 55%;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--ov-line);
+}
+
+/* Compact: the answers only, with less chrome. The type keeps its size. */
+.ov.is-compact .ov-pane-body {
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+.ov.is-compact .card {
+  padding: var(--space-3) var(--space-4);
+}
+.ov.is-compact .question {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* --- Ask box --- */
+
+.ov-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
+  border-top: 1px solid var(--ov-line);
+}
+.ov-ask-input {
+  flex: 1;
+  min-width: 120px;
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  background: rgb(0 0 0 / 0.35);
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 14px;
+}
+.ov-ask-input::placeholder {
+  color: var(--ov-text-3);
+}
+.ov-ask-btn {
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  background: var(--ov-raise);
+  color: var(--ov-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-ask-btn:disabled,
+.ov-ask-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ov-ask-error {
+  flex-basis: 100%;
+  color: var(--ov-bad);
+  font-size: 12px;
+}
+
+.ov-grip {
   position: absolute;
   right: 0;
   bottom: 0;
   width: 14px;
   height: 14px;
-  cursor: nwse-resize;
-  background: linear-gradient(135deg, transparent 55%, #4a525c 55%, #4a525c 65%, transparent 65%, transparent 75%, #4a525c 75%, #4a525c 85%, transparent 85%);
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--ov-line) 50%);
 }
 
-/* Compact: the answers only, tighter, for a small window (either layout). */
-.overlay.compact .pane-body {
-  padding: 4px 6px;
-}
+/* --- History's replay: the overlay's look inside the main window --- */
 
-.overlay.compact .tx {
-  gap: 4px;
-}
-
-.overlay.compact .tx .line {
-  font-size: 12px;
-  padding: 2px 6px;
-}
-
-.overlay.compact .conversation {
-  gap: 4px;
-}
-
-.overlay.compact .msg.answer {
-  width: 100%;
-  max-width: 100%;
-}
-
-.overlay.compact .card {
-  padding: 5px 7px;
-}
-
-.overlay.compact .points .bullets {
-  font-size: 13px;
-}
-
-.overlay.compact .deep,
-.overlay.compact .deep .bullets {
-  font-size: 12px;
-}
-
-.overlay.compact .thumbs {
-  margin-top: 3px;
-}
-
-.ask {
-  display: flex;
-  gap: 6px;
-  padding: 8px;
-  border-top: 1px solid #2c323a;
-  flex-wrap: wrap;
-}
-
-.ask input {
-  flex: 1;
-  max-width: none;
-  background: #111418;
-  border-color: #3a414a;
-}
-
-/* A past call in History, drawn as the overlay was (SessionDetail): a window-sized panel in
-   the main window, in the overlay's colors. */
-.overlay.replay {
+.ov.ov-replay {
   height: min(70vh, 640px);
-  color: var(--l-overlay-text);
-  border: 1px solid #2c323a;
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
-
-.overlay.replay .overlay-head {
+.ov.ov-replay .ov-head {
   cursor: default;
+}
+.ov-replay-count {
+  color: var(--ov-text-2);
+  font-size: 13px;
 }

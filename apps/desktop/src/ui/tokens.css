@@ -109,7 +109,8 @@
 }
 
 /* The overlay is always dark: it floats over whatever is on screen. */
-:root[data-window="overlay"] {
+:root[data-window="overlay"],
+.ov {
   color-scheme: dark;
   --ov-panel: 16 18 22;
   --ov-text: #f4f6f9;
