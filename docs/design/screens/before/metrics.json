@@ -1,0 +1,396 @@
+{
+  "session-start": {
+    "pageHeight": 780,
+    "startButtonY": 597,
+    "buttons": 16,
+    "notes": 4
+  },
+  "session-start-standup": {
+    "pageHeight": 780,
+    "startButtonY": 656,
+    "buttons": 16,
+    "notes": 4
+  },
+  "session-start-meeting": {
+    "pageHeight": 855,
+    "startButtonY": 751,
+    "buttons": 16,
+    "notes": 4
+  },
+  "session-start-empty": {
+    "pageHeight": 780,
+    "startButtonY": 621,
+    "buttons": 16,
+    "notes": 5
+  },
+  "session-start-loading": {
+    "pageHeight": 780,
+    "startButtonY": 597,
+    "buttons": 16,
+    "notes": 4
+  },
+  "session-start-error": {
+    "pageHeight": 780,
+    "startButtonY": 621,
+    "buttons": 16,
+    "notes": 5
+  },
+  "session-signed-out": {
+    "pageHeight": 780,
+    "startButtonY": 660,
+    "buttons": 17,
+    "notes": 4
+  },
+  "session-locked": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 7,
+    "notes": 0
+  },
+  "session-running": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 16,
+    "notes": 4
+  },
+  "session-end-choice": {
+    "pageHeight": 861,
+    "startButtonY": null,
+    "buttons": 19,
+    "notes": 5
+  },
+  "session-postcall": {
+    "pageHeight": 1887,
+    "startButtonY": 597,
+    "buttons": 31,
+    "notes": 7
+  },
+  "session-other-active": {
+    "pageHeight": 780,
+    "startButtonY": 597,
+    "buttons": 17,
+    "notes": 4
+  },
+  "session-update-ready": {
+    "pageHeight": 780,
+    "startButtonY": 675,
+    "buttons": 17,
+    "notes": 4
+  },
+  "applications": {
+    "pageHeight": 960,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 0
+  },
+  "applications-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 3
+  },
+  "applications-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 0
+  },
+  "applications-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 1
+  },
+  "applications-long": {
+    "pageHeight": 3869,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 0
+  },
+  "applications-editor": {
+    "pageHeight": 1914,
+    "startButtonY": null,
+    "buttons": 15,
+    "notes": 2
+  },
+  "applications-new": {
+    "pageHeight": 1837,
+    "startButtonY": null,
+    "buttons": 13,
+    "notes": 1
+  },
+  "applications-pull": {
+    "pageHeight": 1315,
+    "startButtonY": null,
+    "buttons": 13,
+    "notes": 1
+  },
+  "resumes": {
+    "pageHeight": 1000,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 5
+  },
+  "resumes-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 3
+  },
+  "resumes-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 1
+  },
+  "resumes-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 2
+  },
+  "resumes-long": {
+    "pageHeight": 1345,
+    "startButtonY": null,
+    "buttons": 14,
+    "notes": 8
+  },
+  "work-log": {
+    "pageHeight": 1293,
+    "startButtonY": null,
+    "buttons": 25,
+    "notes": 2
+  },
+  "work-material": {
+    "pageHeight": 787,
+    "startButtonY": null,
+    "buttons": 30,
+    "notes": 2
+  },
+  "work-facts": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 23,
+    "notes": 2
+  },
+  "work-delete-company": {
+    "pageHeight": 1493,
+    "startButtonY": null,
+    "buttons": 27,
+    "notes": 2
+  },
+  "work-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 2
+  },
+  "work-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 6,
+    "notes": 1
+  },
+  "work-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 7,
+    "notes": 2
+  },
+  "work-long": {
+    "pageHeight": 1326,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 2
+  },
+  "history": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 6,
+    "notes": 0
+  },
+  "history-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 6,
+    "notes": 1
+  },
+  "history-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 6,
+    "notes": 0
+  },
+  "history-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 7,
+    "notes": 1
+  },
+  "history-long": {
+    "pageHeight": 1984,
+    "startButtonY": null,
+    "buttons": 7,
+    "notes": 0
+  },
+  "history-session": {
+    "pageHeight": 1320,
+    "startButtonY": null,
+    "buttons": 22,
+    "notes": 3
+  },
+  "settings": {
+    "pageHeight": 1474,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 10
+  },
+  "settings-dev-build": {
+    "pageHeight": 1531,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 10
+  },
+  "settings-signed-out": {
+    "pageHeight": 1272,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 9
+  },
+  "settings-locked": {
+    "pageHeight": 1504,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 11
+  },
+  "debug": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 7,
+    "notes": 0
+  },
+  "overlay-idle": {
+    "fastAnswer": null,
+    "deepAnswer": null,
+    "question": null,
+    "transcript": null,
+    "passTitle": null,
+    "latestFastVisible": null,
+    "latestFastTop": null
+  },
+  "overlay-midcall": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-midcall-stacked": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 348
+  },
+  "overlay-midcall-compact": {
+    "fastAnswer": "13px",
+    "deepAnswer": "12px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 420
+  },
+  "overlay-midcall-compact-small": {
+    "fastAnswer": "13px",
+    "deepAnswer": "12px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 280
+  },
+  "overlay-midcall-narrow": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 361
+  },
+  "overlay-opacity-60": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-opacity-35": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-text-130": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 338
+  },
+  "overlay-click-through": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-menu": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-degraded": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-reconnecting": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 402
+  },
+  "overlay-stream": {
+    "cls": 0,
+    "fastTopMin": 199,
+    "fastTopMax": 427,
+    "framesThatMoved": 9,
+    "frames": 286
+  }
+}
