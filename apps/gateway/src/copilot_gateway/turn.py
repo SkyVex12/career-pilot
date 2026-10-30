@@ -138,6 +138,14 @@ def substantive_words(text: str) -> int:
     return sum(1 for w in _words(text) if w.strip("'") not in PLEASANTRIES)
 
 
+def is_backchannel(text: str) -> bool:
+    """A listener's "mhmm", "okay", "yeah, right": up to three words that carry nothing. Not a
+    turn of its own when following the user: on 2026-10-30 a teammate's "mhmm" between the
+    user's lines made a second follow card on the same turn, twice."""
+    words = _words(text)
+    return 0 < len(words) <= 3 and substantive_words(text) == 0
+
+
 # How the other side ends a call. "Nice to meet you" is left out: it opens calls as often.
 CLOSING = re.compile(
     r"\b(?:good-?bye|bye(?:-bye| bye| now)?|take care|talk (?:to you )?soon"

@@ -58,6 +58,7 @@ from copilot_gateway.turn import (
     TurnDetector,
     TurnModel,
     addressed_by_name,
+    is_backchannel,
     is_closing,
     substantive_words,
 )
@@ -805,7 +806,14 @@ class Session:
         if not s.follow_user or not line.text:
             return
         lines = self.conv.lines
-        them = [ln for ln in lines if ln.channel == "them" and ln.end_ms <= line.start_ms + 300]
+        # A "mhmm" from the other side is not a new turn to follow (2026-10-30).
+        them = [
+            ln
+            for ln in lines
+            if ln.channel == "them"
+            and ln.end_ms <= line.start_ms + 300
+            and not is_backchannel(ln.text)
+        ]
         if not them:
             return
         anchor = them[-1].end_ms
