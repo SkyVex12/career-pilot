@@ -4,6 +4,10 @@ Stage 1 of the UI redesign, answering [ui-audit.md](ui-audit.md). Nothing here c
 code yet. Stages 2–4 build it once this is agreed. **Decisions I need from you** are collected at
 the end.
 
+> **Decided 2026-10-29:** all recommendations accepted, except one: earlier questions in the
+> overlay are **not collapsed**. They stay in full below the newest one (newest first). Rules 1
+> and 3 and B5 below are updated to match.
+
 **Goals, in order:**
 
 1. The overlay is readable at a glance mid-sentence.
@@ -130,7 +134,7 @@ of `zoom`):
 | Talking points, current question | 18px / 1.45, weight 500 | `--ov-text` |
 | Detailed answer, current question | 15px / 1.5 | `--ov-text` |
 | Question, current | 14px / 1.4, weight 500 | `--ov-text-2` |
-| Earlier questions (collapsed rows) | 14px | `--ov-text-2` |
+| Earlier questions | as the current one, talking points 16px | `--ov-text`, question `--ov-text-2` |
 | Transcript | 14px / 1.5 | `--ov-text`, partial words `--ov-text-3` italic |
 | Labels, state, meta | 12px, weight 600, no all-caps tracking below 12px | `--ov-text-3` |
 
@@ -446,9 +450,9 @@ Low-fi, at the default window size. `[Button]` is a button, `( )` a radio or seg
 │               Answer ↗   │ DETAILED · ◌ queued                   [Copy]  │
 │ Them                     │ ░░░░░░░░░░░░░░░░░░░░░░░░░                      │ 2-line reserve
 │ Makes sense. And how     │                                     👍 👎      │
-│ would you design the     ├─ EARLIER ──────────────────────────────────────┤
-│ alerting… and keep in    │ ▸ How did you decide what to roll back…  ✓ ✓  │ collapsed rows,
-│ mind we have about forty │ ▸ Tell me about a time you handled a…    ✓ ✓  │ click to expand
+│ would you design the     ├─ EARLIER (in full, newest first) ──────────────┤
+│ alerting… and keep in    │ How did you decide what to roll back first?   │ full cards,
+│ mind we have about forty │ ● Newest change first, unless an older…       │ scroll for more
 ├──────────────────────────┴────────────────────────────────────────────────┤
 │ [Type a question, or Enter to answer what was just said ] [Ask] [Respond] │
 └───────────────────────────────────────────────────────────────────────────┘
@@ -460,9 +464,9 @@ Low-fi, at the default window size. `[Button]` is a button, `( )` a radio or seg
  One column (stacked)                       Compact (answers only)
 ┌─ ● Listening ──────── A− A+ ◫ ▭ ⚙ × ─┐    ┌─ ● Listening ─────── ⚙ ▭ × ─┐
 │ Them: Thanks for joining…            │    │ How would you design the…    │ 1 line, ellipsis
-│ ▸ Tell me about a time… ✓ ✓          │    │ ● Alert on symptoms users    │ 18px, unchanged
+│ ┌ Tell me about a time… (full card) ┐│    │ ● Alert on symptoms users    │ 18px, unchanged
 │ Them: Okay. How did you decide…      │    │   feel: latency and errors   │
-│ ▸ How did you decide… ✓ ✓            │    │ ● Page only when the▍         │
+│ ┌ How did you decide… (full card)   ┐│    │ ● Page only when the▍         │
 │ Them: Makes sense. And how…          │    │ ◌ writing        [Copy]      │
 ├─ NOW (pinned) ───────────────────────┤    │ ──────────────────────────── │
 │ How would you design the alerting…   │    │ DETAILED ◌ queued   [Copy]   │
@@ -497,12 +501,14 @@ run as the audit.
 
 - It is always in the same place: the top of the answers pane (split, compact), or the pinned Now
   block (one column). The newest non-cancelled question is "Now". When a newer one arrives, the
-  old Now folds into Earlier as one change, with no scrolling. A speculative question shows a
+  old Now moves down to become the first of the earlier cards, as one change; if you have
+  scrolled down, the browser's scroll anchoring keeps what you are reading still and a
+  "New answer ↑" button appears. A speculative question shows a
   "listening…" badge; if it is cancelled, the previous Now returns.
 - It is the largest text in the overlay: 18 px at 100%, weight 500, line length capped at about
   70 characters, bullets with a hanging indent.
-- Earlier questions collapse to one row each: question, then ✓ points ✓ detailed. Each expands
-  in place. Expanding pauses nothing.
+- Earlier questions stay in full below it, newest first, with talking points at 16 px so the
+  current card stands out.
 - Contrast is at least 7:1 at full opacity and at least 4.5:1 at the lowest opacity, over both
   light and dark content.
 
@@ -570,7 +576,7 @@ PR.
 | B2 | Settings save on change, except free-text fields ([above](#settings-save-model)) | 3 | One save model instead of three |
 | B3 | Hotkeys recorded by pressing them, stored in the same accelerator format | 3 | Typing "CommandOrControl+…" by hand is error-prone. The Rust side and file format are unchanged. |
 | B4 | Reversible actions (archive, reject a fact, remove a fact) get an Undo toast. Deleting a company document, "Reject all", removing an attachment, and Disconnect Career-OS get a confirmation they don't have today. | 3 | "Destructive actions confirm" |
-| B5 | Overlay answers pane: newest question on top, earlier ones collapsed, no auto-scroll | 4 | Rules 1 and 3 |
+| B5 | Overlay answers pane: newest question on top, earlier ones below in full, no auto-scroll | 4 | Rules 1 and 3 |
 | B6 | Overlay opacity fades the background and chrome, not the answer text | 4 | Rule 4 |
 | B7 | "Quit Copilot" asks first when a call is running | 4 | It is one slip from "All settings…" |
 | B8 | UI copy says "call" instead of "session" ("Start call", "End call…") | 2–3 | Users say call. The API keeps its names. |
@@ -593,7 +599,7 @@ from → to, the list of behaviour changes, and waits for every CI job to pass.
 
 ## Decisions for you
 
-1. **Overlay order (B5).** Newest on top with earlier questions collapsed (recommended), or
+1. **Overlay order (B5).** *Decided: newest on top, earlier ones not collapsed.* Was: newest on top with earlier questions collapsed, or
    today's chronological order with the newest card pinned at the bottom?
 2. **Overlay opacity (B6).** Fade the background only and keep answer text near-opaque
    (recommended), or keep today's whole-window fade?
