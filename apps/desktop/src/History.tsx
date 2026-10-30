@@ -1,8 +1,8 @@
 // History: calls still running (open one here, or end it), past sessions (open one, delete
-// one), live minutes this period, and account deletion behind a confirmation.
+// one) and live minutes this period. Account deletion is in Settings (DeleteAccount).
 import { useCallback, useContext, useEffect, useState } from "react";
 import { api, rest, type LiveSession, type SessionItem, type Usage } from "./api";
-import { Chip, when } from "./ui";
+import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
 import { SessionDetail } from "./SessionDetail";
 import { ProfileContext } from "./profiles";
 
@@ -10,7 +10,10 @@ export function History({
   running,
   liveId,
   onOpenLive,
+  active = true,
 }: {
+  /** Shown now: a kept-open tab refreshes when shown again and polls only while shown. */
+  active?: boolean;
   /** A call runs in this app now. */
   running: boolean;
   /** That call's id. */
@@ -39,6 +42,7 @@ export function History({
   useEffect(() => {
     load();
   }, [load]);
+  useOnShow(active, load);
 
   const more = async () => {
     if (!next) return;
@@ -66,7 +70,7 @@ export function History({
 
   return (
     <>
-      <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />
+      {active && <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />}
       <section className="panel">
         <div className="usage">
           <div>
@@ -78,8 +82,9 @@ export function History({
             <div className="muted">sessions</div>
           </div>
         </div>
-        {error && <p className="note warn">{error}</p>}
+        {error && <LoadError error={error} onRetry={load} />}
         <h3>Sessions</h3>
+        {sessions === null && !error && <Loading what="sessions" />}
         {sessions?.length === 0 && <p className="note">No sessions yet.</p>}
         <table className="list clickable">
           <tbody>
@@ -105,7 +110,6 @@ export function History({
           </button>
         )}
       </section>
-      <DeleteAccount />
     </>
   );
 }
@@ -214,7 +218,8 @@ export function LiveNow({
   );
 }
 
-function DeleteAccount() {
+/** In Settings: the whole account, behind a typed confirmation. */
+export function DeleteAccount() {
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -229,15 +234,18 @@ function DeleteAccount() {
   };
   return (
     <section className="panel danger-zone">
-      <h3>Delete account</h3>
-      <p className="note">Deletes every session, transcript, document and memory fact, and your encryption keys. This cannot be undone.</p>
-      {!confirming ? (
-        <div className="actions">
+      <div className="danger-row">
+        <div>
+          <h3>Delete account</h3>
+          <p className="note">Deletes every session, transcript, document and memory fact, and your encryption keys. This cannot be undone.</p>
+        </div>
+        {!confirming && (
           <button className="danger" onClick={() => setConfirming(true)}>
             Delete my account…
           </button>
-        </div>
-      ) : (
+        )}
+      </div>
+      {confirming && (
         <div className="actions">
           <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder='Type "delete" to confirm' />
           <button className="danger" disabled={typed.trim().toLowerCase() !== "delete"} onClick={remove}>

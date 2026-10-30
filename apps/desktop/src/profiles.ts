@@ -37,6 +37,11 @@ export function isLocked(conn: CareerOsConnection | null): boolean {
   return conn?.required === true && !conn.connected;
 }
 
+/** An API error that means the chosen profile is not this account's (any more). */
+export function refusesProfile(error: string): boolean {
+  return /\(HTTP 40[34]\)/.test(error);
+}
+
 /** The switch shows when there is someone besides "Me". */
 export function showSwitch(profiles: Profile[]): boolean {
   return profiles.some((p) => !p.me);
@@ -60,10 +65,13 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
         await api.setProfile(null);
         setCurrent(null);
       }
-    } catch {
+    } catch (e) {
       if (gen !== generation.current) return;
+      // A profile this account no longer has is refused (403 or 404): back to "Me". A slow
+      // or failed call (Career-OS, a restart, the network) keeps the profile and the list, so
+      // the screens do not switch to someone else's data; the next load fixes it.
+      if (!refusesProfile(String(e))) return;
       setProfiles([]);
-      // A profile this account no longer has makes every call fail: back to "Me".
       if (current !== null) {
         await api.setProfile(null).catch(() => undefined);
         setCurrent(null);

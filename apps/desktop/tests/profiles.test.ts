@@ -44,3 +44,13 @@ describe("profiles", () => {
     expect(isLocked(conn({ required: true, connected: true, status: "active" }))).toBe(false);
   });
 });
+
+describe("a failed profiles call", () => {
+  it("goes back to Me only when the profile is refused", async () => {
+    const { refusesProfile } = await import("../src/profiles");
+    expect(refusesProfile("not your profile (HTTP 403)")).toBe(true);
+    expect(refusesProfile("no such profile (HTTP 404)")).toBe(true);
+    expect(refusesProfile("could not reach api.example (timed out)")).toBe(false);
+    expect(refusesProfile("bad gateway (HTTP 502)")).toBe(false);
+  });
+});

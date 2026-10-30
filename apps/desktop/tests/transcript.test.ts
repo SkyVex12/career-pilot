@@ -76,6 +76,22 @@ describe("transcript blocks", () => {
   });
 });
 
+describe("the live overlay leaves the user's own words out", () => {
+  it("keeps the other side's blocks apart where the user spoke, and keeps each card link", () => {
+    const s = run([
+      final("them", 0, "Tell me about the ledger.", 0, 1500),
+      final("me", 0, "Sure, it was a migration.", 2000, 3500),
+      detected("q1"),
+      final("them", 1, "How long did it take?", 4000, 5000),
+    ]);
+    expect(shape(s)).toHaveLength(3); // History shows all three
+    const live = transcriptBlocks(s, { showMe: false });
+    expect(live.map(blockText)).toEqual(["Tell me about the ledger.", "How long did it take?"]);
+    expect(live.map((b) => b.who)).toEqual(["them", "them"]);
+    expect(live[0].asked).toEqual(["q1"]);
+  });
+});
+
 describe("view prefs", () => {
   it("steps the text size along the scale and holds at the ends", () => {
     expect(stepScale(1, 1)).toBe(1.1);

@@ -101,8 +101,12 @@ select {
   max-width: 420px;
 }
 
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: auto;
+  padding: 0;
+  margin: 0;
+  flex: none;
 }
 
 .muted {
@@ -614,7 +618,7 @@ input[type="checkbox"] {
 
 .hotkey {
   display: grid;
-  grid-template-columns: 1fr 220px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   align-items: center;
   gap: 4px 10px;
 }
@@ -626,6 +630,9 @@ input[type="checkbox"] {
 .hotkey input {
   grid-column: 2;
   grid-row: 1;
+  max-width: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .hotkey-hint {
@@ -948,7 +955,7 @@ kbd.key {
 }
 
 /* The transcript pane: each side's lines joined into blocks, both full width. */
-.transcript {
+.tx {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -957,23 +964,23 @@ kbd.key {
   gap: 8px;
 }
 
-.transcript .line {
+.tx .line {
   line-height: 1.45;
   font-size: 13px;
   padding: 4px 8px;
   border-left: 2px solid #3d8a63;
 }
 
-.transcript .line.me {
+.tx .line.me {
   border-left-color: #8b6fd6;
 }
 
-.transcript .line p {
+.tx .line p {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.transcript .who {
+.tx .who {
   display: block;
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -982,11 +989,11 @@ kbd.key {
   margin-bottom: 1px;
 }
 
-.transcript .line.me .who {
+.tx .line.me .who {
   color: #b9a5f0;
 }
 
-.transcript .partial {
+.tx .partial {
   color: var(--overlay-muted);
   font-style: italic;
 }
@@ -1240,17 +1247,16 @@ kbd.key {
   background: linear-gradient(135deg, transparent 55%, #4a525c 55%, #4a525c 65%, transparent 65%, transparent 75%, #4a525c 75%, #4a525c 85%, transparent 85%);
 }
 
-/* Compact: tighter, for a small window. One column shows the answers only; split keeps both
-   panes. */
+/* Compact: the answers only, tighter, for a small window (either layout). */
 .overlay.compact .pane-body {
   padding: 4px 6px;
 }
 
-.overlay.compact .transcript {
+.overlay.compact .tx {
   gap: 4px;
 }
 
-.overlay.compact .transcript .line {
+.overlay.compact .tx .line {
   font-size: 12px;
   padding: 2px 6px;
 }
@@ -1521,8 +1527,51 @@ tr.muted td {
 }
 
 .danger-zone h3 {
-  margin-top: 0;
+  margin: 0 0 4px;
   color: var(--bad);
+}
+
+.danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.danger-row .note {
+  margin: 0;
+}
+
+.danger-row button {
+  flex: none;
+}
+
+/* Settings: headed sections on one label column, the Save bar at the end. */
+.settings > h3 {
+  margin: 28px 0 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings > h3:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings > h3 + .grid {
+  margin-top: 0;
+}
+
+.save-bar {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  align-items: center;
 }
 
 /* Work: companies, the work log, material and facts. */
@@ -1950,5 +1999,9 @@ details.output > summary h3 {
 .device-test .note.bad { color: var(--bad, #c33); }
 .audio-meter-bar { height: 6px; max-width: 420px; border-radius: 3px; background: var(--border, #ccc); overflow: hidden; }
 .audio-meter-fill { height: 100%; background: var(--accent, #2a7); transition: width 80ms linear; }
-.quick-tests { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-width: 420px; }
-.quick-tests .device-control { flex: 1 1 auto; }
+/* The Session tab: both tests on one row of the form, each name with its button. */
+.device-tests { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.device-tests .device-test { flex: 1 1 220px; }
+.device-tests .device-control { flex: 0 0 auto; }
+.device-tests .device-row { gap: 10px; min-height: 34px; }
+.device-tests .audio-meter-bar { max-width: 240px; }

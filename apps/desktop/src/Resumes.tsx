@@ -4,10 +4,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type ResumeVersion } from "./api";
 import { isTextFile, resumeStatusLabel } from "./pairing";
-import { Chip, when } from "./ui";
+import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
 import { usePolling } from "./usePolling";
 
-export function Resumes() {
+export function Resumes({ active = true }: { active?: boolean }) {
   const [base, setBase] = useState<ResumeVersion | null>(null);
   const [versions, setVersions] = useState<ResumeVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +30,7 @@ export function Resumes() {
   useEffect(() => {
     load();
   }, [load]);
+  useOnShow(active, load);
   const pending = [base, ...(versions ?? [])].some((v) => v?.status === "extracting");
   usePolling(load, 3000, pending);
 
@@ -58,7 +59,14 @@ export function Resumes() {
   return (
     <section className="panel">
       <h3>Base resume</h3>
-      {base ? <VersionRow v={base} onChanged={load} /> : <p className="note">None yet: upload or paste your resume below.</p>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {versions === null ? (
+        !error && <Loading what="resumes" />
+      ) : base ? (
+        <VersionRow v={base} onChanged={load} />
+      ) : (
+        <p className="note">None yet: upload or paste your resume below.</p>
+      )}
       <div className="grid">
         <label>{base ? "Replace it" : "Add it"}</label>
         <div>
@@ -96,7 +104,6 @@ export function Resumes() {
         </div>
       </div>
       {message && <p className="note">{message}</p>}
-      {error && <p className="note warn">{error}</p>}
 
       <h3>Tailored resumes</h3>
       {versions?.length === 0 && <p className="note">None yet: add one to an application under Applications.</p>}

@@ -29,7 +29,7 @@ import { Applications, roundLabel, useCatalog } from "./Applications";
 import { applicationOption } from "./pairing";
 import { DeviceTest } from "./AudioCheck";
 import { CareerOsSettings } from "./CareerOs";
-import { History, LiveNow } from "./History";
+import { DeleteAccount, History, LiveNow } from "./History";
 import { Resumes } from "./Resumes";
 import { when } from "./ui";
 import { SessionDetail } from "./SessionDetail";
@@ -52,6 +52,13 @@ const TABS: [Tab, string][] = [
 export default function App() {
   const [session] = useSession();
   const [tab, setTab] = useState<Tab>("start");
+  // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
+  // refresh in the background (useOnShow) instead of starting from nothing.
+  const [opened, setOpened] = useState<Set<Tab>>(() => new Set(["start"]));
+  useEffect(() => {
+    setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab)));
+  }, [tab]);
+  const keep = (t: Tab) => tab === t || opened.has(t);
   const [view, setView] = useState<SettingsView | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
@@ -144,21 +151,37 @@ export default function App() {
             session={session}
             tokenSet={tokenSet}
             environment={environment}
-            devices={{ mic: view?.settings.mic_device ?? null, output: view?.settings.output_device ?? null }}
+            settings={view?.settings ?? null}
+            onSettingsSaved={reload}
             onSettings={() => setTab("settings")}
             onOpenLive={openLive}
           />
         )}
         {!link.locked && needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
-        {!link.locked && !needsToken && tab === "resumes" && <Resumes />}
-        {!link.locked && !needsToken && tab === "applications" && <Applications />}
-        {!link.locked && !needsToken && tab === "work" && <Work />}
-        {!link.locked && !needsToken && tab === "history" && (
-          <History
-            running={session.running}
-            liveId={session.running ? session.sessionId : null}
-            onOpenLive={openLive}
-          />
+        {!link.locked && tokenSet && keep("resumes") && (
+          <div hidden={tab !== "resumes"}>
+            <Resumes active={tab === "resumes"} />
+          </div>
+        )}
+        {!link.locked && tokenSet && keep("applications") && (
+          <div hidden={tab !== "applications"}>
+            <Applications active={tab === "applications"} />
+          </div>
+        )}
+        {!link.locked && tokenSet && keep("work") && (
+          <div hidden={tab !== "work"}>
+            <Work active={tab === "work"} />
+          </div>
+        )}
+        {!link.locked && tokenSet && keep("history") && (
+          <div hidden={tab !== "history"}>
+            <History
+              active={tab === "history"}
+              running={session.running}
+              liveId={session.running ? session.sessionId : null}
+              onOpenLive={openLive}
+            />
+          </div>
         )}
       </ProfileContext.Provider>
       {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
@@ -367,15 +390,17 @@ function StartScreen({
   session,
   tokenSet,
   environment,
-  devices,
+  settings,
+  onSettingsSaved,
   onSettings,
   onOpenLive,
 }: {
   session: SessionView;
   tokenSet: boolean;
   environment: string;
-  /** The saved microphone and call-audio device, for their Test buttons before the call. */
-  devices: { mic: string | null; output: string | null };
+  /** The saved settings: the microphone and call audio are picked and tested here. */
+  settings: Settings | null;
+  onSettingsSaved: () => void;
   onSettings: () => void;
   onOpenLive: (live: LiveSession) => Promise<void>;
 }) {
@@ -611,6 +636,8 @@ function StartScreen({
               : "Both sides are transcribed live for the answers, but no words are stored; the summary covers only the call's length and the questions' types."}
           </p>
         </div>
+
+        {settings && <DevicePickers settings={settings} disabled={running || busy} onSaved={onSettingsSaved} />}
       </div>
 
       <div className="actions">
@@ -625,17 +652,7 @@ function StartScreen({
         )}
         <button onClick={() => api.showOverlay(true)}>Show overlay</button>
       </div>
-      {!running && (
-        <div className="quick-tests">
-          <DeviceTest part="mic" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
-            <span>Microphone</span>
-          </DeviceTest>
-          <DeviceTest part="call" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
-            <span>Call audio</span>
-          </DeviceTest>
-          <p className="note">Tests the devices saved in Settings.</p>
-        </div>
-      )}
+
       {running && ending && (
         <div className="end-choice">
           <p>How should this call be saved?</p>
@@ -881,6 +898,58 @@ function duplicateHotkeys(draft: Settings): Set<keyof Settings> {
   return dup;
 }
 
+/** The Session tab's microphone and call-audio rows: picked before each call, each with its
+ * Test button, and saved to the settings the moment one is picked. */
+function DevicePickers({ settings, disabled, onSaved }: { settings: Settings; disabled: boolean; onSaved: () => void }) {
+  const [devices, setDevices] = useState<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] } | null>(null);
+  const [mic, setMic] = useState(settings.mic_device);
+  const [output, setOutput] = useState(settings.output_device);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.listDevices().then(setDevices);
+  }, []);
+  useEffect(() => setMic(settings.mic_device), [settings.mic_device]);
+  useEffect(() => setOutput(settings.output_device), [settings.output_device]);
+  const pick = async (key: "mic_device" | "output_device", value: string | null) => {
+    (key === "mic_device" ? setMic : setOutput)(value);
+    setError(null);
+    try {
+      await api.saveSettings({ ...settings, [key]: value }, null);
+      onSaved();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const select = (list: DeviceInfo[] | undefined, value: string | null, key: "mic_device" | "output_device") => (
+    <select value={value ?? ""} disabled={disabled} onChange={(e) => pick(key, e.target.value || null)}>
+      <option value="">System default</option>
+      {list?.map((d) => (
+        <option key={d.id} value={d.id}>
+          {d.name}
+          {d.is_default ? " (default)" : ""}
+        </option>
+      ))}
+    </select>
+  );
+  return (
+    <>
+      <label>Microphone</label>
+      <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled}>
+        {select(devices?.inputs, mic, "mic_device")}
+      </DeviceTest>
+
+      <label>Call audio from</label>
+      <div>
+        <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled}>
+          {select(devices?.outputs, output, "output_device")}
+        </DeviceTest>
+        <p className="note">The speakers or headset the call plays on; captured in loopback.</p>
+        {error && <p className="note warn">{error}</p>}
+      </div>
+    </>
+  );
+}
+
 function SettingsScreen({ view, running, onSaved }: { view: SettingsView; running: boolean; onSaved: () => void }) {
   const settings = view.settings;
   const tokenSet = view.dev_token_set;
@@ -889,14 +958,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
   const [token, setToken] = useState("");
   const [host, setHost] = useState("");
   const [signingIn, setSigningIn] = useState(false);
-  const [devices, setDevices] = useState<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  // The overlay's opacity for the monitor it is on now; the slider sets it live.
-  const [opacity, setOpacity] = useState<number | null>(null);
-  useEffect(() => {
-    api.listDevices().then(setDevices);
-    api.overlayPrefs().then((p) => setOpacity(p.opacity)).catch(() => undefined);
-  }, []);
   const dupes = duplicateHotkeys(draft);
 
   const save = async () => {
@@ -904,7 +966,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
     try {
       await api.saveSettings(draft, token ? token : null);
       setToken("");
-      setMessage(running ? "Saved. Device and echo settings apply to the next session." : "Saved.");
+      setMessage(running ? "Saved. Echo cancellation applies to the next session." : "Saved.");
       onSaved();
     } catch (e) {
       setMessage(String(e));
@@ -935,25 +997,15 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
       setMessage(String(e));
     }
   };
-  const deviceSelect = (list: DeviceInfo[] | undefined, value: string | null, key: "mic_device" | "output_device") => (
-    <select value={value ?? ""} onChange={(e) => set(key, e.target.value || null)}>
-      <option value="">System default</option>
-      {list?.map((d) => (
-        <option key={d.id} value={d.id}>
-          {d.name}
-          {d.is_default ? " (default)" : ""}
-        </option>
-      ))}
-    </select>
-  );
-
   const release = view.release;
   const updates = view.updates;
   const updateLine = settingsLine(update);
   const check = useCheckNow(update);
   return (
-    <section className="panel">
-      <div className="grid">
+    <>
+      <section className="panel settings">
+        <h3>App</h3>
+        <div className="grid">
         <label>Version</label>
         <div>
           <span>{view.version}</span>
@@ -995,16 +1047,11 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
             </div>
           </>
         )}
+        </div>
 
-        {release ? (
-          <>
-            <label>Server</label>
-            <div>
-              <span>{release.stage}</span>
-              <p className="note">{release.api_url}</p>
-            </div>
-          </>
-        ) : (
+        <h3>Account</h3>
+        <div className="grid">
+        {!release && (
           <>
             <label>Environment</label>
             <div className="row">
@@ -1097,57 +1144,15 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
             </div>
           </>
         )}
-        {draft.environment === settings.environment && view.warnings.length > 0 && (
-          <>
-            <label>Not encrypted</label>
-            <div>
-              {view.warnings.map((w) => (
-                <p key={w} className="note warn">
-                  {w}
-                </p>
-              ))}
-            </div>
-          </>
-        )}
-
-        <label>Microphone</label>
-        <DeviceTest part="mic" micDevice={draft.mic_device} outputDevice={draft.output_device} disabled={running} disabledNote="Test after the call: it is using the devices.">
-          {deviceSelect(devices?.inputs, draft.mic_device, "mic_device")}
-        </DeviceTest>
-
-        <label>Call audio from</label>
-        <div>
-          <DeviceTest part="call" micDevice={draft.mic_device} outputDevice={draft.output_device} disabled={running}>
-            {deviceSelect(devices?.outputs, draft.output_device, "output_device")}
-          </DeviceTest>
-          <p className="note">The speakers or headset the call plays on; captured in loopback.</p>
         </div>
 
+        <h3>During calls</h3>
+        <div className="grid">
         <label>Echo cancellation</label>
         <label className="check">
           <input type="checkbox" checked={draft.echo_cancellation} onChange={(e) => set("echo_cancellation", e.target.checked)} />
           Remove the call's sound from the microphone (needed without headphones)
         </label>
-
-        <label>Overlay opacity</label>
-        <div>
-          <div className="row">
-            <input
-              type="range"
-              min={0.3}
-              max={1}
-              step={0.05}
-              value={opacity ?? 1}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setOpacity(v);
-                api.setOverlayOpacity(v).catch(() => undefined);
-              }}
-            />
-            <span>{Math.round((opacity ?? 1) * 100)}%</span>
-          </div>
-          <p className="note">How see-through the overlay is. Step it any time with the opacity hotkeys; remembered per monitor.</p>
-        </div>
 
         <label>Hotkeys</label>
         <div className="hotkeys">
@@ -1175,23 +1180,29 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
             it. Conflicts are flagged here and re-checked when you save.
           </p>
         </div>
+        </div>
 
+        <h3>Advanced</h3>
+        <div className="grid">
         <label>Debug panel</label>
         <label className="check">
           <input type="checkbox" checked={draft.show_debug} onChange={(e) => set("show_debug", e.target.checked)} />
           Show (also Ctrl+Shift+D)
         </label>
-      </div>
-      <div className="actions">
-        <button className="primary" onClick={save}>
-          Save
-        </button>
-        {message && <span className="note">{message}</span>}
-      </div>
-      <CareerOsSettings key={accountOf(view)} ready={view.ready} />
-      <h3>Audio levels</h3>
-      <Meters />
-    </section>
+        </div>
+
+        <div className="actions save-bar">
+          <button className="primary" onClick={save} disabled={!unsaved && !token}>
+            Save
+          </button>
+          <span className="note">{message ?? (unsaved || token ? "Unsaved changes." : "")}</span>
+        </div>
+      </section>
+      <section className="panel settings">
+        <CareerOsSettings key={accountOf(view)} ready={view.ready} />
+      </section>
+      {view.ready && <DeleteAccount />}
+    </>
   );
 }
 
@@ -1238,6 +1249,8 @@ function DebugPanel({ session }: { session: SessionView }) {
   const latency = Object.values(session.latency);
   return (
     <section className="panel debug">
+      <h3>Audio levels</h3>
+      <Meters />
       <h3>Latency per question (ms)</h3>
       <table>
         <thead>

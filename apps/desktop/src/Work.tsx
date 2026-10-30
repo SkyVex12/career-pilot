@@ -3,14 +3,14 @@
 // Standup and meeting mode answer from these (the start screen picks the company).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type CompanyDocument, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
-import { Chip, when } from "./ui";
+import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
 import { usePolling } from "./usePolling";
 import { KIND_LABELS, byKind, itemLine, localDay } from "./workday";
 
 const ACCEPT = ".pdf,.md,.markdown,.txt";
 type Sub = "log" | "material" | "facts";
 
-export function Work() {
+export function Work({ active = true }: { active?: boolean }) {
   const [employers, setEmployers] = useState<Employer[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -29,6 +29,7 @@ export function Work() {
   useEffect(() => {
     load();
   }, [load]);
+  useOnShow(active, load);
 
   const employer = employers?.find((e) => e.id === selected) ?? null;
   return (
@@ -41,15 +42,18 @@ export function Work() {
             {(e.pending_proposals ?? 0) > 0 && <span className="count">{e.pending_proposals}</span>}
           </button>
         ))}
-        <button className="link" onClick={() => setAdding(true)}>
-          + Add a company
-        </button>
+        {employers !== null && employers.length > 0 && !adding && (
+          <button className="link" onClick={() => setAdding(true)}>
+            + Add a company
+          </button>
+        )}
       </div>
       <p className="note">
         Companies you work at, apart from the jobs you apply to. Standup and meeting mode answer from the company you pick on the start screen.
       </p>
-      {error && <p className="note warn">{error}</p>}
-      {employers?.length === 0 && !adding && <p className="callout">No company yet: add the one you work at.</p>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {employers === null && !error && <Loading what="companies" />}
+      {(adding || employers?.length === 0) && <h3>{employers?.length === 0 ? "Add the company you work at" : "Add a company"}</h3>}
       {(adding || employers?.length === 0) && (
         <EmployerForm
           onCancel={() => setAdding(false)}
