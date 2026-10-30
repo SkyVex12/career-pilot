@@ -2,14 +2,14 @@
 // History. Polls GET /sessions/{id} for up to 5 minutes until the outputs are ready, then shows
 // them; when the transcript was stored, also the call as the overlay showed it (Replay) and the
 // plain transcript (Transcript).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { rest, type Replay, type SessionDetail as Detail } from "./api";
 import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 import { Banner, Button, Card, ConfirmDialog, EmptyState, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, useToast } from "./ui";
-import { MODE_LABEL } from "./History";
+import { MODE_LABEL } from "./calls";
 
 export function SessionDetail({
   sessionId,
@@ -190,16 +190,18 @@ function CallReplay({ replay }: { replay: Replay }) {
   const [compact, setCompact] = useState(false);
   const ratings = useMemo(() => Object.fromEntries(replay.questions.map((q) => [q.id, q.feedback])), [replay]);
   return (
-    <div className={compact ? "overlay replay compact" : "overlay replay"}>
-      <header className="overlay-head">
-        <span className="badge badge-off">
-          <span className="dot" />
+    <div className={compact ? "ov ov-replay is-compact" : "ov ov-replay"} style={{ "--ov-alpha": 1 } as CSSProperties}>
+      <header className="ov-head">
+        <span className="ov-status ov-status-off">
+          <span className="ov-status-icon" aria-hidden="true">
+            ○
+          </span>
           Replay
         </span>
-        <span className="muted">
+        <span className="ov-replay-count">
           {replay.questions.length} suggestion{replay.questions.length === 1 ? "" : "s"}
         </span>
-        <span className="spacer" />
+        <span className="ov-spacer" />
         <ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />
       </header>
       <ConversationView

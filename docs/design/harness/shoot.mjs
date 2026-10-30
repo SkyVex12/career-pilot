@@ -31,7 +31,10 @@ const tab = (label) => async (p) => {
   await p.waitForTimeout(400);
 };
 const click = (text, opts = {}) => async (p) => {
-  await p.getByRole("button", { name: text, exact: opts.exact ?? false }).first().click();
+  // A button, a tab or a menu item with this name (the old UI's segmented buttons, the new tabs).
+  const name = { name: text, exact: opts.exact ?? false };
+  const any = p.getByRole("button", name).or(p.getByRole("tab", name)).or(p.getByRole("menuitem", name)).or(p.getByRole("radio", name));
+  await any.first().click();
   await p.waitForTimeout(400);
 };
 const seq = (...fs) => async (p) => {
@@ -40,15 +43,17 @@ const seq = (...fs) => async (p) => {
 
 const main = [
   ["session-start", "?", null],
-  ["session-start-standup", "?", click("standup", { exact: true })],
-  ["session-start-meeting", "?", click("meeting", { exact: true })],
+  ["session-start-standup", "?", click("Standup", { exact: true })],
+  ["session-start-meeting", "?", click("Meeting", { exact: true })],
+  ["session-start-more", "?", click("More options")],
+  ["session-start-audio", "?", click("Change or test")],
   ["session-start-empty", "?data=empty", null],
   ["session-start-loading", "?data=loading", null],
   ["session-start-error", "?data=error", null],
   ["session-signed-out", "?data=signedout", null],
   ["session-locked", "?data=locked", null],
   ["session-running", "?call=midcall", null],
-  ["session-end-choice", "?call=midcall", click("End session")],
+  ["session-end-choice", "?call=midcall", click("End call")],
   ["session-postcall", "?call=ended", null],
   ["session-other-active", "?call=session_active", null],
   ["session-update-ready", "?update=ready", null],
@@ -57,18 +62,23 @@ const main = [
   ["applications-loading", "?data=loading", tab("Applications")],
   ["applications-error", "?data=error", tab("Applications")],
   ["applications-long", "?data=long", tab("Applications")],
-  ["applications-editor", "?", seq(tab("Applications"), async (p) => (await p.locator("table.list tr").first().click(), p.waitForTimeout(500)))],
+  ["applications-editor", "?", seq(tab("Applications"), async (p) => (await p.locator(".apps-list .ui-row-hit").nth(1).click(), p.waitForTimeout(500)))],
+  ["applications-jd", "?", seq(tab("Applications"), click("Job description", { exact: true }))],
+  ["applications-resume", "?", seq(tab("Applications"), click("Resume", { exact: true }))],
   ["applications-new", "?", seq(tab("Applications"), click("Add application"))],
+  ["applications-new-errors", "?", seq(tab("Applications"), click("Add application"), async (p) => (await p.locator(".ui-dialog-foot button", { hasText: "Add application" }).click(), p.waitForTimeout(300)))],
   ["applications-pull", "?", seq(tab("Applications"), click("Pull from Career-OS"))],
+  ["applications-narrow", "?", seq(tab("Applications"), async (p) => (await p.setViewportSize({ width: 760, height: 780 }), p.waitForTimeout(400)))],
   ["resumes", "?", tab("Resumes")],
   ["resumes-empty", "?data=empty", tab("Resumes")],
   ["resumes-loading", "?data=loading", tab("Resumes")],
   ["resumes-error", "?data=error", tab("Resumes")],
   ["resumes-long", "?data=long", tab("Resumes")],
+  ["resumes-replace", "?", seq(tab("Resumes"), click("Replace"))],
   ["work-log", "?", tab("Work")],
   ["work-material", "?", seq(tab("Work"), click("Material"))],
   ["work-facts", "?", seq(tab("Work"), click("Facts", { exact: true }))],
-  ["work-delete-company", "?", seq(tab("Work"), click("Delete all data"))],
+  ["work-delete-company", "?", seq(tab("Work"), click("Company actions"), click("Delete all its data"))],
   ["work-empty", "?data=empty", tab("Work")],
   ["work-loading", "?data=loading", tab("Work")],
   ["work-error", "?data=error", tab("Work")],
@@ -80,8 +90,12 @@ const main = [
   ["history-long", "?data=long", tab("History")],
   ["history-session", "?", seq(tab("History"), async (p) => (await p.locator("table.list.clickable tr, .ui-list .ui-row-hit").first().click(), p.waitForTimeout(800)))],
   ["settings", "?", tab("Settings")],
+  ["settings-account", "?", seq(tab("Settings"), click("Account", { exact: true }))],
+  ["settings-audio", "?", seq(tab("Settings"), click("Audio", { exact: true }))],
+  ["settings-hotkeys", "?", seq(tab("Settings"), click("Overlay & hotkeys", { exact: true }))],
+  ["settings-advanced", "?dev=1", seq(tab("Settings"), click("Advanced", { exact: true }))],
   ["settings-dev-build", "?dev=1", tab("Settings")],
-  ["settings-signed-out", "?data=signedout", tab("Settings")],
+  ["settings-signed-out", "?data=signedout", seq(tab("Settings"), click("Account", { exact: true }))],
   ["settings-locked", "?data=locked", tab("Settings")],
   ["debug", "?call=midcall", async (p) => (await p.keyboard.press("Control+Shift+D"), p.waitForTimeout(500))],
 ];
@@ -110,7 +124,7 @@ for (const scheme of ["light", "dark"]) {
     const file = `${name}${scheme === "dark" ? "-dark" : ""}`;
     if (!file.startsWith(only)) continue;
     // Dark only for the screens the audit compares side by side.
-    if (scheme === "dark" && !["session-start", "applications", "work-log", "history-session", "settings"].includes(name)) continue;
+    if (scheme === "dark" && !["session-start", "session-running", "applications", "work-log", "history-session", "settings", "settings-hotkeys"].includes(name)) continue;
     const page = await browser.newPage({ viewport: MAIN, colorScheme: scheme });
     await page.goto(BASE + query);
     await page.waitForTimeout(700);
@@ -127,7 +141,7 @@ for (const scheme of ["light", "dark"]) {
           notes: document.querySelectorAll(".note").length,
         };
       });
-      if (["applications-long", "history-long", "session-start", "settings", "work-log", "history-session"].includes(name)) {
+      if (["applications-long", "history-long", "session-start", "settings", "work-log", "work-material", "history-session"].includes(name)) {
         await page.screenshot({ path: join(out, `${file}-full.png`), fullPage: true });
       }
     }
@@ -149,10 +163,11 @@ for (const [name, query, viewport, act] of overlay) {
       return el ? getComputedStyle(el).fontSize : null;
     };
     const cards = document.querySelectorAll(".card");
-    const last = cards[cards.length - 1];
+    // The newest answer: the "Now" card (the redesigned overlay), else the last card (before).
+    const last = document.querySelector(".card.is-now") ?? cards[cards.length - 1];
     const r = last?.querySelector(".points")?.getBoundingClientRect();
     return {
-      fastAnswer: px(".points .bullets"),
+      fastAnswer: px(".card.is-now .points .bullets") ?? px(".points .bullets"),
       deepAnswer: px(".deep .bullets"),
       question: px(".card .question"),
       transcript: px(".tx .line"),

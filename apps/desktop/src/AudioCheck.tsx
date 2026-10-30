@@ -1,9 +1,10 @@
-// A device row with its own Test button (Settings, and the Session tab before a call): the
-// device's control on the left, Test on the right, and while it runs a level bar under the
-// row, then the verdict. The Rust core does the work (audio_check, one part at a time).
+// A device row with its own Test button (Settings, Audio, and the Call screen before a call): the
+// device's picker, Test beside it, and while it runs a level bar under the row, then the
+// verdict. The Rust core does the work (audio_check, one part at a time).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, onAudioCheck, type AudioPart } from "./api";
 import { type CheckState, meterFill, partLevel, partLine, partVerdict } from "./audiotest";
+import { Button } from "./ui";
 
 export function DeviceTest({
   part,
@@ -52,32 +53,33 @@ export function DeviceTest({
   };
   const line = partLine(part, check);
   const ok = check.state === "done" ? partVerdict(part, check.result).ok : null;
+  const tone = ok === true ? "is-ok" : ok === false || check.state === "failed" ? "is-bad" : "";
   return (
     <div className="device-test">
       <div className="device-row">
         <div className="device-control">{children}</div>
-        <button
-          className="small"
+        <Button
+          size="md"
           onClick={run}
-          disabled={disabled || running}
+          disabled={disabled}
+          loading={running}
           title={part === "mic" ? "Speak for 3 seconds to check this microphone" : "Plays a short tone on this device to check the app hears it"}
         >
-          {running && <span className="spinner" />}
           {running ? "Testing…" : "Test"}
-        </button>
+        </Button>
       </div>
       {running && (
-        <div className="audio-meter-bar" role="meter" aria-label={part === "mic" ? "Microphone level" : "Call audio level"}>
-          <div className="audio-meter-fill" style={{ width: `${Math.round(meterFill(partLevel(part, check.meter)) * 100)}%` }} />
+        <div className="device-meter" role="meter" aria-label={part === "mic" ? "Microphone level" : "Call audio level"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(meterFill(partLevel(part, check.meter)) * 100)}>
+          <div className="device-meter-fill" style={{ width: `${Math.round(meterFill(partLevel(part, check.meter)) * 100)}%` }} />
         </div>
       )}
       {line && (
-        <p className={`note${ok === true ? " ok" : ok === false || check.state === "failed" ? " bad" : ""}`} aria-live="polite">
-          {ok === true ? "✓ " : ok === false ? "✗ " : ""}
+        <p className={`device-verdict ${tone}`} aria-live="polite">
+          <span aria-hidden="true">{ok === true ? "✓ " : ok === false || check.state === "failed" ? "✕ " : ""}</span>
           {line}
         </p>
       )}
-      {disabled && disabledNote && <p className="note">{disabledNote}</p>}
+      {disabled && disabledNote && <p className="ui-field-hint">{disabledNote}</p>}
     </div>
   );
 }

@@ -1,0 +1,132 @@
+{
+  "overlay-idle": {
+    "fastAnswer": null,
+    "deepAnswer": null,
+    "question": null,
+    "transcript": null,
+    "passTitle": null,
+    "latestFastVisible": null,
+    "latestFastTop": null
+  },
+  "overlay-midcall": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-midcall-stacked": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": null,
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 351
+  },
+  "overlay-midcall-compact": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": null,
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 76
+  },
+  "overlay-midcall-compact-small": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": null,
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 76
+  },
+  "overlay-midcall-narrow": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 286
+  },
+  "overlay-opacity-60": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-opacity-35": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-text-130": {
+    "fastAnswer": "22.5px",
+    "deepAnswer": "18.75px",
+    "question": "17.5px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 141
+  },
+  "overlay-click-through": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 142
+  },
+  "overlay-menu": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-degraded": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-reconnecting": {
+    "fastAnswer": "18px",
+    "deepAnswer": "15px",
+    "question": "14px",
+    "transcript": "14px",
+    "passTitle": "12px",
+    "latestFastVisible": true,
+    "latestFastTop": 112
+  },
+  "overlay-stream": {
+    "cls": 0.866,
+    "fastTopMin": 112,
+    "fastTopMax": 112,
+    "framesThatMoved": 0,
+    "frames": 302
+  },
+  "history-session": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 16,
+    "notes": 0
+  }
+}

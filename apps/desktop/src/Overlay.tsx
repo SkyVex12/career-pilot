@@ -1,22 +1,25 @@
-// The always-on-top overlay. Two layouts, switched from the header and remembered:
-// - split (the default): the transcript in the left third (the other side live; both sides
-//   in History's replay), each side's short
-//   lines joined into blocks (transcript.ts), and the suggested answers in the right two
-//   thirds. Each pane scrolls on its own and follows its newest content while the reader is at
-//   its bottom; scrolled up, it stays put and offers "Jump to latest". A narrow window stacks
-//   the panes.
-// - one column: the whole conversation in order, the other side on the left, the answers on
-//   the right, and in History the user's own words ("You said").
-// Compact shows the answers only, tighter, in either layout. Compact shows the answers only.
-// Text size steps with the A-/A+ buttons or Ctrl+plus/minus/0. Hotkey, typed question, thumbs
-// and the status badge as before.
+// The always-on-top overlay (docs/design/ui-proposal.md, "Overlay rules"). It is read
+// mid-sentence, so:
+// - the newest question ("Now") is always in the same place: the top of the answers pane (split
+//   and compact), or pinned under the conversation (one column); earlier questions follow in
+//   full, newest first. The answers pane never scrolls by itself, so text that streams in grows
+//   below what is being read; scrolled down, a new question offers "New answer ↑".
+// - each pass says its state in words and an icon (thinking, writing with a caret, done,
+//   stopped, failed), and space is held for it, so the first words push nothing.
+// - the opacity setting fades the window's background and chrome; the answers keep a backing
+//   and their text stays opaque, so they stay readable over whatever is behind.
+// The transcript pane (split) keeps following its newest line. Text size steps with A-/A+ or
+// Ctrl+plus/minus/0; compact shows the answers only; hotkeys, click-through, keep on top, copy,
+// thumbs, the typed question (Ask) and the reply button (Answer) are as before.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
-import { badge, conversation, deepStartsAlone, useSession, type ConversationItem, type QuestionView, type SessionView } from "./session";
+import { prettyKey } from "./hotkeys";
+import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
+import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
 
 const COMPACT_KEY = "overlay.compact";
 
@@ -36,10 +39,6 @@ function saveCompact(on: boolean) {
   }
 }
 
-/** The overlay's comfort prefs, kept by the Rust core per monitor: opacity and view it renders,
- * and whether clicks are passing through it. The core pushes changes (a hotkey, or a move to
- * another monitor); the overlay asks once on mount. `compact` keeps a localStorage copy so the
- * first paint matches, before the core answers. */
 const NO_HOTKEYS: OverlayPrefs["hotkeys"] = {
   toggle_overlay: "",
   click_through: "",
@@ -48,6 +47,9 @@ const NO_HOTKEYS: OverlayPrefs["hotkeys"] = {
   opacity_down: "",
 };
 
+/** The overlay's comfort prefs, kept by the Rust core per monitor: opacity and view, and whether
+ * clicks pass through. The core pushes changes (a hotkey, a move to another monitor); the overlay
+ * asks once on mount. `compact` keeps a localStorage copy so the first paint matches. */
 function useOverlayPrefs() {
   const [opacity, setOpacity] = useState(1);
   const [compact, setCompactState] = useState(loadCompact);
@@ -126,16 +128,6 @@ export function useViewPrefs() {
 
 export type ViewPrefs = ReturnType<typeof useViewPrefs>;
 
-/// Changes whenever anything shown grows, so the view can follow it.
-function contentSize(items: ConversationItem[]): string {
-  let chars = 0;
-  for (const it of items) {
-    if (it.kind === "question") chars += it.question.fast.text.length + it.question.deep.text.length + (it.question.deep.done ? 1 : 0);
-    else chars += it.text.length;
-  }
-  return `${items.length}:${chars}`;
-}
-
 /// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
 export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
@@ -145,12 +137,24 @@ export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean
   return null;
 }
 
+const STATUS_ICON: Record<string, string> = { ok: "●", degraded: "▲", reconnecting: "◌", off: "○" };
+
+export function StatusBadge({ s }: { s: SessionView }) {
+  const b = badge(s);
+  return (
+    <span className={`ov-status ov-status-${b.state}`} role="status" title={b.text} data-tauri-drag-region>
+      <span className="ov-status-icon" aria-hidden="true">
+        {STATUS_ICON[b.state]}
+      </span>
+      <span className="ov-status-text">{b.text}</span>
+    </span>
+  );
+}
+
 export default function Overlay() {
   const [s, dispatch] = useSession();
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
-  const [menu, setMenu] = useState(false);
-  const b = badge(s);
   const stepText = view.stepText;
 
   // Ctrl+plus / Ctrl+minus / Ctrl+0 size the text while the overlay has focus.
@@ -165,51 +169,33 @@ export default function Overlay() {
     return () => window.removeEventListener("keydown", onKey);
   }, [stepText]);
 
+  const offKey = prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G");
   return (
-    <div className={compact ? "overlay compact" : "overlay"} style={{ opacity }}>
-      {clickThrough && (
-        <div className="clickthrough" role="status">
-          Click-through on{hotkeys.click_through_off ? ` — ${hotkeys.click_through_off} to turn off` : " — use your turn-off hotkey"}
-        </div>
-      )}
-      <header className="overlay-head" data-tauri-drag-region>
-        <span className={`badge badge-${b.state}`} title={b.text} data-tauri-drag-region>
-          <span className="dot" />
-          {b.text}
+    <div className={cx("ov", compact && "is-compact")} style={{ "--ov-alpha": opacity } as CSSProperties}>
+      <header className="ov-head" data-tauri-drag-region>
+        <StatusBadge s={s} />
+        <span className="ov-speaking" data-tauri-drag-region>
+          {s.speaking.them && <span className="ov-pill">them</span>}
+          {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}
         </span>
-        <span className="speaking" data-tauri-drag-region>
-          {s.speaking.them && <span className="pill">them</span>}
-          {s.speaking.me && <span className="pill pill-me">you</span>}
-        </span>
-        <span className="spacer" data-tauri-drag-region />
+        <span className="ov-spacer" data-tauri-drag-region />
         <ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />
-        <button
-          className="icon"
-          title="Drag to resize"
+        <IconButton
+          label="Drag to resize"
+          icon="⤡"
+          size="sm"
           onMouseDown={(e) => {
             e.preventDefault();
             if (inTauri) getCurrentWindow().startResizeDragging("SouthEast");
           }}
-        >
-          ⤡
-        </button>
-        <button className={menu ? "icon on" : "icon"} title="Overlay settings" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
-          ⚙
-        </button>
-        <button className="icon" title="Hide overlay" onClick={() => inTauri && getCurrentWindow().hide()}>
-          ×
-        </button>
-      </header>
-      {menu && (
-        <OverlayMenu
-          opacity={opacity}
-          onOpacity={setOpacityLive}
-          onTop={onTop}
-          onToggleOnTop={setOnTop}
-          clickThrough={clickThrough}
-          hotkeys={hotkeys}
-          onClose={() => setMenu(false)}
         />
+        <OverlayMenu opacity={opacity} onOpacity={setOpacityLive} onTop={onTop} onToggleOnTop={setOnTop} clickThrough={clickThrough} hotkeys={hotkeys} running={s.running} />
+        <IconButton label="Hide overlay" icon="✕" size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
+      </header>
+      {clickThrough && (
+        <div className="ov-clickthrough" role="status">
+          Click-through on · <Kbd>{offKey}</Kbd> turns it off
+        </div>
       )}
 
       <ConversationView
@@ -219,13 +205,13 @@ export default function Overlay() {
         textScale={view.textScale}
         live
         onExpand={(id) => dispatch({ type: "deep_requested", id })}
-        emptyAnswers={s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
-        emptyTranscript={s.running ? "Nothing heard yet." : "No session."}
+        emptyAnswers={s.running ? "Listening. Press the hotkey to answer the last thing said." : "No call running. Start one in the Copilot window."}
+        emptyTranscript={s.running ? "Nothing heard yet." : "No call."}
         showMe={false}
       />
 
       <AskBox disabled={!s.running} />
-      <span className="grip" title="Resize" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
+      <span className="ov-grip" aria-hidden="true" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
     </div>
   );
 }
@@ -234,35 +220,24 @@ export default function Overlay() {
 export function ViewControls({ view, compact, onCompact }: { view: ViewPrefs; compact: boolean; onCompact: () => void }) {
   const split = view.layout === "split";
   return (
-    <>
-      <button className="icon text-size" title="Smaller text (Ctrl+minus)" onClick={() => view.stepText(-1)}>
-        A−
-      </button>
-      <button className="icon text-size" title={`Larger text (Ctrl+plus), now ${Math.round(view.textScale * 100)}%`} onClick={() => view.stepText(1)}>
-        A+
-      </button>
-      <button
-        className="icon"
-        title={split ? "One column: transcript and answers together" : "Split: transcript left, answers right"}
-        aria-pressed={split}
-        onClick={() => view.setLayout(split ? "stacked" : "split")}
-      >
-        {split ? "▤" : "◫"}
-      </button>
-      <button
-        className="icon"
-        title={compact ? "Leave compact view" : "Compact: answers only"}
-        aria-pressed={compact}
-        onClick={onCompact}
-      >
-        {compact ? "☰" : "▭"}
-      </button>
-    </>
+    <span className="ov-view">
+      <IconButton label="Smaller text (Ctrl+minus)" icon="A−" size="sm" className="ov-text-size" onClick={() => view.stepText(-1)} />
+      <IconButton label={`Larger text (Ctrl+plus), now ${Math.round(view.textScale * 100)}%`} icon="A+" size="sm" className="ov-text-size" onClick={() => view.stepText(1)} />
+      {!compact && (
+        <IconButton
+          label={split ? "One column: transcript and answers together" : "Split: transcript left, answers right"}
+          icon={split ? "▤" : "◫"}
+          size="sm"
+          onClick={() => view.setLayout(split ? "stacked" : "split")}
+        />
+      )}
+      <IconButton label={compact ? "Leave compact view" : "Compact: answers only"} icon={compact ? "☰" : "▭"} size="sm" pressed={compact} onClick={onCompact} />
+    </span>
   );
 }
 
-/** The conversation in the chosen layout. `live` follows new content; a replay (History)
- * starts at the top and passes `ratings`. */
+/** The conversation in the chosen layout. Live (the overlay), the newest question comes first;
+ * a replay (History) reads top to bottom, in the order the call went, and passes `ratings`. */
 export function ConversationView({
   s,
   compact,
@@ -288,19 +263,51 @@ export function ConversationView({
   emptyTranscript: string;
 }) {
   const items = useMemo(() => conversation(s).filter((i) => showMe || i.kind !== "me"), [s, showMe]);
-  const answers = useMemo(() => items.filter((i) => i.kind === "question"), [items]);
+  const questions = useMemo(() => items.filter((i): i is Extract<ConversationItem, { kind: "question" }> => i.kind === "question").map((i) => i.question), [items]);
   const blocks = useMemo(() => transcriptBlocks(s, { showMe }), [s, showMe]);
   const answersPane = useRef<HTMLDivElement>(null);
-  const scale = { "--text-scale": textScale } as CSSProperties;
+  const scale = { "--ov-scale": textScale } as CSSProperties;
+  const nowId = live ? (questions[questions.length - 1]?.id ?? null) : null;
+  const card = (q: QuestionView) => (
+    <QuestionCard key={q.id} q={q} now={q.id === nowId} compact={compact} onExpand={() => onExpand?.(q.id)} past={ratings ? { rating: ratings[q.id] ?? null } : null} />
+  );
+  const answersList = (list: QuestionView[]) =>
+    list.length === 0 ? (
+      <p className="ov-empty">{emptyAnswers}</p>
+    ) : (
+      <ol className="ov-cards" aria-label="Suggestions">
+        {list.map((q) => (
+          <li key={q.id}>{card(q)}</li>
+        ))}
+      </ol>
+    );
+  // Live: newest first. A replay: in the order they came.
+  const ordered = live ? [...questions].reverse() : questions;
 
-  // Compact is the answers only, whichever the layout.
-  if (compact || layout === "stacked") {
-    const shown = compact ? answers : items;
+  if (compact) {
     return (
-      <div className="overlay-single" style={scale}>
-        <ScrollPane className="pane-single" size={contentSize(shown)} live={live}>
-          {shown.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={shown} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />}
+      <div className="ov-body ov-single" style={scale}>
+        <AnswersPane paneRef={answersPane} newestId={nowId}>
+          {answersList(ordered)}
+        </AnswersPane>
+      </div>
+    );
+  }
+
+  if (layout === "stacked") {
+    // The conversation in order; live, the current question is pinned under it.
+    const shown = live ? items.filter((i) => !(i.kind === "question" && i.question.id === nowId)) : items;
+    const now = live ? questions.find((q) => q.id === nowId) : undefined;
+    return (
+      <div className="ov-body ov-stacked" style={scale}>
+        <ScrollPane className="ov-pane-flow" size={contentSize(shown)} live={live} label="Conversation">
+          {shown.length === 0 && !now ? <p className="ov-empty">{emptyAnswers}</p> : <Flow items={shown} card={card} />}
         </ScrollPane>
+        {now && (
+          <section className="ov-now-pinned" aria-label="Current suggestion">
+            {card(now)}
+          </section>
+        )}
       </div>
     );
   }
@@ -311,35 +318,66 @@ export function ConversationView({
   };
   const transcriptSize = `${blocks.length}:${blocks.reduce((n, b) => n + blockText(b).length, 0)}`;
   return (
-    <div className="overlay-split" style={scale}>
-      <ScrollPane className="pane-transcript" title="Transcript" size={transcriptSize} live={live}>
-        {blocks.length === 0 ? <p className="muted empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} />}
+    <div className="ov-body ov-split" style={scale}>
+      <ScrollPane className="ov-pane-transcript" title="Transcript" size={transcriptSize} live={live} label="Transcript">
+        {blocks.length === 0 ? <p className="ov-empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} />}
       </ScrollPane>
-      <ScrollPane className="pane-answers" title="Suggestions" size={contentSize(answers)} live={live} paneRef={answersPane}>
-        {answers.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={answers} s={s} compact={false} onExpand={onExpand} ratings={ratings} />}
-      </ScrollPane>
+      <AnswersPane title="Suggestions" paneRef={answersPane} newestId={nowId}>
+        {answersList(ordered)}
+      </AnswersPane>
     </div>
   );
 }
 
-/** One scrolling pane that follows its newest content while the reader is at the bottom. */
-function ScrollPane({
-  className,
-  title,
-  size,
-  live,
-  paneRef,
-  children,
-}: {
-  className: string;
-  title?: string;
-  size: string;
-  live: boolean;
-  paneRef?: RefObject<HTMLDivElement | null>;
-  children: ReactNode;
-}) {
-  const own = useRef<HTMLDivElement>(null);
-  const body = paneRef ?? own;
+/// Changes whenever anything shown grows, so a following pane can follow it.
+function contentSize(items: ConversationItem[]): string {
+  let chars = 0;
+  for (const it of items) {
+    if (it.kind === "question") chars += it.question.fast.text.length + it.question.deep.text.length + (it.question.deep.done ? 1 : 0);
+    else chars += it.text.length;
+  }
+  return `${items.length}:${chars}`;
+}
+
+/** The suggestions: anchored to the top, never scrolled by itself. Scrolled down when a newer
+ * question arrives, the browser keeps what is being read in place and "New answer ↑" goes up. */
+function AnswersPane({ title, paneRef, newestId, children }: { title?: string; paneRef: RefObject<HTMLDivElement | null>; newestId: string | null; children: ReactNode }) {
+  const [unseen, setUnseen] = useState(false);
+  const last = useRef(newestId);
+  useEffect(() => {
+    if (newestId === last.current) return;
+    last.current = newestId;
+    const el = paneRef.current;
+    if (el && el.scrollTop > 24) setUnseen(true);
+  }, [newestId, paneRef]);
+  const toTop = () => {
+    paneRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    setUnseen(false);
+  };
+  return (
+    <section className="ov-pane ov-pane-answers" aria-label={title ?? "Suggestions"}>
+      {title && <h2 className="ov-pane-head">{title}</h2>}
+      <div
+        className="ov-pane-body"
+        ref={paneRef}
+        onScroll={(e) => {
+          if (e.currentTarget.scrollTop <= 24) setUnseen(false);
+        }}
+      >
+        {children}
+      </div>
+      {unseen && (
+        <button type="button" className="ov-jump ov-jump-top" onClick={toTop}>
+          New answer ↑
+        </button>
+      )}
+    </section>
+  );
+}
+
+/** A pane that follows its newest content while the reader is at the bottom (the transcript). */
+function ScrollPane({ className, title, size, live, label, children }: { className: string; title?: string; size: string; live: boolean; label: string; children: ReactNode }) {
+  const body = useRef<HTMLDivElement>(null);
   const follower = useRef(new Follower());
   const [jump, setJump] = useState(false);
 
@@ -348,7 +386,7 @@ function ScrollPane({
     if (!el || !live) return;
     follower.current.onContent(el);
     setJump(follower.current.showJump);
-  }, [size, live, body]);
+  }, [size, live]);
 
   const onScroll = () => {
     const el = body.current;
@@ -363,13 +401,13 @@ function ScrollPane({
     setJump(false);
   };
   return (
-    <section className={`pane ${className}`}>
-      {title && <h2 className="pane-head">{title}</h2>}
-      <div className="pane-body" ref={body} onScroll={onScroll}>
-        <div className="pane-content">{children}</div>
+    <section className={`ov-pane ${className}`} aria-label={label}>
+      {title && <h2 className="ov-pane-head">{title}</h2>}
+      <div className="ov-pane-body ov-follow" ref={body} onScroll={onScroll}>
+        {children}
       </div>
       {jump && (
-        <button className="jump" onClick={toLatest}>
+        <button type="button" className="ov-jump" onClick={toLatest}>
           Jump to latest ↓
         </button>
       )}
@@ -377,7 +415,7 @@ function ScrollPane({
   );
 }
 
-/** Both sides of the call as joined blocks; a block that got a suggestion links to its card. */
+/** The other side's words as joined blocks; a block that got a suggestion links to its card. */
 function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (id: string) => void }) {
   return (
     <ol className="tx">
@@ -393,7 +431,7 @@ function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (
             ))}
           </p>
           {b.asked.length > 0 && (
-            <button className="asked" title="Show the suggestion for this" onClick={() => onAsked(b.asked[b.asked.length - 1])}>
+            <button type="button" className="asked" onClick={() => onAsked(b.asked[b.asked.length - 1])}>
               Suggestion →
             </button>
           )}
@@ -403,32 +441,25 @@ function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (
   );
 }
 
-const KEY_LABELS: Record<string, string> = {
-  CommandOrControl: "Ctrl",
-  CommandOrCtrl: "Ctrl",
-  CmdOrCtrl: "Ctrl",
-  Control: "Ctrl",
-  Command: "Cmd",
-  Super: "Win",
-  Up: "↑",
-  Down: "↓",
-};
-
-/** A readable chip for an accelerator, e.g. "CommandOrControl+Shift+H" -> "Ctrl+Shift+H". */
-function prettyKey(accel: string): string {
-  return accel
-    .split("+")
-    .map((p) => KEY_LABELS[p.trim()] ?? p.trim())
-    .join("+");
+/** One column: lines and questions in the order they came. */
+function Flow({ items, card }: { items: ConversationItem[]; card: (q: QuestionView) => ReactNode }) {
+  return (
+    <ol className="ov-flow">
+      {items.map((it) => {
+        if (it.kind === "question") return <li key={it.key}>{card(it.question)}</li>;
+        return (
+          <li key={it.key} className={`msg ${it.kind}`}>
+            <span className="who">{it.kind === "me" ? "You said" : "Them"}</span>
+            <p className={it.final ? "" : "partial"}>{it.kind === "me" ? `“${it.text}”` : it.text}</p>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
-function Hotkey({ accel }: { accel: string }) {
-  if (!accel) return null;
-  return <kbd className="key">{prettyKey(accel)}</kbd>;
-}
-
-/** The overlay's own settings menu (the gear dropdown): quick comfort toggles without opening
- * the main window. "All settings…" brings the main window forward; the rest live here. */
+/** The overlay's settings (the gear): opacity, keep on top, click-through, all settings, quit.
+ * Esc or a click outside closes it and gives focus back to the gear. */
 function OverlayMenu({
   opacity,
   onOpacity,
@@ -436,7 +467,7 @@ function OverlayMenu({
   onToggleOnTop,
   clickThrough,
   hotkeys,
-  onClose,
+  running,
 }: {
   opacity: number;
   onOpacity: (v: number) => void;
@@ -444,154 +475,123 @@ function OverlayMenu({
   onToggleOnTop: (on: boolean) => void;
   clickThrough: boolean;
   hotkeys: OverlayPrefs["hotkeys"];
-  onClose: () => void;
+  running: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [quitting, setQuitting] = useState(false);
+  const gear = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => {
+    setOpen(false);
+    gear.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.querySelector<HTMLElement>("input, button")?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (!panel.current?.contains(e.target as Node) && !gear.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const quit = () => {
+    if (inTauri) api.quitApp().catch(() => undefined);
+  };
   return (
-    <>
-      <div className="menu-backdrop" onClick={onClose} />
-      <div className="overlay-menu" role="menu">
-        <div className="menu-row col">
-          <span className="menu-label">Transparency</span>
-          <div className="menu-slider">
+    <span className="ov-menu-wrap">
+      <IconButton ref={gear} label="Overlay settings" icon="⚙" size="sm" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)} />
+      {open && (
+        <div
+          ref={panel}
+          className="ov-menu"
+          role="dialog"
+          aria-label="Overlay settings"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              close();
+            }
+          }}
+        >
+          <div className="ov-menu-row">
+            <label className="ov-menu-label" htmlFor="ov-opacity">
+              Opacity <span className="ov-menu-value">{Math.round(opacity * 100)}%</span>
+            </label>
             <input
+              id="ov-opacity"
               type="range"
               min={0.3}
               max={1}
               step={0.05}
               value={opacity}
+              aria-valuetext={`${Math.round(opacity * 100)}%`}
               onChange={(e) => onOpacity(Number(e.target.value))}
             />
-            <span className="menu-value">{Math.round(opacity * 100)}%</span>
+            <span className="ov-menu-hint">
+              The background fades; answers stay readable. Step it anytime: {hotkeys.opacity_up && <Kbd>{prettyKey(hotkeys.opacity_up)}</Kbd>}{" "}
+              {hotkeys.opacity_down && <Kbd>{prettyKey(hotkeys.opacity_down)}</Kbd>}
+            </span>
           </div>
-          <span className="menu-hint">
-            Step it anytime <Hotkey accel={hotkeys.opacity_up} /> <Hotkey accel={hotkeys.opacity_down} />
-          </span>
+          <div className="ov-menu-row">
+            <Switch label="Keep on top" hint="Above other apps" checked={onTop} onChange={onToggleOnTop} />
+          </div>
+          <div className="ov-menu-row">
+            <Switch
+              label="Click-through"
+              hint={clickThrough ? `On: ${prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G")} turns it off` : `Clicks pass through; the top bar stays usable.${hotkeys.click_through ? ` Hotkey ${prettyKey(hotkeys.click_through)}` : ""}`}
+              checked={clickThrough}
+              onChange={(on) => {
+                // Turned off by its hotkey only: the mouse cannot reach the overlay while it is on.
+                if (on && inTauri) api.setClickThrough(true).catch(() => undefined);
+              }}
+            />
+          </div>
+          <div className="ov-menu-sep" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ov-menu-item"
+            onClick={() => {
+              close();
+              if (inTauri) api.openMainSettings().catch(() => undefined);
+            }}
+          >
+            All settings…
+          </Button>
+          <div className="ov-menu-sep" />
+          <Button variant="danger-ghost" size="sm" className="ov-menu-item" onClick={() => (running ? setQuitting(true) : quit())}>
+            Quit Copilot{running ? "…" : ""}
+          </Button>
         </div>
-
-        <button className="menu-row" role="menuitemcheckbox" aria-checked={onTop} onClick={() => onToggleOnTop(!onTop)}>
-          <span className="menu-main">
-            <span className="menu-label">Keep on top</span>
-            <span className="menu-hint">Overlay stays above other apps</span>
-          </span>
-          <span className={onTop ? "switch on" : "switch"} />
-        </button>
-
-        <button
-          className="menu-row"
-          role="menuitemcheckbox"
-          aria-checked={clickThrough}
-          title={clickThrough ? "Turn off with the hotkey" : "Clicks pass to the window underneath"}
-          onClick={() => inTauri && !clickThrough && api.setClickThrough(true).catch(() => undefined)}
-        >
-          <span className="menu-main">
-            <span className="menu-label">
-              Click-through <Hotkey accel={hotkeys.click_through} />
-            </span>
-            <span className="menu-hint">
-              {clickThrough ? `On — ${prettyKey(hotkeys.click_through_off)} to turn off` : "Clicks pass through (top bar stays usable)"}
-            </span>
-          </span>
-          <span className={clickThrough ? "switch on" : "switch"} />
-        </button>
-
-        <div className="menu-sep" />
-
-        <button
-          className="menu-row link-row"
-          onClick={() => {
-            onClose();
-            if (inTauri) api.openMainSettings().catch(() => undefined);
-          }}
-        >
-          All settings…
-        </button>
-        <button
-          className="menu-row link-row danger"
-          onClick={() => inTauri && api.quitApp().catch(() => undefined)}
-        >
-          Quit Copilot
-        </button>
-      </div>
-    </>
+      )}
+      <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit Copilot" onConfirm={quit}>
+        The call stops here. It can be opened again from History while it is still running.
+      </ConfirmDialog>
+    </span>
   );
 }
 
-/** The conversation list, as the overlay shows it. History passes `ratings` for a past call:
- * read only, with the thumbs the user gave during the call. */
-export function Conversation({
-  items,
-  s,
-  compact,
-  onExpand,
-  ratings,
-}: {
-  items: ConversationItem[];
-  s: SessionView;
-  compact: boolean;
-  onExpand?: (id: string) => void;
-  ratings?: Record<string, "up" | "down" | null>;
-}) {
-  return (
-    <ol className="conversation">
-      {items.map((it) => (
-        <Item key={it.key} item={it} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />
-      ))}
-    </ol>
-  );
-}
+type PassState = { icon: string; text: string; tone: "wait" | "live" | "done" | "warn" };
 
-function Item({
-  item,
-  s,
-  compact,
-  onExpand,
-  ratings,
-}: {
-  item: ConversationItem;
-  s: SessionView;
-  compact: boolean;
-  onExpand?: (id: string) => void;
-  ratings?: Record<string, "up" | "down" | null>;
-}) {
-  switch (item.kind) {
-    case "them":
-      return (
-        <li className="msg them">
-          <span className="who">Them</span>
-          <p className={item.final ? "" : "partial"}>{item.text}</p>
-        </li>
-      );
-    case "me":
-      return (
-        <li className="msg me">
-          <span className="who">You said</span>
-          <p className={item.final ? "" : "partial"}>“{item.text}”</p>
-        </li>
-      );
-    case "question":
-      return (
-        <li className="msg answer" data-q={item.question.id}>
-          <QuestionCard
-            q={item.question}
-            s={s}
-            compact={compact}
-            onExpand={() => onExpand?.(item.question.id)}
-            past={ratings ? { rating: ratings[item.question.id] ?? null } : null}
-          />
-        </li>
-      );
-  }
+/** What a pass is doing, in words. */
+export function passState(p: PassView, kind: "fast" | "deep"): PassState {
+  if (p.error === "cancelled") return { icon: "⏹", text: "Stopped for a newer question", tone: "warn" };
+  if (p.error) return { icon: "⚠", text: `Failed (${p.error})`, tone: "warn" };
+  if (p.done) return { icon: "✓", text: p.source === "prepared" ? "Done · prepared" : "Done", tone: "done" };
+  if (p.text) return { icon: "◌", text: "Writing", tone: "live" };
+  return { icon: "◌", text: kind === "fast" ? "Thinking" : "Queued", tone: "wait" };
 }
 
 function QuestionCard({
   q,
-  s,
+  now,
   compact,
   onExpand,
   past,
 }: {
   q: QuestionView;
-  s: SessionView;
+  /** The newest question: the largest type, in the fixed place. */
+  now: boolean;
   compact: boolean;
   onExpand: () => void;
   /** A past call (History): nothing can be asked or rated any more. */
@@ -599,6 +599,11 @@ function QuestionCard({
 }) {
   const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
   const deepStarted = q.deep.text.length > 0 || q.deep.done || q.deepRequested;
+  const fast = passState(q.fast, "fast");
+  const deep = passState(q.deep, "deep");
+  // Space stays held for the talking points until the detailed answer is done, so nothing
+  // under them jumps up while the reader is still on them.
+  const holdFast = !q.fast.done || (deepStarted && !q.deep.done);
 
   const expand = () => {
     onExpand();
@@ -611,49 +616,53 @@ function QuestionCard({
   };
 
   return (
-    <article className="card">
-      <header className="card-head">
-        <span className="label">Suggested</span>
-        <span className="tag">{q.type.replace("_", " ")}</span>
-        {q.speculative && <span className="tag">listening…</span>}
-      </header>
-      <p className="question">{q.text}</p>
+    <article className={cx("card", now ? "is-now" : "is-earlier", q.speculative && "is-speculative")} data-q={q.id} aria-label={`${now ? "Now: " : ""}${q.text}`}>
+      <p className="question">
+        {q.text}
+        {q.speculative && <span className="ui-visually-hidden"> (still listening)</span>}
+      </p>
 
-      <section className="points">
-        <PassHead title="Talking points" text={q.fast.text} />
-        {q.fast.text ? <AnswerText text={q.fast.text} /> : !q.fast.done && <p className="muted">Thinking…</p>}
-        {q.fast.source === "prepared" && <p className="note">Prepared answer</p>}
-        {q.fast.error && q.fast.error !== "cancelled" && <p className="note warn">Talking points failed ({q.fast.error})</p>}
-        {q.fast.error === "cancelled" && <p className="note">Stopped for a newer question</p>}
-      </section>
+      <div role="group" className={cx("points pass pass-fast", holdFast && "is-held")} aria-label="Talking points">
+        {q.fast.text && <AnswerText text={q.fast.text} streaming={!q.fast.done} />}
+        <PassStatus state={fast} />
+      </div>
 
-      <section className="deep">
-        {deepStarted ? (
-          <>
-            <PassHead title="Detailed answer" text={q.deep.text} />
-            {q.deep.text ? <AnswerText text={q.deep.text} /> : !q.deep.done && <p className="muted">Writing…</p>}
-            {q.deep.error === "cancelled" && <p className="note">Stopped for a newer question</p>}
-            {q.deep.error && q.deep.error !== "cancelled" && <p className="note warn">Detailed answer failed ({q.deep.error})</p>}
-          </>
-        ) : past ? (
-          !compact && <p className="note">No detailed answer was asked for.</p>
-        ) : (
-          <button className="link" onClick={expand}>
+      {deepStarted ? (
+        <div role="group" className="deep pass pass-deep" aria-label="Detailed answer">
+          <span className="pass-title" aria-hidden="true">
+            Detailed
+          </span>
+          {q.deep.text ? (
+            <AnswerText text={q.deep.text} streaming={!q.deep.done} />
+          ) : (
+            !q.deep.done && (
+              <div className="ov-reserve" aria-hidden="true">
+                <span />
+                <span />
+              </div>
+            )
+          )}
+          <PassStatus state={deep} />
+        </div>
+      ) : (
+        !past && (
+          <button type="button" className="ov-get-deep" onClick={expand}>
             Get the detailed answer ▾
           </button>
-        )}
-        {!past && !deepStarted && !deepStartsAlone(s, q.type) && !compact && <p className="note">Only on request for this question type.</p>}
-      </section>
+        )
+      )}
 
-      <footer className="thumbs">
-        <button className={rating === "up" ? "on" : ""} disabled={Boolean(past)} onClick={() => rate(true)} title="Helpful">
+      <footer className="card-tools">
+        <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />
+        {deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
+        <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
           👍
         </button>
-        <button className={rating === "down" ? "on" : ""} disabled={Boolean(past)} onClick={() => rate(false)} title="Not helpful">
+        <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
           👎
         </button>
         {!compact && q.fast.refs.length > 0 && (
-          <span className="refs muted" title={q.fast.refs.map((r) => r.label).join("\n")}>
+          <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
           </span>
         )}
@@ -662,22 +671,25 @@ function QuestionCard({
   );
 }
 
-function PassHead({ title, text }: { title: string; text: string }) {
+/** A pass's state. Writing shows as the caret and done as nothing, so only waiting, stopped
+ * and failed are drawn; a screen reader hears every state. */
+function PassStatus({ state }: { state: PassState }) {
+  const shown = state.tone === "wait" || state.tone === "warn";
   return (
-    <div className="pass-head">
-      <span className="pass-title">{title}</span>
-      <CopyButton text={text} />
-    </div>
+    <p className={cx("pass-status", `pass-state-${state.tone}`, !shown && "ui-visually-hidden")}>
+      {shown && <span aria-hidden="true">{state.icon} </span>}
+      {state.text}
+    </p>
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label, short }: { text: string; label: string; short: string }) {
   const [copied, setCopied] = useState(false);
   const c = useMemo(() => copier(setCopied), []);
   useEffect(() => () => c.dispose(), [c]);
   return (
-    <button className="copy" disabled={!text} onClick={() => c.copy(text)} title="Copy as plain text">
-      {copied ? "Copied" : "Copy"}
+    <button type="button" className="copy" disabled={!text} onClick={() => c.copy(text)} aria-label={label} title="Copy as plain text">
+      {copied ? "Copied" : short}
     </button>
   );
 }
@@ -694,30 +706,31 @@ function AskBox({ disabled }: { disabled: boolean }) {
   };
   return (
     <form
-      className="ask"
+      className="ov-ask"
       onSubmit={(e) => {
         e.preventDefault();
         send(text.trim() || null);
       }}
     >
       <input
+        className="ov-ask-input"
+        aria-label="Question"
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        placeholder={disabled ? "No session" : "Type a question, or Enter to answer what was just said"}
+        placeholder={disabled ? "No call running" : "Type a question, or Enter to answer what was just said"}
       />
-      <button type="submit" disabled={disabled}>
+      <button type="submit" className="ov-ask-btn" disabled={disabled}>
         Ask
       </button>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => send(text.trim() || null, true)}
-        title="Suggest a reply to what was just said: a request, a reminder, a check-in"
-      >
-        Respond
+      <button type="button" className="ov-ask-btn" disabled={disabled} onClick={() => send(text.trim() || null, true)} title="Suggest a reply to what was just said: a request, a reminder, a check-in">
+        Answer
       </button>
-      {error && <span className="note warn">{error}</span>}
+      {error && (
+        <span className="ov-ask-error" role="alert">
+          {error}
+        </span>
+      )}
     </form>
   );
 }

@@ -1,0 +1,462 @@
+{
+  "session-start": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-start-standup": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-start-meeting": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-start-more": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-start-audio": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 12,
+    "notes": 0
+  },
+  "session-start-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "session-start-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-start-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-signed-out": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "session-locked": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "session-running": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 8,
+    "notes": 0
+  },
+  "session-end-choice": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "session-postcall": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "session-other-active": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "session-update-ready": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "applications": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 0
+  },
+  "applications-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 13,
+    "notes": 0
+  },
+  "applications-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "applications-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 13,
+    "notes": 0
+  },
+  "applications-long": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 64,
+    "notes": 0
+  },
+  "applications-editor": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 0
+  },
+  "applications-jd": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 27,
+    "notes": 0
+  },
+  "applications-resume": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 0
+  },
+  "applications-new": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 32,
+    "notes": 0
+  },
+  "applications-new-errors": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 32,
+    "notes": 0
+  },
+  "applications-pull": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 31,
+    "notes": 0
+  },
+  "applications-narrow": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 0
+  },
+  "resumes": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 15,
+    "notes": 0
+  },
+  "resumes-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 12,
+    "notes": 0
+  },
+  "resumes-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "resumes-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "resumes-long": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 18,
+    "notes": 0
+  },
+  "resumes-replace": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 19,
+    "notes": 0
+  },
+  "work-log": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 27,
+    "notes": 0
+  },
+  "work-material": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 30,
+    "notes": 0
+  },
+  "work-facts": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 19,
+    "notes": 0
+  },
+  "work-delete-company": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 29,
+    "notes": 0
+  },
+  "work-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 12,
+    "notes": 0
+  },
+  "work-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "work-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "work-long": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 27,
+    "notes": 0
+  },
+  "history": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 14,
+    "notes": 0
+  },
+  "history-empty": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "history-loading": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 10,
+    "notes": 0
+  },
+  "history-error": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 11,
+    "notes": 0
+  },
+  "history-long": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 35,
+    "notes": 0
+  },
+  "history-session": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 16,
+    "notes": 0
+  },
+  "settings": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 16,
+    "notes": 0
+  },
+  "settings-account": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 18,
+    "notes": 0
+  },
+  "settings-audio": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 18,
+    "notes": 0
+  },
+  "settings-hotkeys": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 26,
+    "notes": 0
+  },
+  "settings-advanced": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 17,
+    "notes": 0
+  },
+  "settings-dev-build": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 15,
+    "notes": 0
+  },
+  "settings-signed-out": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 17,
+    "notes": 0
+  },
+  "settings-locked": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 18,
+    "notes": 0
+  },
+  "debug": {
+    "pageHeight": 780,
+    "startButtonY": null,
+    "buttons": 9,
+    "notes": 0
+  },
+  "overlay-idle": {
+    "fastAnswer": null,
+    "deepAnswer": null,
+    "question": null,
+    "transcript": null,
+    "passTitle": null,
+    "latestFastVisible": null,
+    "latestFastTop": null
+  },
+  "overlay-midcall": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-midcall-stacked": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 347
+  },
+  "overlay-midcall-compact": {
+    "fastAnswer": "13px",
+    "deepAnswer": "12px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 419
+  },
+  "overlay-midcall-compact-small": {
+    "fastAnswer": "13px",
+    "deepAnswer": "12px",
+    "question": "12px",
+    "transcript": null,
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 279
+  },
+  "overlay-midcall-narrow": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 360
+  },
+  "overlay-opacity-60": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-opacity-35": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-text-130": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 337
+  },
+  "overlay-click-through": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-menu": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-degraded": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-reconnecting": {
+    "fastAnswer": "15px",
+    "deepAnswer": "13px",
+    "question": "12px",
+    "transcript": "13px",
+    "passTitle": "10px",
+    "latestFastVisible": true,
+    "latestFastTop": 401
+  },
+  "overlay-stream": {
+    "cls": 0,
+    "fastTopMin": 198,
+    "fastTopMax": 426,
+    "framesThatMoved": 9,
+    "frames": 303
+  }
+}

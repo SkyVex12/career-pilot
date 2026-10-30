@@ -7,6 +7,13 @@ the end.
 > **Decided 2026-10-29:** all recommendations accepted, except one: earlier questions in the
 > overlay are **not collapsed**. They stay in full below the newest one (newest first). Rules 1
 > and 3 and B5 below are updated to match.
+>
+> **Changed in stage 4, on your review of the overlay:** the overlay shows the text and little
+> else. No "Now" badge, no question-type chip, no card boxes (a rule between questions), no
+> "Talking points" or "Done" labels: writing shows as the caret, and only waiting, stopped and
+> failed are written out (a screen reader still hears every state). The newest answer stands out
+> by size and brightness; copy and thumbs stay, faint until hovered or focused. The Respond
+> button is labelled Answer.
 
 **Goals, in order:**
 

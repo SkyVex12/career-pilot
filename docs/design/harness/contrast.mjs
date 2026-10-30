@@ -34,3 +34,12 @@ for (const o of [1, 0.6, 0.35]) {
   const txPx = mix(ovText, bgPx, 0.92 + 0.08 * o);
   console.log(`fast answer at opacity ${o}`.padEnd(52), cr(txPx, bgPx).toFixed(2));
 }
+
+console.log("== stage 4 overlay as built (panel 0.94*alpha, card backing max(0.62, alpha), text opaque)");
+for (const backHex of ["#e8e2d6", "#ffffff", "#000000"]) {
+  for (const a of [1, 0.6, 0.35, 0.3]) {
+    const panelPx = mix(hex("#101216"), hex(backHex), 0.94 * a);
+    const cardPx = mix(hex("#101216"), panelPx, Math.max(0.62, a));
+    console.log(`fast answer #f4f6f9, opacity ${a}, over ${backHex}`.padEnd(52), cr(hex("#f4f6f9"), cardPx).toFixed(2));
+  }
+}
