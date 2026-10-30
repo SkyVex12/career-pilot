@@ -13,9 +13,10 @@ pub const MIN_OPACITY: f64 = 0.3;
 pub const MAX_OPACITY: f64 = 1.0;
 pub const OPACITY_STEP: f64 = 0.1;
 
-/// The overlay's starting size and its floor (matches the window's min_inner_size in lib.rs),
+/// The overlay's starting size (wide enough for the transcript and suggestions side by side)
+/// and its floor (matches the window's min_inner_size in lib.rs),
 /// so a saved layout from a larger monitor is shrunk to fit a smaller one but never below this.
-pub const DEFAULT_W: u32 = 440;
+pub const DEFAULT_W: u32 = 760;
 pub const DEFAULT_H: u32 = 620;
 pub const MIN_W: u32 = 320;
 pub const MIN_H: u32 = 240;

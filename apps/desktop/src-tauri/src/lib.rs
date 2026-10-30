@@ -360,25 +360,45 @@ async fn audio_check(
     state: State<'_, AppState>,
     mic_device: Option<String>,
     output_device: Option<String>,
+    part: Option<String>,
 ) -> Res<check::AudioCheck> {
     let _starting = state.begin_start()?;
-    tauri::async_runtime::spawn_blocking(move || run_audio_check(&app, mic_device, output_device))
-        .await
-        .map_err(|e| e.to_string())?
+    // Settings tests each device on its own row: "mic" only listens, "call" only plays the
+    // tone; without a part, both in turn.
+    let (speak, play) = match part.as_deref() {
+        Some("mic") => (AUDIO_CHECK_SPEAK, false),
+        Some("call") => (Duration::ZERO, true),
+        _ => (AUDIO_CHECK_SPEAK, true),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        run_audio_check(&app, mic_device, output_device, speak, play)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn run_audio_check(app: &AppHandle, mic: Option<String>, output: Option<String>) -> Res<check::AudioCheck> {
+fn run_audio_check(
+    app: &AppHandle,
+    mic: Option<String>,
+    output: Option<String>,
+    speak: Duration,
+    play: bool,
+) -> Res<check::AudioCheck> {
     let (tx, rx) = std::sync::mpsc::sync_channel(512);
     let mut source = DeviceSource::new(mic, output.clone());
     source.start(tx).map_err(|e| e.to_string())?;
     let mut result = check::Check::new();
     let started = Instant::now();
-    let tone_ms = Duration::from_millis(u64::from(check::TONE_MS));
+    let tone_ms = if play {
+        Duration::from_millis(u64::from(check::TONE_MS)) + AUDIO_CHECK_AFTER_TONE
+    } else {
+        Duration::ZERO
+    };
     let mut tone: Option<std::thread::JoinHandle<bool>> = None;
     let mut emitted = Instant::now();
-    while started.elapsed() < AUDIO_CHECK_SPEAK + tone_ms + AUDIO_CHECK_AFTER_TONE {
-        let speaking = started.elapsed() < AUDIO_CHECK_SPEAK;
-        if !speaking && tone.is_none() {
+    while started.elapsed() < speak + tone_ms {
+        let speaking = started.elapsed() < speak;
+        if play && !speaking && tone.is_none() {
             let out = output.clone();
             tone = Some(std::thread::spawn(move || capture::play_tone(out.as_deref()).is_ok()));
         }
@@ -1322,7 +1342,7 @@ pub fn run() {
             let overlay =
                 WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
                     .title("Copilot overlay")
-                    .inner_size(440.0, 620.0)
+                    .inner_size(layout::DEFAULT_W as f64, layout::DEFAULT_H as f64)
                     .min_inner_size(320.0, 240.0)
                     .always_on_top(overlay_on_top)
                     .decorations(false)

@@ -877,13 +877,142 @@ kbd.key {
 
 .overlay {
   position: relative;
+  /* The panes stack when the overlay (or History's replay) is narrow. */
+  container: overlay / inline-size;
 }
 
-.overlay-body {
+/* The two layouts (Overlay.tsx): one column, or split into the transcript (a third) and the
+   suggestions (two thirds). Each pane scrolls on its own. */
+.overlay-single,
+.overlay-split {
   flex: 1;
+  min-height: 0;
+  display: grid;
+}
+
+.overlay-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.overlay-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+.pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-transcript {
+  border-right: 1px solid #2c323a;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.pane-head {
+  margin: 0;
+  padding: 5px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--overlay-muted);
+  border-bottom: 1px solid #22282f;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 8px 10px;
   overscroll-behavior: contain;
+}
+
+/* The text size control scales what the panes show, not the header or the ask box. */
+.pane-content {
+  zoom: var(--text-scale, 1);
+}
+
+@container overlay (max-width: 559px) {
+  .overlay-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 2fr) minmax(0, 5fr);
+  }
+
+  .pane-transcript {
+    border-right: 0;
+    border-bottom: 1px solid #2c323a;
+  }
+}
+
+/* The transcript pane: each side's lines joined into blocks, both full width. */
+.transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transcript .line {
+  line-height: 1.45;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-left: 2px solid #3d8a63;
+}
+
+.transcript .line.me {
+  border-left-color: #8b6fd6;
+}
+
+.transcript .line p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.transcript .who {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7fc8a0;
+  margin-bottom: 1px;
+}
+
+.transcript .line.me .who {
+  color: #b9a5f0;
+}
+
+.transcript .partial {
+  color: var(--overlay-muted);
+  font-style: italic;
+}
+
+.overlay button.asked {
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  font-size: 11px;
+  color: #8ab4ff;
+}
+
+/* Suggestions take the pane's whole width. */
+.pane-answers .msg.answer {
+  width: 100%;
+  max-width: 100%;
+}
+
+.overlay-head .icon.text-size {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+
+.overlay-head .icon[aria-pressed="true"] {
+  color: #8ab4ff;
 }
 
 .empty {
@@ -1091,7 +1220,7 @@ kbd.key {
 .overlay button.jump {
   position: absolute;
   left: 50%;
-  bottom: 52px;
+  bottom: 10px;
   transform: translateX(-50%);
   background: #2563eb;
   border: 0;
@@ -1111,9 +1240,19 @@ kbd.key {
   background: linear-gradient(135deg, transparent 55%, #4a525c 55%, #4a525c 65%, transparent 65%, transparent 75%, #4a525c 75%, #4a525c 85%, transparent 85%);
 }
 
-/* Compact: answers only, tighter, for a small window. */
-.overlay.compact .overlay-body {
+/* Compact: tighter, for a small window. One column shows the answers only; split keeps both
+   panes. */
+.overlay.compact .pane-body {
   padding: 4px 6px;
+}
+
+.overlay.compact .transcript {
+  gap: 4px;
+}
+
+.overlay.compact .transcript .line {
+  font-size: 12px;
+  padding: 2px 6px;
 }
 
 .overlay.compact .conversation {
@@ -1800,13 +1939,16 @@ details.output > summary h3 {
   display: inline;
 }
 
-/* "Test audio" (AudioCheck.tsx): two level meters and the verdicts. */
-.audio-check { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.audio-meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.audio-meter { opacity: 0.55; }
-.audio-meter.active { opacity: 1; }
-.audio-meter-bar { height: 8px; border-radius: 4px; background: var(--border, #ccc); overflow: hidden; }
+/* A device row with its Test button (AudioCheck.tsx): the dropdown narrower, Test on its
+   right, the level bar and the verdict under the row. */
+.device-test { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.device-row { display: flex; align-items: center; gap: 8px; }
+.device-control { flex: 0 1 340px; min-width: 0; }
+.device-control select { width: 100%; }
+.device-test > .note { margin: 0; }
+.device-test .note.ok { color: var(--ok, #2a7); }
+.device-test .note.bad { color: var(--bad, #c33); }
+.audio-meter-bar { height: 6px; max-width: 420px; border-radius: 3px; background: var(--border, #ccc); overflow: hidden; }
 .audio-meter-fill { height: 100%; background: var(--accent, #2a7); transition: width 80ms linear; }
-.audio-verdicts { margin: 0; padding-left: 18px; }
-.audio-verdicts li.ok { color: var(--ok, #2a7); }
-.audio-verdicts li.bad { color: var(--bad, #c33); }
+.quick-tests { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-width: 420px; }
+.quick-tests .device-control { flex: 1 1 auto; }

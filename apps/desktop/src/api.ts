@@ -236,6 +236,7 @@ export interface AudioVerdict {
   peak_db: number;
   sound_ms: number;
 }
+export type AudioPart = "mic" | "call";
 export interface AudioCheckResult {
   mic: AudioVerdict;
   call: AudioVerdict;
@@ -270,8 +271,9 @@ export const api = {
     invoke<void>("save_settings", { settings, devToken }),
   listDevices: () => invoke<{ inputs: DeviceInfo[]; outputs: DeviceInfo[] }>("list_devices"),
   /** About five seconds: speak for three, then a test sound plays on the output. */
-  audioCheck: (micDevice: string | null, outputDevice: string | null) =>
-    invoke<AudioCheckResult>("audio_check", { micDevice, outputDevice }),
+  /** "mic" listens only, "call" plays the test tone only; without a part, both in turn. */
+  audioCheck: (micDevice: string | null, outputDevice: string | null, part?: AudioPart) =>
+    invoke<AudioCheckResult>("audio_check", { micDevice, outputDevice, part: part ?? null }),
   /** `target`: a tailored resume's application, a version whose content it replaces, a label;
    * or the application a job description belongs to. */
   uploadDocument: (kind: DocumentKind, file: File, target?: UploadTarget) =>

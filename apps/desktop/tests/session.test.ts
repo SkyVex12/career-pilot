@@ -73,7 +73,7 @@ describe("session reducer", () => {
       server({ type: "transcript.partial", channel: "them", seg_id: 0, text: "Tell me about" }),
       server({ type: "transcript.final", channel: "them", seg_id: 0, text: "Tell me about a time.", start_ms: 0, end_ms: 900 }),
     ]);
-    expect(s.transcript).toEqual([{ key: "them:0", channel: "them", text: "Tell me about a time.", final: true }]);
+    expect(s.transcript).toEqual([{ key: "them:0", channel: "them", text: "Tell me about a time.", final: true, startMs: 0, endMs: 900 }]);
   });
 });
 

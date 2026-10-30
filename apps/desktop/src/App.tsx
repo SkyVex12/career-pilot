@@ -27,7 +27,7 @@ import { ago, bar, settingsLine } from "./updates";
 import { parseTarget, upcoming } from "./catalog";
 import { Applications, roundLabel, useCatalog } from "./Applications";
 import { applicationOption } from "./pairing";
-import { AudioCheck } from "./AudioCheck";
+import { DeviceTest } from "./AudioCheck";
 import { CareerOsSettings } from "./CareerOs";
 import { History, LiveNow } from "./History";
 import { Resumes } from "./Resumes";
@@ -374,7 +374,7 @@ function StartScreen({
   session: SessionView;
   tokenSet: boolean;
   environment: string;
-  /** The saved microphone and call-audio device, for "Test audio" before the call. */
+  /** The saved microphone and call-audio device, for their Test buttons before the call. */
   devices: { mic: string | null; output: string | null };
   onSettings: () => void;
   onOpenLive: (live: LiveSession) => Promise<void>;
@@ -626,12 +626,15 @@ function StartScreen({
         <button onClick={() => api.showOverlay(true)}>Show overlay</button>
       </div>
       {!running && (
-        <AudioCheck
-          micDevice={devices.mic}
-          outputDevice={devices.output}
-          disabled={busy}
-          note="Uses the devices saved in Settings."
-        />
+        <div className="quick-tests">
+          <DeviceTest part="mic" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
+            <span>Microphone</span>
+          </DeviceTest>
+          <DeviceTest part="call" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
+            <span>Call audio</span>
+          </DeviceTest>
+          <p className="note">Tests the devices saved in Settings.</p>
+        </div>
       )}
       {running && ending && (
         <div className="end-choice">
@@ -1108,21 +1111,17 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
         )}
 
         <label>Microphone</label>
-        {deviceSelect(devices?.inputs, draft.mic_device, "mic_device")}
+        <DeviceTest part="mic" micDevice={draft.mic_device} outputDevice={draft.output_device} disabled={running} disabledNote="Test after the call: it is using the devices.">
+          {deviceSelect(devices?.inputs, draft.mic_device, "mic_device")}
+        </DeviceTest>
 
         <label>Call audio from</label>
         <div>
-          {deviceSelect(devices?.outputs, draft.output_device, "output_device")}
+          <DeviceTest part="call" micDevice={draft.mic_device} outputDevice={draft.output_device} disabled={running}>
+            {deviceSelect(devices?.outputs, draft.output_device, "output_device")}
+          </DeviceTest>
           <p className="note">The speakers or headset the call plays on; captured in loopback.</p>
         </div>
-
-        <label>Audio test</label>
-        <AudioCheck
-          micDevice={draft.mic_device}
-          outputDevice={draft.output_device}
-          disabled={running}
-          note={running ? "Not during a call: the call is using the devices." : undefined}
-        />
 
         <label>Echo cancellation</label>
         <label className="check">

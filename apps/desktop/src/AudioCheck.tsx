@@ -1,31 +1,26 @@
-// "Test audio": the chosen microphone and call-audio device, checked before a call (Settings
-// and the Session tab). The Rust core does the work (audio_check); this shows the meters and
-// the verdicts.
-import { useEffect, useRef, useState } from "react";
-import { api, onAudioCheck } from "./api";
-import { type CheckState, checkLine, meterFill } from "./audiotest";
+// A device row with its own Test button (Settings, and the Session tab before a call): the
+// device's control on the left, Test on the right, and while it runs a level bar under the
+// row, then the verdict. The Rust core does the work (audio_check, one part at a time).
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api, onAudioCheck, type AudioPart } from "./api";
+import { type CheckState, meterFill, partLevel, partLine, partVerdict } from "./audiotest";
 
-function Meter({ label, db, active }: { label: string; db: number | null; active: boolean }) {
-  return (
-    <div className={`audio-meter${active ? " active" : ""}`}>
-      <span className="note">{label}</span>
-      <div className="audio-meter-bar">
-        <div className="audio-meter-fill" style={{ width: `${Math.round(meterFill(db ?? -100) * 100)}%` }} />
-      </div>
-    </div>
-  );
-}
-
-export function AudioCheck({
+export function DeviceTest({
+  part,
   micDevice,
   outputDevice,
   disabled,
-  note,
+  disabledNote,
+  children,
 }: {
+  part: AudioPart;
   micDevice: string | null;
   outputDevice: string | null;
   disabled?: boolean;
-  note?: string;
+  /** Said under the row while testing is not possible. */
+  disabledNote?: string;
+  /** The device's dropdown, or a label when the device is chosen elsewhere. */
+  children: ReactNode;
 }) {
   const [check, setCheck] = useState<CheckState>({ state: "idle" });
   const running = check.state === "running";
@@ -38,11 +33,16 @@ export function AudioCheck({
       off.then((f) => f());
     };
   }, []);
+  // A different device makes the last verdict stale.
+  useEffect(() => {
+    if (!runningRef.current) setCheck({ state: "idle" });
+  }, [micDevice, outputDevice]);
+
   const run = async () => {
     runningRef.current = true;
     setCheck({ state: "running", meter: null });
     try {
-      const result = await api.audioCheck(micDevice, outputDevice);
+      const result = await api.audioCheck(micDevice, outputDevice, part);
       setCheck({ state: "done", result });
     } catch (e) {
       setCheck({ state: "failed", message: String(e) });
@@ -50,35 +50,34 @@ export function AudioCheck({
       runningRef.current = false;
     }
   };
-  const meter = check.state === "running" ? check.meter : null;
+  const line = partLine(part, check);
+  const ok = check.state === "done" ? partVerdict(part, check.result).ok : null;
   return (
-    <div className="audio-check">
-      <div className="row">
-        <button className="small" onClick={run} disabled={disabled || running}>
+    <div className="device-test">
+      <div className="device-row">
+        <div className="device-control">{children}</div>
+        <button
+          className="small"
+          onClick={run}
+          disabled={disabled || running}
+          title={part === "mic" ? "Speak for 3 seconds to check this microphone" : "Plays a short tone on this device to check the app hears it"}
+        >
           {running && <span className="spinner" />}
-          {running ? "Testing…" : "Test audio"}
+          {running ? "Testing…" : "Test"}
         </button>
-        <span className={`note${check.state === "failed" ? " bad" : ""}`} aria-live="polite">
-          {checkLine(check)}
-        </span>
       </div>
       {running && (
-        <div className="audio-meters">
-          <Meter label="Microphone" db={meter?.mic_db ?? null} active={meter?.phase !== "tone"} />
-          <Meter label="Call audio" db={meter?.call_db ?? null} active={meter?.phase === "tone"} />
+        <div className="audio-meter-bar" role="meter" aria-label={part === "mic" ? "Microphone level" : "Call audio level"}>
+          <div className="audio-meter-fill" style={{ width: `${Math.round(meterFill(partLevel(part, check.meter)) * 100)}%` }} />
         </div>
       )}
-      {check.state === "done" && (
-        <ul className="audio-verdicts">
-          <li className={check.result.mic.ok ? "ok" : "bad"}>
-            <b>Microphone:</b> {check.result.mic.message}
-          </li>
-          <li className={check.result.call.ok ? "ok" : "bad"}>
-            <b>Call audio:</b> {check.result.call.message}
-          </li>
-        </ul>
+      {line && (
+        <p className={`note${ok === true ? " ok" : ok === false || check.state === "failed" ? " bad" : ""}`} aria-live="polite">
+          {ok === true ? "✓ " : ok === false ? "✗ " : ""}
+          {line}
+        </p>
       )}
-      {note && <p className="note">{note}</p>}
+      {disabled && disabledNote && <p className="note">{disabledNote}</p>}
     </div>
   );
 }
