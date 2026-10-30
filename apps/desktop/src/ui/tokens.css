@@ -1,0 +1,148 @@
+/* Design tokens (docs/design/ui-proposal.md, "Design system"). Components read only these:
+   no raw colours or pixel sizes outside this file. The theme is set on <html data-theme> by
+   theme.ts (the OS setting, or the user's override), so both windows switch together. Every
+   text pair here is at least 4.5:1, borders and focus at least 3:1
+   (docs/design/harness/contrast.mjs). */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --surface-sunken: #eceff3;
+  --border: #dfe3e8;
+  --border-strong: #858e9b;
+  --text: #14171c;
+  --text-2: #4a5361;
+  --text-3: #626b79;
+  --accent: #2457d6;
+  --accent-hover: #1c47b3;
+  --accent-soft: #e9effc;
+  --on-accent: #ffffff;
+  --success: #14753a;
+  --success-soft: #e8f5ec;
+  --warning: #8a5300;
+  --warning-soft: #fdf3e1;
+  --danger: #b42318;
+  --danger-hover: #93190f;
+  --danger-soft: #fdecea;
+  --on-danger: #ffffff;
+  --focus: #2457d6;
+  --scrim: rgb(16 18 22 / 0.45);
+  --shadow-1: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
+  --shadow-2: 0 8px 24px rgb(16 24 40 / 0.16);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --surface: #171a20;
+  --surface-2: #20242c;
+  --surface-sunken: #12151a;
+  --border: #2a2f38;
+  --border-strong: #646c7a;
+  --text: #e8ebf0;
+  --text-2: #b3bbc7;
+  --text-3: #8d96a4;
+  --accent: #7aa5ff;
+  --accent-hover: #9bbcff;
+  --accent-soft: rgb(122 165 255 / 0.14);
+  --on-accent: #0b1020;
+  --success: #5bd08a;
+  --success-soft: rgb(91 208 138 / 0.12);
+  --warning: #f2b84b;
+  --warning-soft: rgb(242 184 75 / 0.12);
+  --danger: #ff8a80;
+  --danger-hover: #ffaaa2;
+  --danger-soft: rgb(255 138 128 / 0.12);
+  --on-danger: #1a0705;
+  --focus: #7aa5ff;
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --lh-xs: 16px;
+  --lh-sm: 18px;
+  --lh-md: 20px;
+  --lh-lg: 24px;
+  --lh-xl: 28px;
+  --lh-2xl: 32px;
+
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 40px;
+  --space-10: 48px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  --control-h-sm: 28px;
+  --control-h-md: 32px;
+  --control-h-lg: 40px;
+
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --sidebar-w: 216px;
+  --content-max: 880px;
+}
+
+/* The overlay is always dark: it floats over whatever is on screen. */
+:root[data-window="overlay"],
+.ov {
+  color-scheme: dark;
+  --ov-panel: 16 18 22;
+  --ov-text: #f4f6f9;
+  --ov-text-2: #c3cad4;
+  --ov-text-3: #98a1ae;
+  --ov-line: rgb(255 255 255 / 0.1);
+  --ov-raise: rgb(255 255 255 / 0.05);
+  --ov-fast: #8db4ff;
+  --ov-deep: #c3a6ff;
+  --ov-live: #5bd08a;
+  --ov-warn: #f2b84b;
+  --ov-bad: #ff8a80;
+  --focus: #8db4ff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* One focus style everywhere, both windows: an outline (it also shows in Windows contrast themes). */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

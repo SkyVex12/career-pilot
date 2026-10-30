@@ -1,0 +1,665 @@
+/* The overlay (Overlay.tsx) and History's replay of a call, drawn the same way. Always dark: it
+   floats over whatever is on screen. Tokens only (ui/tokens.css, the --ov-* set).
+   Opacity: --ov-alpha (the setting, 0.3 to 1) fades the window's background and chrome; each
+   answer card keeps a backing of at least 62% and opaque text, so it stays readable over light
+   content (docs/design/ui-proposal.md, "Overlay rules", 4). Type: --ov-scale (A-/A+) multiplies
+   every size through calc(), so wrapping is computed at the real size; nothing is under 12 px. */
+
+html[data-window="overlay"],
+html[data-window="overlay"] body {
+  /* The window is transparent (src-tauri sets it so): the panel paints its own background. */
+  background: transparent;
+  height: 100%;
+  overflow: hidden;
+}
+html[data-window="overlay"] #root {
+  height: 100%;
+}
+
+.ov {
+  --ov-alpha: 1;
+  --ov-scale: 1;
+}
+/* The sizes are computed where the text scale is set (each layout's body), so A-/A+ apply. */
+.ov,
+.ov-body {
+  --fs-fast: calc(18px * var(--ov-scale));
+  --fs-fast-earlier: calc(16px * var(--ov-scale));
+  --fs-deep: calc(15px * var(--ov-scale));
+  --fs-question: calc(14px * var(--ov-scale));
+  --fs-tx: calc(14px * var(--ov-scale));
+  --fs-meta: calc(12px * var(--ov-scale));
+}
+.ov {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: rgb(var(--ov-panel) / calc(0.94 * var(--ov-alpha)));
+  color: var(--ov-text);
+  font-family: var(--font);
+  container: overlay / inline-size;
+}
+
+/* Chrome (header, transcript, ask box) fades with the setting, never below 45%. */
+.ov-head,
+.ov-ask,
+.ov-pane-transcript,
+.ov-clickthrough {
+  opacity: max(0.45, calc(0.35 + 0.65 * var(--ov-alpha)));
+}
+
+/* --- Header --- */
+
+.ov-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--ov-line);
+  cursor: move;
+  user-select: none;
+}
+.ov-head .ui-icon-btn {
+  color: var(--ov-text-2);
+  cursor: pointer;
+}
+.ov-head .ui-icon-btn:hover:not(:disabled) {
+  background: var(--ov-raise);
+  color: var(--ov-text);
+}
+.ov-head .ui-icon-btn[aria-pressed="true"],
+.ov-head .ui-icon-btn[aria-expanded="true"] {
+  background: rgb(141 180 255 / 0.16);
+  color: var(--ov-fast);
+}
+.ov-text-size {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ov-view {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+.ov-spacer {
+  flex: 1;
+  align-self: stretch;
+}
+.ov-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 260px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ov-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-status-ok .ov-status-icon {
+  color: var(--ov-live);
+}
+.ov-status-degraded,
+.ov-status-reconnecting {
+  color: var(--ov-warn);
+}
+.ov-status-off {
+  color: var(--ov-text-2);
+}
+.ov-status-reconnecting .ov-status-icon {
+  animation: ov-pulse 1s infinite;
+}
+@keyframes ov-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.ov-speaking {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.ov-pill {
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgb(91 208 138 / 0.18);
+  color: var(--ov-live);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.ov-pill-me {
+  background: rgb(141 180 255 / 0.18);
+  color: var(--ov-fast);
+}
+
+.ov-clickthrough {
+  padding: var(--space-2) var(--space-4);
+  background: rgb(242 184 75 / 0.16);
+  border-bottom: 1px solid rgb(242 184 75 / 0.4);
+  color: var(--ov-warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ov-clickthrough .ui-kbd {
+  background: transparent;
+  color: var(--ov-text);
+  border-color: rgb(242 184 75 / 0.6);
+}
+
+/* --- The gear's panel --- */
+
+.ov-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.ov-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 300px;
+  padding: var(--space-4);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--ov-panel));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+  cursor: default;
+}
+.ov-menu-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.ov-menu-label {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.ov-menu-value {
+  color: var(--ov-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ov-menu input[type="range"] {
+  width: 100%;
+  accent-color: var(--ov-fast);
+}
+.ov-menu-hint {
+  color: var(--ov-text-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.ov-menu .ui-field-hint {
+  color: var(--ov-text-3);
+}
+.ov-menu-sep {
+  height: 1px;
+  background: var(--ov-line);
+}
+.ov-menu-item {
+  justify-content: flex-start;
+}
+
+/* --- Panes --- */
+
+.ov-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.ov-split {
+  flex-direction: row;
+}
+.ov-stacked,
+.ov-single {
+  flex-direction: column;
+}
+.ov-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+.ov-pane-transcript {
+  flex: 0 0 34%;
+  border-right: 1px solid var(--ov-line);
+}
+.ov-pane-head {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--ov-text-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.ov-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-5);
+  /* Content inserted above what is being read does not move it (Chromium's scroll anchoring). */
+  overflow-anchor: auto;
+}
+.ov-follow {
+  overflow-anchor: none;
+}
+.ov-empty {
+  margin: var(--space-6) 0;
+  color: var(--ov-text-2);
+  font-size: var(--fs-tx);
+  text-align: center;
+}
+.ov-jump {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-pill);
+  background: rgb(var(--ov-panel));
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+}
+.ov-jump-top {
+  top: calc(var(--space-8) + var(--space-2));
+  bottom: auto;
+  background: var(--ov-fast);
+  color: #0b1020;
+  border-color: transparent;
+}
+
+@container overlay (max-width: 559px) {
+  .ov-split {
+    flex-direction: column;
+  }
+  .ov-pane-transcript {
+    flex: 0 0 30%;
+    border-right: 0;
+    border-bottom: 1px solid var(--ov-line);
+  }
+}
+
+/* --- Transcript --- */
+
+.tx,
+.ov-flow,
+.ov-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tx .line {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--ov-live);
+}
+.tx .line.me {
+  border-left-color: var(--ov-fast);
+}
+.tx .line p,
+.ov-flow .msg p {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-tx);
+  line-height: 1.5;
+}
+.tx .who,
+.ov-flow .who {
+  color: var(--ov-text-3);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.partial {
+  color: var(--ov-text-3);
+  font-style: italic;
+}
+.asked {
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ov-fast);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-flow .msg {
+  max-width: 90%;
+}
+.ov-flow .msg.me {
+  align-self: flex-end;
+  text-align: right;
+}
+
+/* --- Answers: text first. No boxes or labels; the newest is the largest and brightest, the
+   earlier ones quieter below it, a rule between them. Tools stay faint until wanted. --- */
+
+.ov-cards {
+  gap: 0;
+}
+.card {
+  padding: var(--space-4) var(--space-3);
+  border-radius: var(--radius-md);
+  /* Its own backing: readable over light content however low the opacity setting goes. */
+  background: rgb(var(--ov-panel) / max(0.62, var(--ov-alpha)));
+}
+.ov-cards > li + li .card,
+.ov-flow > li + li > .card {
+  border-top: 1px solid var(--ov-line);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.card.is-earlier {
+  color: var(--ov-text-2);
+}
+.question {
+  margin: 0 0 var(--space-3);
+  color: var(--ov-text-3);
+  font-size: var(--fs-question);
+  line-height: 1.4;
+}
+.card.is-speculative .question {
+  font-style: italic;
+}
+
+.pass {
+  position: relative;
+}
+.pass-deep {
+  margin-top: var(--space-4);
+  padding-left: var(--space-4);
+  border-left: 2px solid rgb(195 166 255 / 0.45);
+}
+.pass-fast.is-held {
+  /* Held for three lines of talking points while they are written. */
+  min-height: calc(var(--fs-fast) * 1.45 * 3);
+}
+.pass-title {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--ov-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+.pass-status {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--ov-text-3);
+}
+.pass-state-warn {
+  color: var(--ov-warn);
+}
+
+.card-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  opacity: 0.35;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.card:hover .card-tools,
+.card-tools:focus-within {
+  opacity: 1;
+}
+.copy {
+  padding: 0 var(--space-3);
+  min-height: 24px;
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ov-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.copy:hover:not(:disabled) {
+  color: var(--ov-text);
+  background: var(--ov-raise);
+}
+.copy:disabled {
+  display: none;
+}
+
+.bullets {
+  margin: 0;
+  padding-left: 1.1em;
+}
+.bullets li + li {
+  margin-top: 0.3em;
+}
+.prose p {
+  margin: 0 0 0.45em;
+}
+.points .bullets,
+.points .prose {
+  max-width: 72ch;
+  color: var(--ov-text);
+  font-size: var(--fs-fast);
+  line-height: 1.45;
+  font-weight: 500;
+}
+.card.is-earlier .points .bullets,
+.card.is-earlier .points .prose,
+.card.is-earlier .deep .bullets,
+.card.is-earlier .deep .prose {
+  color: var(--ov-text-2);
+}
+.card.is-earlier .points .bullets,
+.card.is-earlier .points .prose {
+  font-size: var(--fs-fast-earlier);
+  font-weight: 400;
+}
+.deep .bullets,
+.deep .prose {
+  max-width: 76ch;
+  color: var(--ov-text);
+  font-size: var(--fs-deep);
+  line-height: 1.5;
+}
+.cite {
+  margin-left: 2px;
+  color: var(--ov-text-3);
+  font-size: 12px;
+}
+.suggested {
+  color: var(--ov-text-2);
+  font-style: italic;
+}
+.suggest-tag {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-sm);
+  color: var(--ov-warn);
+  font-size: 12px;
+  font-style: normal;
+}
+.ov-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  opacity: 0.7;
+  animation: ov-blink 1s steps(2, start) infinite;
+}
+@keyframes ov-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-caret {
+    animation: none;
+  }
+}
+.ov-reserve {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+.ov-reserve span {
+  display: block;
+  height: calc(var(--fs-deep) * 0.8);
+  border-radius: var(--radius-sm);
+  background: var(--ov-raise);
+}
+.ov-reserve span:last-child {
+  width: 70%;
+}
+.ov-get-deep {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid rgb(195 166 255 / 0.5);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ov-deep);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-get-deep:hover {
+  background: rgb(195 166 255 / 0.12);
+}
+.ov-thumb {
+  min-width: 32px;
+  min-height: 28px;
+  border: 1px solid var(--ov-line);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+.ov-thumb[aria-pressed="true"] {
+  border-color: var(--ov-fast);
+  background: rgb(141 180 255 / 0.16);
+}
+.ov-thumb:disabled {
+  cursor: default;
+}
+.ov-thumb:disabled:not([aria-pressed="true"]) {
+  opacity: 0.4;
+}
+.refs {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ov-text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One column: the conversation scrolls; the current card is pinned under it. */
+.ov-pane-flow {
+  flex: 1;
+}
+.ov-now-pinned {
+  flex: none;
+  max-height: 55%;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--ov-line);
+}
+
+/* Compact: the answers only, with less chrome. The type keeps its size. */
+.ov.is-compact .ov-pane-body {
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+.ov.is-compact .card {
+  padding: var(--space-3) var(--space-4);
+}
+.ov.is-compact .question {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* --- Ask box --- */
+
+.ov-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
+  border-top: 1px solid var(--ov-line);
+}
+.ov-ask-input {
+  flex: 1;
+  min-width: 120px;
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  background: rgb(0 0 0 / 0.35);
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 14px;
+}
+.ov-ask-input::placeholder {
+  color: var(--ov-text-3);
+}
+.ov-ask-btn {
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  background: var(--ov-raise);
+  color: var(--ov-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-ask-btn:disabled,
+.ov-ask-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ov-ask-error {
+  flex-basis: 100%;
+  color: var(--ov-bad);
+  font-size: 12px;
+}
+
+.ov-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--ov-line) 50%);
+}
+
+/* --- History's replay: the overlay's look inside the main window --- */
+
+.ov.ov-replay {
+  height: min(70vh, 640px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.ov.ov-replay .ov-head {
+  cursor: default;
+}
+.ov-replay-count {
+  color: var(--ov-text-2);
+  font-size: 13px;
+}

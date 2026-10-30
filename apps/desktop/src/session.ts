@@ -298,13 +298,23 @@ export function useSession(): [SessionView, (a: Action) => void] {
   return [state, dispatch];
 }
 
+/// Why a call stopped, in words.
+export const STOPPED: Record<StopReason, string> = {
+  ended: "Call ended",
+  no_minutes: "No minutes left",
+  session_active: "Another call is active",
+  replaced: "Continued in another app",
+  unauthorized: "Sign-in rejected",
+  outdated: "Updating the app",
+};
+
 /// One badge for the overlay: the connection first, then the worst component status.
 export function badge(s: SessionView): { state: BadgeState | "off"; text: string } {
   const c = s.connection;
-  if (!s.running || !c) return { state: "off", text: s.stopped ? `Stopped: ${s.stopped}` : "Not in a session" };
+  if (!s.running || !c) return { state: "off", text: s.stopped ? STOPPED[s.stopped] : "Not in a call" };
   if (c.state === "connecting") return { state: "reconnecting", text: "Connecting" };
   if (c.state === "reconnecting") return { state: "reconnecting", text: "Reconnecting" };
-  if (c.state === "stopped") return { state: "off", text: `Stopped: ${c.reason}` };
+  if (c.state === "stopped") return { state: "off", text: STOPPED[c.reason] };
   const statuses = Object.entries(s.status).filter(([, v]) => v.state !== "ok");
   const worst = statuses.find(([, v]) => v.state === "reconnecting") ?? statuses[0];
   if (worst) return { state: worst[1].state, text: worst[1].message || `${worst[0]} ${worst[1].state}` };

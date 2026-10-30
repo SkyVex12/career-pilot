@@ -1,26 +1,49 @@
-// Work: the companies the user works at (apart from the jobs they apply to), and per company
-// a daily work log, its material (documents whose facts wait for approval) and its facts.
-// Standup and meeting mode answer from these (the start screen picks the company).
+// Work: the companies the user works at (apart from the jobs they apply to), and per company a
+// daily work log, its material (documents whose facts wait for approval) and its facts.
+// Standup and meeting calls answer from these (the Call screen picks the company).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type CompanyDocument, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
-import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
+import { ACCEPT, plural, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
 import { KIND_LABELS, byKind, itemLine, localDay } from "./workday";
-
-const ACCEPT = ".pdf,.md,.markdown,.txt";
-type Sub = "log" | "material" | "facts";
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  ConfirmDialog,
+  Dialog,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  List,
+  ListRow,
+  ListState,
+  Menu,
+  PageHeader,
+  Select,
+  SkeletonList,
+  Tabs,
+  Textarea,
+  required,
+  useToast,
+} from "./ui";
 
 export function Work({ active = true }: { active?: boolean }) {
   const [employers, setEmployers] = useState<Employer[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<"add" | "edit" | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState("log");
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
       const list = (await rest.employers()).employers;
       setEmployers(list);
-      setSelected((cur) => (cur && list.some((e) => e.id === cur) ? cur : (list.find((e) => e.current) ?? list[0])?.id ?? null));
+      setSelected((cur) => (cur && list.some((e) => e.id === cur) ? cur : (list.find((e) => e.current && e.status === "active") ?? list[0])?.id ?? null));
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -32,192 +55,255 @@ export function Work({ active = true }: { active?: boolean }) {
   useOnShow(active, load);
 
   const employer = employers?.find((e) => e.id === selected) ?? null;
-  return (
-    <section className="panel">
-      <div className="companies">
-        {employers?.map((e) => (
-          <button key={e.id} className={e.id === selected ? "on" : ""} onClick={() => setSelected(e.id)}>
-            {e.name}
-            {e.status === "archived" ? " (archived)" : e.current ? "" : " (past)"}
-            {(e.pending_proposals ?? 0) > 0 && <span className="count">{e.pending_proposals}</span>}
-          </button>
-        ))}
-        {employers !== null && employers.length > 0 && !adding && (
-          <button className="link" onClick={() => setAdding(true)}>
-            + Add a company
-          </button>
-        )}
-      </div>
-      <p className="note">
-        Companies you work at, apart from the jobs you apply to. Standup and meeting mode answer from the company you pick on the start screen.
-      </p>
-      {error && <LoadError error={error} onRetry={load} />}
-      {employers === null && !error && <Loading what="companies" />}
-      {(adding || employers?.length === 0) && <h3>{employers?.length === 0 ? "Add the company you work at" : "Add a company"}</h3>}
-      {(adding || employers?.length === 0) && (
-        <EmployerForm
-          onCancel={() => setAdding(false)}
-          onSaved={async (e) => {
-            setAdding(false);
-            await load();
-            setSelected(e.id);
-          }}
-        />
-      )}
-      {employer && !adding && <Company key={employer.id} employer={employer} onChanged={load} />}
-    </section>
-  );
-}
-
-function EmployerForm({ employer, onSaved, onCancel }: { employer?: Employer; onSaved: (e: Employer) => void; onCancel: () => void }) {
-  const [name, setName] = useState(employer?.name ?? "");
-  const [title, setTitle] = useState(employer?.title ?? "");
-  const [team, setTeam] = useState(employer?.team ?? "");
-  const [started, setStarted] = useState(employer?.started_on ?? "");
-  const [ended, setEnded] = useState(employer?.ended_on ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    const fields = { name: name.trim(), title: title.trim(), team: team.trim(), started_on: started || null, ended_on: ended || null };
+  const archive = async (e: Employer) => {
+    const to = e.status === "archived" ? "active" : "archived";
     try {
-      onSaved(employer ? await rest.updateEmployer(employer.id, fields) : await rest.createEmployer(fields));
-    } catch (e) {
-      setError(String(e));
+      await rest.updateEmployer(e.id, { status: to });
+      await load();
+      toast({
+        tone: "success",
+        text: to === "archived" ? `Archived ${e.name}.` : `${e.name} is active again.`,
+        action: {
+          label: "Undo",
+          onClick: () => {
+            rest.updateEmployer(e.id, { status: e.status }).then(load, (err) => toast({ tone: "error", text: String(err) }));
+          },
+        },
+      });
+    } catch (err) {
+      toast({ tone: "error", text: String(err) });
     }
   };
-  return (
-    <div className="grid form">
-      <label>Company</label>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Fernhill Logistics" />
-      <label>Your role</label>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Backend Engineer" />
-      <label>Team</label>
-      <input value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Optional" />
-      <label>Started</label>
-      <input type="date" value={started} onChange={(e) => setStarted(e.target.value)} />
-      <label>Ended</label>
-      <div>
-        <input type="date" value={ended} onChange={(e) => setEnded(e.target.value)} />
-        <p className="note">Leave empty while you work there.</p>
-      </div>
-      <span />
-      <div className="actions">
-        <button className="primary" disabled={!name.trim()} onClick={save}>
-          {employer ? "Save" : "Add company"}
-        </button>
-        <button onClick={onCancel}>Cancel</button>
-        {error && <span className="note warn">{error}</span>}
-      </div>
-    </div>
-  );
-}
 
-function Company({ employer, onChanged }: { employer: Employer; onChanged: () => void }) {
-  const [sub, setSub] = useState<Sub>("log");
-  const [editing, setEditing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const archive = async () => {
-    try {
-      await rest.updateEmployer(employer.id, { status: employer.status === "archived" ? "active" : "archived" });
-      onChanged();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-  if (editing) {
+  if (error && !employers) {
     return (
-      <EmployerForm
-        employer={employer}
-        onCancel={() => setEditing(false)}
-        onSaved={() => {
-          setEditing(false);
-          onChanged();
-        }}
-      />
+      <>
+        <PageHeader title="Work" />
+        <Banner tone="danger" title="Could not load your companies" action={<Button size="sm" onClick={load}>Retry</Button>}>
+          {error}
+        </Banner>
+      </>
+    );
+  }
+  if (!employers) {
+    return (
+      <>
+        <PageHeader title="Work" />
+        <SkeletonList rows={3} label="Loading companies" />
+      </>
     );
   }
   return (
-    <div className="company">
-      <div className="company-head">
-        <h3>
-          {employer.name}
-          <span className="muted">{[employer.title, employer.team].filter(Boolean).join(" · ")}</span>
-        </h3>
-        <div className="actions">
-          <button className="link" onClick={() => setEditing(true)}>
-            Edit
-          </button>
-          <button className="link" onClick={archive}>
-            {employer.status === "archived" ? "Unarchive" : "Archive"}
-          </button>
-          <button className="link danger-text" onClick={() => setDeleting(true)}>
-            Delete all data for this company…
-          </button>
-        </div>
-      </div>
-      {deleting && <DeleteCompany employer={employer} onCancel={() => setDeleting(false)} onDeleted={onChanged} />}
-      {error && <p className="note warn">{error}</p>}
-      <div className="segmented">
-        {(
-          [
-            ["log", "Work log"],
-            ["material", "Material"],
-            ["facts", "Facts"],
-          ] as [Sub, string][]
-        ).map(([k, label]) => (
-          <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>
-            {label}
-            {k === "material" && (employer.pending_proposals ?? 0) > 0 ? ` (${employer.pending_proposals} to review)` : ""}
-          </button>
-        ))}
-      </div>
-      {sub === "log" && <LogTab employer={employer} />}
-      {sub === "material" && <MaterialTab employer={employer} onDecided={onChanged} />}
-      {sub === "facts" && <FactsTab employer={employer} />}
-    </div>
+    <>
+      <PageHeader
+        title="Work"
+        actions={
+          <>
+            {employers.length > 0 && (
+              <Button variant="secondary" onClick={() => setForm("add")}>
+                + Add company
+              </Button>
+            )}
+            {employer && (
+              <Menu
+                label="Company actions"
+                trigger="⋯"
+                items={[
+                  { label: "Edit company…", onSelect: () => setForm("edit") },
+                  { label: employer.status === "archived" ? "Unarchive" : "Archive", hint: "Archived companies are not offered for calls", onSelect: () => archive(employer) },
+                  "separator",
+                  { label: "Delete all its data…", danger: true, onSelect: () => setDeleting(true) },
+                ]}
+              />
+            )}
+          </>
+        }
+        meta={employers.length ? "Companies you work at, apart from the jobs you apply to. Standups and meetings answer from the one picked on the Call screen." : undefined}
+      />
+      {employers.length === 0 ? (
+        <EmptyState
+          icon="▦"
+          title="Add the company you work at"
+          action={
+            <Button variant="primary" onClick={() => setForm("add")}>
+              Add company
+            </Button>
+          }
+        >
+          Standups and meetings answer from your work log and the company's material.
+        </EmptyState>
+      ) : (
+        <>
+          <div className="work-company">
+            <Field label="Company" inline>
+              <Select value={selected ?? ""} onChange={(e) => setSelected(e.target.value)}>
+                {employers.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                    {e.status === "archived" ? " (archived)" : e.current ? "" : " (past)"}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {employer && <span className="ui-text-2 ui-truncate">{[employer.title, employer.team].filter(Boolean).join(" · ")}</span>}
+            {employer?.status === "archived" && <Badge tone="neutral">Archived</Badge>}
+          </div>
+          {employer && (
+            <Tabs
+              key={employer.id}
+              label="Company"
+              value={tab}
+              onChange={setTab}
+              items={[
+                { value: "log", label: "Log", content: <LogTab employer={employer} /> },
+                { value: "material", label: "Material", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
+                { value: "facts", label: "Facts", content: <FactsTab employer={employer} /> },
+              ]}
+            />
+          )}
+        </>
+      )}
+      <EmployerForm
+        open={form !== null}
+        employer={form === "edit" ? employer : null}
+        onOpenChange={(o) => !o && setForm(null)}
+        onSaved={async (e) => {
+          await load();
+          setSelected(e.id);
+        }}
+      />
+      {employer && (
+        <ConfirmDialog
+          open={deleting}
+          onOpenChange={setDeleting}
+          title={`Delete everything for ${employer.name}?`}
+          typed={employer.name}
+          confirmLabel="Delete all data"
+          onConfirm={async () => {
+            await rest.deleteEmployer(employer.id, employer.name);
+            toast({ tone: "success", text: `Deleted ${employer.name} and its data.` });
+            setSelected(null);
+            await load();
+          }}
+        >
+          Its work logs and attachments, documents, facts, and its standup and meeting calls with their transcripts. This cannot be undone.
+        </ConfirmDialog>
+      )}
+    </>
   );
 }
 
-function DeleteCompany({ employer, onCancel, onDeleted }: { employer: Employer; onCancel: () => void; onDeleted: () => void }) {
-  const [typed, setTyped] = useState("");
+/** Field checks for a company: a name, and an end that is not before the start. */
+export function checkEmployer(f: { name: string; started: string; ended: string }): { name?: string; ended?: string } {
+  const out: { name?: string; ended?: string } = {};
+  const n = required(f.name, "the company's name");
+  if (n) out.name = n;
+  if (f.started && f.ended && f.ended < f.started) out.ended = "The end can't be before the start.";
+  return out;
+}
+
+function EmployerForm({ open, employer, onOpenChange, onSaved }: { open: boolean; employer: Employer | null; onOpenChange: (o: boolean) => void; onSaved: (e: Employer) => void }) {
+  const [name, setName] = useState("");
+  const [title, setTitle] = useState("");
+  const [team, setTeam] = useState("");
+  const [started, setStarted] = useState("");
+  const [ended, setEnded] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const go = async () => {
+  useEffect(() => {
+    if (!open) return;
+    setName(employer?.name ?? "");
+    setTitle(employer?.title ?? "");
+    setTeam(employer?.team ?? "");
+    setStarted(employer?.started_on ?? "");
+    setEnded(employer?.ended_on ?? "");
+    setTouched(false);
+    setError(null);
+  }, [open, employer]);
+  const checks = checkEmployer({ name, started, ended });
+  const save = async () => {
+    setTouched(true);
+    if (Object.keys(checks).length) return;
+    setBusy(true);
+    setError(null);
+    const fields = { name: name.trim(), title: title.trim(), team: team.trim(), started_on: started || null, ended_on: ended || null };
     try {
-      await rest.deleteEmployer(employer.id, typed);
-      onDeleted();
+      const out = employer ? await rest.updateEmployer(employer.id, fields) : await rest.createEmployer(fields);
+      onOpenChange(false);
+      onSaved(out);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
   };
   return (
-    <div className="callout">
-      <p>
-        This deletes everything for {employer.name}: its work logs and attachments, documents, facts, and its standup and meeting sessions with their
-        transcripts. It cannot be undone. Type the company's name to confirm.
-      </p>
-      <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={employer.name} />
-      <div className="actions">
-        <button className="danger" disabled={typed.trim().toLowerCase() !== employer.name.trim().toLowerCase()} onClick={go}>
-          Delete all data
-        </button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-      {error && <p className="note warn">{error}</p>}
-    </div>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={employer ? `Edit ${employer.name}` : "Add a company"}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} onClick={save}>
+            {employer ? "Save" : "Add company"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <Field label="Company" error={touched ? (checks.name ?? null) : null}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => setTouched(true)} />
+        </Field>
+        <div className="form-2">
+          <Field label="Your role" optional>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Field label="Team" optional>
+            <Input value={team} onChange={(e) => setTeam(e.target.value)} />
+          </Field>
+        </div>
+        <div className="form-2">
+          <Field label="Started" optional>
+            <Input type="date" value={started} onChange={(e) => setStarted(e.target.value)} />
+          </Field>
+          <Field label="Ended" optional hint="Empty while you work there." error={touched ? (checks.ended ?? null) : null}>
+            <Input type="date" value={ended} onChange={(e) => setEnded(e.target.value)} />
+          </Field>
+        </div>
+        {error && <Banner tone="danger">{error}</Banner>}
+        <button type="submit" hidden />
+      </form>
+    </Dialog>
   );
 }
 
-// --- Work log ------------------------------------------------------------------------------
+// --- Log ---------------------------------------------------------------------------------------
+
+function shiftDay(day: string, by: number): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() + by);
+  return localDay(d);
+}
 
 function LogTab({ employer }: { employer: Employer }) {
   const [day, setDay] = useState(localDay());
   const [entries, setEntries] = useState<WorkLog[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -236,14 +322,20 @@ function LogTab({ employer }: { employer: Employer }) {
   }, [entry?.text, day]); // eslint-disable-line react-hooks/exhaustive-deps
   usePolling(load, 3000, entries?.some((e) => e.status === "extracting") ?? false);
 
+  const go = (d: string) => {
+    setDay(d);
+    setDirty(false);
+  };
   const save = async () => {
+    if (!text.trim()) return;
     setBusy(true);
     try {
       await rest.putLog(employer.id, day, text);
       setDirty(false);
       await load();
+      toast({ tone: "success", text: "Saved. Its facts are being read." });
     } catch (e) {
-      setError(String(e));
+      toast({ tone: "error", text: String(e) });
     } finally {
       setBusy(false);
     }
@@ -256,142 +348,145 @@ function LogTab({ employer }: { employer: Employer }) {
       await api.uploadCompanyFile(`/employers/${employer.id}/logs/${day}/attachments`, f);
       await load();
     } catch (e) {
-      setError(`${f.name}: ${e}`);
+      toast({ tone: "error", text: `${f.name}: ${e}` });
     } finally {
       setBusy(false);
     }
   };
-  const remove = async () => {
-    if (!entry || !confirm(`Delete the log for ${day} and the facts that came from it?`)) return;
-    try {
-      await rest.deleteLog(employer.id, day);
-      setText("");
-      setDirty(false);
-      await load();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
 
   return (
-    <div>
-      <div className="grid">
-        <label>Day</label>
-        <input
-          type="date"
-          value={day}
-          onChange={(e) => {
-            setDay(e.target.value);
-            setDirty(false);
-          }}
-        />
-        <label>What you worked on</label>
-        <div>
-          <textarea
+    <div className="work-log">
+      <div className="work-log-main">
+        <div className="work-day">
+          <IconButton label="Previous day" icon="‹" variant="subtle" onClick={() => go(shiftDay(day, -1))} />
+          <Input type="date" aria-label="Day" value={day} onChange={(e) => go(e.target.value || localDay())} />
+          <IconButton label="Next day" icon="›" variant="subtle" onClick={() => go(shiftDay(day, 1))} />
+          {day !== localDay() && (
+            <Button size="sm" variant="ghost" onClick={() => go(localDay())}>
+              Today
+            </Button>
+          )}
+          <span className="ui-spacer" />
+          {entry && <LogStatus log={entry} />}
+        </div>
+        <Field label="What you worked on" hint="Tasks, tickets and PRs, decisions, blockers, plans for tomorrow. Paste from your notes, Jira or Slack as it is.">
+          <Textarea
             rows={10}
             value={text}
             onChange={(e) => {
               setText(e.target.value);
               setDirty(true);
             }}
-            placeholder={"Tasks, tickets and PRs, decisions, blockers, plans for tomorrow.\nPaste from your notes, Jira or Slack as it is."}
           />
-          <div className="actions">
-            <button className="primary" disabled={busy || !text.trim() || !dirty} onClick={save}>
-              {entry ? "Save changes" : "Save"}
-            </button>
-            <input
-              ref={file}
-              type="file"
-              accept={ACCEPT}
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) attach(f);
-                e.target.value = "";
-              }}
-            />
-            <button disabled={busy || !text.trim()} onClick={() => file.current?.click()}>
-              Attach a file…
-            </button>
-            {entry && (
-              <button className="link danger-text" onClick={remove}>
-                Delete this day
-              </button>
-            )}
-            {entry && <LogStatus log={entry} />}
-          </div>
-          {entry && entry.attachments.length > 0 && (
-            <ul className="files">
-              {entry.attachments.map((a) => (
-                <li key={a.id}>
-                  {a.name} <span className="muted">{Math.ceil(a.size_bytes / 1024)} KB</span>{" "}
-                  <button className="link" onClick={() => rest.deleteCompanyDocument(employer.id, a.id).then(load, (e) => setError(String(e)))}>
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
+        </Field>
+        {entry && entry.attachments.length > 0 && (
+          <ul className="work-files" aria-label="Attachments">
+            {entry.attachments.map((a) => (
+              <li key={a.id}>
+                <span aria-hidden="true">📎</span> <span className="ui-truncate">{a.name}</span> <span className="ui-muted">{Math.ceil(a.size_bytes / 1024)} KB</span>
+                <RemoveAttachment name={a.name} onRemove={() => rest.deleteCompanyDocument(employer.id, a.id).then(load)} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="form-actions">
+          <input
+            ref={file}
+            type="file"
+            accept={ACCEPT}
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) attach(f);
+            }}
+          />
+          <Button disabled={busy || !text.trim()} onClick={() => file.current?.click()} title={!text.trim() ? "Write the day's log first" : undefined}>
+            Attach a file…
+          </Button>
+          {entry && (
+            <Button variant="danger-ghost" onClick={() => setDeleting(true)}>
+              Delete this day…
+            </Button>
           )}
+          <span className="ui-spacer" />
+          <Button variant="primary" disabled={!text.trim() || !dirty} loading={busy} onClick={save}>
+            Save
+          </Button>
         </div>
+        {entry?.items && entry.items.length > 0 && (
+          <Card title="From this day's log" inset>
+            <p className="ui-field-hint">Your log is kept as it is; fix anything that came out wrong.</p>
+            <Facts items={entry.items} onChanged={load} />
+          </Card>
+        )}
       </div>
-      {error && <p className="note warn">{error}</p>}
-      {entry?.items && entry.items.length > 0 && (
-        <>
-          <h3>From this day's log</h3>
-          <p className="note">Your own log is kept as it is; fix anything that came out wrong.</p>
-          <Facts items={entry.items} onChanged={load} />
-        </>
-      )}
-      <h3>Past entries</h3>
-      {entries?.length === 0 && <p className="note">No entries yet.</p>}
-      <table className="list clickable">
-        <tbody>
-          {entries?.map((e) => (
-            <tr
-              key={e.id}
-              onClick={() => {
-                setDay(e.day);
-                setDirty(false);
-              }}
-            >
-              <td className="nowrap">{e.day}</td>
-              <td className="muted">{e.text.split("\n")[0].slice(0, 90)}</td>
-              <td>
-                <LogStatus log={e} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <aside className="work-log-past" aria-label="Past entries">
+        <h2 className="ui-section-title">Past entries</h2>
+        <ListState items={entries} error={error} onRetry={load} loadingLabel="the work log" empty={<p className="ui-field-hint">No entries yet.</p>}>
+          {(list) => (
+            <List label="Past entries">
+              {list.map((e) => (
+                <ListRow key={e.id} selected={e.day === day} onClick={() => go(e.day)} title={e.day} meta={e.text.split("\n")[0]} trailing={<LogStatus log={e} short />} />
+              ))}
+            </List>
+          )}
+        </ListState>
+      </aside>
+      <ConfirmDialog
+        open={deleting}
+        onOpenChange={setDeleting}
+        title={`Delete the log for ${day}?`}
+        confirmLabel="Delete log"
+        onConfirm={async () => {
+          await rest.deleteLog(employer.id, day);
+          setText("");
+          setDirty(false);
+          await load();
+        }}
+      >
+        The facts that came from it are deleted too.
+      </ConfirmDialog>
     </div>
   );
 }
 
-function LogStatus({ log }: { log: WorkLog }) {
+function RemoveAttachment({ name, onRemove }: { name: string; onRemove: () => Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <IconButton label={`Remove ${name}`} icon="✕" size="sm" onClick={() => setOpen(true)} />
+      <ConfirmDialog open={open} onOpenChange={setOpen} title={`Remove ${name}?`} confirmLabel="Remove" onConfirm={onRemove}>
+        The file and the facts read from it are deleted.
+      </ConfirmDialog>
+    </>
+  );
+}
+
+function LogStatus({ log, short }: { log: WorkLog; short?: boolean }) {
   switch (log.status) {
     case "extracting":
-      return <Chip state="busy">Reading</Chip>;
+      return <Badge tone="warning">Reading</Badge>;
     case "extracted":
-      return <Chip state="ok">{plural(log.items?.length ?? 0, "fact")}</Chip>;
+      return <Badge tone="success">{plural(log.items?.length ?? 0, "fact")}</Badge>;
     case "failed":
-      return <Chip state="bad">Could not read it; save again</Chip>;
+      return <Badge tone="danger">{short ? "Not read" : "Could not read it; save again"}</Badge>;
     default:
-      return <Chip state="off">Saved</Chip>;
+      return <Badge tone="neutral">Saved</Badge>;
   }
 }
 
-// --- Material --------------------------------------------------------------------------------
+// --- Material ------------------------------------------------------------------------------------
 
 function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: () => void }) {
   const [docs, setDocs] = useState<CompanyDocument[] | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
   const [writing, setWriting] = useState(false);
-  const [textName, setTextName] = useState("");
-  const [text, setText] = useState("");
+  const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -413,9 +508,10 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
     try {
       await api.uploadCompanyFile(`/employers/${employer.id}/documents`, f);
       await load();
+      toast({ tone: "success", text: `Uploaded ${f.name}. Its facts appear here to review once read.` });
       return true;
     } catch (e) {
-      setError(`${f.name}: ${e}`);
+      toast({ tone: "error", text: `${f.name}: ${e}` });
       return false;
     } finally {
       setBusy(false);
@@ -427,102 +523,183 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
       await load();
       onDecided();
     } catch (e) {
-      setError(String(e));
+      toast({ tone: "error", text: String(e) });
     }
   };
-  // Pasted text goes through the same upload as a Markdown file, named after the user's title.
-  const saveText = async () => {
-    const title = textName.trim();
-    if (!title || !text.trim()) return;
-    const fileName = /\.(md|markdown|txt)$/i.test(title) ? title : `${title}.md`;
-    if (!(await upload(new File([text], fileName, { type: "text/markdown" })))) return;
-    setTextName("");
-    setText("");
-    setWriting(false);
-  };
+  const pendingDocs = (docs ?? []).filter((d) => proposals.some((p) => p.company_document_id === d.id));
 
   return (
-    <div className="stack">
-      <div className="material-add">
-        <div className="actions">
-          <input
-            ref={file}
-            type="file"
-            accept={ACCEPT}
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) upload(f);
-              e.target.value = "";
-            }}
-          />
-          <button disabled={busy} onClick={() => file.current?.click()}>
-            {busy ? "Saving…" : "Upload a file…"}
-          </button>
-          <button disabled={busy} className={writing ? "on" : ""} onClick={() => setWriting((v) => !v)}>
-            Write or paste text
-          </button>
-        </div>
-        <p className="note">Architecture notes, wiki pages, meeting notes, specs: PDF, Markdown or text. You review its facts before they are kept.</p>
-        {writing && (
-          <div className="material-text">
-            <label className="field">
-              <span>Name</span>
-              <input value={textName} onChange={(e) => setTextName(e.target.value)} placeholder="Payments service architecture" />
-            </label>
-            <label className="field">
-              <span>Text</span>
-              <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste or write the notes here" />
-            </label>
-            <div className="actions">
-              <button className="primary" disabled={busy || !textName.trim() || !text.trim()} onClick={saveText}>
-                {busy ? "Saving…" : "Save"}
-              </button>
-              <button className="link" onClick={() => setWriting(false)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+    <div className="ui-stack">
+      <div className="form-actions material-add">
+        <input
+          ref={file}
+          type="file"
+          accept={ACCEPT}
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) upload(f);
+          }}
+        />
+        <Button onClick={() => file.current?.click()} loading={busy}>
+          Upload a file…
+        </Button>
+        <Button onClick={() => setWriting(true)}>Write or paste text…</Button>
+        <span className="ui-field-hint">Architecture notes, wiki pages, meeting notes, specs: PDF, Markdown or text. You review its facts before they are kept.</span>
       </div>
-      {error && <p className="note warn">{error}</p>}
-      {docs?.length === 0 && <p className="note">No documents yet.</p>}
-      {docs?.map((d) => {
-        const mine = proposals.filter((p) => p.company_document_id === d.id);
-        return (
-          <div key={d.id} className="doc">
-            <div className="doc-head">
-              <strong>{d.name}</strong> <span className="muted">{d.created_at ? when(d.created_at) : ""}</span>{" "}
-              {d.status === "ingesting" ? (
-                <Chip state="busy">Reading</Chip>
-              ) : d.status === "failed" ? (
-                <Chip state="bad">Could not read it</Chip>
-              ) : (
-                <Chip state="ok">{plural(d.approved_proposals ?? 0, "fact")} kept</Chip>
-              )}
-              <span className="doc-actions">
-                {mine.length > 0 && (
-                  <>
-                    <button className="primary small" onClick={() => decide(() => rest.decideDocument(d.id, "approve"))}>
-                      Approve all {mine.length}
-                    </button>
-                    <button className="small" onClick={() => decide(() => rest.decideDocument(d.id, "reject"))}>
-                      Reject all
-                    </button>
-                  </>
-                )}
-                <button className="link danger-text" onClick={() => decide(() => rest.deleteCompanyDocument(employer.id, d.id))}>
-                  Delete
-                </button>
-              </span>
-            </div>
-            {mine.map((p) => (
-              <ProposalRow key={p.id} proposal={p} decide={decide} />
-            ))}
+
+      {pendingDocs.length > 0 && (
+        <section className="ui-section" aria-labelledby="review-title">
+          <h2 className="ui-section-title" id="review-title">
+            To review ({proposals.length})
+          </h2>
+          <div className="ui-stack">
+            {pendingDocs.map((d) => {
+              const mine = proposals.filter((p) => p.company_document_id === d.id);
+              return (
+                <Card
+                  key={d.id}
+                  title={<span className="ui-truncate">{d.name}</span>}
+                  actions={
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setConfirm({
+                            title: `Reject all ${plural(mine.length, "fact")} from ${d.name}?`,
+                            body: "None of them is kept. The document stays.",
+                            label: "Reject all",
+                            run: () => decide(() => rest.decideDocument(d.id, "reject")),
+                          })
+                        }
+                      >
+                        Reject all
+                      </Button>
+                      <Button size="sm" variant="primary" onClick={() => decide(() => rest.decideDocument(d.id, "approve"))}>
+                        Approve all {mine.length}
+                      </Button>
+                    </>
+                  }
+                >
+                  <ul className="proposals">
+                    {mine.map((p) => (
+                      <ProposalRow key={p.id} proposal={p} decide={decide} />
+                    ))}
+                  </ul>
+                </Card>
+              );
+            })}
           </div>
-        );
-      })}
+        </section>
+      )}
+
+      <section className="ui-section" aria-labelledby="docs-title">
+        <h2 className="ui-section-title" id="docs-title">
+          Documents
+        </h2>
+        <ListState items={docs} error={error} onRetry={load} loadingLabel="documents" empty={<EmptyState title="No documents yet">Upload or paste the company's notes, so meetings can answer from them.</EmptyState>}>
+          {(list) => (
+            <List label="Documents">
+              {list.map((d) => (
+                <ListRow
+                  key={d.id}
+                  title={d.name}
+                  fullTitle={d.name}
+                  meta={d.created_at ? when(d.created_at) : undefined}
+                  trailing={
+                    d.status === "ingesting" ? (
+                      <Badge tone="warning">Reading</Badge>
+                    ) : d.status === "failed" ? (
+                      <Badge tone="danger">Could not read it</Badge>
+                    ) : (
+                      <Badge tone="success">{plural(d.approved_proposals ?? 0, "fact")} kept</Badge>
+                    )
+                  }
+                  actions={
+                    <Menu
+                      label={`Actions for ${d.name}`}
+                      trigger="⋯"
+                      items={[
+                        {
+                          label: "Delete…",
+                          danger: true,
+                          onSelect: () =>
+                            setConfirm({
+                              title: `Delete ${d.name}?`,
+                              body: "The document and the facts kept from it are deleted.",
+                              label: "Delete document",
+                              run: () => decide(() => rest.deleteCompanyDocument(employer.id, d.id)),
+                            }),
+                        },
+                      ]}
+                    />
+                  }
+                />
+              ))}
+            </List>
+          )}
+        </ListState>
+      </section>
+
+      <WriteText open={writing} onOpenChange={setWriting} upload={upload} />
+      <ConfirmDialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)} title={confirm?.title ?? ""} confirmLabel={confirm?.label ?? "OK"} onConfirm={() => confirm?.run()}>
+        {confirm?.body}
+      </ConfirmDialog>
     </div>
+  );
+}
+
+function WriteText({ open, onOpenChange, upload }: { open: boolean; onOpenChange: (o: boolean) => void; upload: (f: File) => Promise<boolean> }) {
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setText("");
+      setTouched(false);
+    }
+  }, [open]);
+  const nameError = touched ? required(name, "a name") : null;
+  const textError = touched ? required(text, "the text") : null;
+  // Pasted text goes through the same upload as a Markdown file, named after the user's title.
+  const save = async () => {
+    setTouched(true);
+    if (!name.trim() || !text.trim()) return;
+    const title = name.trim();
+    const fileName = /\.(md|markdown|txt)$/i.test(title) ? title : `${title}.md`;
+    setBusy(true);
+    const ok = await upload(new File([text], fileName, { type: "text/markdown" }));
+    setBusy(false);
+    if (ok) onOpenChange(false);
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="lg"
+      title="Write or paste text"
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} onClick={save}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Field label="Name" error={nameError}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => setTouched(true)} placeholder="e.g. Payments service architecture" />
+      </Field>
+      <Field label="Text" error={textError}>
+        <Textarea rows={12} value={text} onChange={(e) => setText(e.target.value)} />
+      </Field>
+    </Dialog>
   );
 }
 
@@ -530,28 +707,31 @@ function ProposalRow({ proposal, decide }: { proposal: Proposal; decide: (fn: ()
   const [summary, setSummary] = useState(proposal.summary);
   const [editing, setEditing] = useState(false);
   return (
-    <div className="proposal">
-      <span className="kind">{KIND_LABELS[proposal.kind] ?? proposal.kind}</span>
-      <div>
+    <li className="proposal">
+      <Badge tone="neutral" icon={false}>
+        {KIND_LABELS[proposal.kind] ?? proposal.kind}
+      </Badge>
+      <div className="proposal-text">
         <strong>{proposal.title}</strong>
-        {editing ? <input value={summary} onChange={(e) => setSummary(e.target.value)} /> : <span>: {summary}</span>}
-        {proposal.evidence && <div className="muted evidence">“{proposal.evidence}”</div>}
+        {editing ? <Input aria-label={`Summary of ${proposal.title}`} value={summary} onChange={(e) => setSummary(e.target.value)} /> : <span className="ui-text-2">{summary}</span>}
+        {proposal.evidence && <span className="ui-muted proposal-evidence">"{proposal.evidence}"</span>}
       </div>
-      <div className="actions">
-        <button
-          className="small"
+      <div className="proposal-actions">
+        <Button size="sm" variant="ghost" onClick={() => setEditing((v) => !v)} aria-label={`${editing ? "Done editing" : "Edit"} ${proposal.title}`}>
+          {editing ? "Done" : "Edit"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => decide(() => rest.rejectProposal(proposal.id))} aria-label={`Reject ${proposal.title}`}>
+          Reject
+        </Button>
+        <Button
+          size="sm"
           onClick={() => decide(() => rest.approveProposal(proposal.id, summary !== proposal.summary ? { summary } : undefined))}
+          aria-label={`Approve ${proposal.title}`}
         >
           Approve
-        </button>
-        <button className="link" onClick={() => setEditing((v) => !v)}>
-          Edit
-        </button>
-        <button className="link" onClick={() => decide(() => rest.rejectProposal(proposal.id))}>
-          Reject
-        </button>
+        </Button>
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -572,76 +752,111 @@ function FactsTab({ employer }: { employer: Employer }) {
     load();
   }, [load]);
   return (
-    <div>
-      <p className="note">What standups and meetings at {employer.name} can draw on. Work logs add to it; documents add what you approve.</p>
-      {error && <p className="note warn">{error}</p>}
-      {items?.length === 0 && <p className="note">Nothing yet: write a work log or upload a document.</p>}
-      {items && <Facts items={items} onChanged={load} />}
+    <div className="ui-stack">
+      <p className="ui-field-hint">What standups and meetings at {employer.name} can draw on. Work logs add to it; documents add what you approve.</p>
+      <ListState items={items} error={error} onRetry={load} loadingLabel="facts" empty={<EmptyState title="No facts yet">Write a work log or upload a document.</EmptyState>}>
+        {(list) => <Facts items={list} onChanged={load} />}
+      </ListState>
     </div>
   );
 }
 
 function Facts({ items, onChanged }: { items: MemoryItem[]; onChanged: () => void }) {
+  const [editing, setEditing] = useState<MemoryItem | null>(null);
+  const [removing, setRemoving] = useState<MemoryItem | null>(null);
   return (
-    <>
+    <div className="ui-stack">
       {byKind(items).map(([kind, list]) => (
-        <div key={kind}>
-          <h4>{KIND_LABELS[kind]}</h4>
-          <ul className="facts">
+        <section key={kind} aria-label={KIND_LABELS[kind]}>
+          <h3 className="ui-section-title">{KIND_LABELS[kind]}</h3>
+          <List label={KIND_LABELS[kind]}>
             {list.map((i) => (
-              <FactRow key={i.id} item={i} onChanged={onChanged} />
+              <ListRow
+                key={i.id}
+                title={itemLine(i)}
+                fullTitle={itemLine(i)}
+                meta={[i.day, i.edited ? "edited" : null].filter(Boolean).join(" · ") || undefined}
+                actions={
+                  <Menu
+                    label={`Actions for ${i.title}`}
+                    trigger="⋯"
+                    items={[
+                      { label: "Edit…", onSelect: () => setEditing(i) },
+                      { label: "Remove…", danger: true, onSelect: () => setRemoving(i) },
+                    ]}
+                  />
+                }
+              />
             ))}
-          </ul>
-        </div>
+          </List>
+        </section>
       ))}
-    </>
+      <EditFact item={editing} onClose={() => setEditing(null)} onDone={onChanged} />
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(o) => !o && setRemoving(null)}
+        title={`Remove "${removing?.title ?? ""}"?`}
+        confirmLabel="Remove fact"
+        onConfirm={async () => {
+          if (removing) await rest.archiveMemory(removing.id);
+          onChanged();
+        }}
+      >
+        Standups and meetings stop using it.
+      </ConfirmDialog>
+    </div>
   );
 }
 
-function FactRow({ item, onChanged }: { item: MemoryItem; onChanged: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(item.title);
-  const [summary, setSummary] = useState(item.summary);
+function EditFact({ item, onClose, onDone }: { item: MemoryItem | null; onClose: () => void; onDone: () => void }) {
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const run = async (fn: () => Promise<unknown>) => {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setTitle(item?.title ?? "");
+    setSummary(item?.summary ?? "");
+    setError(null);
+  }, [item]);
+  const save = async () => {
+    if (!item) return;
+    if (!title.trim()) {
+      setError("Enter a title.");
+      return;
+    }
+    setBusy(true);
     try {
-      await fn();
-      setEditing(false);
-      onChanged();
+      await rest.updateMemory(item.id, { title: title.trim(), summary: summary.trim() });
+      onClose();
+      onDone();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
   };
-  if (editing) {
-    return (
-      <li>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input value={summary} onChange={(e) => setSummary(e.target.value)} />
-        <button className="small" onClick={() => run(() => rest.updateMemory(item.id, { title, summary }))}>
-          Save
-        </button>
-        <button className="link" onClick={() => setEditing(false)}>
-          Cancel
-        </button>
-        {error && <span className="note warn">{error}</span>}
-      </li>
-    );
-  }
   return (
-    <li>
-      {item.day && <span className="muted">{item.day} </span>}
-      {itemLine(item)}
-      {item.edited && <span className="muted"> (edited)</span>}{" "}
-      <button className="link" onClick={() => setEditing(true)}>
-        Edit
-      </button>
-      <button className="link" onClick={() => run(() => rest.archiveMemory(item.id))}>
-        Remove
-      </button>
-    </li>
+    <Dialog
+      open={item !== null}
+      onOpenChange={(o) => !o && onClose()}
+      title="Edit fact"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} onClick={save}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Field label="Title" error={error}>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+      <Field label="Summary" optional>
+        <Textarea rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} />
+      </Field>
+    </Dialog>
   );
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
