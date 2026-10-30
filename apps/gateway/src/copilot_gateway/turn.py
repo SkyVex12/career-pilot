@@ -23,6 +23,13 @@ match and the held pass restart on the final the moment it arrives, and the call
 interim is cancelled, so a turn never waits for two detector calls in a row. When no text has
 arrived by the speech end, the turn starts on the first interim or final that does.
 
+Early decision (2026-10-30, standups and meetings): while the other side is still speaking,
+each time the live text ends a sentence (at most once per `early_interval_ms`), step 1 already
+runs on it. At the speech end, if the text has not changed materially since, the turn takes
+that detector call and held pass over instead of starting its own, so the detector's ~1 s is
+spent while the speaker is still talking. In the 2026-10-30 standup that second was on the
+path of every question.
+
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
 """
@@ -31,7 +38,7 @@ import asyncio
 import contextlib
 import re
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
@@ -223,6 +230,11 @@ class TurnHost(Protocol):
         """Cancel a held pass that was never shown; nothing is sent."""
         ...
 
+    def retime_held(self, qid: UUID, t0: float) -> None:
+        """A held pass started before the speech end now belongs to the turn that ended at
+        t0: its latencies count from there, as for any other turn."""
+        ...
+
 
 @dataclass
 class _Turn:
@@ -237,6 +249,16 @@ class _Turn:
     speculative_qid: UUID | None = None  # a question shown speculatively, not confirmed yet
     cand: _Candidate | None = None  # the text being decided, with its detector call
     taken: bool = False  # a forced question took the held pass and the detector call over
+    early: "_Early | None" = None  # step 1 started on this text before the speech end
+
+
+@dataclass
+class _Early:
+    """Step 1 started on the live text while the speaker was still talking."""
+
+    cand: _Candidate
+    held: UUID | None
+    at: float
 
 
 class TurnDetector:
@@ -250,6 +272,9 @@ class TurnDetector:
         turn_model: TurnModel | None = None,
         hold: bool = True,
         hold_min_words: int = 3,
+        group_call: Callable[[], bool] | None = None,
+        hold_any_min_words: int | None = None,
+        early_interval_ms: int | None = None,
     ) -> None:
         self.host = host
         self.silence_s = silence_timer_ms / 1000
@@ -258,6 +283,17 @@ class TurnDetector:
         self.turn_model = turn_model or NoTurnModel()
         self.hold = hold
         self.hold_min_words = hold_min_words
+        # In a group call (standup, meeting) a question to the user is often a statement ("so
+        # you're good to start there"), which `likely_question` turns down: there, hold a pass
+        # for any utterance of this many words (None: the local check only). On 2026-10-30, 3
+        # of 8 questions waited ~0.9 s more for a fast pass started after the detector.
+        self.group_call = group_call or (lambda: False)
+        self.hold_any_min_words = hold_any_min_words
+        # Early decision (module doc), group calls only; None: off.
+        self.early_s = early_interval_ms / 1000 if early_interval_ms else None
+        self.speaking = False
+        self.early: _Early | None = None
+        self.early_at = 0.0
         self.finals: list[str] = []
         self.interim = ""
         self.text_arrived = asyncio.Event()  # any STT text since the last speech end
@@ -272,6 +308,8 @@ class TurnDetector:
         self.held_released = 0
         self.held_discarded = 0
         self.detached_turns = 0
+        self.early_starts = 0
+        self.early_used = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -292,8 +330,47 @@ class TurnDetector:
         if r.flushed and self.turn is not None:
             self.turn.flushed_at = time.monotonic()
             self.turn.flushed.set()
+        if self.speaking and r.text:
+            self._maybe_early()
+
+    def _maybe_early(self) -> None:
+        """Start step 1 on the live text when it ends a sentence (the module doc)."""
+        if self.early_s is None or not self.group_call():
+            return
+        text = self.utterance()
+        if not text or text[-1] not in ".?!" or len(_words(text)) < self.hold_min_words:
+            return
+        if self.early is not None and not materially_changed(self.early.cand.text, text):
+            return
+        now = time.monotonic()
+        if now - self.early_at < self.early_s:
+            return
+        self._drop_early()
+        self.early_at = now
+        self.early_starts += 1
+        detection = asyncio.ensure_future(self.host.detect(text))
+        match = self.host.start_match(text)
+        held = None
+        if self._should_hold(text):
+            self.held_starts += 1
+            held = self.host.start_held(text, now, match)
+        self.early = _Early(_Candidate(text, detection, match), held, now)
+
+    def _drop_early(self, early: "_Early | None" = None) -> None:
+        if early is None:
+            early, self.early = self.early, None
+        if early is None:
+            return
+        early.cand.cancel()
+        if early.held is not None:
+            self.held_discarded += 1
+            self.host.discard_question(early.held)
 
     def on_speech_start(self) -> None:
+        self.speaking = True
+        self._interrupt()
+
+    def _interrupt(self) -> None:
         task, turn = self.task, self.turn
         self.task = None
         if task is None or task.done():
@@ -316,9 +393,11 @@ class TurnDetector:
         task.cancel()  # step 3; the task sends question.cancelled if needed
 
     def on_speech_end(self) -> None:
-        self.on_speech_start()
+        self._interrupt()
+        self.speaking = False
         self.text_arrived.clear()
-        self.turn = _Turn(time.monotonic())
+        self.turn = _Turn(time.monotonic(), early=self.early)
+        self.early = None
         self.task = asyncio.create_task(self._turn(self.turn))
 
     def cancel(self) -> None:
@@ -326,6 +405,7 @@ class TurnDetector:
             if task is not None and not task.done():
                 task.cancel()
         self.task = None
+        self._drop_early()
 
     def take_over(self) -> "tuple[UUID, str, asyncio.Future[Detection]] | None":
         """A forced question with nothing typed, while the latest utterance's turn is still
@@ -391,12 +471,30 @@ class TurnDetector:
             return None
         return max(0, int((turn.flushed_at - turn.t0) * 1000))
 
+    def _should_hold(self, text: str) -> bool:
+        if not self.hold:
+            return False
+        if likely_question(text, self.hold_min_words):
+            return True
+        n = self.hold_any_min_words
+        return n is not None and self.group_call() and len(_words(text)) >= n
+
     def _hold(self, turn: _Turn, text: str, match: "asyncio.Task[object] | None") -> None:
-        """Step 1: a held fast pass alongside the detector, if the text looks like a question."""
+        """Step 1: a held fast pass alongside the detector, if the text looks like a question
+        (or, in a group call, is long enough to be one)."""
         self._discard_held(turn)
-        if self.hold and likely_question(text, self.hold_min_words):
+        if self._should_hold(text):
             self.held_starts += 1
             turn.held_qid = self.host.start_held(text, turn.t0, match)
+
+    def _adopt(self, turn: _Turn, early: _Early) -> _Candidate:
+        """Step 1 already ran on this text before the speech end: the turn takes it over."""
+        self.early_used += 1
+        turn.cand = early.cand
+        turn.held_qid = early.held
+        if early.held is not None:
+            self.host.retime_held(early.held, turn.t0)
+        return early.cand
 
     def _discard_held(self, turn: _Turn) -> None:
         if turn.held_qid is not None:
@@ -474,13 +572,22 @@ class TurnDetector:
 
     async def _turn(self, turn: _Turn) -> None:
         t0 = turn.t0
+        early, turn.early = turn.early, None
+        if early is not None and (
+            not self.utterance() or materially_changed(early.cand.text, self.utterance())
+        ):
+            self._drop_early(early)  # the speaker went on past that sentence
+            early = None
         if not self.utterance():  # no text yet: start on the first interim or final
             await self._wait_text(t0 + self.final_wait_s)
             if not self.utterance():
                 return
         cand: _Candidate | None = None
         try:
-            cand = self._start(turn, self.utterance())
+            if early is not None:
+                cand = self._adopt(turn, early)
+            else:
+                cand = self._start(turn, self.utterance())
             cand, detection = await self._decide(turn, cand)
             if not detection.fires():
                 self._discard_held(turn)

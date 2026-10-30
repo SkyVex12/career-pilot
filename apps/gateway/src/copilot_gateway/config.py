@@ -58,6 +58,14 @@ class Settings(CoreSettings):
     # detector, as before.
     speculative_hold: bool = True
     speculative_min_words: int = 3
+    # Standups and meetings: hold a pass for any utterance of this many words, not only those
+    # the local check takes for a question ("so you're good to start there" is one). About
+    # $0.0002 per discarded pass on gpt-6-luna, ~$0.06 per live hour (2026-10-30). None: off.
+    group_hold_min_words: int | None = 4
+    # Standups and meetings: start the detector and the held pass on the live text each time
+    # it ends a sentence, at most once per this many ms, so the decision is ready at the
+    # speech end (turn.py, "Early decision"). None: off.
+    early_decision_interval_ms: int | None = 700
     stage1_min_score: float = 0.3
     detector_max_tokens: int = 80
     # A detector request with no first token after this long gets a second one alongside it

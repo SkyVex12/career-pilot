@@ -230,6 +230,9 @@ class Session:
             turn_model=svc.turn_model,
             hold=self.settings.speculative_hold,
             hold_min_words=self.settings.speculative_min_words,
+            group_call=lambda: self.info.mode in prompts.GROUP_MODES,
+            hold_any_min_words=self.settings.group_hold_min_words,
+            early_interval_ms=self.settings.early_decision_interval_ms,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -667,6 +670,12 @@ class Session:
     def discard_question(self, qid: UUID) -> None:
         self.answers.discard(qid)
 
+    def retime_held(self, qid: UUID, t0: float) -> None:
+        q = self.answers.questions.get(qid)
+        if q is not None:
+            q.early_ms = max(0, int((t0 - q.t0) * 1000))
+            q.t0 = t0
+
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
@@ -914,6 +923,19 @@ class Session:
             "questions": len(self.answers.questions) + int(prior.get("questions") or 0),
             "stats": add(self.answers.stats, prior.get("stats")),
             "detector": add(self.detector.stats, prior.get("detector")),
+            # Held passes are the price of not waiting for the detector (2026-10-30): how
+            # many started, were shown, were thrown away, and how many turns were decided
+            # before their speech end.
+            "turns": add(
+                {
+                    "held_started": self.turns.held_starts,
+                    "held_released": self.turns.held_released,
+                    "held_discarded": self.turns.held_discarded,
+                    "early_started": self.turns.early_starts,
+                    "early_used": self.turns.early_used,
+                },
+                prior.get("turns"),
+            ),
         }
 
     # Lifecycle.
@@ -1188,9 +1210,9 @@ class Session:
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
         log.info(
-            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s turns=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            totals["questions"], totals["stats"], totals["detector"],
+            totals["questions"], totals["stats"], totals["detector"], totals["turns"],
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):

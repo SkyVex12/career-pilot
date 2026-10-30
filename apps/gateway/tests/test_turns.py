@@ -7,7 +7,13 @@ import json
 from typing import Any
 
 from copilot_core import keys
-from copilot_gateway.testing import GatewayServer, ProtocolClient, Reply, ScriptedProvider
+from copilot_gateway.testing import (
+    GatewayServer,
+    ProtocolClient,
+    Reply,
+    ScriptedProvider,
+    text_frame_audio,
+)
 from copilot_gateway.testing import default_reply as scripted_reply
 from copilot_gateway.turn import likely_question
 
@@ -334,3 +340,86 @@ async def test_the_detector_follows_the_session_mode(env) -> None:
     assert len(seen) == 2
     assert "in an interview" in seen[0]
     assert "in a meeting" in seen[1]
+
+
+def detector_says(answer: str, delay_s: float = DETECTOR_S) -> Any:
+    def reply(job: str, req: Any) -> Reply:
+        if job == "detector":
+            return Reply([json.dumps({"answer": answer})], first_delay_s=delay_s)
+        return scripted_reply(job, req)
+
+    return reply
+
+
+async def test_a_standup_statement_gets_a_held_pass(env) -> None:
+    """2026-10-30 standup: questions put as statements ("so you're good to start there")
+    failed the local check, so their fast pass started after the detector, ~0.9 s later, on 3
+    of 8 questions. In a group call any utterance of 4+ words is held."""
+    use(env, detector_says("respond"))
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("So you are good to start on the next report from my side.")
+        q = await c.wait_type("question.detected")
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+    lat = fast["latency_ms"]
+    assert lat["start_ms"] < 100, lat  # started with the detector, not after it
+
+
+async def test_an_interview_statement_still_waits_for_the_detector(env) -> None:
+    provider = use(env, detector_says("none"))
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="interview")
+        await c.say("So you are good to start on the next report from my side.")
+        await c.wait_type("transcript.final")
+        await asyncio.sleep(DETECTOR_S + 0.3)
+    assert [job for job, _ in provider.calls] == ["detector"]
+
+
+async def test_a_standup_question_is_decided_while_it_is_still_being_said(env) -> None:
+    """2026-10-30 standup: the detector's ~0.95 s came after every speech end. In a group call
+    it now runs on the live text once it ends a sentence; at the speech end the decision is
+    there, and the answer shows at the speculative start instead of after the detector."""
+    provider = use(env, detector_says("respond"))
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.frame(0, 0b01, text_frame_audio("Are you still on the migration ticket?"), 0)
+        await asyncio.sleep(DETECTOR_S + 0.3)  # still talking (a trailing breath, say)
+        await c.frame(0, 0b10, b"", 1500)
+        q = await c.wait_type("question.detected")
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.early_used == 1
+        await c.send({"type": "session.end"})
+        await c.closed()
+    lat = fast["latency_ms"]
+    assert lat["release_ms"] < DETECTOR_S * 1000 - 100, lat
+    # How much earlier the work started is kept with the answer (not sent to the client).
+    [stored] = [
+        e
+        for e in await session_log(env, c.session_id)
+        if e["kind"] == "answer" and e.get("pass") == "fast"
+    ]
+    assert stored["latency_ms"]["early_ms"] >= DETECTOR_S * 1000, stored
+    assert [job for job, _ in provider.calls].count("detector") == 1
+
+
+async def test_an_early_decision_is_dropped_when_the_speaker_goes_on(env) -> None:
+    provider = use(env, detector_says("respond"))
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.frame(0, 0b01, text_frame_audio("Are you still on the migration?"), 0)
+        await asyncio.sleep(0.2)
+        await c.frame(0, 0b00, text_frame_audio("Or the client report first?"), 1000)
+        await c.frame(0, 0b10, b"", 1200)
+        q = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.early_used == 0
+    assert q["text"] == "Are you still on the migration? Or the client report first?"
+    # Only one card: the pass held on the first sentence never showed.
+    assert len({m["question_id"] for m in c.of_type("question.detected")}) == 1
+    assert [job for job, _ in provider.calls].count("detector") >= 2
