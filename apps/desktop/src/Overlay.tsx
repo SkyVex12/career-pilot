@@ -1,16 +1,20 @@
-// The always-on-top overlay: the whole conversation as one scrolling view that never drops
-// earlier messages. The other side on the left (live text that settles into the final), the
-// suggested answers on the right (talking points first, the detailed answer streaming in
-// below), and the user's own words on the right as plain quoted lines, marked "You said", so
-// they never read as an answer. It follows the newest message while the reader is at the
-// bottom; scrolled up, it stays put and offers "Jump to latest". Hotkey, typed question,
-// thumbs and the status badge as before; a compact mode for a small window.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+// The always-on-top overlay. Two layouts, switched from the header and remembered:
+// - split (the default): the transcript of both sides in the left third, each side's short
+//   lines joined into blocks (transcript.ts), and the suggested answers in the right two
+//   thirds. Each pane scrolls on its own and follows its newest content while the reader is at
+//   its bottom; scrolled up, it stays put and offers "Jump to latest". A narrow window stacks
+//   the panes. Compact keeps the split, tighter.
+// - one column: the whole conversation in order, the other side on the left, the answers and
+//   the user's own words ("You said") on the right. Compact shows the answers only.
+// Text size steps with the A-/A+ buttons or Ctrl+plus/minus/0. Hotkey, typed question, thumbs
+// and the status badge as before.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { badge, conversation, deepStartsAlone, useSession, type ConversationItem, type QuestionView, type SessionView } from "./session";
+import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 
 const COMPACT_KEY = "overlay.compact";
 
@@ -91,6 +95,35 @@ function useOverlayPrefs() {
   return { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop };
 }
 
+/** Text size and layout, shared by the overlay and History's replay (the same localStorage),
+ * and kept in step between the two windows. */
+export function useViewPrefs() {
+  const [textScale, setScale] = useState(loadTextScale);
+  const [layout, setLayoutState] = useState<OverlayLayout>(loadLayout);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === TEXT_SCALE_KEY) setScale(loadTextScale());
+      if (e.key === LAYOUT_KEY) setLayoutState(loadLayout());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  const stepText = useCallback((steps: number) => {
+    setScale((v) => {
+      const next = steps === 0 ? 1 : stepScale(v, steps);
+      savePref(TEXT_SCALE_KEY, String(next));
+      return next;
+    });
+  }, []);
+  const setLayout = useCallback((l: OverlayLayout) => {
+    setLayoutState(l);
+    savePref(LAYOUT_KEY, l);
+  }, []);
+  return { textScale, layout, stepText, setLayout };
+}
+
+export type ViewPrefs = ReturnType<typeof useViewPrefs>;
+
 /// Changes whenever anything shown grows, so the view can follow it.
 function contentSize(items: ConversationItem[]): string {
   let chars = 0;
@@ -101,38 +134,34 @@ function contentSize(items: ConversationItem[]): string {
   return `${items.length}:${chars}`;
 }
 
+/// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
+export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  if (e.key === "=" || e.key === "+") return 1;
+  if (e.key === "-" || e.key === "_") return -1;
+  if (e.key === "0") return 0;
+  return null;
+}
+
 export default function Overlay() {
   const [s, dispatch] = useSession();
-  const items = useMemo(() => conversation(s), [s]);
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
-  const shown = useMemo(() => (compact ? items.filter((i) => i.kind === "question") : items), [items, compact]);
-  const size = contentSize(shown);
-  const body = useRef<HTMLDivElement>(null);
-  const follower = useRef(new Follower());
-  const [jump, setJump] = useState(false);
+  const view = useViewPrefs();
   const [menu, setMenu] = useState(false);
   const b = badge(s);
+  const stepText = view.stepText;
 
-  useLayoutEffect(() => {
-    const el = body.current;
-    if (!el) return;
-    follower.current.onContent(el);
-    setJump(follower.current.showJump);
-  }, [size, compact]);
-
-  const onScroll = () => {
-    const el = body.current;
-    if (!el) return;
-    follower.current.onScroll(el);
-    setJump(follower.current.showJump);
-  };
-  const toLatest = () => {
-    const el = body.current;
-    if (!el) return;
-    follower.current.jump(el);
-    setJump(false);
-  };
-  const toggleCompact = () => setCompact(!compact);
+  // Ctrl+plus / Ctrl+minus / Ctrl+0 size the text while the overlay has focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const steps = textKeyStep(e);
+      if (steps === null) return;
+      e.preventDefault();
+      stepText(steps);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stepText]);
 
   return (
     <div className={compact ? "overlay compact" : "overlay"} style={{ opacity }}>
@@ -151,9 +180,7 @@ export default function Overlay() {
           {s.speaking.me && <span className="pill pill-me">you</span>}
         </span>
         <span className="spacer" data-tauri-drag-region />
-        <button className="icon" title={compact ? "Show the whole conversation" : "Compact: answers only"} onClick={toggleCompact}>
-          {compact ? "☰" : "▭"}
-        </button>
+        <ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />
         <button
           className="icon"
           title="Drag to resize"
@@ -183,25 +210,189 @@ export default function Overlay() {
         />
       )}
 
-      <main className="overlay-body" ref={body} onScroll={onScroll}>
-        {shown.length === 0 ? (
-          <p className="muted empty">
-            {s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
-          </p>
-        ) : (
-          <Conversation items={shown} s={s} compact={compact} onExpand={(id) => dispatch({ type: "deep_requested", id })} />
-        )}
-      </main>
+      <ConversationView
+        s={s}
+        compact={compact}
+        layout={view.layout}
+        textScale={view.textScale}
+        live
+        onExpand={(id) => dispatch({ type: "deep_requested", id })}
+        emptyAnswers={s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
+        emptyTranscript={s.running ? "Nothing heard yet." : "No session."}
+      />
 
+      <AskBox disabled={!s.running} />
+      <span className="grip" title="Resize" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
+    </div>
+  );
+}
+
+/** The header's view buttons: text size, split or one column, and compact. */
+export function ViewControls({ view, compact, onCompact }: { view: ViewPrefs; compact: boolean; onCompact: () => void }) {
+  const split = view.layout === "split";
+  return (
+    <>
+      <button className="icon text-size" title="Smaller text (Ctrl+minus)" onClick={() => view.stepText(-1)}>
+        A−
+      </button>
+      <button className="icon text-size" title={`Larger text (Ctrl+plus), now ${Math.round(view.textScale * 100)}%`} onClick={() => view.stepText(1)}>
+        A+
+      </button>
+      <button
+        className="icon"
+        title={split ? "One column: transcript and answers together" : "Split: transcript left, answers right"}
+        aria-pressed={split}
+        onClick={() => view.setLayout(split ? "stacked" : "split")}
+      >
+        {split ? "▤" : "◫"}
+      </button>
+      <button
+        className="icon"
+        title={compact ? "Leave compact view" : split ? "Compact: tighter, both panes kept" : "Compact: answers only"}
+        aria-pressed={compact}
+        onClick={onCompact}
+      >
+        {compact ? "☰" : "▭"}
+      </button>
+    </>
+  );
+}
+
+/** The conversation in the chosen layout. `live` follows new content; a replay (History)
+ * starts at the top and passes `ratings`. */
+export function ConversationView({
+  s,
+  compact,
+  layout,
+  textScale,
+  live,
+  onExpand,
+  ratings,
+  emptyAnswers,
+  emptyTranscript,
+}: {
+  s: SessionView;
+  compact: boolean;
+  layout: OverlayLayout;
+  textScale: number;
+  live: boolean;
+  onExpand?: (id: string) => void;
+  ratings?: Record<string, "up" | "down" | null>;
+  emptyAnswers: string;
+  emptyTranscript: string;
+}) {
+  const items = useMemo(() => conversation(s), [s]);
+  const answers = useMemo(() => items.filter((i) => i.kind === "question"), [items]);
+  const blocks = useMemo(() => transcriptBlocks(s), [s]);
+  const answersPane = useRef<HTMLDivElement>(null);
+  const scale = { "--text-scale": textScale } as CSSProperties;
+
+  if (layout === "stacked") {
+    const shown = compact ? answers : items;
+    return (
+      <div className="overlay-single" style={scale}>
+        <ScrollPane className="pane-single" size={contentSize(shown)} live={live}>
+          {shown.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={shown} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />}
+        </ScrollPane>
+      </div>
+    );
+  }
+
+  const toCard = (id: string) => {
+    const el = answersPane.current?.querySelector(`[data-q="${id}"]`);
+    el?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  const transcriptSize = `${blocks.length}:${blocks.reduce((n, b) => n + blockText(b).length, 0)}`;
+  return (
+    <div className="overlay-split" style={scale}>
+      <ScrollPane className="pane-transcript" title={compact ? undefined : "Transcript"} size={transcriptSize} live={live}>
+        {blocks.length === 0 ? <p className="muted empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} />}
+      </ScrollPane>
+      <ScrollPane className="pane-answers" title={compact ? undefined : "Suggestions"} size={contentSize(answers)} live={live} paneRef={answersPane}>
+        {answers.length === 0 ? <p className="muted empty">{emptyAnswers}</p> : <Conversation items={answers} s={s} compact={compact} onExpand={onExpand} ratings={ratings} />}
+      </ScrollPane>
+    </div>
+  );
+}
+
+/** One scrolling pane that follows its newest content while the reader is at the bottom. */
+function ScrollPane({
+  className,
+  title,
+  size,
+  live,
+  paneRef,
+  children,
+}: {
+  className: string;
+  title?: string;
+  size: string;
+  live: boolean;
+  paneRef?: RefObject<HTMLDivElement | null>;
+  children: ReactNode;
+}) {
+  const own = useRef<HTMLDivElement>(null);
+  const body = paneRef ?? own;
+  const follower = useRef(new Follower());
+  const [jump, setJump] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el || !live) return;
+    follower.current.onContent(el);
+    setJump(follower.current.showJump);
+  }, [size, live, body]);
+
+  const onScroll = () => {
+    const el = body.current;
+    if (!el || !live) return;
+    follower.current.onScroll(el);
+    setJump(follower.current.showJump);
+  };
+  const toLatest = () => {
+    const el = body.current;
+    if (!el) return;
+    follower.current.jump(el);
+    setJump(false);
+  };
+  return (
+    <section className={`pane ${className}`}>
+      {title && <h2 className="pane-head">{title}</h2>}
+      <div className="pane-body" ref={body} onScroll={onScroll}>
+        <div className="pane-content">{children}</div>
+      </div>
       {jump && (
         <button className="jump" onClick={toLatest}>
           Jump to latest ↓
         </button>
       )}
+    </section>
+  );
+}
 
-      <AskBox disabled={!s.running} />
-      <span className="grip" title="Resize" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
-    </div>
+/** Both sides of the call as joined blocks; a block that got a suggestion links to its card. */
+function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (id: string) => void }) {
+  return (
+    <ol className="transcript">
+      {blocks.map((b) => (
+        <li key={b.key} className={`line ${b.who}`}>
+          <span className="who">{b.who === "me" ? "You" : "Them"}</span>
+          <p>
+            {b.parts.map((p, i) => (
+              <span key={p.key} className={p.final ? undefined : "partial"}>
+                {i > 0 ? " " : ""}
+                {p.text}
+              </span>
+            ))}
+          </p>
+          {b.asked.length > 0 && (
+            <button className="asked" title="Show the suggestion for this" onClick={() => onAsked(b.asked[b.asked.length - 1])}>
+              Suggestion →
+            </button>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -372,7 +563,7 @@ function Item({
       );
     case "question":
       return (
-        <li className="msg answer">
+        <li className="msg answer" data-q={item.question.id}>
           <QuestionCard
             q={item.question}
             s={s}

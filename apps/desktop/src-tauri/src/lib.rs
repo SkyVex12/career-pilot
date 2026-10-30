@@ -1322,7 +1322,7 @@ pub fn run() {
             let overlay =
                 WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
                     .title("Copilot overlay")
-                    .inner_size(440.0, 620.0)
+                    .inner_size(layout::DEFAULT_W as f64, layout::DEFAULT_H as f64)
                     .min_inner_size(320.0, 240.0)
                     .always_on_top(overlay_on_top)
                     .decorations(false)

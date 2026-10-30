@@ -4,8 +4,8 @@
 // overlay showed it (both sides and every suggestion), with the plain transcript below.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { rest, type Replay, type SessionDetail as Detail } from "./api";
-import { Conversation } from "./Overlay";
-import { conversation, fromReplay } from "./session";
+import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
+import { fromReplay } from "./session";
 import { when } from "./ui";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 
@@ -119,13 +119,12 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
   );
 }
 
-/** The overlay as it was during the call: the same conversation, cards and compact view, read
+/** The overlay as it was during the call: the same layouts, text size and compact view, read
  * only (the thumbs show what was rated). */
 function CallReplay({ replay }: { replay: Replay }) {
   const s = useMemo(() => fromReplay(replay), [replay]);
-  const items = useMemo(() => conversation(s), [s]);
+  const view = useViewPrefs();
   const [compact, setCompact] = useState(false);
-  const shown = compact ? items.filter((i) => i.kind === "question") : items;
   const ratings = useMemo(() => Object.fromEntries(replay.questions.map((q) => [q.id, q.feedback])), [replay]);
   return (
     <div className={compact ? "overlay replay compact" : "overlay replay"}>
@@ -138,17 +137,18 @@ function CallReplay({ replay }: { replay: Replay }) {
           {replay.questions.length} suggestion{replay.questions.length === 1 ? "" : "s"}
         </span>
         <span className="spacer" />
-        <button className="icon" title={compact ? "Show the whole conversation" : "Compact: answers only"} onClick={() => setCompact(!compact)}>
-          {compact ? "☰" : "▭"}
-        </button>
+        <ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />
       </header>
-      <main className="overlay-body">
-        {shown.length === 0 ? (
-          <p className="muted empty">Nothing was said or suggested in this call.</p>
-        ) : (
-          <Conversation items={shown} s={s} compact={compact} ratings={ratings} />
-        )}
-      </main>
+      <ConversationView
+        s={s}
+        compact={compact}
+        layout={view.layout}
+        textScale={view.textScale}
+        live={false}
+        ratings={ratings}
+        emptyAnswers="Nothing was suggested in this call."
+        emptyTranscript="Nothing was transcribed."
+      />
     </div>
   );
 }

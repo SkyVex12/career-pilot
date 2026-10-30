@@ -31,6 +31,9 @@ export interface TranscriptLine {
   channel: string;
   text: string;
   final: boolean;
+  /** From the call's start, once the final says (a partial has no times yet). */
+  startMs?: number;
+  endMs?: number;
 }
 
 export type BadgeState = "ok" | "degraded" | "reconnecting";
@@ -134,7 +137,10 @@ export function reduce(s: SessionView, a: Action): SessionView {
           timeline: s.timeline.filter((r) => !(r.kind === "line" && r.key === key)),
         };
       }
-      const line = { key, channel: m.channel, text: m.text, final: m.type === "transcript.final" };
+      const line: TranscriptLine =
+        m.type === "transcript.final"
+          ? { key, channel: m.channel, text: m.text, final: true, startMs: m.start_ms, endMs: m.end_ms }
+          : { key, channel: m.channel, text: m.text, final: false };
       const i = s.transcript.findIndex((t) => t.key === key);
       if (i >= 0) return { ...s, transcript: s.transcript.map((t, j) => (j === i ? line : t)) };
       return { ...s, transcript: [...s.transcript, line], timeline: [...s.timeline, { kind: "line", key }] };
@@ -219,7 +225,7 @@ export function fromReplay(r: Replay): SessionView {
     p ? { text: p.text, done: true, error: null, source: p.source, refs: p.refs } : { ...emptyPass(), done: missingDone };
   const transcript: TranscriptLine[] = r.segments
     .filter((seg) => seg.text)
-    .map((seg) => ({ key: `${seg.channel}:${seg.seg_id}`, channel: seg.channel, text: seg.text, final: true }));
+    .map((seg) => ({ key: `${seg.channel}:${seg.seg_id}`, channel: seg.channel, text: seg.text, final: true, startMs: seg.start_ms, endMs: seg.end_ms }));
   const questions: QuestionView[] = r.questions.map((q) => ({
     id: q.id,
     text: q.text,
