@@ -607,6 +607,24 @@ def test_the_deep_answer_develops_the_cues_in_the_chosen_style() -> None:
     assert set(prompts.DEEP_STYLES) == {"bullets", "paragraph"}
 
 
+def test_a_standup_gets_a_short_detailed_answer() -> None:
+    """2026-10-30 standup: the paragraph answer ran 129 to 162 words, about a minute of speech,
+    and showed 5.5 s after the question. In a standup it is 2 or 3 sentences."""
+    ctx = prompts.PromptContext("Alex", "standup", "# digest", "Mode: standup")
+    for style in ("paragraph", "bullets"):
+        content = str(prompts.deep_pass(ctx, "", "q?", "respond", 800, style=style).content)
+        assert "for a standup" in content, style
+        assert "120 to 180 words" not in content
+        assert "6 to 10 lines" not in content
+    assert "35 to 60 words" in str(
+        prompts.deep_pass(ctx, "", "q?", "technical", 800, style="paragraph").content
+    )
+    meeting = prompts.PromptContext("Alex", "meeting", "# digest", "Mode: meeting")
+    content = str(prompts.deep_pass(meeting, "", "q?", "technical", 800, style="paragraph").content)
+    assert "120 to 180 words" in content
+    assert set(prompts.STANDUP_DEEP_STYLES) == set(prompts.DEEP_STYLES)
+
+
 def test_live_prompts_split_personal_facts_from_knowledge() -> None:
     """October 2026: "use only facts from the data" left questions the data does not cover
     with thin or evasive answers, or a story forced onto them. Personal facts still come only

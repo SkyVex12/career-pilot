@@ -223,6 +223,24 @@ DEEP_STYLES: dict[str, str] = {
     ),
 }
 
+# In a standup the detailed answer is said, not read after the call: on 2026-10-30 the
+# paragraph style gave 129 to 162 words (about a minute of speech) and showed 5.5 s after the
+# question (p50). These replace the styles above in standups.
+STANDUP_DEEP_STYLES: dict[str, str] = {
+    "bullets": (
+        "Style: bullets, for a standup. 3 to 5 lines, 6 to 14 words each, in the order of the "
+        "cues on screen; each line a full thought the user can say, citations and [~] at its "
+        "end. No examples. This replaces the shape's line count and word limit."
+    ),
+    "paragraph": (
+        "Style: short paragraph, for a standup. 2 or 3 sentences, 35 to 60 words in all, that "
+        "the user can say as written: first person, plain spoken words, in the order of the "
+        "cues on screen. No examples, no background they already know. Citations and [~] go "
+        "at the end of the sentence they belong to. This replaces the shape's line count and "
+        "word limit."
+    ),
+}
+
 DEEP_SHAPES: dict[str, str] = {
     "behavioral": (
         "If a story in the data matches: its name, the situation, what the user did and the "
@@ -506,7 +524,8 @@ def deep_pass(
     parts.append(_data("shown_cues", shown.strip() or "(none yet)"))
     shapes = {**DEEP_SHAPES, **WORKPLACE_SHAPES} if ctx.at_work else DEEP_SHAPES
     shape = shapes.get(qtype, shapes["other"])
-    how = DEEP_STYLES.get(style, DEEP_STYLES["bullets"])
+    styles = STANDUP_DEEP_STYLES if ctx.mode == "standup" else DEEP_STYLES
+    how = styles.get(style, styles["bullets"])
     parts.append(f"Question ({qtype}): {question}\nShape: {shape}\n{how}")
     return LLMRequest(
         system=_system(DEEP_SYSTEM, ctx), content="\n\n".join(parts), max_tokens=max_tokens
