@@ -133,6 +133,39 @@ expect = "answer"
 type = "standup_status"
 case = "a check about the user's own work (missed on 10-27)"
 
+# Added after the 2026-10-30 standup: questions put as statements (they got no held pass then)
+# and a listener's "mhmm" between the user's lines.
+
+[[utterance]]
+id = "dana_next"
+parts = ["Next is the shipping alerts work, the tickets are already in. So you're good to start there, from my side at least."]
+gap_s = 1.0
+expect = "answer"
+type = "standup_status"
+case = "a go-ahead on the user's next task, said as a statement (10-30)"
+
+[[utterance]]
+id = "alex_started"
+speaker = "me"
+parts = ["Yes, I already started on the alert templates."]
+gap_s = 0.5
+expect = "none"
+
+[[utterance]]
+id = "dana_mhmm"
+parts = ["Mhmm."]
+gap_s = 0.5
+expect = "none"
+case = "a listener's backchannel (10-30)"
+
+[[utterance]]
+id = "dana_name"
+parts = ["Settings is a better word than preview for that page. If you have a better name, feel free to let me know."]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+case = "an invitation to the user, no question mark (10-30)"
+
 [[utterance]]
 id = "dana_bye"
 parts = ["Cool, that's all from me. Have a good one."]

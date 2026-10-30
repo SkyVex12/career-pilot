@@ -38,7 +38,8 @@ _RULES = """Rules:
   - Facts about {user_name}: experience, employers, projects, roles, numbers, dates, people.
     They come only from <digest>, <session_pack> or <memory>, exactly as written there.
     {facts_rule} Cite each with the short id of its entry, like [n:3f2a]; a point taken
-    from a prepared answer cites that answer's story or role.
+    from a prepared answer cites that answer's story or role. A point with no entry has no
+    citation: never an empty or made-up one ("[n: n/a]").
   - Knowledge and reasoning: how something works, design approaches, tradeoffs, good
     practice, how {user_name} would tackle a problem, sensible questions back. These come
     from your own knowledge, phrased as {user_name}'s thinking ("I'd...", "the way I see
@@ -179,6 +180,11 @@ not sentences to read out.
   same order, so put the points in the order the full answer should take.
 - No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
   output only a question back.
+- Every cue is something {user_name} says. Never a cue about the notes or the data ("no date
+  in the standup notes", "not in my notes"): with no fact for it, give {user_name}'s answer,
+  plan or the condition it depends on, as "I'd".
+- A question back never hands the other side's question back to them: asked for a date or a
+  decision, the cues are {user_name}'s answer, not "is it today or Monday?".
 - Output only the bullet list."""
 )
 

@@ -108,4 +108,5 @@ def test_review_standup_cases_carry_the_turn_taking() -> None:
     assert "about" in all_cases["dana_bye"].turns or "minute" in all_cases["dana_bye"].turns
     fire = {c.id for c in all_cases.values() if c.should_fire}
     assert fire == {"dana_clear", "dana_aware", "dana_rest_review", "dana_plan", "dana_move",
-                    "dana_migration"}  # fmt: skip
+                    "dana_migration", "dana_next", "dana_name"}  # fmt: skip
+    assert all_cases["dana_mhmm"].should_fire is False
