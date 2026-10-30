@@ -5,7 +5,7 @@ import { useContext, useEffect, useState } from "react";
 import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type Stage } from "./api";
 import { ProfileContext } from "./profiles";
 import { STAGES, pullState, stageLabel } from "./pairing";
-import { Chip, when } from "./ui";
+import { Chip, when } from "./shared";
 
 export function CareerOsSettings({ ready }: { ready: boolean }) {
   const [conn, setConn] = useState<CareerOsConnection | null>(null);

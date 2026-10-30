@@ -15,7 +15,7 @@ import {
 import { STAGES, isTextFile, pairingChoices, pairingValue, resumeLabel, stageLabel } from "./pairing";
 import { upcoming } from "./catalog";
 import { PullDialog } from "./CareerOs";
-import { PackStatus, when, Loading, LoadError, useOnShow } from "./ui";
+import { PackStatus, when, Loading, LoadError, useOnShow } from "./shared";
 import { usePolling } from "./usePolling";
 
 export const ROUNDS: [Round, string][] = [

@@ -1,7 +1,7 @@
 // The main window: the session (start screen, then the post-call screen), resumes,
 // applications and interviews, work (the companies the user works at), history, settings, and the debug
 // panel (hidden unless turned on in the settings, or with Ctrl+Shift+D).
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import {
   api,
@@ -31,23 +31,14 @@ import { DeviceTest } from "./AudioCheck";
 import { CareerOsSettings } from "./CareerOs";
 import { DeleteAccount, History, LiveNow } from "./History";
 import { Resumes } from "./Resumes";
-import { when } from "./ui";
+import { when } from "./shared";
 import { SessionDetail } from "./SessionDetail";
-import { badge, useSession, type SessionView } from "./session";
+import { useSession, type SessionView } from "./session";
+import { Shell, type Tab } from "./Shell";
+import { SegmentedControl, ToastProvider, useTheme } from "./ui";
 import { Work } from "./Work";
 import { defaultEmployer, packLabel } from "./workday";
-import { ProfileContext, accountOf, isLocked, showSwitch, useProfiles, type ProfileState } from "./profiles";
-
-type Tab = "start" | "resumes" | "applications" | "work" | "history" | "settings" | "debug";
-
-const TABS: [Tab, string][] = [
-  ["start", "Session"],
-  ["applications", "Applications"],
-  ["resumes", "Resumes"],
-  ["work", "Work"],
-  ["history", "History"],
-  ["settings", "Settings"],
-];
+import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 
 export default function App() {
   const [session] = useSession();
@@ -61,6 +52,7 @@ export default function App() {
   const keep = (t: Tab) => tab === t || opened.has(t);
   const [view, setView] = useState<SettingsView | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
   const tokenSet = view?.ready ?? false;
   const environment = view?.settings.environment ?? "local";
@@ -108,7 +100,7 @@ export default function App() {
 
   if (!inTauri) {
     return (
-      <main className="page">
+      <main className="shell-content">
         <h1>Copilot</h1>
         <p>This UI needs the Rust core: run <code>pnpm --filter @copilot/desktop tauri dev</code>.</p>
       </main>
@@ -121,107 +113,68 @@ export default function App() {
     setTab("start");
   };
 
-  const needsToken = !tokenSet && (tab === "resumes" || tab === "applications" || tab === "work" || tab === "history");
+  const needsToken = !tokenSet && (tab === "resumes" || tab === "applications" || tab === "work");
+  const switchProfile = (id: string | null) => {
+    setProfileError(null);
+    profiles.switchTo(id).catch((err) => setProfileError(String(err)));
+  };
+  // Screens not yet on the design system keep the old look inside a .page wrapper (Stage 3
+  // moves them over and deletes it).
+  const legacy = (node: React.ReactNode) => <div className="page legacy">{node}</div>;
   return (
-    <main className="page">
-      <nav className="tabs">
-        <div className="tab-list">
-          {TABS.map(([t, label]) => (
-            <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {label}
-            </button>
-          ))}
-          {showDebug && (
-            <button className={tab === "debug" ? "on" : ""} onClick={() => setTab("debug")}>
-              Debug
-            </button>
-          )}
-        </div>
-        <div className="tab-meta">
-          <ProfileSwitch state={profiles.state} running={session.running} onSwitch={profiles.switchTo} />
-          <StatusBadge session={session} />
-        </div>
-      </nav>
-      <UpdateBar running={session.running} />
-      {/* A profile switch or another account remounts every screen, so each one loads its data. */}
-      <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
-        {link.locked && tab !== "settings" && tab !== "debug" && <LinkCareerOsFirst onSettings={() => setTab("settings")} />}
-        {!link.locked && tab === "start" && (
-          <StartScreen
-            session={session}
-            tokenSet={tokenSet}
-            environment={environment}
-            settings={view?.settings ?? null}
-            onSettingsSaved={reload}
-            onSettings={() => setTab("settings")}
-            onOpenLive={openLive}
-          />
-        )}
-        {!link.locked && needsToken && <SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />}
-        {!link.locked && tokenSet && keep("resumes") && (
-          <div hidden={tab !== "resumes"}>
-            <Resumes active={tab === "resumes"} />
-          </div>
-        )}
-        {!link.locked && tokenSet && keep("applications") && (
-          <div hidden={tab !== "applications"}>
-            <Applications active={tab === "applications"} />
-          </div>
-        )}
-        {!link.locked && tokenSet && keep("work") && (
-          <div hidden={tab !== "work"}>
-            <Work active={tab === "work"} />
-          </div>
-        )}
-        {!link.locked && tokenSet && keep("history") && (
-          <div hidden={tab !== "history"}>
-            <History
-              active={tab === "history"}
-              running={session.running}
-              liveId={session.running ? session.sessionId : null}
-              onOpenLive={openLive}
-            />
-          </div>
-        )}
-      </ProfileContext.Provider>
-      {tab === "settings" && view && <SettingsScreen view={view} running={session.running} onSaved={reload} />}
-      {tab === "debug" && <DebugPanel session={session} />}
-    </main>
-  );
-}
-
-/** Top right: whom the app works for, "Me" or one of the Career-OS users an admin link reads.
- * Locked while a session runs: a session keeps the profile it started with. */
-function ProfileSwitch({
-  state,
-  running,
-  onSwitch,
-}: {
-  state: ProfileState;
-  running: boolean;
-  onSwitch: (id: string | null) => Promise<void>;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  if (!showSwitch(state.profiles)) return null;
-  return (
-    <span className="row" title={running ? "End the session to switch" : "Whose applications, resumes and sessions"}>
-      <select
-        aria-label="Profile"
-        value={state.here ?? ""}
-        disabled={running}
-        onChange={(e) => {
-          setError(null);
-          onSwitch(e.target.value || null).catch((err) => setError(String(err)));
-        }}
+    <ToastProvider>
+      <Shell
+        tab={tab}
+        onTab={setTab}
+        session={session}
+        profiles={profiles.state}
+        onSwitchProfile={switchProfile}
+        profileError={profileError}
+        version={view?.version ?? null}
+        showDebug={showDebug}
+        banner={<UpdateBar running={session.running} />}
       >
-        {state.profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.me ? `Me (${p.name})` : p.name}
-          </option>
-        ))}
-      </select>
-      {error && <span className="warn">{error}</span>}
-    </span>
+        {/* A profile switch or another account remounts every screen, so each one loads its data. */}
+        <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
+          {link.locked && tab !== "settings" && tab !== "debug" && legacy(<LinkCareerOsFirst onSettings={() => setTab("settings")} />)}
+          {!link.locked &&
+            tab === "start" &&
+            legacy(
+              <StartScreen
+                session={session}
+                tokenSet={tokenSet}
+                environment={environment}
+                settings={view?.settings ?? null}
+                onSettingsSaved={reload}
+                onSettings={() => setTab("settings")}
+                onOpenLive={openLive}
+              />,
+            )}
+          {!link.locked && needsToken && legacy(<SetTokenFirst environment={environment} onSettings={() => setTab("settings")} />)}
+          {!link.locked && tokenSet && keep("resumes") && (
+            <div hidden={tab !== "resumes"}>{legacy(<Resumes active={tab === "resumes"} />)}</div>
+          )}
+          {!link.locked && tokenSet && keep("applications") && (
+            <div hidden={tab !== "applications"}>{legacy(<Applications active={tab === "applications"} />)}</div>
+          )}
+          {!link.locked && tokenSet && keep("work") && <div hidden={tab !== "work"}>{legacy(<Work active={tab === "work"} />)}</div>}
+          {!link.locked && keep("history") && (
+            <div hidden={tab !== "history"} className="shell-content">
+              <History
+                active={tab === "history"}
+                ready={tokenSet}
+                running={session.running}
+                liveId={session.running ? session.sessionId : null}
+                onOpenLive={openLive}
+                onSignIn={() => setTab("settings")}
+              />
+            </div>
+          )}
+        </ProfileContext.Provider>
+        {tab === "settings" && view && legacy(<SettingsScreen view={view} running={session.running} onSaved={reload} />)}
+        {tab === "debug" && legacy(<DebugPanel session={session} />)}
+      </Shell>
+    </ToastProvider>
   );
 }
 
@@ -323,16 +276,6 @@ function UpdateBar({ running }: { running: boolean }) {
         </div>
       )}
     </div>
-  );
-}
-
-function StatusBadge({ session }: { session: SessionView }) {
-  const b = badge(session);
-  return (
-    <span className={`badge badge-${b.state}`}>
-      <span className="dot" />
-      {b.text}
-    </span>
   );
 }
 
@@ -960,6 +903,7 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
   const [signingIn, setSigningIn] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const dupes = duplicateHotkeys(draft);
+  const [theme, setTheme] = useTheme();
 
   const save = async () => {
     setMessage(null);
@@ -1006,6 +950,20 @@ function SettingsScreen({ view, running, onSaved }: { view: SettingsView; runnin
       <section className="panel settings">
         <h3>App</h3>
         <div className="grid">
+        <label>Theme</label>
+        <div>
+          <SegmentedControl
+            label="Theme"
+            value={theme}
+            onChange={setTheme}
+            options={[
+              ["system", "System"],
+              ["light", "Light"],
+              ["dark", "Dark"],
+            ]}
+          />
+          <p className="note">System follows Windows. The overlay stays dark.</p>
+        </div>
         <label>Version</label>
         <div>
           <span>{view.version}</span>

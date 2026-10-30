@@ -3,7 +3,7 @@
 // Standup and meeting mode answer from these (the start screen picks the company).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type CompanyDocument, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
-import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
+import { Chip, when, Loading, LoadError, useOnShow } from "./shared";
 import { usePolling } from "./usePolling";
 import { KIND_LABELS, byKind, itemLine, localDay } from "./workday";
 

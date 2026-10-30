@@ -27,7 +27,7 @@ const BEHIND = `html{background:
   font:600 22px/1.8 Segoe UI;color:#111;padding:40px;white-space:pre-wrap;word-spacing:30px}`;
 
 const tab = (label) => async (p) => {
-  await p.locator("nav.tabs button", { hasText: label }).first().click();
+  await p.locator(`nav.tabs button, nav[aria-label="Main"] button`, { hasText: label }).first().click();
   await p.waitForTimeout(400);
 };
 const click = (text, opts = {}) => async (p) => {
@@ -78,7 +78,7 @@ const main = [
   ["history-loading", "?data=loading", tab("History")],
   ["history-error", "?data=error", tab("History")],
   ["history-long", "?data=long", tab("History")],
-  ["history-session", "?", seq(tab("History"), async (p) => (await p.locator("table.list.clickable tr").first().click(), p.waitForTimeout(800)))],
+  ["history-session", "?", seq(tab("History"), async (p) => (await p.locator("table.list.clickable tr, .ui-list .ui-row-hit").first().click(), p.waitForTimeout(800)))],
   ["settings", "?", tab("Settings")],
   ["settings-dev-build", "?dev=1", tab("Settings")],
   ["settings-signed-out", "?data=signedout", tab("Settings")],

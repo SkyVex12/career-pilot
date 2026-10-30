@@ -1,25 +1,45 @@
-// One session after its call: the post-call screen right after a session ends, and a past
-// session opened from History. Polls GET /sessions/{id} for up to 5 minutes until the
-// outputs are ready, then shows them and, when the transcript was stored, the call as the
-// overlay showed it (both sides and every suggestion), with the plain transcript below.
+// One call after it ended: the Call screen right after it ends, and a past call opened from
+// History. Polls GET /sessions/{id} for up to 5 minutes until the outputs are ready, then shows
+// them; when the transcript was stored, also the call as the overlay showed it (Replay) and the
+// plain transcript (Transcript).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { rest, type Replay, type SessionDetail as Detail } from "./api";
 import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
-import { when } from "./ui";
+import { when } from "./shared";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
+import { Banner, Button, Card, ConfirmDialog, EmptyState, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, useToast } from "./ui";
+import { MODE_LABEL } from "./History";
 
-export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: string; onDeleted?: () => void; onClose?: () => void }) {
+export function SessionDetail({
+  sessionId,
+  onDeleted,
+  onClose,
+  companies = {},
+  justEnded = false,
+  onNewCall,
+}: {
+  sessionId: string;
+  onDeleted?: () => void;
+  onClose?: () => void;
+  companies?: Record<string, string>;
+  /** The Call screen's view right after a call: "Call ended" and a New call button. */
+  justEnded?: boolean;
+  onNewCall?: () => void;
+}) {
   const [state, setState] = useState<PollState>({ phase: "waiting", session: null, elapsedMs: 0, error: null });
   const [round, setRound] = useState(0); // bumped by "Look again"
   const [transcript, setTranscript] = useState<TranscriptRow[] | null>(null);
   const [replay, setReplay] = useState<Replay | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const [tab, setTab] = useState("summary");
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setTranscript(null);
     setReplay(null);
+    setReplayError(null);
     pollSession(() => rest.session(sessionId), (s) => !cancelled && setState(s), { cancelled: () => cancelled }).then((final) => {
       if (cancelled || final.phase !== "ready" || !final.session.store_transcript) return;
       rest.replay(sessionId).then(
@@ -28,7 +48,7 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
           setReplay(r);
           setTranscript(transcriptRows(r.segments));
         },
-        (e) => !cancelled && setMessage(`Transcript: ${e}`),
+        (e) => !cancelled && setReplayError(String(e)),
       );
     });
     return () => {
@@ -36,86 +56,129 @@ export function SessionDetail({ sessionId, onDeleted, onClose }: { sessionId: st
     };
   }, [sessionId, round]);
 
-  const remove = async () => {
-    if (!window.confirm("Delete this session, its transcript and its outputs? Facts already approved into your memory stay.")) return;
-    try {
-      await rest.deleteSession(sessionId);
-      onDeleted?.();
-    } catch (e) {
-      setMessage(String(e));
-    }
-  };
-
   const session = state.phase === "gone" ? null : state.session;
-  return (
-    <section className="panel detail">
-      <div className="detail-head">
-        <h2>{session ? heading(session) : "Session"}</h2>
-        <span className="spacer" />
-        {onClose && <button onClick={onClose}>Close</button>}
-        {onDeleted && (
-          <button className="danger" onClick={remove}>
-            Delete
-          </button>
-        )}
-      </div>
-      {session && <p className="note">{facts(session)}</p>}
-      {session?.store_transcript && <AudioStatus session={session} />}
+  const title = session ? heading(session, companies) : "Call";
+  const stored = Boolean(session?.store_transcript);
+  const outputs = state.phase === "ready" ? outputsInOrder(state.session) : [];
 
-      {state.phase !== "ready" && (
-        <div className="callout">
-          {state.phase === "waiting" && <span className="spinner" />}
-          {waitingText(state, Boolean(session?.store_transcript))}
-          {state.phase === "timeout" && (
-            <button className="link" onClick={() => setRound((r) => r + 1)}>
-              Look again
-            </button>
-          )}
-          {state.phase === "waiting" && state.error && <p className="note warn">{state.error}</p>}
-        </div>
-      )}
-
+  const summary = (
+    <div className="ui-stack">
       {state.phase === "ready" &&
-        outputsInOrder(state.session).map(([kind, text]) => (
-          <article key={kind} className="output">
-            <div className="output-head">
-              <h3>{OUTPUT_TITLES[kind]}</h3>
-              {(kind === "follow_up_email" || kind === "standup_report") && <CopyButton text={text} />}
-            </div>
-            <div className="output-text">{text}</div>
+        outputs.map(([kind, text]) => (
+          <Card key={kind} title={OUTPUT_TITLES[kind]} actions={(kind === "follow_up_email" || kind === "standup_report") && <CopyButton text={text} />}>
+            <div className="ui-prewrap sd-output">{text}</div>
             {kind === "standup_report" && state.session.employer_id && (
-              <p className="note">The commitments were added to this company's open commitments for the next standup; remove any under Work, Facts.</p>
+              <p className="ui-field-hint sd-output-note">The commitments were added to this company's open commitments for the next standup; remove any under Work, Facts.</p>
             )}
-          </article>
+          </Card>
         ))}
-      {state.phase === "ready" && outputsInOrder(state.session).length === 0 && <p className="note">No summary: this call was saved with its transcript only.</p>}
+      {state.phase === "ready" && outputs.length === 0 && (
+        <EmptyState icon="✓" title="No summary">
+          This call was saved with its transcript only.
+        </EmptyState>
+      )}
+      {state.phase === "waiting" && (
+        <Card>
+          <div className="ui-row-inline waiting-line" role="status">
+            <Spinner size="sm" label={null} />
+            <span>{waitingText(state, stored)}</span>
+          </div>
+          <div className="ui-stack waiting-skeleton" aria-hidden="true">
+            <Skeleton width="92%" height={12} />
+            <Skeleton width="80%" height={12} />
+            <Skeleton width="64%" height={12} />
+          </div>
+          {state.error && <p className="ui-field-hint">Still trying: {state.error}</p>}
+        </Card>
+      )}
+      {state.phase === "timeout" && (
+        <Banner tone="warning" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Look again</Button>}>
+          {waitingText(state, stored)}
+        </Banner>
+      )}
+      {state.phase === "gone" && <Banner tone="neutral">{waitingText(state, stored)}</Banner>}
+    </div>
+  );
 
-      {state.phase === "ready" && session?.store_transcript && (
-        <article className="output">
-          <h3>The call</h3>
-          {replay === null && !message && <p className="note">Loading…</p>}
-          {replay && <CallReplay replay={replay} />}
-        </article>
+  const replayPanel = replayError ? (
+    <Banner tone="danger" title="Could not load the replay" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Retry</Button>}>
+      {replayError}
+    </Banner>
+  ) : replay ? (
+    <CallReplay replay={replay} />
+  ) : (
+    <SkeletonList rows={3} label="Loading the replay" />
+  );
+
+  const transcriptPanel = transcript === null ? (
+    replayError ? replayPanel : <SkeletonList rows={4} label="Loading the transcript" />
+  ) : transcript.length === 0 ? (
+    <EmptyState icon="…" title="Nothing was transcribed" />
+  ) : (
+    <ol className="sd-transcript">
+      {transcript.map((r) => (
+        <li key={r.key}>
+          <span className="sd-at ui-num">{r.at}</span>
+          <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
+          <span className="sd-text">{r.text}</span>
+        </li>
+      ))}
+    </ol>
+  );
+
+  return (
+    <article className="session-detail">
+      <PageHeader
+        back={
+          onClose && !justEnded ? (
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              ← History
+            </Button>
+          ) : undefined
+        }
+        title={justEnded ? `Call ended${session ? ` · ${title}` : ""}` : title}
+        meta={session ? facts(session, stored) : <Skeleton width={260} height={12} />}
+        actions={
+          <>
+            {justEnded && onNewCall && (
+              <Button variant="primary" onClick={onNewCall}>
+                New call
+              </Button>
+            )}
+            {onDeleted && <Menu label="More actions" trigger="⋯" items={[{ label: "Delete call…", danger: true, onSelect: () => setDeleting(true) }]} />}
+          </>
+        }
+      />
+      {state.phase === "ready" && stored ? (
+        <Tabs
+          label="Call"
+          value={tab}
+          onChange={setTab}
+          items={[
+            { value: "summary", label: "Summary", content: summary },
+            { value: "replay", label: "Replay", content: replayPanel },
+            { value: "transcript", label: "Transcript", content: transcriptPanel },
+          ]}
+        />
+      ) : (
+        summary
       )}
-      {state.phase === "ready" && session?.store_transcript && transcript && transcript.length > 0 && (
-        <details className="output">
-          <summary>
-            <h3>Transcript</h3>
-          </summary>
-          <ul className="plain transcript-rows">
-            {transcript.map((r) => (
-              <li key={r.key}>
-                <span className="muted">{r.at}</span> <b className={r.who === "You" ? "you" : ""}>{r.who}</b> {r.text}
-              </li>
-            ))}
-          </ul>
-        </details>
+      {state.phase === "ready" && session && !stored && <p className="ui-field-hint detail-note">No transcript or replay: the transcript was not stored for this call.</p>}
+      {onDeleted && (
+        <ConfirmDialog
+          open={deleting}
+          onOpenChange={setDeleting}
+          title="Delete this call?"
+          confirmLabel="Delete call"
+          onConfirm={async () => {
+            await rest.deleteSession(sessionId);
+            onDeleted();
+          }}
+        >
+          Its transcript and outputs are deleted. Facts already approved into your memory stay.
+        </ConfirmDialog>
       )}
-      {state.phase === "ready" && session && !session.store_transcript && (
-        <p className="note">No transcript: it was not stored for this call (no consent).</p>
-      )}
-      {message && <p className="note warn">{message}</p>}
-    </section>
+    </article>
   );
 }
 
@@ -154,30 +217,32 @@ function CallReplay({ replay }: { replay: Replay }) {
   );
 }
 
-function heading(s: Detail): string {
-  const mode = s.mode ? s.mode[0].toUpperCase() + s.mode.slice(1) : "Session";
-  return s.title ? `${mode}: ${s.title}` : mode;
+function heading(s: Detail, companies: Record<string, string>): string {
+  const mode = s.mode ? (MODE_LABEL[s.mode] ?? s.mode) : "Call";
+  const company = s.employer_id ? companies[s.employer_id] : undefined;
+  return [mode, company, s.title].filter(Boolean).join(" · ");
 }
 
-function facts(s: Detail): string {
+function facts(s: Detail, stored: boolean): string {
   const parts: string[] = [];
   if (s.started_at) parts.push(when(s.started_at));
   if (s.billed_seconds != null && s.ended_at) parts.push(`${Math.max(1, Math.round(s.billed_seconds / 60))} min`);
   parts.push(`${s.questions} question${s.questions === 1 ? "" : "s"}`);
-  if (s.platform) parts.push(s.platform);
+  if (s.platform) parts.push(PLATFORM[s.platform] ?? s.platform);
+  if (stored) parts.push(audioStatus(s));
   return parts.join(" · ");
 }
 
-function AudioStatus({ session }: { session: Detail }) {
-  let text: string;
-  if (session.me_audio_status === "live") text = "Your side of the call was transcribed live; no audio was kept.";
-  else if (session.me_audio_status === "transcribed") text = "Your side of the call was transcribed; the audio is deleted.";
-  else text = "Your side of the call was not transcribed; the summary is from the other side only.";
-  return <p className="note">{text}</p>;
+const PLATFORM: Record<string, string> = { zoom: "Zoom", meet: "Google Meet", teams: "Microsoft Teams", other: "Other app" };
+
+function audioStatus(s: Detail): string {
+  if (s.me_audio_status === "live") return "your side transcribed live";
+  if (s.me_audio_status === "transcribed") return "your side transcribed, audio deleted";
+  return "your side not transcribed";
 }
 
-function CopyButton({ text }: { text: string }) {
-  const [done, setDone] = useState(false);
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const toast = useToast();
   const copy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -189,8 +254,11 @@ function CopyButton({ text }: { text: string }) {
       document.execCommand("copy");
       area.remove();
     }
-    setDone(true);
-    setTimeout(() => setDone(false), 1500);
-  }, [text]);
-  return <button onClick={copy}>{done ? "Copied" : "Copy"}</button>;
+    toast({ tone: "success", text: "Copied" });
+  }, [text, toast]);
+  return (
+    <Button size="sm" onClick={copy}>
+      {label}
+    </Button>
+  );
 }

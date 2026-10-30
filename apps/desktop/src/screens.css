@@ -1,0 +1,101 @@
+/* Screen-specific layout on the design system (tokens only). Components live in ui/ui.css. */
+
+/* --- History and a call's detail --- */
+
+.history-filters {
+  margin-bottom: var(--space-5);
+}
+.history-when {
+  display: inline-block;
+  width: 168px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+.history-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-5);
+}
+.live-now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.session-detail .sd-output {
+  line-height: 1.6;
+}
+.session-detail .sd-output-note {
+  margin-top: var(--space-4);
+}
+.waiting-line {
+  color: var(--text-2);
+}
+.waiting-skeleton {
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.detail-note {
+  margin-top: var(--space-5);
+}
+
+.sd-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sd-transcript li {
+  display: grid;
+  grid-template-columns: 56px 48px 1fr;
+  gap: var(--space-3);
+}
+.sd-at {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.sd-who {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.sd-who.is-you {
+  color: var(--accent);
+}
+.sd-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The replay keeps the overlay's look (always dark) inside the page, filling the tab. */
+.session-detail .overlay.replay {
+  height: min(70vh, 640px);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* --- Settings pieces shared before Stage 3 --- */
+
+.account-danger {
+  border-color: var(--danger);
+}
+.account-danger-row {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.ui-stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+@media (max-width: 899px) {
+  .history-when {
+    width: auto;
+  }
+}

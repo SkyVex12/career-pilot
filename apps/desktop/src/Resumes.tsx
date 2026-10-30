@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type ResumeVersion } from "./api";
 import { isTextFile, resumeStatusLabel } from "./pairing";
-import { Chip, when, Loading, LoadError, useOnShow } from "./ui";
+import { Chip, when, Loading, LoadError, useOnShow } from "./shared";
 import { usePolling } from "./usePolling";
 
 export function Resumes({ active = true }: { active?: boolean }) {
