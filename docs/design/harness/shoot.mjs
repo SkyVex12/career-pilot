@@ -163,10 +163,11 @@ for (const [name, query, viewport, act] of overlay) {
       return el ? getComputedStyle(el).fontSize : null;
     };
     const cards = document.querySelectorAll(".card");
-    const last = cards[cards.length - 1];
+    // The newest answer: the "Now" card (the redesigned overlay), else the last card (before).
+    const last = document.querySelector(".card.is-now") ?? cards[cards.length - 1];
     const r = last?.querySelector(".points")?.getBoundingClientRect();
     return {
-      fastAnswer: px(".points .bullets"),
+      fastAnswer: px(".card.is-now .points .bullets") ?? px(".points .bullets"),
       deepAnswer: px(".deep .bullets"),
       question: px(".card .question"),
       transcript: px(".tx .line"),
