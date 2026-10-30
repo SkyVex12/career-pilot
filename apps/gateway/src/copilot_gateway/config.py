@@ -206,6 +206,9 @@ class Settings(CoreSettings):
     )
     deepgram_url: str = "wss://api.deepgram.com/v1/listen"
     stt_stall_s: float = 3.0
+    # A stream silent for stt_stall_s gets a Finalize first and this long to answer before it
+    # is reconnected (stt/resilient.py). None: reconnect at once.
+    stt_nudge_s: float | None = 1.0
     stt_failures_before_switch: int = 2
     stt_keepalive_s: float = 5.0
 

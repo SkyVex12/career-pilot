@@ -5,6 +5,11 @@ VAD hears speech, or a dropped connection, counts as a failure. The supervisor r
 replays the audio not yet covered by a final; after two consecutive failures on one provider it
 switches to the next one in the list.
 
+Before a silent stream counts as stalled, it is nudged: a Finalize asks it for what it has, and
+only if nothing comes within `nudge_s` does it reconnect. The stalled stream is closed in the
+background, so the new one does not wait for it. On 2026-10-30 Deepgram went silent 6 times in
+a 19-minute standup; two of those landed on questions and added 3 to 4 s each.
+
 Only speech is sent to the provider, so its timeline is shorter than the call. Each chunk sent
 records (provider ms, capture ms), and result times are mapped back to capture ms.
 """
@@ -76,6 +81,8 @@ class ResilientSTT:
         failures_before_switch: int = 2,
         keepalive_s: float = 5.0,
         keyterms: Sequence[str] = (),
+        nudge_s: float | None = 1.0,
+        label: str = "",
     ) -> None:
         if not providers:
             raise ValueError("at least one STT provider is needed")
@@ -86,6 +93,14 @@ class ResilientSTT:
         self.failures_before_switch = failures_before_switch
         self.keepalive_s = keepalive_s
         self.keyterms = list(keyterms)
+        self.nudge_s = nudge_s
+        self.label = label  # the channel, for the logs
+        self.nudges = 0
+        self.nudge_saves = 0  # nudges a result answered: reconnects avoided
+        self.nudged_at: float | None = None
+        self.last_result_at = 0.0
+        self.stalled_at: float | None = None  # a reconnect after a stall, until its first result
+        self._closing: set[asyncio.Task[None]] = set()
 
         self.index = 0
         self.failures = 0
@@ -159,6 +174,8 @@ class ResilientSTT:
             stream, self.stream = self.stream, None
             if stream is not None:
                 await _close_quietly(stream)
+            for task in list(self._closing):
+                task.cancel()
 
     async def _run_once(self) -> None:
         name, factory = self.providers[self.index]
@@ -196,13 +213,23 @@ class ResilientSTT:
             await asyncio.gather(*tasks, return_exceptions=True)
             async with self._lock:
                 self.stream = None
-            await _close_quietly(stream)
+            # In the background: a stalled stream can take its full 2 s to close, and the
+            # new connection should not wait for it.
+            closing = asyncio.create_task(_close_quietly(stream))
+            self._closing.add(closing)
+            closing.add_done_callback(self._closing.discard)
         await self._failed(f"{name}: {reason}")
 
     async def _failed(self, reason: str) -> None:
         self.failures += 1
         self.total_failures += 1
-        log.warning("stt failure %d on %s: %s", self.failures, self.provider, reason)
+        log.warning(
+            "stt failure %d on %s%s: %s (last result %.1f s ago, %d ms of audio to replay)",
+            self.failures, self.provider, f" ({self.label})" if self.label else "", reason,
+            time.monotonic() - self.last_result_at if self.last_result_at else -1.0,
+            self.pending_ms,
+        )  # fmt: skip
+        self.stalled_at = time.monotonic()
         self.degraded = True
         self.on_status("reconnecting", "Reconnecting transcription")
         if self.failures >= self.failures_before_switch and len(self.providers) > 1:
@@ -217,19 +244,37 @@ class ResilientSTT:
             await self._handle(stream, result)
 
     async def _handle(self, stream: STTStream, r: STTResult) -> None:
+        now = time.monotonic()
         self.awaiting_since = None
+        self.last_result_at = now
         self.failures = 0
+        if self.nudged_at is not None:
+            self.nudged_at = None
+            self.nudge_saves += 1
+            log.info(
+                "stt %s%s answered a nudge", stream.name, f" ({self.label})" if self.label else ""
+            )
+        if self.stalled_at is not None:
+            log.info(
+                "stt %s%s: first result %d ms after the failure",
+                stream.name, f" ({self.label})" if self.label else "",
+                int((now - self.stalled_at) * 1000),
+            )  # fmt: skip
+            self.stalled_at = None
         if self.degraded:
             self.degraded = False
             self.on_status("ok", "Transcription back")
         if r.is_final:
             self._drop_covered(r.end_ms)
-        if r.flushed:
+        # Only a reply to the latest speech end's Finalize flushes a turn: not one to an
+        # earlier Finalize, nor a nudge's when no speech end is waiting for its final.
+        flushed = r.flushed and self.flush_pending and not self._answers_earlier_finalize(r)
+        if flushed:
             self.flush_pending = False
         timed = TimedResult(
             text=r.text,
             is_final=r.is_final,
-            flushed=r.flushed and not self._answers_earlier_finalize(r),
+            flushed=flushed,
             start_ms=self.timeline.to_capture(r.start_ms),
             end_ms=self.timeline.to_capture(r.end_ms),
             provider=stream.name,
@@ -261,9 +306,29 @@ class ResilientSTT:
             await asyncio.sleep(min(0.25, self.stall_s / 4))
             since = self.awaiting_since
             if since is None or not (self.in_speech or self.flush_pending):
+                self.nudged_at = None
                 continue
-            if time.monotonic() - max(since, self.connected_at) > self.stall_s:
-                raise StallError(f"no results for {self.stall_s:g} s while speech is active")
+            now = time.monotonic()
+            if now - max(since, self.connected_at) <= self.stall_s:
+                continue
+            if self.nudge_s is not None and self.nudged_at is None:
+                await self._nudge()
+                continue
+            if self.nudged_at is not None and now - self.nudged_at <= (self.nudge_s or 0):
+                continue
+            self.nudged_at = None
+            raise StallError(f"no results for {self.stall_s:g} s while speech is active")
+
+    async def _nudge(self) -> None:
+        """Ask a silent stream for what it has (a Finalize) before calling it stalled. Its
+        reply is not a turn's flush (`_handle`): it counts as one more Finalize, so the reply
+        to the real one is still told apart (`_answers_earlier_finalize`)."""
+        self.nudged_at = time.monotonic()
+        self.nudges += 1
+        self.finalized_at = (self.finalized_at[1], self.timeline.stream_ms)
+        async with self._lock:
+            if self.stream is not None:
+                await self._send(self.stream, self.stream.finalize())
 
     async def _keepalive(self, stream: STTStream) -> None:
         while True:

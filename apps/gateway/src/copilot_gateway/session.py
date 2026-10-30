@@ -206,9 +206,9 @@ class Session:
         # The user's own microphone, transcribed live as a second stream (me_stt).
         self.stt_me: ResilientSTT | None = None
         if svc.stt_providers:
-            self.stt = self._stt_stream(self._on_stt)
+            self.stt = self._stt_stream(self._on_stt, label="them")
             if self.settings.me_stt:
-                self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers)
+                self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers, label="me")
         self.detector = Detector(
             svc.router,
             principal.display_name,
@@ -338,6 +338,7 @@ class Session:
         self,
         on_result: Callable[[TimedResult], Awaitable[None]],
         providers: Sequence[tuple[str, STTFactory]] | None = None,
+        label: str = "",
     ) -> ResilientSTT:
         s = self.settings
         return ResilientSTT(
@@ -347,6 +348,8 @@ class Session:
             stall_s=s.stt_stall_s,
             failures_before_switch=s.stt_failures_before_switch,
             keepalive_s=s.stt_keepalive_s,
+            nudge_s=s.stt_nudge_s,
+            label=label,
             keyterms=self.pack.keyterms if self.pack is not None else (),
         )
 
@@ -936,6 +939,19 @@ class Session:
                 },
                 prior.get("turns"),
             ),
+            "stt": add(
+                {
+                    f"{label}_{k}": v
+                    for label, stt in (("them", self.stt), ("me", self.stt_me))
+                    if stt is not None
+                    for k, v in (
+                        ("failures", stt.total_failures),
+                        ("nudges", stt.nudges),
+                        ("nudge_saves", stt.nudge_saves),
+                    )
+                },
+                prior.get("stt"),
+            ),
         }
 
     # Lifecycle.
@@ -1210,9 +1226,11 @@ class Session:
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
         log.info(
-            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s turns=%s",
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s turns=%s"
+            " stt=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
             totals["questions"], totals["stats"], totals["detector"], totals["turns"],
+            totals["stt"],
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
