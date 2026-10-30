@@ -24,6 +24,7 @@ class TextSTTControl:
     connects: int = 0
     connect_failures: int = 0  # the next N connects fail
     stall: bool = False  # swallow audio, emit nothing
+    quiet: bool = False  # alive but no interims: only a Finalize gets a reply (a nudge)
     drop_after_chunks: int | None = None  # close the connection after N audio chunks
     final_suffix: str = ""  # appended to finals only: an interim that missed the last words
     # A real STT's final comes back over the network some time after the speech-end frame.
@@ -70,6 +71,8 @@ class TextSTT:
         if text:
             self.control.sent_text.append(text)
             self.words.append(text)
+        if self.control.quiet:
+            return
         self.queue.put_nowait(STTResult(" ".join(self.words), False, self.seg_start, self.ms))
 
     async def finalize(self) -> None:

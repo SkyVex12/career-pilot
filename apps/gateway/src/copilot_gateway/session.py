@@ -58,6 +58,7 @@ from copilot_gateway.turn import (
     TurnDetector,
     TurnModel,
     addressed_by_name,
+    is_backchannel,
     is_closing,
     substantive_words,
 )
@@ -206,9 +207,9 @@ class Session:
         # The user's own microphone, transcribed live as a second stream (me_stt).
         self.stt_me: ResilientSTT | None = None
         if svc.stt_providers:
-            self.stt = self._stt_stream(self._on_stt)
+            self.stt = self._stt_stream(self._on_stt, label="them")
             if self.settings.me_stt:
-                self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers)
+                self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers, label="me")
         self.detector = Detector(
             svc.router,
             principal.display_name,
@@ -230,6 +231,9 @@ class Session:
             turn_model=svc.turn_model,
             hold=self.settings.speculative_hold,
             hold_min_words=self.settings.speculative_min_words,
+            group_call=lambda: self.info.mode in prompts.GROUP_MODES,
+            hold_any_min_words=self.settings.group_hold_min_words,
+            early_interval_ms=self.settings.early_decision_interval_ms,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -335,6 +339,7 @@ class Session:
         self,
         on_result: Callable[[TimedResult], Awaitable[None]],
         providers: Sequence[tuple[str, STTFactory]] | None = None,
+        label: str = "",
     ) -> ResilientSTT:
         s = self.settings
         return ResilientSTT(
@@ -344,6 +349,8 @@ class Session:
             stall_s=s.stt_stall_s,
             failures_before_switch=s.stt_failures_before_switch,
             keepalive_s=s.stt_keepalive_s,
+            nudge_s=s.stt_nudge_s,
+            label=label,
             keyterms=self.pack.keyterms if self.pack is not None else (),
         )
 
@@ -667,6 +674,12 @@ class Session:
     def discard_question(self, qid: UUID) -> None:
         self.answers.discard(qid)
 
+    def retime_held(self, qid: UUID, t0: float) -> None:
+        q = self.answers.questions.get(qid)
+        if q is not None:
+            q.early_ms = max(0, int((t0 - q.t0) * 1000))
+            q.t0 = t0
+
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
@@ -793,7 +806,14 @@ class Session:
         if not s.follow_user or not line.text:
             return
         lines = self.conv.lines
-        them = [ln for ln in lines if ln.channel == "them" and ln.end_ms <= line.start_ms + 300]
+        # A "mhmm" from the other side is not a new turn to follow (2026-10-30).
+        them = [
+            ln
+            for ln in lines
+            if ln.channel == "them"
+            and ln.end_ms <= line.start_ms + 300
+            and not is_backchannel(ln.text)
+        ]
         if not them:
             return
         anchor = them[-1].end_ms
@@ -914,6 +934,32 @@ class Session:
             "questions": len(self.answers.questions) + int(prior.get("questions") or 0),
             "stats": add(self.answers.stats, prior.get("stats")),
             "detector": add(self.detector.stats, prior.get("detector")),
+            # Held passes are the price of not waiting for the detector (2026-10-30): how
+            # many started, were shown, were thrown away, and how many turns were decided
+            # before their speech end.
+            "turns": add(
+                {
+                    "held_started": self.turns.held_starts,
+                    "held_released": self.turns.held_released,
+                    "held_discarded": self.turns.held_discarded,
+                    "early_started": self.turns.early_starts,
+                    "early_used": self.turns.early_used,
+                },
+                prior.get("turns"),
+            ),
+            "stt": add(
+                {
+                    f"{label}_{k}": v
+                    for label, stt in (("them", self.stt), ("me", self.stt_me))
+                    if stt is not None
+                    for k, v in (
+                        ("failures", stt.total_failures),
+                        ("nudges", stt.nudges),
+                        ("nudge_saves", stt.nudge_saves),
+                    )
+                },
+                prior.get("stt"),
+            ),
         }
 
     # Lifecycle.
@@ -1188,9 +1234,11 @@ class Session:
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
         log.info(
-            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s",
+            "session ended: reason=%s minutes=%.1f questions=%d stats=%s detector=%s turns=%s"
+            " stt=%s",
             reason, (datetime.now(UTC) - self.info.started_at).total_seconds() / 60,
-            totals["questions"], totals["stats"], totals["detector"],
+            totals["questions"], totals["stats"], totals["detector"], totals["turns"],
+            totals["stt"],
         )  # fmt: skip
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):

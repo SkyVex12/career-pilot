@@ -64,6 +64,36 @@ _COMMAND_WORDS = _COMMAND_VERBS | {
 }  # fmt: skip
 
 
+# A citation with no real short id ("[n: n/a]", "[n:]", "[n:none]"): the client shows it as
+# text. On 2026-10-30 a fast cue carried "[n: n/a]".
+BAD_CITATION = re.compile(r"[ \t]*\[n:(?![0-9a-z]{2,8}\])[^\]\n]{0,24}\]", re.IGNORECASE)
+_HOLD_MAX = 32  # an open "[" held this long at most, waiting for its "]"
+
+
+class CitationFilter:
+    """Drops broken citations from streamed text. Text after an open "[" is held until its
+    "]" arrives (a few tokens at most), so a citation split across chunks is still seen."""
+
+    def __init__(self) -> None:
+        self.buf = ""
+
+    def feed(self, text: str) -> str:
+        self.buf += text
+        cut = self.buf.rfind("[")
+        tail = self.buf[cut:] if cut >= 0 else ""
+        if cut >= 0 and "]" not in tail and "\n" not in tail and len(tail) <= _HOLD_MAX:
+            while cut > 0 and self.buf[cut - 1] in " \t":
+                cut -= 1
+            out, self.buf = self.buf[:cut], self.buf[cut:]
+        else:
+            out, self.buf = self.buf, ""
+        return BAD_CITATION.sub("", out)
+
+    def flush(self) -> str:
+        out, self.buf = BAD_CITATION.sub("", self.buf), ""
+        return out
+
+
 def normalize_question(text: str) -> str:
     text = re.sub(r"[^\w\s]", " ", text.lower())
     return re.sub(r"\s+", " ", text).strip()
@@ -105,6 +135,7 @@ class Question:
     detected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     turn_end_ms: int | None = None
     final_ms: int | None = None  # t0 to the STT final (None: no final, or a forced question)
+    early_ms: int | None = None  # its passes started this long before the speech end (turn.py)
     expanded_at: float | None = None  # monotonic time of the expand tap
     was_speculative: bool = False
     tasks: dict[str, "asyncio.Task[None]"] = field(default_factory=dict[str, "asyncio.Task[None]"])
@@ -449,6 +480,8 @@ class AnswerEngine:
             out["total_ms"] = max(0, int((time.monotonic() - q.t0) * 1000))
             if q.final_ms is not None:
                 out["final_ms"] = q.final_ms
+            if q.early_ms is not None:
+                out["early_ms"] = q.early_ms
             if state["start_at"] is not None:
                 out["start_ms"] = max(0, int((state["start_at"] - q.t0) * 1000))
             if pass_ == "deep" and q.expanded_at is not None:
@@ -571,12 +604,15 @@ class AnswerEngine:
 
             async def stream() -> LLMDone:
                 finished: LLMDone | None = None
+                cites = CitationFilter()
                 async for chunk in host.router.stream(job, req, on_fallback):
                     if isinstance(chunk, LLMDone):
                         finished = chunk
                         state["done"] = chunk
-                    else:
-                        delta(chunk)
+                    elif text := cites.feed(chunk):
+                        delta(text)
+                if rest := cites.flush():
+                    delta(rest)
                 assert finished is not None
                 return finished
 

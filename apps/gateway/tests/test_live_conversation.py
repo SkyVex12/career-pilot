@@ -390,6 +390,46 @@ async def test_the_answer_follows_the_user_when_no_question_fired(env) -> None:
     assert "continue from where their lines in the transcript" in str(deep.content)
 
 
+async def test_a_mhmm_from_the_other_side_does_not_start_a_second_follow_card(env) -> None:
+    # 2026-10-30 standup: a teammate's "mhmm" between the user's lines counted as a new turn
+    # of theirs, so the user's next words made a second card with the same text, twice.
+    env.providers = [ScriptedProvider("anthropic")]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start(mode="standup")
+        await c.say("We could keep the image size in the page settings instead", capture_ms=0)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["channel"] == "them")
+        await asyncio.sleep(0.6)
+        await c.say_me(
+            "I think we can put the same options on the preview page with a short note",
+            capture_ms=3000, end_ms=6000,
+        )  # fmt: skip
+        q = await c.wait_type("question.detected", timeout=3.0)
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        # The listener's "mhmm" comes while the user is still talking, as on 2026-10-30.
+        await c.say("Mhmm.", capture_ms=3050)
+        await c.wait(lambda m: m["type"] == "transcript.final" and m["text"] == "Mhmm.")
+        session = next(iter(gw.manager.sessions.values()))
+        if session.turns.task is not None:  # the "mhmm" turn is decided
+            await asyncio.wait_for(asyncio.shield(session.turns.task), 5)
+        await c.say_me(
+            "and the scheduler would read that same saved setting for every export it sends",
+            capture_ms=7000, end_ms=9500,
+        )  # fmt: skip
+        await c.wait(lambda m: m["type"] == "transcript.final" and "scheduler" in m["text"])
+        await asyncio.sleep(0.6)
+        assert len(c.of_type("question.detected")) == 1
+
+
+def test_a_backchannel_is_not_a_turn() -> None:
+    from copilot_gateway.turn import is_backchannel
+
+    for text in ("Mhmm.", "Okay.", "Yeah, right.", "Cool. Okay."):
+        assert is_backchannel(text), text
+    for text in ("", "Design side.", "Did you check it?", "Okay, so the next one is the report."):
+        assert not is_backchannel(text), text
+
+
 async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
     def reply(job: str, req: LLMRequest) -> Reply:
         if job == "detector" and "how are you" in str(req.content).lower():

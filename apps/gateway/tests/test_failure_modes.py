@@ -138,6 +138,78 @@ async def test_stt_stall_while_speaking_reconnects(env) -> None:
         assert partial["text"] == "hello"
 
 
+async def test_a_silent_stt_stream_is_nudged_before_a_reconnect(env) -> None:
+    """2026-10-30 standup: Deepgram went silent 6 times; each reconnect closed the old
+    stream, connected and replayed the audio, 3 to 4 s on the two questions it hit. A stream
+    that is alive answers a Finalize, so it gets one before it counts as stalled."""
+    env.stt.quiet = True
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.frame(0, 0b01, b" hello".ljust(3200, b"\0"), 0)  # speech starts, never ends
+        final = await c.wait_type("transcript.final", timeout=3)
+        assert final["text"] == "hello"
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.stt is not None
+        assert (session.stt.nudges, session.stt.nudge_saves) == (1, 1)
+    assert env.stt.connects == 1
+    assert [m for m in c.of_type("status") if m["state"] == "reconnecting"] == []
+
+
+class SlowCloseSTT:
+    """A stream that never answers and takes 2 s to close, as a stalled socket can."""
+
+    name = "slow-close"
+    connections = 0
+    reconnected: asyncio.Event | None = None
+
+    async def connect(self) -> None:
+        SlowCloseSTT.connections += 1
+        if SlowCloseSTT.connections >= 2 and SlowCloseSTT.reconnected is not None:
+            SlowCloseSTT.reconnected.set()
+
+    async def send_audio(self, pcm: bytes) -> None:
+        pass
+
+    async def finalize(self) -> None:
+        pass
+
+    async def keepalive(self) -> None:
+        pass
+
+    async def results(self) -> AsyncIterator[STTResult]:
+        await asyncio.Event().wait()
+        yield STTResult("", False, 0, 0)
+
+    async def close(self) -> None:
+        await asyncio.sleep(2)
+
+
+async def test_a_stalled_stream_does_not_delay_the_reconnect() -> None:
+    SlowCloseSTT.connections = 0
+    SlowCloseSTT.reconnected = asyncio.Event()
+    stt = ResilientSTT(
+        [("slow-close", lambda _: SlowCloseSTT())],
+        on_result=lambda r: asyncio.sleep(0),
+        on_status=lambda state, message: None,
+        stall_s=0.2,
+        nudge_s=0.1,
+    )
+    runner = asyncio.create_task(stt.run())
+    await asyncio.sleep(0.01)
+    stt.speech(True)
+    await stt.send(b"\0" * 3200, 0)
+    started = asyncio.get_running_loop().time()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(SlowCloseSTT.reconnected.wait(), 3)
+    elapsed = asyncio.get_running_loop().time() - started
+    runner.cancel()
+    await asyncio.gather(runner, return_exceptions=True)
+    assert SlowCloseSTT.connections >= 2
+    assert elapsed < 1.0, elapsed  # stall 0.2 + nudge 0.1, not + the 2 s close
+    assert stt.nudges == 1
+
+
 async def test_stt_switches_provider_after_two_failures(env) -> None:
     async with GatewayServer(env.services(stt_names=("deepgram", "assemblyai"))) as gw:
         c = ProtocolClient(gw.url)

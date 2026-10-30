@@ -38,7 +38,8 @@ _RULES = """Rules:
   - Facts about {user_name}: experience, employers, projects, roles, numbers, dates, people.
     They come only from <digest>, <session_pack> or <memory>, exactly as written there.
     {facts_rule} Cite each with the short id of its entry, like [n:3f2a]; a point taken
-    from a prepared answer cites that answer's story or role.
+    from a prepared answer cites that answer's story or role. A point with no entry has no
+    citation: never an empty or made-up one ("[n: n/a]").
   - Knowledge and reasoning: how something works, design approaches, tradeoffs, good
     practice, how {user_name} would tackle a problem, sensible questions back. These come
     from your own knowledge, phrased as {user_name}'s thinking ("I'd...", "the way I see
@@ -179,6 +180,11 @@ not sentences to read out.
   same order, so put the points in the order the full answer should take.
 - No bracketed placeholder ever ("[your location]"): for a detail only {user_name} knows,
   output only a question back.
+- Every cue is something {user_name} says. Never a cue about the notes or the data ("no date
+  in the standup notes", "not in my notes"): with no fact for it, give {user_name}'s answer,
+  plan or the condition it depends on, as "I'd".
+- A question back never hands the other side's question back to them: asked for a date or a
+  decision, the cues are {user_name}'s answer, not "is it today or Monday?".
 - Output only the bullet list."""
 )
 
@@ -220,6 +226,24 @@ DEEP_STYLES: dict[str, str] = {
         "screen (the shape's order when there are none). "
         "No bullets or line breaks inside a paragraph. Citations and [~] go at the end of the "
         "sentence they belong to. This replaces the shape's line count and word limit."
+    ),
+}
+
+# In a standup the detailed answer is said, not read after the call: on 2026-10-30 the
+# paragraph style gave 129 to 162 words (about a minute of speech) and showed 5.5 s after the
+# question (p50). These replace the styles above in standups.
+STANDUP_DEEP_STYLES: dict[str, str] = {
+    "bullets": (
+        "Style: bullets, for a standup. 3 to 5 lines, 6 to 14 words each, in the order of the "
+        "cues on screen; each line a full thought the user can say, citations and [~] at its "
+        "end. No examples. This replaces the shape's line count and word limit."
+    ),
+    "paragraph": (
+        "Style: short paragraph, for a standup. 2 or 3 sentences, 35 to 60 words in all, that "
+        "the user can say as written: first person, plain spoken words, in the order of the "
+        "cues on screen. No examples, no background they already know. Citations and [~] go "
+        "at the end of the sentence they belong to. This replaces the shape's line count and "
+        "word limit."
     ),
 }
 
@@ -506,7 +530,8 @@ def deep_pass(
     parts.append(_data("shown_cues", shown.strip() or "(none yet)"))
     shapes = {**DEEP_SHAPES, **WORKPLACE_SHAPES} if ctx.at_work else DEEP_SHAPES
     shape = shapes.get(qtype, shapes["other"])
-    how = DEEP_STYLES.get(style, DEEP_STYLES["bullets"])
+    styles = STANDUP_DEEP_STYLES if ctx.mode == "standup" else DEEP_STYLES
+    how = styles.get(style, styles["bullets"])
     parts.append(f"Question ({qtype}): {question}\nShape: {shape}\n{how}")
     return LLMRequest(
         system=_system(DEEP_SYSTEM, ctx), content="\n\n".join(parts), max_tokens=max_tokens

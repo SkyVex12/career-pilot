@@ -607,6 +607,24 @@ def test_the_deep_answer_develops_the_cues_in_the_chosen_style() -> None:
     assert set(prompts.DEEP_STYLES) == {"bullets", "paragraph"}
 
 
+def test_a_standup_gets_a_short_detailed_answer() -> None:
+    """2026-10-30 standup: the paragraph answer ran 129 to 162 words, about a minute of speech,
+    and showed 5.5 s after the question. In a standup it is 2 or 3 sentences."""
+    ctx = prompts.PromptContext("Alex", "standup", "# digest", "Mode: standup")
+    for style in ("paragraph", "bullets"):
+        content = str(prompts.deep_pass(ctx, "", "q?", "respond", 800, style=style).content)
+        assert "for a standup" in content, style
+        assert "120 to 180 words" not in content
+        assert "6 to 10 lines" not in content
+    assert "35 to 60 words" in str(
+        prompts.deep_pass(ctx, "", "q?", "technical", 800, style="paragraph").content
+    )
+    meeting = prompts.PromptContext("Alex", "meeting", "# digest", "Mode: meeting")
+    content = str(prompts.deep_pass(meeting, "", "q?", "technical", 800, style="paragraph").content)
+    assert "120 to 180 words" in content
+    assert set(prompts.STANDUP_DEEP_STYLES) == set(prompts.DEEP_STYLES)
+
+
 def test_live_prompts_split_personal_facts_from_knowledge() -> None:
     """October 2026: "use only facts from the data" left questions the data does not cover
     with thin or evasive answers, or a story forced onto them. Personal facts still come only
@@ -867,3 +885,33 @@ def test_mock_interview_script_scores_the_10_29_turns() -> None:
     # Fictional: the candidate of evals/bench/profile.toml, and no name from the real calls.
     text = path.read_text("utf-8")
     assert "Alex" in text
+
+
+def test_a_broken_citation_never_reaches_the_screen() -> None:
+    """2026-10-30 standup: a fast cue ended in "[n: n/a]", which the client shows as text."""
+    from copilot_gateway.answer import CitationFilter
+
+    def run(chunks: list[str]) -> str:
+        f = CitationFilter()
+        return "".join(f.feed(c) for c in chunks) + f.flush()
+
+    text = "- Preview and exports should match [n: n/a]\n- Keep one setting [n:w13b]\n"
+    assert run([text]) == "- Preview and exports should match\n- Keep one setting [n:w13b]\n"
+    # Split across chunks, as a model streams it.
+    chunks = ["- Match the preview [", "n:", " n/a", "]\n- One setting [n:w1", "3b] [~]\n"]
+    assert run(chunks) == "- Match the preview\n- One setting [n:w13b] [~]\n"
+    assert run(["- No source [n:]", "\n"]) == "- No source\n"
+    assert run(["a [b"]) == "a [b"  # an unclosed bracket comes out at the end
+    # Text before an open bracket is not held back.
+    f = CitationFilter()
+    assert f.feed("- Keep one setting [n:") == "- Keep one setting"
+
+
+def test_fast_cues_never_talk_about_the_notes_or_hand_the_question_back() -> None:
+    """2026-10-30 standup: asked whether the release is today or Monday, a fast cue said there
+    was no date in the standup notes and asked the teammate the same question back."""
+    ctx = prompts.PromptContext("Alex", "standup", "# digest", "Mode: standup")
+    fast = prompts.fast_pass(ctx, "", "q?", "standup_status", 250).system[0].text
+    assert "Never a cue about the notes or the data" in fast
+    assert "never hands the other side's question back" in fast
+    assert '"[n: n/a]"' in fast
