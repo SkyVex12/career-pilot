@@ -611,6 +611,23 @@ function StartScreen({
               : "Both sides are transcribed live for the answers, but no words are stored; the summary covers only the call's length and the questions' types."}
           </p>
         </div>
+
+        {!running && (
+          <>
+            <label>Audio</label>
+            <div>
+              <div className="device-tests">
+                <DeviceTest part="mic" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
+                  <span>Microphone</span>
+                </DeviceTest>
+                <DeviceTest part="call" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
+                  <span>Call audio</span>
+                </DeviceTest>
+              </div>
+              <p className="note">Test the devices chosen in Settings before the call.</p>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="actions">
@@ -625,17 +642,7 @@ function StartScreen({
         )}
         <button onClick={() => api.showOverlay(true)}>Show overlay</button>
       </div>
-      {!running && (
-        <div className="quick-tests">
-          <DeviceTest part="mic" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
-            <span>Microphone</span>
-          </DeviceTest>
-          <DeviceTest part="call" micDevice={devices.mic} outputDevice={devices.output} disabled={busy}>
-            <span>Call audio</span>
-          </DeviceTest>
-          <p className="note">Tests the devices saved in Settings.</p>
-        </div>
-      )}
+
       {running && ending && (
         <div className="end-choice">
           <p>How should this call be saved?</p>

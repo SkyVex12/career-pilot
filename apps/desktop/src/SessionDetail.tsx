@@ -148,6 +148,7 @@ function CallReplay({ replay }: { replay: Replay }) {
         ratings={ratings}
         emptyAnswers="Nothing was suggested in this call."
         emptyTranscript="Nothing was transcribed."
+        showMe
       />
     </div>
   );

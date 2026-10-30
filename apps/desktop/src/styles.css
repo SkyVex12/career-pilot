@@ -948,7 +948,7 @@ kbd.key {
 }
 
 /* The transcript pane: each side's lines joined into blocks, both full width. */
-.transcript {
+.tx {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -957,23 +957,23 @@ kbd.key {
   gap: 8px;
 }
 
-.transcript .line {
+.tx .line {
   line-height: 1.45;
   font-size: 13px;
   padding: 4px 8px;
   border-left: 2px solid #3d8a63;
 }
 
-.transcript .line.me {
+.tx .line.me {
   border-left-color: #8b6fd6;
 }
 
-.transcript .line p {
+.tx .line p {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.transcript .who {
+.tx .who {
   display: block;
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -982,11 +982,11 @@ kbd.key {
   margin-bottom: 1px;
 }
 
-.transcript .line.me .who {
+.tx .line.me .who {
   color: #b9a5f0;
 }
 
-.transcript .partial {
+.tx .partial {
   color: var(--overlay-muted);
   font-style: italic;
 }
@@ -1246,11 +1246,11 @@ kbd.key {
   padding: 4px 6px;
 }
 
-.overlay.compact .transcript {
+.overlay.compact .tx {
   gap: 4px;
 }
 
-.overlay.compact .transcript .line {
+.overlay.compact .tx .line {
   font-size: 12px;
   padding: 2px 6px;
 }
@@ -1950,5 +1950,9 @@ details.output > summary h3 {
 .device-test .note.bad { color: var(--bad, #c33); }
 .audio-meter-bar { height: 6px; max-width: 420px; border-radius: 3px; background: var(--border, #ccc); overflow: hidden; }
 .audio-meter-fill { height: 100%; background: var(--accent, #2a7); transition: width 80ms linear; }
-.quick-tests { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-width: 420px; }
-.quick-tests .device-control { flex: 1 1 auto; }
+/* The Session tab: both tests on one row of the form, each name with its button. */
+.device-tests { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.device-tests .device-test { flex: 1 1 220px; }
+.device-tests .device-control { flex: 0 0 auto; }
+.device-tests .device-row { gap: 10px; min-height: 34px; }
+.device-tests .audio-meter-bar { max-width: 240px; }

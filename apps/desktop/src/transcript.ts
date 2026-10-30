@@ -28,7 +28,9 @@ export function blockText(b: TranscriptBlock): string {
   return b.parts.map((p) => p.text).join(" ");
 }
 
-export function transcriptBlocks(s: SessionView): TranscriptBlock[] {
+/// `showMe: false` leaves the user's own blocks out (the live overlay); they still end the
+/// other side's block, and a question detected after them points at the block before.
+export function transcriptBlocks(s: SessionView, { showMe = true }: { showMe?: boolean } = {}): TranscriptBlock[] {
   const lines = new Map(s.transcript.map((t) => [t.key, t]));
   const live = new Set(s.questions.filter((q) => !q.cancelled).map((q) => q.id));
   const out: TranscriptBlock[] = [];
@@ -51,7 +53,13 @@ export function transcriptBlocks(s: SessionView): TranscriptBlock[] {
     }
     if (t.endMs !== undefined) lastEnd = t.endMs;
   }
-  return out;
+  if (showMe) return out;
+  const kept: TranscriptBlock[] = [];
+  for (const b of out) {
+    if (b.who === "them") kept.push(b);
+    else kept[kept.length - 1]?.asked.push(...b.asked);
+  }
+  return kept;
 }
 
 /// The text sizes the overlay steps through; 1 is the size it always had.

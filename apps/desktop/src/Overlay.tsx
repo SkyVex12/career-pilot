@@ -1,11 +1,12 @@
 // The always-on-top overlay. Two layouts, switched from the header and remembered:
-// - split (the default): the transcript of both sides in the left third, each side's short
+// - split (the default): the transcript in the left third (the other side live; both sides
+//   in History's replay), each side's short
 //   lines joined into blocks (transcript.ts), and the suggested answers in the right two
 //   thirds. Each pane scrolls on its own and follows its newest content while the reader is at
 //   its bottom; scrolled up, it stays put and offers "Jump to latest". A narrow window stacks
 //   the panes. Compact keeps the split, tighter.
-// - one column: the whole conversation in order, the other side on the left, the answers and
-//   the user's own words ("You said") on the right. Compact shows the answers only.
+// - one column: the whole conversation in order, the other side on the left, the answers on
+//   the right, and in History the user's own words ("You said"). Compact shows the answers only.
 // Text size steps with the A-/A+ buttons or Ctrl+plus/minus/0. Hotkey, typed question, thumbs
 // and the status badge as before.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
@@ -219,6 +220,7 @@ export default function Overlay() {
         onExpand={(id) => dispatch({ type: "deep_requested", id })}
         emptyAnswers={s.running ? "Listening. Press the hotkey to answer the last thing said." : "Start a session in the main window."}
         emptyTranscript={s.running ? "Nothing heard yet." : "No session."}
+        showMe={false}
       />
 
       <AskBox disabled={!s.running} />
@@ -270,7 +272,10 @@ export function ConversationView({
   ratings,
   emptyAnswers,
   emptyTranscript,
+  showMe,
 }: {
+  /** The user's own words: shown in History, left out live (the user knows what they said). */
+  showMe: boolean;
   s: SessionView;
   compact: boolean;
   layout: OverlayLayout;
@@ -281,9 +286,9 @@ export function ConversationView({
   emptyAnswers: string;
   emptyTranscript: string;
 }) {
-  const items = useMemo(() => conversation(s), [s]);
+  const items = useMemo(() => conversation(s).filter((i) => showMe || i.kind !== "me"), [s, showMe]);
   const answers = useMemo(() => items.filter((i) => i.kind === "question"), [items]);
-  const blocks = useMemo(() => transcriptBlocks(s), [s]);
+  const blocks = useMemo(() => transcriptBlocks(s, { showMe }), [s, showMe]);
   const answersPane = useRef<HTMLDivElement>(null);
   const scale = { "--text-scale": textScale } as CSSProperties;
 
@@ -373,7 +378,7 @@ function ScrollPane({
 /** Both sides of the call as joined blocks; a block that got a suggestion links to its card. */
 function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (id: string) => void }) {
   return (
-    <ol className="transcript">
+    <ol className="tx">
       {blocks.map((b) => (
         <li key={b.key} className={`line ${b.who}`}>
           <span className="who">{b.who === "me" ? "You" : "Them"}</span>
