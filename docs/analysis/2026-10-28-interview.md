@@ -1,6 +1,6 @@
 # Interview, 2026-10-28: a slow fast pass, a resume that lost its HubSpot lines
 
-The first real interview run through the app: session `01a182e8-aa7c-74c5-ab4c-e49039e62aa0`,
+The first real interview run through the app: session `<session id>`,
 started 14:27:28 UTC, 15.6 min (the call itself ran from 04:31 to 13:51 of it), Zoom, desktop
 app 0.1.11, against the Stage 0 GCP deployment (backend at `67567fa`, the merge of the
 [2026-10-27 fixes](2026-10-27-standup.md); later merges changed only the desktop), OpenAI routes
@@ -34,7 +34,7 @@ What went wrong:
   each question. The detector, which has a 2 s hedge to the Priority tier, was not affected.
 - **The paired resume's HubSpot and client-facing lines never reached the answers.** The resume
   has two HubSpot bullets (workflows and webhooks at the latest employer, Data Sync at the one
-  before), two on working with business teams and clients, and "15 years". Resume extraction kept
+  before), two on working with business teams and clients, and the years of experience. Resume extraction kept
   one summary sentence per role, and none of these made it into a role, project or story; the
   HubSpot skills survived only as an uncited list. So the HubSpot answer framed HubSpot as
   something the user would learn ("I'd approach it through its docs"), contradicting both the
@@ -124,7 +124,7 @@ role, 5 projects and 5 stories; whatever bullet none of those covers is gone. Go
 HubSpot bullets (proposing HubSpot CRM and Operations Hub workflows with programmable automation
 and webhooks; evaluating HubSpot Data Sync and field mappings), both bullets about working with
 business teams, product owners and client-facing colleagues on requirements and tradeoffs, and the
-summary's 15 years of experience. The HubSpot skills survived as names in an uncited skills line,
+summary's years of experience. The HubSpot skills survived as names in an uncited skills line,
 and the pack builder wrote "the digest does not establish specific HubSpot implementations" into
 the job summary, which every live prompt carries. These were the interview's two main topics.
 
@@ -187,7 +187,7 @@ connection error at 13:03 on both a held pass and a detector call (the detector 
 goodbye, 100% overlap).
 
 Speech recognition, mic channel (no keyterms were sent): HubSpot misheard 3 times as other words,
-the latest employer (DP World) once, Zoho once, "REST and SOAP" once, the user's state once, plus
+the latest employer's name once, Zoho once, "REST and SOAP" once, the user's state once, plus
 general noise in the user's speech. The "them" channel got HubSpot and the role terms right.
 
 Cost, this call:

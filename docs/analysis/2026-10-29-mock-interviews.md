@@ -9,10 +9,10 @@ company: findings are paraphrased, profiles are A, B and C, and hiring companies
 
 | Session | Profile | Started (UTC) | Length | Backend (deployed main) | Computer | Call |
 | --- | --- | --- | --- | --- | --- | --- |
-| `01a18862-228a-7d4c-969b-78c53c226c5e` | A | 15:58:15 | 53.4 min | `bee5ac9` | 1 | Technical round, .NET, AWS and React, with a recruiter |
-| `01a18897-28c9-7a4f-ba87-0b4cc019c36e` | B | 16:56:10 | 92.6 min | `bee5ac9`, then `e76182b` from 17:22, `8ba9d36` from 18:18 | 2 | Screen for a full-stack role at a medical-device startup (its first 30.5 min) |
-| `01a188b5-b9a4-7d05-93f1-4cfaf78a49f5` | A | 17:29:33 | 59.2 min | `e76182b`, then `8ba9d36` from 18:18 | 1 | Interview at a software outsourcing firm, held in Russian |
-| `01a188d1-54cf-7680-8b0f-0515710e3278` | C | 17:59:42 | 13.0 min | `e76182b` | 2 | Recruiter screen for a senior Drupal front-end role |
+| `<session id>` | A | 15:58:15 | 53.4 min | `bee5ac9` | 1 | Technical round, .NET, AWS and React, with a recruiter |
+| `<session id>` | B | 16:56:10 | 92.6 min | `bee5ac9`, then `e76182b` from 17:22, `8ba9d36` from 18:18 | 2 | Screen for a full-stack role at a medical-device startup (its first 30.5 min) |
+| `<session id>` | A | 17:29:33 | 59.2 min | `e76182b`, then `8ba9d36` from 18:18 | 1 | Interview at a software outsourcing firm, held in Russian |
+| `<session id>` | C | 17:59:42 | 13.0 min | `e76182b` | 2 | Recruiter screen for a senior Drupal front-end role |
 
 The computers are told apart by the address each session's WebSocket closed from (the proxy log).
 
