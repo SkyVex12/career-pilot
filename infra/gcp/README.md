@@ -62,7 +62,7 @@ registry, write logs and use the backups bucket.
 
 The API and the workers use Cloud Storage through its S3-compatible XML API (presigned uploads
 included), signed with an HMAC key of the `copilot-stage0-uploads` service account, which may
-only use the uploads bucket. The organization (`leadstar116-org`) enforces
+only use the uploads bucket. The organization enforces
 `iam.disableServiceAccountKeyCreation`, Google's default for new organizations, and that covers
 HMAC keys of service accounts. `stage.py secrets generate --lift-key-policy` therefore grants the
 signed-in Organization Administrator Org Policy Administrator, turns the constraint off for this

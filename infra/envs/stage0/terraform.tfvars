@@ -51,6 +51,6 @@ model_prices = {
 log_retention_days = 7
 xray_sampling_rate = 0.05
 budget_monthly_usd = 25
-budget_emails      = ["skyvex12@outlook.com"]
-github_repo        = "SkyVex12/career-pilot"
-scheduler_rate     = "rate(5 minutes)"
+# budget_emails is in allowlist.auto.tfvars (gitignored).
+github_repo    = "SkyVex12/career-pilot"
+scheduler_rate = "rate(5 minutes)"

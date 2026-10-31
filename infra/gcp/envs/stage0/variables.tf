@@ -14,7 +14,7 @@ variable "project_number" {
 
 variable "billing_account" {
   type        = string
-  description = "The billing account the budget watches, e.g. 01E781-540C4F-0EF7E4"
+  description = "The billing account the budget watches, e.g. 000000-AAAAAA-000000 (in allowlist.auto.tfvars)"
 }
 
 variable "region" {
