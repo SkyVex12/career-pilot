@@ -876,3 +876,7 @@ uv run pyright
   and both sides in the transcript, a call without consent (nothing recorded, a metadata
   summary), history, usage, and deleting a session and the account. It fails with the reason
   when the stack is down.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
