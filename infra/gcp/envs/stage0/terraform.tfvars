@@ -2,17 +2,19 @@
 #
 # Stage 0 on GCP (ARCHITECTURE.md, "Stage 0 on GCP"): one VM runs every container, Postgres,
 # Valkey and ElasticMQ on its data disk, no load balancer, no TLS, port 80 behind an IP
-# allow-list. Two lists are not in git: put them in allowlist.auto.tfvars (gitignored) as
-#   allowed_cidrs  = ["203.0.113.7/32"]
-#   allowed_emails = ["you@gmail.com"]
+# allow-list. The allow-lists, the billing account and the budget emails are not in git: put
+# them in allowlist.auto.tfvars (gitignored) as
+#   allowed_cidrs   = ["203.0.113.7/32"]
+#   allowed_emails  = ["you@gmail.com"]
+#   billing_account = "000000-AAAAAA-000000"
+#   budget_emails   = ["you@gmail.com"]
 
-name            = "copilot-stage0"
-project_id      = "career-pilot-512115"
-project_number  = "869820620165"
-billing_account = "01E781-540C4F-0EF7E4"
-region          = "us-central1" # Iowa: central to the team (US Central time), OpenAI and Deepgram
-zone            = "us-central1-a"
-copilot_env     = "staging"
+name           = "copilot-stage0"
+project_id     = "career-pilot-512115"
+project_number = "869820620165"
+region         = "us-central1" # Iowa: central to the team (US Central time), OpenAI and Deepgram
+zone           = "us-central1-a"
+copilot_env    = "staging"
 
 # 2 shared vCPUs, 2 GiB; the services measured about 1 GiB in all. x86, so the images are
 # built for linux/amd64 (and linux/arm64, for AWS). A t2a-standard-1 (ARM, 4 GiB) costs twice
@@ -64,7 +66,6 @@ backup_time_utc    = "08:30:00" # 3:30 in the morning, US Central
 backup_days        = 7
 image_keep_count   = 30 # about 10 deploys: each multi-arch tag is three versions
 budget_monthly_usd = 25
-budget_emails      = ["leadstar116@proton.me"]
 github_repo        = "SkyVex12/career-pilot"
 
 # The Career-OS backend (Cloud Run, project-045de1e9-8f62-42ef-b6d, us-east1), for linking

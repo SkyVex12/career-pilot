@@ -20,6 +20,47 @@ Terraform and GitHub Actions (see "Deploying Stage 0"; the AWS version is kept, 
 the app signs in with Google, and locally it uses the dev token. Every service logs JSON lines
 with the session id to Cloud Logging.
 
+## Who it's for
+
+- **Job seekers in live interviews:** recruiter screens and technical rounds, with answers drawn
+  from their own resume, projects and stories, tailored to the job they applied for.
+- **People in day-to-day work meetings:** standups and reviews, with answers drawn from their
+  recent work, tickets and the commitments they made in earlier calls.
+
+Stage 0 is used by a small internal team (3 to 4 people) on Windows.
+
+## Built with
+
+| Part | Technology |
+| --- | --- |
+| Desktop app | Tauri 2 (Rust), React and TypeScript; WASAPI capture, echo cancellation, Silero VAD |
+| Backend | Python 3.12, FastAPI (WebSocket gateway, REST API), queue workers |
+| Data | PostgreSQL 16 with pgvector and row-level security, Valkey, SQS (ElasticMQ locally), S3-compatible storage |
+| AI | OpenAI and Claude models for detection and answers, Deepgram Nova-3 speech recognition |
+| Infrastructure | Docker, Terraform, Google Cloud (Stage 0), GitHub Actions for CI, deploys and desktop releases |
+| Tooling | uv, pnpm, cargo; one JSON Schema generates the protocol types for Python, TypeScript and Rust |
+
+## Quick start
+
+With the [prerequisites](#prerequisites) installed:
+
+```sh
+uv sync && pnpm install                          # dependencies
+docker compose up -d --wait                      # Postgres, Valkey, queue, S3 on localhost
+uv run copilot-migrate && uv run copilot-dev-roles
+uv run copilot-api                               # then, each in its own terminal:
+uv run copilot-gateway                           #   the live-session gateway
+uv run copilot-worker                            #   background jobs
+pnpm --filter @copilot/desktop tauri dev         # the desktop app
+```
+
+Copy `.env.example` to `.env` and add your own OpenAI and Deepgram keys for live answers.
+Details are in [Local stack](#local-stack) and the sections after it.
+
+## Roadmap
+
+What is done, what comes next and the open questions are in [ROADMAP.md](ROADMAP.md).
+
 ## Layout
 
 ```
@@ -368,13 +409,16 @@ Done once, by hand, in this order.
    `infra/gcp/envs/stage0/terraform.tfvars` (`google_oauth_client_id`); keep the secret for
    step 7.
 5. **Allow-lists.** In `infra/gcp/envs/stage0/allowlist.auto.tfvars` (gitignored): the Google
-   accounts that may sign in (empty or left out: any Google account with a verified email), and
-   the addresses that may reach port 80 (or `open_to_internet = true`):
+   accounts that may sign in (empty or left out: any Google account with a verified email),
+   the addresses that may reach port 80 (or `open_to_internet = true`), the billing account
+   and who gets the budget emails:
 
    ```hcl
    allowed_emails   = ["you@gmail.com", "alex@gmail.com"]
    allowed_cidrs    = ["203.0.113.7/32", "198.51.100.20/32"]
    open_to_internet = false
+   billing_account  = "000000-AAAAAA-000000"
+   budget_emails    = ["you@gmail.com"]
    ```
 
 6. **The stage.** Review the plan before applying:
