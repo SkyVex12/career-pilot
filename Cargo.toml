@@ -6,7 +6,7 @@ members = ["apps/desktop/src-tauri", "apps/desktop/core", "packages/protocol/rus
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
