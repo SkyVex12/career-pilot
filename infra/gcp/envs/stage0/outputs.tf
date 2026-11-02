@@ -1,6 +1,11 @@
 output "external_ip" {
-  description = "The VM's static IP: the desktop app's Cloud host"
-  value       = local.host_ip
+  description = "The VM's address now (ephemeral: it changes at every start; the app asks wake_url)"
+  value       = module.host.external_ip
+}
+
+output "wake_url" {
+  description = "The wake function: GET for the VM's state and address, POST to start it"
+  value       = google_cloudfunctions2_function.wake.service_config[0].uri
 }
 
 output "api_url" {
@@ -72,6 +77,7 @@ output "desktop" {
   value = {
     api_url      = local.api_url
     gateway_url  = local.gateway_url
+    wake_url     = google_cloudfunctions2_function.wake.service_config[0].uri
     update_url   = "https://storage.googleapis.com/${google_storage_bucket.releases.name}/desktop/latest.json"
     download_url = "https://storage.googleapis.com/${google_storage_bucket.releases.name}/desktop/Copilot-setup.exe"
   }

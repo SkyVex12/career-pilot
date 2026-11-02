@@ -28,6 +28,16 @@ fn embed_release_config() {
         let ok = value.get(key).and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty());
         assert!(ok, "release config {}: `{key}` is missing or empty", path.display());
     }
+    // URLs with `{host}` (the on-demand VM's address) need the wake function that gives it.
+    let needs_wake = ["api_url", "gateway_url"]
+        .iter()
+        .any(|k| value.get(*k).and_then(|v| v.as_str()).is_some_and(|s| s.contains("{host}")));
+    let has_wake = value.get("wake_url").and_then(|v| v.as_str()).is_some_and(|s| s.starts_with("https://"));
+    assert!(
+        !needs_wake || has_wake,
+        "release config {}: `{{host}}` in the URLs needs an https `wake_url`",
+        path.display()
+    );
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("release.json");
     std::fs::write(out, text).unwrap();
 }

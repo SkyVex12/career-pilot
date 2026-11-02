@@ -16,10 +16,11 @@ region         = "us-central1" # Iowa: central to the team (US Central time), Op
 zone           = "us-central1-a"
 copilot_env    = "staging"
 
-# 2 shared vCPUs, 2 GiB; the services measured about 1 GiB in all. x86, so the images are
-# built for linux/amd64 (and linux/arm64, for AWS). A t2a-standard-1 (ARM, 4 GiB) costs twice
-# as much.
-machine_type = "e2-small"
+# 2 shared vCPUs (one full vCPU sustained), 4 GiB. The e2-small (half that) ran above its CPU
+# share in every live session (130 to 163% in October 2026); the VM now runs only while used
+# (idle_minutes), so the bigger machine costs less than the always-on small one. x86, so the
+# images are built for linux/amd64 (and linux/arm64, for AWS).
+machine_type = "e2-medium"
 boot_image   = "projects/cos-cloud/global/images/family/cos-stable"
 boot_disk_gb = 10
 data_disk_gb = 10
@@ -62,7 +63,8 @@ model_prices = {
 }
 
 scheduler_minutes  = 5
-backup_time_utc    = "08:30:00" # 3:30 in the morning, US Central
+backup_time_utc    = "08:30:00" # 3:30 in the morning, US Central (or at the next start)
+idle_minutes       = 30         # then it backs up and stops; the desktop app starts it again
 backup_days        = 7
 image_keep_count   = 30 # about 10 deploys: each multi-arch tag is three versions
 budget_monthly_usd = 25

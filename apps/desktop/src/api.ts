@@ -252,12 +252,24 @@ export function onAudioCheck(handler: (m: AudioCheckMeter) => void): Promise<Unl
   return listen<AudioCheckMeter>("copilot://audio-check", (e) => handler(e.payload));
 }
 
+/** The on-demand server (src-tauri wake): the VM stops itself when idle and starts when the
+ * app needs it, which takes a minute or two. */
+export type ServerState =
+  | { state: "starting"; detail: string | null }
+  | { state: "ready"; detail: null }
+  | { state: "failed"; detail: string };
+
+export function onServer(handler: (s: ServerState) => void): Promise<UnlistenFn> {
+  return listen<ServerState>("copilot://server", (e) => handler(e.payload));
+}
+
 export function onUpdate(handler: (u: UpdateState) => void): Promise<UnlistenFn> {
   return listen<UpdateState>("copilot://update", (e) => handler(e.payload));
 }
 
 export const api = {
   getSettings: () => invoke<SettingsView>("get_settings"),
+  wakeServer: () => invoke<void>("wake_server"),
   updateStatus: () => invoke<UpdateState>("update_status"),
   installUpdate: () => invoke<void>("install_update"),
   checkUpdates: () => invoke<void>("check_updates"),

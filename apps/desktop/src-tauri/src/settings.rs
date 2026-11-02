@@ -248,6 +248,7 @@ mod tests {
             api_url: "http://34.1.2.3/v1".into(),
             gateway_url: "ws://34.1.2.3/v1/session".into(),
             update_url: "https://storage.googleapis.com/b/desktop/latest.json".into(),
+            wake_url: None,
         };
         let oauth = r#"{"domain":"https://accounts.google.com","client_id":"c","scopes":["openid"]}"#;
         // A dev build's file, on the local stack: switched to the stage, the old sign-in dropped.
@@ -266,6 +267,26 @@ mod tests {
         .unwrap();
         s.pin_to_release(&release);
         assert!(s.oauth.is_some());
+    }
+
+    #[test]
+    fn an_on_demand_stage_keeps_its_host_placeholder_until_the_app_fills_it() {
+        let release = ReleaseConfig {
+            stage: "Stage 0".into(),
+            api_url: "http://{host}/v1".into(),
+            gateway_url: "ws://{host}/v1/session".into(),
+            update_url: "https://storage.googleapis.com/b/desktop/latest.json".into(),
+            wake_url: Some("https://wake.example.run.app".into()),
+        };
+        let oauth = r#"{"domain":"https://accounts.google.com","client_id":"c","scopes":["openid"]}"#;
+        // The same placeholder URL at every start: the sign-in settings stay, whatever the IP.
+        let mut s: Settings = serde_json::from_str(&format!(
+            r#"{{"environment":"cloud","cloud_api_url":"http://{{host}}/v1","oauth":{oauth},"profile":"ab-12"}}"#
+        ))
+        .unwrap();
+        s.pin_to_release(&release);
+        assert!(s.oauth.is_some());
+        assert_eq!(s.session_url(), "ws://{host}/v1/session?profile=ab-12");
     }
 
     #[test]

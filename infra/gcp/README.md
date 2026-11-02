@@ -11,12 +11,13 @@ bootstrap/        the Terraform state bucket (local state; once per project)
 envs/stage0/      Stage 0: main.tf wires everything, terraform.tfvars sizes it;
                   allowlist.auto.tfvars (not in git) holds the IPs and the sign-in emails
 modules/
-  host/           the VM, its static IP, firewall rules (port 80, IAP SSH), the data disk, its
+  host/           the VM (ephemeral IP), firewall rules (port 80, IAP SSH), the data disk, its
                   service account, and the boot config (cloud-init.yaml.tftpl)
   ci/             Workload Identity Federation for GitHub Actions and its three accounts:
                   ci (image pushes), deploy (start the VM, IAP + OS Login), release (the
                   desktop releases bucket)
 host/             files the VM gets at every boot: copilotctl.sh, elasticmq.conf
+wake/             the wake function: the desktop app starts the VM through it (below)
 scripts/stage.py  one command per operation (deploy, rollback, health, logs, backups,
                   allow-list, secrets, start and stop, desktop-config); it runs copilotctl on
                   the VM over IAP SSH
@@ -93,12 +94,39 @@ itself in place from its channel (stable). To move to a new image deliberately:
 terraform -chdir=infra/gcp/envs/stage0 apply -replace=module.host.google_compute_instance.vm
 ```
 
-The data disk moves to the new VM; the app is down for about five minutes. The IP stays.
+The data disk moves to the new VM; the app is down for about five minutes.
 
 ## Changing the machine type
 
 `machine_type` in `envs/stage0/terraform.tfvars`, then apply: the VM stops, changes and starts
-again (a few minutes). An e2-medium (4 GiB) doubles the VM's cost.
+again (a few minutes). The VM bills only while it runs (below), so a bigger machine costs its
+hourly price times the hours used.
+
+## Running on demand
+
+The VM runs only while someone uses it, which keeps Stage 0 at a few dollars a month:
+
+- **It stops itself.** `copilotctl idle` (the `copilot-idle.timer`, every five minutes) stops the
+  VM after `idle_minutes` (terraform.tfvars; 0 turns it off) with no live session (a WebSocket
+  on the gateway), no request through nginx and no job on the queue. The Session screen's
+  poll of `GET /v1/sessions/live` does not count, so an app left open does not keep it up. It
+  takes a backup first. `stage.py logs` shows each check's verdict (`idle check: staying up`).
+- **The desktop app starts it.** Opening the app, or any action that needs the server, calls the
+  wake function (`terraform output wake_url`; `infra/gcp/wake/main.py`): GET gives the VM's
+  state and address, POST starts it first. The app shows "Starting the server" and waits until
+  the API answers (one to two minutes). Background polls never start it.
+- **The address changes at every start.** The VM has an ephemeral IP, free while it is stopped
+  (a reserved one is billed double then). Release builds carry `http://{host}/v1` and
+  `ws://{host}/v1/session` (`terraform output desktop`, written to apps/desktop/release.json by
+  `stage.py desktop-config`), and fill in the address the wake function gives. Apps built
+  before this need an update; they update themselves from the releases bucket.
+- Deploys start a stopped VM (`stage.py deploy --start`), and the idle check then stops it
+  again. Scheduled jobs (the scheduler timer, the nightly backup) run only while the VM is up;
+  the backup timer is `Persistent`, so a missed one runs at the next start.
+
+The wake function needs no credentials (the app has none before the VM is up). It can only
+read and start this one VM, which stops again after `idle_minutes`; the budget alert catches
+anyone keeping it awake.
 
 ## The KMS key ring after a teardown
 

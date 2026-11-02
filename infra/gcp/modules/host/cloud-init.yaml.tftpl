@@ -78,6 +78,28 @@ write_files:
       [Timer]
       OnCalendar=*-*-* ${backup_time_utc} UTC
       Persistent=true
+  - path: /etc/systemd/system/copilot-idle.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot idle check: stop the VM when nobody uses it
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash /var/lib/copilot/copilotctl.sh idle
+  - path: /etc/systemd/system/copilot-idle.timer
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Copilot idle check every 5 minutes
+
+      [Timer]
+      OnCalendar=*:2/5
+      AccuracySec=10s
 
 runcmd:
   - systemctl daemon-reload

@@ -381,7 +381,7 @@ def desktop_config() -> None:
     urls = json.loads(out)
     path = ROOT / "apps/desktop/release.json"
     cfg: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    keys = ("api_url", "gateway_url", "update_url")
+    keys = ("api_url", "gateway_url", "wake_url", "update_url")
     changed = {k: urls[k] for k in keys if cfg.get(k) != urls[k]}
     if changed:
         cfg.update(changed)

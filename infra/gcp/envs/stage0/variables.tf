@@ -145,6 +145,11 @@ variable "backup_time_utc" {
   type = string
 }
 
+variable "idle_minutes" {
+  type        = number
+  description = "Stop the VM after this many minutes with no session, request or job (the desktop app starts it again through the wake function); 0: never"
+}
+
 variable "backup_days" {
   type        = number
   description = "How long the backups bucket keeps each nightly dump"

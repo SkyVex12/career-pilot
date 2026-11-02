@@ -105,6 +105,7 @@ NOTHING_PREFIXES = (
     ".github/workflows/release-desktop.yml",
     ".gitattributes",
     ".editorconfig",
+    "LICENSE",
 )
 
 
