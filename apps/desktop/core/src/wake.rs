@@ -48,8 +48,12 @@ fn http() -> reqwest::Client {
 
 /// POST: start the VM if it is stopped; its state and address.
 pub async fn wake(wake_url: &str) -> Result<Reply, String> {
-    let response =
-        http().post(wake_url).send().await.map_err(|e| format!("could not reach the wake function: {e}"))?;
+    let response = http()
+        .post(wake_url)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the wake function: {e}"))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("the wake function answered HTTP {}", status.as_u16()));
@@ -109,5 +113,19 @@ mod tests {
         assert_eq!(r, Reply { status: "RUNNING".into(), host: Some("34.1.2.3".into()) });
         let r: Reply = serde_json::from_str(r#"{"status":"TERMINATED","host":null}"#).unwrap();
         assert_eq!(r.host, None);
+    }
+}
+
+/// Against a real stage: `COPILOT_WAKE_URL=... COPILOT_API_URL='http://{host}/v1' cargo test -p
+/// copilot-client wake::live -- --ignored`. It starts the VM if it is stopped.
+#[cfg(test)]
+mod live {
+    #[tokio::test]
+    #[ignore = "needs a deployed stage"]
+    async fn starts_the_stage_and_finds_its_api() {
+        let wake_url = std::env::var("COPILOT_WAKE_URL").expect("COPILOT_WAKE_URL");
+        let api_url = std::env::var("COPILOT_API_URL").unwrap_or_else(|_| "http://{host}/v1".into());
+        let host = super::start(&wake_url, &api_url, |p| eprintln!("{p:?}")).await.unwrap();
+        assert!(super::api_ready(&super::fill(&api_url, &host)).await);
     }
 }
