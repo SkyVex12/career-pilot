@@ -3,7 +3,7 @@
 // Ctrl+Shift+D). Signing in and the Career-OS link, when the stage requires one, come first:
 // the Call screen walks through them, and the other screens wait.
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, inTauri, onOpenSettings, onSettingsChanged, onUpdate, rest, type CareerOsConnection, type LiveSession, type SettingsView, type UpdateState } from "./api";
+import { api, inTauri, onOpenSettings, onServer, onSettingsChanged, onUpdate, rest, type CareerOsConnection, type LiveSession, type ServerState, type SettingsView, type UpdateState } from "./api";
 import { bar } from "./updates";
 import { Applications } from "./Applications";
 import { CallScreen } from "./CallScreen";
@@ -139,7 +139,12 @@ export default function App() {
         profileError={profileError}
         version={view?.version ?? null}
         showDebug={showDebug}
-        banner={<UpdateBar update={update} running={session.running} />}
+        banner={
+          <>
+            <ServerBar />
+            <UpdateBar update={update} running={session.running} />
+          </>
+        }
       >
         {/* A profile switch or another account remounts every screen, so each one loads its data. */}
         <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
@@ -286,6 +291,46 @@ function useCheckNow(update: UpdateState) {
     });
   };
   return { busy, error, start };
+}
+
+/** The on-demand server: the stage's VM stops when nobody uses it, and the app starts it again
+ * (src-tauri, wake_server). While it starts, this bar says so; if it does not, it offers a retry. */
+function ServerBar() {
+  const [server, setServer] = useState<ServerState | null>(null);
+  useEffect(() => {
+    const off = onServer(setServer);
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
+  if (!server || server.state === "ready") return null;
+  const retry = () => {
+    setServer({ state: "starting", detail: null });
+    api.wakeServer().catch(() => {});
+  };
+  return (
+    <div className="update-bar" aria-live="polite">
+      {server.state === "starting" ? (
+        <Banner tone="info">
+          Starting the server; this takes a minute or two{server.detail ? ` (${server.detail})` : ""}.
+          <span className="update-track moving" role="progressbar">
+            <span className="update-fill" />
+          </span>
+        </Banner>
+      ) : (
+        <Banner
+          tone="danger"
+          action={
+            <Button size="sm" variant="primary" onClick={retry}>
+              Try again
+            </Button>
+          }
+        >
+          {server.detail}
+        </Banner>
+      )}
+    </div>
+  );
 }
 
 /** Release builds update themselves (src-tauri/src/release.rs). While an update downloads,

@@ -7,10 +7,11 @@
 locals {
   prefix   = var.name
   registry = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
-  host_ip  = module.host.external_ip
 
-  api_url     = "http://${local.host_ip}/v1"
-  gateway_url = "ws://${local.host_ip}/v1/session"
+  # The VM's address changes at every start (an ephemeral IP), so the desktop app's URLs carry
+  # {host}, which the app fills in from the wake function's answer.
+  api_url     = "http://{host}/v1"
+  gateway_url = "ws://{host}/v1/session"
 
   kms_key = google_kms_crypto_key.user_data.id
 
@@ -132,6 +133,8 @@ resource "google_project_service" "apis" {
   for_each = toset([
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
+    "cloudbuild.googleapis.com", # builds the wake function
+    "cloudfunctions.googleapis.com",
     "cloudkms.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
@@ -141,6 +144,7 @@ resource "google_project_service" "apis" {
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "oslogin.googleapis.com",
+    "run.googleapis.com", # the wake function runs on Cloud Run
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
     "sts.googleapis.com",
@@ -352,6 +356,7 @@ module "host" {
   allowed_cidrs     = var.open_to_internet ? ["0.0.0.0/0"] : var.allowed_cidrs
   scheduler_minutes = var.scheduler_minutes
   backup_time_utc   = var.backup_time_utc
+  idle_minutes      = var.idle_minutes
   metadata = {
     copilot-env             = local.copilot_env
     copilot-registry        = local.registry
@@ -361,6 +366,116 @@ module "host" {
 
     copilot-backup-bucket = google_storage_bucket.backups.name
   }
+}
+
+# --- The wake function: the desktop app starts the VM on demand ------------------------------
+# infra/gcp/wake/main.py. The VM stops itself when idle (copilotctl idle); the app calls this
+# function to start it and to learn its current address. Cloud Functions (2nd gen, on Cloud
+# Run), well inside the free tier: one call per app start.
+
+resource "google_storage_bucket" "functions" {
+  name                        = "${local.prefix}-functions-${var.project_id}"
+  location                    = upper(var.region)
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true
+  depends_on                  = [google_project_service.apis]
+}
+
+data "archive_file" "wake" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../wake"
+  output_path = "${path.module}/.terraform/wake.zip"
+  excludes    = ["__pycache__"]
+}
+
+resource "google_storage_bucket_object" "wake" {
+  name   = "wake/${data.archive_file.wake.output_md5}.zip"
+  bucket = google_storage_bucket.functions.name
+  source = data.archive_file.wake.output_path
+}
+
+# What the function may do: read and start this one VM.
+resource "google_project_iam_custom_role" "wake" {
+  role_id     = "copilotStage0Wake"
+  title       = "Copilot Stage 0 wake"
+  description = "Read the Stage 0 VM's state and start it (the wake function)"
+  permissions = ["compute.instances.get", "compute.instances.start", "compute.instances.resume"]
+}
+
+resource "google_service_account" "wake" {
+  account_id   = "${local.prefix}-wake"
+  display_name = "Copilot Stage 0 wake function"
+  depends_on   = [google_project_service.apis]
+}
+
+resource "google_compute_instance_iam_member" "wake" {
+  zone          = module.host.zone
+  instance_name = module.host.instance
+  role          = google_project_iam_custom_role.wake.id
+  member        = "serviceAccount:${google_service_account.wake.email}"
+}
+
+# Cloud Build builds the function's image as this account (not the project's default one).
+resource "google_service_account" "wake_build" {
+  account_id   = "${local.prefix}-wake-build"
+  display_name = "Copilot Stage 0 wake function build"
+  depends_on   = [google_project_service.apis]
+}
+
+resource "google_project_iam_member" "wake_build" {
+  for_each = toset(["roles/cloudbuild.builds.builder", "roles/logging.logWriter", "roles/artifactregistry.writer"])
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.wake_build.email}"
+}
+
+resource "google_storage_bucket_iam_member" "wake_build" {
+  bucket = google_storage_bucket.functions.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.wake_build.email}"
+}
+
+resource "google_cloudfunctions2_function" "wake" {
+  name     = "${local.prefix}-wake"
+  location = var.region
+
+  build_config {
+    runtime         = "python312"
+    entry_point     = "wake"
+    service_account = google_service_account.wake_build.id
+    source {
+      storage_source {
+        bucket = google_storage_bucket.functions.name
+        object = google_storage_bucket_object.wake.name
+      }
+    }
+  }
+
+  service_config {
+    min_instance_count    = 0
+    max_instance_count    = 1
+    available_memory      = "256M"
+    timeout_seconds       = 30
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = google_service_account.wake.email
+    environment_variables = {
+      COPILOT_PROJECT  = var.project_id
+      COPILOT_ZONE     = module.host.zone
+      COPILOT_INSTANCE = module.host.instance
+    }
+  }
+
+  depends_on = [google_project_iam_member.wake_build, google_storage_bucket_iam_member.wake_build]
+}
+
+# Callable without credentials (see infra/gcp/wake/main.py for why that is acceptable).
+resource "google_cloud_run_v2_service_iam_member" "wake_public" {
+  location = google_cloudfunctions2_function.wake.location
+  name     = google_cloudfunctions2_function.wake.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 # --- Budget --------------------------------------------------------------------------------------

@@ -30,6 +30,7 @@ use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, Connec
 use copilot_client::net::close::StopReason;
 use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::{AnswerStyle, Mode};
+use copilot_client::wake::{self, Progress};
 use history::History;
 use hotkeys::Action;
 use layout::MonitorLayout;
@@ -56,6 +57,10 @@ const SETTINGS_EVENT: &str = "copilot://settings";
 const OVERLAY_EVENT: &str = "copilot://overlay";
 /// The overlay asked to open the main window's Settings screen ("All settings…").
 const OPEN_SETTINGS_EVENT: &str = "copilot://open-settings";
+/// The on-demand server (wake.rs): {"state": "starting" | "ready" | "failed", "detail"}.
+const SERVER_EVENT: &str = "copilot://server";
+/// A background call while the VM is stopped: it does not start the VM by itself.
+const SERVER_ASLEEP: &str = "The server is asleep; it starts when you use the app.";
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// The Credential Manager entry older versions kept the recordings' key in.
 const OLD_RECORDING_KEY: &str = "me-audio-key";
@@ -80,6 +85,10 @@ struct AppState {
     /// (so the global-shortcut handler can tell which action fired), and a counter that lets a
     /// burst of move or resize events settle before the new frame is saved.
     overlay: OverlayState,
+    /// The stage VM's address while it is known to run (its URLs carry `{host}`; wake.rs).
+    server_host: Mutex<Option<String>>,
+    /// One start at a time; other calls wait for it.
+    server_start: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
@@ -176,15 +185,73 @@ impl AppState {
         }
     }
 
-    fn api(&self) -> Result<ApiClient, String> {
+    /// The API client. `wake`: start the stage's VM if it is not known to run (a call the user
+    /// made); otherwise a stopped VM fails the call with SERVER_ASLEEP (background polls).
+    async fn api(&self, app: &AppHandle, wake: bool) -> Result<ApiClient, String> {
         let (url, profile) = {
             let s = self.settings.lock().unwrap();
             (s.active_urls().1.to_string(), s.profile.clone())
         };
+        let url = self.fill_url(app, &url, wake).await?;
         Ok(ApiClient::new(&url, self.tokens()?)
             .map_err(|e| e.to_string())?
             .with_client(self.client.clone())
             .with_profile(profile))
+    }
+
+    /// `url` with the VM's address in place of `{host}` (wake.rs); unchanged if it has none.
+    async fn fill_url(&self, app: &AppHandle, url: &str, wake: bool) -> Res<String> {
+        if !wake::needs_host(url) {
+            return Ok(url.to_string());
+        }
+        Ok(wake::fill(url, &self.server_host(app, wake).await?))
+    }
+
+    /// The VM's address: the known one, or (with `wake`) a start through the wake function,
+    /// waiting until the API answers. The UI hears each step as SERVER_EVENT.
+    async fn server_host(&self, app: &AppHandle, wake: bool) -> Res<String> {
+        if let Some(host) = self.server_host.lock().unwrap().clone() {
+            return Ok(host);
+        }
+        if !wake {
+            return Err(SERVER_ASLEEP.into());
+        }
+        let _one = self.server_start.lock().await;
+        if let Some(host) = self.server_host.lock().unwrap().clone() {
+            return Ok(host);
+        }
+        let wake_url = release::config()
+            .and_then(|r| r.wake_url.clone())
+            .ok_or("the server URL needs a host, but this build has no wake URL")?;
+        let api_url = self.settings.lock().unwrap().cloud_api_url.trim().to_string();
+        let _ = app.emit(SERVER_EVENT, serde_json::json!({ "state": "starting", "detail": null }));
+        let progress = {
+            let app = app.clone();
+            move |p: Progress| {
+                let detail = match p {
+                    Progress::Vm(status) => format!("the server is {}", status.to_lowercase()),
+                    Progress::Services => "the services are starting".to_string(),
+                };
+                let _ = app.emit(SERVER_EVENT, serde_json::json!({ "state": "starting", "detail": detail }));
+            }
+        };
+        match wake::start(&wake_url, &api_url, progress).await {
+            Ok(host) => {
+                tracing::info!("server up at {host}");
+                *self.server_host.lock().unwrap() = Some(host.clone());
+                let _ = app.emit(SERVER_EVENT, serde_json::json!({ "state": "ready", "detail": null }));
+                Ok(host)
+            }
+            Err(e) => {
+                let _ = app.emit(SERVER_EVENT, serde_json::json!({ "state": "failed", "detail": e }));
+                Err(e)
+            }
+        }
+    }
+
+    /// The VM did not answer: it may have stopped (idle), so the next call asks again.
+    fn forget_server(&self) {
+        *self.server_host.lock().unwrap() = None;
     }
 }
 
@@ -193,6 +260,9 @@ impl AppState {
 fn api_error(app: &AppHandle, e: ApiError) -> String {
     if let ApiError::Outdated { min_version, .. } = &e {
         outdated(app, &format!("the API needs {min_version} or newer"));
+    }
+    if let ApiError::Network(_) = &e {
+        app.state::<AppState>().forget_server();
     }
     e.to_string()
 }
@@ -443,7 +513,10 @@ async fn api_call(
     path: String,
     body: Option<Value>,
 ) -> Res<Value> {
-    state.api()?.call(&method, &path, body.as_ref()).await.map_err(|e| api_error(&app, e))
+    // The Session screen polls the live calls every ten seconds; that alone does not keep or
+    // start the VM (copilotctl idle ignores it too).
+    let wake = !(method == "GET" && path == "/sessions/live");
+    state.api(&app, wake).await?.call(&method, &path, body.as_ref()).await.map_err(|e| api_error(&app, e))
 }
 
 /// A resume or job description from the UI: the file's bytes as the raw body, its kind and
@@ -471,7 +544,8 @@ async fn upload_document(app: AppHandle, state: State<'_, AppState>, request: Re
         None => serde_json::Map::new(),
     };
     state
-        .api()?
+        .api(&app, true)
+        .await?
         .upload_document_for(&kind, &file_name, bytes.clone(), &target)
         .await
         .map_err(|e| api_error(&app, e))
@@ -494,7 +568,12 @@ async fn upload_company_file(app: AppHandle, state: State<'_, AppState>, request
         return Err(format!("cannot upload to {path}"));
     }
     let file_name = header("x-file-name")?;
-    state.api()?.upload_raw(&path, &file_name, bytes.clone()).await.map_err(|e| api_error(&app, e))
+    state
+        .api(&app, true)
+        .await?
+        .upload_raw(&path, &file_name, bytes.clone())
+        .await
+        .map_err(|e| api_error(&app, e))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -515,6 +594,14 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Start the stage's VM now if it is stopped (the "Try again" on the server note); Ok at once
+/// when it is known to run or the stage has no on-demand VM.
+#[tauri::command]
+async fn wake_server(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
+    let api_url = state.settings.lock().unwrap().active_urls().1.to_string();
+    state.fill_url(&app, &api_url, true).await.map(|_| ())
+}
+
 /// The cloud environment's browser sign-in: the stage's sign-in settings from
 /// `GET /v1/auth/config`, then OAuth with PKCE in the default browser. Returns the email.
 #[tauri::command]
@@ -523,6 +610,7 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
     if api_url.is_empty() {
         return Err("Set the cloud API URL and save first.".into());
     }
+    let api_url = state.fill_url(&app, &api_url, true).await?;
     let cfg = oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()).map_err(|e| e.to_string())?;
     state.update_settings(|s| s.oauth = Some(cfg));
     let provider = state.oauth().ok_or("no sign-in settings")?;
@@ -565,7 +653,7 @@ async fn set_profile(state: State<'_, AppState>, profile: Option<String>) -> Res
 /// the Cognito user); the dev token stays (it is the local gateway's).
 #[tauri::command]
 async fn delete_account(app: AppHandle, state: State<'_, AppState>) -> Res<Value> {
-    let result = state.api()?.delete("/me").await.map_err(|e| api_error(&app, e))?;
+    let result = state.api(&app, true).await?.delete("/me").await.map_err(|e| api_error(&app, e))?;
     state.update_settings(|s| s.last_session_id = None);
     if state.settings.lock().unwrap().environment == Environment::Cloud
         && let Some(p) = state.oauth()
@@ -655,6 +743,7 @@ async fn open_session(app: AppHandle, state: State<'_, AppState>, request: OpenR
 /// app's current profile (None: "Me").
 #[tauri::command]
 async fn end_live_session(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: Uuid,
     profile: Option<String>,
@@ -674,6 +763,7 @@ async fn end_live_session(
         s.profile = profile;
         s.session_url()
     };
+    let url = state.fill_url(&app, &url, true).await?;
     let tokens = state.tokens()?;
     let code = client::end_session(&url, tokens.as_ref(), session_id).await?;
     state.update_settings(|s| {
@@ -697,7 +787,7 @@ async fn launch(
     if settings.environment == Environment::Cloud {
         // A stage that requires a Career-OS link refuses the session anyway; say why first.
         // The check is best effort: when it cannot be made, the gateway decides.
-        if let Ok(conn) = state.api()?.get("/career-os/connection").await
+        if let Ok(conn) = state.api(&app, true).await?.get("/career-os/connection").await
             && conn["required"] == Value::Bool(true)
             && conn["connected"] != Value::Bool(true)
         {
@@ -717,8 +807,9 @@ async fn launch(
         them_vad: vad()?,
         me_vad: vad()?,
     };
+    let session_url = state.fill_url(&app, &settings.session_url(), true).await?;
     let mut config = ClientConfig::new(
-        settings.session_url(),
+        session_url,
         StartParams {
             mode: request.mode,
             job_id: request.job_id,
@@ -785,11 +876,12 @@ async fn end_session(state: State<'_, AppState>, summarize: Option<bool>) -> Res
 
 /// The 4409 offer: end the session this app last had live, so a new one can start.
 #[tauri::command]
-async fn end_other_session(state: State<'_, AppState>) -> Res<String> {
+async fn end_other_session(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
     let (url, sid) = {
         let s = state.settings.lock().unwrap();
         (s.session_url(), s.last_session_id)
     };
+    let url = state.fill_url(&app, &url, true).await?;
     let Some(sid) = sid else {
         return Err("The other session was not started from this app. Close it there, or wait two \
                     minutes after it lost its connection."
@@ -1307,14 +1399,16 @@ pub fn run() {
                 activity: Mutex::new(Activity::default()),
                 gate: Gate::default(),
                 overlay: OverlayState::default(),
+                server_host: Mutex::new(None),
+                server_start: tokio::sync::Mutex::new(()),
             });
             #[cfg(feature = "release")]
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
             register_hotkeys(app.handle());
-            // GET /me first (it woke Aurora when Stage 0 was to scale it to zero; now it checks
-            // the sign-in).
+            // Opening the app starts the stage's VM (it stops itself when idle; wake.rs), then
+            // GET /me checks the sign-in.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // A release build learns its stage's sign-in settings at once, so a sign-in kept
@@ -1322,7 +1416,11 @@ pub fn run() {
                 if needs_auth_config {
                     let state = handle.state::<AppState>();
                     let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
-                    match oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()) {
+                    let fetched = match state.fill_url(&handle, &api_url, true).await {
+                        Ok(api_url) => oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()),
+                        Err(e) => Err(copilot_client::auth::AuthError::NotSignedIn(e)),
+                    };
+                    match fetched {
                         Ok(cfg) => {
                             state.update_settings(|s| s.oauth = Some(cfg));
                             // The settings screen may have loaded before this answered.
@@ -1331,7 +1429,7 @@ pub fn run() {
                         Err(e) => tracing::info!("sign-in settings not fetched at startup: {e}"),
                     }
                 }
-                if let Ok(api) = handle.state::<AppState>().api()
+                if let Ok(api) = handle.state::<AppState>().api(&handle, true).await
                     && let Err(e) = api.get("/me").await
                 {
                     tracing::info!("GET /me at startup: {}", api_error(&handle, e));
@@ -1369,6 +1467,7 @@ pub fn run() {
             list_devices,
             audio_check,
             api_call,
+            wake_server,
             upload_document,
             upload_company_file,
             delete_account,

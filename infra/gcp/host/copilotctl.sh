@@ -12,6 +12,7 @@
 #   copilotctl restart [name...]     restart services (picks up new config and secrets)
 #   copilotctl scheduler             one copilot-scheduler --once tick (the 5-minute timer)
 #   copilotctl backup                pg_dump to the backups bucket (the nightly timer)
+#   copilotctl idle                  stop the VM if nobody used it lately (the 5-minute timer)
 #   copilotctl restore <object>      restore a dump from the backups bucket (app stopped meanwhile)
 #   copilotctl run <name>            the units' ExecStart (not for people)
 #
@@ -190,7 +191,7 @@ boot() {
   docker-credential-gcr configure-docker --registries="$(registry | cut -d/ -f1)" >/dev/null
   systemctl daemon-reload
   systemctl start copilot-postgres copilot-valkey copilot-elasticmq
-  systemctl start copilot-scheduler.timer copilot-backup.timer
+  systemctl start copilot-scheduler.timer copilot-backup.timer copilot-idle.timer
   if [ "$(tag)" != none ]; then
     systemctl start "${APP_SERVICES[@]/#/copilot-}"
   else
@@ -291,6 +292,46 @@ status() {
   free -m | sed -n 2,3p
 }
 
+# --- Idle stop -------------------------------------------------------------------------------
+
+# The VM runs only while someone uses it: the desktop app starts it through the wake function
+# (infra/gcp/wake), and this check (copilot-idle.timer, every five minutes) stops it after
+# `copilot-idle-minutes` (metadata; 0 or unset: never) with no live session, no API request
+# and no queued job. The app's background poll of GET /v1/sessions/live does not count, so an
+# app left open does not keep the VM running. A stopped VM bills only its disks.
+idle_reason() {
+  local minutes=$1 up requests sessions queued
+  up=$(cut -d. -f1 /proc/uptime)
+  [ "$up" -ge $((minutes * 60)) ] || { echo "booted $((up / 60)) min ago"; return; }
+  pgrep -f "copilotctl.sh (deploy|rollback|restore|backup)" >/dev/null && { echo "a deploy, restore or backup is running"; return; }
+  # Live sessions: the gateway's WebSocket connections (nginx holds one per session). If this
+  # cannot be told, the VM stays up: stopping mid-call is worse than an hour's cost.
+  sessions=$(ss -Htn state established '( sport = :8081 )' | wc -l) || sessions=unknown
+  [ "$sessions" = 0 ] || { echo "live session connections: $sessions"; return; }
+  # Requests through nginx (its JSON access log), except the app's live-session poll.
+  requests=$(docker logs --since "${minutes}m" copilot-proxy 2>/dev/null |
+    grep '"service":"proxy"' | grep -cv -e '"path":"/v1/sessions/live"' -e '"path":"/healthz"' || true)
+  [ "${requests:-0}" -eq 0 ] || { echo "$requests request(s) in the last $minutes min"; return; }
+  # Jobs waiting or running on the workers (ElasticMQ's queue).
+  queued=$(curl -sf -m 5 "http://127.0.0.1:9324/000000000000/jobs?Action=GetQueueAttributes&AttributeName.1=ApproximateNumberOfMessages&AttributeName.2=ApproximateNumberOfMessagesNotVisible&AttributeName.3=ApproximateNumberOfMessagesDelayed" |
+    grep -o '<Value>[0-9]*</Value>' | grep -o '[0-9][0-9]*' | awk '{s+=$1} END {print s+0}') || queued=unknown
+  [ "$queued" = 0 ] || { echo "queue: $queued job(s)"; return; }
+}
+
+idle() {
+  local minutes reason
+  minutes=$(attr copilot-idle-minutes 2>/dev/null || echo 0)
+  [[ $minutes =~ ^[0-9]+$ ]] && [ "$minutes" -gt 0 ] || return 0
+  reason=$(idle_reason "$minutes")
+  if [ -n "$reason" ]; then
+    log "idle check: staying up ($reason)"
+    return 0
+  fi
+  log "idle for $minutes min: backing up, then stopping the VM"
+  if [ "$(tag)" != none ]; then backup || log "backup failed; stopping anyway (the last dump is in the bucket)"; fi
+  systemctl poweroff
+}
+
 # --- Backups ---------------------------------------------------------------------------------
 
 backup() {
@@ -341,6 +382,7 @@ case ${1:-} in
     [ "$(tag)" = none ] && { log "no deploy yet; skipping the tick"; exit 0; }
     docker_run scheduler wait ;;
   backup) backup ;;
+  idle) idle ;;
   restore) restore "${2:-}" ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  *) sed -n '2,21p' "$0"; exit 2 ;;
 esac

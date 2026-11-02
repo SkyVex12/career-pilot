@@ -1,7 +1,8 @@
 # The Stage 0 VM: one Container-Optimized OS instance running every container (gateway, API,
 # worker, nginx proxy, Postgres with pgvector, Valkey, ElasticMQ) under systemd, with the data
-# on its own persistent disk, a static external IP, port 80 open only to the allow-list and
-# SSH only through IAP. See infra/gcp/README.md.
+# on its own persistent disk, an ephemeral external IP (new at every start: the desktop app
+# asks the wake function for it), port 80 open only to the allow-list and SSH only through IAP.
+# It runs only while used: the idle check stops it. See infra/gcp/README.md.
 
 variable "name" {
   type = string
@@ -57,6 +58,11 @@ variable "scheduler_minutes" {
   type = number
 }
 
+variable "idle_minutes" {
+  type        = number
+  description = "Stop the VM after this many minutes unused (copilotctl idle); 0: never"
+}
+
 variable "backup_time_utc" {
   type        = string
   description = "HH:MM:SS, UTC"
@@ -91,13 +97,6 @@ resource "google_project_iam_member" "logs" {
 }
 
 # --- Network edge --------------------------------------------------------------------------------
-
-resource "google_compute_address" "ip" {
-  name         = "${var.name}-ip"
-  region       = var.region
-  address_type = "EXTERNAL"
-  network_tier = "PREMIUM"
-}
 
 # Port 80 from the allow-list only (Stage 0 has no TLS), or from anywhere when the stage sets
 # open_to_internet. `infra/gcp/scripts/stage.py allow` changes the list in one command, so
@@ -171,8 +170,8 @@ resource "google_compute_instance" "vm" {
 
   network_interface {
     subnetwork = var.subnetwork
+    # Ephemeral: free while the VM is stopped (a reserved address is billed double then).
     access_config {
-      nat_ip       = google_compute_address.ip.address
       network_tier = "PREMIUM"
     }
   }
@@ -189,6 +188,7 @@ resource "google_compute_instance" "vm" {
   }
 
   metadata = merge(var.metadata, {
+    copilot-idle-minutes         = tostring(var.idle_minutes)
     enable-oslogin               = "TRUE"
     block-project-ssh-keys       = "TRUE"
     google-logging-enabled       = "true"
@@ -216,7 +216,12 @@ output "service_account" {
 }
 
 output "external_ip" {
-  value = google_compute_address.ip.address
+  description = "The current ephemeral address (changes at every start)"
+  value       = google_compute_instance.vm.network_interface[0].access_config[0].nat_ip
+}
+
+output "self_link" {
+  value = google_compute_instance.vm.self_link
 }
 
 output "instance" {
