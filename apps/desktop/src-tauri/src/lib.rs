@@ -1317,6 +1317,13 @@ pub fn run() {
     #[cfg(feature = "release")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
+        // Closing the main window quits the app. Otherwise the hidden overlay window kept the
+        // process alive with no window to show, and a second launch had nothing to bring forward.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
