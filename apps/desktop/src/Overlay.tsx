@@ -190,6 +190,7 @@ export default function Overlay() {
           }}
         />
         <OverlayMenu opacity={opacity} onOpacity={setOpacityLive} onTop={onTop} onToggleOnTop={setOnTop} clickThrough={clickThrough} hotkeys={hotkeys} running={s.running} />
+        <IconButton label="Minimize overlay" icon="–" size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
         <IconButton label="Hide overlay" icon="✕" size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
       </header>
       {clickThrough && (

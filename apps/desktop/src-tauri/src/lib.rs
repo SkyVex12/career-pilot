@@ -1015,7 +1015,32 @@ fn install_update(app: AppHandle) -> Res<()> {
 #[tauri::command]
 fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     let w = app.get_webview_window("overlay").ok_or("no overlay window")?;
-    if show { w.show() } else { w.hide() }.map_err(|e| e.to_string())
+    if show {
+        bring_back_overlay(&w);
+        Ok(())
+    } else {
+        w.hide().map_err(|e| e.to_string())
+    }
+}
+
+/// The overlay's minimize button. The overlay has no taskbar button, so it gets one while it is
+/// minimized; otherwise there would be nothing to click to bring it back. Restoring it removes
+/// that button again (the overlay's window events, in run).
+#[tauri::command]
+fn minimize_overlay(app: AppHandle) -> Res<()> {
+    let w = overlay_window(&app).ok_or("no overlay window")?;
+    let _ = w.set_skip_taskbar(false);
+    w.minimize().map_err(|e| e.to_string())
+}
+
+/// Show the overlay, restoring it if it was minimized, and focus it.
+fn bring_back_overlay(w: &WebviewWindow) {
+    let _ = w.show();
+    if matches!(w.is_minimized(), Ok(true)) {
+        let _ = w.unminimize();
+    }
+    let _ = w.set_skip_taskbar(true);
+    let _ = w.set_focus();
 }
 
 /// Register every bound hotkey from settings and remember which action each fired key drives,
@@ -1145,11 +1170,11 @@ fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
 
 fn toggle_overlay(app: &AppHandle) {
     let Some(w) = overlay_window(app) else { return };
-    if matches!(w.is_visible(), Ok(true)) {
+    // A minimized overlay counts as visible, but the hotkey should bring it back, not hide it.
+    if matches!(w.is_visible(), Ok(true)) && !matches!(w.is_minimized(), Ok(true)) {
         let _ = w.hide();
     } else {
-        let _ = w.show();
-        let _ = w.set_focus();
+        bring_back_overlay(&w);
     }
 }
 
@@ -1159,7 +1184,7 @@ fn toggle_overlay(app: &AppHandle) {
 fn apply_click_through(app: &AppHandle, on: bool) {
     let Some(w) = overlay_window(app) else { return };
     if on {
-        let _ = w.show();
+        bring_back_overlay(&w);
     }
     let _ = w.set_ignore_cursor_events(on);
     app.state::<AppState>().overlay.click_through.store(on, Ordering::SeqCst);
@@ -1199,6 +1224,10 @@ fn schedule_remember(app: &AppHandle) {
 /// saved opacity and view are applied so each screen keeps its own feel.
 fn remember_geometry(app: &AppHandle) {
     let Some(w) = overlay_window(app) else { return };
+    // Minimized, Windows parks the window off screen: not a place to remember.
+    if matches!(w.is_minimized(), Ok(true)) {
+        return;
+    }
     let Some((x, y, fw, fh)) = overlay_frame(&w) else { return };
     let monitors = monitor_infos(&w);
     let Some(idx) = layout::monitor_for_window(&monitors, x, y, fw, fh) else { return };
@@ -1461,6 +1490,13 @@ pub fn run() {
                 if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
                     schedule_remember(&handle);
                 }
+                // Restored from its taskbar button after a minimize: drop that button again.
+                if matches!(event, WindowEvent::Resized(_) | WindowEvent::Focused(true))
+                    && let Some(w) = overlay_window(&handle)
+                    && matches!(w.is_minimized(), Ok(false))
+                {
+                    let _ = w.set_skip_taskbar(true);
+                }
             });
             // Reopen where it was last left, recovering onto a monitor that still exists.
             place_overlay(app.handle());
@@ -1495,6 +1531,7 @@ pub fn run() {
             snapshot,
             live_status,
             show_overlay,
+            minimize_overlay,
             overlay_prefs,
             set_overlay_opacity,
             set_overlay_view,

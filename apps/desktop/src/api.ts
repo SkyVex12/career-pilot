@@ -348,6 +348,8 @@ export const api = {
   setOverlayOnTop: (on: boolean) => invoke<void>("set_overlay_on_top", { on }),
   /** Bring the main window forward on its Settings screen ("All settings…"). */
   openMainSettings: () => invoke<void>("open_main_settings"),
+  /** Minimize the overlay (it gets a taskbar button until it is restored). */
+  minimizeOverlay: () => invoke<void>("minimize_overlay"),
   /** Quit the whole app. */
   quitApp: () => invoke<void>("quit_app"),
 };
