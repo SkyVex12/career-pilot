@@ -415,7 +415,8 @@ fn save_settings(
     } else if settings.display_name != kept.display_name {
         stealth::set_main_title(&app, &settings.display_name);
     }
-    if settings.display_name != kept.display_name {
+    // A failed file write still stores the name. The next save tries the file again.
+    if settings.display_name != kept.display_name || program_name::differs(&settings.display_name) {
         program_name::install(&settings.display_name)?;
     }
     Ok(())
@@ -1032,12 +1033,13 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     if show {
         bring_back_overlay(&w);
         // The overlay is created hidden. Set exclusion again once it is on screen, in case the
-        // call at startup did not stick, and cover any window opened since the last apply.
+        // call at startup did not stick, and give it the same name as the main window.
         let (on, name) = {
             let state = app.state::<AppState>();
             let settings = state.settings.lock().unwrap();
             (settings.stealth, settings.display_name.clone())
         };
+        stealth::set_main_title(&app, &name);
         if on {
             stealth::apply(&app, true, &name);
         }

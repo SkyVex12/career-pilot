@@ -93,7 +93,10 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
         if label == "overlay" {
             // A hidden transparent overlay paints an opaque white rectangle if its title,
             // taskbar tab, or capture affinity changes. Leave it alone until it is shown.
+            // Once it is on screen, its title has to match the main window or Task Manager
+            // keeps a row under the old name.
             if window.is_visible().unwrap_or(false) {
+                let _ = window.set_title(display_name);
                 set_window(&label, &window, affinity);
                 restore_overlay_transparency(&window);
             }
@@ -104,10 +107,18 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
     }
 }
 
-/// The main window caption. Used when Stealth stays off, so a new name still shows on the window.
+/// Every visible window's caption. The hidden overlay is left alone so it does not paint white.
+/// Task Manager lists each visible window under the program name, so a window left as "Copilot"
+/// stays on screen as its own row.
 pub fn set_main_title(app: &AppHandle, display_name: &str) {
-    if let Some(window) = app.get_webview_window("main") {
+    for (label, window) in app.webview_windows() {
+        if label == "overlay" && !window.is_visible().unwrap_or(false) {
+            continue;
+        }
         let _ = window.set_title(display_name);
+        if label == "overlay" {
+            restore_overlay_transparency(&window);
+        }
     }
 }
 
