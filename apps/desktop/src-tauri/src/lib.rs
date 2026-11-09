@@ -9,6 +9,7 @@
 mod history;
 mod hotkeys;
 mod layout;
+mod program_name;
 mod release;
 mod settings;
 mod stealth;
@@ -407,9 +408,15 @@ fn save_settings(
     // The hotkeys may have been rebound: register the new set.
     register_hotkeys(&app);
     // Apply when it is on, or when it was just turned off so capture works again.
-    // Leaving it off does not call the API.
+    // Leaving it off does not call the capture API. A new name still updates the window title,
+    // and is written into the program file so Task Manager shows it after the next start.
     if settings.stealth || kept.stealth {
         stealth::apply(&app, settings.stealth, &settings.display_name);
+    } else if settings.display_name != kept.display_name {
+        stealth::set_main_title(&app, &settings.display_name);
+    }
+    if settings.display_name != kept.display_name {
+        program_name::install(&settings.display_name)?;
     }
     Ok(())
 }
@@ -1523,13 +1530,24 @@ pub fn run() {
             // Reopen where it was last left, recovering onto a monitor that still exists.
             place_overlay(app.handle());
             // Both windows exist now. A saved stealth choice excludes them from capture.
+            // The overlay stays hidden here, so applying stealth does not paint it.
+            program_name::cleanup_previous();
             let (on, name) = {
                 let state = app.state::<AppState>();
                 let settings = state.settings.lock().unwrap();
                 (settings.stealth, settings.display_name.clone())
             };
+            let name = stealth::normalize_display_name(&name)
+                .unwrap_or_else(|_| stealth::DEFAULT_DISPLAY_NAME.to_string());
             if on {
                 stealth::apply(app.handle(), true, &name);
+            } else {
+                stealth::set_main_title(app.handle(), &name);
+            }
+            // Task Manager reads the program file, not the window title. Write the saved name
+            // now; it shows up the next time this program starts.
+            if let Err(e) = program_name::install(&name) {
+                tracing::warn!("task manager name: {e}");
             }
             #[cfg(feature = "release")]
             release::updater::start(app.handle());
