@@ -111,7 +111,7 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
       setNameError(null);
       return;
     }
-    save({ display_name: next }, "Saved. Restart the app for Task Manager to show this name.").catch((e) => setNameError(String(e)));
+    save({ display_name: next }, "Saved. Quit and start the app again for Task Manager to show this name.").catch((e) => setNameError(String(e)));
   };
   return (
     <>
@@ -140,7 +140,7 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
           <Field
             label="Task Manager name"
             error={nameError}
-            hint="A plain name for this app, such as Copilot. Task Manager shows it after you restart. The installed program stays Copilot Desktop, which is set when the app is built."
+            hint="A plain name for this app, such as Copilot. Quit and start the app again, and Task Manager shows this name. The program file stays copilot-desktop.exe."
           >
             <Input
               value={displayName}

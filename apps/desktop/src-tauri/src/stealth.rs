@@ -6,10 +6,14 @@
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
 //!
-//! While it is on, the main window also leaves the taskbar. It stays open and usable. The window
-//! title becomes the configured display name, which is what Task Manager shows for that window
-//! after a restart. The executable file name and the version-resource description (`productName`,
-//! "Copilot Desktop") are written when the app is built and change only when a new build is installed.
+//! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
+//! window title is the configured display name. Task Manager's process name is the executable's
+//! description, which `program_name` writes when that name is saved; it shows up after the next
+//! start. The executable file name stays `copilot-desktop.exe`.
+//!
+//! The overlay is created hidden and transparent. Changing its title, taskbar tab, or capture
+//! affinity while it is hidden makes Windows paint an opaque white rectangle where the overlay
+//! sits, so those calls wait until the overlay is actually on screen.
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -18,11 +22,7 @@ const WDA_NONE: u32 = 0x0000_0000;
 /// `WDA_EXCLUDEFROMCAPTURE`: the window stays on the monitor and is left out of capture.
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
 
-/// The main window title in tauri.conf.json, restored when Stealth is off.
-const MAIN_TITLE: &str = "Copilot";
-/// The overlay builder title, restored when Stealth is off.
-const OVERLAY_TITLE: &str = "Copilot overlay";
-/// Shown in Task Manager for the window. Neutral, and the app's own name.
+/// Shown in Task Manager for this app. Neutral, and the app's own name.
 pub const DEFAULT_DISPLAY_NAME: &str = "Copilot";
 const MAX_DISPLAY_NAME: usize = 64;
 
@@ -89,45 +89,49 @@ pub(crate) fn affinity(exclude: bool) -> u32 {
 /// not stop the others, and a failure does not hide or close anything.
 pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
     let affinity = affinity(on);
-    let name = if on { display_name } else { DEFAULT_DISPLAY_NAME };
     for (label, window) in app.webview_windows() {
+        if label == "overlay" {
+            // A hidden transparent overlay paints an opaque white rectangle if its title,
+            // taskbar tab, or capture affinity changes. Leave it alone until it is shown.
+            if window.is_visible().unwrap_or(false) {
+                set_window(&label, &window, affinity);
+                restore_overlay_transparency(&window);
+            }
+            continue;
+        }
         set_window(&label, &window, affinity);
-        present(&label, &window, on, name);
+        present(&label, &window, on, display_name);
     }
 }
 
-/// The taskbar button and the title Task Manager reads. The window stays open either way.
+/// The main window caption. Used when Stealth stays off, so a new name still shows on the window.
+pub fn set_main_title(app: &AppHandle, display_name: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title(display_name);
+    }
+}
+
+/// The taskbar button and the main window title. The window stays open either way.
+/// The overlay is not handled here: touching it while it is hidden paints a white rectangle.
 fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
-    match label {
-        "main" => {
-            if on {
-                if matches!(window.is_minimized(), Ok(true)) {
-                    let _ = window.unminimize();
-                }
-                // No taskbar button, and no minimize: a minimized window with no button is stuck.
-                let _ = window.set_minimizable(false);
-                let _ = window.set_skip_taskbar(true);
-                let _ = window.set_title(display_name);
-            } else {
-                let _ = window.set_minimizable(true);
-                let _ = window.set_skip_taskbar(false);
-                let _ = window.set_title(MAIN_TITLE);
-            }
+    if label != "main" {
+        if on {
+            let _ = window.set_skip_taskbar(true);
+            let _ = window.set_title(display_name);
         }
-        "overlay" => {
-            let _ = window.set_title(if on { display_name } else { OVERLAY_TITLE });
-            // The overlay is normally off the taskbar. While Stealth is on it stays off even if
-            // it was minimized onto a temporary button.
-            if on || matches!(window.is_minimized(), Ok(false)) {
-                let _ = window.set_skip_taskbar(true);
-            }
+        return;
+    }
+    let _ = window.set_title(display_name);
+    if on {
+        if matches!(window.is_minimized(), Ok(true)) {
+            let _ = window.unminimize();
         }
-        _ => {
-            if on {
-                let _ = window.set_skip_taskbar(true);
-                let _ = window.set_title(display_name);
-            }
-        }
+        // No taskbar button, and no minimize: a minimized window with no button is stuck.
+        let _ = window.set_minimizable(false);
+        let _ = window.set_skip_taskbar(true);
+    } else {
+        let _ = window.set_minimizable(true);
+        let _ = window.set_skip_taskbar(false);
     }
 }
 
@@ -152,10 +156,58 @@ fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
     }
 }
 
+/// Capture affinity clears the blur region tao used to make the overlay transparent. Put that
+/// empty region back so a visible overlay does not turn into a solid white panel.
+#[cfg(windows)]
+fn restore_overlay_transparency(window: &WebviewWindow) {
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let region = CreateRectRgn(0, 0, -1, -1);
+        if region.is_null() {
+            return;
+        }
+        let blur =
+            DwmBlurBehind { flags: DWM_BB_ENABLE | DWM_BB_BLURREGION, enable: 1, region, transition: 0 };
+        let _ = DwmEnableBlurBehindWindow(hwnd.0, &blur);
+        let _ = DeleteObject(region);
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_overlay_transparency(_window: &WebviewWindow) {}
+
+/// `DWM_BLURBEHIND`. Field order matches the Windows struct, including pointer alignment.
+#[cfg(windows)]
+#[repr(C)]
+struct DwmBlurBehind {
+    flags: u32,
+    enable: i32,
+    region: *mut std::ffi::c_void,
+    transition: i32,
+}
+
+#[cfg(windows)]
+const DWM_BB_ENABLE: u32 = 0x1;
+#[cfg(windows)]
+const DWM_BB_BLURREGION: u32 = 0x2;
+
 #[cfg(windows)]
 #[link(name = "user32")]
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn CreateRectRgn(left: i32, top: i32, right: i32, bottom: i32) -> *mut std::ffi::c_void;
+    fn DeleteObject(object: *mut std::ffi::c_void) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "dwmapi")]
+unsafe extern "system" {
+    fn DwmEnableBlurBehindWindow(hwnd: *mut std::ffi::c_void, blur: *const DwmBlurBehind) -> i32;
 }
 
 // `GetLastError` lives in kernel32, not user32. Call it before any other Windows call.
