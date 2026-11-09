@@ -1,12 +1,38 @@
 //! The name Task Manager shows for this process.
 //!
-//! On Windows 11 that name is the executable's `FileDescription`, not the window title. The
-//! title is applied immediately; the description is stored in the program file and is read the
-//! next time the program starts. The file name stays `copilot-desktop.exe`. A signed file is
-//! left alone, because rewriting it would break the signature. Names of Windows components are
-//! rejected earlier, in `stealth::normalize_display_name`.
+//! Windows 11 lists the program file's description as the group, and the window title as the
+//! row under it. Both are set to the configured name. The description is stored in the program
+//! file, so the group shows it the next time the program starts. The file name stays
+//! `copilot-desktop.exe`. A signed file is left alone, because rewriting it would break the
+//! signature. Names of Windows components are rejected earlier, in `stealth::normalize_display_name`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// The name written into the program file during this process. Version-info reads are cached
+/// for a path, so a second save in the same process must not decide the write failed.
+static APPLIED: Mutex<Option<String>> = Mutex::new(None);
+
+/// True when the program file's description is not `name` yet. A failed write leaves this true,
+/// so saving the same name again tries the file once more.
+pub fn differs(name: &str) -> bool {
+    if applied_is(name) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let Ok(running) = std::env::current_exe() else { return false };
+        match description_is(&launch_path(&running), name) {
+            Ok(same) => !same,
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        false
+    }
+}
 
 /// Write `name` into this program's version resource so the next start shows it in Task Manager.
 /// Does nothing when the file already has that description.
@@ -40,9 +66,13 @@ fn install_windows(name: &str) -> Result<(), String> {
     if name.is_empty() || name.chars().count() > 64 {
         return Err("Enter a short name for this app, such as Copilot.".into());
     }
+    if applied_is(name) {
+        return Ok(());
+    }
     let running = std::env::current_exe().map_err(|e| format!("Task Manager could not be updated: {e}"))?;
     let target = launch_path(&running);
     if description_is(&target, name)? {
+        mark_applied(name);
         return Ok(());
     }
     if security_directory_size(&target)? > 0 {
@@ -57,31 +87,146 @@ fn install_windows(name: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(&staging);
         return Err(e);
     }
-    if same_path(&target, &running) {
-        let previous = previous_path(&target);
-        let _ = std::fs::remove_file(&previous);
-        if let Err(e) = std::fs::rename(&target, &previous) {
+    // `MoveFile` on the running program returns access denied. A POSIX rename still moves the
+    // directory entry, and the mapped image keeps running. If that also fails, a helper swaps
+    // the file after this process exits, which is what the next start will launch.
+    if let Err(e) = swap_into_place(&staging, &target) {
+        if schedule_swap(&staging, &target).is_err() {
             let _ = std::fs::remove_file(&staging);
-            return Err(format!("Task Manager could not be updated: {e}"));
+            return Err(e);
         }
-        if let Err(e) = std::fs::rename(&staging, &target) {
-            let _ = std::fs::rename(&previous, &target);
-            return Err(format!("Task Manager could not be updated: {e}"));
-        }
-    } else if let Err(e) = replace_idle(&staging, &target) {
-        let _ = std::fs::remove_file(&staging);
-        return Err(e);
+        tracing::warn!("program file will be replaced after exit: {e}");
     }
+    mark_applied(name);
     tracing::info!("program description is now \"{name}\"; Task Manager shows it after the next start");
     Ok(())
 }
 
 #[cfg(windows)]
-fn replace_idle(staging: &Path, target: &Path) -> Result<(), String> {
-    if target.exists() {
-        std::fs::remove_file(target).map_err(|e| format!("Task Manager could not be updated: {e}"))?;
+fn swap_into_place(staging: &Path, target: &Path) -> Result<(), String> {
+    make_writable(target);
+    let previous = previous_path(target);
+    make_writable(&previous);
+    let _ = std::fs::remove_file(&previous);
+    rename_replacing(target, &previous)?;
+    if let Err(e) = rename_replacing(staging, target) {
+        let _ = rename_replacing(&previous, target);
+        return Err(e);
     }
-    std::fs::rename(staging, target).map_err(|e| format!("Task Manager could not be updated: {e}"))
+    Ok(())
+}
+
+/// Rename `from` onto `to` in the same directory. The destination may be the running image.
+#[cfg(windows)]
+fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
+    match posix_rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::rename(from, to).map_err(|e| format!("Task Manager could not be updated: {e}")),
+    }
+}
+
+#[cfg(windows)]
+fn posix_rename(from: &Path, to: &Path) -> Result<(), String> {
+    // RootDirectory is null, so the new name has to be a full path. A bare file name is read as
+    // empty and the POSIX rename deletes the file instead of moving it.
+    let wide = wide_path(to);
+    if wide.len() > 1024 {
+        return Err("Task Manager could not be updated.".into());
+    }
+    let name_bytes = u32::try_from((wide.len() - 1) * 2).unwrap_or(0);
+    // 64-bit: flags, pad, root, length, then the wide path. 32-bit has no pad before the root.
+    let header = if cfg!(target_pointer_width = "64") { 20 } else { 12 };
+    let mut info = vec![0u8; header + wide.len() * 2];
+    let flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+    info[0..4].copy_from_slice(&flags.to_le_bytes());
+    let len_at = header - 4;
+    info[len_at..len_at + 4].copy_from_slice(&name_bytes.to_le_bytes());
+    for (index, unit) in wide.iter().enumerate() {
+        let at = header + index * 2;
+        info[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+    let from_wide = wide_path(from);
+    let handle = unsafe {
+        CreateFileW(
+            from_wide.as_ptr(),
+            DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!("Task Manager could not be updated ({}).", last_error()));
+    }
+    let size = u32::try_from(info.len()).unwrap_or(0);
+    let ok = unsafe { SetFileInformationByHandle(handle, FILE_RENAME_INFO_EX, info.as_ptr(), size) };
+    let err = last_error();
+    unsafe { CloseHandle(handle) };
+    if ok == 0 {
+        return Err(format!("Task Manager could not be updated ({err})."));
+    }
+    if !to.exists() {
+        return Err("Task Manager could not be updated (the program file was not renamed).".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn schedule_swap(staging: &Path, target: &Path) -> Result<(), String> {
+    let previous = previous_path(target);
+    let prev_name = previous.file_name().unwrap_or_default();
+    let pid = std::process::id();
+    let script = std::env::temp_dir().join(format!("copilot-name-swap-{pid}.ps1"));
+    let body = format!(
+        "$ErrorActionPreference = 'SilentlyContinue'\n\
+         Wait-Process -Id {pid}\n\
+         Start-Sleep -Milliseconds 600\n\
+         Remove-Item -LiteralPath {prev} -Force\n\
+         Rename-Item -LiteralPath {target} -NewName {prev_name}\n\
+         Move-Item -LiteralPath {staging} -Destination {target} -Force\n\
+         Remove-Item -LiteralPath {prev} -Force\n\
+         Remove-Item -LiteralPath {script} -Force\n",
+        prev = ps_quote(&previous),
+        target = ps_quote(target),
+        prev_name = ps_quote(Path::new(prev_name)),
+        staging = ps_quote(staging),
+        script = ps_quote(&script),
+    );
+    std::fs::write(&script, body).map_err(|e| format!("Task Manager could not be updated: {e}"))?;
+    spawn_hidden_powershell(&script)
+}
+
+#[cfg(windows)]
+fn spawn_hidden_powershell(script: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED: u32 = 0x0000_0008;
+    const BREAKAWAY: u32 = 0x0100_0000;
+    let mut cmd = std::process::Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File"]).arg(script);
+    cmd.creation_flags(NO_WINDOW | DETACHED | BREAKAWAY);
+    if cmd.spawn().is_err() {
+        cmd.creation_flags(NO_WINDOW | DETACHED);
+        cmd.spawn().map_err(|e| format!("Task Manager could not be updated: {e}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn ps_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn make_writable(path: &Path) {
+    const READONLY: u32 = 0x1;
+    let wide = wide_path(path);
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    if attrs != INVALID_FILE_ATTRIBUTES && attrs & READONLY != 0 {
+        unsafe { SetFileAttributesW(wide.as_ptr(), attrs & !READONLY) };
+    }
 }
 
 #[cfg(windows)]
@@ -170,9 +315,14 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
-#[cfg(windows)]
-fn same_path(a: &Path, b: &Path) -> bool {
-    a == b || a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+fn applied_is(name: &str) -> bool {
+    APPLIED.lock().ok().is_some_and(|applied| applied.as_deref() == Some(name))
+}
+
+fn mark_applied(name: &str) {
+    if let Ok(mut applied) = APPLIED.lock() {
+        *applied = Some(name.to_string());
+    }
 }
 
 #[cfg(windows)]
@@ -515,6 +665,29 @@ fn last_error() -> u32 {
 }
 
 #[cfg(windows)]
+const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
+#[cfg(windows)]
+const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
+#[cfg(windows)]
+const FILE_RENAME_INFO_EX: i32 = 22;
+#[cfg(windows)]
+const DELETE: u32 = 0x0001_0000;
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x1;
+#[cfg(windows)]
+const FILE_SHARE_WRITE: u32 = 0x2;
+#[cfg(windows)]
+const FILE_SHARE_DELETE: u32 = 0x4;
+#[cfg(windows)]
+const OPEN_EXISTING: u32 = 3;
+#[cfg(windows)]
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+#[cfg(windows)]
+const INVALID_HANDLE_VALUE: *mut std::ffi::c_void = -1isize as *mut std::ffi::c_void;
+#[cfg(windows)]
+const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
+
+#[cfg(windows)]
 const RT_VERSION: u16 = 16;
 #[cfg(windows)]
 const LOAD_LIBRARY_AS_DATAFILE: u32 = 0x2;
@@ -525,6 +698,20 @@ const LOAD_LIBRARY_AS_IMAGE_RESOURCE: u32 = 0x20;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetLastError() -> u32;
+    fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *mut std::ffi::c_void,
+        disposition: u32,
+        flags: u32,
+        template: *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn SetFileInformationByHandle(file: *mut std::ffi::c_void, class: i32, info: *const u8, size: u32)
+    -> i32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    fn GetFileAttributesW(name: *const u16) -> u32;
+    fn SetFileAttributesW(name: *const u16, attrs: u32) -> i32;
     fn LoadLibraryExW(name: *const u16, file: *mut std::ffi::c_void, flags: u32) -> *mut std::ffi::c_void;
     fn FreeLibrary(module: *mut std::ffi::c_void) -> i32;
     fn EnumResourceLanguagesW(
@@ -661,5 +848,19 @@ mod tests {
         let dir = exe.parent()?.parent()?;
         let candidate = dir.join("copilot-desktop.exe");
         candidate.is_file().then_some(candidate)
+    }
+
+    #[test]
+    fn a_running_programs_stand_in_can_be_renamed_with_posix_semantics() {
+        let dir = std::env::temp_dir().join(format!("copilot-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let from = dir.join("copilot-desktop.exe");
+        let to = dir.join("copilot-desktop.exe.previous");
+        std::fs::write(&from, b"not a real program").expect("write");
+        super::posix_rename(&from, &to).expect("posix rename");
+        assert!(!from.exists());
+        assert_eq!(std::fs::read(&to).expect("read"), b"not a real program");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
