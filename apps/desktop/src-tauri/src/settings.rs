@@ -307,8 +307,7 @@ mod tests {
         assert!(s.overlay_monitor.is_none());
 
         // The per-monitor layout and the chosen monitor survive a save/load round-trip.
-        let mut s = Settings::default();
-        s.stealth = true;
+        let mut s = Settings { stealth: true, ..Settings::default() };
         s.layouts.insert(
             "DISPLAY1".into(),
             MonitorLayout { x: 40, y: 50, w: 480, h: 640, opacity: 0.7, compact: true },
