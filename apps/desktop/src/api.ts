@@ -78,6 +78,8 @@ export interface Settings {
   overlay_on_top: boolean;
   /** Leave every app window out of screen capture while it stays visible here. */
   stealth: boolean;
+  /** Window title Task Manager shows while Stealth is on. The built program name stays Copilot Desktop. */
+  display_name: string;
   show_debug: boolean;
   last_session_id: string | null;
   /** The profile the app acts for (set with `api.setProfile`); null is the account ("Me"). */

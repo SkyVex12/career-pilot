@@ -102,6 +102,17 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
   const [theme, setTheme] = useTheme();
   const updates = view.updates;
   const line = settingsLine(update);
+  const [displayName, setDisplayName] = useState(view.settings.display_name);
+  const [nameError, setNameError] = useState<string | null>(null);
+  useEffect(() => setDisplayName(view.settings.display_name), [view.settings.display_name]);
+  const commitName = () => {
+    const next = displayName.trim();
+    if (next === view.settings.display_name) {
+      setNameError(null);
+      return;
+    }
+    save({ display_name: next }, "Saved. Restart the app for Task Manager to show this name.").catch((e) => setNameError(String(e)));
+  };
   return (
     <>
       <Card title="Appearance">
@@ -119,12 +130,33 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
         </Field>
       </Card>
       <Card title="Stealth">
-        <Switch
-          label="Stealth mode"
-          hint="Hides this app from screen sharing, screenshots, and recordings. The windows stay visible and usable on your screen. Supported Windows capture leaves them out, with no black rectangle. Capture tools that ignore this setting can still show the app."
-          checked={view.settings.stealth}
-          onChange={(on) => save({ stealth: on }).catch(() => undefined)}
-        />
+        <div className="ui-stack">
+          <Switch
+            label="Stealth mode"
+            hint="Hides this app from screen sharing, screenshots, and recordings, and takes its button off the taskbar. The windows stay open and usable. Supported Windows capture leaves them out, with no black rectangle. Capture tools that ignore this setting can still show the app."
+            checked={view.settings.stealth}
+            onChange={(on) => save({ stealth: on }).catch(() => undefined)}
+          />
+          <Field
+            label="Task Manager name"
+            error={nameError}
+            hint="A plain name for this app, such as Copilot. Task Manager shows it after you restart. The installed program stays Copilot Desktop, which is set when the app is built."
+          >
+            <Input
+              value={displayName}
+              spellCheck={false}
+              maxLength={64}
+              onChange={(e) => {
+                setDisplayName(e.target.value);
+                setNameError(null);
+              }}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+          </Field>
+        </div>
       </Card>
       <Card title="Updates">
         <div className="ui-stack">

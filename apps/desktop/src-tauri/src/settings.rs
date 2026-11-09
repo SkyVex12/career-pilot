@@ -68,6 +68,9 @@ pub struct Settings {
     /// Leave every app window out of screen capture while it stays visible on the monitor
     /// (stealth.rs). Off until turned on in Settings.
     pub stealth: bool,
+    /// The window title Task Manager shows while Stealth is on. The executable name and the
+    /// version-resource description stay the built product name and change with an install.
+    pub display_name: String,
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
@@ -104,6 +107,7 @@ impl Default for Settings {
             overlay_monitor: None,
             overlay_on_top: true,
             stealth: false,
+            display_name: crate::stealth::DEFAULT_DISPLAY_NAME.into(),
             show_debug: false,
             last_session_id: None,
             profile: None,
@@ -223,6 +227,7 @@ mod tests {
         // A file without the field takes the default: ask before installing, stealth off.
         assert_eq!(s.update_mode, UpdateMode::Ask);
         assert!(!s.stealth);
+        assert_eq!(s.display_name, crate::stealth::DEFAULT_DISPLAY_NAME);
         assert!(s.last_version.is_none() && s.pending_update.is_none());
         let cloud = Settings {
             environment: Environment::Cloud,
@@ -307,7 +312,7 @@ mod tests {
         assert!(s.overlay_monitor.is_none());
 
         // The per-monitor layout and the chosen monitor survive a save/load round-trip.
-        let mut s = Settings { stealth: true, ..Settings::default() };
+        let mut s = Settings { stealth: true, display_name: "Copilot Desktop".into(), ..Settings::default() };
         s.layouts.insert(
             "DISPLAY1".into(),
             MonitorLayout { x: 40, y: 50, w: 480, h: 640, opacity: 0.7, compact: true },
