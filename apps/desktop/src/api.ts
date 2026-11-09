@@ -76,6 +76,8 @@ export interface Settings {
   overlay_monitor: string | null;
   /** The overlay stays above other windows ("Keep on top"). */
   overlay_on_top: boolean;
+  /** Leave every app window out of screen capture while it stays visible here. */
+  stealth: boolean;
   show_debug: boolean;
   last_session_id: string | null;
   /** The profile the app acts for (set with `api.setProfile`); null is the account ("Me"). */

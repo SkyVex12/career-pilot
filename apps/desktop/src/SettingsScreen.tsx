@@ -118,6 +118,14 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
           />
         </Field>
       </Card>
+      <Card title="Stealth">
+        <Switch
+          label="Stealth mode"
+          hint="Hides this app from screen sharing, screenshots, and recordings. The windows stay visible and usable on your screen. Supported Windows capture leaves them out, with no black rectangle. Capture tools that ignore this setting can still show the app."
+          checked={view.settings.stealth}
+          onChange={(on) => save({ stealth: on }).catch(() => undefined)}
+        />
+      </Card>
       <Card title="Updates">
         <div className="ui-stack">
           <div className="ui-row-inline">

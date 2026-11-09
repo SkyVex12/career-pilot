@@ -6,6 +6,7 @@
 //! current session so a window opened or reloaded mid-call (the overlay) rebuilds the whole
 //! conversation with `snapshot` (see `history`).
 
+mod stealth;
 mod history;
 mod hotkeys;
 mod layout;
@@ -404,6 +405,11 @@ fn save_settings(
     release::updater::refresh_ready(&app);
     // The hotkeys may have been rebound: register the new set.
     register_hotkeys(&app);
+    // Apply when it is on, or when it was just turned off so capture works again.
+    // Leaving it off does not call the API.
+    if settings.stealth || kept.stealth {
+        stealth::apply(&app, settings.stealth);
+    }
     Ok(())
 }
 
@@ -1017,6 +1023,11 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     let w = app.get_webview_window("overlay").ok_or("no overlay window")?;
     if show {
         bring_back_overlay(&w);
+        // The overlay is created hidden. Set exclusion again once it is on screen, in case the
+        // call at startup did not stick, and cover any window opened since the last apply.
+        if app.state::<AppState>().settings.lock().unwrap().stealth {
+            stealth::apply(&app, true);
+        }
         Ok(())
     } else {
         w.hide().map_err(|e| e.to_string())
@@ -1500,6 +1511,10 @@ pub fn run() {
             });
             // Reopen where it was last left, recovering onto a monitor that still exists.
             place_overlay(app.handle());
+            // Both windows exist now. A saved stealth choice excludes them from capture.
+            if app.state::<AppState>().settings.lock().unwrap().stealth {
+                stealth::apply(app.handle(), true);
+            }
             #[cfg(feature = "release")]
             release::updater::start(app.handle());
             Ok(())
