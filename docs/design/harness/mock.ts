@@ -136,6 +136,7 @@ function settingsView(): SettingsView {
       overlay_monitor: null,
       overlay_on_top: true,
       stealth: false,
+      display_name: "Copilot",
       show_debug: false,
       last_session_id: null,
       profile: null,

@@ -5,6 +5,11 @@
 //! That flag omits the window. `WDA_MONITOR` (0x1) is never used: it paints a black rectangle
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
+//!
+//! While it is on, the main window also leaves the taskbar. It stays open and usable. The window
+//! title becomes the configured display name, which is what Task Manager shows for that window
+//! after a restart. The executable file name and the version-resource description (`productName`,
+//! "Copilot Desktop") are written when the app is built and change only when a new build is installed.
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -13,17 +18,116 @@ const WDA_NONE: u32 = 0x0000_0000;
 /// `WDA_EXCLUDEFROMCAPTURE`: the window stays on the monitor and is left out of capture.
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
 
+/// The main window title in tauri.conf.json, restored when Stealth is off.
+const MAIN_TITLE: &str = "Copilot";
+/// The overlay builder title, restored when Stealth is off.
+const OVERLAY_TITLE: &str = "Copilot overlay";
+/// Shown in Task Manager for the window. Neutral, and the app's own name.
+pub const DEFAULT_DISPLAY_NAME: &str = "Copilot";
+const MAX_DISPLAY_NAME: usize = 64;
+
+/// Windows' own process and Task Manager names. A display name must not use one of these.
+const RESERVED: &[&str] = &[
+    "applicationframehost",
+    "conhost",
+    "csrss",
+    "ctfmon",
+    "desktop window manager",
+    "dllhost",
+    "dwm",
+    "explorer",
+    "fontdrvhost",
+    "lsass",
+    "msmpeng",
+    "registry",
+    "runtimebroker",
+    "searchhost",
+    "securityhealthservice",
+    "service host",
+    "services",
+    "shellexperiencehost",
+    "sihost",
+    "smss",
+    "startmenuexperiencehost",
+    "svchost",
+    "system",
+    "system idle process",
+    "systemsettings",
+    "taskhostw",
+    "windows explorer",
+    "windows installer",
+    "wininit",
+    "winlogon",
+];
+
+/// The Task Manager window name: this app's own short name, never a Windows component.
+pub fn normalize_display_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME {
+        return Err("Enter a short name for this app, such as Copilot.".into());
+    }
+    if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+    {
+        return Err("The name cannot contain a path or control character.".into());
+    }
+    let key = name.to_ascii_lowercase();
+    let key = key.strip_suffix(".exe").unwrap_or(&key).trim().trim_end_matches('.');
+    if RESERVED.contains(&key) {
+        return Err("That name belongs to Windows. Use a plain name for this app, such as Copilot.".into());
+    }
+    Ok(name.to_string())
+}
+
 /// The affinity to pass to `SetWindowDisplayAffinity`. Exclusion is `0x11`, never `WDA_MONITOR`.
 pub(crate) fn affinity(exclude: bool) -> u32 {
     if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }
 }
 
-/// Apply the current choice to every window the app has open. One window failing does not
-/// stop the others, and a failure does not hide or resize anything.
-pub fn apply(app: &AppHandle, exclude: bool) {
-    let affinity = affinity(exclude);
+/// Apply capture exclusion, the taskbar button, and the window title. One window failing does
+/// not stop the others, and a failure does not hide or close anything.
+pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
+    let affinity = affinity(on);
+    let name = if on { display_name } else { DEFAULT_DISPLAY_NAME };
     for (label, window) in app.webview_windows() {
         set_window(&label, &window, affinity);
+        present(&label, &window, on, name);
+    }
+}
+
+/// The taskbar button and the title Task Manager reads. The window stays open either way.
+fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
+    match label {
+        "main" => {
+            if on {
+                if matches!(window.is_minimized(), Ok(true)) {
+                    let _ = window.unminimize();
+                }
+                // No taskbar button, and no minimize: a minimized window with no button is stuck.
+                let _ = window.set_minimizable(false);
+                let _ = window.set_skip_taskbar(true);
+                let _ = window.set_title(display_name);
+            } else {
+                let _ = window.set_minimizable(true);
+                let _ = window.set_skip_taskbar(false);
+                let _ = window.set_title(MAIN_TITLE);
+            }
+        }
+        "overlay" => {
+            let _ = window.set_title(if on { display_name } else { OVERLAY_TITLE });
+            // The overlay is normally off the taskbar. While Stealth is on it stays off even if
+            // it was minimized onto a temporary button.
+            if on || matches!(window.is_minimized(), Ok(false)) {
+                let _ = window.set_skip_taskbar(true);
+            }
+        }
+        _ => {
+            if on {
+                let _ = window.set_skip_taskbar(true);
+                let _ = window.set_title(display_name);
+            }
+        }
     }
 }
 
@@ -80,5 +184,14 @@ mod tests {
         assert_eq!(affinity(true), 0x11);
         assert_eq!(affinity(false), 0);
         assert_ne!(affinity(true), 1);
+    }
+
+    #[test]
+    fn the_display_name_is_this_app_and_not_a_windows_component() {
+        assert_eq!(super::normalize_display_name("  Copilot  ").unwrap(), "Copilot");
+        assert_eq!(super::normalize_display_name("Copilot Desktop").unwrap(), "Copilot Desktop");
+        assert!(super::normalize_display_name("  ").is_err());
+        assert!(super::normalize_display_name("svchost.exe").is_err());
+        assert!(super::normalize_display_name("Windows Explorer").is_err());
     }
 }
