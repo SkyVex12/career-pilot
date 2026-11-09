@@ -135,6 +135,7 @@ function settingsView(): SettingsView {
       layouts: {},
       overlay_monitor: null,
       overlay_on_top: true,
+      stealth: false,
       show_debug: false,
       last_session_id: null,
       profile: null,

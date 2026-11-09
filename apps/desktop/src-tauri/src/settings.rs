@@ -65,6 +65,9 @@ pub struct Settings {
     pub overlay_monitor: Option<String>,
     /// The overlay stays above other windows (the overlay's "Keep on top" toggle).
     pub overlay_on_top: bool,
+    /// Leave every app window out of screen capture while it stays visible on the monitor
+    /// (stealth.rs). Off until turned on in Settings.
+    pub stealth: bool,
     pub show_debug: bool,
     /// The session this app last had live, so a 4409 can offer to end it.
     pub last_session_id: Option<Uuid>,
@@ -100,6 +103,7 @@ impl Default for Settings {
             layouts: BTreeMap::new(),
             overlay_monitor: None,
             overlay_on_top: true,
+            stealth: false,
             show_debug: false,
             last_session_id: None,
             profile: None,
@@ -216,8 +220,9 @@ mod tests {
         assert_eq!(s.active_urls(), ("ws://10.0.0.5:8081/v1/session", "http://10.0.0.5:8080/v1"));
         assert_eq!(s.session_url(), "ws://10.0.0.5:8081/v1/session");
         assert_eq!(s.hotkey, "F9");
-        // A file without the field takes the default: ask before installing.
+        // A file without the field takes the default: ask before installing, stealth off.
         assert_eq!(s.update_mode, UpdateMode::Ask);
+        assert!(!s.stealth);
         assert!(s.last_version.is_none() && s.pending_update.is_none());
         let cloud = Settings {
             environment: Environment::Cloud,
@@ -303,6 +308,7 @@ mod tests {
 
         // The per-monitor layout and the chosen monitor survive a save/load round-trip.
         let mut s = Settings::default();
+        s.stealth = true;
         s.layouts.insert(
             "DISPLAY1".into(),
             MonitorLayout { x: 40, y: 50, w: 480, h: 640, opacity: 0.7, compact: true },
