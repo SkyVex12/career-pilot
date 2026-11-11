@@ -12,13 +12,21 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 from copilot_core.auth import (
+    COPILOT_ISSUER,
     GOOGLE_JWKS_URL,
     AuthError,
+    ByIssuer,
     CognitoVerifier,
+    CopilotVerifier,
     GoogleVerifier,
     JwksCache,
+    TokenSigner,
+    email_public_keys,
     google_user_id,
+    key_id,
     make_verifier,
+    new_signing_key,
+    public_key_of,
 )
 from copilot_core.config import CoreSettings
 
@@ -251,3 +259,141 @@ def test_make_verifier_for_google_takes_an_optional_allow_list() -> None:
     v = make_verifier(s)
     assert isinstance(v, GoogleVerifier)
     assert v.allowed == {"a@x.io", "b@y.io"}
+
+
+# --- Email sign-in: the API's own access tokens ---------------------------------------------
+
+
+def own_tokens(allowed: list[str] | None = None) -> tuple[TokenSigner, CopilotVerifier]:
+    signing_key, public_key = new_signing_key()
+    return TokenSigner(signing_key, ttl_s=3600), CopilotVerifier([public_key], allowed or [])
+
+
+async def test_own_token_carries_the_user_id() -> None:
+    signer, v = own_tokens()
+    uid = uuid.uuid4()
+    p = await v.verify(signer.sign(uid, "sam@example.com", "Sam"))
+    assert (p.user_id, p.email, p.display_name) == (uid, "sam@example.com", "Sam")
+    assert (p.provider, p.subject, p.new_identity) == ("email", "sam@example.com", False)
+    assert p.expires_at is not None
+    assert 3500 < p.expires_at - time.time() <= 3600
+
+
+async def test_own_token_rejects() -> None:
+    signer, v = own_tokens()
+    uid = uuid.uuid4()
+    with pytest.raises(AuthError, match="token expired"):
+        await v.verify(signer.sign(uid, "sam@example.com", "Sam", now=time.time() - 7200))
+    # Signed by another deployment's key: same kid check first, then the signature.
+    other, _ = own_tokens()
+    with pytest.raises(AuthError, match="unknown signing key"):
+        await v.verify(other.sign(uid, "sam@example.com", "Sam"))
+    forged = jwt.encode(
+        {"iss": COPILOT_ISSUER, "aud": "copilot", "sub": str(uid), "email": "sam@example.com",
+         "token_use": "access", "iat": int(time.time()), "exp": int(time.time()) + 60},
+        other.key, algorithm="EdDSA", headers={"kid": signer.kid},
+    )  # fmt: skip
+    with pytest.raises(AuthError, match="invalid token"):
+        await v.verify(forged)
+    hs = jwt.encode({"iss": COPILOT_ISSUER, "sub": str(uid)}, "x" * 32, algorithm="HS256")
+    with pytest.raises(AuthError, match="algorithm"):
+        await v.verify(hs)
+    with pytest.raises(AuthError, match="malformed"):
+        await v.verify("not-a-jwt")
+    for claim, value, message in (
+        ("token_use", "refresh", "not an access token"),
+        ("sub", "not-a-uuid", "sub is not a user id"),
+        ("aud", "another-app", "invalid token"),
+        ("iss", "someone-else", "invalid token"),
+        ("email", "", "no email"),
+    ):
+        base = {"iss": COPILOT_ISSUER, "aud": "copilot", "sub": str(uid),
+                "email": "sam@example.com", "token_use": "access",
+                "iat": int(time.time()), "exp": int(time.time()) + 60}  # fmt: skip
+        bad = jwt.encode({**base, claim: value}, signer.key, "EdDSA", headers={"kid": signer.kid})
+        with pytest.raises(AuthError, match=message):
+            await v.verify(bad)
+
+
+async def test_own_token_checks_the_allow_list_on_every_use() -> None:
+    signer, v = own_tokens(allowed=["sam@example.com"])
+    uid = uuid.uuid4()
+    assert (await v.verify(signer.sign(uid, "sam@example.com", "Sam"))).user_id == uid
+    with pytest.raises(AuthError, match="allow-list"):
+        await v.verify(signer.sign(uid, "mallory@example.com", "M"))
+
+
+def test_key_helpers() -> None:
+    signing_key, public_key = new_signing_key()
+    assert public_key_of(signing_key) == public_key
+    assert len(key_id(public_key)) == 16
+    assert new_signing_key()[0] != signing_key
+    with pytest.raises(RuntimeError, match="32 bytes"):
+        public_key_of("c2hvcnQ")
+    with pytest.raises(RuntimeError, match="PUBLIC_KEYS"):
+        CopilotVerifier([], [])
+
+
+async def test_tokens_are_told_apart_by_issuer() -> None:
+    key = KeyPair("g1")
+    signer, own = own_tokens()
+    both = ByIssuer({COPILOT_ISSUER: own}, google_verifier(key))
+    uid = uuid.uuid4()
+    assert (await both.verify(signer.sign(uid, "sam@example.com", "Sam"))).user_id == uid
+    g = await both.verify(key.sign(google_claims()))
+    assert g.user_id == google_user_id("109876543210987654321")
+    assert g.provider == "google"
+    # A Google-signed token that claims to be ours goes to our verifier, which refuses it.
+    with pytest.raises(AuthError):
+        await both.verify(key.sign(google_claims(iss=COPILOT_ISSUER)))
+    with pytest.raises(AuthError):
+        await both.verify("garbage")
+
+
+class FakeIdentities:
+    def __init__(self, known: dict[tuple[str, str], uuid.UUID]) -> None:
+        self.known = known
+
+    async def user_of(self, provider: str, subject: str) -> uuid.UUID | None:
+        return self.known.get((provider, subject))
+
+
+async def test_google_sign_in_resolves_through_identities() -> None:
+    key = KeyPair("g1")
+    sub = "109876543210987654321"
+
+    async def fetch(url: str) -> Mapping[str, Any]:
+        return {"keys": [key.jwk()]}
+
+    def verifier_with(known: dict[tuple[str, str], uuid.UUID]) -> GoogleVerifier:
+        return GoogleVerifier(
+            [GOOGLE_CLIENT], [], JwksCache(GOOGLE_JWKS_URL, fetch=fetch),
+            identities=FakeIdentities(known),
+        )  # fmt: skip
+
+    # Nothing recorded: the id Google sign-ins always had, and the API is told to record it.
+    p = await verifier_with({}).verify(key.sign(google_claims()))
+    assert (p.user_id, p.new_identity, p.subject) == (google_user_id(sub), True, sub)
+    # Recorded for the account an email sign-in made: that account.
+    email_account = uuid.uuid4()
+    p = await verifier_with({("google", sub): email_account}).verify(key.sign(google_claims()))
+    assert (p.user_id, p.new_identity) == (email_account, False)
+
+
+def test_make_verifier_adds_the_api_tokens_when_email_sign_in_is_on() -> None:
+    signing_key, public_key = new_signing_key()
+    base = {"env": "staging", "auth": "google", "google_client_ids": GOOGLE_CLIENT,
+            "email_sign_in": True}  # fmt: skip
+    with pytest.raises(RuntimeError, match="PUBLIC_KEYS"):
+        make_verifier(CoreSettings(_env_file=None, **base))  # pyright: ignore[reportCallIssue]
+    # The gateway: the public key only.
+    v = make_verifier(CoreSettings(_env_file=None, **base, email_public_keys=public_key))  # pyright: ignore[reportCallIssue]
+    assert isinstance(v, ByIssuer)
+    assert isinstance(v.default, GoogleVerifier)
+    assert set(v.issuers) == {COPILOT_ISSUER}
+    # The API (and the local stack): the signing key's own public key.
+    s = CoreSettings(_env_file=None, **base, email_signing_key=signing_key)  # pyright: ignore[reportCallIssue]
+    assert email_public_keys(s) == [public_key]
+    # Off: exactly what it was.
+    off = make_verifier(CoreSettings(_env_file=None, **{**base, "email_sign_in": False}))  # pyright: ignore[reportCallIssue]
+    assert isinstance(off, GoogleVerifier)

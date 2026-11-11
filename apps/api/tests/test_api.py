@@ -463,8 +463,11 @@ async def test_request_lines_name_the_session_and_user(api: Api, caplog) -> None
 
 
 async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
-    # No token needed: the desktop app asks before it has one.
-    saved = api.svc.settings
+    # No token needed: the desktop app asks before it has one. Without email sign-in the
+    # answers are exactly what installed apps have always been given (test_email_auth.py has
+    # the answer with it).
+    saved, saved_email = api.svc.settings, api.svc.email
+    api.svc.email = None
     try:
         api.svc.settings = saved.model_copy(update={
             "auth": "cognito", "cognito_client_ids": ["client123"],
@@ -494,4 +497,4 @@ async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
         api.svc.settings = saved.model_copy(update={"auth": "dev"})
         assert (await api.client.get("/v1/auth/config")).json() == {"provider": "dev"}
     finally:
-        api.svc.settings = saved
+        api.svc.settings, api.svc.email = saved, saved_email

@@ -74,7 +74,8 @@ class CoreSettings(BaseSettings):
     env: Literal["dev", "test", "staging", "prod"] = "prod"
 
     # Auth (ARCHITECTURE.md, "Connection and auth" and "REST API").
-    # cognito on AWS; google on GCP (Google ID tokens, for allow-listed emails only).
+    # cognito on AWS; google on GCP (Google ID tokens). `email_sign_in` below adds sign-in with
+    # an emailed code to any of them.
     auth: Literal["dev", "cognito", "google"] = "cognito"
     dev_token: SecretStr | None = None
     dev_user_id: str = "0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b"
@@ -91,7 +92,17 @@ class CoreSettings(BaseSettings):
     # lives in Secret Manager and reaches the app through GET /v1/auth/config.
     google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
     google_client_secret: SecretStr | None = None
+    # The allow-list covers every sign-in, Google and email alike; empty lets any address in.
     google_allowed_emails: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
+    # Email sign-in (ARCHITECTURE.md, "Email sign-in"): a one-time code by email, then access
+    # tokens the API signs itself (Ed25519, `iss` "copilot"). It adds to `auth`; it does not
+    # replace it. The signing key is an Ed25519 seed, base64url, and only the API has it; the
+    # public keys (base64url, comma separated) are what every service checks tokens against.
+    # A service that has the signing key and no public keys uses the signing key's own, so the
+    # local stack needs one line (`uv run copilot-email-key`).
+    email_sign_in: bool = False
+    email_signing_key: SecretStr | None = None
+    email_public_keys: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
     # On: an account works only once it has an active Career-OS link (ARCHITECTURE.md,
     # "Career-OS link"). The API refuses everything but sign-in, settings and the link itself,
     # and the gateway refuses sessions. Off (the default, and the local stack): no check.
@@ -277,6 +288,7 @@ class CoreSettings(BaseSettings):
         "cognito_client_ids",
         "google_client_ids",
         "google_allowed_emails",
+        "email_public_keys",
         mode="before",
     )
     @classmethod
