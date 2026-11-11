@@ -1,0 +1,106 @@
+# A three-person standup for the session eval (copilot-session-eval, evals/README.md): whom
+# a turn is for, and the open hand-off. Paraphrased from the 2026-10-26 and 2026-10-28
+# standups at a fictional company; nobody here is real. Alex Rivera is the user; a manager
+# and a teammate (Sam) are both "Them". Labels as in standup_review.toml.
+
+[session]
+id = "standup_handoff"
+mode = "standup"
+company = "Fernhill Logistics"
+role = "Backend engineer"
+source = "2026-10-26 and 2026-10-28 standups"
+
+[[item]]
+title = "Label retry logging"
+summary = "Fixed the missing log line for the second retry after a carrier timeout; checked on staging."
+state = "done"
+day = 1
+external_id = "SHIP-412"
+
+[[item]]
+title = "Release of the retry fix"
+summary = "Prepare the production release of the retry fix once testing confirms it."
+state = "planned"
+day = 1
+
+[[line]]
+t = 4
+speaker = "them"
+text = "Okay, let's start. Sam, did the carrier keys get rotated yesterday?"
+expect = "none"
+addressee = "other"
+case = "a question to a teammate by name (2026-10-26: 5 of 7 cards were for someone else)"
+
+[[line]]
+t = 10
+speaker = "them"
+text = "Yes, all three are rotated, and I updated the runbook."
+expect = "none"
+addressee = "other"
+
+[[line]]
+t = 16
+speaker = "them"
+text = "Good. How will the report get built when a form has more than one carrier?"
+expect = "none"
+addressee = "other"
+case = "a follow-up to the teammate who just answered"
+
+[[line]]
+t = 24
+speaker = "them"
+text = "One row per carrier, grouped by form. I'll check with Alex whether the export needs the same."
+expect = "none"
+addressee = "other"
+case = "the user is mentioned, not addressed"
+
+[[line]]
+t = 34
+speaker = "them"
+text = "Fine. Alex, the retry fix, is that ready to go out?"
+expect = "answer"
+addressee = "me"
+type = "standup_status"
+case = "by name"
+
+[[line]]
+t = 40
+speaker = "me"
+text = "Yes, it passed on staging yesterday."
+
+[[line]]
+t = 46
+speaker = "them"
+text = "Great. Is there anything else you want to bring up or talk about?"
+expect = "answer"
+addressee = "me"
+type = "standup_status"
+case = "an open hand-off right after the user spoke (2026-10-28: a card on the previous topic)"
+[line.check]
+must = ["(?i)release|retry"]
+
+[[line]]
+t = 51
+speaker = "me"
+text = "No. So as you know the fix is on staging, and today I'm preparing the release"
+
+[[line]]
+t = 60
+speaker = "them"
+text = "Sounds good. Sam, you're following all of this, right?"
+expect = "none"
+addressee = "other"
+
+[[line]]
+t = 66
+speaker = "them"
+text = "Yes."
+expect = "none"
+addressee = "other"
+
+[[line]]
+t = 70
+speaker = "them"
+text = "Okay, that's all. Have a good day, both of you."
+expect = "none"
+addressee = "nobody"

@@ -1,0 +1,269 @@
+# A recruiter screen for the session eval (copilot-session-eval, evals/README.md).
+#
+# Written after the 2026-11-11 analysis of every session: the turns here are the ones that went
+# wrong, or right, in the real interviews of 2026-10-22 to 2026-11-10, paraphrased. Nobody
+# here is real: the candidate is Alex Rivera (bench/profile.toml), and no line is a real
+# person's words. Times are seconds from the start of the call.
+#
+# On the other side's lines: expect "answer" (a card for Alex), "none" (no card) or "either"
+# (not scored); addressee "me", "other" or "nobody"; type, when a card is expected.
+# unfinished = true: the speaker stops mid-sentence and goes on in the next line (the detector
+# should say "wait"). whole: words the card's question must hold (the first half too).
+# On Alex's lines: follow = "card" (a card should follow them: nothing answered the turn) or
+# "none" (no card: the turn was answered, or Alex is the one asking).
+# [line.check]: patterns the short answer must or must not match, when one is written.
+
+[session]
+id = "interview_screen"
+mode = "interview"
+source = "2026-10-22, 2026-10-28 and 2026-11-10 recruiter screens"
+
+[[line]]
+t = 5
+speaker = "them"
+text = "Hi, is this Alex? I had us down for one o'clock. Are you free to talk now, or should I call back in half an hour?"
+expect = "either"
+addressee = "me"
+case = "scheduling; a yes is enough (2026-11-10: a card 3.7 s later, after the answer)"
+
+[[line]]
+t = 14
+speaker = "me"
+text = "Yes, now works."
+
+[[line]]
+t = 18
+speaker = "them"
+text = "Great. How's your day going so far?"
+expect = "none"
+addressee = "me"
+case = "small talk"
+
+[[line]]
+t = 22
+speaker = "me"
+text = "Good, thanks."
+
+[[line]]
+t = 26
+speaker = "them"
+text = "So do you mind telling me"
+expect = "none"
+addressee = "me"
+unfinished = true
+case = "the first half of a question, before a pause"
+
+[[line]]
+t = 30
+speaker = "them"
+text = "about your background, kind of summarize your work experience for me?"
+expect = "answer"
+addressee = "me"
+type = "behavioral"
+whole = ["mind", "background"]
+case = "2026-11-10: the card held only this half"
+
+[[line]]
+t = 37
+speaker = "me"
+text = "Sure. I'm a backend engineer with about eight years of experience building payment systems"
+
+[[line]]
+t = 45
+speaker = "them"
+text = "On the platform side in particular."
+expect = "none"
+addressee = "me"
+case = "a trailing remark after a question that has its card"
+
+[[line]]
+t = 48
+speaker = "me"
+text = "and most of that was on platform teams, working on ledgers, payouts and the services around them"
+follow = "none"
+case = "2026-11-10: a second card restated the first, with its own detailed answer"
+
+[[line]]
+t = 62
+speaker = "them"
+text = "We also have a staff backend role open besides the senior one you applied for. Do you have a preference between the two?"
+expect = "answer"
+addressee = "me"
+type = "other"
+case = "2026-11-10: the card chose one for the user, who chose the other"
+[line.check]
+must_not = ["(?i)my preference is", "(?i)\\bI(?:'d| would)? prefer the\\b", "(?i)\\bI(?:'d| would) (?:go with|pick|choose) the\\b"]
+
+[[line]]
+t = 72
+speaker = "me"
+text = "I think the staff role is closer to what I want."
+
+[[line]]
+t = 78
+speaker = "them"
+text = "And what is your eligibility to work in the US?"
+expect = "none"
+addressee = "me"
+case = "a screening check: quiet since 2026-10-29"
+
+[[line]]
+t = 82
+speaker = "me"
+text = "I'm a citizen."
+
+[[line]]
+t = 86
+speaker = "them"
+text = "Are you currently working right now?"
+expect = "none"
+addressee = "me"
+case = "a yes or no about their own situation (fired on 2026-11-10)"
+
+[[line]]
+t = 89
+speaker = "me"
+text = "No, my contract ended in the summer."
+
+[[line]]
+t = 94
+speaker = "them"
+text = "Got it. And why did that role end?"
+expect = "answer"
+addressee = "me"
+type = "other"
+case = "2026-11-10: cues to keep it brief and to ask what they wanted to know"
+[line.check]
+must_not = ["(?i)keep it brief", "(?i)what would you like to know", "(?i)explain (?:it|the departure) plainly", "(?i)anything specific"]
+
+[[line]]
+t = 99
+speaker = "me"
+text = "It was a contract and it ran out."
+
+[[line]]
+t = 105
+speaker = "them"
+text = "Can you describe a project where you owned both the API and the data model? What did you own?"
+expect = "answer"
+addressee = "me"
+type = "behavioral"
+
+[[line]]
+t = 114
+speaker = "them"
+text = "Can you hear me okay?"
+expect = "none"
+addressee = "me"
+case = "an audio check right after a question"
+
+[[line]]
+t = 116
+speaker = "me"
+text = "Yes, I can hear you. On the payments ledger I owned the posting service and the schema behind it"
+follow = "none"
+case = "2026-11-10: the audio check made the turn look unanswered"
+
+[[line]]
+t = 140
+speaker = "them"
+text = "And then what about databases, do you have any SQL or anything like that that you're"
+expect = "none"
+addressee = "me"
+unfinished = true
+
+[[line]]
+t = 147
+speaker = "them"
+text = "that you're experienced with?"
+expect = "answer"
+addressee = "me"
+type = "technical"
+whole = ["databases", "sql"]
+case = "2026-11-10: the card's question was these four words"
+
+[[line]]
+t = 152
+speaker = "me"
+text = "Yes, mostly PostgreSQL and some MySQL."
+
+[[line]]
+t = 160
+speaker = "them"
+text = "And which languages do you use most on the back end, like the one you reach for most often is"
+expect = "either"
+addressee = "me"
+unfinished = true
+case = "a question that trails off and is never finished (missed on 2026-11-10)"
+
+[[line]]
+t = 168
+speaker = "me"
+text = "On the back end it's mostly Go and Python these days, and some Java earlier on"
+follow = "card"
+case = "nothing answered the turn: this follow card is the right one"
+
+[[line]]
+t = 182
+speaker = "them"
+text = "What percentage of your work would you say was new development versus maintenance?"
+expect = "answer"
+addressee = "me"
+type = "other"
+case = "2026-11-10: a guessed split; the user gave their own"
+[line.check]
+must_not = ["(?i)\\b\\d{2}\\s?(?:%|percent)(?![^\\n]*\\[~\\])", "(?i)\\b\\d{2}/\\d{2}\\b(?![^\\n]*\\[~\\])"]
+
+[[line]]
+t = 190
+speaker = "me"
+text = "Around sixty forty."
+
+[[line]]
+t = 196
+speaker = "them"
+text = "And for salary, it looks like you're looking in the $1.50 range. Is that correct?"
+expect = "none"
+addressee = "me"
+case = "a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant)"
+[line.check]
+must_not = ["(?i)what (?:do )?you mean", "(?i)clarify", "\\$1\\.50"]
+
+[[line]]
+t = 203
+speaker = "me"
+text = "Sorry, could you say that number again? The audio cut out for a second on my side there"
+follow = "none"
+case = "the user is asking, not answering (2026-11-10)"
+
+[[line]]
+t = 210
+speaker = "them"
+text = "Sure. One fifty to one sixty with a possible annual bonus. So the next step is that I send my notes to the hiring manager, okay?"
+expect = "none"
+addressee = "me"
+
+[[line]]
+t = 222
+speaker = "me"
+text = "Okay."
+
+[[line]]
+t = 225
+speaker = "them"
+text = "Do you have any questions for me?"
+expect = "answer"
+addressee = "me"
+type = "other"
+
+[[line]]
+t = 229
+speaker = "me"
+text = "Yes. How is the team split between platform and product work?"
+
+[[line]]
+t = 240
+speaker = "them"
+text = "Thanks so much for your time. Have a great day."
+expect = "none"
+addressee = "me"

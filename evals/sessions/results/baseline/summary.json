@@ -1,0 +1,231 @@
+{
+  "fixtures": [
+    "interview_screen",
+    "standup_handoff",
+    "standup_review"
+  ],
+  "cost_usd": 0.0548,
+  "flow": {
+    "by_fixture": {
+      "interview_screen": {
+        "cards": 11,
+        "question_one_card": [
+          7,
+          7
+        ],
+        "quiet": [
+          10,
+          10
+        ],
+        "whole_question": [
+          0,
+          2
+        ],
+        "follow": [
+          1,
+          4
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": [
+          "whole_question: line 5 (2026-11-10: the card held only this half)",
+          "whole_question: line 21 (2026-11-10: the card's question was these four words)",
+          "follow: line 8 (2026-11-10: a second card restated the first, with its own detailed answer)",
+          "follow: line 19 (2026-11-10: the audio check made the turn look unanswered)",
+          "follow: line 28 (the user is asking, not answering (2026-11-10))"
+        ]
+      },
+      "standup_handoff": {
+        "cards": 2,
+        "question_one_card": [
+          2,
+          2
+        ],
+        "quiet": [
+          7,
+          7
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          0,
+          0
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_review": {
+        "cards": 7,
+        "question_one_card": [
+          5,
+          5
+        ],
+        "quiet": [
+          9,
+          9
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          0,
+          1
+        ],
+        "update_card": [
+          0,
+          1
+        ],
+        "failed": [
+          "follow: line 21 (the user is asking (2026-11-04: a card that told them to let the teammate go first))",
+          "update_card: line 5 (the update turn: nothing was shown, and a follow card came 5 to 9 s later on the teammate's topic)"
+        ]
+      }
+    },
+    "total": {
+      "question_one_card": [
+        14,
+        14
+      ],
+      "quiet": [
+        26,
+        26
+      ],
+      "whole_question": [
+        0,
+        2
+      ],
+      "follow": [
+        1,
+        5
+      ],
+      "update_card": [
+        0,
+        1
+      ],
+      "all": [
+        41,
+        48
+      ]
+    }
+  },
+  "detect": {
+    "model": "gpt-6-luna",
+    "reps": 2,
+    "fired": [
+      27,
+      28
+    ],
+    "false_fires": [
+      6,
+      54
+    ],
+    "false_fires_by_addressee": {
+      "me": [
+        6,
+        32
+      ],
+      "other": [
+        0,
+        12
+      ],
+      "nobody": [
+        0,
+        10
+      ]
+    },
+    "type": [
+      20,
+      25
+    ],
+    "latency_p50_ms": 1203,
+    "calls": 82,
+    "cost_usd": 0.007,
+    "wrong": [
+      "type interview_screen line 25: answer/technical, wanted other",
+      "false fire interview_screen line 27: answer/other (a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant))",
+      "false fire interview_screen line 29: answer/other (Sure. One fifty to one sixty with a possible annua)",
+      "missed standup_handoff line 6: none/other (an open hand-off right after the user spoke (2026-10-28: a card on the previous topic))",
+      "type standup_review line 12: answer/standup_status, wanted respond",
+      "false fire standup_review line 14: answer/standup_status (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type interview_screen line 25: answer/respond, wanted other",
+      "false fire interview_screen line 27: answer/other (a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant))",
+      "false fire interview_screen line 29: answer/other (Sure. One fifty to one sixty with a possible annua)",
+      "type standup_handoff line 6: answer/other, wanted standup_status",
+      "type standup_review line 9: answer/respond, wanted standup_status",
+      "false fire standup_review line 14: answer/standup_status (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))"
+    ]
+  },
+  "answers": {
+    "reps": 2,
+    "checks": [
+      79,
+      88
+    ],
+    "by_pass": {
+      "fast": [
+        41,
+        44
+      ],
+      "deep": [
+        38,
+        44
+      ]
+    },
+    "cost_usd": 0.0478,
+    "failed": [
+      {
+        "where": "interview_screen line 27 fast rep 0",
+        "check": "must not /(?i)clarify/",
+        "answer": "- I\u2019d rather clarify the currency and compensation basis\n- Is that annual base, total compensation, or another range?"
+      },
+      {
+        "where": "interview_screen line 27 deep rep 0",
+        "check": "must not /(?i)clarify/",
+        "answer": "- Could you clarify the currency and compensation basis for that figure?\n- Are you referring to annual base salary, total compensation, or another range?\n- What base salary range has been budgeted for this Senior Backend Engineer role?\n- How is the rest of the package structured beyond base salary?\n- How does the role\u2019s scope affect where someone falls within that range?\n- I\u2019m looking for larger-scale payments work and more system design ownership."
+      },
+      {
+        "where": "standup_review line 9 fast rep 0",
+        "check": "must not /(?i)independent review/",
+        "answer": "- Export still needed: CSV and PDF on SHIP-433 [n:wf4f]\n- Report read check still outstanding [n:w1ee]\n- Main table and filters are on the preview [n:waac]\n- Independent review needs a rerun [n:waac]"
+      },
+      {
+        "where": "standup_review line 9 deep rep 0",
+        "check": "must not /(?i)uncommitted/",
+        "answer": "- CSV and PDF export still need adding under SHIP-433. [n:wf4f] [~]\n- The read-check fix is outstanding; submit-only roles could see field values. [n:w1ee] [~]\n- The main table and filters are deployed to the preview. [n:waac] [~]\n- Independent review needs a rerun; work remains uncommitted across 64 files. [n:waac] [~]"
+      },
+      {
+        "where": "standup_review line 9 deep rep 0",
+        "check": "must not /(?i)64 files/",
+        "answer": "- CSV and PDF export still need adding under SHIP-433. [n:wf4f] [~]\n- The read-check fix is outstanding; submit-only roles could see field values. [n:w1ee] [~]\n- The main table and filters are deployed to the preview. [n:waac] [~]\n- Independent review needs a rerun; work remains uncommitted across 64 files. [n:waac] [~]"
+      },
+      {
+        "where": "standup_review line 9 deep rep 0",
+        "check": "must not /(?i)independent review/",
+        "answer": "- CSV and PDF export still need adding under SHIP-433. [n:wf4f] [~]\n- The read-check fix is outstanding; submit-only roles could see field values. [n:w1ee] [~]\n- The main table and filters are deployed to the preview. [n:waac] [~]\n- Independent review needs a rerun; work remains uncommitted across 64 files. [n:waac] [~]"
+      },
+      {
+        "where": "interview_screen line 27 deep rep 1",
+        "check": "must not /(?i)clarify/",
+        "answer": "- Could you clarify the figure you have in mind?\n- What salary range has been budgeted for this role?\n- Is the figure annual base pay, or total compensation?\n- If it\u2019s total compensation, how is the package broken down?\n- What portion comes from bonus, and what comes from equity?\n- How does the compensation band relate to the role\u2019s scope?"
+      },
+      {
+        "where": "standup_review line 9 fast rep 1",
+        "check": "must not /(?i)independent review/",
+        "answer": "- Yes, the export is still to do\u2014CSV and PDF [n:wf4f]\n- The report type on the list page is planned [n:w5ce]\n- I\u2019d rerun the independent review; it needs a rerun [n:waac]\n- The report read check is still outstanding [n:w1ee]"
+      },
+      {
+        "where": "standup_review line 9 deep rep 1",
+        "check": "must not /(?i)independent review/",
+        "answer": "- CSV and PDF export are still to do on the carrier report. [n:wf4f]\n- Report type on the list page is planned; design must decide the icon. [n:w5ce]\n- The independent review needs a rerun; I\u2019d do that before you test. [n:waac]\n- The read-check fix remains outstanding; field requests could expose values to submit-only roles. [n:w1ee]"
+      }
+    ]
+  }
+}
