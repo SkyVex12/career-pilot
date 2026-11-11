@@ -45,7 +45,13 @@ from copilot_core.packs import (
 )
 from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
-from copilot_gateway.answer import AnswerEngine, PreparedMatcher, Question, is_answer_command
+from copilot_gateway.answer import (
+    AnswerEngine,
+    MatchResult,
+    PreparedMatcher,
+    Question,
+    is_answer_command,
+)
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
@@ -58,9 +64,11 @@ from copilot_gateway.turn import (
     TurnDetector,
     TurnModel,
     addressed_by_name,
+    asking,
     is_backchannel,
     is_closing,
     substantive_words,
+    update_opening,
 )
 from copilot_protocol import models
 
@@ -144,6 +152,9 @@ ECHO_WINDOW_S = 120.0
 TOTALS_SAVE_S = 10.0  # how often the end line's running totals go into the live state
 # The other side's speech counts as "around the same time" as a line of the user's this close.
 ECHO_NEAR_MS = 500
+# A question that fired this long before the other side's last line, with the user silent in
+# between, still answers the turn (a remark or an audio check came after it).
+FOLLOW_ANSWERED_MS = 15000
 ECHO_TEXT_MS = 1500
 
 
@@ -234,6 +245,8 @@ class Session:
             group_call=lambda: self.info.mode in prompts.GROUP_MODES,
             hold_any_min_words=self.settings.group_hold_min_words,
             early_interval_ms=self.settings.early_decision_interval_ms,
+            carry_gap_ms=self.settings.continuation_gap_ms,
+            first_show_min_words=self.settings.first_show_min_words,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -268,6 +281,14 @@ class Session:
         self.them_speech_ms = 0
         self.me_heard = False
         self.mic_warned = False
+        # The mirror: the user has talked for a while and nothing at all came from the call
+        # (2026-11-05: a two-hour interview with nine fragments of the other side).
+        self.me_speech_ms = 0
+        self.them_heard = False
+        self.call_warned = False
+        # A standup's update card (the pack's prepared points) is shown once, when the user
+        # starts their update with nothing on screen.
+        self._update_shown = False
         # The other side's last line was a goodbye: an interview ends sooner once it is quiet.
         self.them_closing = False
         # The end line's totals from earlier gateway tasks of this session (a resume).
@@ -680,6 +701,16 @@ class Session:
             q.early_ms = max(0, int((t0 - q.t0) * 1000))
             q.t0 = t0
 
+    def retype_question(self, qid: UUID, detection: Detection) -> None:
+        # Shown before the detector decided (turn.py): its type shapes the detailed answer,
+        # and the confirmation sends it to the client.
+        q = self.answers.questions.get(qid)
+        if q is not None:
+            q.qtype = detection.qtype
+            if detection.latency_ms:
+                q.detector_ms = detection.latency_ms
+            q.first_shown = True
+
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
@@ -731,6 +762,7 @@ class Session:
             # Not while the other side speaks: that text may be their echo.
             if not self._them_near(r.start_ms, r.end_ms):
                 self.emit(models.TranscriptPartial, channel="me", seg_id=self.seg_me, text=r.text)
+                self._maybe_update(r.text, r.start_ms)
             return
         seg = self.seg_me
         self.seg_me += 1
@@ -777,6 +809,9 @@ class Session:
             end_ms=line.end_ms,
         )
         self.conv.add(line)
+        if substantive_words(line.text) >= 2:
+            self.turns.drop_carry()  # the user spoke: an unfinished sentence of theirs is over
+        self._maybe_update(line.text, line.start_ms)
         self._maybe_follow(line)
         if self.info.store_transcript:  # the user's words follow the same consent
             self.log_entry(
@@ -827,18 +862,34 @@ class Session:
         )
         if substantive_words(said) < s.follow_min_words:
             return
-        asked = next((a for a in reversed(self.conv.asked) if a.at_ms >= anchor - 1500), None)
+        mine = [ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms]
+        since = mine[-1] if mine else 0
+        # The turn already has an answer on screen, and its deep pass continues it (in the
+        # 2026-10-29 interviews 15 of 18 follow cards were on such turns and mostly restated
+        # the answer, each with its own deep pass). Answered: a question fired since the user
+        # last spoke, shortly before the other side's last line. A remark or an audio check
+        # after the question does not make the turn a new one (2026-11-10: 2 of 4 follow
+        # cards came that way).
+        asked = next(
+            (
+                a
+                for a in reversed(self.conv.asked)
+                if a.at_ms >= anchor - 1500
+                or (a.at_ms >= since - 1500 and anchor - a.at_ms <= FOLLOW_ANSWERED_MS)
+            ),
+            None,
+        )
         if asked is not None:
-            # The turn already has an answer on screen, and its deep pass continues it. In the
-            # 2026-10-29 interviews 15 of 18 follow cards were on such turns and mostly
-            # restated the answer, each with its own deep pass.
+            self._followed.add(anchor)
+            return
+        if asking(said):
+            # The user is asking, not answering ("could you say that again?"): on 2026-11-04
+            # and 2026-11-10 such a card told them what the other side should have said.
             self._followed.add(anchor)
             return
         last = self._last_detection
         if last is not None and last.qtype == "small_talk":
             return
-        mine = [ln.end_ms for ln in lines if ln.channel == "me" and ln.end_ms < them[-1].start_ms]
-        since = mine[-1] if mine else 0
         text = " ".join(self.conv.them_text_between(since, anchor))
         words = text.split()
         if len(words) < 3:
@@ -868,6 +919,57 @@ class Session:
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None, supersede=False)
         log.info("following the user after %d words (no question shown)", len(said.split()))
+
+    def _maybe_update(self, text: str, start_ms: int) -> None:
+        """A standup's update card: when the user opens their own update ("so for my
+        updates, yesterday I...") and nothing answered the other side's last turn, the pack's
+        prepared update shows at once, with no model call for the short answer. The hand-off
+        is often a pause, not a question: in three of eight real standups the user gave
+        yesterday and today with nothing on screen, and the prepared points had been shown
+        once in nine (2026-11-11 analysis). Once per session."""
+        if self._update_shown or self.info.mode != "standup" or self.pack is None:
+            return
+        if not update_opening(text):
+            return
+        question = workplace.STANDUP_QUESTIONS["update"]
+        answer = next((a for a in self.pack.prepared_answers if a.question == question), None)
+        if answer is None or not answer.talking_points:
+            return
+        task = self.turns.task
+        if task is not None and not task.done():
+            return  # the other side's turn is still being decided: the next words look again
+        anchor = self.conv.them_end
+        if any(a.at_ms >= anchor - 1500 and start_ms - a.at_ms <= FOLLOW_ANSWERED_MS
+               for a in self.conv.asked):  # fmt: skip
+            return  # a card for that turn is on screen already
+        self._update_shown = True
+        self._followed.add(anchor)
+        found: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        found.set_result(MatchResult(answer, 1.0, 0))
+        q = Question(
+            qid=uuid7(),
+            text=question,
+            qtype="standup_status",
+            confidence=1.0,
+            addressed=True,
+            speculative=False,
+            forced=False,
+            t0=time.monotonic(),
+            detector_ms=None,
+            match=found,  # pyright: ignore[reportArgumentType]
+        )
+        self.emit(
+            models.QuestionDetected,
+            question_id=q.qid,
+            text=question,
+            question_type=q.qtype,
+            confidence=q.confidence,
+            speculative=False,
+        )
+        self.answers.add(q)
+        self.answers.confirm(q.qid, question, None, supersede=False)
+        self.conv.question(str(q.qid), question, anchor)
+        log.info("standup update card shown as the user began their update")
 
     def _echo(self, seg: int, line: Line, share: float) -> None:
         self.emit(
@@ -918,6 +1020,23 @@ class Session:
             self.mic_warned = False
             self.set_status("stt", "ok", "Your microphone is coming through")
 
+    def _check_call_audio(self) -> None:
+        s = self.settings
+        if self.them_heard or self.call_warned or not s.call_silent_warn_s:
+            return
+        if self.me_speech_ms >= s.call_silent_warn_s * 1000:
+            self.call_warned = True
+            log.info("no audio from the call after %d s of the user's", self.me_speech_ms // 1000)
+            self.set_status(
+                "stt", "degraded", "We can't hear the other side: check the call audio in Settings"
+            )
+
+    def _call_heard(self) -> None:
+        self.them_heard = True
+        if self.call_warned:
+            self.call_warned = False
+            self.set_status("stt", "ok", "The call's audio is coming through")
+
     def totals(self) -> dict[str, Any]:
         """The end line's counts for the whole session, earlier gateway tasks included."""
         prior = self.prior_totals
@@ -944,6 +1063,9 @@ class Session:
                     "held_discarded": self.turns.held_discarded,
                     "early_started": self.turns.early_starts,
                     "early_used": self.turns.early_used,
+                    "carried": self.turns.carried,
+                    "first_shown": self.turns.first_shown,
+                    "first_withdrawn": self.turns.first_withdrawn,
                 },
                 prior.get("turns"),
             ),
@@ -1379,6 +1501,7 @@ class Session:
             await self._on_me_frame(frame)
             return
         if frame.speech_start:
+            self._call_heard()
             self.them_open = frame.capture_ms
             if self.stt is not None:
                 self.stt.speech(True)
@@ -1412,6 +1535,9 @@ class Session:
             self.me_audio_seen = True
             await stt.send(frame.audio, frame.capture_ms)
         if frame.speech_end:
+            if self.me_since is not None:
+                self.me_speech_ms += max(0, frame.capture_ms - self.me_since)
+                self._check_call_audio()
             if stt is not None:
                 stt.speech(False)
             if self.me_audio_seen and stt is not None:

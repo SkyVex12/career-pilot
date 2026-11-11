@@ -141,6 +141,32 @@ Results go to `answers/results/<label>/`: `answers.json`, `summary.json` and `sa
 answers and grades to read. The shape grade judges against the current `DEEP_SHAPES`, so
 regrade older labels after changing them.
 
+## Session eval
+
+`copilot-session-eval` scores whole calls on what went wrong in real ones. `sessions/*.toml`
+are scripts paraphrased from the sessions of October and November 2026
+(docs/analysis/2026-11-11-multi-session.md): each line has its time, its speaker and its
+labels (should a card show, for whom the turn was, the type, whether the speaker stops
+mid-sentence, what the answer must and must not say). Everyone in them is fictional and no
+line is a real person's words. A standup fixture also holds the work items its pack is
+rendered from.
+
+| Part | What it measures | Needs |
+| --- | --- | --- |
+| `flow` | The script replayed through a real gateway with scripted speech to text and models; the detector answers from the labels. So it scores the gateway's own turn handling: one card per question, none where none is due, the whole question on the card (a first half before a pause too), follow cards only where nothing answered and the user is answering, the update card when the user starts their standup update | Nothing: offline, runs in the tests |
+| `detect` | Each labelled line of the other side sent to the configured detector as the gateway sends it (the transcript before it, the turn-taking block in standups): fired against missed, false fires by addressee, type accuracy, latency | The detector model, about $0.0001 a call |
+| `answers` | The lines with a `check` answered through the gateway's prompt builders and routes; every pattern is one check. `--deep` checks the detailed answer too | About $0.0003 a short answer, $0.006 a detailed one |
+
+```sh
+uv run copilot-session-eval run --label baseline --reps 2 --deep   # about $0.06
+uv run copilot-session-eval run --label try --part flow            # offline
+uv run copilot-session-eval compare baseline try                   # markdown table
+```
+
+Results go to `sessions/results/<label>/summary.json`, with every failed check (the answers
+in it are about the fictional profile). To add a call: paraphrase its turns into a new
+`.toml`, label them, and run `--part flow` first.
+
 ## Company workspaces
 
 `copilot-company-eval` grades standup and meeting answers at a company the user works at.

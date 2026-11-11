@@ -1,0 +1,228 @@
+# A two-person standup for the session eval (copilot-session-eval, evals/README.md).
+#
+# Written after the 2026-11-11 analysis: the turns are those of the real standups of
+# 2026-10-28 to 2026-11-05, paraphrased, at a fictional company. Alex Rivera
+# (bench/profile.toml) builds reports; Dana tests them. Every line is invented wording. Times
+# are seconds from the start. Labels as in interview_screen.toml, plus on Alex's lines:
+# update = true: Alex starts their own update with nothing on screen, and the card with
+# yesterday, today and blockers should show.
+#
+# [[item]] is the company's memory the standup pack is rendered from: day is days before the
+# standup (0: today). Two items carry a coding tool's bookkeeping, as real work logs do.
+
+[session]
+id = "standup_review"
+mode = "standup"
+company = "Fernhill Logistics"
+role = "Backend engineer"
+source = "2026-10-28, 2026-11-03, 2026-11-04 and 2026-11-05 standups"
+
+[[item]]
+title = "Label retry logging"
+summary = "Fixed the missing log line for the second retry after a carrier timeout; checked on staging."
+state = "done"
+day = 1
+external_id = "SHIP-412"
+
+[[item]]
+title = "Carrier status report"
+summary = "Main table and filters built and deployed to the preview; the export is still to do. Work remains uncommitted across 64 files; 1,930 tests passed; the independent review needs a rerun."
+state = "in_progress"
+day = 1
+external_id = "SHIP-431"
+
+[[item]]
+title = "Carrier status report export"
+summary = "Add CSV and PDF export to the carrier status report."
+state = "planned"
+day = 1
+external_id = "SHIP-433"
+
+[[item]]
+title = "Report type on the list page"
+summary = "Show the report type on the reports list when the status toggle is on; the icon still needs a decision from design."
+state = "planned"
+day = 1
+external_id = "SHIP-440"
+
+[[item]]
+title = "Report read check"
+summary = "Field requests skip the parent read check and could show values to a submit-only role; fix outstanding."
+state = "planned"
+day = 1
+
+[[line]]
+t = 3
+speaker = "them"
+text = "Morning Alex. How are you?"
+expect = "none"
+addressee = "me"
+case = "small talk"
+
+[[line]]
+t = 6
+speaker = "me"
+text = "Good, you?"
+
+[[line]]
+t = 10
+speaker = "them"
+text = "Good. So for my update, I tested the retry fix on staging and it logs the second retry now, so that one can go out."
+expect = "none"
+addressee = "nobody"
+case = "the teammate's own update"
+
+[[line]]
+t = 22
+speaker = "them"
+text = "I'm also writing the tickets for the change history report and should have them ready tomorrow."
+expect = "none"
+addressee = "nobody"
+
+[[line]]
+t = 30
+speaker = "them"
+text = "So that's it from my side."
+expect = "none"
+addressee = "nobody"
+case = "the hand-off is a stop, not a question (2026-11-03, 2026-11-04)"
+
+[[line]]
+t = 34
+speaker = "me"
+text = "Okay. So for my updates, yesterday I finished the retry logging fix"
+update = true
+case = "the update turn: nothing was shown, and a follow card came 5 to 9 s later on the teammate's topic"
+
+[[line]]
+t = 41
+speaker = "me"
+text = "and today I'm on the carrier status report, the main table is done"
+
+[[line]]
+t = 50
+speaker = "them"
+text = "Nice. And that preview, you already ran your own checks on it, right?"
+expect = "answer"
+addressee = "me"
+type = "standup_status"
+
+[[line]]
+t = 55
+speaker = "me"
+text = "Yes, I went through it myself."
+
+[[line]]
+t = 60
+speaker = "them"
+text = "Is there anything left on the carrier report before I test it?"
+expect = "answer"
+addressee = "me"
+type = "standup_status"
+case = "2026-11-04: the card listed internal defects and commit state; the user said minor things"
+[line.check]
+must = ["(?i)export"]
+must_not = ["(?i)uncommitted", "(?i)64 files", "(?i)tests passed", "(?i)independent review"]
+
+[[line]]
+t = 66
+speaker = "me"
+text = "Just the export, the rest is minor."
+
+[[line]]
+t = 72
+speaker = "them"
+text = "Okay. I was thinking we could put the image option on the setup page instead of the preview."
+expect = "none"
+addressee = "nobody"
+case = "a proposal mid-explanation; the question comes next"
+
+[[line]]
+t = 80
+speaker = "them"
+text = "Does that make more sense to you, or should it stay on the preview?"
+expect = "answer"
+addressee = "me"
+type = "respond"
+
+[[line]]
+t = 86
+speaker = "me"
+text = "Setup is better, I think."
+
+[[line]]
+t = 92
+speaker = "them"
+text = "After the carrier report you should have the change history tickets, by tomorrow."
+expect = "none"
+addressee = "me"
+case = "a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s)"
+
+[[line]]
+t = 98
+speaker = "them"
+text = "Also one more thing, Alex. Can the list page show the report type when the toggle is on?"
+expect = "answer"
+addressee = "me"
+case = "by name"
+
+[[line]]
+t = 106
+speaker = "me"
+text = "Not yet, I need to add that today."
+
+[[line]]
+t = 112
+speaker = "them"
+text = "When does the carrier report seem doable?"
+expect = "answer"
+addressee = "me"
+type = "standup_status"
+case = "2026-11-04: the card asked the teammate which date to plan around"
+[line.check]
+must_not = ["(?i)what (?:due )?date should", "(?i)which date", "(?i)when do you need", "(?i)what date (?:do|would) you"]
+
+[[line]]
+t = 116
+speaker = "me"
+text = "By Friday."
+
+[[line]]
+t = 120
+speaker = "them"
+text = "Okay. Have a great one."
+expect = "none"
+addressee = "me"
+
+[[line]]
+t = 122
+speaker = "them"
+text = "Oh, sorry, go ahead."
+expect = "none"
+addressee = "me"
+
+[[line]]
+t = 124
+speaker = "me"
+text = "I was just going to ask, what is the planned release date for the change history report?"
+follow = "none"
+case = "the user is asking (2026-11-04: a card that told them to let the teammate go first)"
+
+[[line]]
+t = 132
+speaker = "them"
+text = "We moved it to next Thursday."
+expect = "none"
+addressee = "me"
+
+[[line]]
+t = 136
+speaker = "them"
+text = "Anything else from your side?"
+expect = "either"
+addressee = "me"
+
+[[line]]
+t = 139
+speaker = "me"
+text = "No, that's all."

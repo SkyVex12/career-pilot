@@ -460,7 +460,7 @@ def test_bearer_token() -> None:
 def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert (s.silence_timer_ms, s.speculative_start_ms) == (400, 300)
-    assert (s.stage1_min_score, s.detector_hedge_ms) == (0.3, 2000)
+    assert (s.stage1_min_score, s.detector_hedge_ms) == (0.3, 1200)
     assert (s.detector_max_tokens, s.fast_pass_max_tokens, s.deep_pass_max_tokens) == (80, 250, 800)
     assert s.prepared_answer_min_similarity == 0.85
     assert s.deep_pass_auto
@@ -820,7 +820,8 @@ def test_a_yes_or_no_screening_check_needs_no_card() -> None:
     text = prompts.detector("Alex", "", "Are you authorized?", 80, "interview").system[0].text
     assert "a yes-or-no check of Alex's own situation, answered in a word" in text
     assert "will you need sponsorship" in text
-    assert "from their resume. Alex knows the answer." in text
+    assert "from their resume or a pay figure they gave before" in text
+    assert "Alex knows the answer." in text
     assert "work authorization" not in text.split("- respond:")[0]  # no longer an "other"
     ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
     for system in (

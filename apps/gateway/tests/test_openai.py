@@ -383,9 +383,9 @@ def test_the_fast_pass_hedges_on_the_priority_tier() -> None:
     assert second.params["service_tier"] == "priority"
     assert first.model == second.model == "gpt-6-luna"
     router = build_router(settings, [provider])
-    assert router.hedge_after_s == {"detector": 2.0, "fast": 1.2, "deep": 4.5}
+    assert router.hedge_after_s == {"detector": 1.2, "fast": 1.2, "deep": 4.5}
     off = openai_settings(fast_hedge_ms=None, openai_fast_retry_tier=None, deep_hedge_ms=None)
-    assert build_router(off, [provider]).hedge_after_s == {"detector": 2.0}
+    assert build_router(off, [provider]).hedge_after_s == {"detector": 1.2}
     assert all("service_tier" not in r.params for r in build_routes(off, [provider])["fast"])
 
 

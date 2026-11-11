@@ -69,6 +69,12 @@ _RULES = """Rules:
   say: give no cue for it, only a useful question back where one fits. The same for a yes or
   no about their own situation (worked here before, relatives or friends here, holds a
   certification, needs sponsorship): never answer it for them, in either direction.
+- A choice or an estimate that is {user_name}'s to make is never made for them: which of two
+  roles or contract types they prefer, a date they can do, how their time split between
+  kinds of work, why a role ended when the data does not say. Give what to weigh on each
+  side from the data and the call (never "my preference is..."), or the fact the data has
+  (the role's dates) and nothing more. Never a cue about how to answer ("keep it brief",
+  "explain it plainly").
 - How long {user_name} has done something ("how many years of X"): each role in <digest>
   states its length in brackets. Count only the roles whose title or text names X, give
   their lengths or the span they cover, or the headline figure in the profile when the
@@ -84,6 +90,9 @@ _RULES = """Rules:
   question that was most likely asked. It is everything the speaker said in that turn, so it
   may open with remarks ("thanks, good... so"); answer the question in it. When it asks two
   or three things, answer each, in the order asked.
+- Spoken amounts come out oddly from speech recognition: "$1.30" or "one thirty" for 130
+  thousand a year, "ten ninety-nine" for a 1099 contract. Read the amount that makes sense
+  for pay or a contract and answer on that; never ask what it means.
 - The call so far: <transcript> has the latest lines word for word, "Them" for the other side
   and {user_name}'s own lines under their name; <call_summary> sums up what came before, and
   <earlier_answers> pairs earlier questions with what {user_name} actually said. Use them: a
@@ -314,7 +323,12 @@ WORKPLACE_MODE_RULES = {
         "In a standup, give {user_name}'s update from the standup section of <session_pack>:"
         " what was done yesterday, today's plan, blockers, and commitments coming due. A"
         " question about one item gets its status and next step from the data. Never make up"
-        " progress the log does not show."
+        ' progress the log does not show. An open hand-off ("anything from your side?",'
+        ' "anything you want to bring up?") asks for that update, not for a comment on what'
+        " was just said. Say progress the way a teammate reports it to the team: what works,"
+        " what is left, by when. Leave out the tooling's bookkeeping (what is committed or"
+        " not, counts of files and tests, review reruns, flags) and the inner detail of a"
+        " defect, unless {user_name} is asked for exactly that."
     ),
     "meeting": (
         "In a work meeting the talk is technical and open, not a status report: answer as an"
@@ -399,8 +413,9 @@ DETECTOR_SYSTEM = (
   screen or just said ("what is that?", "oh really?") are none: they need no talking points.
   So is a yes-or-no check of {user_name}'s own situation, answered in a word: are you
   authorized to work here, will you need sponsorship, have you worked for us before, do
-  relatives or friends work here, do you hold a certification, "is that right?" about a fact
-  from their resume. {user_name} knows the answer. A question can be phrased as a
+  relatives or friends work here, do you hold a certification, are you working at the
+  moment, "is that right?" about a fact from their resume or a pay figure they gave before.
+  {user_name} knows the answer. A question can be phrased as a
   statement or a request ("I'm curious how you handled X", "walk me through Y") and still be
   a question.
 - In a one-on-one call, such as most interviews, a question from the other side is for
@@ -558,7 +573,10 @@ DETECTOR_GROUP_RULE = """
   spoken for a while, is for that person. Being mentioned ("I'll check with {first}") is not
   being addressed.
 - A check about {user_name}'s own work or plan ("you're still on the migration, right?",
-  "so the rest goes to review?") needs a reply: standup_status in a standup, else respond."""
+  "so the rest goes to review?", "is anything left on it before I test?") needs a reply:
+  standup_status in a standup, else respond. So does an open hand-off to {user_name}
+  ("anything from your side?", "anything you want to bring up?"): it is their turn to give
+  their update."""
 
 GROUP_MODES = ("standup", "meeting")
 TURN_RECENT_S = 120

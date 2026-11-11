@@ -30,6 +30,20 @@ that detector call and held pass over instead of starting its own, so the detect
 spent while the speaker is still talking. In the 2026-10-30 standup that second was on the
 path of every question.
 
+A turn left unfinished (2026-11-11): when the detector says "wait" (the utterance stops
+mid-sentence) and the same speaker goes on within `carry_gap_ms`, the next decision is made
+on both parts, so the question on the card is the whole question. In the 2026-11-10
+interview two cards carried only a question's last words ("...that you're experienced
+with?"): the first half had been dropped when its turn ended undecided.
+
+Shown before the detector (2026-11-11, one-on-one calls only): once the STT final is in, a
+held pass on a plain question (`plain_question`: it ends in "?", opens with a question word
+or "tell me", is long enough, and is not about pay, location or work status) is shown at
+once, speculative, while the detector is still deciding. The detector then types it, or
+says no and the card is withdrawn (`question.cancelled`). The detector's ~1 s was on the
+path of every card: across 151 real questions the first word came at 1.9 s (p50), and the
+user had started answering before it on 56% of interview questions.
+
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
 """
@@ -71,6 +85,14 @@ REQUEST_CUES = (
 )  # fmt: skip
 
 
+# A turn left unfinished carries into the next at most this many times in a row, and only
+# while it is short: a question in two or three parts, not a long explanation.
+CARRY_MAX = 2
+CARRY_MAX_WORDS = 60
+# What a question shown before the detector decided is typed until it does.
+FIRST = Detection("answer", "other")
+
+
 def likely_question(text: str, min_words: int = 3) -> bool:
     """A cheap local check on the text, before any model call: is a held fast pass worth it?
 
@@ -86,6 +108,83 @@ def likely_question(text: str, min_words: int = 3) -> bool:
         return True
     joined = " ".join(words)
     return any(cue in joined for cue in REQUEST_CUES)
+
+
+# Words that may open a question before its question word ("okay, and then what about...").
+LEAD_INS = frozenset(
+    {"and", "so", "then", "okay", "ok", "alright", "right", "perfect", "great", "good", "cool",
+     "awesome", "now", "well", "yeah", "yes", "sure", "got", "it", "gotcha", "also", "but",
+     "thanks", "thank", "you", "um", "uh", "next", "nice"}
+)  # fmt: skip
+ASK_VERBS = frozenset(
+    {"tell", "describe", "explain", "walk", "talk", "share", "give", "summarize", "outline"}
+)
+# A question on these is the user's to answer in a word, or the detector types it "none" (a
+# screening check): never worth showing before the detector has decided.
+LOGISTICS = frozenset(
+    {"eligibility", "eligible", "authorized", "authorization", "sponsorship", "visa",
+     "citizen", "relocate", "relocation", "salary", "compensation", "pay", "rate", "notice",
+     "located", "location", "available", "availability", "start", "currently", "hear",
+     "screen", "questions"}
+)  # fmt: skip
+
+
+def plain_question(text: str, min_words: int = 8) -> bool:
+    """A question plain enough to show before the detector has decided (one-on-one calls):
+    it ends in a "?" from the STT's punctuation, has at least `min_words` words, opens with a
+    question word or a request to tell ("what", "how", "tell me", "can you describe") after
+    at most a few lead-in words, and is not about pay, location or work status. Yes-or-no
+    openers ("are you", "do you have") are left to the detector: screening checks start
+    that way. A wrong guess shows a card that is then withdrawn."""
+    if not text.rstrip().endswith("?"):
+        return False
+    words = _words(text)
+    if len(words) < min_words or LOGISTICS.intersection(words):
+        return False
+    i = 0
+    while i < len(words) and i < 6 and words[i] in LEAD_INS:
+        i += 1
+    head = words[i : i + 4]
+    if not head:
+        return False
+    if head[0] in QUESTION_WORDS or head[0] in ASK_VERBS:
+        return True
+    if head[0] in ("can", "could", "would") and len(head) > 2 and head[1] == "you":
+        return bool(ASK_VERBS.intersection(head[2:]))
+    return False
+
+
+# How the user opens their own update in a standup, in its first words.
+UPDATE_OPENING = re.compile(
+    r"\b(?:my|our) updates?\b|\b(?:from|on) my (?:side|end)\b|\bas for me\b"
+    r"|\byesterday,? (?:i|we)\b|\bso,? yesterday\b|\btoday,? i(?:'m| am| will|'ll)\b",
+    re.IGNORECASE,
+)
+UPDATE_OPENING_WORDS = 14
+
+
+def update_opening(text: str) -> bool:
+    """Is the user starting their own standup update ("so for my updates, yesterday I...")?
+    Looked for in their first words only. In three of eight real standups the update began
+    after the teammate simply stopped, with nothing on screen (2026-11-11 analysis)."""
+    head = " ".join(text.split()[:UPDATE_OPENING_WORDS])
+    return bool(UPDATE_OPENING.search(head))
+
+
+# A statement that ends in a tag ("..., right?") is not a question of the user's.
+TAG_QUESTION = re.compile(
+    r"(?:^|[,\s])(?:right|okay|ok|yeah|correct|no|you know|isn't it|is it)\s*\?$", re.IGNORECASE
+)
+
+
+def asking(text: str) -> bool:
+    """Is the user asking something rather than answering ("sorry, could you say that
+    again?", "what is the planned date?")? One of their first three sentences is a question
+    of three words or more; a "right?" tag is not one."""
+    sentences = [s.strip() for s in re.findall(r"[^.?!]+[.?!]?", text)[:3]]
+    return any(
+        s.endswith("?") and not TAG_QUESTION.search(s) and len(_words(s)) >= 3 for s in sentences
+    )
 
 
 # A name right after one of these is a mention ("I'll check with Sam"), not an address.
@@ -243,6 +342,10 @@ class TurnHost(Protocol):
         t0: its latencies count from there, as for any other turn."""
         ...
 
+    def retype_question(self, qid: UUID, detection: Detection) -> None:
+        """A question shown before the detector decided now has its type."""
+        ...
+
 
 @dataclass
 class _Turn:
@@ -258,6 +361,7 @@ class _Turn:
     cand: _Candidate | None = None  # the text being decided, with its detector call
     taken: bool = False  # a forced question took the held pass and the detector call over
     early: "_Early | None" = None  # step 1 started on this text before the speech end
+    first_qid: UUID | None = None  # shown before the detector decided (plain_question)
 
 
 @dataclass
@@ -283,6 +387,8 @@ class TurnDetector:
         group_call: Callable[[], bool] | None = None,
         hold_any_min_words: int | None = None,
         early_interval_ms: int | None = None,
+        carry_gap_ms: int = 0,
+        first_show_min_words: int | None = None,
     ) -> None:
         self.host = host
         self.silence_s = silence_timer_ms / 1000
@@ -299,6 +405,13 @@ class TurnDetector:
         self.hold_any_min_words = hold_any_min_words
         # Early decision (module doc), group calls only; None: off.
         self.early_s = early_interval_ms / 1000 if early_interval_ms else None
+        # A turn the detector left unfinished keeps its words for this long (module doc);
+        # 0: off. At most CARRY_MAX turns in a row, so a long explanation is never glued.
+        self.carry_s = carry_gap_ms / 1000
+        self.carry_until: float | None = None
+        self.carry_depth = 0
+        # One-on-one calls: show a plain question before the detector decides; None: off.
+        self.first_show_min_words = first_show_min_words
         self.speaking = False
         self.early: _Early | None = None
         self.early_at = 0.0
@@ -318,6 +431,9 @@ class TurnDetector:
         self.detached_turns = 0
         self.early_starts = 0
         self.early_used = 0
+        self.carried = 0
+        self.first_shown = 0
+        self.first_withdrawn = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -376,7 +492,19 @@ class TurnDetector:
 
     def on_speech_start(self) -> None:
         self.speaking = True
+        if self.carry_until is not None and time.monotonic() > self.carry_until:
+            self.drop_carry()  # the speaker took too long: that sentence stays unfinished
         self._interrupt()
+
+    def drop_carry(self) -> None:
+        """Forget the words of a turn left unfinished: the pause was too long, or the user
+        spoke in between."""
+        if self.carry_until is None:
+            return
+        self.carry_until = None
+        self.carry_depth = 0
+        if self.task is None or self.task.done():
+            self.reset()
 
     def _interrupt(self) -> None:
         task, turn = self.task, self.turn
@@ -445,8 +573,26 @@ class TurnDetector:
 
     def _done(self, turn: _Turn) -> None:
         """The turn is decided; its text stays in the transcript tail only."""
+        self.carry_until = None
+        self.carry_depth = 0
         if turn.text is None:
             self.reset()
+
+    def _carry(self, turn: _Turn) -> bool:
+        """The detector said "wait": keep the turn's words for the same speaker's next
+        ones. False when carrying is off or has gone on for CARRY_MAX turns already."""
+        if self.carry_s <= 0 or self.carry_depth >= CARRY_MAX:
+            return False
+        words = self._text(turn).split()
+        if not words or len(words) > CARRY_MAX_WORDS:
+            return False
+        self.carry_depth += 1
+        self.carried += 1
+        self.carry_until = time.monotonic() + self.carry_s
+        if turn.text is not None:
+            # A detached turn: the speaker's next words are already coming in on their own.
+            self.finals.insert(0, turn.text)
+        return True
 
     async def _sleep_until(self, deadline: float) -> None:
         delay = deadline - time.monotonic()
@@ -578,6 +724,27 @@ class TurnDetector:
             if not self._changed(turn, cand):
                 return cand, detection
 
+    async def _first(self, turn: _Turn) -> None:
+        """Shown before the detector (module doc): once the STT final is in and the held pass
+        is on that text, a plain question in a one-on-one call goes on screen while the
+        detector is still deciding."""
+        n = self.first_show_min_words
+        if n is None or self.group_call():
+            return
+        await self._sleep_until(turn.t0 + self.speculative_s)
+        await turn.flushed.wait()
+        await asyncio.sleep(0.02)  # a final that changed the words restarts the candidate
+        cand = turn.cand
+        if cand is None or cand.detection.done() or turn.held_qid is None:
+            return
+        text = self._text(turn)
+        if materially_changed(cand.text, text) or not plain_question(text, n):
+            return
+        self.first_shown += 1
+        qid = self._show(turn, cand.text, FIRST, speculative=True, match=cand.match)
+        turn.first_qid = turn.speculative_qid = qid
+        self.host.retype_question(qid, FIRST)  # marked as shown first; typed for now
+
     async def _turn(self, turn: _Turn) -> None:
         t0 = turn.t0
         early, turn.early = turn.early, None
@@ -596,15 +763,26 @@ class TurnDetector:
                 cand = self._adopt(turn, early)
             else:
                 cand = self._start(turn, self.utterance())
-            cand, detection = await self._decide(turn, cand)
+            first = asyncio.ensure_future(self._first(turn))
+            try:
+                cand, detection = await self._decide(turn, cand)
+            finally:
+                first.cancel()
             if not detection.fires():
                 self._discard_held(turn)
-                self._done(turn)  # step 5
+                if turn.first_qid is not None:  # shown before the detector said no
+                    self.first_withdrawn += 1
+                    self.host.cancel_question(turn.first_qid)
+                    turn.first_qid = turn.speculative_qid = None
+                if detection.decision != "wait" or not self._carry(turn):
+                    self._done(turn)  # step 5
                 return
             await self._sleep_until(t0 + self.speculative_s)
-            qid: UUID | None = None
+            qid: UUID | None = turn.first_qid
             silence_over = time.monotonic() >= t0 + self.silence_s
-            if not (silence_over and turn.flushed.is_set()):
+            if qid is not None:
+                self.host.retype_question(qid, detection)
+            elif not (silence_over and turn.flushed.is_set()):
                 qid = self._show(turn, cand.text, detection, speculative=True, match=cand.match)
                 turn.speculative_qid = qid
                 self.speculative_starts += 1
@@ -623,5 +801,5 @@ class TurnDetector:
             if turn.speculative_qid is not None:
                 self.speculative_cancels += 1
                 self.host.cancel_question(turn.speculative_qid)
-                turn.speculative_qid = None
+                turn.speculative_qid = turn.first_qid = None
             raise
