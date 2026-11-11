@@ -72,8 +72,15 @@ class Settings(CoreSettings):
     # (the job's retry route), and the first to answer is used. Benchmark, October 2026: 5% of
     # detector calls stalled until the 3 s first-token timeout and its retry (5 to 6 s), while
     # 90% finished within 3.3 s. A hedge costs one more detector call (about $0.0001). None:
-    # retry only after the timeout.
-    detector_hedge_ms: int | None = 2000
+    # retry only after the timeout. 2,000 ms until 2026-11-11: in slow spells 11 to 16% of
+    # decisions then took 2.5 to 3.2 s (the wait, plus the second route's 0.8 s), and every
+    # card waited with them; the fast pass has hedged at 1,200 ms since 2026-10-28.
+    detector_hedge_ms: int | None = 1200
+    # One-on-one calls (interviews): a plain question of at least this many words is shown
+    # as soon as the STT final is in, before the detector has decided; the detector then
+    # types it or the card is withdrawn (turn.py, "Shown before the detector"). No extra
+    # model call: the held pass is already running. None: every card waits for the detector.
+    first_show_min_words: int | None = 8
     # The OpenAI tier of the detector's second route, which the hedge and the retry use. In
     # the 2026-10-27 standup a slow spell on gpt-6-luna failed 10 decisions in 50 s, because
     # the hedge went to the same model on the same tier. Priority costs 1.75x on the few calls
@@ -224,6 +231,9 @@ class Settings(CoreSettings):
     # badge says the mic is not heard (2026-10-29: one computer sent none for two whole
     # interviews). None: off.
     mic_silent_warn_s: float | None = 120.0
+    # The mirror: the user's mic has this much speech and no speech at all has come from the
+    # call. The badge says the call's audio is not coming through. None: off.
+    call_silent_warn_s: float | None = 120.0
     max_session_minutes: int = 240
     events_maxlen: int = 2000
     state_ttl_s: int = 7200

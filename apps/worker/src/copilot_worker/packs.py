@@ -37,6 +37,19 @@ log = logging.getLogger(__name__)
 PACK_TTL_MAX_S = 30 * 24 * 3600
 
 
+def pack_ttl(base_s: int, due_at: datetime, now: datetime, application: bool) -> int:
+    """How long a pack is kept. A standup's: its due time plus `base_s`. An application's:
+    the maximum, since it is opened on days nobody can know ahead and is rebuilt whenever its
+    resume, job description or digest changes; the gateway refuses one built for another
+    pairing. Until 2026-11-11 it lived 24 hours, and two of four November interviews opened
+    an application from days before and ran with no job summary, prepared answers or
+    keyterms."""
+    if application:
+        return PACK_TTL_MAX_S
+    ttl = int((due_at - now).total_seconds()) + base_s
+    return max(base_s, min(ttl, PACK_TTL_MAX_S))
+
+
 async def current_digest(ctx: Ctx, uid: UUID) -> Digest | None:
     """The base resume's digest (`digest:{uid}`): standups, meetings, sessions for no
     application."""
@@ -158,8 +171,7 @@ async def pack_build(job: Job, ctx: Ctx) -> None:
             return
         pack, job_id, interview_id, paired, used = built
     pack.token_count = (len(used.text) if used else 0) // 4 + len(render_pack(pack)) // 4
-    ttl = int((due_at - datetime.now(UTC)).total_seconds()) + ctx.settings.pack_ttl_s
-    ttl = max(ctx.settings.pack_ttl_s, min(ttl, PACK_TTL_MAX_S))
+    ttl = pack_ttl(ctx.settings.pack_ttl_s, due_at, datetime.now(UTC), job_id is not None)
     async with ctx.user(uid) as conn:
         if await conn.fetchval("select 1 from app.users where id = $1", uid) is None:
             return  # the user was deleted meanwhile

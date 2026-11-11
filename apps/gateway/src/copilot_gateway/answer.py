@@ -136,6 +136,7 @@ class Question:
     turn_end_ms: int | None = None
     final_ms: int | None = None  # t0 to the STT final (None: no final, or a forced question)
     early_ms: int | None = None  # its passes started this long before the speech end (turn.py)
+    first_shown: bool = False  # shown before the detector had decided (turn.py)
     expanded_at: float | None = None  # monotonic time of the expand tap
     was_speculative: bool = False
     tasks: dict[str, "asyncio.Task[None]"] = field(default_factory=dict[str, "asyncio.Task[None]"])
@@ -482,6 +483,8 @@ class AnswerEngine:
                 out["final_ms"] = q.final_ms
             if q.early_ms is not None:
                 out["early_ms"] = q.early_ms
+            if q.first_shown:
+                out["first_shown"] = 1
             if state["start_at"] is not None:
                 out["start_ms"] = max(0, int((state["start_at"] - q.t0) * 1000))
             if pass_ == "deep" and q.expanded_at is not None:

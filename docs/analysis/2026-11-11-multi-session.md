@@ -429,7 +429,7 @@ Ranked by how often the user ends up without help that the system could have giv
 - **Fix (a), small:** hedge the detector at 1.2 s instead of 2 s, as the fast pass does.
   **Impact:** about 0.8 s off the 11 to 16% of cards that fall in a slow spell; p95 from
   about 3.8 to 5.3 s toward 3 s. Costs one more detector call on those (about $0.0002).
-- **Fix (b), your decision, not proposed for this branch:** in interviews, show the held
+- **Fix (b), your decision (you chose it: section 11):** in interviews, show the held
   short answer before the detector decides when the utterance is plainly a question (ends
   in a question mark from speech recognition, opens with a question word or "tell me",
   eight words or more), and withdraw it if the detector says no. **Impact:** about 1 s off
@@ -545,31 +545,83 @@ two-person standup, a three-person standup: 81 lines with times, addressee and t
 labels, so it measures turn handling alone; `detect` and `answers` call the configured
 models.
 
-Baseline on main (`d552c5a`), 2 repetitions of the live parts, gpt-6-luna and gpt-6.1-sol,
-`evals/sessions/results/baseline/`:
+Baseline on main (`d552c5a`) and the branch, 2 repetitions of the live parts, gpt-6-luna and
+gpt-6.1-sol (`evals/sessions/results/baseline/` and `after/`):
 
-| | Baseline |
-| --- | --- |
-| Flow: one card per question | 14/14 |
-| Flow: no card where none is due | 26/26 |
-| Flow: the whole question on the card | **0/2** |
-| Flow: follow cards right | **1/5** |
-| Flow: update card in a standup | **0/1** |
-| Detect: questions for me fired | 27/28 |
-| Detect: false fires | 6/54 |
-| Detect: type right | 20/25 |
-| Detect: latency p50 | 1,203 ms |
-| Answers: checks passed, short answer | 41/44 |
-| Answers: checks passed, detailed answer | 38/44 |
+| | Baseline | After |
+| --- | --- | --- |
+| Flow: one card per question | 14/14 | 14/14 |
+| Flow: no card where none is due | 26/26 | 26/26 |
+| Flow: the whole question on the card | **0/2** | **2/2** |
+| Flow: follow cards right | **1/5** | **5/5** |
+| Flow: update card in a standup | **0/1** | **1/1** |
+| Flow: cards shown, then withdrawn | 0 | 0 |
+| Detect: questions for me fired | 28/28 | 28/28 |
+| Detect: false fires | 5/54 | 4/54 |
+| Detect: type right | 19/26 | 23/26 |
+| Answers: checks passed, short answer | 38/44 | 42/44 |
+| Answers: checks passed, detailed answer | 34/44 | 44/44 |
 
-The offline part fails where the real calls did: both questions with a first half before a
-pause lose it (issue 3), four of five follow cases are wrong (issue 4), and the update turn
-gets no card (issue 2). Live: the false fires are the pay figure on file (twice), a
-"next step, okay?" remark (twice) and a statement mid-turn in the standup (twice); the miss
-is the open hand-off, and it was typed `other` when it fired (issue 2). The failed answer
-checks are the misheard amount (asked to clarify, both passes, issue 6) and the tool
-bookkeeping in the standup card (issue 7). The role-preference and why-it-ended checks
-passed on this profile in both repetitions, so issue 6's fix for them will not show here.
+On main the offline part fails where the real calls did: both questions with a first half
+before a pause lose it (issue 3), four of five follow cases are wrong (issue 4), and the
+update turn gets no card (issue 2). On the branch all 48 checks pass.
 
-**Spend so far:** one full run, 164 detector calls and 44 answers: $0.055, against the $2
-limit. No speech to text was used, and no new infrastructure.
+Live, read with care: two repetitions, and the model's answers vary run to run (an earlier
+baseline run scored 27/28 fired and 79/88 checks; an earlier branch run missed one standup
+question twice, which led to rewording the hand-off rule; three more repetitions then fired
+42 of 42 with 7 of 81 false). What moved for a reason: the open hand-off is typed
+`standup_status`; the standup card no longer repeats the work log's bookkeeping (0 of 16
+failed checks, from 8); the remaining failed answer check is the misheard pay figure, which
+the short answer still asks about in both repetitions, and the detector still fires on it in
+one. The statement in the middle of a teammate's turn still fires. Detector latency was
+1.3 s at p50 in the baseline run and 1.5 to 2.0 s in the branch runs an hour later: the
+prompt grew by about 60 tokens, which does not explain it; the provider's latency drifts by
+this much (2026-10-14 analysis).
+
+What the eval cannot show: the time saved by the earlier hedge and by showing a plain
+question before the detector. Both need the provider's real timing; the unit tests check
+the behavior with a slow scripted detector, and the next real interview's `first_shown`
+count and `client_first_word_ms` will show the effect.
+
+**Spend:** six eval runs (two baselines, three on the branch, one detector-only), about 800
+detector calls and 260 answers: about $0.26 of the $2 limit. No speech to text, no new
+infrastructure.
+
+## 11. What this branch changed
+
+You chose every fix, with speed and quality first and cost kept down. Each has a test that
+fails on main. Backend, worker and prompts only.
+
+| Issue | Change | Setting | Tests |
+| --- | --- | --- | --- |
+| 1(a) Late in slow spells | The detector hedges at 1.2 s instead of 2 s | `detector_hedge_ms` | `test_the_detector_hedges_as_early_as_the_fast_pass` |
+| 1(b) Late on every card | Interviews: a plain question shows as soon as its final is in, before the detector decides; the detector types it or the card is withdrawn | `first_show_min_words` (8; empty: off) | `test_a_plain_interview_question_shows_before_the_detector_decides`, `test_a_card_shown_first_is_withdrawn_when_the_detector_says_no`, `test_nothing_shows_before_the_detector_in_a_standup_or_when_turned_off`, `test_a_plain_question_is_told_from_one_the_detector_must_decide` |
+| 2 The update turn | Standups: the pack's prepared update shows when the user opens their update with nothing on screen; an open hand-off is typed `standup_status` and answered with the update | — | `test_a_standup_update_gets_the_prepared_card_as_the_user_starts`, `test_no_update_card_in_an_interview_or_over_a_card_already_shown`, `test_a_standup_is_told_about_the_hand_off_and_to_leave_out_tool_bookkeeping` |
+| 3 Half a question | A turn the detector calls unfinished keeps its words for the speaker's next ones (two turns and 60 words at most; dropped when the user speaks or the gap passes) | `continuation_gap_ms` | `test_a_question_left_unfinished_keeps_its_first_half`, `test_an_unfinished_sentence_is_dropped_once_the_user_speaks_or_time_passes` |
+| 4 Follow cards | A turn is answered if a question fired since the user last spoke, up to 15 s before the other side's last line; no follow when the user is asking | — | `test_no_follow_card_after_a_remark_that_follows_the_question`, `test_no_follow_card_when_the_user_is_the_one_asking` |
+| 5 Broken starts | An application's pack lives 30 days; the badge says when nothing comes from the call | `call_silent_warn_s` (120) | `test_an_applications_pack_outlives_the_day_it_was_built`, `test_the_badge_says_when_nothing_comes_from_the_call` |
+| 6 Speaking for the user | Prompt rules: a choice or estimate that is the user's is never made for them; spoken amounts are read sensibly; two more checks need no card | — | `test_the_prompts_leave_the_users_choices_to_them_and_read_amounts_sensibly` |
+| 7 Tool bookkeeping | Standup rule and work-log extraction: progress as told to a teammate | — | the standup prompt test, `test_work_log_extraction_leaves_out_tool_bookkeeping` |
+
+**Cost.** None of these adds a model call per card. 1(b) shows a pass that is already
+running. 1(a) adds a second detector call when the first has no token after 1.2 s: at the
+November rate (11 to 16% of calls in a slow spell, about $0.0002 each on the Priority tier)
+that is about $0.02 to $0.03 per live hour in a bad hour, near zero otherwise. The update
+card adds one detailed answer per standup (about $0.005). Fewer wrong follow cards save
+about $0.005 each (5 in the November sessions).
+
+**1(b) and withdrawn cards.** You ruled out cards that appear and vanish on 2026-10-14;
+this brings them back on purpose, narrowly. The local check passes only questions that end
+in a question mark, open with a question word or a request to tell, run to eight words, and
+are not about pay, location, availability or work status. On the interview fixture no card
+was withdrawn. In a real call one will be now and then (a rhetorical question from the
+interviewer is the likely case). The end line counts them; `COPILOT_FIRST_SHOW_MIN_WORDS=`
+(empty) turns it off without a code change.
+
+**Not changed.** Why app 0.2.4 captured almost nothing on two sessions (the desktop would
+have to report its devices and levels). Cards for checks that need only a yes. The five
+old commitments without a date (a clean-up on the stage needs your OK). Existing work
+items keep their bookkeeping until their log is extracted again.
+
+**Not measured live.** The latency effect of 1(a) and 1(b), and the update card with the
+real pack and microphone: the next interview and the next standup.

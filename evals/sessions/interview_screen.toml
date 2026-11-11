@@ -64,22 +64,17 @@ whole = ["mind", "background"]
 case = "2026-11-10: the card held only this half"
 
 [[line]]
-t = 37
-speaker = "me"
-text = "Sure. I'm a backend engineer with about eight years of experience building payment systems"
-
-[[line]]
-t = 45
+t = 35
 speaker = "them"
 text = "On the platform side in particular."
 expect = "none"
 addressee = "me"
-case = "a trailing remark after a question that has its card"
+case = "a trailing remark right after a question that has its card"
 
 [[line]]
-t = 48
+t = 39
 speaker = "me"
-text = "and most of that was on platform teams, working on ledgers, payouts and the services around them"
+text = "Sure. I'm a backend engineer with about eight years of experience building payment systems on platform teams"
 follow = "none"
 case = "2026-11-10: a second card restated the first, with its own detailed answer"
 

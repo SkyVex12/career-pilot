@@ -1,0 +1,185 @@
+{
+  "fixtures": [
+    "interview_screen",
+    "standup_handoff",
+    "standup_review"
+  ],
+  "cost_usd": 0.0373,
+  "flow": {
+    "by_fixture": {
+      "interview_screen": {
+        "cards": 8,
+        "withdrawn": 0,
+        "question_one_card": [
+          7,
+          7
+        ],
+        "quiet": [
+          10,
+          10
+        ],
+        "whole_question": [
+          2,
+          2
+        ],
+        "follow": [
+          4,
+          4
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_handoff": {
+        "cards": 2,
+        "withdrawn": 0,
+        "question_one_card": [
+          2,
+          2
+        ],
+        "quiet": [
+          7,
+          7
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          0,
+          0
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_review": {
+        "cards": 6,
+        "withdrawn": 0,
+        "question_one_card": [
+          5,
+          5
+        ],
+        "quiet": [
+          9,
+          9
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          1,
+          1
+        ],
+        "update_card": [
+          1,
+          1
+        ],
+        "failed": []
+      }
+    },
+    "total": {
+      "question_one_card": [
+        14,
+        14
+      ],
+      "quiet": [
+        26,
+        26
+      ],
+      "whole_question": [
+        2,
+        2
+      ],
+      "follow": [
+        5,
+        5
+      ],
+      "update_card": [
+        1,
+        1
+      ],
+      "all": [
+        48,
+        48
+      ]
+    }
+  },
+  "detect": {
+    "model": "gpt-6-luna",
+    "reps": 2,
+    "fired": [
+      28,
+      28
+    ],
+    "false_fires": [
+      4,
+      54
+    ],
+    "false_fires_by_addressee": {
+      "me": [
+        4,
+        32
+      ],
+      "other": [
+        0,
+        12
+      ],
+      "nobody": [
+        0,
+        10
+      ]
+    },
+    "type": [
+      23,
+      26
+    ],
+    "latency_p50_ms": 2047,
+    "calls": 82,
+    "cost_usd": 0.0046,
+    "wrong": [
+      "type interview_screen line 24: answer/technical, wanted other",
+      "false fire standup_review line 14: answer/standup_status (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type interview_screen line 24: answer/behavioral, wanted other",
+      "false fire interview_screen line 26: answer/other (a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant))",
+      "false fire interview_screen line 28: answer/other (Sure. One fifty to one sixty with a possible annua)",
+      "type standup_review line 12: answer/standup_status, wanted respond",
+      "false fire standup_review line 14: answer/respond (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))"
+    ]
+  },
+  "answers": {
+    "reps": 2,
+    "checks": [
+      86,
+      88
+    ],
+    "by_pass": {
+      "fast": [
+        42,
+        44
+      ],
+      "deep": [
+        44,
+        44
+      ]
+    },
+    "cost_usd": 0.0327,
+    "failed": [
+      {
+        "where": "interview_screen line 26 fast rep 0",
+        "check": "must not /(?i)clarify/",
+        "answer": "- I\u2019d want to clarify whether you mean $150,000 base salary\n- Is that the range you have budgeted for this role?"
+      },
+      {
+        "where": "interview_screen line 26 fast rep 1",
+        "check": "must not /(?i)clarify/",
+        "answer": "- I\u2019d want to clarify whether you mean $150,000 base salary\n- I\u2019d weigh the full package and role scope\n- What range is budgeted for this position?"
+      }
+    ]
+  }
+}

@@ -193,6 +193,9 @@ def standup_pack(fx: Fixture, today: date | None = None) -> Any:
 # Flow: the gateway's turn handling, offline ---------------------------------------------------
 
 
+WITHDRAWN = "withdrawn"  # a card shown and then taken back
+
+
 @dataclass
 class Card:
     line: int
@@ -324,6 +327,10 @@ async def replay(fx: Fixture, user_name: str) -> list[Card]:
                     continue
                 seen.add(qid)
                 cards.append(Card(line.index, q.qtype, q.text))
+            # A card that was shown and then taken back (the detector said no, or the
+            # speaker went on) is gone from the engine: the client saw it come and go.
+            gone = [m for m in client.messages[start:] if m["type"] == "question.cancelled"]
+            cards += [Card(line.index, WITHDRAWN, "") for _ in gone]
         await client.send({"type": "session.end"})
         await client.closed()
     await valkey.aclose()
@@ -332,6 +339,8 @@ async def replay(fx: Fixture, user_name: str) -> list[Card]:
 
 def score_flow(fx: Fixture, cards: list[Card]) -> dict[str, Any]:
     by_line: dict[int, list[Card]] = {}
+    withdrawn = [c for c in cards if c.qtype == WITHDRAWN]
+    cards = [c for c in cards if c.qtype != WITHDRAWN]
     for c in cards:
         by_line.setdefault(c.line, []).append(c)
     checks: dict[str, list[tuple[int, bool]]] = {
@@ -366,8 +375,11 @@ def score_flow(fx: Fixture, cards: list[Card]) -> dict[str, Any]:
                 checks["follow"].append((line.index, len(got) == 1 and got[0].qtype == "follow"))
             elif line.follow == "none":
                 checks["follow"].append((line.index, not got))
-    out: dict[str, Any] = {"cards": len(cards)}
-    failed: list[str] = []
+    out: dict[str, Any] = {"cards": len(cards), "withdrawn": len(withdrawn)}
+    failed: list[str] = [
+        f"withdrawn: line {c.line} ({fx.lines[c.line].case or fx.lines[c.line].text[:50]})"
+        for c in withdrawn
+    ]
     for name, rows in checks.items():
         out[name] = [sum(ok for _, ok in rows), len(rows)]
         failed += [
@@ -586,6 +598,10 @@ def summary_rows(s: dict[str, Any]) -> list[tuple[str, str]]:
             ("Flow: follow cards right", ratio(t["follow"])),
             ("Flow: update card in a standup", ratio(t["update_card"])),
             ("Flow: all checks", ratio(t["all"])),
+            (
+                "Flow: cards shown, then withdrawn",
+                str(sum(int(f.get("withdrawn", 0)) for f in flow["by_fixture"].values())),
+            ),
         ]
     det = cast(dict[str, Any] | None, s.get("detect"))
     if det:
