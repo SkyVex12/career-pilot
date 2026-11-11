@@ -2,6 +2,7 @@
 // renders: audio, the gateway connection, the Copilot API client and settings storage all
 // live in Rust. `rest` below is the API (ARCHITECTURE.md, "REST API") through `api_call`.
 import { invoke } from "@tauri-apps/api/core";
+import type { CodeSent } from "./emailCode";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AnswerStyle, Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@copilot/protocol";
 
@@ -60,6 +61,8 @@ export interface Settings {
   cloud_api_url: string;
   /** Set by sign-in from the stage's GET /v1/auth/config. */
   oauth: OAuthConfig | null;
+  /** Whether the stage also signs in with an emailed code; null until the app has asked it. */
+  email_sign_in: boolean | null;
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
@@ -144,6 +147,8 @@ export interface SettingsView {
   dev_token_set: boolean;
   /** The cloud environment's signed-in user (their email), if any. */
   signed_in_as: string | null;
+  /** How they signed in: an emailed code, or the browser (Google or Cognito). */
+  signed_in_with: "email" | "browser" | null;
   /** The current environment can make calls: the dev token is set, or the user signed in. */
   ready: boolean;
   /** Plain HTTP or WS to another machine in the current environment. */
@@ -280,6 +285,10 @@ export const api = {
   /** A click, key or scroll (throttled): an automatic update waits for a quiet moment. */
   noteActivity: () => invoke<void>("note_activity"),
   signIn: () => invoke<string>("sign_in"),
+  /** Email sign-in: mail a code to the address. Rejects with an EmailFailure (emailCode.ts). */
+  emailSignInStart: (email: string) => invoke<CodeSent>("email_sign_in_start", { email }),
+  /** Email sign-in: the code for the sign-in. Resolves to the address; rejects like the above. */
+  emailSignInVerify: (email: string, code: string) => invoke<string>("email_sign_in_verify", { email, code }),
   signOut: () => invoke<void>("sign_out"),
   /** The profile switch: every API call and the next session act for it (null: "Me"). */
   setProfile: (profile: string | null) => invoke<void>("set_profile", { profile }),

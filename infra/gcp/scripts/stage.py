@@ -25,7 +25,8 @@ or generated here, piped straight into Secret Manager, and never printed.
                            --any opens it to every address: no TLS, so think first)
     secrets status         which secrets have a value
     secrets set NAME       put a value in (hidden prompt), e.g. openai-api-key
-    secrets generate       database passwords and the uploads HMAC key, if still empty
+    secrets generate       database passwords, the uploads HMAC key, and (once
+                           email_from is applied) the email signing key, if still empty
                            (--lift-key-policy: see infra/gcp/README.md)
     ssh                    a shell on the VM (sudo for root)
     latency                round trips from the VM to OpenAI and Deepgram
@@ -68,6 +69,9 @@ SECRETS = (
     "db-app-system",
     "uploads-hmac-access-id",
     "uploads-hmac-secret",
+    "email-signing-key",
+    "email-public-key",
+    "email-smtp-password",
 )
 GENERATED_DB = ("db-postgres", "db-app-api", "db-app-gateway", "db-app-worker", "db-app-system")
 IMAGES = ("gateway", "api", "worker", "proxy")
@@ -497,6 +501,7 @@ def secrets_generate(lift_key_policy: bool) -> None:
         print(f"{secret_id(name)}: generated")
     if has_value("uploads-hmac-secret") and has_value("uploads-hmac-access-id"):
         print("uploads HMAC key: already set, kept")
+        generate_email_key()
         return
     key = create_hmac_key()
     if key is None:
@@ -512,6 +517,52 @@ def secrets_generate(lift_key_policy: bool) -> None:
     put_secret("uploads-hmac-access-id", key["metadata"]["accessId"])
     put_secret("uploads-hmac-secret", key["secret"])
     print(f"uploads HMAC key: created for {UPLOADS_SA}")
+    generate_email_key()
+
+
+def secret_exists(name: str) -> bool:
+    out = gcloud(
+        "secrets",
+        "describe",
+        secret_id(name),
+        "--format=value(name)",
+        capture=True,
+        check=False,
+    )
+    return bool(out.strip())
+
+
+def generate_email_key() -> None:
+    """The Ed25519 seed and its public key, straight into Secret Manager, never printed.
+
+    The secrets exist only after `email_from` is set and applied (ARCHITECTURE.md, "Email
+    sign-in"). The SMTP password is the Resend API key; that one is `secrets set`.
+    """
+    if not secret_exists("email-signing-key"):
+        print("email sign-in: set email_from and apply before generating its key")
+        return
+    if has_value("email-signing-key") and has_value("email-public-key"):
+        print(f"{secret_id('email-signing-key')}: already set, kept")
+        return
+    # copilot-email-key prints a key for a laptop. This path captures it instead.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from copilot_core.auth import new_signing_key\n"
+            "signing, public = new_signing_key()\n"
+            "print(signing)\nprint(public)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if result.returncode != 0 or len(lines) != 2:
+        sys.exit("could not make the email signing key (run this with `uv run`)")
+    put_secret("email-signing-key", lines[0])
+    put_secret("email-public-key", lines[1])
+    print(f"{secret_id('email-signing-key')}: generated (not printed)")
 
 
 def create_hmac_key() -> dict[str, Any] | None:

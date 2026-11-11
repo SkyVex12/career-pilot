@@ -101,11 +101,21 @@ variable "google_oauth_client_id" {
 
 variable "allowed_emails" {
   type        = list(string)
-  description = "Google accounts that may sign in; empty lets any Google account with a verified email in. Kept out of git, in allowlist.auto.tfvars"
+  description = "Google accounts that may sign in; empty lets any Google account with a verified email in. Kept out of git, in allowlist.auto.tfvars. The same list covers email sign-in."
   default     = []
   validation {
     condition     = alltrue([for e in var.allowed_emails : can(regex("^[^@\\s]+@[^@\\s]+$", e))])
     error_message = "Each entry must be an email."
+  }
+}
+
+variable "email_from" {
+  type        = string
+  default     = ""
+  description = "Sender for sign-in codes, e.g. Copilot <sign-in@example.com>, on a domain verified at Resend. Empty leaves email sign-in off and creates no secrets (ARCHITECTURE.md, \"Email sign-in\")."
+  validation {
+    condition     = !can(regex("[\\r\\n]", var.email_from)) && (var.email_from == "" || can(regex("@", var.email_from)))
+    error_message = "email_from is empty, or an address (a display name and <address> is fine). No line breaks."
   }
 }
 

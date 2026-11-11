@@ -33,6 +33,10 @@ elasticmq_image = "softwaremill/elasticmq-native:1.7.1"
 # goes into Secret Manager, not here.
 google_oauth_client_id = "869820620165-h5j6m5ietjjb2d3ipfvfj7kft4mkei14.apps.googleusercontent.com"
 
+# Email sign-in stays off while this is unset. Set a sender on a domain verified at Resend
+# (ARCHITECTURE.md, "Email sign-in"), apply, then fill the new secrets before the next deploy.
+# email_from = "Copilot <sign-in@example.com>"
+
 # The models of the team's local .env (October 2026): the 2026-10-07 live test's, with memory
 # extraction on gpt-6-sol and low reasoning for the background jobs.
 openai_models = {

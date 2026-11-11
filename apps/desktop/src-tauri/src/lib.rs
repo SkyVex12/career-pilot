@@ -26,7 +26,9 @@ use copilot_client::audio::check;
 use copilot_client::audio::pipeline::Levels;
 use copilot_client::audio::source::{AudioSource, Packet};
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
+use copilot_client::auth::BoxFuture;
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
+use copilot_client::emailauth::{ApiBase, CodeSent, EmailFailure, EmailTokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
@@ -74,6 +76,10 @@ struct AppState {
     dev_tokens: Arc<DevTokenProvider>,
     /// The deployed stage's browser sign-in (Google or Cognito), made from `settings.oauth`.
     oauth: Mutex<Option<Arc<OAuthTokenProvider>>>,
+    /// The deployed stage's email sign-in (emailauth.rs), for the stage in `cloud_api_url`.
+    email: Mutex<Option<Arc<EmailTokenProvider>>>,
+    /// For the email sign-in's calls to the API, which may have to wake the server first.
+    handle: AppHandle,
     engine: Mutex<Option<Arc<Engine>>>,
     history: Arc<Mutex<History>>,
     /// `desktop-<version>`: the gateway's client_version and the API's x-copilot-client.
@@ -174,17 +180,64 @@ impl AppState {
         Some(p)
     }
 
+    /// The email sign-in for the configured stage; None without a cloud API URL.
+    fn email(&self) -> Option<Arc<EmailTokenProvider>> {
+        let stage = self.settings.lock().unwrap().cloud_api_url.trim().to_string();
+        if stage.is_empty() {
+            return None;
+        }
+        let mut slot = self.email.lock().unwrap();
+        if let Some(p) = slot.as_ref().filter(|p| p.stage() == stage) {
+            return Some(p.clone());
+        }
+        let base = Arc::new(StageApi { app: self.handle.clone() });
+        let p = Arc::new(EmailTokenProvider::new(stage, base, self.secrets.clone()));
+        *slot = Some(p.clone());
+        Some(p)
+    }
+
+    /// The email sign-in, if that is how the user is signed in to the stage.
+    fn email_signed_in(&self) -> Option<Arc<EmailTokenProvider>> {
+        self.email().filter(|p| p.signed_in_as().is_some())
+    }
+
+    /// Who is signed in to the stage, and how ("email" or "browser"): at most one of the two.
+    fn signed_in(&self) -> Option<(String, &'static str)> {
+        if let Some(who) = self.email().and_then(|p| p.signed_in_as()) {
+            return Some((who, "email"));
+        }
+        self.oauth().and_then(|p| p.signed_in_as()).map(|who| (who, "browser"))
+    }
+
     /// The token source for the current environment: the dev token locally, the sign-in in the
-    /// cloud.
+    /// cloud (an emailed code or the browser, whichever the user signed in with).
     fn tokens(&self) -> Res<Arc<dyn TokenProvider>> {
         let env = self.settings.lock().unwrap().environment;
         match env {
             Environment::Local => Ok(self.dev_tokens.clone()),
-            Environment::Cloud => match self.oauth() {
-                Some(p) => Ok(p),
-                None => Err("Sign in under Settings first.".into()),
-            },
+            Environment::Cloud => {
+                if let Some(p) = self.email_signed_in() {
+                    return Ok(p);
+                }
+                match self.oauth() {
+                    Some(p) => Ok(p),
+                    None => Err("Sign in under Settings first.".into()),
+                }
+            }
         }
+    }
+
+    /// Keep what `GET /v1/auth/config` said: the browser sign-in's settings (when the stage has
+    /// one) and whether it signs in by email too.
+    fn keep_auth_config(&self, cfg: &oauth::AuthConfig) {
+        let browser = cfg.oauth().ok();
+        let email = cfg.email.is_some();
+        self.update_settings(|s| {
+            if browser.is_some() {
+                s.oauth = browser;
+            }
+            s.email_sign_in = Some(email);
+        });
     }
 
     /// The API client. `wake`: start the stage's VM if it is not known to run (a call the user
@@ -257,6 +310,21 @@ impl AppState {
     }
 }
 
+/// The stage's API for the email sign-in: its address now, starting the server if it sleeps.
+struct StageApi {
+    app: AppHandle,
+}
+
+impl ApiBase for StageApi {
+    fn api_url(&self) -> BoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            let state = self.app.state::<AppState>();
+            let url = state.settings.lock().unwrap().cloud_api_url.trim().to_string();
+            state.fill_url(&self.app, &url, true).await
+        })
+    }
+}
+
 /// An API error for the UI. A 426 (this app is too old for the server) also starts the
 /// update at once.
 fn api_error(app: &AppHandle, e: ApiError) -> String {
@@ -308,6 +376,10 @@ struct SettingsView {
     dev_token_set: bool,
     /// The cloud environment's signed-in user (their email), if any.
     signed_in_as: Option<String>,
+    /// How they signed in: "email" (an emailed code) or "browser" (Google or Cognito).
+    signed_in_with: Option<&'static str>,
+    /// Whether the stage offers sign-in by email; None until the app has asked it.
+    email_sign_in: Option<bool>,
     /// Whether the current environment can make calls: the dev token set, or signed in.
     ready: bool,
     /// Plain HTTP or WS to another machine, for the active environment.
@@ -322,7 +394,11 @@ struct SettingsView {
 fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
     let settings = state.settings.lock().unwrap().clone();
     let dev_token_set = state.dev_tokens.is_set();
-    let signed_in_as = state.oauth().and_then(|p| p.signed_in_as());
+    let (signed_in_as, signed_in_with) = match state.signed_in() {
+        Some((who, how)) => (Some(who), Some(how)),
+        None => (None, None),
+    };
+    let email_sign_in = settings.email_sign_in;
     let ready = match settings.environment {
         Environment::Local => dev_token_set,
         Environment::Cloud => signed_in_as.is_some(),
@@ -337,6 +413,8 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
             .map(|r| ReleaseView { stage: r.stage.clone(), api_url: r.api_url.clone() }),
         dev_token_set,
         signed_in_as,
+        signed_in_with,
+        email_sign_in,
         ready,
         warnings,
         updates: UpdatesView { enabled: release::config().is_some(), checked_at: checked_at(&app) },
@@ -386,7 +464,9 @@ fn save_settings(
     let kept = state.settings.lock().unwrap().clone();
     // The sign-in settings belong to the stage they came from: a new cloud API URL needs a new
     // sign-in.
-    let oauth = if settings.cloud_api_url.trim() == kept.cloud_api_url.trim() { kept.oauth } else { None };
+    let same_stage = settings.cloud_api_url.trim() == kept.cloud_api_url.trim();
+    let oauth = if same_stage { kept.oauth } else { None };
+    let email_sign_in = if same_stage { kept.email_sign_in } else { None };
     // What the app keeps for itself, whatever the screen sent (the per-monitor overlay layouts
     // and the monitor it was last on are the app's, not the screen's).
     state.update_settings(|s| {
@@ -394,6 +474,7 @@ fn save_settings(
             last_session_id: kept.last_session_id,
             profile: kept.profile,
             oauth,
+            email_sign_in,
             last_version: kept.last_version,
             pending_update: kept.pending_update,
             layouts: kept.layouts,
@@ -626,11 +707,13 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
         return Err("Set the cloud API URL and save first.".into());
     }
     let api_url = state.fill_url(&app, &api_url, true).await?;
-    let cfg = oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()).map_err(|e| e.to_string())?;
+    let fetched = oauth::fetch_auth_config(&api_url).await.map_err(|e| e.to_string())?;
+    state.keep_auth_config(&fetched);
+    let cfg = fetched.oauth().map_err(|e| e.to_string())?;
     state.update_settings(|s| s.oauth = Some(cfg));
     let provider = state.oauth().ok_or("no sign-in settings")?;
     let opener = app.clone();
-    provider
+    let email = provider
         .sign_in(move |url| {
             opener
                 .opener()
@@ -638,11 +721,70 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
                 .map_err(|e| format!("could not open the browser: {e}"))
         })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // One sign-in at a time: an email sign-in to this stage ends here.
+    if let Some(p) = state.email_signed_in() {
+        let _ = p.sign_out().await;
+        state.update_settings(|s| s.profile = None);
+    }
+    Ok(email)
+}
+
+/// Email sign-in, step one: mail a code to the address. Starts the stage's server first if it
+/// sleeps, as the browser sign-in does.
+#[tauri::command]
+async fn email_sign_in_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    email: String,
+) -> Result<CodeSent, EmailFailure> {
+    let provider = state
+        .email()
+        .ok_or_else(|| EmailFailure::new("unavailable", "Set the cloud API URL and save first."))?;
+    // Learn whether the stage offers it (and keep its sign-in settings current) before asking.
+    let api_url = state.settings.lock().unwrap().cloud_api_url.trim().to_string();
+    let api_url = state.fill_url(&app, &api_url, true).await.map_err(|e| EmailFailure::new("network", e))?;
+    match oauth::fetch_auth_config(&api_url).await {
+        Ok(cfg) => {
+            state.keep_auth_config(&cfg);
+            if cfg.email.is_none() {
+                return Err(EmailFailure::new("not_offered", "This server does not offer email sign-in."));
+            }
+        }
+        Err(e) => return Err(EmailFailure::network(e)),
+    }
+    provider.start(&email).await
+}
+
+/// Email sign-in, step two: the code for the tokens. Returns the address signed in.
+#[tauri::command]
+async fn email_sign_in_verify(
+    state: State<'_, AppState>,
+    email: String,
+    code: String,
+) -> Result<String, EmailFailure> {
+    let provider = state
+        .email()
+        .ok_or_else(|| EmailFailure::new("unavailable", "Set the cloud API URL and save first."))?;
+    let before = state.signed_in().map(|(who, _)| who);
+    let who = provider.verify(&email, &code).await?;
+    // One sign-in at a time: a browser sign-in to this stage ends here.
+    if let Some(p) = state.oauth()
+        && p.signed_in_as().is_some()
+    {
+        let _ = p.sign_out().await;
+    }
+    if before.as_deref() != Some(who.as_str()) {
+        state.update_settings(|s| s.profile = None);
+    }
+    Ok(who)
 }
 
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
+    if let Some(p) = state.email_signed_in() {
+        p.sign_out().await.map_err(|e| e.to_string())?;
+    }
     if let Some(p) = state.oauth() {
         p.sign_out().await.map_err(|e| e.to_string())?;
     }
@@ -670,10 +812,13 @@ async fn set_profile(state: State<'_, AppState>, profile: Option<String>) -> Res
 async fn delete_account(app: AppHandle, state: State<'_, AppState>) -> Res<Value> {
     let result = state.api(&app, true).await?.delete("/me").await.map_err(|e| api_error(&app, e))?;
     state.update_settings(|s| s.last_session_id = None);
-    if state.settings.lock().unwrap().environment == Environment::Cloud
-        && let Some(p) = state.oauth()
-    {
-        let _ = p.sign_out().await;
+    if state.settings.lock().unwrap().environment == Environment::Cloud {
+        if let Some(p) = state.email_signed_in() {
+            let _ = p.sign_out().await;
+        }
+        if let Some(p) = state.oauth() {
+            let _ = p.sign_out().await;
+        }
     }
     Ok(result)
 }
@@ -1443,7 +1588,9 @@ pub fn run() {
             if let Err(e) = settings.save(&settings_path) {
                 tracing::warn!("could not save settings: {e}");
             }
-            let needs_auth_config = release::config().is_some() && settings.oauth.is_none();
+            // Also once after an update from a version without email sign-in.
+            let needs_auth_config =
+                release::config().is_some() && (settings.oauth.is_none() || settings.email_sign_in.is_none());
             let overlay_on_top = settings.overlay_on_top;
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             // Versions before live transcription recorded the user's audio for an upload after
@@ -1458,6 +1605,8 @@ pub fn run() {
                 settings_path,
                 dev_tokens: Arc::new(DevTokenProvider::new(secrets.clone())),
                 oauth: Mutex::new(None),
+                email: Mutex::new(None),
+                handle: app.handle().clone(),
                 secrets,
                 engine: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
@@ -1484,12 +1633,12 @@ pub fn run() {
                     let state = handle.state::<AppState>();
                     let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
                     let fetched = match state.fill_url(&handle, &api_url, true).await {
-                        Ok(api_url) => oauth::fetch_auth_config(&api_url).await.and_then(|c| c.oauth()),
+                        Ok(api_url) => oauth::fetch_auth_config(&api_url).await,
                         Err(e) => Err(copilot_client::auth::AuthError::NotSignedIn(e)),
                     };
                     match fetched {
                         Ok(cfg) => {
-                            state.update_settings(|s| s.oauth = Some(cfg));
+                            state.keep_auth_config(&cfg);
                             // The settings screen may have loaded before this answered.
                             let _ = handle.emit(SETTINGS_EVENT, ());
                         }
@@ -1566,6 +1715,8 @@ pub fn run() {
             upload_company_file,
             delete_account,
             sign_in,
+            email_sign_in_start,
+            email_sign_in_verify,
             sign_out,
             set_profile,
             start_session,
