@@ -34,10 +34,13 @@ APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # Tables each role may read, from the role table in ARCHITECTURE.md.
 # resume_versions: metadata columns only (a column grant), never the text or file.
 GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
-                  "employers", "resume_versions", "profiles", "integrations"}  # fmt: skip
+                  "employers", "resume_versions", "profiles", "integrations",
+                  "identities"}  # fmt: skip
 # integrations: the Career-OS link's status only (a column grant), never the token.
 # Tables the gateway reads through a table-wide grant (the other two have column grants).
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
+# Sign-in tables (migration 0014): the API's alone to write, and the workers get nothing.
+API_ONLY_TABLES = {"identities", "refresh_tokens"}
 # Tables without row-level security, on purpose (system table, workers only).
 NO_RLS_TABLES = {"job_runs", "career_os_people"}
 
@@ -228,6 +231,19 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "day": date(2026, 10, 1) + timedelta(days=n),
         "live_seconds": 60,
     },
+    "identities": lambda w, n: {
+        "provider": "google",
+        "subject": f"sub-{w.user_id}-{n}",
+        "user_id": w.user_id,
+        "email": f"{w.user_id}@example.com",
+    },
+    "refresh_tokens": lambda w, n: {
+        "token_hash": uuid.uuid4().hex * 2,
+        "user_id": w.user_id,
+        "family_id": w.session_id,
+        "email": f"{w.user_id}@example.com",
+        "expires_at": NOW + timedelta(days=60),
+    },
 }
 USER_TABLES = list(ROWS)
 # Views over user tables. They use security_invoker, so the base table's RLS applies;
@@ -240,10 +256,14 @@ def tenant_column(table: str) -> str:
 
 
 def can_read(role: str, table: str) -> bool:
+    if role == "app_worker":
+        return table not in API_ONLY_TABLES
     return role != "app_gateway" or table in GATEWAY_TABLES
 
 
-def can_write(role: str) -> bool:
+def can_write(role: str, table: str | None = None) -> bool:
+    if role == "app_worker":
+        return table not in API_ONLY_TABLES
     return role != "app_gateway"
 
 
@@ -368,7 +388,7 @@ async def test_cannot_update_or_delete_another_users_rows(db: Db, role: str, tab
         (f"delete from app.{table} where {col} = $1", "DELETE"),
     ):
         status, _, err = await as_user(db, role, db.a, sql, db.b.user_id)
-        if can_write(role):
+        if can_write(role, table):
             assert err is None
             assert status == f"{verb} 0", f"{role} changed user B's rows in {table}: {status}"
         else:
@@ -708,3 +728,88 @@ async def test_workplace_nodes_name_their_employer(db: Db) -> None:
         with pytest.raises(asyncpg.CheckViolationError):
             async with db.conn.transaction():
                 await insert(db.conn, "memory_nodes", row)
+
+
+# Sign-in (migration 0014) --------------------------------------------------------------
+# Before the user is known, a transaction presents a key in app.sign_in and sees the one row
+# it names: read only, and nothing without the key.
+
+
+async def with_key(
+    db: Db, role: str, key: str | None, sql: str, *args: Any
+) -> tuple[str | None, list[asyncpg.Record], str | None]:
+    """One statement as `role` in a sign-in transaction (no user, `key` presented)."""
+    status: str | None = None
+    rows: list[asyncpg.Record] = []
+    try:
+        async with db.conn.transaction():
+            await db.conn.execute(f"set local role {role}")
+            await db.conn.execute(
+                "select set_config('app.user_id', $1, true)", str(uuid.UUID(int=0))
+            )
+            if key is not None:
+                await db.conn.execute("select set_config('app.sign_in', $1, true)", key)
+            if sql.lstrip().lower().startswith("select"):
+                rows = await db.conn.fetch(sql, *args)
+            else:
+                status = await db.conn.execute(sql, *args)
+            raise Rollback
+    except Rollback:
+        return status, rows, None
+    except asyncpg.PostgresError as e:
+        return None, [], e.sqlstate
+
+
+@pytest.mark.parametrize("role", ["app_api", "app_gateway"])
+async def test_a_sign_in_key_shows_its_identity_and_no_other(db: Db, role: str) -> None:
+    subject, email = f"sub-{db.a.user_id}-0", f"{db.a.user_id}@example.com"
+    for key in (None, "", "google:", "google:nobody", f"google:sub-{db.a.user_id}", "email:"):
+        _, rows, err = await with_key(db, role, key, "select user_id from app.identities")
+        assert err is None
+        assert rows == [], f"{role} saw identities with the key {key!r}"
+    for key in (f"google:{subject}", f"email:{email}"):
+        _, rows, err = await with_key(db, role, key, "select user_id from app.identities")
+        assert err is None
+        assert {r["user_id"] for r in rows} == {db.a.user_id}
+
+
+async def test_a_sign_in_key_shows_its_refresh_token_and_no_other(db: Db) -> None:
+    mine = await db.conn.fetchval(
+        "select token_hash from app.refresh_tokens where user_id = $1", db.a.user_id
+    )
+    for key in (None, "", "refresh:", f"refresh:{'0' * 64}", f"email:{db.a.user_id}@example.com"):
+        _, rows, err = await with_key(db, "app_api", key, "select 1 from app.refresh_tokens")
+        assert err is None
+        assert rows == []
+    _, rows, err = await with_key(
+        db, "app_api", f"refresh:{mine}", "select user_id from app.refresh_tokens"
+    )
+    assert err is None
+    assert [r["user_id"] for r in rows] == [db.a.user_id]
+    # The gateway and the workers have no business with refresh tokens.
+    for role in ("app_gateway", "app_worker"):
+        _, _, err = await with_key(db, role, f"refresh:{mine}", "select 1 from app.refresh_tokens")
+        assert err == INSUFFICIENT_PRIVILEGE
+
+
+@pytest.mark.parametrize("table", sorted(API_ONLY_TABLES))
+async def test_a_sign_in_key_cannot_write(db: Db, table: str) -> None:
+    subject = f"sub-{db.a.user_id}-0"
+    mine = await db.conn.fetchval(
+        "select token_hash from app.refresh_tokens where user_id = $1", db.a.user_id
+    )
+    key = f"google:{subject}" if table == "identities" else f"refresh:{mine}"
+    for sql, verb in (
+        (f"update app.{table} set email = 'x@example.com'", "UPDATE"),
+        (f"delete from app.{table}", "DELETE"),
+    ):
+        status, _, err = await with_key(db, "app_api", key, sql)
+        assert err is None
+        assert status == f"{verb} 0", f"a sign-in key changed {table}: {status}"
+    row = ROWS[table](db.a, 3)
+    cols = ", ".join(row)
+    params = ", ".join(f"${i}" for i in range(1, len(row) + 1))
+    _, _, err = await with_key(
+        db, "app_api", key, f"insert into app.{table} ({cols}) values ({params})", *row.values()
+    )
+    assert err == INSUFFICIENT_PRIVILEGE

@@ -11,9 +11,18 @@ import pytest
 import pytest_asyncio
 
 from copilot_api.deps import Services
+from copilot_api.emailauth import EmailSignIn
+from copilot_api.mailer import MemoryMailer
 from copilot_api.main import create_app
 from copilot_api.testing import Api, api_settings
-from copilot_core.auth import StaticVerifier
+from copilot_core.auth import (
+    COPILOT_ISSUER,
+    ByIssuer,
+    CopilotVerifier,
+    StaticVerifier,
+    email_public_keys,
+    new_signing_key,
+)
 from copilot_core.crypto import DevKeyProvider, UserCrypto
 from copilot_core.db import create_pool
 from copilot_core.jobs import MemoryJobQueue
@@ -29,29 +38,36 @@ async def api() -> AsyncIterator[Api]:
         url = await db.__aenter__()
     except StackUnavailableError as e:
         pytest.fail(str(e), pytrace=False)
-    settings = api_settings()
+    # Email sign-in is on beside the tests' static tokens, as it is beside Google on a stage.
+    settings = api_settings(email_sign_in=True, email_signing_key=new_signing_key()[0])
     assert settings.dev_master_key is not None
     store = S3Store(settings)
     await store.ensure_bucket()
     verifier = StaticVerifier({})
     jobs = MemoryJobQueue()
+    pool = await create_pool(as_role(url, "app_api"), 1, 5)
+    valkey = make_valkey(settings.valkey_url)
+    mailer = MemoryMailer()
     svc = Services(
         settings=settings,
-        pool=await create_pool(as_role(url, "app_api"), 1, 5),
-        valkey=make_valkey(settings.valkey_url),
+        pool=pool,
+        valkey=valkey,
         queue=jobs,
         store=store,
         crypto=UserCrypto(
             DevKeyProvider(base64.b64decode(settings.dev_master_key.get_secret_value()))
         ),
-        verifier=verifier,
+        verifier=ByIssuer(
+            {COPILOT_ISSUER: CopilotVerifier(email_public_keys(settings), [])}, verifier
+        ),
+        email=EmailSignIn(settings, pool, valkey, mailer),
     )
     app = create_app(svc)
     app.state.services = svc
     client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://api.test")
     admin = await asyncpg.connect(url)
     try:
-        yield Api(svc, client, admin, jobs, verifier)
+        yield Api(svc, client, admin, jobs, verifier, mailer)
     finally:
         await client.aclose()
         await admin.close()

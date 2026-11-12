@@ -336,8 +336,44 @@ describe("Call", () => {
     wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null })} />);
     expect(screen.getByRole("heading", { name: "Get ready for your first call" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start call" })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Sign in with your browser" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     expect(ipc.calls.some((c) => c.cmd === "sign_in")).toBe(true);
+  });
+
+  it("email sign-in: a code, a resend countdown, then a wrong code and an expired one", async () => {
+    callRoutes();
+    ipc.handle("email_sign_in_start", () => ({ code_length: 6, expires_in_s: 600, resend_after_s: 60 }));
+    let tries = 0;
+    ipc.handle("email_sign_in_verify", () => {
+      tries += 1;
+      throw tries === 1
+        ? { code: "invalid_code", message: "no" }
+        : { code: "code_expired", message: "no" };
+    });
+    wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null, settings: { ...SETTINGS, email_sign_in: true } })} />);
+    await userEvent.click(screen.getByRole("button", { name: "Continue with email" }));
+    await userEvent.type(screen.getByLabelText("Email address"), "sam@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Send code" }));
+    expect(await screen.findByText(/We sent a 6-digit code to/)).toBeInTheDocument();
+    expect(screen.getByText("sam@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Send a new code in \d+:\d+/ })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Code"), "123 456");
+    expect(screen.getByLabelText("Code")).toHaveValue("123456");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That code isn't right");
+    await userEvent.type(screen.getByLabelText("Code"), "654321");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That code has expired or was already used");
+    const start = ipc.calls.find((c) => c.cmd === "email_sign_in_start");
+    expect(start?.args.email).toBe("sam@example.com");
+  });
+
+  it("a stage without email sign-in offers Google only", async () => {
+    callRoutes();
+    wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null, settings: { ...SETTINGS, email_sign_in: false } })} />);
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with email" })).not.toBeInTheDocument();
+    expect(screen.getByText(/With your Google account\./)).toBeInTheDocument();
   });
 
   it("locked: the Career-OS step asks for the code", async () => {

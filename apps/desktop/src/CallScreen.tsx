@@ -4,6 +4,7 @@
 // - ready: the next interview (or the company, for a standup or meeting) and Start call;
 // - live: the call running, its last question and levels, mode and answer style, End call;
 // - just ended: the call's summary as it is written (SessionDetail).
+import { SignIn } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import { api, rest, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type Settings } from "./api";
@@ -105,8 +106,6 @@ export function CallScreen(props: CallProps) {
 // --- Setup ---------------------------------------------------------------------------------
 
 function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs, locked, onCareerOsChanged, onSettingsSaved, onSettings, onResumes }: CallProps) {
-  const [signingIn, setSigningIn] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [hasResume, setHasResume] = useState<boolean | null>(null);
   useEffect(() => {
     if (!tokenSet) return;
@@ -116,18 +115,6 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
     );
   }, [tokenSet]);
   const browserSignIn = release || environment === "cloud";
-  const signIn = async () => {
-    setSigningIn(true);
-    setError(null);
-    try {
-      await api.signIn();
-      onSettingsSaved();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSigningIn(false);
-    }
-  };
   const linkNeeded = careerOs?.available && (careerOs.required || !careerOs.connected);
   const showLink = Boolean(linkNeeded || locked || careerOs?.connected);
   // Steps are numbered as shown: the Career-OS step only when the stage has Career-OS.
@@ -139,18 +126,22 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
         <Step n={1} done={tokenSet} title="Sign in" doneText={signedInAs ?? (browserSignIn ? "Signed in" : "Dev token set")}>
           {browserSignIn ? (
             <>
-              <p className="ui-text-2">Opens your browser at the sign-in page. You stay signed in on this computer.</p>
-              <div className="ui-row-inline">
-                <Button variant="primary" loading={signingIn} onClick={signIn} disabled={!release && !settings?.cloud_api_url}>
-                  {signingIn ? "Waiting for the browser…" : "Sign in with your browser"}
-                </Button>
-                {!release && !settings?.cloud_api_url && (
+              <p className="ui-text-2">
+                {settings?.email_sign_in === false
+                  ? "With your Google account. You stay signed in on this computer."
+                  : "With your Google account, or with a code we email you. You stay signed in on this computer."}
+              </p>
+              <SignIn
+                browserName={settings?.oauth?.provider === "cognito" ? null : "Google"}
+                emailOffered={settings?.email_sign_in ?? null}
+                disabled={!release && !settings?.cloud_api_url}
+                disabledHint={
                   <Button variant="link" onClick={onSettings}>
                     Set the cloud URLs first (Settings, Advanced)
                   </Button>
-                )}
-              </div>
-              {error && <p className="ui-field-error">{error}</p>}
+                }
+                onSignedIn={onSettingsSaved}
+              />
             </>
           ) : (
             <div className="ui-row-inline">

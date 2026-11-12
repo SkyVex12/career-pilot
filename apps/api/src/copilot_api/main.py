@@ -15,11 +15,14 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services, require_link
+from copilot_api.emailauth import EmailSignIn
+from copilot_api.mailer import make_mailer
 from copilot_api.routes import (
     applications,
     auth,
     career_os,
     documents,
+    email_auth,
     employers,
     me,
     profiles,
@@ -32,6 +35,7 @@ from copilot_core.careeros import make_client
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import create_pool
 from copilot_core.dotenv import load_dotenv
+from copilot_core.identities import Identities
 from copilot_core.jobs import SqsJobQueue
 from copilot_core.storage import S3Store
 from copilot_core.valkey_client import make_valkey
@@ -107,17 +111,24 @@ async def build_services(settings: ApiSettings) -> Services:
     store = S3Store(settings)
     if settings.env in ("dev", "test"):
         await store.ensure_bucket()
+    pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+    valkey = make_valkey(settings.valkey_url, settings.valkey_cluster)
     return Services(
         settings=settings,
-        pool=await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max),
-        valkey=make_valkey(settings.valkey_url, settings.valkey_cluster),
+        pool=pool,
+        valkey=valkey,
         queue=SqsJobQueue(
             settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
         store=store,
         crypto=UserCrypto(make_key_provider(settings), settings.dek_cache_ttl_s),
-        verifier=make_verifier(settings),
+        # Asked on every request (no remembering): the API also writes identities, and must
+        # see an account's deletion at once.
+        verifier=make_verifier(settings, Identities(pool, ttl_s=0)),
         career_os=make_client(settings.career_os_url, settings.career_os_timeout_s),
+        email=EmailSignIn(settings, pool, valkey, make_mailer(settings))
+        if settings.email_sign_in
+        else None,
     )
 
 
@@ -129,6 +140,8 @@ def create_app(services: Services | None = None) -> FastAPI:
         try:
             yield
         finally:
+            if app.state.services.email is not None:
+                await app.state.services.email.drain()  # a code's mail on its way out
             if owned:
                 await app.state.services.pool.close()
                 await app.state.services.valkey.aclose()
@@ -142,7 +155,7 @@ def create_app(services: Services | None = None) -> FastAPI:
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
-    for module in (auth, me, profiles, career_os):
+    for module in (auth, email_auth, me, profiles, career_os):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
     for module in (documents, applications, resumes, sessions, employers):

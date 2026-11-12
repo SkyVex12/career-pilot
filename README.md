@@ -446,6 +446,18 @@ Done once, by hand, in this order.
    uv run infra/gcp/scripts/stage.py secrets status
    ```
 
+   Email sign-in stays off until `email_from` is set in `terraform.tfvars` (a sender on a
+   domain verified at Resend: SPF, DKIM, and DMARC) and that change is applied. The apply
+   creates three empty secrets and nothing else billed beyond Secret Manager (about $0.06
+   each per month once they hold a version). Then, before the next deploy or restart:
+
+   ```sh
+   uv run infra/gcp/scripts/stage.py secrets generate   # the signing key, not printed
+   uv run infra/gcp/scripts/stage.py secrets set email-smtp-password   # the Resend API key
+   ```
+
+   See ARCHITECTURE.md, "Email sign-in". Do not apply that until the DNS records exist.
+
 8. **CI/CD.** Repository variables (Settings → Secrets and variables → Actions → Variables, or
    `gh variable set`) from `terraform output ci`: `GCP_WORKLOAD_IDENTITY_PROVIDER`,
    `GCP_CI_SERVICE_ACCOUNT`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_RELEASE_SERVICE_ACCOUNT`,

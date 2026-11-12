@@ -9,6 +9,7 @@ import { CareerOsSettings } from "./CareerOs";
 import { DevicePickers } from "./CallScreen";
 import { HOTKEYS, clashWith } from "./hotkeys";
 import { accountOf } from "./profiles";
+import { SignIn } from "./SignIn";
 import { HotkeyInput } from "./ui/HotkeyInput";
 import { Banner, Button, Card, ConfirmDialog, Field, Input, PageHeader, SegmentedControl, Select, Switch, useTheme, useToast } from "./ui";
 
@@ -192,23 +193,12 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
 }
 
 function Account({ view, onSaved }: { view: SettingsView; onSaved: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const toast = useToast();
   const settings = view.settings;
   const browser = Boolean(view.release) || settings.environment === "cloud";
-  const signIn = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const email = await api.signIn();
-      onSaved();
-      toast({ tone: "success", text: `Signed in${email ? ` as ${email}` : ""}.` });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+  const signedIn = (email: string) => {
+    onSaved();
+    toast({ tone: "success", text: `Signed in${email ? ` as ${email}` : ""}.` });
   };
   const signOut = async () => {
     try {
@@ -225,21 +215,29 @@ function Account({ view, onSaved }: { view: SettingsView; onSaved: () => void })
         {browser ? (
           view.signed_in_as !== null ? (
             <div className="ui-row-inline">
-              <span>Signed in{view.signed_in_as ? ` as ${view.signed_in_as}` : ""}.</span>
+              <span>
+                Signed in{view.signed_in_as ? ` as ${view.signed_in_as}` : ""}
+                {view.signed_in_with === "email" ? ", with an emailed code" : view.signed_in_with === "browser" && settings.oauth?.provider !== "cognito" ? ", with Google" : ""}.
+              </span>
               <Button size="sm" onClick={signOut}>
                 Sign out
               </Button>
             </div>
           ) : (
             <div className="ui-stack-tight">
-              <p className="ui-text-2">Opens your browser at the sign-in page. The sign-in is kept in the Windows Credential Manager and renews itself, also during a call.</p>
-              <div className="ui-row-inline">
-                <Button variant="primary" loading={busy} disabled={!settings.cloud_api_url} onClick={signIn}>
-                  {busy ? "Waiting for the browser…" : "Sign in with your browser"}
-                </Button>
-                {!settings.cloud_api_url && <span className="ui-field-hint">Set the cloud URLs under Advanced first.</span>}
-              </div>
-              {error && <p className="ui-field-error">{error}</p>}
+              <p className="ui-text-2">
+                {settings.email_sign_in === false
+                  ? "With your Google account. "
+                  : "With your Google account, or with a code we email you. "}
+                The sign-in is kept in the Windows Credential Manager and renews itself, also during a call.
+              </p>
+              <SignIn
+                browserName={settings.oauth?.provider === "cognito" ? null : "Google"}
+                emailOffered={settings.email_sign_in}
+                disabled={!settings.cloud_api_url}
+                disabledHint={<span className="ui-field-hint">Set the cloud URLs under Advanced first.</span>}
+                onSignedIn={signedIn}
+              />
             </div>
           )
         ) : (

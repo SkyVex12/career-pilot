@@ -29,6 +29,7 @@ from starlette.websockets import WebSocket, WebSocketState
 from copilot_core import careeros, jobs, logs, profiles, prompts, resumes, versions, workplace
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
+from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
 from copilot_core.llm import LLMDone, ModelRouter
 from copilot_core.packs import (
@@ -110,6 +111,8 @@ class Services:
     task_id: str = field(default_factory=lambda: str(uuid7()))
     # Postgres as app_gateway (read only), for company memory; None without a database.
     pool: asyncpg.Pool | None = None
+    # Which account a Google sign-in belongs to (app.identities), read through `pool`.
+    identities: Identities | None = None
 
 
 @dataclass

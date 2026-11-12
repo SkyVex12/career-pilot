@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ import httpx2
 
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services
+from copilot_api.mailer import MemoryMailer
 from copilot_core.auth import Principal, StaticVerifier
 from copilot_core.careeros import CareerOsClient
 from copilot_core.jobs import MemoryJobQueue
@@ -48,6 +49,7 @@ class Api:
     admin: asyncpg.Connection
     jobs: MemoryJobQueue
     verifier: StaticVerifier
+    mailer: MemoryMailer = field(default_factory=MemoryMailer)
 
     def user(self, name: str = "Alex") -> tuple[uuid.UUID, dict[str, str]]:
         """A new user's id and auth headers (their row is created on first request)."""

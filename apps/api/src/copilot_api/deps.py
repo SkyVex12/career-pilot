@@ -1,9 +1,10 @@
 """Shared services and request dependencies.
 
-Every request carries an access token (Cognito, or the dev token locally). The first request
-of a new user creates their `app.users` row from the token. Every handler then runs its
-queries inside `services.tx(user)`, which opens a transaction that sets `app.user_id` first
-(ARCHITECTURE.md, "Row-level security").
+Every request carries an access token (Google's or Cognito's, the API's own after an email
+sign-in, or the dev token locally). The first request of a new user creates their `app.users`
+row from the token; an email sign-in's account is made when its code is verified instead.
+Every handler then runs its queries inside `services.tx(user)`, which opens a transaction that
+sets `app.user_id` first (ARCHITECTURE.md, "Row-level security").
 
 A request may name one of the account's profiles (`x-copilot-profile`; ARCHITECTURE.md,
 "Profiles"). `UserDep` is then the profile, so the handler reads and writes the profile's rows;
@@ -28,7 +29,8 @@ import httpx2
 from fastapi import Depends, Header, HTTPException, Request
 
 from copilot_api.config import ApiSettings
-from copilot_core import careeros, jobs, keys, logs, profiles
+from copilot_api.emailauth import EmailSignIn
+from copilot_core import careeros, identities, jobs, keys, logs, profiles
 from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
@@ -50,6 +52,7 @@ class Services:
     crypto: UserCrypto
     verifier: TokenVerifier
     career_os: CareerOsClient | None = None  # None: COPILOT_CAREER_OS_URL is unset
+    email: EmailSignIn | None = None  # None: COPILOT_EMAIL_SIGN_IN is off
 
     @asynccontextmanager
     async def tx(self, user: Principal) -> AsyncGenerator[Conn]:
@@ -95,10 +98,21 @@ async def current_account(
         principal = await svc.verifier.verify(token)
     except AuthError as e:
         raise HTTPException(401, str(e), headers={"WWW-Authenticate": "Bearer"}) from e
+    if principal.new_identity:
+        # A Google sign-in nothing has recorded yet: an account from before identities, or
+        # the account an email sign-in made for the same address (copilot_core.identities).
+        principal = await identities.adopt_google(svc.pool, principal)
     logs.set_ids(user_id=principal.user_id)
     async with svc.tx(principal) as conn:
         known = await conn.fetchval("select 1 from app.users where id = $1", principal.user_id)
     if known is None:
+        if principal.provider == "email":
+            # An email sign-in makes its account when the code is verified; a token without
+            # one is a deleted account's, and does not bring it back.
+            raise HTTPException(
+                401, "this account no longer exists; sign in again",
+                headers={"WWW-Authenticate": "Bearer"},
+            )  # fmt: skip
         email = principal.email or await userinfo_email(svc.settings, token)
         if not email:
             raise HTTPException(403, "the token carries no email for the new account")
@@ -111,6 +125,8 @@ async def current_account(
                     email,
                     principal.display_name,
                 )
+                if principal.new_identity:
+                    await identities.record_google(conn, principal)
         except asyncpg.UniqueViolationError as e:  # the email belongs to another account
             raise HTTPException(409, "this email belongs to another account") from e
         log.info("created user %s on first login", principal.user_id)

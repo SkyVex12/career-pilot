@@ -15,6 +15,7 @@ from copilot_core import __version__, embed, logs
 from copilot_core.db import create_pool
 from copilot_core.dotenv import load_dotenv
 from copilot_core.embed import Embedder
+from copilot_core.identities import Identities
 from copilot_core.jobs import SqsJobQueue
 from copilot_core.llm import ModelRouter
 from copilot_core.pricing import missing_prices
@@ -93,14 +94,17 @@ def build_services(settings: Settings) -> Services:
     embedder = make_embedder(settings)
     router = build_router(settings)
     warn_missing_prices(router, settings)
+    # Its pool is set once the database is open (create_app).
+    identities = Identities()
     return Services(
+        identities=identities,
         settings=settings,
         store=GatewayStore(make_client(settings), settings),
         jobs=SqsJobQueue(
             settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
         router=router,
-        verifier=make_verifier(settings),
+        verifier=make_verifier(settings, identities),
         stt_providers=stt_providers(settings),
         embedder=embedder,
     )
@@ -113,6 +117,8 @@ def create_app(services: Services | None = None) -> FastAPI:
         owned_pool = svc.pool is None and bool(svc.settings.database_url)
         if owned_pool:
             svc.pool = await open_pool(svc.settings)
+        if svc.identities is not None:
+            svc.identities.pool = svc.pool
         app.state.manager = SessionManager(svc)
         warm = asyncio.create_task(svc.router.warm())
         try:

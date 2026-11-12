@@ -58,6 +58,17 @@ pub struct AuthConfig {
     pub client_secret: Option<String>,
     pub bearer: Option<String>,
     pub authorize_params: BTreeMap<String, String>,
+    /// Present when the stage also signs in with an emailed code ([`crate::emailauth`]).
+    pub email: Option<EmailOption>,
+}
+
+/// The stage's email sign-in, from `GET /v1/auth/config`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct EmailOption {
+    pub code_length: u32,
+    pub code_ttl_s: u64,
+    pub resend_after_s: u64,
 }
 
 /// What the app needs to sign in to one deployment, kept in the settings file. A client

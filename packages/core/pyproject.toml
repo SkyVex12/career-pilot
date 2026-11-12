@@ -20,6 +20,7 @@ dependencies = [
 copilot-migrate = "copilot_core.migrate:run"
 copilot-dev-roles = "copilot_core.devroles:run"
 copilot-db-logins = "copilot_core.dblogins:run"
+copilot-email-key = "copilot_core.emailkey:run"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.13"]
