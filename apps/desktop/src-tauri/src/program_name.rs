@@ -383,7 +383,9 @@ fn parse_block(data: &[u8], offset: usize) -> Result<(Block, usize), String> {
             break;
         }
         children.push(child);
-        cursor = next;
+        // wLength stops at the value. The zero to three bytes that align the next
+        // block are not part of it, so the next block starts on the next dword.
+        cursor = align4(next);
     }
     Ok((Block { text, key, value, children }, end))
 }
@@ -745,6 +747,57 @@ unsafe extern "system" {
 
 #[cfg(all(test, windows))]
 mod tests {
+    #[test]
+    fn a_windows_version_block_keeps_its_language() {
+        // The resource compiler's wLength does not include the padding before the next
+        // block. Reading the next block immediately after wLength drops the language,
+        // and the rewritten file then has no language for Windows to query.
+        let name = "Copilot Desktop";
+        let mut bytes = Vec::new();
+        write_windows(&mut bytes, &version_tree(name));
+        let mut root = super::parse_root(&bytes).expect("parse");
+        assert_eq!(text(&root, "ProductName").as_deref(), Some(name));
+        assert!(has_key(&root, "Translation"));
+        assert!(super::replace_names(&mut root, "Copilot"));
+        let written = super::serialize(&root).expect("serialize");
+        assert_eq!(super::version_string(&written, "FileDescription").expect("description"), "Copilot");
+        assert_eq!(super::version_string(&written, "ProductName").expect("product"), "Copilot");
+    }
+
+    fn write_windows(buf: &mut Vec<u8>, block: &super::Block) {
+        let start = buf.len();
+        buf.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        super::write_text(buf, &block.key);
+        while !buf.len().is_multiple_of(4) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(&block.value);
+        let end = if block.children.is_empty() {
+            buf.len()
+        } else {
+            while !buf.len().is_multiple_of(4) {
+                buf.push(0);
+            }
+            for child in &block.children {
+                write_windows(buf, child);
+                while !buf.len().is_multiple_of(4) {
+                    buf.push(0);
+                }
+            }
+            buf.len()
+        };
+        let total = u16::try_from(end - start).expect("length");
+        buf[start..start + 2].copy_from_slice(&total.to_le_bytes());
+        let value_len = if block.text { block.value.len() / 2 } else { block.value.len() };
+        buf[start + 2..start + 4].copy_from_slice(&(value_len as u16).to_le_bytes());
+        let kind: u16 = if block.text { 1 } else { 0 };
+        buf[start + 4..start + 6].copy_from_slice(&kind.to_le_bytes());
+    }
+
+    fn has_key(block: &super::Block, key: &str) -> bool {
+        block.key == key || block.children.iter().any(|child| has_key(child, key))
+    }
+
     #[test]
     fn a_longer_name_round_trips_through_the_version_block() {
         // The built-in description is "Copilot Desktop" (15 characters). A longer name has to
