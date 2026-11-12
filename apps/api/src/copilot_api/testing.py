@@ -131,8 +131,10 @@ class FakeCareerOs:
 
     def public_key(self, key: Ed25519PrivateKey | None = None) -> tuple[str, str]:
         """(kid, public key in base64url) of the signing key, as `/oauth/keys` gives them."""
-        raw = (key or self.sign_in_key).public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        raw = (
+            (key or self.sign_in_key)
+            .public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
         )
         return hashlib.sha256(raw).hexdigest()[:16], self._b64(raw)
 

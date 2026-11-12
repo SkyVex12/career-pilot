@@ -238,13 +238,17 @@ async def test_case_3_several_linked_accounts_are_never_picked_for_the_person(
     for s in shown.values():
         assert s["methods"] == ["google"]
         assert s["created_at"] == time.strftime("%Y-%m-%d", time.gmtime())
-        assert str(a) not in s["id"] and str(b) not in s["id"]
+        assert str(a) not in s["id"]
+        assert str(b) not in s["id"]
     assert await identity_of(api, "user:u1") is None  # nothing recorded yet
 
     pick_a = shown["a•••@g•••.example"]["id"]
     body = {"ticket": asked["ticket"], "choice": "existing", "account_id": pick_a}
     # No proof, the other linked account's proof, a stranger's, a made-up choice, a new one.
-    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (401, "proof_required")
+    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (
+        401,
+        "proof_required",
+    )
     r = await api.client.post(COMPLETE, json=body, headers={**IP, **google_b})
     assert code_of(r) == (409, "wrong_account")
     r = await api.client.post(COMPLETE, json=body, headers={**IP, **google_c})
@@ -305,7 +309,10 @@ async def test_case_4_use_my_existing_account_needs_its_own_sign_in(
     uid, google = await google_account(api, fake.emails["u2"])
     asked = (await cos(api, fake, "u2")).json()
     body = {"ticket": asked["ticket"], "choice": "existing"}
-    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (401, "proof_required")
+    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (
+        401,
+        "proof_required",
+    )
     # A Career-OS sign-in is not that account's own method.
     elsewhere = await signed_in(api, fake, "u3")
     r = await api.client.post(COMPLETE, json=body, headers={**IP, **bearer(elsewhere)})
@@ -463,7 +470,9 @@ async def test_unlinking_is_blocked_while_career_os_is_the_only_way_in(
 async def test_a_code_link_cannot_disagree_with_the_sign_in(api: Api, fake: FakeCareerOs) -> None:
     out = await signed_in(api, fake, "u1")
     uid = uuid.UUID((await me(api, bearer(out)))["id"])
-    await api.admin.execute("update app.integrations set status = 'revoked' where user_id = $1", uid)
+    await api.admin.execute(
+        "update app.integrations set status = 'revoked' where user_id = $1", uid
+    )
     r = await api.client.post(
         "/v1/career-os/connect", headers=bearer(out), json={"code": fake.code_for("u2")}
     )
@@ -484,10 +493,14 @@ async def test_a_code_works_once_and_only_with_its_verifier(api: Api, fake: Fake
     # Expired on Career-OS looks the same: it no longer knows the code.
     code, verifier = fake.approve("u2")
     fake.sign_in_codes.clear()
-    r = await api.client.post(SIGN_IN, json={**body, "code": code, "code_verifier": verifier}, headers=IP)
+    r = await api.client.post(
+        SIGN_IN, json={**body, "code": code, "code_verifier": verifier}, headers=IP
+    )
     assert code_of(r) == (400, "invalid_grant")
     code, verifier = fake.approve("u2")
-    r = await api.client.post(SIGN_IN, json={**body, "code": code, "code_verifier": "x" * 43}, headers=IP)
+    r = await api.client.post(
+        SIGN_IN, json={**body, "code": code, "code_verifier": "x" * 43}, headers=IP
+    )
     assert code_of(r) == (400, "invalid_grant")
     code, verifier = fake.approve("u2")
     r = await api.client.post(
@@ -587,14 +600,14 @@ async def test_when_career_os_is_down_the_button_says_so_and_other_sign_ins_work
     assert "Career-OS could not be reached" in r.json()["detail"]["message"]
     # Whoever is signed in stays signed in, and can refresh.
     assert (await api.client.get("/v1/me", headers=bearer(out))).status_code == 200
-    r = await api.client.post("/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]})
+    r = await api.client.post(
+        "/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]}
+    )
     assert r.status_code == 200
     _, google = await google_account(api)
     assert (await api.client.get("/v1/me", headers=google)).status_code == 200
     assert (await api.client.get("/v1/auth/config")).status_code == 200
-    r = await api.client.post(
-        "/v1/auth/email/start", json={"email": "sam@example.com"}, headers=IP
-    )
+    r = await api.client.post("/v1/auth/email/start", json={"email": "sam@example.com"}, headers=IP)
     assert r.status_code == 200
 
 
@@ -603,12 +616,18 @@ async def test_sign_in_attempts_are_limited_per_client(api: Api, fake: FakeCaree
     api.svc.cos_sign_in.limit = (Limit(2, 900),)
     body = {"code": "x", "code_verifier": "v" * 43, "redirect_uri": fake.REDIRECT}
     for _ in range(2):
-        assert code_of(await api.client.post(SIGN_IN, json=body, headers=IP)) == (400, "invalid_grant")
+        assert code_of(await api.client.post(SIGN_IN, json=body, headers=IP)) == (
+            400,
+            "invalid_grant",
+        )
     r = await api.client.post(SIGN_IN, json=body, headers=IP)
     assert code_of(r) == (429, "rate_limited")
     assert int(r.headers["retry-after"]) > 0
     other = {"X-Forwarded-For": "198.51.100.4"}
-    assert code_of(await api.client.post(SIGN_IN, json=body, headers=other)) == (400, "invalid_grant")
+    assert code_of(await api.client.post(SIGN_IN, json=body, headers=other)) == (
+        400,
+        "invalid_grant",
+    )
 
 
 async def test_auth_config_adds_the_option_and_is_unchanged_without_it(
@@ -627,7 +646,9 @@ async def test_auth_config_adds_the_option_and_is_unchanged_without_it(
     for path in (SIGN_IN, COMPLETE):
         body = {"code": "x", "code_verifier": "v" * 43, "redirect_uri": "r", "ticket": "t" * 30,
                 "choice": "new"}  # fmt: skip
-        keys = ("ticket", "choice") if path == COMPLETE else ("code", "code_verifier", "redirect_uri")
+        keys = (
+            ("ticket", "choice") if path == COMPLETE else ("code", "code_verifier", "redirect_uri")
+        )
         r = await api.client.post(path, json={k: body[k] for k in keys}, headers=IP)
         assert r.status_code == 404
 
@@ -653,7 +674,11 @@ async def test_career_os_sign_in_is_off_beside_an_allow_list(api: Api, fake: Fak
         await strict.verify(out["access_token"])
     open_ = CopilotVerifier(email_public_keys(api.svc.settings), [])
     principal = await open_.verify(out["access_token"])
-    assert (principal.provider, principal.subject, principal.email) == ("career_os", "user:u1", None)
+    assert (principal.provider, principal.subject, principal.email) == (
+        "career_os",
+        "user:u1",
+        None,
+    )
     with pytest.raises(RuntimeError, match="SITE_URL"):
         CareerOsSignIn(
             api_settings(email_signing_key=key), api.svc.pool, api.svc.valkey, fake.client(),
@@ -712,10 +737,14 @@ async def test_a_sign_in_ends_when_career_os_disables_the_account(
 ) -> None:
     out = await signed_in(api, fake, "u1")
     fake.disabled.add("u1")
-    r = await api.client.post("/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]})
+    r = await api.client.post(
+        "/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]}
+    )
     assert code_of(r) == (401, "invalid_refresh_token")
     fake.disabled.clear()
-    r = await api.client.post("/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]})
+    r = await api.client.post(
+        "/v1/auth/token/refresh", json={"refresh_token": out["refresh_token"]}
+    )
     assert r.status_code == 401  # revoked, not just refused
     # An account that was deleted is not brought back by its token.
     other = await signed_in(api, fake, "u2")
@@ -740,15 +769,23 @@ async def test_a_pending_choice_is_sealed_in_valkey_and_ends(api: Api, fake: Fak
     assert 0 < await api.svc.valkey.ttl(keys[0]) <= 8 * 60
     # Another ticket opens nothing, and a ticket that ran out is gone.
     body = {"ticket": "t" * 43, "choice": "new"}
-    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (400, "ticket_expired")
+    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (
+        400,
+        "ticket_expired",
+    )
     await api.svc.valkey.delete(keys[0])
     body = {"ticket": asked["ticket"], "choice": "new"}
-    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (400, "ticket_expired")
+    assert code_of(await api.client.post(COMPLETE, json=body, headers=IP)) == (
+        400,
+        "ticket_expired",
+    )
     # So is one whose link code ran out on Career-OS: nothing half-made is left.
     asked = (await cos(api, fake, "u1")).json()
     fake.codes.clear()
     before = await accounts(api)
-    r = await api.client.post(COMPLETE, json={"ticket": asked["ticket"], "choice": "new"}, headers=IP)
+    r = await api.client.post(
+        COMPLETE, json={"ticket": asked["ticket"], "choice": "new"}, headers=IP
+    )
     assert code_of(r) == (400, "ticket_expired")
     assert await accounts(api) == before
     assert await identity_of(api, "user:u1") is None
@@ -779,7 +816,9 @@ async def test_sign_in_reads_only_the_links_of_the_account_signing_in(
     async with sign_in_tx(api.svc.pool, "career_os_link:user:a1") as conn:
         assert await conn.fetch("select 1 from app.integrations") == []
     async with sign_in_tx(api.svc.pool, "career_os_link:admin:a1") as conn:
-        assert [r["user_id"] for r in await conn.fetch("select user_id from app.integrations")] == [c]
+        assert [r["user_id"] for r in await conn.fetch("select user_id from app.integrations")] == [
+            c
+        ]
     # A Career-OS identity is seen with its own key, and a user sees only their own.
     out = await signed_in(api, fake, "u3")
     mine = uuid.UUID((await me(api, bearer(out)))["id"])
@@ -789,7 +828,9 @@ async def test_sign_in_reads_only_the_links_of_the_account_signing_in(
     async with sign_in_tx(api.svc.pool, "career_os:user:u1") as conn:
         assert await conn.fetch("select 1 from app.identities") == []
     async with user_tx(api.svc.pool, a) as conn:
-        assert [r["user_id"] for r in await conn.fetch("select user_id from app.integrations")] == [a]
+        assert [r["user_id"] for r in await conn.fetch("select user_id from app.integrations")] == [
+            a
+        ]
         rows = await conn.fetch("select user_id from app.identities")
         assert {r["user_id"] for r in rows} == {a}
         with pytest.raises(Exception, match="row-level security"):
