@@ -813,3 +813,109 @@ async def test_a_sign_in_key_cannot_write(db: Db, table: str) -> None:
         db, "app_api", key, f"insert into app.{table} ({cols}) values ({params})", *row.values()
     )
     assert err == INSUFFICIENT_PRIVILEGE
+
+
+# --- Career-OS sign-in (migration 0015): the links of the Career-OS account signing in ----------
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def career_os_links(db: Db) -> AsyncIterator[None]:
+    """A's account linked to Career-OS user u1, B's to super admin a1."""
+    for w, kind, external in ((db.a, "user", "u1"), (db.b, "super_admin", "a1")):
+        await db.conn.execute(
+            "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
+            " status, external_id, external_kind) values ($1, 'career_os', $2, 1, $3, 'active',"
+            " $4, $5)",
+            w.user_id, b"ciphertext", ["applications:read"], external, kind,
+        )  # fmt: skip
+    try:
+        yield
+    finally:
+        await db.conn.execute("delete from app.integrations where provider = 'career_os'")
+
+
+@pytest.mark.parametrize("role", ["app_api", "app_gateway", "app_worker"])
+async def test_a_sign_in_key_shows_its_career_os_links_and_no_other(
+    db: Db, role: str, career_os_links: None
+) -> None:
+    sql = "select user_id, provider from app.integrations"
+    nothing = (None, "", "career_os_link:", "career_os_link:user:", "career_os_link:user:a1",
+               "career_os_link:admin:u1", "career_os_link:super_admin:a1", "career_os:user:u1",
+               f"google:sub-{db.a.user_id}-0", f"email:{db.a.user_id}@example.com")  # fmt: skip
+    for key in nothing:
+        _, rows, err = await with_key(db, role, key, sql)
+        assert err is None
+        assert rows == [], f"{role} saw integrations with the key {key!r}"
+    # A super admin is an admin: the kind in the key is `user` or `admin`.
+    for key, world in (("career_os_link:user:u1", db.a), ("career_os_link:admin:a1", db.b)):
+        _, rows, err = await with_key(db, role, key, sql)
+        assert err is None
+        # Its Career-OS link only: never the account's other integrations.
+        assert [(r["user_id"], r["provider"]) for r in rows] == [(world.user_id, "career_os")]
+
+
+async def test_a_career_os_link_key_cannot_write(db: Db, career_os_links: None) -> None:
+    key = "career_os_link:user:u1"
+    for sql, verb in (
+        ("update app.integrations set status = 'revoked'", "UPDATE"),
+        ("delete from app.integrations", "DELETE"),
+    ):
+        status, _, err = await with_key(db, "app_api", key, sql)
+        assert err is None
+        assert status == f"{verb} 0", f"a sign-in key changed integrations: {status}"
+    _, _, err = await with_key(
+        db, "app_api", key,
+        "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
+        " status, external_id, external_kind) values ($1, 'slack', $2, 1, $3, 'active', 'u1',"
+        " 'user')",
+        db.a.user_id, b"x", ["a"],
+    )  # fmt: skip
+    assert err == INSUFFICIENT_PRIVILEGE
+    # Nor does it open anything else of that account's.
+    for table in ("users", "identities", "refresh_tokens", "documents"):
+        _, rows, err = await with_key(db, "app_api", key, f"select 1 from app.{table}")
+        assert err is None
+        assert rows == [], table
+
+
+async def test_career_os_identities_carry_no_email_and_one_per_account(db: Db) -> None:
+    async def add(provider: str, subject: str, email: str | None) -> str | None:
+        try:
+            async with db.conn.transaction():
+                await db.conn.execute(
+                    "insert into app.identities (provider, subject, user_id, email)"
+                    " values ($1, $2, $3, $4)",
+                    provider, subject, db.a.user_id, email,
+                )  # fmt: skip
+                raise Rollback
+        except Rollback:
+            return None
+        except asyncpg.PostgresError as e:
+            return e.sqlstate
+
+    check, unique = "23514", "23505"
+    assert await add("career_os", "user:u1", None) is None
+    assert await add("career_os", "user:u1", "a@example.com") == check
+    assert await add("google", "sub-x", None) == check
+    assert await add("email", "a@example.com", None) == check
+    assert await add("okta", "x", "a@example.com") == check
+    await db.conn.execute(
+        "insert into app.identities (provider, subject, user_id, email)"
+        " values ('career_os', 'user:u1', $1, null)",
+        db.a.user_id,
+    )
+    try:
+        assert await add("career_os", "admin:a9", None) == unique
+        # With its key, the gateway and the API see it; another key shows nothing.
+        for role in ("app_api", "app_gateway"):
+            _, rows, err = await with_key(
+                db, role, "career_os:user:u1", "select user_id from app.identities"
+            )
+            assert err is None
+            assert [r["user_id"] for r in rows] == [db.a.user_id]
+            _, rows, _ = await with_key(
+                db, role, "career_os:user:u2", "select user_id from app.identities"
+            )
+            assert rows == []
+    finally:
+        await db.conn.execute("delete from app.identities where provider = 'career_os'")

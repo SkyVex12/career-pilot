@@ -57,6 +57,7 @@ export const SETTINGS: Settings = {
   cloud_api_url: "http://stage.example.com/v1",
   oauth: null,
   email_sign_in: null,
+  career_os_sign_in: null,
   mic_device: null,
   output_device: null,
   echo_cancellation: true,

@@ -46,6 +46,8 @@ pub struct Settings {
     /// Whether the stage also signs in with an emailed code, from the same answer; None until
     /// the app has asked (a settings file from before email sign-in).
     pub email_sign_in: Option<bool>,
+    /// Whether the stage also signs in with a Career-OS account; None until the app has asked.
+    pub career_os_sign_in: Option<bool>,
     /// cpal device ids; None is the system default.
     pub mic_device: Option<String>,
     pub output_device: Option<String>,
@@ -98,6 +100,7 @@ impl Default for Settings {
             cloud_api_url: String::new(),
             oauth: None,
             email_sign_in: None,
+            career_os_sign_in: None,
             mic_device: None,
             output_device: None,
             echo_cancellation: true,
@@ -142,6 +145,7 @@ impl Settings {
             // The sign-in settings belong to the stage they came from.
             self.oauth = None;
             self.email_sign_in = None;
+            self.career_os_sign_in = None;
         }
         self.environment = Environment::Cloud;
         self.cloud_api_url = release.api_url.clone();

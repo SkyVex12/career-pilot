@@ -103,6 +103,11 @@ class CoreSettings(BaseSettings):
     email_sign_in: bool = False
     email_signing_key: SecretStr | None = None
     email_public_keys: Annotated[list[str], NoDecode] = Field(default_factory=list[str])
+    # Career-OS sign-in (ARCHITECTURE.md, "Career-OS sign-in"): the person signs in on
+    # Career-OS's own site and the API issues the same tokens of its own, so it needs the keys
+    # above too, with or without email sign-in. Only the API reads the rest of its settings
+    # (`career_os_url`, `career_os_site_url`); every service must know to take the tokens.
+    career_os_sign_in: bool = False
     # On: an account works only once it has an active Career-OS link (ARCHITECTURE.md,
     # "Career-OS link"). The API refuses everything but sign-in, settings and the link itself,
     # and the gateway refuses sessions. Off (the default, and the local stack): no check.
@@ -339,3 +344,6 @@ class DataSettings(CoreSettings):
     # and pulling applications on demand. Unset: the link is not offered.
     career_os_url: str | None = None
     career_os_timeout_s: float = 15.0
+    # Career-OS's own site (HTTPS), where a person signs in and approves "Sign in to Career
+    # Pilot". Career-OS sign-in needs it, `career_os_url` and `career_os_sign_in`.
+    career_os_site_url: str | None = None

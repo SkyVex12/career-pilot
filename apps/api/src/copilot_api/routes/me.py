@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from copilot_api.deps import AccountDep, SvcDep
 from copilot_core import profiles
-from copilot_core.auth import Principal
+from copilot_core.auth import CAREER_OS, Principal
 
 router = APIRouter()
 
@@ -76,11 +76,31 @@ ME_SQL = "select id, email, display_name, plan, settings, created_at from app.us
 
 @router.get("/me")
 async def get_me(svc: SvcDep, user: AccountDep) -> dict[str, Any]:
+    """The account, with the ways it signs in (`sign_in_methods`: Google, an emailed code,
+    Career-OS). Settings shows them; Career-OS cannot be disconnected while it is the only one
+    (`DELETE /career-os/connection`)."""
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(ME_SQL, user.user_id)
+        methods = await conn.fetch(
+            "select provider, email, created_at from app.identities order by created_at, provider"
+        )
+        career_os = await conn.fetchval(
+            "select external_label from app.integrations where provider = $1", CAREER_OS
+        )
     if row is None:
         raise HTTPException(404, "no such user")
-    return _me(row)
+    out = _me(row)
+    out["sign_in_methods"] = [
+        {
+            "provider": m["provider"],
+            # Whose sign-in it is: the address Google or the emailed code verified, or the
+            # linked Career-OS account's name.
+            "label": (career_os or "") if m["provider"] == CAREER_OS else m["email"],
+            "added_at": m["created_at"].isoformat(),
+        }
+        for m in methods
+    ]
+    return out
 
 
 @router.patch("/me")

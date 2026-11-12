@@ -28,6 +28,7 @@ use copilot_client::audio::source::{AudioSource, Packet};
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::BoxFuture;
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
+use copilot_client::careerossignin::{CareerOsFailure, CareerOsOutcome, CareerOsTokenProvider};
 use copilot_client::emailauth::{ApiBase, CodeSent, EmailFailure, EmailTokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, ConnectionState, StartParams};
@@ -78,6 +79,8 @@ struct AppState {
     oauth: Mutex<Option<Arc<OAuthTokenProvider>>>,
     /// The deployed stage's email sign-in (emailauth.rs), for the stage in `cloud_api_url`.
     email: Mutex<Option<Arc<EmailTokenProvider>>>,
+    /// The deployed stage's Career-OS sign-in (careerossignin.rs), for the same stage.
+    career_os: Mutex<Option<Arc<CareerOsTokenProvider>>>,
     /// For the email sign-in's calls to the API, which may have to wake the server first.
     handle: AppHandle,
     engine: Mutex<Option<Arc<Engine>>>,
@@ -201,12 +204,69 @@ impl AppState {
         self.email().filter(|p| p.signed_in_as().is_some())
     }
 
-    /// Who is signed in to the stage, and how ("email" or "browser"): at most one of the two.
+    /// The Career-OS sign-in for the configured stage; None without a cloud API URL.
+    fn career_os(&self) -> Option<Arc<CareerOsTokenProvider>> {
+        let stage = self.settings.lock().unwrap().cloud_api_url.trim().to_string();
+        if stage.is_empty() {
+            return None;
+        }
+        let mut slot = self.career_os.lock().unwrap();
+        if let Some(p) = slot.as_ref().filter(|p| p.stage() == stage) {
+            return Some(p.clone());
+        }
+        let base = Arc::new(StageApi { app: self.handle.clone() });
+        let p = Arc::new(CareerOsTokenProvider::new(stage, base, self.secrets.clone()));
+        *slot = Some(p.clone());
+        Some(p)
+    }
+
+    /// The Career-OS sign-in, if that is how the user is signed in to the stage.
+    fn career_os_signed_in(&self) -> Option<Arc<CareerOsTokenProvider>> {
+        self.career_os().filter(|p| p.signed_in_as().is_some())
+    }
+
+    /// Who is signed in to the stage, and how: at most one of email, Career-OS, or the browser.
     fn signed_in(&self) -> Option<(String, &'static str)> {
         if let Some(who) = self.email().and_then(|p| p.signed_in_as()) {
             return Some((who, "email"));
         }
+        if let Some(who) = self.career_os().and_then(|p| p.signed_in_as()) {
+            return Some((who, "career_os"));
+        }
         self.oauth().and_then(|p| p.signed_in_as()).map(|who| (who, "browser"))
+    }
+
+    /// The access token of the sign-in already on this computer, for proving an account or for
+    /// adding Career-OS to it. None when nobody is signed in.
+    async fn proof_token(&self) -> Option<String> {
+        let provider: Arc<dyn TokenProvider> = if let Some(p) = self.email_signed_in() {
+            p
+        } else if let Some(p) = self.career_os_signed_in() {
+            p
+        } else {
+            self.oauth().filter(|p| p.signed_in_as().is_some())?
+        };
+        provider.current().await.ok().map(|t| t.access_token)
+    }
+
+    /// Drop every sign-in except `keep` (`email`, `career_os`, or `browser`).
+    async fn end_other_sign_ins(&self, keep: &str) {
+        if keep != "email"
+            && let Some(p) = self.email_signed_in()
+        {
+            let _ = p.sign_out().await;
+        }
+        if keep != "career_os"
+            && let Some(p) = self.career_os_signed_in()
+        {
+            let _ = p.sign_out().await;
+        }
+        if keep != "browser"
+            && let Some(p) = self.oauth()
+            && p.signed_in_as().is_some()
+        {
+            let _ = p.sign_out().await;
+        }
     }
 
     /// The token source for the current environment: the dev token locally, the sign-in in the
@@ -219,6 +279,9 @@ impl AppState {
                 if let Some(p) = self.email_signed_in() {
                     return Ok(p);
                 }
+                if let Some(p) = self.career_os_signed_in() {
+                    return Ok(p);
+                }
                 match self.oauth() {
                     Some(p) => Ok(p),
                     None => Err("Sign in under Settings first.".into()),
@@ -228,15 +291,17 @@ impl AppState {
     }
 
     /// Keep what `GET /v1/auth/config` said: the browser sign-in's settings (when the stage has
-    /// one) and whether it signs in by email too.
+    /// one), and whether it signs in by email and by Career-OS too.
     fn keep_auth_config(&self, cfg: &oauth::AuthConfig) {
         let browser = cfg.oauth().ok();
         let email = cfg.email.is_some();
+        let career_os = cfg.career_os.is_some();
         self.update_settings(|s| {
             if browser.is_some() {
                 s.oauth = browser;
             }
             s.email_sign_in = Some(email);
+            s.career_os_sign_in = Some(career_os);
         });
     }
 
@@ -376,7 +441,7 @@ struct SettingsView {
     dev_token_set: bool,
     /// The cloud environment's signed-in user (their email), if any.
     signed_in_as: Option<String>,
-    /// How they signed in: "email" (an emailed code) or "browser" (Google or Cognito).
+    /// How they signed in: "email", "career_os", or "browser" (Google or Cognito).
     signed_in_with: Option<&'static str>,
     /// Whether the stage offers sign-in by email; None until the app has asked it.
     email_sign_in: Option<bool>,
@@ -467,6 +532,7 @@ fn save_settings(
     let same_stage = settings.cloud_api_url.trim() == kept.cloud_api_url.trim();
     let oauth = if same_stage { kept.oauth } else { None };
     let email_sign_in = if same_stage { kept.email_sign_in } else { None };
+    let career_os_sign_in = if same_stage { kept.career_os_sign_in } else { None };
     // What the app keeps for itself, whatever the screen sent (the per-monitor overlay layouts
     // and the monitor it was last on are the app's, not the screen's).
     state.update_settings(|s| {
@@ -475,6 +541,7 @@ fn save_settings(
             profile: kept.profile,
             oauth,
             email_sign_in,
+            career_os_sign_in,
             last_version: kept.last_version,
             pending_update: kept.pending_update,
             layouts: kept.layouts,
@@ -722,11 +789,8 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Res<String> {
         })
         .await
         .map_err(|e| e.to_string())?;
-    // One sign-in at a time: an email sign-in to this stage ends here.
-    if let Some(p) = state.email_signed_in() {
-        let _ = p.sign_out().await;
-        state.update_settings(|s| s.profile = None);
-    }
+    // One sign-in at a time: an email or Career-OS sign-in to this stage ends here.
+    state.end_other_sign_ins("browser").await;
     Ok(email)
 }
 
@@ -768,21 +832,83 @@ async fn email_sign_in_verify(
         .ok_or_else(|| EmailFailure::new("unavailable", "Set the cloud API URL and save first."))?;
     let before = state.signed_in().map(|(who, _)| who);
     let who = provider.verify(&email, &code).await?;
-    // One sign-in at a time: a browser sign-in to this stage ends here.
-    if let Some(p) = state.oauth()
-        && p.signed_in_as().is_some()
-    {
-        let _ = p.sign_out().await;
-    }
+    // One sign-in at a time: a browser or Career-OS sign-in to this stage ends here.
+    state.end_other_sign_ins("email").await;
     if before.as_deref() != Some(who.as_str()) {
         state.update_settings(|s| s.profile = None);
     }
     Ok(who)
 }
 
+/// Career-OS sign-in: the browser page on Career-OS, then the code to the API. Returns a
+/// sign-in, or a choice (several linked accounts, or an email that matches one).
+#[tauri::command]
+async fn career_os_sign_in(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CareerOsOutcome, CareerOsFailure> {
+    let provider = state
+        .career_os()
+        .ok_or_else(|| CareerOsFailure::new("unavailable", "Set the cloud API URL and save first."))?;
+    let api_url = state.settings.lock().unwrap().cloud_api_url.trim().to_string();
+    let api_url =
+        state.fill_url(&app, &api_url, true).await.map_err(|e| CareerOsFailure::new("network", e))?;
+    let cfg = match oauth::fetch_auth_config(&api_url).await {
+        Ok(cfg) => cfg,
+        Err(e) => return Err(CareerOsFailure::new("network", e.to_string())),
+    };
+    state.keep_auth_config(&cfg);
+    let Some(option) = cfg.career_os else {
+        return Err(CareerOsFailure::new("not_offered", "This server does not offer Career-OS sign-in."));
+    };
+    let opener = app.clone();
+    let pending = copilot_client::careerossignin::browser_code(&option, move |url| {
+        opener.opener().open_url(url, None::<&str>).map_err(|e| format!("could not open the browser: {e}"))
+    })
+    .await?;
+    // After the browser: a sign-in already on this computer adds Career-OS to that account.
+    let bearer = state.proof_token().await;
+    let before = state.signed_in().map(|(who, _)| who);
+    let outcome = provider.exchange(&pending, bearer.as_deref()).await?;
+    if outcome.name().is_some() {
+        state.end_other_sign_ins("career_os").await;
+        if before.as_deref() != outcome.name() {
+            state.update_settings(|s| s.profile = None);
+        }
+    }
+    Ok(outcome)
+}
+
+/// The person's answer when Career-OS sign-in asked which account, or whether to use an
+/// existing one. `existing` uses the sign-in now on this computer as proof.
+#[tauri::command]
+async fn career_os_complete(
+    state: State<'_, AppState>,
+    ticket: String,
+    choice: String,
+    account_id: Option<String>,
+) -> Result<CareerOsOutcome, CareerOsFailure> {
+    let provider = state
+        .career_os()
+        .ok_or_else(|| CareerOsFailure::new("unavailable", "Set the cloud API URL and save first."))?;
+    let bearer = if choice == "existing" { state.proof_token().await } else { None };
+    let before = state.signed_in().map(|(who, _)| who);
+    let outcome = provider.complete(&ticket, &choice, account_id.as_deref(), bearer.as_deref()).await?;
+    if outcome.name().is_some() {
+        state.end_other_sign_ins("career_os").await;
+        if before.as_deref() != outcome.name() {
+            state.update_settings(|s| s.profile = None);
+        }
+    }
+    Ok(outcome)
+}
+
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
     if let Some(p) = state.email_signed_in() {
+        p.sign_out().await.map_err(|e| e.to_string())?;
+    }
+    if let Some(p) = state.career_os_signed_in() {
         p.sign_out().await.map_err(|e| e.to_string())?;
     }
     if let Some(p) = state.oauth() {
@@ -1589,8 +1715,10 @@ pub fn run() {
                 tracing::warn!("could not save settings: {e}");
             }
             // Also once after an update from a version without email sign-in.
-            let needs_auth_config =
-                release::config().is_some() && (settings.oauth.is_none() || settings.email_sign_in.is_none());
+            let needs_auth_config = release::config().is_some()
+                && (settings.oauth.is_none()
+                    || settings.email_sign_in.is_none()
+                    || settings.career_os_sign_in.is_none());
             let overlay_on_top = settings.overlay_on_top;
             let secrets: Arc<dyn SecretStore> = Arc::new(OsSecretStore::new(CREDENTIAL_SERVICE));
             // Versions before live transcription recorded the user's audio for an upload after
@@ -1606,6 +1734,7 @@ pub fn run() {
                 dev_tokens: Arc::new(DevTokenProvider::new(secrets.clone())),
                 oauth: Mutex::new(None),
                 email: Mutex::new(None),
+                career_os: Mutex::new(None),
                 handle: app.handle().clone(),
                 secrets,
                 engine: Mutex::new(None),
@@ -1717,6 +1846,8 @@ pub fn run() {
             sign_in,
             email_sign_in_start,
             email_sign_in_verify,
+            career_os_sign_in,
+            career_os_complete,
             sign_out,
             set_profile,
             start_session,

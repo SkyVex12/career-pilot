@@ -13,8 +13,8 @@ from copilot_protocol.models import ClientOutdated
 
 def client(minimum: str | None = None) -> httpx2.AsyncClient:
     settings = api_settings(auth="dev", **({"min_client_version": minimum} if minimum else {}))
-    app = create_app(SimpleNamespace(settings=settings, email=None))  # pyright: ignore[reportArgumentType]
-    app.state.services = SimpleNamespace(settings=settings, email=None)
+    app = create_app(SimpleNamespace(settings=settings, email=None, cos_sign_in=None))  # pyright: ignore[reportArgumentType]
+    app.state.services = SimpleNamespace(settings=settings, email=None, cos_sign_in=None)
     return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://api.test")
 
 

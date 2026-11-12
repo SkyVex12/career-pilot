@@ -60,6 +60,16 @@ pub struct AuthConfig {
     pub authorize_params: BTreeMap<String, String>,
     /// Present when the stage also signs in with an emailed code ([`crate::emailauth`]).
     pub email: Option<EmailOption>,
+    /// Present when the stage also signs in with a Career-OS account ([`crate::careerossignin`]).
+    pub career_os: Option<CareerOsOption>,
+}
+
+/// The stage's Career-OS sign-in, from `GET /v1/auth/config`: the page the browser opens.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct CareerOsOption {
+    pub authorize_url: String,
+    pub client_id: String,
 }
 
 /// The stage's email sign-in, from `GET /v1/auth/config`.
@@ -201,7 +211,7 @@ fn random_state() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn encode(s: &str) -> String {
+pub(crate) fn encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
@@ -287,7 +297,7 @@ async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
 }
 
 /// Serve the loopback redirect until the callback with our `state` arrives; returns the code.
-async fn wait_for_code(listener: TcpListener, state: &str) -> Result<String, AuthError> {
+pub(crate) async fn wait_for_code(listener: TcpListener, state: &str) -> Result<String, AuthError> {
     loop {
         let (mut stream, _) = listener.accept().await.map_err(|e| AuthError::NotSignedIn(e.to_string()))?;
         let mut buf = vec![0u8; 8192];

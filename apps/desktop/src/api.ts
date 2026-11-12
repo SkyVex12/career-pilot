@@ -63,6 +63,8 @@ export interface Settings {
   oauth: OAuthConfig | null;
   /** Whether the stage also signs in with an emailed code; null until the app has asked it. */
   email_sign_in: boolean | null;
+  /** Whether the stage also signs in with a Career-OS account; null until the app has asked it. */
+  career_os_sign_in: boolean | null;
   mic_device: string | null;
   output_device: string | null;
   echo_cancellation: boolean;
@@ -147,8 +149,8 @@ export interface SettingsView {
   dev_token_set: boolean;
   /** The cloud environment's signed-in user (their email), if any. */
   signed_in_as: string | null;
-  /** How they signed in: an emailed code, or the browser (Google or Cognito). */
-  signed_in_with: "email" | "browser" | null;
+  /** How they signed in: an emailed code, Career-OS, or the browser (Google or Cognito). */
+  signed_in_with: "email" | "career_os" | "browser" | null;
   /** The current environment can make calls: the dev token is set, or the user signed in. */
   ready: boolean;
   /** Plain HTTP or WS to another machine in the current environment. */
@@ -289,6 +291,11 @@ export const api = {
   emailSignInStart: (email: string) => invoke<CodeSent>("email_sign_in_start", { email }),
   /** Email sign-in: the code for the sign-in. Resolves to the address; rejects like the above. */
   emailSignInVerify: (email: string, code: string) => invoke<string>("email_sign_in_verify", { email, code }),
+  /** Career-OS sign-in: the browser page, then either a sign-in or a choice the screen shows. */
+  careerOsSignIn: () => invoke<CareerOsOutcome>("career_os_sign_in"),
+  /** The answer to a Career-OS choice. `existing` uses the sign-in now on this computer as proof. */
+  careerOsComplete: (ticket: string, choice: "existing" | "new", accountId: string | null) =>
+    invoke<CareerOsOutcome>("career_os_complete", { ticket, choice, accountId }),
   signOut: () => invoke<void>("sign_out"),
   /** The profile switch: every API call and the next session act for it (null: "Me"). */
   setProfile: (profile: string | null) => invoke<void>("set_profile", { profile }),
@@ -651,7 +658,24 @@ export interface Me {
   email: string;
   display_name: string;
   plan: string;
+  /** How this account signs in. Career-OS cannot be disconnected while it is the only one. */
+  sign_in_methods?: { provider: string; label: string; added_at: string }[];
 }
+
+/** One account on the Career-OS choice screen. `id` is present when several accounts match. */
+export interface CareerOsAccount {
+  id?: string;
+  email?: string;
+  methods: string[];
+  created_at: string;
+}
+
+/** `POST /auth/career-os/sign-in` and `/auth/career-os/complete`. */
+export type CareerOsOutcome =
+  | { status: "signed_in"; name: string; account: string }
+  | { status: "added" }
+  | { status: "choose_account"; ticket: string; expires_in_s: number; accounts: CareerOsAccount[] }
+  | { status: "existing_or_new"; ticket: string; expires_in_s: number; verified: boolean; account: CareerOsAccount | null };
 
 // Company workspaces (apps/api/src/copilot_api/routes/employers.py).
 

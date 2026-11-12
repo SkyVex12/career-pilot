@@ -15,6 +15,7 @@ from copilot_api.emailauth import EmailSignIn
 from copilot_api.mailer import MemoryMailer
 from copilot_api.main import create_app
 from copilot_api.testing import Api, api_settings
+from copilot_api.tokens import TokenService
 from copilot_core.auth import (
     COPILOT_ISSUER,
     ByIssuer,
@@ -48,6 +49,7 @@ async def api() -> AsyncIterator[Api]:
     pool = await create_pool(as_role(url, "app_api"), 1, 5)
     valkey = make_valkey(settings.valkey_url)
     mailer = MemoryMailer()
+    tokens = TokenService(settings, pool)
     svc = Services(
         settings=settings,
         pool=pool,
@@ -60,7 +62,8 @@ async def api() -> AsyncIterator[Api]:
         verifier=ByIssuer(
             {COPILOT_ISSUER: CopilotVerifier(email_public_keys(settings), [])}, verifier
         ),
-        email=EmailSignIn(settings, pool, valkey, mailer),
+        email=EmailSignIn(settings, pool, valkey, mailer, tokens=tokens),
+        tokens=tokens,
     )
     app = create_app(svc)
     app.state.services = svc

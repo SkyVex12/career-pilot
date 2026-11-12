@@ -4,7 +4,7 @@
 // - ready: the next interview (or the company, for a standup or meeting) and Start call;
 // - live: the call running, its last question and levels, mode and answer style, End call;
 // - just ended: the call's summary as it is written (SessionDetail).
-import { SignIn } from "./SignIn";
+import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import { api, rest, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type Settings } from "./api";
@@ -126,14 +126,11 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
         <Step n={1} done={tokenSet} title="Sign in" doneText={signedInAs ?? (browserSignIn ? "Signed in" : "Dev token set")}>
           {browserSignIn ? (
             <>
-              <p className="ui-text-2">
-                {settings?.email_sign_in === false
-                  ? "With your Google account. You stay signed in on this computer."
-                  : "With your Google account, or with a code we email you. You stay signed in on this computer."}
-              </p>
+              <p className="ui-text-2">{signInWays(settings?.email_sign_in ?? null, settings?.career_os_sign_in ?? null)}</p>
               <SignIn
                 browserName={settings?.oauth?.provider === "cognito" ? null : "Google"}
                 emailOffered={settings?.email_sign_in ?? null}
+                careerOsOffered={settings?.career_os_sign_in ?? null}
                 disabled={!release && !settings?.cloud_api_url}
                 disabledHint={
                   <Button variant="link" onClick={onSettings}>
