@@ -26,7 +26,8 @@ or generated here, piped straight into Secret Manager, and never printed.
     secrets status         which secrets have a value
     secrets set NAME       put a value in (hidden prompt), e.g. openai-api-key
     secrets generate       database passwords, the uploads HMAC key, and (once
-                           email_from is applied) the email signing key, if still empty
+                           email_from or career_os_site_url is applied) the token
+                           signing key, if still empty
                            (--lift-key-policy: see infra/gcp/README.md)
     ssh                    a shell on the VM (sudo for root)
     latency                round trips from the VM to OpenAI and Deepgram
@@ -535,11 +536,12 @@ def secret_exists(name: str) -> bool:
 def generate_email_key() -> None:
     """The Ed25519 seed and its public key, straight into Secret Manager, never printed.
 
-    The secrets exist only after `email_from` is set and applied (ARCHITECTURE.md, "Email
-    sign-in"). The SMTP password is the Resend API key; that one is `secrets set`.
+    The secrets exist after `email_from` or `career_os_site_url` is set and applied
+    (ARCHITECTURE.md, "Email sign-in" and "Career-OS sign-in"). The SMTP password is the
+    Resend API key; that one is `secrets set`, and only email sign-in uses it.
     """
     if not secret_exists("email-signing-key"):
-        print("email sign-in: set email_from and apply before generating its key")
+        print("token keys: set email_from or career_os_site_url and apply before generating them")
         return
     if has_value("email-signing-key") and has_value("email-public-key"):
         print(f"{secret_id('email-signing-key')}: already set, kept")

@@ -17,8 +17,8 @@ locals {
 
   # Secret Manager secrets, created empty: README.md ("Secrets") fills them, by hand for the
   # API keys and the OAuth client, by `stage.py secrets generate` for the rest.
-  # Email sign-in's three secrets exist only once email_from is set (ARCHITECTURE.md,
-  # "Email sign-in"): until then this plan adds no secret and no mail settings.
+  # The token keypair exists once email sign-in or Career-OS sign-in is on. The SMTP secret
+  # exists only once email_from is set (ARCHITECTURE.md, "Email sign-in").
   base_secrets = {
     openai-api-key             = "OpenAI API key: the gateway and the workers"
     deepgram-api-key           = "Deepgram API key: streaming STT (gateway), pre-recorded (workers)"
@@ -31,13 +31,21 @@ locals {
     uploads-hmac-secret        = "HMAC secret of the uploads service account"
     google-oauth-client-secret = "The desktop OAuth client's secret (Google sign-in)"
   }
-  email_secrets = {
-    email-signing-key   = "Ed25519 seed for email sign-in access tokens (the API only)"
-    email-public-key    = "Ed25519 public key for those tokens (the API and the gateway)"
+  token_key_secrets = {
+    email-signing-key = "Ed25519 seed for the API's own access tokens (the API only)"
+    email-public-key  = "Ed25519 public key for those tokens (the API and the gateway)"
+  }
+  smtp_secret = {
     email-smtp-password = "Resend API key, used as the SMTP password for sign-in mail"
   }
-  secrets = merge(local.base_secrets, var.email_from == "" ? {} : local.email_secrets)
-  secret  = { for k, _ in local.secrets : k => "{{secret:${local.prefix}-${k}}}" }
+  # Career-OS sign-in issues the same tokens, so it needs the keypair even while email is off.
+  own_tokens = var.email_from != "" || var.career_os_site_url != ""
+  secrets = merge(
+    local.base_secrets,
+    local.own_tokens ? local.token_key_secrets : {},
+    var.email_from == "" ? {} : local.smtp_secret,
+  )
+  secret = { for k, _ in local.secrets : k => "{{secret:${local.prefix}-${k}}}" }
 
   db_url = { for role, s in {
     postgres    = "db-postgres"
@@ -64,20 +72,21 @@ locals {
     COPILOT_MIN_CLIENT_VERSION    = var.min_desktop_version
     COPILOT_REQUIRE_CAREER_OS     = tostring(var.require_career_os)
   }
-  # Off until email_from is set, so an apply with today's tfvars changes nothing here.
   # The strings name secrets; they do not read them. Both branches stay valid when the
   # secrets are not created yet.
-  email_env = var.email_from == "" ? {} : {
-    COPILOT_EMAIL_SIGN_IN     = "true"
+  token_key_env = local.own_tokens ? {
     COPILOT_EMAIL_PUBLIC_KEYS = "{{secret:${local.prefix}-email-public-key}}"
+  } : {}
+  # Off until email_from is set. Career-OS sign-in does not turn mail on.
+  email_env = var.email_from == "" ? {} : {
+    COPILOT_EMAIL_SIGN_IN = "true"
   }
-  # Off until career_os_site_url is set, so an apply with today's tfvars changes nothing here.
-  # The tokens are the email sign-in's, so the public key above has to exist already.
+  # Off until career_os_site_url is set.
   career_os_sign_in_env = var.career_os_site_url == "" ? {} : {
     COPILOT_CAREER_OS_SIGN_IN  = "true"
     COPILOT_CAREER_OS_SITE_URL = var.career_os_site_url
   }
-  common_env = merge(local.common_base, local.email_env, local.career_os_sign_in_env)
+  common_env = merge(local.common_base, local.token_key_env, local.email_env, local.career_os_sign_in_env)
   model_env = merge(
     {
       COPILOT_LLM_PROVIDERS                      = "openai"
@@ -124,15 +133,16 @@ locals {
       PORT                         = "8080"
       COPILOT_API_DATABASE_URL     = local.db_url["app_api"]
       COPILOT_GOOGLE_CLIENT_SECRET = local.secret["google-oauth-client-secret"]
-      }, var.email_from == "" ? {} : {
-      # Resend's free tier (ARCHITECTURE.md, "Email sign-in"). The password is the API key.
+      }, local.own_tokens ? {
       COPILOT_EMAIL_SIGNING_KEY = "{{secret:${local.prefix}-email-signing-key}}"
-      COPILOT_EMAIL_SENDER      = "smtp"
-      COPILOT_SMTP_HOST         = "smtp.resend.com"
-      COPILOT_SMTP_PORT         = "587"
-      COPILOT_SMTP_USERNAME     = "resend"
-      COPILOT_EMAIL_FROM        = var.email_from
-      COPILOT_SMTP_PASSWORD     = "{{secret:${local.prefix}-email-smtp-password}}"
+      } : {}, var.email_from == "" ? {} : {
+      # Resend's free tier (ARCHITECTURE.md, "Email sign-in"). The password is the API key.
+      COPILOT_EMAIL_SENDER  = "smtp"
+      COPILOT_SMTP_HOST     = "smtp.resend.com"
+      COPILOT_SMTP_PORT     = "587"
+      COPILOT_SMTP_USERNAME = "resend"
+      COPILOT_EMAIL_FROM    = var.email_from
+      COPILOT_SMTP_PASSWORD = "{{secret:${local.prefix}-email-smtp-password}}"
     })
     worker = merge(local.model_env, local.data_env, {
       HOST                        = "127.0.0.1"
