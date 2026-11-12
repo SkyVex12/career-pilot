@@ -197,3 +197,17 @@ variable "career_os_url" {
     error_message = "career_os_url must be an https:// URL (it carries the link token)."
   }
 }
+
+variable "career_os_site_url" {
+  description = "Career-OS's own site (https://...), where a person signs in and approves Career Pilot. Empty leaves Career-OS sign-in off. Needs career_os_url and the email signing keys (ARCHITECTURE.md, Career-OS sign-in). No new resource."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.career_os_site_url == "" || startswith(var.career_os_site_url, "https://")
+    error_message = "career_os_site_url must be an https:// URL."
+  }
+  validation {
+    condition     = var.career_os_site_url == "" || var.email_from != ""
+    error_message = "career_os_site_url needs email_from: Career-OS sign-in uses the email signing keys, and adds no secret of its own."
+  }
+}

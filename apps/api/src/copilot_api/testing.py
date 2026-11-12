@@ -6,13 +6,18 @@ import copy
 import hashlib
 import json
 import os
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import asyncpg
 import httpx2
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services
@@ -103,6 +108,90 @@ class FakeCareerOs:
             "u3": {"app_hooli_1": third},
         }
         self.pdf = b"%PDF-1.4 fake resume for the test\n"
+        # Sign-in (/oauth/*): the address Career-OS has for each account (never verified,
+        # unless a test says so), who is disabled, the signing key, and the codes a browser
+        # approval made. `assert_with` lets a test put anything in place of the assertion.
+        self.emails: dict[str, str] = {
+            "u1": "alex@example.com", "u2": "blair@example.com", "u3": "casey@example.com",
+            "a1": "dana@example.com",
+        }  # fmt: skip
+        self.email_verified = False
+        self.disabled: set[str] = set()
+        self.sign_in_key = Ed25519PrivateKey.generate()
+        self.sign_in_codes: dict[str, tuple[str, str, str]] = {}
+        self.assert_with: Callable[[str], str] | None = None
+
+    # --- Sign-in ------------------------------------------------------------------------------
+
+    REDIRECT = "http://127.0.0.1:53682/callback"
+
+    @staticmethod
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    def public_key(self, key: Ed25519PrivateKey | None = None) -> tuple[str, str]:
+        """(kid, public key in base64url) of the signing key, as `/oauth/keys` gives them."""
+        raw = (
+            (key or self.sign_in_key)
+            .public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        )
+        return hashlib.sha256(raw).hexdigest()[:16], self._b64(raw)
+
+    def approve(self, account: str, redirect: str = REDIRECT) -> tuple[str, str]:
+        """The person signed in on Career-OS's site as `account` and approved: the
+        authorization code the app gets on its redirect, and the app's PKCE verifier."""
+        verifier = self._b64(os.urandom(48))
+        challenge = self._b64(hashlib.sha256(verifier.encode()).digest())
+        code = f"cos-code-{uuid.uuid4().hex}"
+        self.sign_in_codes[code] = (account, challenge, redirect)
+        return code, verifier
+
+    def assertion(
+        self, account: str, *, key: Ed25519PrivateKey | None = None, kid: str | None = None,
+        now: float | None = None, **claims: Any,
+    ) -> str:  # fmt: skip
+        """A sign-in assertion as Career-OS signs it; the keyword arguments change it."""
+        is_admin = account in self.admins
+        kind = "admin" if is_admin else "user"
+        issued = int(time.time() if now is None else now)
+        body: dict[str, Any] = {
+            "iss": "career-os", "aud": "career-pilot", "sub": f"{kind}:{account}",
+            "iat": issued, "exp": issued + 60, "jti": uuid.uuid4().hex,
+            "principal_kind": kind, "principal_id": account,
+            "account_type": "admin" if is_admin else "user",
+            "name": (self.admins if is_admin else self.users).get(account, ""),
+            "email": self.emails.get(account, ""), "email_verified": self.email_verified,
+            **claims,
+        }  # fmt: skip
+        return jwt.encode(
+            body, key or self.sign_in_key, algorithm="EdDSA",
+            headers={"kid": kid or self.public_key()[0]},
+        )  # fmt: skip
+
+    def _sign_in(self, request: httpx2.Request, path: str) -> httpx2.Response:
+        if path == "/oauth/keys":
+            kid, public = self.public_key()
+            return httpx2.Response(
+                200, json={"keys": [{"kid": kid, "alg": "EdDSA", "public_key": public}]}
+            )
+        body = json.loads(request.content)
+        found = self.sign_in_codes.pop(body.get("code", ""), None)  # single use
+        if found is None or body.get("client_id") != "career-pilot":
+            return httpx2.Response(400, json={"detail": "invalid_grant"})
+        account, challenge, redirect = found
+        verifier = str(body.get("code_verifier", ""))
+        if (
+            self._b64(hashlib.sha256(verifier.encode()).digest()) != challenge
+            or body.get("redirect_uri") != redirect
+        ):
+            return httpx2.Response(400, json={"detail": "invalid_grant"})
+        if account in self.disabled:
+            return httpx2.Response(403, json={"detail": "account_disabled"})
+        out = copy.deepcopy(self.contract["sign_in"]["token"]["response"])
+        make = self.assert_with or self.assertion
+        out.update(assertion=make(account), link_code=self.code_for(account))
+        return httpx2.Response(200, json=out)
 
     def scope(self, account: str) -> list[str]:
         """The users an account's token reads, as Career-OS's `applications_query` does."""
@@ -129,10 +218,12 @@ class FakeCareerOs:
             raise httpx2.ConnectError("career-os is down")
         path = request.url.path.removeprefix("/v1/career-pilot")
         self.calls.append(f"{request.method} {path}")
+        if path in ("/oauth/keys", "/oauth/token"):
+            return self._sign_in(request, path)
         if request.method == "POST" and path == "/link":
             body = json.loads(request.content)
             user = self.codes.pop(body["code"], None)
-            if user is None:
+            if user is None or user in self.disabled:
                 return httpx2.Response(401, json={"detail": "invalid or expired code"})
             token = f"cpt_{uuid.uuid4().hex}"
             self.tokens[token] = user
@@ -149,6 +240,8 @@ class FakeCareerOs:
         account = self.tokens.get(token)
         if account is None or token in self.revoked:
             return httpx2.Response(401, json={"detail": "invalid token"})
+        if account in self.disabled:
+            return httpx2.Response(401, json={"detail": "Account disabled"})
         if request.method == "DELETE" and path == "/link":
             self.revoked.add(token)
             return httpx2.Response(204)

@@ -2,7 +2,8 @@
 
 The app knows only the API's base URL; this tells it whether to use a browser sign-in (OAuth
 with PKCE: Cognito's own domain on AWS, Google on GCP) or the dev token on the local stack,
-and whether the stage also signs in with an emailed code (copilot_api.routes.email_auth).
+and whether the stage also signs in with an emailed code (copilot_api.routes.email_auth) or
+with a Career-OS account (copilot_api.routes.career_os_auth).
 Nothing here is secret: Cognito's app client is a public client without a secret, and Google
 treats a desktop client's secret as not confidential (it ships inside every installed app).
 """
@@ -32,6 +33,15 @@ class EmailOption(BaseModel):
     resend_after_s: int
 
 
+class CareerOsOption(BaseModel):
+    """The browser sign-in on Career-OS's own site: OAuth's authorization code with PKCE (S256)
+    and a loopback redirect. The app sends the code it gets to `POST /auth/career-os/sign-in`,
+    under the API's root; it never talks to Career-OS's token endpoint itself."""
+
+    authorize_url: str
+    client_id: str
+
+
 class AuthConfig(BaseModel):
     provider: Literal["cognito", "google", "dev"]
     # Cognito: the user pool's OAuth domain (https://<prefix>.auth.<region>.amazoncognito
@@ -51,13 +61,18 @@ class AuthConfig(BaseModel):
     # Email sign-in, when the stage has it: a second way in, beside `provider`. Apps from
     # before it (desktop 0.2.x and older) do not know the field and keep using `provider`.
     email: EmailOption | None = None
+    # Career-OS sign-in, when the stage has it: a third way in. Apps from before it (desktop
+    # 0.2.x and older) ignore the field, as they do `email`.
+    career_os: CareerOsOption | None = None
 
 
 # Defaults are left out, so Cognito's answer is what it was before Google was added, and
-# Google's what it was before email sign-in on a stage without it.
+# Google's what it was before email sign-in or Career-OS sign-in on a stage without them.
 @router.get("/auth/config", response_model_exclude_defaults=True)
 async def auth_config(svc: SvcDep) -> AuthConfig:
     config = provider_config(svc)
+    if svc.cos_sign_in is not None:
+        config.career_os = CareerOsOption(**svc.cos_sign_in.option())
     if svc.email is not None:
         s = svc.settings
         config.email = EmailOption(

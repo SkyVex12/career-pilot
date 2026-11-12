@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services, require_link
 from copilot_api.emailauth import EmailSignIn
@@ -21,6 +22,7 @@ from copilot_api.routes import (
     applications,
     auth,
     career_os,
+    career_os_auth,
     documents,
     email_auth,
     employers,
@@ -29,9 +31,10 @@ from copilot_api.routes import (
     resumes,
     sessions,
 )
+from copilot_api.tokens import TokenService
 from copilot_core import __version__, logs, versions
 from copilot_core.auth import make_verifier
-from copilot_core.careeros import make_client
+from copilot_core.careeros import CareerOsClient, make_client
 from copilot_core.crypto import UserCrypto, make_key_provider
 from copilot_core.db import create_pool
 from copilot_core.dotenv import load_dotenv
@@ -113,6 +116,10 @@ async def build_services(settings: ApiSettings) -> Services:
         await store.ensure_bucket()
     pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
     valkey = make_valkey(settings.valkey_url, settings.valkey_cluster)
+    crypto = UserCrypto(make_key_provider(settings), settings.dek_cache_ttl_s)
+    career_os = make_client(settings.career_os_url, settings.career_os_timeout_s)
+    own_tokens = settings.email_sign_in or settings.career_os_sign_in
+    tokens = TokenService(settings, pool) if own_tokens else None
     return Services(
         settings=settings,
         pool=pool,
@@ -121,15 +128,34 @@ async def build_services(settings: ApiSettings) -> Services:
             settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
         store=store,
-        crypto=UserCrypto(make_key_provider(settings), settings.dek_cache_ttl_s),
+        crypto=crypto,
         # Asked on every request (no remembering): the API also writes identities, and must
         # see an account's deletion at once.
         verifier=make_verifier(settings, Identities(pool, ttl_s=0)),
-        career_os=make_client(settings.career_os_url, settings.career_os_timeout_s),
-        email=EmailSignIn(settings, pool, valkey, make_mailer(settings))
+        career_os=career_os,
+        email=EmailSignIn(settings, pool, valkey, make_mailer(settings), tokens=tokens)
         if settings.email_sign_in
         else None,
+        cos_sign_in=career_os_sign_in(settings, pool, valkey, career_os, crypto, tokens),
+        tokens=tokens,
     )
+
+
+def career_os_sign_in(
+    settings: ApiSettings, pool: Any, valkey: Any, client: CareerOsClient | None,
+    crypto: UserCrypto, tokens: TokenService | None,
+) -> CareerOsSignIn | None:  # fmt: skip
+    """Career-OS sign-in when the stage has it: switched on, with Career-OS's API and site
+    set. Never beside an allow-list, which lists verified addresses and a Career-OS sign-in
+    has none: the stage then keeps its other sign-ins and says why this one is off."""
+    if not settings.career_os_sign_in:
+        return None
+    if client is None or tokens is None:
+        raise RuntimeError("COPILOT_CAREER_OS_SIGN_IN needs COPILOT_CAREER_OS_URL")
+    if settings.google_allowed_emails:
+        log.warning("Career-OS sign-in is off: this stage has an allow-list of emails")
+        return None
+    return CareerOsSignIn(settings, pool, valkey, client, crypto, tokens)
 
 
 def create_app(services: Services | None = None) -> FastAPI:
@@ -155,7 +181,7 @@ def create_app(services: Services | None = None) -> FastAPI:
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
-    for module in (auth, email_auth, me, profiles, career_os):
+    for module in (auth, email_auth, career_os_auth, me, profiles, career_os):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
     for module in (documents, applications, resumes, sessions, employers):

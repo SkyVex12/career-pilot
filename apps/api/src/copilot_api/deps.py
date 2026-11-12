@@ -1,8 +1,9 @@
 """Shared services and request dependencies.
 
-Every request carries an access token (Google's or Cognito's, the API's own after an email
-sign-in, or the dev token locally). The first request of a new user creates their `app.users`
-row from the token; an email sign-in's account is made when its code is verified instead.
+Every request carries an access token (Google's or Cognito's, the API's own after an email or
+Career-OS sign-in, or the dev token locally). The first request of a new user creates their
+`app.users` row from the token; an email or Career-OS sign-in's account is made by the sign-in
+itself instead.
 Every handler then runs its queries inside `services.tx(user)`, which opens a transaction that
 sets `app.user_id` first (ARCHITECTURE.md, "Row-level security").
 
@@ -28,10 +29,12 @@ import asyncpg
 import httpx2
 from fastapi import Depends, Header, HTTPException, Request
 
+from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.config import ApiSettings
 from copilot_api.emailauth import EmailSignIn
+from copilot_api.tokens import TokenService
 from copilot_core import careeros, identities, jobs, keys, logs, profiles
-from copilot_core.auth import AuthError, Principal, TokenVerifier, bearer_token
+from copilot_core.auth import CAREER_OS, AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
 from copilot_core.db import Conn, user_tx
@@ -53,6 +56,8 @@ class Services:
     verifier: TokenVerifier
     career_os: CareerOsClient | None = None  # None: COPILOT_CAREER_OS_URL is unset
     email: EmailSignIn | None = None  # None: COPILOT_EMAIL_SIGN_IN is off
+    cos_sign_in: CareerOsSignIn | None = None  # None: the stage has no Career-OS sign-in
+    tokens: TokenService | None = None  # the API's own tokens, when either of the two is on
 
     @asynccontextmanager
     async def tx(self, user: Principal) -> AsyncGenerator[Conn]:
@@ -106,9 +111,9 @@ async def current_account(
     async with svc.tx(principal) as conn:
         known = await conn.fetchval("select 1 from app.users where id = $1", principal.user_id)
     if known is None:
-        if principal.provider == "email":
-            # An email sign-in makes its account when the code is verified; a token without
-            # one is a deleted account's, and does not bring it back.
+        if principal.provider in ("email", CAREER_OS):
+            # An email or Career-OS sign-in makes its account itself; a token without one is
+            # a deleted account's, and does not bring it back.
             raise HTTPException(
                 401, "this account no longer exists; sign in again",
                 headers={"WWW-Authenticate": "Bearer"},

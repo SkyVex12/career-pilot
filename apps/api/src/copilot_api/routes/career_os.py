@@ -20,6 +20,7 @@ Career-OS since they were pulled; pulling again replaces the pulled fields, JD a
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -27,21 +28,25 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from copilot_api import links
+from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
+from copilot_api.links import ACCOUNT_TYPES, integration_row_id
 from copilot_api.routes.applications import application_out, enqueue_packs
 from copilot_core import careeros, jobs, profiles, resumes
-from copilot_core.auth import Principal
-from copilot_core.careeros import CareerOsClient, CareerOsError, ResumeFile
+from copilot_core.auth import CAREER_OS, Principal
+from copilot_core.careeros import CareerOsClient, CareerOsError, ResumeFile, principal_kind
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
 from copilot_core.storage import resume_file_key
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 PROVIDER = careeros.PROVIDER
 COS_ID = r"^[A-Za-z0-9_.:-]{1,128}$"
 STAGES = ("applied", "interview", "offer", "rejected")
-ACCOUNT_TYPES = ("user", "admin", "super_admin")
 FILE_TYPES = ("application/pdf", "text/plain", "text/markdown",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/msword")  # fmt: skip
@@ -63,10 +68,6 @@ class PulledApplication(BaseModel):
     source_site: str | None = Field(default=None, max_length=200)
     stage: str = "applied"
     note: str | None = Field(default=None, max_length=10_000)
-
-
-def integration_row_id(uid: UUID) -> str:
-    return f"{uid}:{PROVIDER}"
 
 
 def client_of(svc: Services) -> CareerOsClient:
@@ -175,6 +176,9 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
             "select status from app.integrations where provider = $1", PROVIDER
         )
         email = await conn.fetchval("select email from app.users where id = $1", uid)
+        signs_in_as = await conn.fetchval(
+            "select subject from app.identities where provider = $1", CAREER_OS
+        )
     if current == "active":
         raise HTTPException(409, "Career-OS is already connected; disconnect it first")
     code = body.code.strip().upper().replace(" ", "")
@@ -187,28 +191,17 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
             raise HTTPException(429, e.message) from e
         raise HTTPException(502, e.message) from e
     cos_user = linked["user"]
-    kind = linked.get("account_type")
-    kind = kind if kind in ACCOUNT_TYPES else "user"
-    secret = json.dumps({"token": linked["token"], "link_id": linked.get("link_id")})
+    kind = links.account_type(linked)
+    if signs_in_as is not None and signs_in_as != f"{principal_kind(kind)}:{cos_user.get('id')}":
+        # The account signs in with another Career-OS account: linking this one would leave
+        # a sign-in and a link that disagree. Disconnecting removes that sign-in first.
+        await client.revoke(str(linked["token"]))
+        raise HTTPException(
+            409, "this account signs in with a different Career-OS account; disconnect it first"
+        )
     try:
         async with svc.tx(user) as conn:
-            sealed, key_version = await svc.crypto.encrypt(
-                conn, uid, "integrations", integration_row_id(uid), secret
-            )
-            await conn.execute(
-                "insert into app.integrations (user_id, provider, token_enc, key_version, scopes,"
-                " status, external_id, external_label, external_kind, connected_at)"
-                " values ($1, $2, $3, $4, $5, 'active', $6, $7, $8, now())"
-                " on conflict (user_id, provider) do update set token_enc = excluded.token_enc,"
-                " key_version = excluded.key_version, scopes = excluded.scopes,"
-                " status = 'active', external_id = excluded.external_id,"
-                " external_label = excluded.external_label,"
-                " external_kind = excluded.external_kind, connected_at = now(),"
-                " last_sync_at = null",
-                uid, PROVIDER, sealed, key_version,
-                [str(s) for s in linked.get("scopes") or ["applications:read"]],
-                str(cos_user.get("id")), str(cos_user.get("name") or "")[:200], kind,
-            )  # fmt: skip
+            await links.write(svc.crypto, conn, uid, linked)
             row = await conn.fetchrow(
                 "select status, external_id, external_label, external_kind, connected_at,"
                 " last_sync_at from app.integrations where provider = $1",
@@ -227,11 +220,22 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
 @router.delete("/career-os/connection", status_code=204)
 async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
     """Revoke the token on Career-OS, then delete it here. If Career-OS cannot be reached the
-    link stays, so it is never left valid there while gone here."""
+    link stays, so it is never left valid there while gone here.
+
+    Unlinking also removes the account's Career-OS sign-in (ARCHITECTURE.md, "Career-OS
+    sign-in"), so it is refused while that is the account's only way in: the person adds
+    another sign-in first."""
     uid = user.user_id
     async with svc.tx(user) as conn:
+        if await CareerOsSignIn.only_method(conn):
+            raise HTTPException(409, {
+                "code": "only_sign_in_method",
+                "message": "Career-OS is the only way you sign in to this account. Add another "
+                           "sign-in first (Settings, Account), then disconnect.",
+            })  # fmt: skip
         exists = await conn.fetchval("select 1 from app.integrations where provider = $1", PROVIDER)
         if exists is None:
+            await CareerOsSignIn.forget(conn, uid)
             return Response(status_code=204)
         token: str | None
         try:
@@ -245,6 +249,8 @@ async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
             raise HTTPException(502, f"could not revoke the link on Career-OS: {e.message}") from e
     async with svc.tx(user) as conn:
         await conn.execute("delete from app.integrations where provider = $1", PROVIDER)
+        await CareerOsSignIn.forget(conn, uid)
+    log.info("career-os: user %s disconnected; its Career-OS sign-in went with the link", uid)
     return Response(status_code=204)
 
 

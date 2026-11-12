@@ -120,9 +120,19 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
         title="Disconnect Career-OS?"
         confirmLabel="Disconnect"
         onConfirm={async () => {
-          await rest.disconnectCareerOs();
-          setConn(await rest.careerOs());
-          toast({ tone: "success", text: "Disconnected; the link is revoked in Career-OS too." });
+          try {
+            await rest.disconnectCareerOs();
+            setConn(await rest.careerOs());
+            toast({ tone: "success", text: "Disconnected; the link is revoked in Career-OS too." });
+          } catch (e) {
+            const text = String(e);
+            toast({
+              tone: "error",
+              text: text.includes("only_sign_in_method")
+                ? "Career-OS is the only way you sign in to this account. Add another sign-in first, then disconnect."
+                : text,
+            });
+          }
         }}
       >
         Applications already pulled stay. To pull more you will need a new code{conn.required ? ", and the app waits until you connect again" : ""}.

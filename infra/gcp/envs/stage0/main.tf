@@ -71,7 +71,13 @@ locals {
     COPILOT_EMAIL_SIGN_IN     = "true"
     COPILOT_EMAIL_PUBLIC_KEYS = "{{secret:${local.prefix}-email-public-key}}"
   }
-  common_env = merge(local.common_base, local.email_env)
+  # Off until career_os_site_url is set, so an apply with today's tfvars changes nothing here.
+  # The tokens are the email sign-in's, so the public key above has to exist already.
+  career_os_sign_in_env = var.career_os_site_url == "" ? {} : {
+    COPILOT_CAREER_OS_SIGN_IN  = "true"
+    COPILOT_CAREER_OS_SITE_URL = var.career_os_site_url
+  }
+  common_env = merge(local.common_base, local.email_env, local.career_os_sign_in_env)
   model_env = merge(
     {
       COPILOT_LLM_PROVIDERS                      = "openai"

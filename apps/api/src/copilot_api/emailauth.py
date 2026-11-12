@@ -10,8 +10,8 @@ one again revokes its whole chain.
   using the code up are one atomic step (`CHECK_CODE`).
 - **Rate limits** are counters in Valkey, per address and per client address, on asking for a
   code and on trying one. They are keyed by a hash, so no address is kept there.
-- **Refresh tokens** are rows in `app.refresh_tokens` (migration 0014), as SHA-256 hashes.
-- **Access tokens** are JWTs the API signs (`copilot_core.auth.TokenSigner`), about an hour.
+- **Tokens** are the API's own (`copilot_api.tokens`): a signed access token, about an hour,
+  and a refresh token that works once.
 
 Asking for a code answers the same way and in the same time whatever the address is: the mail
 is sent after the answer, and an address that may not sign in gets the same answer and no mail.
@@ -23,19 +23,17 @@ import hmac
 import logging
 import secrets
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import Any
-from uuid import UUID
 
 import asyncpg
 
 from copilot_api.config import ApiSettings
 from copilot_api.mailer import Mailer, sign_in_message
+from copilot_api.tokens import RefreshError, Tokens, TokenService
+from copilot_api.tokens import sha as _sha
 from copilot_core import identities
-from copilot_core.auth import TokenSigner, allow_list
-from copilot_core.db import become, sign_in_tx, user_tx
-from copilot_core.ids import uuid7
 from copilot_core.valkey_client import Valkey
+
+__all__ = ["CodeError", "EmailSignIn", "Limit", "Limits", "RateLimited", "RefreshError", "Tokens"]
 
 log = logging.getLogger(__name__)
 
@@ -90,25 +88,19 @@ class CodeError(Exception):
         self.reason = reason
 
 
-class RefreshError(Exception):
-    """`reason`: "invalid" (unknown, expired or revoked), "reused" (a replaced token shown
-    again: its chain is now revoked), "not_allowed" (off the allow-list)."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
-@dataclass(frozen=True)
-class Tokens:
-    access_token: str
-    refresh_token: str
-    expires_in: int
-    email: str
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
+async def hit(valkey: Valkey, scope: str, who: str, limits: tuple[Limit, ...]) -> None:
+    """Count one request; RateLimited when any window is over its count. Keyed by a hash, so
+    neither an address nor a client address is kept in Valkey."""
+    for limit in limits:
+        key = f"auth:limit:{scope}:{limit.window_s}:{_sha(who)[:32]}"
+        await valkey.set(key, 0, ex=limit.window_s, nx=True)
+        count = int(await valkey.incr(key))
+        if count > limit.count:
+            left = int(await valkey.ttl(key))
+            if left < 0:  # the window ended between the two calls: start it again
+                await valkey.expire(key, limit.window_s)
+                left = limit.window_s
+            raise RateLimited(max(left, 1))
 
 
 @dataclass
@@ -118,32 +110,36 @@ class EmailSignIn:
     valkey: Valkey
     mailer: Mailer
     limits: Limits = Limits()
+    # The API's tokens; shared with Career-OS sign-in when the stage has both.
+    tokens: TokenService | None = None
     _sends: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
     def __post_init__(self) -> None:
-        key = self.settings.email_signing_key
-        if key is None:
-            raise RuntimeError("COPILOT_EMAIL_SIGN_IN needs COPILOT_EMAIL_SIGNING_KEY on the API")
-        seed = key.get_secret_value()
-        self.signer = TokenSigner(seed, self.settings.email_access_ttl_s)
+        if self.tokens is None:
+            self.tokens = TokenService(self.settings, self.pool)
         # The codes' HMAC key: derived from the signing key, which only the API holds.
-        self._code_key = hashlib.sha256(b"copilot sign-in code\0" + seed.encode()).digest()
-        self.allowed = allow_list(self.settings.google_allowed_emails)
+        self._code_key = hashlib.sha256(
+            b"copilot sign-in code\0" + self.tokens.seed.encode()
+        ).digest()
+
+    @property
+    def _tokens(self) -> TokenService:
+        assert self.tokens is not None
+        return self.tokens
+
+    @property
+    def allowed(self) -> set[str]:
+        """The allow-list (empty: any address). One list for codes, tokens and refreshes."""
+        return self._tokens.allowed
+
+    @allowed.setter
+    def allowed(self, emails: set[str]) -> None:
+        self._tokens.allowed = emails
 
     # --- Limits -------------------------------------------------------------------------------
 
     async def _hit(self, scope: str, who: str, limits: tuple[Limit, ...]) -> None:
-        """Count one request; RateLimited when any window is over its count."""
-        for limit in limits:
-            key = f"auth:limit:{scope}:{limit.window_s}:{_sha(who)[:32]}"
-            await self.valkey.set(key, 0, ex=limit.window_s, nx=True)
-            count = int(await self.valkey.incr(key))
-            if count > limit.count:
-                left = int(await self.valkey.ttl(key))
-                if left < 0:  # the window ended between the two calls: start it again
-                    await self.valkey.expire(key, limit.window_s)
-                    left = limit.window_s
-                raise RateLimited(max(left, 1))
+        await hit(self.valkey, scope, who, limits)
 
     # --- Codes --------------------------------------------------------------------------------
 
@@ -155,7 +151,7 @@ class EmailSignIn:
         return f"auth:code:{_sha(email)[:32]}"
 
     def may_sign_in(self, email: str) -> bool:
-        return not self.allowed or email in self.allowed
+        return self._tokens.may_sign_in(email)
 
     async def start(self, email: str, client: str) -> None:
         """Send a code to a normalized address. Returns the same way whether or not the
@@ -202,90 +198,12 @@ class EmailSignIn:
         if result != 1 or not self.may_sign_in(email):
             raise CodeError({0: "expired", 2: "locked"}.get(result, "invalid"))
         user_id, name = await identities.account_for_email(self.pool, email)
-        refresh = await self._issue(user_id, email, uuid7())
-        return self._tokens(user_id, email, name, refresh)
+        return await self._tokens.issue(user_id, name, email=email)
 
     # --- Tokens -------------------------------------------------------------------------------
 
-    def _tokens(self, user_id: UUID, email: str, name: str, refresh: str) -> Tokens:
-        access = self.signer.sign(user_id, email, name)
-        return Tokens(access, refresh, self.signer.ttl_s, email)
-
-    async def _insert(self, conn: Any, user_id: UUID, email: str, family: UUID) -> str:
-        token = secrets.token_urlsafe(32)
-        await conn.execute(
-            "insert into app.refresh_tokens (token_hash, user_id, family_id, email, expires_at)"
-            " values ($1, $2, $3, $4, now() + $5::interval)",
-            _sha(token), user_id, family, email,
-            timedelta(days=self.settings.email_refresh_ttl_days),
-        )  # fmt: skip
-        return token
-
-    async def _issue(self, user_id: UUID, email: str, family: UUID) -> str:
-        async with user_tx(self.pool, user_id) as conn:
-            # Tokens past their time have nothing left to tell; replaced ones are kept until
-            # then, to recognize one shown again.
-            await conn.execute(
-                "delete from app.refresh_tokens where user_id = $1 and expires_at < now()", user_id
-            )
-            return await self._insert(conn, user_id, email, family)
-
     async def refresh(self, token: str) -> Tokens:
-        """Replace a refresh token: new access and refresh tokens, and the old one is spent.
-        A spent token shown again revokes every token of its sign-in."""
-        digest = _sha(token)
-        reused = False
-        async with sign_in_tx(self.pool, f"refresh:{digest}") as conn:
-            found = await conn.fetchval(
-                "select user_id from app.refresh_tokens where token_hash = $1", digest
-            )
-            if found is None:
-                raise RefreshError("invalid")
-            user_id: UUID = found
-            await become(conn, user_id)
-            row = await conn.fetchrow(
-                "select family_id, email, replaced_at, revoked_at, expires_at <= now() as expired"
-                "  from app.refresh_tokens where token_hash = $1 for update",
-                digest,
-            )
-            if row is None or row["revoked_at"] is not None or row["expired"]:
-                raise RefreshError("invalid")
-            email, family = str(row["email"]), row["family_id"]
-            if row["replaced_at"] is not None or not self.may_sign_in(email):
-                reused = row["replaced_at"] is not None
-                await self._revoke_family(conn, user_id, family)
-            else:
-                await conn.execute(
-                    "update app.refresh_tokens set replaced_at = now() where token_hash = $1",
-                    digest,
-                )
-                name = await conn.fetchval(
-                    "select display_name from app.users where id = $1", user_id
-                )
-                fresh = await self._insert(conn, user_id, email, family)
-                return self._tokens(user_id, email, str(name or email), fresh)
-        # Outside the transaction, so the revocation above is committed.
-        if reused:
-            log.warning("refresh token reuse: revoked the sign-in of user %s", user_id)
-        raise RefreshError("reused" if reused else "not_allowed")
+        return await self._tokens.refresh(token)
 
     async def sign_out(self, token: str) -> bool:
-        """Revoke the refresh token's whole sign-in; False if the token is not known."""
-        digest = _sha(token)
-        async with sign_in_tx(self.pool, f"refresh:{digest}") as conn:
-            row = await conn.fetchrow(
-                "select user_id, family_id from app.refresh_tokens where token_hash = $1", digest
-            )
-            if row is None:
-                return False
-            await become(conn, row["user_id"])
-            await self._revoke_family(conn, row["user_id"], row["family_id"])
-        return True
-
-    @staticmethod
-    async def _revoke_family(conn: Any, user_id: UUID, family: UUID) -> None:
-        await conn.execute(
-            "update app.refresh_tokens set revoked_at = now()"
-            " where user_id = $1 and family_id = $2 and revoked_at is null",
-            user_id, family,
-        )  # fmt: skip
+        return await self._tokens.sign_out(token)

@@ -71,6 +71,26 @@
     "request": "GET /v1/career-pilot/applications/app_acme_1/resume-file",
     "response_headers": {"content-type": "application/pdf", "content-disposition": "attachment; filename=\"resume.pdf\""}
   },
+  "sign_in": {
+    "about": "Sign in to Career Pilot with a Career-OS account: authorization code with PKCE (S256) and a loopback redirect. client_id is always career-pilot.",
+    "authorize_page": "GET <site>/career-pilot/authorize?response_type=code&client_id=career-pilot&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&state=...&code_challenge=...&code_challenge_method=S256",
+    "consent": {"client": "Career Pilot", "account": {"account_type": "user", "name": "Alex Doe", "email": "alex@example.com"}, "scopes": ["applications:read"]},
+    "approve": {
+      "request": {"client_id": "career-pilot", "redirect_uri": "http://127.0.0.1:53682/callback", "state": "opaque", "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method": "S256"},
+      "response": {"redirect_to": "http://127.0.0.1:53682/callback?code=EXAMPLE-not-a-real-code&state=opaque"}
+    },
+    "token": {
+      "request": {"grant_type": "authorization_code", "code": "EXAMPLE-not-a-real-code", "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", "redirect_uri": "http://127.0.0.1:53682/callback", "client_id": "career-pilot"},
+      "response": {"assertion": "EXAMPLE.not-a-real.assertion", "token_type": "assertion", "expires_in": 60, "link_code": "K7QM-2XPA-9R", "link_code_expires_at": "2026-10-22T10:10:00Z"}
+    },
+    "assertion_claims": {"iss": "career-os", "aud": "career-pilot", "sub": "user:u20260101000000", "principal_kind": "user", "principal_id": "u20260101000000", "account_type": "user", "name": "Alex Doe", "email": "alex@example.com", "email_verified": false, "iat": 1792663800, "exp": 1792663860, "jti": "EXAMPLE"},
+    "keys": {"keys": [{"kid": "0123456789abcdef", "alg": "EdDSA", "public_key": "EXAMPLE-base64url-ed25519-public-key"}]},
+    "errors": {
+      "400": "{\"detail\": \"invalid_grant\"}: unknown, used or expired code, wrong verifier, redirect or client; a request that is not Career Pilot's",
+      "403": "{\"detail\": \"account_disabled\"}: the account was disabled or deleted after approving",
+      "503": "the server has no signing key: the sign-in is off"
+    }
+  },
   "errors": {
     "401": "missing, unknown, revoked or expired token or code; a session token on the bearer endpoints; disabled user or admin",
     "404": "no such application or user_id in the link's scope (the user's own, or an admin's linked users'; anything else looks the same)",

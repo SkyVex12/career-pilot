@@ -2,14 +2,14 @@
 // Advanced. Toggles, choices and devices save the moment they change, and a recorded hotkey
 // when it is valid; free-text fields (a development build's URLs and token) keep a Save button.
 import { useEffect, useState } from "react";
-import { api, type Settings, type SettingsView, type UpdateState } from "./api";
+import { api, rest, type Settings, type SettingsView, type UpdateState } from "./api";
 import { cloudUrlsFor } from "./urls";
 import { ago, settingsLine } from "./updates";
 import { CareerOsSettings } from "./CareerOs";
 import { DevicePickers } from "./CallScreen";
 import { HOTKEYS, clashWith } from "./hotkeys";
 import { accountOf } from "./profiles";
-import { SignIn } from "./SignIn";
+import { SignIn, signInWays } from "./SignIn";
 import { HotkeyInput } from "./ui/HotkeyInput";
 import { Banner, Button, Card, ConfirmDialog, Field, Input, PageHeader, SegmentedControl, Select, Switch, useTheme, useToast } from "./ui";
 
@@ -214,26 +214,38 @@ function Account({ view, onSaved }: { view: SettingsView; onSaved: () => void })
       <Card title="Sign-in">
         {browser ? (
           view.signed_in_as !== null ? (
-            <div className="ui-row-inline">
-              <span>
-                Signed in{view.signed_in_as ? ` as ${view.signed_in_as}` : ""}
-                {view.signed_in_with === "email" ? ", with an emailed code" : view.signed_in_with === "browser" && settings.oauth?.provider !== "cognito" ? ", with Google" : ""}.
-              </span>
-              <Button size="sm" onClick={signOut}>
-                Sign out
-              </Button>
+            <div className="ui-stack-tight">
+              <div className="ui-row-inline">
+                <span>
+                  Signed in{view.signed_in_as ? ` as ${view.signed_in_as}` : ""}
+                  {view.signed_in_with === "email"
+                    ? ", with an emailed code"
+                    : view.signed_in_with === "career_os"
+                      ? ", with Career-OS"
+                      : view.signed_in_with === "browser" && settings.oauth?.provider !== "cognito"
+                        ? ", with Google"
+                        : ""}
+                  .
+                </span>
+                <Button size="sm" onClick={signOut}>
+                  Sign out
+                </Button>
+              </div>
+              <SignInMethods offered={settings.career_os_sign_in} onChanged={onSaved} />
             </div>
           ) : (
             <div className="ui-stack-tight">
               <p className="ui-text-2">
-                {settings.email_sign_in === false
-                  ? "With your Google account. "
-                  : "With your Google account, or with a code we email you. "}
-                The sign-in is kept in the Windows Credential Manager and renews itself, also during a call.
+                {signInWays(
+                  settings.email_sign_in,
+                  settings.career_os_sign_in,
+                  "The sign-in is kept in the Windows Credential Manager and renews itself, also during a call.",
+                )}
               </p>
               <SignIn
                 browserName={settings.oauth?.provider === "cognito" ? null : "Google"}
                 emailOffered={settings.email_sign_in}
+                careerOsOffered={settings.career_os_sign_in}
                 disabled={!settings.cloud_api_url}
                 disabledHint={<span className="ui-field-hint">Set the cloud URLs under Advanced first.</span>}
                 onSignedIn={signedIn}
@@ -385,6 +397,67 @@ function Advanced({ view, save, onSaved }: { view: SettingsView; save: Save; onS
         </Card>
       )}
     </>
+  );
+}
+
+const METHOD_NAME: Record<string, string> = { google: "Google", email: "Email code", career_os: "Career-OS" };
+
+/** The account's sign-in methods, and adding Career-OS while signed in another way. */
+function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChanged: () => void }) {
+  const toast = useToast();
+  const [methods, setMethods] = useState<{ provider: string; label: string }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const reload = () => {
+    rest.me().then((m) => setMethods(m.sign_in_methods ?? [])).catch(() => setMethods([]));
+  };
+  useEffect(reload, []);
+  const hasCareerOs = methods?.some((m) => m.provider === "career_os");
+  return (
+    <div className="ui-stack-tight">
+      {methods && methods.length > 0 && (
+        <ul className="ui-text-2">
+          {methods.map((m) => (
+            <li key={m.provider}>
+              {METHOD_NAME[m.provider] ?? m.provider}
+              {m.label ? ` · ${m.label}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      {offered !== false && methods !== null && !hasCareerOs && (
+        <Button
+          size="sm"
+          loading={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const out = await api.careerOsSignIn();
+              if (out.status === "added" || out.status === "signed_in") {
+                toast({ tone: "success", text: "Career-OS sign-in added." });
+                reload();
+                onChanged();
+              } else {
+                toast({ tone: "error", text: "Sign out and use Continue with Career-OS to choose an account." });
+              }
+            } catch (e) {
+              const code = e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+              toast({
+                tone: "error",
+                text: code === "career_os_unavailable"
+                  ? "Career-OS isn't answering. Your current sign-in still works."
+                  : code === "only_sign_in_method" || String(e).includes("only_sign_in_method")
+                    ? "Career-OS is the only way you sign in. Add another sign-in first."
+                    : String(e),
+              });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Add Career-OS sign-in
+        </Button>
+      )}
+    </div>
   );
 }
 

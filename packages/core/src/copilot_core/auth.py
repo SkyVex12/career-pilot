@@ -12,13 +12,15 @@ Four verifiers behind one interface:
   empty list lets every verified Google account in). Google's `sub` is not a
   UUID, so the user id is a UUIDv5 of it: stable, and the same on every service. An account
   first made by an email sign-in has another id; `app.identities` names it (`IdentityLookup`).
-- `CopilotVerifier` (email sign-in): an access token the API signed itself after an emailed
-  one-time code (`TokenSigner`: Ed25519, about an hour). `sub` is the user id. Checked against
-  the deployment's public keys, with no network call.
+- `CopilotVerifier` (email sign-in and Career-OS sign-in): an access token the API signed
+  itself, after an emailed one-time code or a sign-in on Career-OS (`TokenSigner`: Ed25519,
+  about an hour). `sub` is the user id; `idp` says which sign-in it was when it was not email.
+  Checked against the deployment's public keys, with no network call.
 - `DevTokenVerifier`: a static dev token for one dev user. It refuses to start outside
   COPILOT_ENV=dev, and refuses on cloud compute (ECS, Lambda, Compute Engine) even then.
 
-A deployment takes its provider's tokens and, with `email_sign_in`, the API's own as well:
+A deployment takes its provider's tokens and, with `email_sign_in` or `career_os_sign_in`,
+the API's own as well:
 `ByIssuer` reads the token's `iss` (unverified, only to choose) and hands the token to that
 issuer's verifier, which checks everything.
 """
@@ -53,8 +55,8 @@ class Principal:
     display_name: str
     expires_at: float | None  # Unix seconds; None for tokens that do not expire
     email: str | None = None  # present when the token carries it; see API first login
-    # The sign-in behind the token ("google", "email") and its subject there, when the
-    # verifier knows them (app.identities).
+    # The sign-in behind the token ("google", "email", "career_os") and its subject there,
+    # when the verifier knows them (app.identities).
     provider: str | None = None
     subject: str | None = None
     # No app.identities row names this sign-in yet: the API records one (first login).
@@ -312,6 +314,7 @@ class GoogleVerifier:
 COPILOT_ISSUER = "copilot"
 COPILOT_AUDIENCE = "copilot"
 COPILOT_ALGORITHM = "EdDSA"
+CAREER_OS = "career_os"  # the `idp` of a Career-OS sign-in, and its app.identities.provider
 
 
 def _b64(data: bytes) -> str:
@@ -359,18 +362,28 @@ class TokenSigner:
         self.kid = key_id(public_key_of(signing_key))
         self.ttl_s = ttl_s
 
-    def sign(self, user_id: UUID, email: str, name: str, now: float | None = None) -> str:
+    def sign(
+        self, user_id: UUID, email: str | None, name: str, now: float | None = None,
+        provider: str = "email", subject: str | None = None,
+    ) -> str:  # fmt: skip
+        """An email sign-in's token carries its address. Any other sign-in's (`provider`
+        "career_os") carries `idp` and its subject there (`idp_sub`), and no email: Career-OS
+        does not verify addresses, so none is vouched for."""
         issued = int(time.time() if now is None else now)
-        claims = {
+        claims: dict[str, Any] = {
             "iss": COPILOT_ISSUER,
             "aud": COPILOT_AUDIENCE,
             "sub": str(user_id),
-            "email": email,
             "name": name,
             "token_use": "access",
             "iat": issued,
             "exp": issued + self.ttl_s,
         }
+        if provider == "email":
+            claims["email"] = email
+        else:
+            claims["idp"] = provider
+            claims["idp_sub"] = subject
         return jwt.encode(claims, self.key, algorithm=COPILOT_ALGORITHM, headers={"kid": self.kid})
 
 
@@ -380,8 +393,9 @@ class CopilotVerifier:
     ) -> None:
         if not public_keys:
             raise RuntimeError(
-                "COPILOT_EMAIL_SIGN_IN needs COPILOT_EMAIL_PUBLIC_KEYS (or, on the API and the "
-                "local stack, COPILOT_EMAIL_SIGNING_KEY)"
+                "COPILOT_EMAIL_SIGN_IN and COPILOT_CAREER_OS_SIGN_IN need "
+                "COPILOT_EMAIL_PUBLIC_KEYS (or, on the API and the local stack, "
+                "COPILOT_EMAIL_SIGNING_KEY)"
             )
         self.keys = {
             key_id(k): Ed25519PublicKey.from_public_bytes(_key_bytes(k, "a public key"))
@@ -420,6 +434,22 @@ class CopilotVerifier:
             user_id = UUID(str(claims["sub"]))
         except ValueError as e:
             raise AuthError("sub is not a user id") from e
+        if claims.get("idp") == CAREER_OS:
+            subject = str(claims.get("idp_sub") or "")
+            if not subject:
+                raise AuthError("the token names no Career-OS account")
+            # An allow-list is a list of verified addresses, and a Career-OS sign-in has none.
+            if self.allowed:
+                raise AuthError("Career-OS sign-in is off while this server has an allow-list")
+            return Principal(
+                user_id=user_id,
+                display_name=str(claims.get("name") or "Career-OS account"),
+                expires_at=float(claims["exp"]),
+                provider=CAREER_OS,
+                subject=subject,
+            )
+        if "idp" in claims:
+            raise AuthError("unknown sign-in")
         email = str(claims.get("email") or "").lower()
         if not email:
             raise AuthError("the token carries no email")
@@ -470,10 +500,11 @@ def email_public_keys(settings: CoreSettings) -> list[str]:
 def make_verifier(
     settings: CoreSettings, identities: IdentityLookup | None = None
 ) -> TokenVerifier:
-    """The deployment's verifier; with email sign-in on, the API's own tokens as well.
-    `identities` resolves a Google sign-in to its account (services with a database)."""
+    """The deployment's verifier; with email sign-in or Career-OS sign-in on, the API's own
+    tokens as well. `identities` resolves a Google sign-in to its account (services with a
+    database)."""
     provider = _provider_verifier(settings, identities)
-    if not settings.email_sign_in:
+    if not (settings.email_sign_in or settings.career_os_sign_in):
         return provider
     own = CopilotVerifier(email_public_keys(settings), settings.google_allowed_emails)
     return ByIssuer({COPILOT_ISSUER: own}, provider)
