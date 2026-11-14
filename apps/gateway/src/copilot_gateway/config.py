@@ -42,6 +42,12 @@ QuestionType = Literal[
     # Not from the detector: the user has started answering, and the answer follows them
     # (Session._maybe_follow). Sent to the client as "other".
     "follow",
+    # At work only (prompts.WORK_TYPES), each with its own shape; sent to the client as the
+    # protocol type in prompts.WIRE_TYPES.
+    "decision",
+    "how_it_works",
+    "status_follow_up",
+    "estimate_risk",
 ]
 
 
@@ -129,6 +135,10 @@ class Settings(CoreSettings):
             "other",
             "respond",
             "follow",
+            "decision",
+            "how_it_works",
+            "status_follow_up",
+            "estimate_risk",
         ]
     )
     rerank_keep: int = 6
@@ -143,6 +153,12 @@ class Settings(CoreSettings):
     memory_fast_wait_ms: int = 30
     memory_deep_wait_ms: int = 150
     memory_fast_hits: int = 4
+    # Engineering context (copilot_core.knowledge): sections of the company's documents next
+    # to its facts. The short answer gets excerpts found by keyword in memory (no wait); the
+    # detailed answer whole sections, with the vector search when it is in within
+    # memory_deep_wait_ms. 0 turns either off.
+    knowledge_fast_sections: int = 3
+    knowledge_deep_sections: int = 4
     # Rendering a company's pack at session start when no current one is stored (DB only).
     pack_render_timeout_ms: int = 400
     first_token_timeout_ms: int = 1500

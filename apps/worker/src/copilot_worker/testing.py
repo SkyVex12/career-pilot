@@ -21,14 +21,14 @@ from copilot_core.ids import uuid7
 from copilot_core.jobs import MemoryJobQueue
 from copilot_core.storage import document_key
 from copilot_core.teststack import S3_ENDPOINT, VALKEY_URL
-from copilot_worker import documents, packs, sessionlog, system, workplace
+from copilot_worker import documents, knowledge, packs, sessionlog, system, workplace
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import Ctx
 from copilot_worker.fixtures import ClaudeFixtures
 from copilot_worker.runtime import HANDLERS, Job
 
 FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
-HANDLER_MODULES = (documents, packs, sessionlog, system, workplace)
+HANDLER_MODULES = (documents, knowledge, packs, sessionlog, system, workplace)
 
 
 def worker_settings(**over: Any) -> WorkerSettings:

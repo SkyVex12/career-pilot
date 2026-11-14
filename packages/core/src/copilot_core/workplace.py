@@ -34,9 +34,11 @@ from typing import Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from copilot_core import knowledge
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
 from copilot_core.packs import (
+    CompanyDigest,
     EmployerRef,
     NodeRef,
     PackItem,
@@ -52,7 +54,11 @@ from copilot_core.packs import (
 # A node row: an asyncpg Record or a mapping with its columns.
 type Row = Any
 
-WORKPLACE_KINDS = ("work_item", "commitment", "project", "system", "person", "decision", "term")
+WORKPLACE_KINDS = ("work_item", "commitment", "project", "system", "person", "decision", "term",
+                   "flow", "constraint", "risk")  # fmt: skip
+# What a company document adds (engineering context): `system` is a component, `term` a
+# glossary entry; a decision's body carries why, alternatives and tradeoff, a flow's its steps.
+KNOWLEDGE_KINDS = ("system", "decision", "flow", "constraint", "risk", "term", "project", "person")
 SHORT_PREFIX = "w"
 
 # The standup questions the pack prepares points for: they are the same every day, so their
@@ -123,7 +129,7 @@ async def memory_version(conn: Conn, user_id: UUID, employer_id: UUID) -> str:
 async def load_nodes(conn: Conn, user_id: UUID, employer_id: UUID) -> list[Row]:
     return list(
         await conn.fetch(
-            "select id, kind, title, summary, body, valid_from, created_at, updated_at"
+            "select id, kind, title, summary, body, source, valid_from, created_at, updated_at"
             " from app.memory_nodes"
             " where user_id = $1 and employer_id = $2 and status = 'active'"
             " and domain = 'workplace' order by id",
@@ -155,6 +161,10 @@ def item_text(row: Row) -> str:
             text += f". Stack: {stack}"
     if kind == "work_item" and b.get("external_id") and str(b["external_id"]) not in text:
         text = f"{text} ({b['external_id']})"
+    if kind in ("decision", "flow") or (kind == "system" and b.get("talks_to")):
+        # A decision's reason and rejected alternative, a flow's steps, a component's
+        # neighbours: what an architecture question is about.
+        return knowledge.digest_line(row)
     return text
 
 
@@ -427,7 +437,23 @@ async def render_employer_pack(
     version = await memory_version(conn, user_id, employer_id)
     build = standup_pack if mode == "standup" else meeting_pack
     pack = build(user_id, emp, nodes, today, version, built_at)
-    return pack.model_copy(update={"keyterms": keyterms(emp.name, nodes)})
+    digest = company_digest(emp.name, nodes)
+    if digest is not None and pack.workplace is not None:
+        # The digest holds these with their reasons; the meeting brief need not repeat them.
+        for key in ("systems", "decisions", "terms"):
+            pack.workplace.sections.pop(key, None)
+        pack.token_count = len(render_pack(pack)) // 4
+    return pack.model_copy(update={"keyterms": keyterms(emp.name, nodes), "knowledge": digest})
+
+
+def company_digest(company: str, nodes: Sequence[Row]) -> CompanyDigest | None:
+    """The company's engineering digest, with the same short ids its pack uses; None when no
+    document has given it a component, a decision or a flow yet."""
+    sids = short_ids([n["id"] for n in nodes], SHORT_PREFIX)
+    found = knowledge.render_digest(company, nodes, sids)
+    if not found.text:
+        return None
+    return CompanyDigest(text=found.text, refs=found.refs, names=found.names)
 
 
 KEYTERM_KINDS = ("project", "system", "term", "person")
@@ -469,7 +495,7 @@ _TSQUERY = (
 # $1 user, $2 query text, $3 employer, $4 limit
 FTS_SQL = f"""
 with q as (select {_TSQUERY} as tsq)
-select n.id, n.kind, n.title, n.summary, n.body, n.valid_from,
+select n.id, n.kind, n.title, n.summary, n.body, n.source, n.valid_from,
        ts_rank(n.search, q.tsq) as rank
 from app.memory_nodes n, q
 where n.user_id = $1 and n.employer_id = $3 and n.status = 'active'
@@ -504,14 +530,15 @@ fused as (
   order by score desc, id
   limit $4
 )
-select n.id, n.kind, n.title, n.summary, n.body, n.valid_from, f.score as rank
+select n.id, n.kind, n.title, n.summary, n.body, n.source, n.valid_from, f.score as rank
 from fused f join app.memory_nodes n using (id)
 order by f.score desc, n.id
 """
 
 # $1 uuid[] of the hits, $2 employer, $3 limit
 HOPS_SQL = """
-select distinct on (n.id) e.rel, n.id, n.kind, n.title, n.summary, n.body, n.valid_from
+select distinct on (n.id) e.rel, n.id, n.kind, n.title, n.summary, n.body, n.source,
+       n.valid_from
 from app.memory_edges e
 join app.memory_nodes n on n.id = case when e.src = any($1) then e.dst else e.src end
 where (e.src = any($1) or e.dst = any($1)) and n.status = 'active'
@@ -567,7 +594,7 @@ def latest_only(hits: list[Hit]) -> list[Hit]:
 
 # $1 user, $2 employer, $3 normalized titles, $4 a regex of ticket ids (or null)
 THREAD_SQL = """
-select id, kind, title, summary, body, valid_from, 0.0 as rank
+select id, kind, title, summary, body, source, valid_from, 0.0 as rank
 from app.memory_nodes
 where user_id = $1 and employer_id = $2 and status = 'active' and kind = 'work_item'
   and (lower(title) = any($3::text[])

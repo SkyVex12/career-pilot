@@ -7,10 +7,10 @@
 
 The fictional company (evals/company/company.toml) is the benchmark candidate's current
 employer: two weeks of work logs and three documents. `prepare` runs the real extraction
-(the worker's worklog and company_doc prompts and model routes, `.env`) on them in a throwaway
-database and saves the company's memory to memory.json, with document facts approved as a user
-would. `run` answers the questions of evals/company/questions.toml with the gateway's own prompt
-builders and model routes:
+(the worker's worklog and knowledge prompts and model routes, `.env`) on them in a throwaway
+database and saves the company's memory to memory.json; document facts are kept at once, as
+the worker keeps them. `run` answers the questions of evals/company/questions.toml with the
+gateway's own prompt builders and model routes:
 
 - `after`: what a standup or meeting at the company gets now. The pack is rendered from the
   company's memory (`copilot_core.workplace`, as the worker and the gateway do), the meeting's
@@ -209,14 +209,14 @@ async def seed_company(conn: Any, company: dict[str, Any], user_name: str) -> No
 
 async def cmd_prepare(args: argparse.Namespace) -> int:
     """The real extraction over the fixture, saved as memory.json."""
+    from copilot_core import knowledge
     from copilot_core.dotenv import load_dotenv
     from copilot_core.providers import make_providers
+    from copilot_worker import knowledge as kjobs
     from copilot_worker import prompts as wprompts
     from copilot_worker.config import WorkerSettings
-    from copilot_worker.documents import document_block
     from copilot_worker.llm import build_router, complete_json
     from copilot_worker.workplace import (
-        document_proposals,
         known_titles,
         log_context,
         render_known,
@@ -248,28 +248,19 @@ async def cmd_prepare(args: argparse.Namespace) -> int:
                 )
                 print(f"log {day}: {n} nodes", flush=True)
             for doc in company["document"]:
-                known_rows = await known_titles(conn, EVAL_USER, EVAL_EMPLOYER)
-                block = document_block(str(doc["text"]).encode(), "text/markdown", doc["name"])
-                req = wprompts.company_doc_request(user, name, block, render_known(known_rows))
-                data = await complete_json(router, "company_doc", req)
-                proposals = document_proposals(data, known_rows)
-                doc_ref = str(uuid.uuid5(EVAL_EMPLOYER, f"doc:{doc['name']}"))
-                for p in proposals:  # approved as the user would
-                    await conn.execute(
-                        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain,"
-                        " title, summary, body, source, valid_from)"
-                        " values ($1, $2, $3, $4, 'workplace', $5, $6, $7, $8, $9)",
-                        uuid.uuid4(),
-                        EVAL_USER,
-                        EVAL_EMPLOYER,
-                        p["kind"],
-                        p["title"],
-                        p["summary"],
-                        {**p["body"], "evidence": p["evidence"]},
-                        {"type": "company_document", "ref": doc_ref},
-                        date.fromisoformat(p["valid_from"]) if p.get("valid_from") else None,
-                    )
-                print(f"document {doc['name']}: {len(proposals)} facts", flush=True)
+                sections = knowledge.split(str(doc["text"]))
+                merged: dict[str, list[Any]] = {f: [] for f in kjobs.FIELDS}
+                for part in kjobs.parts(sections):
+                    known = render_known(await known_titles(conn, EVAL_USER, EVAL_EMPLOYER))
+                    req = wprompts.knowledge_request(user, name, kjobs.render_sections(part), known)
+                    data = await complete_json(router, "knowledge", req)
+                    for f in kjobs.FIELDS:
+                        merged[f] += list(data.get(f) or [])
+                doc_ref = uuid.uuid5(EVAL_EMPLOYER, f"doc:{doc['name']}")
+                n = await kjobs.write_facts(
+                    conn, EVAL_USER, EVAL_EMPLOYER, doc_ref, merged, sections
+                )
+                print(f"document {doc['name']}: {n} facts", flush=True)
             nodes = await conn.fetch(
                 "select id, kind, title, summary, body, source, valid_from from app.memory_nodes"
                 " where employer_id = $1 and status = 'active' order by kind, title",

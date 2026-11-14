@@ -227,7 +227,7 @@ POSTCALL_MEETING_SCHEMA: dict[str, Any] = obj(
     {"summary": STR, "decisions": STRS, "action_items": STRS}
 )
 
-# --- worklog.extract and company_doc.extract (company workspaces) ---------------------
+# --- worklog.extract and knowledge.index (company workspaces) -------------------------
 
 WORKPLACE_RULES = f"""Rules:
 - Use only what the source says. Never invent tickets, people, systems, dates or numbers.
@@ -300,44 +300,88 @@ WORKLOG_SCHEMA: dict[str, Any] = obj(
     }
 )
 
-COMPANY_DOC_SYSTEM = f"""You extract workplace facts from a company document for a meeting copilot.
-The document belongs to the company the user works at: architecture notes, a wiki page,
-meeting notes or a spec. The user reviews every fact before it is kept.
+# knowledge.index: a company document, read for what an engineer is asked about it. Until
+# November 2026 a document gave only five one-line kinds of fact, and 6% of its words
+# survived (docs/analysis/2026-11-14-standup-technical.md): there was nowhere to put how a
+# part works, what a decision rejected, or a limit.
+KNOWLEDGE_SYSTEM = f"""You build a company's engineering knowledge base from one document.
+The document belongs to the company the user works at: an architecture or design document, a
+decision record, a README, an investigation write-up, a diagram written as text, or notes. It
+is given as numbered sections, each with its heading path. A meeting copilot uses what you
+return to answer a colleague's questions in the user's standups: how a part works, why
+something was chosen, what was rejected, what a thing is called, what could break.
 
-Return the projects, systems (what each does and its stack), people (name and role), decisions
-(what, by whom if said, why, and the date if given as YYYY-MM-DD) and terms (the company's own
-words and acronyms with their meaning) that a teammate would need to talk about this work. Each
-item carries evidence: a quote of at most 25 words from the document that supports it.
+Return:
+- components: each service, library, job, store, index, queue or screen the document
+  describes. `does` is one plain line: what it does and what it owns. `talks_to` names the
+  other components it calls, reads or writes, by their names in this document or <known>.
+  `stack` is what it runs on or is built with.
+- decisions: each choice the document records. `what` is the choice in one line. `why` is
+  the reason given. `alternatives` are the options rejected, each with why not when the
+  document says ("activity stream: values not indexed"). `tradeoff` is the cost accepted.
+  `date` is YYYY-MM-DD when given. A rule the team follows ("code goes in the shared folder
+  only when a second project needs it") is a decision too.
+- flows: how something works end to end: a request, a write path, a calculation, an export,
+  a rollout. `steps` are 3 to 5 short steps in order, each "<part> does <what>", with the
+  document's own names and numbers. A calculation's rule ("expense is the sum of the months
+  in range") is a step, word for word.
+- constraints: limits the design must keep: caps, retention, ordering, what a field or index
+  cannot do, what must run before what. `detail` gives the number or the condition.
+- risks: what is known to be open, fragile or unverified, and what would trigger it.
+- terms: the company's own words, acronyms, field, flag and index names, with their meaning.
+- projects and people (name and role) the document names and <known> does not have.
+- Each item's `section` is the number of the section it came from.
+
+Be complete over the whole document: a section that explains a mechanism or lists likely
+questions with their answers holds exactly what will be asked. Prefer the document's exact
+names, numbers and conditions to a paraphrase; a summary that drops the number is useless.
 
 {WORKPLACE_RULES}"""
 
-_EVIDENCE = {"evidence": STR}
-COMPANY_DOC_SCHEMA: dict[str, Any] = obj(
+_SECTION = {"section": {"type": "integer"}}
+KNOWLEDGE_SCHEMA: dict[str, Any] = obj(
     {
-        "projects": {
+        "components": {
             "type": "array",
-            "items": obj({"name": STR, "summary": STR, "stack": STRS, **_EVIDENCE}),
-        },
-        "systems": {
-            "type": "array",
-            "items": obj({"name": STR, "summary": STR, "stack": STRS, **_EVIDENCE}),
-        },
-        "people": {
-            "type": "array",
-            "items": obj({"name": STR, "role": STR, "summary": STR, **_EVIDENCE}),
+            "items": obj({"name": STR, "does": STR, "talks_to": STRS, "stack": STRS, **_SECTION}),
         },
         "decisions": {
             "type": "array",
-            "items": obj({"title": STR, "summary": STR, "date": STR, **_EVIDENCE}),
+            "items": obj(
+                {
+                    "title": STR,
+                    "what": STR,
+                    "why": STR,
+                    "alternatives": STRS,
+                    "tradeoff": STR,
+                    "date": STR,
+                    **_SECTION,
+                }
+            ),
         },
-        "terms": {"type": "array", "items": obj({"term": STR, "meaning": STR, **_EVIDENCE})},
+        "flows": {
+            "type": "array",
+            "items": obj({"name": STR, "summary": STR, "steps": STRS, **_SECTION}),
+        },
+        "constraints": {
+            "type": "array",
+            "items": obj({"title": STR, "detail": STR, **_SECTION}),
+        },
+        "risks": {"type": "array", "items": obj({"title": STR, "detail": STR, **_SECTION})},
+        "terms": {"type": "array", "items": obj({"term": STR, "meaning": STR, **_SECTION})},
+        "projects": {"type": "array", "items": obj({"name": STR, "summary": STR, "stack": STRS})},
+        "people": {"type": "array", "items": obj({"name": STR, "role": STR, "summary": STR})},
     }
 )
 
 # First line of each system prompt, by fixture job name (see copilot_worker.fixtures).
 JOB_PROMPTS: dict[str, str] = {
     "worklog": WORKLOG_SYSTEM.split("\n", 1)[0],
-    "company_doc": COMPANY_DOC_SYSTEM.split("\n", 1)[0],
+    "knowledge": KNOWLEDGE_SYSTEM.split("\n", 1)[0],
+    # knowledge.ask runs the live prompts (copilot_core.prompts): the detector's for the
+    # question's type, the detailed answer's for the answer.
+    "ask_type": "Decide whether the latest utterance in",
+    "ask_answer": "You help ",
     "extract": EXTRACT_SYSTEM.split("\n", 1)[0],
     "job": JOB_SYSTEM.split("\n", 1)[0],
     "pack": PACK_SYSTEM.split("\n", 1)[0],
@@ -452,19 +496,19 @@ def worklog_request(
     )
 
 
-def company_doc_request(
-    user_name: str, company: str, document: Mapping[str, Any], known: str
-) -> LLMRequest:
+def knowledge_request(user_name: str, company: str, sections: str, known: str) -> LLMRequest:
+    """One part of a company document, as numbered sections with their heading paths."""
     text = "\n\n".join(
         [
             f"User: {user_name}\nCompany: {company}",
             data_block("known", known or "(nothing yet)"),
-            "Extract the workplace facts from this company document as JSON.",
+            data_block("document", sections),
+            "Build the knowledge base entries for this document as JSON.",
         ]
     )
     return LLMRequest(
-        system=[SystemBlock(COMPANY_DOC_SYSTEM)],
-        content=[document, {"type": "text", "text": text}],
+        system=[SystemBlock(KNOWLEDGE_SYSTEM)],
+        content=text,
         max_tokens=32000,
-        json_schema=COMPANY_DOC_SCHEMA,
+        json_schema=KNOWLEDGE_SCHEMA,
     )

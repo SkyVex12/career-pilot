@@ -24,15 +24,16 @@ JOBS: dict[str, Family] = {
     "pack": "sonnet",  # session pack: ranked stories and prepared answers
     "postcall": "sonnet",  # summary, feedback, follow-up email, standup report
     # Company workspaces. A work log is the user's own short note: Sonnet reads it well enough
-    # at half the price. A company document's facts go to approval, but wrong ones still cost
-    # the user's time: Opus, like a resume.
+    # at half the price.
     "worklog": "sonnet",
-    "company_doc": "opus",
+    # Engineering context: a document's components, decisions and flows. They are kept at
+    # once and loaded into every standup prompt, so a wrong one is repeated live: Opus.
+    "knowledge": "opus",
 }
 
 # OpenAI routes of the company workspace jobs use the settings of the job of the same kind,
 # so a deployment needs no new model settings for them.
-OPENAI_SETTINGS_JOB = {"worklog": "pack", "company_doc": "extract"}
+OPENAI_SETTINGS_JOB = {"worklog": "pack", "knowledge": "extract"}
 
 
 def _model(settings: WorkerSettings, provider: str, family: Family) -> str:
@@ -47,7 +48,7 @@ def build_routes(
     routes: dict[str, list[Route]] = {}
     for job, family in JOBS.items():
         effort = (
-            settings.extract_effort if job in ("extract", "company_doc")
+            settings.extract_effort if job in ("extract", "knowledge")
             else settings.background_effort
         )  # fmt: skip
         params: dict[str, Any] = {

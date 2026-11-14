@@ -1,0 +1,53 @@
+{
+ "questions": 37,
+ "detected": [
+  35,
+  37
+ ],
+ "type_right": [
+  33,
+  37
+ ],
+ "fact_in_short_prompt": [
+  31,
+  31
+ ],
+ "fact_in_detailed_prompt": [
+  31,
+  31
+ ],
+ "fact_preloaded": [
+  28,
+  31
+ ],
+ "short_answer_correct": [
+  29,
+  33
+ ],
+ "detailed_answer_correct": [
+  30,
+  33
+ ],
+ "detailed_correct_when_shown": [
+  30,
+  31
+ ],
+ "safe_answer_when_not_covered": [
+  2,
+  2
+ ],
+ "detector_ms_p50": 1047,
+ "short_first_token_ms_p50": 875,
+ "detailed_first_token_ms_p50": 1281,
+ "short_prompt_tokens_p50": 5911,
+ "cost_usd": 0.0991,
+ "prepare_cost_usd": 0.0,
+ "prepare_tokens": {
+  "model": "",
+  "input": 0,
+  "output": 0
+ },
+ "engineering_context": true,
+ "digest_chars": 10022,
+ "sections": 30
+}

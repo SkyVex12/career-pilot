@@ -26,6 +26,7 @@ from valkey.exceptions import ConnectionError as ValkeyConnectionError
 from valkey.exceptions import TimeoutError as ValkeyTimeoutError
 
 from copilot_core import keys
+from copilot_core.knowledge import LiveIndex
 from copilot_core.packs import Digest, SessionPack
 from copilot_gateway.config import Settings
 
@@ -268,6 +269,11 @@ class GatewayStore:
         field = keys.employer_pack_field(employer_id, mode)
         pack_id = await self.client.hget(keys.pack_index(uid), field)  # pyright: ignore[reportUnknownMemberType]
         return None if pack_id is None else await self.get_pack_by_id(uid, _s(pack_id))
+
+    async def get_knowledge(self, uid: UUID, employer_id: UUID) -> LiveIndex | None:
+        """A company's document sections, as a worker opened them for live calls."""
+        raw = await self.client.get(keys.knowledge(uid, employer_id))
+        return None if raw is None else LiveIndex.model_validate_json(raw)
 
     async def put_session_pack(self, uid: UUID, pack: SessionPack, ttl_s: int) -> None:
         """A pack the gateway made for one session (rendered at start, or with the meeting's

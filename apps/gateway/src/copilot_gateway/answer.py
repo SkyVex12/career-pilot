@@ -754,8 +754,8 @@ class AnswerEngine:
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit. A reply to a
         remark (respond) is never a prepared standup answer."""
-        if q.qtype in ("respond", "follow"):
-            return None
+        if q.qtype in ("respond", "follow", *prompts.WORK_TYPES):
+            return None  # nor is a question about a decision, a mechanism or an estimate
         result = self._match_result(q)
         return result.answer if result is not None else None
 

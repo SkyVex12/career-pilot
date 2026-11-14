@@ -1,0 +1,438 @@
+# Technical questions for the engineering-context eval (copilot-knowledge-eval, evals/README.md).
+#
+# The 35 technical turns of docs/analysis/2026-11-14-standup-technical.md, one question each
+# and in the same order, moved to a fictional company: Alex Rivera (bench/profile.toml) builds
+# reports at Fernhill Logistics; the documents in docs/ are invented for this eval. Every line
+# is invented wording: nothing here is a real person's words or a real company's design. Two
+# more questions at the end ask for what no document holds.
+#
+# Per question:
+#   turn      the analysis's turn number it stands for
+#   context   the call's lines before it, oldest first: ["them" | "me", text]
+#   text      what the other side says: the turn the user must answer
+#   types     the detector types that give the right answer shape (any of them counts)
+#   source    where the fact is: a file in docs/, "work log" ([[item]] below), "general"
+#             (the model's own knowledge), "opinion" (nothing to ground it) or "none"
+#   fact      a pattern the prompt must contain for the fact to count as retrieved
+#   must      patterns a correct answer contains (all of them); must_not: none of them
+# For source = "none" a correct answer says the user will confirm and follows up, and gives
+# no made-up specific (must_not).
+
+[company]
+name = "Fernhill Logistics"
+title = "Backend engineer"
+team = "Reports"
+
+# The user's recent work, as work-log facts (day: days before the standup).
+[[item]]
+kind = "work_item"
+title = "Carrier cost report"
+summary = "Cost report merged to the test environment after review; the production release PR is open."
+state = "done"
+day = 1
+external_id = "FH-512"
+
+[[item]]
+kind = "work_item"
+title = "Delivery log report"
+summary = "Field list and the main table work on the preview; the export is still to do."
+state = "in_progress"
+day = 1
+external_id = "FH-520"
+
+[[item]]
+kind = "work_item"
+title = "Migrate old cost reports"
+summary = "Convert the old cost reports to the builder; planned after the cost report release, not started."
+state = "planned"
+day = 1
+external_id = "FH-540"
+
+[[item]]
+kind = "work_item"
+title = "Cost type on the reports list"
+summary = "Show Cost as the type on the reports list when Include costs is on, with a filter option; the icon needs design."
+state = "planned"
+day = 1
+external_id = "FH-527"
+
+[[item]]
+kind = "decision"
+title = "Images in exports are a separate feature"
+summary = "Removed the image-export commits from the cost report branch: pictures in PDF and spreadsheet exports were not approved and are a separate feature."
+day = 3
+
+[[item]]
+kind = "work_item"
+title = "Package size check"
+summary = "No function gains a package from the report work; pdfsmith stays in report-delivery and report-export-worker only."
+state = "done"
+day = 2
+
+[[question]]
+id = "libs_rule_recall"
+turn = 1
+context = [["them", "Sorry, I dropped for a second. Can you hear me now?"], ["me", "Yes, I can hear you."]]
+text = "So Alex, you remember what I said about where report-specific code should go, the shared folder thing?"
+types = ["decision"]
+source = "report-libraries.md"
+fact = "second deployable"
+must = ["second (deployable|project|function)|only when (another|a second|more than one)"]
+
+[[question]]
+id = "cost_rule_clear"
+turn = 2
+context = [["them", "So for January to March the report should work on those three months."], ["me", "Okay."]]
+text = "That calculation over the date range is clear, right, Alex?"
+types = ["how_it_works", "respond"]
+source = "cost-report-writeup.md"
+fact = "sum of the da(il)?y"
+must = ["sum"]
+
+[[question]]
+id = "cost_sum_or_average"
+turn = 3
+context = [["them", "Running cost I understand. Period cost I could not find in the old tickets."], ["me", "Let me double check that."]]
+text = "Do you already know whether the period cost is an average of those days or a total?"
+types = ["how_it_works"]
+source = "cost-report-writeup.md"
+fact = "sum of the da(il)?y"
+must = ["\\b(sum|total)\\b"]
+must_not = ["(it is|it's|is) (an|the) average"]
+
+[[question]]
+id = "plan_dates_move"
+turn = 4
+context = [["them", "Did you get to the code review with Sam yet?"], ["me", "Not yet, he was busy yesterday."]]
+text = "Does that change the plan for the delivery log report, should I move the dates on the roadmap?"
+types = ["estimate_risk"]
+source = "work log"
+fact = "Delivery log report"
+must = ["delivery log"]
+
+[[question]]
+id = "migration_still_open"
+turn = 5
+context = [["me", "After this fix I can start on the delivery log report."], ["them", "Okay, I'll leave the dates then."]]
+text = "And you still have the migration of the old cost reports to do, right?"
+types = ["status_follow_up", "standup_status"]
+source = "work log"
+fact = "Migrate old cost reports"
+must = ["not started|planned|after the (cost report )?release|still (to do|open)|FH-540"]
+
+[[question]]
+id = "filter_on_cost_columns"
+turn = 6
+context = [["them", "I tested most of the cost report, the numbers look right."], ["me", "Good."]]
+text = "Those calculated cost columns, can we offer them in the filter fields too, or is that too much to add now?"
+types = ["estimate_risk", "how_it_works"]
+source = "cost-report-writeup.md"
+fact = "locked and skipped|Filters: locked"
+must = ["lock|skip|stored values|second query|before filtering|out of scope"]
+
+[[question]]
+id = "cold_start_general"
+turn = 7
+context = [["them", "The functions are all around forty megabytes now, there is no reason for that."], ["me", "Okay, that is a lot."]]
+text = "You do know why a bigger package makes the cold start slower, right?"
+types = ["how_it_works", "technical", "respond"]
+source = "general"
+must = ["load|initiali[sz]|download|unpack|start"]
+
+[[question]]
+id = "framework_familiar"
+turn = 8
+context = [["me", "Yes, I know the cold start problem."], ["them", "I'll tell you how we fixed this two years ago. We were using Nest."]]
+text = "Are you familiar with NestJS?"
+types = ["technical", "how_it_works", "other", "respond"]
+source = "general"
+must = ["Nest"]
+
+[[question]]
+id = "recent_function"
+turn = 9
+context = [["them", "Maybe the report work pulled something big into the shared folder."], ["me", "I understand the concern."]]
+text = "Let's look at one of the functions. Is there any new function that you introduced recently?"
+types = ["how_it_works"]
+source = "report-libraries.md"
+fact = "report-export-worker"
+must = ["report-export-worker"]
+
+[[question]]
+id = "which_function"
+turn = 10
+context = [["them", "Is there any new function that you introduced recently?"], ["me", "Yes, for the large exports, the part rendering runs in its own function."]]
+text = "Which one is that? Which function are we talking about?"
+types = ["how_it_works", "respond"]
+source = "report-libraries.md"
+fact = "report-export-worker"
+must = ["report-export-worker"]
+must_not = ["not a function"]
+
+[[question]]
+id = "pdf_function"
+turn = 11
+context = [["me", "Sure, we can go through them."], ["them", "Let's pick one and look inside it."]]
+text = "Is there any function that uses the PDF code?"
+types = ["how_it_works"]
+source = "report-libraries.md"
+fact = "report-render"
+must = ["report-(delivery|export-worker)", "report-render|pdfsmith"]
+
+[[question]]
+id = "pdf_library_import"
+turn = 12
+context = [["me", "The report export worker, that one."], ["them", "Okay, this one is thirty megabytes."]]
+text = "Is this importing any PDF related library? That library is one of the biggest we have."
+types = ["how_it_works"]
+source = "report-libraries.md"
+fact = "pdfsmith"
+must = ["pdfsmith"]
+
+[[question]]
+id = "library_name"
+turn = 13
+context = [["them", "Is this importing any PDF related library?"], ["me", "Yes, this is for exporting PDFs, so it includes the PDF library through report-render."]]
+text = "What's the name of that?"
+types = ["how_it_works", "respond"]
+source = "report-libraries.md"
+fact = "pdfsmith"
+must = ["pdfsmith"]
+
+[[question]]
+id = "remove_export_libs"
+turn = 14
+context = [["me", "Let me check the generated packages and come back to you."], ["them", "Okay. Two things."]]
+text = "If you added the PDF export library or any export library into the shared folder, that must come out immediately."
+types = ["estimate_risk", "how_it_works", "respond"]
+source = "report-libraries.md"
+fact = "Only report-delivery and report-export-worker|report-render"
+must = ["report-render|report-delivery|report-export-worker"]
+
+[[question]]
+id = "duplicate_code"
+turn = 15
+context = [["them", "You have half a dozen functions that need to share code."], ["me", "Yes."]]
+text = "So if I ask you to take the code out of the shared folder you would have to duplicate it between those functions, right?"
+types = ["decision", "how_it_works"]
+source = "report-libraries.md"
+fact = "cannot import each other|second deployable"
+must = ["cannot import each other|second (deployable|project|function)|import(s)? (it|the library)"]
+
+[[question]]
+id = "module_library"
+turn = 16
+context = [["me", "Yes, otherwise the code is duplicated."], ["them", "I don't know how to fix that, but here is a thought."]]
+text = "Could we have a library just for one module, only for reporting, so the others never get it? Does that make sense?"
+types = ["decision", "how_it_works", "respond"]
+source = "report-libraries.md"
+fact = "report-store"
+must = ["three|report-store|already"]
+
+[[question]]
+id = "why_no_images"
+turn = 17
+context = [["them", "He already said don't do the images at all, so we bring it up again."], ["me", "Right."]]
+text = "There was no technical problem in what you built, right? Was there a technical reason you said we should not do it?"
+types = ["decision"]
+source = "work log"
+fact = "Images in exports are a separate feature"
+must = ["not approved|separate feature|unapproved|wasn't approved|was not approved"]
+
+[[question]]
+id = "image_setting_place"
+turn = 18
+context = [["them", "Having the image size in the preview and again in the schedule feels repetitive."], ["me", "I think the same options could be on both."]]
+text = "If someone picks small here and gets large in the scheduled file, support has to untangle that. One place for it, right?"
+types = ["respond", "decision", "estimate_risk", "other"]
+source = "opinion"
+
+[[question]]
+id = "builder_or_preview"
+turn = 19
+context = [["them", "Once an attachment field is selected we could ask right there whether to embed the image."], ["me", "Mm-hm."]]
+text = "Does that make more sense to you on the builder page, or on the preview?"
+types = ["respond", "decision", "other", "estimate_risk"]
+source = "opinion"
+
+[[question]]
+id = "list_shows_type"
+turn = 20
+context = [["me", "I will share the delivery log preview today."], ["them", "I also logged one more ticket for the reports list."]]
+text = "If the cost toggle is turned on in a report, can we show its type as Cost on the list page?"
+types = ["estimate_risk", "status_follow_up", "how_it_works", "standup_status"]
+source = "work log"
+fact = "FH-527"
+must = ["FH-527|planned|filter option|icon"]
+
+[[question]]
+id = "filter_effort_statement"
+turn = 21
+context = [["them", "One more thing on the filter options, we do not see the cost columns there."], ["me", "Okay."]]
+text = "If enabling those takes real effort or puts a toll on how fast reports run, I would clarify it with Sam before putting work into it."
+types = ["estimate_risk", "how_it_works"]
+source = "cost-report-writeup.md"
+fact = "locked and skipped|Filters: locked"
+must = ["lock|skip|stored values|second query|before filtering|out of scope"]
+
+[[question]]
+id = "when_doable"
+turn = 22
+context = [["me", "What is the planned release date for the delivery log report?"], ["them", "The ticket says the second. That's okay, I can update it."]]
+text = "When does this seem doable?"
+types = ["estimate_risk"]
+source = "work log"
+fact = "Delivery log report"
+must = ["export|preview"]
+
+[[question]]
+id = "cannot_group_current"
+turn = 23
+context = [["them", "I have some feedback on the delivery log preview, let me share it."], ["me", "Okay."]]
+text = "I can add the depot and status columns, but I cannot group or sum by them. It only lets me do that for the scanned fields."
+types = ["how_it_works"]
+source = "delivery-log-design.md"
+fact = "display-only"
+must = ["display-only|another index|live values|current (values|fields)|per page"]
+
+[[question]]
+id = "scan_id_on_purpose"
+turn = 24
+context = [["me", "Okay, let me check that one."], ["them", "Then I had a few more points on the list."]]
+text = "Did we add the Scan id column intentionally, or did it come in automatically when you built this?"
+types = ["decision"]
+source = "delivery-log-design.md"
+fact = "scanEventId_text"
+must = ["on purpose|intention|deliberate", "filter|sort|group|backfill|migration"]
+
+[[question]]
+id = "take_scan_id_out"
+turn = 25
+context = [["me", "Yes, I added that one on purpose, it supports filtering and grouping."], ["them", "To me it is just a lot of very big numbers."]]
+text = "We could just take it out, I don't think it's needed, if that doesn't hamper anything else."
+types = ["estimate_risk", "decision", "respond"]
+source = "delivery-log-design.md"
+fact = "Scan id"
+must = ["filter|sort|group"]
+
+[[question]]
+id = "proof_link_column"
+turn = 26
+context = [["them", "For some reports I get a proof link column."], ["me", "Okay."]]
+text = "I did not turn proof of delivery on for this depot and I still get the column, with empty cells. It is not a field of the form."
+types = ["how_it_works"]
+source = "delivery-log-design.md"
+fact = "hasEverHadPod|ever had"
+must = ["ever (had|been)|hasEverHadPod|at some point|was (once|ever)"]
+
+[[question]]
+id = "pallet_columns_missing"
+turn = 27
+context = [["them", "When I scan a pallet, the pallet table columns are not captured in the report."], ["me", "Mm-hm, okay."]]
+text = "I checked the scan history page too and it is not there either, so that is where you fetch the data from and that is the discrepancy, right?"
+types = ["how_it_works", "respond"]
+source = "delivery-log-design.md"
+fact = "pallet"
+must = ["top-level|pallet('s)? own field ids|field list"]
+
+[[question]]
+id = "first_scan_per_parcel"
+turn = 28
+context = [["them", "Say a parcel was scanned ten times."], ["me", "Mm-hm."]]
+text = "I want a report over only the first scan of each parcel. Is that achievable from the data architecture we have today?"
+types = ["estimate_risk", "how_it_works"]
+source = "delivery-log-design.md"
+fact = "earliest scan time"
+must = ["earliest|first scan|group by parcel", "new query|not built|processing time|edit scans"]
+
+[[question]]
+id = "libs_code_removed"
+turn = 29
+context = [["them", "I need to talk to you about the implementation and review how everything looks."]]
+text = "Are you comfortable with where we are right now? In particular, did you remove your code from the shared folder?"
+types = ["decision", "status_follow_up", "respond"]
+source = "report-libraries.md"
+fact = "second deployable"
+must = ["second (deployable|project|function)|shared (code|library|libraries)|only (what|code)"]
+
+[[question]]
+id = "tell_me_audit_trail"
+turn = 30
+context = [["me", "For my update, the audit trail report is on the test environment."], ["them", "Okay, good."]]
+text = "Tell me about the audit trail report."
+types = ["how_it_works"]
+source = "report-sources-overview.md"
+fact = "event-stream"
+must = ["event-stream|old value|changed field|one row per"]
+must_not = ["pull request|PR #|merged"]
+
+[[question]]
+id = "how_audit_trail_built"
+turn = 31
+context = [["them", "Tell me about the audit trail report."], ["me", "It lists every change to a parcel."]]
+text = "How is it built?"
+types = ["how_it_works"]
+source = "report-sources-overview.md"
+fact = "event-stream"
+must = ["event-stream", "resolver|row per|parse|entr(y|ies)"]
+
+[[question]]
+id = "audit_trail_logic"
+turn = 32
+context = [["them", "How is the audit trail report built?"], ["me", "A resolver in the engine reads the entries."]]
+text = "More detail about its logic, please."
+types = ["how_it_works"]
+source = "report-sources-overview.md"
+fact = "event-stream"
+must = ["event-stream|pars|summary text|counts entries|nextOffset|50,000"]
+
+[[question]]
+id = "audit_trail_search_index"
+turn = 33
+context = [["them", "More detail about the audit trail report's logic."], ["me", "Sure."]]
+text = "How does it use the search index?"
+types = ["how_it_works"]
+source = "report-sources-overview.md"
+fact = "event-stream"
+must = ["event-stream"]
+
+[[question]]
+id = "index_name"
+turn = 34
+context = [["them", "How does the audit trail report use the search index?"], ["me", "It reads the change entries from one index."]]
+text = "What's the name of the index?"
+types = ["how_it_works"]
+source = "report-sources-overview.md"
+fact = "event-stream"
+must = ["event-stream"]
+must_not = ["delivery_record is|named `?fh-"]
+
+[[question]]
+id = "package_size_followup"
+turn = 35
+context = [["me", "That is how the audit trail reads its entries."], ["them", "Okay, that covers the audit trail."]]
+text = "How about the package size of the functions?"
+types = ["status_follow_up", "how_it_works", "estimate_risk", "standup_status"]
+source = "work log"
+fact = "Package size check"
+must = ["pdfsmith|no function|report-(delivery|export-worker)"]
+
+[[question]]
+id = "retry_count_unknown"
+turn = 0
+context = [["me", "The large exports are rendered in parts by the export worker."], ["them", "For the large exports."]]
+text = "How many times does the export worker retry a part that fails before it gives up?"
+types = ["how_it_works"]
+source = "none"
+must = ["confirm|follow up|check|get back|look (it|that) up"]
+must_not = ["\\b(retries|retry) (up to )?(\\d+|three|five|two) times", "\\b(\\d+|three|five|two) (times|retries|attempts)\\b"]
+
+[[question]]
+id = "sftp_design_unknown"
+turn = 0
+context = [["me", "The audit trail goes out after the delivery log."], ["them", "Next after the audit trail is file delivery."]]
+text = "How does our report delivery to a customer's SFTP folder work today, which service pushes the file?"
+types = ["how_it_works"]
+source = "none"
+must = ["confirm|follow up|check|get back|look (it|that) up"]
+must_not = ["port 22", "the \\S+ (service|function|lambda) pushes"]

@@ -28,8 +28,9 @@ from uuid import UUID
 
 import asyncpg
 
+from copilot_core import knowledge
 from copilot_core.db import user_tx
-from copilot_core.workplace import Hit, search
+from copilot_core.workplace import Hit, search, vector_literal
 
 log = logging.getLogger(__name__)
 
@@ -146,3 +147,30 @@ class CompanyMemory:
         for item in self.lookups.values():
             item.cancel()
         self.lookups.clear()
+
+    async def section_ids(
+        self, vector: VectorSource | None, limit: int, wait_ms: int
+    ) -> list[UUID]:
+        """The ids of the document sections nearest the question's vector, within `wait_ms`
+        (the embedding included); none past it, on any error, or without an embedder. The
+        gateway reads ids only: the sections' text is sealed, and it searches its own live
+        copy by keyword."""
+        if vector is None or not self.embedding_model:
+            return []
+        try:
+            async with asyncio.timeout(wait_ms / 1000):
+                vec = await vector()
+                if vec is None:
+                    return []
+                async with user_tx(self.pool, self.user_id) as conn:
+                    rows = await conn.fetch(
+                        knowledge.VECTOR_SQL, self.user_id, self.employer_id,
+                        vector_literal(vec), self.embedding_model, limit,
+                    )  # fmt: skip
+        except TimeoutError:
+            return []
+        except (OSError, asyncpg.PostgresError) as e:
+            self.failures += 1
+            log.warning("section search failed: %s", e)
+            return []
+        return [r["id"] for r in rows]

@@ -9,6 +9,8 @@ Scheduler runs `copilot-scheduler --once` as a scheduled task every five minutes
 - sessions.sweep: every 5 minutes; key sessions.sweep:{slot}
 - usage.report: daily from 00:15 UTC, for the day before; key usage.report:{day}
 - digest.rebuild: weekly from Monday 03:00 UTC, per user; key digest.rebuild:{uid}:{memory}
+- knowledge.index: hourly, for company documents with no index of their content (those from
+  before engineering context, and failed ones for a week); key knowledge.index:...:{hour}
 - pack.build: 30 minutes before each user's weekday standup (settings standup_time and
   timezone); key pack.build:{uid}:standup:{date}:{digest}
 
@@ -112,6 +114,31 @@ class Scheduler:
             sent.append(key)
         return sent
 
+    async def index_documents(self, now: datetime) -> list[str]:
+        """Company documents with no index of their content are indexed: those uploaded
+        before engineering context (this is their migration: the documents and their facts
+        stay, and gain sections and richer facts), and those whose indexing failed or has
+        been running for over an hour. Once an hour; a failed one for a week."""
+        async with system_tx(self.pool) as conn:
+            rows = await conn.fetch(
+                "select id, user_id, sha256 from app.company_documents"
+                " where work_log_id is null and content_type in ('text/plain', 'text/markdown')"
+                " and indexed_sha256 is distinct from sha256"
+                " and (status = 'ingested'"
+                "      or (status = 'failed' and created_at > $2)"
+                "      or (status = 'ingesting' and created_at < $1 and created_at > $2))",
+                now - timedelta(hours=1),
+                now - timedelta(days=7),
+            )
+        sent: list[str] = []
+        for r in rows:
+            message = jobs.knowledge_index(r["user_id"], r["id"], r["sha256"])
+            # A new key each hour: the first try's key is taken once it has run.
+            message["idempotency_key"] += f":{now.strftime('%Y%m%dT%H')}"
+            await self.queue.send(message)
+            sent.append(str(message["idempotency_key"]))
+        return sent
+
     async def tick(self, now: datetime | None = None) -> list[str]:
         now = now or datetime.now(UTC)
         sent: list[str] = []
@@ -129,6 +156,8 @@ class Scheduler:
         hour = now.strftime("%Y%m%dT%H")
         if await self.once("worklog.retry", hour):
             sent += await self.retry_work_logs(now)
+        if await self.once("knowledge.index", hour):
+            sent += await self.index_documents(now)
         async with system_tx(self.pool) as conn:
             users = [UserRow(r["id"], r["settings"] or {}) for r in await conn.fetch(
                 "select id, settings from app.users"

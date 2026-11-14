@@ -6,8 +6,7 @@
   app shows what came out under the entry, to edit or remove. A changed entry is extracted
   again: the nodes from its earlier content are replaced (those the user edited are kept),
   and commitments it had closed are opened again before the new content closes its own.
-- `company_doc.extract`: a company document becomes memory proposals, which the user approves
-  per document. Other people wrote it, so its facts wait like any other proposal.
+- A company document is indexed by `knowledge.index` (copilot_worker.knowledge).
 - `workplace.refresh`: after the company's memory changed, embed the nodes that have no vector
   from the current model and rebuild the company's standup and meeting packs.
 - `employer.purge`: after "delete all data for this company" removed the rows, delete the
@@ -17,7 +16,6 @@ Idempotency: the extraction keys name the content's SHA-256, and each handler ch
 the row still has that content before writing, so a stale or repeated job changes nothing.
 """
 
-import hashlib
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -417,151 +415,6 @@ async def close_commitments(
             )
             closed += 1
     return closed
-
-
-# --- company_doc.extract ------------------------------------------------------------------
-
-
-@handler("company_doc.extract")
-async def company_doc_extract(job: Job, ctx: Ctx) -> None:
-    uid = job.uid
-    doc_id = UUID(job.payload["document_id"])
-    async with ctx.user(uid) as conn:
-        doc = await conn.fetchrow(
-            "select d.employer_id, d.s3_key, d.sha256, d.status, d.content_type, d.name_enc,"
-            " d.key_version, d.work_log_id, e.name, u.display_name from app.company_documents d"
-            " join app.employers e on e.id = d.employer_id"
-            " join app.users u on u.id = d.user_id where d.id = $1",
-            doc_id,
-        )
-        if doc is None or doc["status"] == "ingested" or doc["work_log_id"] is not None:
-            return
-        eid: UUID = doc["employer_id"]
-        name = await ctx.crypto.decrypt(
-            conn, uid, "company_documents", str(doc_id), doc["name_enc"], doc["key_version"]
-        )
-        sealed = await ctx.store.get(doc["s3_key"])
-        body = None
-        if sealed is not None:
-            body = await ctx.crypto.decrypt_bytes(
-                conn, uid, "company_documents", str(doc_id), sealed, doc["key_version"]
-            )
-        known = await known_titles(conn, uid, eid)
-    if body is None or hashlib.sha256(body).hexdigest() != doc["sha256"]:
-        log.warning("company document %s: missing or not the declared content", doc_id)
-        await _doc_status(ctx, uid, doc_id, "failed")
-        return
-    req = prompts.company_doc_request(
-        str(doc["display_name"]),
-        str(doc["name"]),
-        document_block(body, doc["content_type"], name),
-        render_known(known),
-    )
-    try:
-        data = await complete_json(ctx.router, "company_doc", req)
-    except ModelOutputError as e:
-        log.warning("company document %s: extraction failed (%s)", doc_id, e)
-        await _doc_status(ctx, uid, doc_id, "failed")
-        return
-    proposals = document_proposals(data, known)
-    async with ctx.user(uid) as conn:
-        status = await conn.fetchval(
-            "select status from app.company_documents where id = $1 for update", doc_id
-        )
-        if status is None or status == "ingested":
-            return
-        await conn.execute(
-            "delete from app.memory_proposals where company_document_id = $1"
-            " and status = 'pending'",
-            doc_id,
-        )
-        source = {"type": "company_document", "ref": str(doc_id)}
-        await conn.executemany(
-            "insert into app.memory_proposals (id, user_id, employer_id, company_document_id,"
-            " source, action, payload) values ($1, $2, $3, $4, $5, 'create', $6)",
-            [(uuid7(), uid, eid, doc_id, source, p) for p in proposals],
-        )
-        await conn.execute(
-            "update app.company_documents set status = 'ingested' where id = $1", doc_id
-        )
-    log.info("company document %s: %d proposals", doc_id, len(proposals))
-
-
-async def _doc_status(ctx: Ctx, uid: UUID, doc_id: UUID, status: str) -> None:
-    async with ctx.user(uid) as conn:
-        await conn.execute(
-            "update app.company_documents set status = $2 where id = $1", doc_id, status
-        )
-
-
-def document_proposals(
-    data: Mapping[str, Any], known: Mapping[str, Mapping[str, Any]]
-) -> list[dict[str, Any]]:
-    """Proposal payloads ({kind, title, summary, body, valid_from, evidence}) for the facts a
-    document gives that the company's memory does not have yet."""
-    out: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add(
-        kind: str,
-        title: str,
-        summary: str,
-        body: dict[str, Any],
-        evidence: str,
-        valid_from: str | None = None,
-    ) -> None:
-        key = (kind, normalize(title))
-        if not key[1] or key in seen or key[1] in known.get(kind, {}):
-            return
-        seen.add(key)
-        out.append(
-            {
-                "kind": kind,
-                "title": title,
-                "summary": summary or title,
-                "body": body,
-                "valid_from": valid_from,
-                "evidence": evidence,
-            }
-        )
-
-    for kind, field in (("project", "projects"), ("system", "systems")):
-        for item in map(as_dict, as_list(data.get(field))):
-            stack = [_str(s, 60) for s in as_list(item.get("stack")) if _str(s, 60)]
-            add(
-                kind,
-                _str(item.get("name"), 200),
-                _str(item.get("summary")),
-                {"stack": stack},
-                _str(item.get("evidence"), 300),
-            )
-    for item in map(as_dict, as_list(data.get("people"))):
-        add(
-            "person",
-            _str(item.get("name"), 200),
-            _str(item.get("summary")),
-            {"role": _str(item.get("role"), 200)},
-            _str(item.get("evidence"), 300),
-        )
-    for item in map(as_dict, as_list(data.get("decisions"))):
-        when = _str(item.get("date"), 10)
-        add(
-            "decision",
-            _str(item.get("title"), 200),
-            _str(item.get("summary")),
-            {},
-            _str(item.get("evidence"), 300),
-            when if len(when) == 10 else None,
-        )
-    for item in map(as_dict, as_list(data.get("terms"))):
-        add(
-            "term",
-            _str(item.get("term"), 200),
-            _str(item.get("meaning")),
-            {},
-            _str(item.get("evidence"), 300),
-        )
-    return out
 
 
 # --- workplace.refresh --------------------------------------------------------------------
