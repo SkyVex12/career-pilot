@@ -783,7 +783,7 @@ function useCompanies(ready: boolean): { employers: Employer[] | null; error: st
   return { employers, error };
 }
 
-/** A company's documents that have approved facts: the ones a call can focus on. */
+/** A company's documents that have given facts: the ones a call can focus on. */
 function useMaterials(employerId: string): { documents: CompanyDocument[] | null; error: string | null } {
   const [documents, setDocuments] = useState<CompanyDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -813,11 +813,11 @@ function MaterialPicker({ materials, selected, onChange }: { materials: { docume
       </legend>
       {error && <p className="ui-field-error">{error}</p>}
       {documents === null && !error && <Spinner size="sm" label="Loading the company's material" />}
-      {documents?.length === 0 && <EmptyState title="No material with approved facts yet">Upload or paste some under Work, Material.</EmptyState>}
+      {documents?.length === 0 && <EmptyState title="No documents read yet">Upload or paste some under Work, Engineering context.</EmptyState>}
       {documents?.map((d) => (
         <Checkbox key={d.id} checked={selected.includes(d.id)} onChange={(on) => toggle(d.id, on)} label={`${d.name} (${plural(d.approved_proposals ?? 0, "fact")})`} />
       ))}
-      <p className="ui-field-hint">Answers read the chosen material first; everything else the company has is still searched for each question.</p>
+      <p className="ui-field-hint">Answers read the chosen documents' facts first; everything else the company has is still loaded and searched for each question.</p>
     </fieldset>
   );
 }

@@ -55,3 +55,5 @@ export function useOnShow(active: boolean, f: () => unknown) {
 
 /** A text file read in the app; a PDF goes up as a file instead. */
 export const ACCEPT = ".pdf,.md,.markdown,.txt";
+/// Engineering context reads Markdown and text for now.
+export const TEXT_ACCEPT = ".md,.markdown,.txt";
