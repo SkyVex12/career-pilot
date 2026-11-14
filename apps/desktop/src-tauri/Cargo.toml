@@ -3,7 +3,6 @@ name = "copilot-desktop"
 version = "0.0.0"
 description = "Copilot desktop client"
 edition = "2024"
-license.workspace = true
 publish.workspace = true
 
 [lib]
