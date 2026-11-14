@@ -11,8 +11,9 @@ Wire-format responses that the worker tests (and a worker started with
 | `claude/pack.sse` | Anthropic SDK stream | `pack.build` for an interview |
 | `claude/postcall_{interview,standup,meeting}.sse` | Anthropic SDK stream | `session.postcall` per mode |
 | `openai/*.sse` (the same six jobs) | OpenAI SDK stream (Responses API) | The same jobs on OpenAI (`test_openai_jobs.py`), recorded from the real API in October 2026 with the models `.env.example` suggests |
-| `claude/worklog.sse`, `claude/company_doc.sse` | Anthropic SDK stream | `worklog.extract` and `company_doc.extract` (company workspaces), written by hand from `inputs/worklog.md` and `inputs/company_doc.md`; no OpenAI recordings yet |
-| `inputs/resume.md`, `inputs/job.md`, `inputs/worklog.md`, `inputs/company_doc.md` | | The sample documents the tests upload |
+| `claude/worklog.sse`, `claude/knowledge.sse` | Anthropic SDK stream | `worklog.extract` and `knowledge.index` (company workspaces), written by hand from `inputs/worklog.md` and `inputs/engineering_doc.md`; no OpenAI recordings yet |
+| `claude/ask_type.sse`, `claude/ask_answer.sse` | Anthropic SDK stream | `knowledge.ask` ("test a question"): the detector prompt's answer and the detailed answer, written by hand; the answer cites the first short id of the request's `<memory>` block |
+| `inputs/resume.md`, `inputs/job.md`, `inputs/worklog.md`, `inputs/engineering_doc.md` | | The sample documents the tests upload |
 
 The replay picks the file by the first line of the request's system prompt (Claude's
 `system`, OpenAI's developer message). Short ids

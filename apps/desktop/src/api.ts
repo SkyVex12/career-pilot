@@ -697,7 +697,7 @@ export interface Employer {
 
 export type EmployerFields = Partial<Pick<Employer, "name" | "title" | "team" | "started_on" | "ended_on" | "status">>;
 
-export type WorkplaceKind = "work_item" | "commitment" | "project" | "system" | "person" | "decision" | "term";
+export type WorkplaceKind = "work_item" | "commitment" | "project" | "system" | "person" | "decision" | "term" | "flow" | "constraint" | "risk";
 
 export interface MemoryItem {
   id: string;
@@ -737,6 +737,34 @@ export interface CompanyDocument {
   created_at?: string;
   pending_proposals?: number;
   approved_proposals?: number;
+  /// Engineering context: how many searchable sections and facts the file gave, why it
+  /// could not be read, and the earlier upload it replaces once it is read.
+  sections?: number;
+  facts?: number;
+  error?: string | null;
+  replaces?: string | null;
+}
+
+/// What one file gave: its sections' headings and the facts taken from it.
+export interface DocumentDetail {
+  id: string;
+  name: string;
+  status: CompanyDocument["status"];
+  error: string | null;
+  sections: number;
+  headings: string[];
+  facts: MemoryItem[];
+}
+
+/// "Test a question": pending until a worker has answered, then the type a standup would
+/// give the question, the answer and where each cited fact came from.
+export interface AskResult {
+  ask_id: string;
+  status: "pending" | "done" | "failed";
+  type?: string;
+  answer?: string;
+  sources?: { kind: "fact" | "section"; label: string }[];
+  error?: string;
 }
 
 export interface Proposal {
@@ -827,6 +855,9 @@ export const rest = {
   deleteLog: (employerId: string, day: string) => call<null>("DELETE", `/employers/${employerId}/logs/${day}`),
   companyDocuments: (employerId: string) => call<{ documents: CompanyDocument[] }>("GET", `/employers/${employerId}/documents`),
   deleteCompanyDocument: (employerId: string, id: string) => call<null>("DELETE", `/employers/${employerId}/documents/${id}`),
+  companyDocument: (employerId: string, id: string) => call<DocumentDetail>("GET", `/employers/${employerId}/documents/${id}`),
+  askKnowledge: (employerId: string, question: string) => call<AskResult>("POST", `/employers/${employerId}/knowledge/ask`, { question }),
+  askedKnowledge: (employerId: string, askId: string) => call<AskResult>("GET", `/employers/${employerId}/knowledge/ask/${askId}`),
   memory: (employerId: string, kind?: WorkplaceKind) =>
     call<{ memory: MemoryItem[] }>("GET", `/employers/${employerId}/memory${kind ? `?kind=${kind}` : ""}`),
   updateMemory: (id: string, fields: { title?: string; summary?: string; body?: Record<string, unknown> }) =>

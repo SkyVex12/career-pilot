@@ -1,0 +1,53 @@
+{
+ "questions": 37,
+ "detected": [
+  30,
+  37
+ ],
+ "type_right": [
+  10,
+  37
+ ],
+ "fact_in_short_prompt": [
+  19,
+  31
+ ],
+ "fact_in_detailed_prompt": [
+  24,
+  31
+ ],
+ "fact_preloaded": [
+  10,
+  31
+ ],
+ "short_answer_correct": [
+  19,
+  33
+ ],
+ "detailed_answer_correct": [
+  20,
+  33
+ ],
+ "detailed_correct_when_shown": [
+  20,
+  26
+ ],
+ "safe_answer_when_not_covered": [
+  2,
+  2
+ ],
+ "detector_ms_p50": 1093,
+ "short_first_token_ms_p50": 1132,
+ "detailed_first_token_ms_p50": 1617,
+ "short_prompt_tokens_p50": 2984,
+ "cost_usd": 0.077,
+ "prepare_cost_usd": 0.0,
+ "prepare_tokens": {
+  "model": "gpt-6-sol",
+  "input": 5174,
+  "output": 3562
+ },
+ "engineering_context": false,
+ "digest_chars": 0,
+ "sections": 0
+}

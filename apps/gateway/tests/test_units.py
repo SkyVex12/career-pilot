@@ -466,8 +466,9 @@ def test_settings_defaults_match_the_doc(monkeypatch: pytest.MonkeyPatch) -> Non
     assert s.deep_pass_auto
     assert s.deep_pass_auto_types == [
         "behavioral", "technical", "system_design", "coding", "standup_status", "other",
-        "respond", "follow",
+        "respond", "follow", "decision", "how_it_works", "status_follow_up", "estimate_risk",
     ]  # fmt: skip
+    assert (s.knowledge_fast_sections, s.knowledge_deep_sections) == (3, 4)
     assert (s.conversation_summary_tokens, s.conversation_answers_tokens) == (500, 600)
     assert (s.detector_context_tokens, s.me_stt) == (300, True)
     assert (s.rerank_keep, s.retrieval_budget_ms, s.first_token_timeout_ms) == (6, 100, 1500)

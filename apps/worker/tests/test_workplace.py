@@ -1,6 +1,8 @@
 """Company workspace jobs against the local stack: work log extraction (idempotent, edits
-kept), commitments closed and reopened, document proposals, node embeddings, company packs,
-search scoped to one company, per-company purge, and standup commitments from post-call."""
+kept), commitments closed and reopened, node embeddings, company packs, search scoped to one
+company, per-company purge, standup commitments from post-call, and engineering context: a
+document indexed into sealed sections and facts, published for live calls, replaced by a
+newer upload, and asked a test question."""
 
 import hashlib
 import json
@@ -14,7 +16,7 @@ from uuid import UUID
 import asyncpg
 import pytest
 
-from copilot_core import jobs, keys
+from copilot_core import jobs, keys, knowledge
 from copilot_core.db import create_pool, user_tx
 from copilot_core.ids import uuid7
 from copilot_core.packs import SessionPack, render_pack
@@ -243,56 +245,6 @@ async def test_a_log_closes_commitments_and_reopens_them_when_it_changes(stack: 
     assert "closed_by" not in body
 
 
-async def test_company_document_becomes_proposals_for_what_is_new(stack: Stack) -> None:
-    uid = await stack.new_user()
-    eid = await new_employer(stack, uid)
-    other = await new_employer(stack, uid, "Old Corp")
-    for e, title in ((eid, "Label service"), (other, "Dispatch service")):
-        await stack.admin.execute(
-            "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title,"
-            " summary, source) values ($1, $2, $3, 'system', 'workplace', $4, $4,"
-            ' \'{"type": "worklog"}\')',
-            uuid7(),
-            uid,
-            e,
-            title,
-        )
-    body = (INPUTS / "company_doc.md").read_bytes()
-    doc = await seal_file(stack, uid, eid, "dispatch.md", body, None)
-    job = jobs.envelope(
-        "company_doc.extract", f"company_doc.extract:{uid}:{doc}", uid, {"document_id": str(doc)}
-    )
-    await stack.run(job)
-    name, request = stack.claude.requests[-1]
-    assert name == "company_doc"
-    sent = json.dumps(request["messages"])
-    assert "Label service" in sent  # in <known>
-    assert "Dispatch service" not in sent.split("<known>")[1].split("</known>")[0]
-    rows = await stack.admin.fetch(
-        "select payload, status, employer_id, company_document_id from app.memory_proposals"
-        " where company_document_id = $1",
-        doc,
-    )
-    titles = sorted(json.loads(r["payload"])["title"] for r in rows)
-    # The label service is known here; the other company's dispatch service is not.
-    assert titles == [
-        "Dispatch service",
-        "Keep SQS for the dispatch queue",
-        "Linehaul",
-        "Priya Raman",
-        "Sam Okafor",
-    ]
-    assert {(r["status"], r["employer_id"]) for r in rows} == {("pending", eid)}
-    assert all(json.loads(r["payload"])["evidence"] for r in rows)
-    calls = len(stack.claude.requests)
-    await stack.run(job)  # ingested: a redelivery does nothing
-    assert len(stack.claude.requests) == calls
-    count = await stack.admin.fetchval(
-        "select count(*) from app.memory_proposals where company_document_id = $1", doc
-    )
-    assert count == 5
-
-
 class FakeEmbedder:
     model_id = "test:fake@1024"
 
@@ -426,6 +378,7 @@ async def test_purge_deletes_one_companys_files_packs_and_cached_answers(stack: 
             keys.pack_index(uid), mapping={keys.employer_pack_field(e, "meeting"): f"p-{e}"}
         )
         await stack.ctx.valkey.set(keys.qa(uid, f"q-{e}"), json.dumps({"employer": str(e)}))
+        await stack.ctx.valkey.set(keys.knowledge(uid, e), "{}")
     await stack.run(
         jobs.envelope("employer.purge", f"employer.purge:{gone}", uid, {"employer_id": str(gone)})
     )
@@ -436,6 +389,8 @@ async def test_purge_deletes_one_companys_files_packs_and_cached_answers(stack: 
     assert await stack.ctx.valkey.get(keys.pack(uid, f"p-{gone}")) is None
     assert await stack.ctx.valkey.get(keys.qa(uid, f"q-{gone}")) is None
     assert await stack.ctx.valkey.get(keys.qa(uid, f"q-{keep}")) is not None
+    assert await stack.ctx.valkey.get(keys.knowledge(uid, gone)) is None
+    assert await stack.ctx.valkey.get(keys.knowledge(uid, keep)) is not None
 
 
 async def test_standup_commitments_go_back_to_the_company(stack: Stack) -> None:
@@ -587,3 +542,246 @@ async def test_a_provider_outage_marks_the_log_failed_and_it_is_retried(
     status = await stack.admin.fetchval("select status from app.work_logs where id = $1", log_id)
     assert status == "extracted"
     assert await nodes_of(stack, eid)
+
+
+# --- engineering context -------------------------------------------------------------------
+
+DOC = (INPUTS / "engineering_doc.md").read_bytes()
+
+
+async def index(stack: Stack, uid: UUID, doc: UUID) -> None:
+    await stack.run(jobs.knowledge_index(uid, doc, hashlib.sha256(DOC).hexdigest()))
+
+
+async def test_a_company_document_becomes_sealed_sections_and_facts_at_once(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    label = uuid7()  # named in a work log before the document came
+    await stack.admin.execute(
+        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title, summary,"
+        " source) values ($1, $2, $3, 'system', 'workplace', 'Label service',"
+        """ 'Prints labels', '{"type": "worklog"}')""",
+        label,
+        uid,
+        eid,
+    )
+    doc = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+    stack.take()
+    await index(stack, uid, doc)
+    name, request = stack.claude.requests[-1]
+    assert name == "knowledge"
+    sent = json.dumps(request["messages"])
+    assert "[section 1] Dispatch platform: architecture notes > How a parcel is dispatched" in sent
+    assert "Label service" in sent.split("<known>")[1].split("</known>")[0]
+
+    # Sections: the whole text, cut at its headings, sealed. The diagram's "#" is no heading.
+    chunks = await stack.admin.fetch(
+        "select id, ord, body_enc, key_version from app.knowledge_chunks where document_id = $1"
+        " order by ord",
+        doc,
+    )
+    assert len(chunks) == 6
+    assert all(b"dispatch" not in bytes(c["body_enc"]).lower() for c in chunks)
+    async with stack.ctx.user(uid) as conn:
+        opened = [
+            json.loads(await stack.ctx.crypto.decrypt(
+                conn, uid, "knowledge_chunks", str(c["id"]), c["body_enc"], c["key_version"]
+            ))
+            for c in chunks
+        ]  # fmt: skip
+    assert opened[1]["doc"] == "dispatch.md"
+    assert opened[1]["path"].endswith("> How a parcel is dispatched")
+    assert "this line is a comment in the diagram" in opened[1]["text"]
+    assert "at most 5 times" in opened[0]["text"]  # a detail no fact needs to carry
+
+    # Facts: kept at once, with what an architecture question is about. Nothing to approve.
+    rows = await nodes_of(stack, eid)
+    by_title = {r["title"]: r for r in rows}
+    assert kinds(rows) == {
+        "constraint": 1, "decision": 1, "flow": 1, "person": 2, "risk": 1, "system": 3, "term": 1,
+    }  # fmt: skip
+    decision = json.loads(by_title["Keep SQS for the dispatch queue"]["body"])
+    assert decision["why"] == "Ordering per route is all the team needs"
+    assert decision["alternatives"] == ["Kafka: nobody on the team runs it"]
+    assert decision["tradeoff"].startswith("The FIFO limit of 300 messages")
+    assert decision["section"].endswith("Keep SQS for the dispatch queue (2026-09-14)")
+    assert by_title["Keep SQS for the dispatch queue"]["valid_from"] == date(2026, 9, 14)
+    assert len(json.loads(by_title["Parcel dispatch"]["body"])["steps"]) == 3
+    assert json.loads(by_title["Dispatch service"]["body"])["talks_to"] == [
+        "Dispatch queue", "Rate service", "Label service",
+    ]  # fmt: skip
+    # The system a work log named first is one node still: its own words, plus the stack
+    # the document adds.
+    assert by_title["Label service"]["id"] == label
+    assert by_title["Label service"]["summary"] == "Prints labels"
+    assert json.loads(by_title["Label service"]["body"])["stack"] == ["Carrier APIs"]
+    assert (
+        await stack.admin.fetchval(
+            "select count(*) from app.memory_proposals where employer_id = $1", eid
+        )
+        == 0
+    )
+    row = await stack.admin.fetchrow(
+        "select status, chunk_count, error, indexed_sha256 = sha256 as indexed"
+        " from app.company_documents where id = $1",
+        doc,
+    )
+    assert row is not None
+    assert dict(row) == {"status": "ingested", "chunk_count": 6, "error": None, "indexed": True}
+    assert {m["type"] for m in stack.take()} == {"workplace.refresh", "knowledge.publish"}
+
+    calls = len(stack.claude.requests)
+    await index(stack, uid, doc)  # indexed: a redelivery does nothing
+    await stack.run(
+        jobs.envelope("company_doc.extract", f"old:{doc}", uid, {"document_id": str(doc)})
+    )  # nor does the job an API from before engineering context sends
+    assert len(stack.claude.requests) == calls
+
+    # The digest every standup prompt carries is rendered from these facts, the same bytes
+    # each time, and cites them.
+    async with stack.ctx.user(uid) as conn:
+        from copilot_core.workplace import render_employer_pack
+
+        packs = [await render_employer_pack(conn, uid, eid, "standup", DAY) for _ in range(2)]
+    first, second = (p.knowledge for p in packs if p is not None)
+    assert first is not None
+    assert second is not None
+    assert first.text == second.text
+    assert "## System map" in first.text
+    assert "## Decisions" in first.text
+    assert "Why: Ordering per route is all the team needs." in first.text
+    assert "Rejected: Kafka: nobody on the team runs it." in first.text
+    assert "1) The intake API writes one job per parcel" in first.text
+    cited = re.findall(r"\[(n:w[0-9a-f]+)\]", first.text)
+    assert cited
+    assert set(cited) <= set(first.refs)
+    assert "Dispatch service" in first.names
+
+
+async def test_sections_are_published_for_live_calls_with_vectors(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    doc = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+    await index(stack, uid, doc)
+    publish = stack.take("knowledge.publish")[-1]
+    stack.ctx.embedder = FakeEmbedder()  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        await stack.run(publish)
+    finally:
+        stack.ctx.embedder = None
+    raw = await stack.ctx.valkey.get(keys.knowledge(uid, eid))
+    live = knowledge.LiveIndex.model_validate_json(raw)
+    assert len(live.chunks) == live.total == 6
+    assert {c.doc for c in live.chunks} == {"dispatch.md"}
+    found = knowledge.Index.build(live.chunks).search("how many parcels does a route take", 2)
+    assert found[0][0].path.endswith("> Limits")
+    models = await stack.admin.fetch(
+        "select embedding_model from app.knowledge_chunks where document_id = $1", doc
+    )
+    assert {r["embedding_model"] for r in models} == {FakeEmbedder.model_id}
+    # Deleting the last document leaves no live copy behind.
+    await stack.admin.execute("delete from app.company_documents where id = $1", doc)
+    await stack.run(jobs.knowledge_publish(uid, eid, "empty"))
+    assert await stack.ctx.valkey.get(keys.knowledge(uid, eid)) is None
+
+
+async def test_a_new_upload_of_the_same_file_replaces_the_old_one(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    old = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+    await index(stack, uid, old)
+    # The user corrected one fact; it must survive the replacement.
+    await stack.admin.execute(
+        "update app.memory_nodes set summary = 'A route takes 150 parcels',"
+        " body = body || '{\"edited\": true}' where employer_id = $1 and kind = 'constraint'",
+        eid,
+    )
+    old_key = company_document_key(uid, eid, old)
+    new = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+    await stack.admin.execute(
+        "update app.company_documents set replaces = $2 where id = $1", new, old
+    )
+    await index(stack, uid, new)
+    docs = await stack.admin.fetch(
+        "select id from app.company_documents where employer_id = $1", eid
+    )
+    assert [r["id"] for r in docs] == [new]
+    assert await stack.ctx.store.get(old_key) is None
+    owners = await stack.admin.fetch(
+        "select distinct document_id from app.knowledge_chunks where employer_id = $1", eid
+    )
+    assert [r["document_id"] for r in owners] == [new]
+    rows = await nodes_of(stack, eid)
+    titles = [r["title"] for r in rows]
+    assert len(titles) == len(set(titles))  # every fact once
+    capacity = next(r for r in rows if r["kind"] == "constraint")
+    assert capacity["summary"] == "A route takes 150 parcels"
+    assert {json.loads(r["source"])["ref"] for r in rows} == {str(new)}
+
+
+async def test_a_failed_extraction_keeps_the_sections_and_says_so(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from copilot_core.llm import AllRoutesFailedError
+    from copilot_worker import knowledge as jobs_module
+
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    doc = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+
+    async def outage(*_: Any, **__: Any) -> Any:
+        raise AllRoutesFailedError("knowledge", ["openai: no credits remaining"])
+
+    with monkeypatch.context() as m:
+        m.setattr(jobs_module, "complete_json", outage)
+        with pytest.raises(AllRoutesFailedError):  # raised again, so the queue retries it
+            await index(stack, uid, doc)
+    row = await stack.admin.fetchrow(
+        "select status, error, chunk_count from app.company_documents where id = $1", doc
+    )
+    assert row is not None
+    assert row["status"] == "failed"
+    assert row["chunk_count"] == 6
+    assert "searchable" in row["error"]
+    assert "knowledge.publish" in {m["type"] for m in stack.take()}
+    await index(stack, uid, doc)  # the provider is back
+    assert (
+        await stack.admin.fetchval("select status from app.company_documents where id = $1", doc)
+        == "ingested"
+    )
+
+    pdf = await seal_file(stack, uid, eid, "scan.pdf", b"%PDF-1.7", None)
+    await stack.admin.execute(
+        "update app.company_documents set content_type = 'application/pdf' where id = $1", pdf
+    )
+    await stack.run(jobs.knowledge_index(uid, pdf, hashlib.sha256(b"%PDF-1.7").hexdigest()))
+    error = await stack.admin.fetchval("select error from app.company_documents where id = $1", pdf)
+    assert error == "Only Markdown and text files are read for now."
+
+
+async def test_a_test_question_gets_an_answer_with_its_type_and_sources(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    doc = await seal_file(stack, uid, eid, "dispatch.md", DOC, None)
+    await index(stack, uid, doc)
+    ask = uuid7()
+    question = "Why did we keep SQS for the dispatch queue?"
+    await stack.run(jobs.knowledge_ask(uid, eid, ask, question, "standup"))
+    result = json.loads(await stack.ctx.valkey.get(keys.knowledge_ask(uid, ask)))
+    assert result["status"] == "done"
+    assert result["type"] == "decision"
+    assert result["answer"].startswith("- We kept SQS FIFO")
+    assert result["searched"]["sections"] >= 1
+    assert result["sources"]
+    assert {s["kind"] for s in result["sources"]} <= {"fact", "section"}
+    (_, typed), (_, answered) = stack.claude.requests[-2:]
+    # The same prompt a standup gets: the digest as its own block, the decision shape, and
+    # passages of the document named by file and section.
+    system = json.dumps(answered["system"])
+    assert "<company_digest>" in system
+    assert "Keep SQS for the dispatch queue" in system
+    asked = json.dumps(answered["messages"])
+    assert "Question (decision): " + question in asked
+    assert "what was rejected and why not" in asked
+    assert "(doc: dispatch.md > Dispatch platform: architecture notes > Decisions" in asked
+    assert "decision|how_it_works" not in json.dumps(typed["messages"])

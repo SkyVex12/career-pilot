@@ -26,7 +26,17 @@ import asyncpg
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
-from copilot_core import careeros, jobs, logs, profiles, prompts, resumes, versions, workplace
+from copilot_core import (
+    careeros,
+    jobs,
+    knowledge,
+    logs,
+    profiles,
+    prompts,
+    resumes,
+    versions,
+    workplace,
+)
 from copilot_core.db import user_tx
 from copilot_core.embed import Embedder
 from copilot_core.identities import Identities
@@ -318,6 +328,9 @@ class Session:
                 limit=self.settings.rerank_keep,
             )
         self._embeds: OrderedDict[str, asyncio.Task[list[float] | None]] = OrderedDict()
+        # Engineering context: the company's document sections, searched by keyword here.
+        self.sections: knowledge.Index | None = None
+        self.sections_total = 0
 
         self.last_speech = time.monotonic()
         self.last_force = 0.0
@@ -337,6 +350,8 @@ class Session:
             fields["question_type"] = "other"
         if fields.get("question_type") == "follow":  # the protocol has no such type
             fields["question_type"] = "other"
+        if fields.get("question_type") in prompts.WIRE_TYPES:  # nor the types used at work
+            fields["question_type"] = prompts.WIRE_TYPES[fields["question_type"]]
         self.seq += 1
         message = cls.model_validate({"type": _type_of(cls), "seq": self.seq, **fields})
         data = message.model_dump_json(exclude_none=True, by_alias=True)
@@ -452,6 +467,11 @@ class Session:
             pack_text=render_pack(self.pack) if self.pack else None,
             company=employer.name if at_work and employer else None,
             role=(employer.title or None) if at_work and employer else None,
+            company_digest=(
+                self.pack.knowledge.text
+                if at_work and self.pack is not None and self.pack.knowledge is not None
+                else None
+            ),
         )
 
     # Company memory.
@@ -489,6 +509,63 @@ class Session:
 
         return get
 
+    async def load_sections(self) -> None:
+        """Load the company's document sections (a worker opened them into Valkey) and index
+        them for keyword search. Without them the call still has the company's digest and
+        facts; a worker is asked to open them for next time."""
+        eid = self.info.employer_id
+        if eid is None or self.info.mode not in prompts.GROUP_MODES or self.sections is not None:
+            return
+        uid = self.principal.user_id
+        try:
+            live = await self.svc.store.get_knowledge(uid, eid)
+        except (*UNAVAILABLE, ValidationError, ValueError) as e:
+            log.warning("could not load the company's document sections: %s", e)
+            return
+        if live is None:
+            stamp = datetime.now(UTC).strftime("%Y%m%d%H")
+            with contextlib.suppress(Exception):
+                await self.svc.jobs.send(jobs.knowledge_publish(uid, eid, "missing", stamp))
+            return
+        # Tokenizing a few hundred sections takes tens of ms: off the event loop.
+        self.sections = await asyncio.to_thread(knowledge.Index.build, live.chunks)
+        self.sections_total = len(live.chunks)
+        log.info("loaded %d document sections of employer %s", len(live.chunks), eid)
+
+    def _context_names(self) -> list[str]:
+        """The company's names a question may point back at: its pack's keyterms and its
+        digest's components, flows and terms."""
+        if self.pack is None:
+            return []
+        extra = self.pack.knowledge.names if self.pack.knowledge is not None else []
+        return list(dict.fromkeys([*self.pack.keyterms, *extra]))
+
+    async def section_lines(self, text: str, deep: bool) -> list[str]:
+        """The `<memory>` lines from the company's documents for a pass. Keyword search runs
+        in memory, on the question and, when it is short or points back ("which one?"), on
+        the question with the company's names said in the last lines of the call. The
+        detailed answer also gets the vector search's sections when they are in in time."""
+        index, s = self.sections, self.settings
+        want = s.knowledge_deep_sections if deep else s.knowledge_fast_sections
+        if index is None or want <= 0:
+            return []
+        lists = [[c for c, _ in index.search(text, want)]]
+        names = self._context_names()
+        if knowledge.needs_context(text, names):
+            said = knowledge.context_names(self.conv.context().recent, names)
+            if said:
+                again = index.search(f"{text} {' '.join(said)}", want)
+                lists.append([c for c, _ in again])
+        if deep and self.company_memory is not None:
+            ids = await self.company_memory.section_ids(
+                self._vector(text), want, s.memory_deep_wait_ms
+            )
+            found = [index.get(i) for i in ids]
+            lists.append([c for c in found if c is not None])
+        chunks = knowledge.merge(*lists, limit=want)
+        words = None if deep else knowledge.FAST_EXCERPT_WORDS
+        return knowledge.memory_lines(chunks, self._refs, text, words)
+
     def _memory_on(self) -> bool:
         return self.company_memory is not None and self.info.mode in ("standup", "meeting")
 
@@ -498,7 +575,8 @@ class Session:
         that the session's refs now map, so the answer's citations become memory_refs."""
         mem = self.company_memory
         if mem is None or not self._memory_on():
-            return [], {}
+            sections = await self.section_lines(text, pass_ == "deep")
+            return sections, ({"memory_sections": len(sections)} if sections else {})
         deep = pass_ == "deep"
         s = self.settings
         wait = s.memory_deep_wait_ms if deep else s.memory_fast_wait_ms
@@ -506,9 +584,14 @@ class Session:
         if not deep:
             hits = hits[: s.memory_fast_hits]
         in_pack = {i.node_id for i in pack_items(self.pack)} if self.pack else set[UUID]()
+        if self.pack is not None and self.pack.knowledge is not None:
+            in_pack |= {r.node_id for r in self.pack.knowledge.refs.values()}
         lines = workplace.memory_lines(hits, self._refs, in_pack)
         stats["memory_hits"] = len(lines)
-        return lines, stats
+        sections = await self.section_lines(text, deep)
+        if sections:
+            stats["memory_sections"] = len(sections)
+        return lines + sections, stats
 
     def answer_style(self) -> str:
         return self.info.answer_style
@@ -1091,8 +1174,9 @@ class Session:
 
     def deep_auto_types(self) -> list[str]:
         s = self.settings
-        # The client knows no "follow": a follow card reaches it as "other".
-        types = [t for t in s.deep_pass_auto_types if t != "follow"]
+        # The client knows no "follow": a follow card reaches it as "other". Nor the types
+        # used at work, which reach it as the protocol types of prompts.WIRE_TYPES.
+        types = [t for t in s.deep_pass_auto_types if t in prompts.QUESTION_TYPES]
         return types if s.deep_pass_auto else []
 
     def state_fields(self) -> dict[str, Any]:
@@ -1181,6 +1265,7 @@ class Session:
         not pay the handshake (see ModelRouter.warm), then write the prompt cache."""
 
         async def warm() -> None:
+            await self.load_sections()
             await self.router.warm()
             await self.prewarm_prompts()
 
@@ -1236,6 +1321,7 @@ class Session:
             if pack is not None:
                 self.set_pack(pack)
                 self._prompt_ctx = self._build_prompt_ctx()
+            await self.load_sections()
         await self.prewarm_prompts()
 
     def set_pack(self, pack: SessionPack) -> None:

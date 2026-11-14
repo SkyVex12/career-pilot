@@ -150,3 +150,35 @@ def digest_rebuild(user_id: UUID, resume_version_id: UUID, memory_version: str) 
     """`digest.rebuild` for one resume version, once per version of its memory."""
     key = f"digest.rebuild:{user_id}:{resume_version_id}:{memory_version}"
     return envelope("digest.rebuild", key, user_id, {"resume_version_id": str(resume_version_id)})
+
+
+def knowledge_index(user_id: UUID, document_id: UUID, sha256: str) -> dict[str, Any]:
+    """`knowledge.index`: one company document into sealed sections and facts, once per
+    content."""
+    key = f"knowledge.index:{user_id}:{document_id}:{sha256}"
+    return envelope("knowledge.index", key, user_id, {"document_id": str(document_id)})
+
+
+def knowledge_publish(
+    user_id: UUID, employer_id: UUID, version: str, again: str = ""
+) -> dict[str, Any]:
+    """`knowledge.publish`: a company's sections opened into Valkey for live calls, once per
+    set of sections (`knowledge.live_version`). `again` makes a new key when the live copy
+    expired though the sections did not change."""
+    key = f"knowledge.publish:{user_id}:{employer_id}:{version}"
+    if again:
+        key += f":{again}"
+    return envelope("knowledge.publish", key, user_id, {"employer_id": str(employer_id)})
+
+
+def knowledge_ask(
+    user_id: UUID, employer_id: UUID, ask_id: UUID, question: str, mode: str
+) -> dict[str, Any]:
+    """`knowledge.ask`: one "test a question" on a company's engineering context."""
+    payload = {
+        "employer_id": str(employer_id),
+        "ask_id": str(ask_id),
+        "question": question,
+        "mode": mode,
+    }
+    return envelope("knowledge.ask", f"knowledge.ask:{user_id}:{ask_id}", user_id, payload)

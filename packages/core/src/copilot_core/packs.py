@@ -136,6 +136,15 @@ class FocusMaterial(_Model):
     items: list[PackItem] = []
 
 
+class CompanyDigest(_Model):
+    """A company's engineering digest (copilot_core.knowledge.render_digest): the
+    `<company_digest>` prompt block, the short ids it cites and the names it knows."""
+
+    text: str = ""
+    refs: dict[str, NodeRef] = {}
+    names: list[str] = []
+
+
 class EmployerRef(_Model):
     id: UUID
     name: str
@@ -172,6 +181,9 @@ class SessionPack(_Model):
     # every approved fact from them, read before the rest. Set by the gateway on its own
     # copy of the pack, never stored by workers.
     focus: list[FocusMaterial] = []
+    # A company pack: the digest of its engineering context, shown as its own prompt block
+    # before the pack (it changes with the documents, not with the day).
+    knowledge: CompanyDigest | None = None
     # Short ids used in prepared talking points that are not ranked stories.
     refs: dict[str, NodeRef] = {}
     # An application's interview pack: the resume version its digest and stories came from.
@@ -223,6 +235,8 @@ def ref_map(digest: Digest | None, pack: SessionPack | None) -> dict[str, NodeRe
     if digest is not None:
         refs.update(digest.refs)
     if pack is not None:
+        if pack.knowledge is not None:
+            refs.update(pack.knowledge.refs)
         refs.update(pack.refs)
         for story in pack.ranked_stories:
             refs[story.short_id] = NodeRef(node_id=story.node_id, label=story.title)

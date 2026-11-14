@@ -34,7 +34,7 @@ def parse_detection(text: str) -> Detection:
     if start < 0 or end < start:
         raise ValueError(f"no JSON object in detector output: {text!r}")
     answer = str(json.loads(text[start : end + 1]).get("answer", "none"))
-    if answer in prompts.QUESTION_TYPES:
+    if answer in prompts.QUESTION_TYPES or answer in prompts.WORK_TYPES:
         return Detection(decision="answer", qtype=answer)
     return Detection(decision="wait" if answer == "wait" else "none", qtype="other")
 

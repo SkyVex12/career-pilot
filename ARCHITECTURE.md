@@ -147,8 +147,11 @@ Memory is a per-user career knowledge graph with embeddings, compiled into three
 | Skill | Technology or soft skill, years, linked evidence |
 | Work item | Ticket, PR, task, review or blocker at a company, with its state and the day |
 | Commitment | Promise made at work (in a work log or a standup), with its due date |
-| Decision | What was decided at a company, by whom and why |
-| System | A company's service or tool, what it does and its stack |
+| Decision | What was decided at a company, by whom and why; from a document also what was rejected and the tradeoff accepted |
+| System | A company's component: a service, library, job, store, index or queue; what it does, what it talks to and its stack |
+| Flow | How something works at a company end to end, as 3 to 5 steps |
+| Constraint | A limit a company's design must keep: a cap, a retention, an ordering |
+| Risk | What is known to be open, fragile or unverified at a company |
 | Term | A company's own word or acronym and its meaning |
 
 Career memory (roles, projects, stories, skills) and workplace memory are kept apart: every workplace node belongs to one employer (`memory_nodes.employer_id`, see [Company workspaces](#company-workspaces)), and the career digest and interview packs never read workplace nodes.
@@ -219,10 +222,10 @@ Standups and meetings answer from the user's work at a company. The companies th
 | Source | What it is | How it enters memory |
 | --- | --- | --- |
 | **Work log** | One entry per company and day (`app.work_logs`): what the user worked on, as they wrote or pasted it (tasks, tickets, PRs, decisions, blockers, plans for tomorrow), with attached files | `worklog.extract` (Sonnet, or the pack model on OpenAI) turns it into work items, decisions, commitments, and the projects, systems, people and terms it names. The user wrote it, so the facts are kept at once and shown under the entry to edit or remove, written as the user's own notes (a log written from coding-assistant sessions never names the assistant as the one who did the work). It also closes open commitments the log says are done. A failed extraction marks the log failed; saving it again, or the scheduler's hourly retry (for a week), extracts it again |
-| **Company material** | Documents per company (`app.company_documents`): architecture notes, wiki pages, meeting notes, specs | `company_doc.extract` (Opus, or the extraction model on OpenAI) proposes projects, systems, people, decisions and terms, each with a quote as evidence. Other people wrote it, so the facts wait for approval, one by one or for the whole document ("approve all 18") |
+| **Engineering context** | Documents per company (`app.company_documents`): architecture and design documents, decision records, READMEs, diagrams as text, notes; Markdown or text, many files | `knowledge.index` keeps the whole text as searchable sections and extracts components, decisions, flows, constraints, risks and terms (below). The user uploaded it for this, so nothing waits for approval; the app shows what each file gave, to edit or remove |
 | **Standup report** | The post-call report of a standup at a company | Its new commitments (at most 3) become that company's open commitments at once (the user's own promises; the post-call screen says so and they can be removed under Work), it closes open commitments the user said are done, and both feed the next standup |
 
-What decides between kept-at-once and approval is whose statement it is: the user's own log and promises are theirs, a document's facts are someone else's. A changed work log is extracted again (keyed by its content hash): the facts from its earlier content are replaced, except those the user edited, and the commitments it had closed open again before the new content closes its own. The worker embeds every workplace node as it writes it (`workplace.refresh`), so live search has vectors; until then it finds the node by full text.
+Until November 2026 a document's facts waited for approval, as someone else's statement. On Stage 0 every batch was approved in one go within four minutes of its upload: the step delayed answers and filtered nothing, so a document the user uploads is now kept at once like their log (proposals left from before can still be decided). A changed work log is extracted again (keyed by its content hash): the facts from its earlier content are replaced, except those the user edited, and the commitments it had closed open again before the new content closes its own. The worker embeds every workplace node as it writes it (`workplace.refresh`), so live search has vectors; until then it finds the node by full text.
 
 **Packs, built when the company is picked.** The start screen asks for the company's pack when the user picks it (`POST /employers/{id}/packs/{mode}`), and a worker builds it unless one already matches the company's memory (a hash of its active nodes, `memory_version`) and, for a standup, today. Both packs are rendered from the company's nodes with no model call, so a build takes milliseconds and the same memory gives the same bytes (prompt caching):
 
@@ -233,6 +236,36 @@ What decides between kept-at-once and approval is whose statement it is: the use
 **A pack that is not ready.** Session start never waits on a model: if no stored pack matches the company's memory and day (the worker has not built it yet, or the memory changed since), the gateway renders the same pack from Postgres itself (tens of milliseconds, read only), with the standup questions' vectors carried over from the stored pack, and asks a worker to build it for next time. Without a database the stored pack is used as it is; without either, the call runs on the career digest alone.
 
 **Live search.** Meeting questions cannot all be prepared, so the gateway searches the chosen company's memory for each question ([Hybrid memory search](#hybrid-memory-search)), as `app_gateway` (read only) on Postgres on the same host. Full text starts with the detector on the question's text; the fast pass waits at most 30 ms for it (`memory_fast_wait_ms`) and gets up to 4 hits as a `<memory>` block. The vector half waits for the question's embedding, which prepared-answer matching makes anyway (one call per text, shared); the deep pass, which starts at confirmation, waits at most 150 ms for the hybrid result (`memory_deep_wait_ms`) and otherwise takes the full-text one. Each query has the 100 ms retrieval budget. Hits the pack already shows are left out, and every hit gets a short id (`n:w…`) so its citation becomes a memory ref.
+#### Engineering context
+
+Standups turn technical: why something was chosen, how a component works, what a thing is called. In twelve standups on Stage 0, 35 such turns were put to the user and the uploaded documents held the needed fact for 25; the card was right on 8 ([the 2026-11-14 analysis](docs/analysis/2026-11-14-standup-technical.md)). The largest cause was extraction: a document became one-line facts of five kinds, and 6% of its words survived. The sections on how something is built, what a decision rejected, and "likely questions" are what was lost. So a document is now kept two ways, because each loses what the other keeps:
+
+| Kept as | What | Used for |
+| --- | --- | --- |
+| **Sections** | The whole text, cut at its headings (`#` to `####`); each piece carries its heading path, a fenced block (code, a Mermaid or PlantUML diagram) stays whole, and a piece over about 220 words is cut at paragraph ends. A file without headings is cut by paragraphs | Search at question time, and citations by file and section. Nothing is dropped, so a one-line rule, a condition or a name can be found |
+| **Facts** | Components (what each does, what it talks to), decisions (what, why, rejected alternatives, tradeoff), flows (3 to 5 steps), constraints, open risks, terms, in workplace memory | The answer's shape, and the company digest |
+
+Chunks alone cannot assemble a list across sections ("which functions exist") and give nothing to preload; facts alone still drop the one-line specifics. On the analysed turns, keyword search over sections found the fact for 25 of 30 search cases in the top 8, against 12 of 30 for the facts of the time.
+
+**Indexing (`knowledge.index`).** The API seals the upload and enqueues the job, keyed by the content's hash. The worker cuts the text into sections and stores each sealed with the user's data key (`app.knowledge_chunks.body_enc`: the file's name, the heading path and the text). Then the extraction model (Opus, or the extraction model on OpenAI) reads the sections, at most about 6,000 words a call, a longer file in parts that are told what the earlier parts named. Its facts replace the ones this file gave before, except those the user edited. A fact another source already holds under the same name (a system first named in a work log) keeps its text and gains the fields the document adds. If extraction fails the file is marked failed with a reason, its sections stay searchable, and the scheduler tries again hourly for a week. Only Markdown and text are read for now. Nothing of a document's text is logged: ids and counts only.
+
+**Replacing.** A file uploaded under the name of an earlier one (case and surrounding spaces aside) is marked to replace it. The earlier file, its sections and its facts go in the same transaction that writes the new file's facts, so answers never lose the document in between; a fact the user edited stays and moves to the new file.
+
+**Migration.** Documents from before are indexed by the scheduler (`knowledge.index` for every text document with no index of its content, hourly). The documents and the facts approved from them stay until the new extraction of the same file replaces them; user-edited facts are kept.
+
+**The company digest.** Every standup and meeting prompt at a company carries `<company_digest>`: a system map (each component, what it does and talks to), how the main flows work, the decisions with their reason and what was rejected, limits, open risks and a glossary. It is rendered from the company's facts with no model call (`copilot_core.knowledge.render_digest`), at most about 2,500 tokens, a document's facts before a work log's passing mentions and decisions newest first, so the same memory gives the same bytes. It is its own cached block before the session pack, because it changes with the documents and the pack with the day. A company with no component, decision or flow from a document has no digest, and its prompts are unchanged. With a digest, the meeting brief drops its own systems, decisions and terms sections.
+
+**Search at question time.** The gateway cannot open sealed text (it has no grant on the data keys), so a worker opens a company's sections into Valkey for live calls (`knowledge.publish`: `kb:{uid}:{employer}`, at most 2,000 sections, 30 days, rewritten when the sections change and when the start screen picks the company), as it does a session pack. At session start the gateway loads them and builds a keyword index in memory (BM25; a dotted or dashed name counts whole and by its parts; a section must share two of the question's words). So keyword search costs no database round trip and no wait:
+
+- The short answer gets up to 3 excerpts (the 70 words around the match), the detailed answer up to 4 whole sections, each as a `<memory>` line `(doc: file > section) text` with a short id (`n:k…`), so its citation reaches the app as a source naming the file and section.
+- A short question, or one that points back ("which one?", "what's that called?"), is searched a second time with the company's names said in the last lines of the call (the pack's keyterms and the digest's components, flows and terms), and the two result lists are interleaved. On the analysed turns the second search rescued four such questions; used instead of the first it lost others.
+- The detailed answer also gets the sections nearest the question's vector: a Postgres query that returns ids only (`knowledge_chunks.embedding`, written by `knowledge.publish`), within `memory_deep_wait_ms`.
+- Search starts on the interim text with the early decision, as memory search does, so a held short answer already has its excerpts.
+
+**Honesty.** At work, what the digest, the pack and the memory lines do not state about the company's own systems is not known and is never filled in from general knowledge. When the question is about exactly that, the first line is the user's safe answer: the part the entries do state, then that they will confirm the rest and follow up, naming what they will check. This comes before the general rule that an answer never says what the data lacks, and applies to standups and meetings only.
+
+**Test a question.** The company's page has a box that asks one question and shows the answer a standup would get, its type and its sources. A worker answers (`knowledge.ask`: the same digest, pack, searches, detector prompt and detailed-answer prompt), so the API still calls no model; the app polls for the result, kept ten minutes in Valkey.
+
 ### Models and routing
 
 Each job gets the fastest model that is good enough for it; Opus stays out of the live path.
@@ -356,7 +389,7 @@ The copilot holds resumes, meeting transcripts and employer data, so encryption 
 
 - **Tenant isolation:** Postgres row-level security on every user table, set from the session's user id, so a query that forgets its filter still returns nothing from other users. The semantic answer cache and all Valkey keys are scoped per user.
 - **Searchable versus encrypted data:** memory facts and embeddings must stay searchable, so they rely on Aurora encryption at rest plus row-level security. Transcripts, raw workplace data and documents get application-level envelope encryption: one KMS key, one data key per user. Deleting a user's data key makes that encrypted data unreadable.
-- **Two kinds of memory:** personal career memory and workplace data are stored and labeled separately, and workplace data can be deleted on its own, per company. Every workplace node, work log, company document, proposal and standup or meeting session names its employer with a same-user foreign key that cascades, so **"delete all data for this company"** (`DELETE /employers/{id}`, after typing the company's name; refused while a call there is live) removes that company's logs, documents, facts, proposals and sessions with their transcripts in one transaction, then `employer.purge` deletes its sealed files, its packs and the exact-repeat answers given from them. Nightly backups keep deleted rows for up to 7 days. Work log text and company documents are raw workplace data: sealed with the user's data key (`work_logs.text_enc`, `company_documents`' object and file name); the facts extracted from them stay searchable under row-level security, like all memory.
+- **Two kinds of memory:** personal career memory and workplace data are stored and labeled separately, and workplace data can be deleted on its own, per company. Every workplace node, work log, company document, proposal and standup or meeting session names its employer with a same-user foreign key that cascades, so **"delete all data for this company"** (`DELETE /employers/{id}`, after typing the company's name; refused while a call there is live) removes that company's logs, documents, facts, proposals and sessions with their transcripts in one transaction, then `employer.purge` deletes its sealed files, its packs and the exact-repeat answers given from them. Nightly backups keep deleted rows for up to 7 days. Work log text and company documents are raw workplace data: sealed with the user's data key (`work_logs.text_enc`, `company_documents`' object and file name, and every section of a document in `knowledge_chunks.body_enc`); the facts extracted from them stay searchable under row-level security, like all memory. For live calls a worker opens a company's sections into Valkey (`kb:{uid}:{employer}`), as session packs hold its facts there; `employer.purge` deletes it with the company.
 - **Audio:** both sides are transcribed live, in memory, and no audio is ever stored. Recording consent rules vary by jurisdiction, so transcripts are opt-in with retention controls.
 - **Third-party processors:** audio goes to the STT provider, and error data to Sentry. Each needs a data processing agreement and zero-retention settings; prompt logs stay in a self-hosted Langfuse.
 - **Untrusted input:** transcripts, tool data and company documents are treated as data in prompts, and facts from other people's words enter memory only after the user approves them; the user's own work logs and promises are kept at once.
@@ -406,6 +439,8 @@ Per live hour, computed from token counts and the configured prices (no live mea
 | Total | | \~$0.82 | \~$1.32 | \~$0.54 | \~$0.84 |
 
 Assumed cache hit rate: 95% on the fast pass's prefix (prewarmed, a question every minute or two) and on the deep pass's once it runs on every question; 75% on the deep pass before, when it ran on fewer. Claude cache misses are priced as writes (1.25x input). The conversation itself is priced as uncached input, an upper bound: on OpenAI, whose prompt cache matches any repeated prefix, the summary and earlier answers (stable between summary updates) and the older verbatim lines usually repeat from the call before, so most of it is read from the cache.
+
+**Engineering context (November 2026).** Per upload: one extraction call per 6,000 words (a 3,000-word document is about 5k tokens in and 3k to 6k out, about $0.05 at Sonnet-class prices) and embeddings well under a cent; a re-upload costs the same. Per live hour: the digest adds up to about 2,500 cached tokens to every pass and the sections up to about 300 tokens to a short answer and 1,200 to a detailed one, about $0.15 to $0.25 on the OpenAI routes at the measured standup rates. In the eval the short answer's prompt went from about 3,000 to about 5,900 tokens, and its first token did not come later (875 ms against 1,132 ms at p50, one run each, within the provider's drift). Search adds no wait: keyword search is in memory, and the vector query is the detailed answer's alone. `knowledge_fast_sections` and `knowledge_deep_sections` (0: off) turn the sections' share down.
 
 **Measured in talk-heavy standups (Stage 0, October 2026):** two real standups ran the detector about 930 and 950 times a live hour (every final and interim the turn logic sends, plus hedges and calls cancelled by newer text) and threw away about 400 and 330 held fast passes an hour, against the 250 and 20 assumed above, while answering only 3 to 11 questions. On gpt-6-luna that is about $0.07 an hour each for the detector and the held passes, and both calls came to about $0.62 to $0.64 a live hour in all, under the estimate because few questions were answered. On Claude the same rates would add roughly $0.70 (detector) and $0.50 (held passes) an hour, so before routing standups to Claude the held pass needs a tighter gate (a question cue in standups and meetings) and the estimate a talk-heavy row. Analyses: `docs/analysis/2026-10-26-standup.md`, `docs/analysis/2026-10-27-standup.md`.
 
@@ -644,7 +679,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | --- | --- | --- |
 | `app_owner` | Migrations only | Owns all tables |
 | `app_api` | Copilot API | Read and write user tables, under row-level security |
-| `app_gateway` | Gateway | Read only: `users`, `profiles` (to check a session's profile), `applications` (and the `jobs` view), `interviews`, `memory_nodes`, `memory_edges`, `employers`, and the metadata columns of `resume_versions` (never the raw work logs, documents, resume text or files) |
+| `app_gateway` | Gateway | Read only: `users`, `profiles` (to check a session's profile), `applications` (and the `jobs` view), `interviews`, `memory_nodes`, `memory_edges`, `employers`, `knowledge_chunks` (ids and vectors; it cannot open the sealed text), and the metadata columns of `resume_versions` (never the raw work logs, documents, resume text or files) |
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
@@ -717,7 +752,7 @@ create table app.memory_nodes (
   user_id     uuid not null references app.users(id) on delete cascade,
   kind        text not null check (kind in
                 ('profile','role','project','story','skill','work_item','commitment','company',
-                 'person','decision','system','term')),
+                 'person','decision','system','term','flow','constraint','risk')),
   domain      text not null check (domain in ('career','workplace')),
   title       text not null,
   summary     text not null,                   -- one line, used in the digest and in search
@@ -908,10 +943,33 @@ create table app.company_documents (
   size_bytes   int  not null,
   status       text not null default 'uploaded'
                check (status in ('uploaded','ingesting','ingested','failed')),
+  indexed_sha256 text,                           -- the content its sections and facts came from
+  chunk_count  int  not null default 0,
+  error        text,                             -- why it could not be read
+  replaces     uuid,                             -- the earlier upload it replaces once indexed
   created_at   timestamptz not null default now(),
   unique (id, user_id),
   foreign key (employer_id, user_id) references app.employers(id, user_id) on delete cascade,
   foreign key (work_log_id, user_id) references app.work_logs(id, user_id) on delete cascade
+);
+
+-- Engineering context (0016): a company document's text as sections. The text, its heading
+-- path and the file's name are sealed; the database reads only the vector.
+create table app.knowledge_chunks (
+  id              uuid primary key,
+  user_id         uuid not null references app.users(id) on delete cascade,
+  employer_id     uuid not null,
+  document_id     uuid not null,
+  ord             int  not null,
+  body_enc        bytea not null,                -- sealed JSON: {"doc", "path", "text"}
+  key_version     int  not null,
+  embedding       vector(1024),
+  embedding_model text,
+  created_at      timestamptz not null default now(),
+  unique (document_id, ord),
+  foreign key (employer_id, user_id) references app.employers(id, user_id) on delete cascade,
+  foreign key (document_id, user_id)
+    references app.company_documents(id, user_id) on delete cascade
 );
 
 -- Workplace memory belongs to one employer, career memory to none; new kinds decision,
@@ -1113,6 +1171,8 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `pack:{uid}:index` | hash | None, fields replaced | Worker | `interview:{interview_id}`, `job:{application_id}` or `mode:{mode}` to the `pack_id` the gateway loads at session start (interview first, then the application's newest pack; only if built from the application's paired resume version; `mode:` only for a session for no application); `employer:{employer_id}:{mode}` to a company's standup or meeting pack, which a session at that company loads instead (never the mode's: it would hold no company or another's). A pack the gateway makes for one session (rendered at start, or with the meeting's agenda) is stored under its own `pack_id` for the session state's 2 hours, outside the index |
 | `qa:{uid}:{qhash}` | string (JSON) | 7 days | Gateway | Answer for an exact repeat of a normalized question of 4 words or more (a shorter one means something new each time) |
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
+| `kb:{uid}:{employer_id}` | string (JSON) | 30 days, rewritten when the sections change | Worker | A company's document sections opened for live calls (file name, heading path, text); the gateway searches them by keyword in memory. Deleted with the company |
+| `kbask:{uid}:{ask_id}` | string (JSON) | 10 min | Worker | The result of one "test a question" |
 
 The semantic cache is not a separate store: each session pack carries prepared answers with embeddings, and the gateway compares the live question against those 30 or so vectors in memory. Exact repeats hit `qa:{uid}:{qhash}`. Nothing is shared between users.
 
@@ -1202,7 +1262,10 @@ One standard queue `jobs` with fair queues: `MessageGroupId` is the user id (or 
 | `user.delete` | API | none | 30 min | `user.delete:{uid}` |
 | `sessions.sweep` | Scheduler every 5 minutes | none | 2 min | `sessions.sweep:{slot}` |
 | `worklog.extract` | API (a work log saved, an attachment added or removed) | work_log_id, content_sha256 | 15 min | `worklog.extract:{uid}:{log_id}:{content_sha256}` |
-| `company_doc.extract` | API (a company document uploaded) | document_id | 15 min | `company_doc.extract:{uid}:{document_id}:{sha256}` |
+| `knowledge.index` | API (a company document uploaded), scheduler (hourly: documents with no index of their content, failed ones for a week) | document_id | 15 min | `knowledge.index:{uid}:{document_id}:{sha256}` |
+| `knowledge.publish` | Worker (after indexing), API (a document deleted; the start screen picked a company whose live copy expired), gateway (no live copy at session start) | employer_id | 5 min | `knowledge.publish:{uid}:{employer_id}:{sections_version}` |
+| `knowledge.ask` | API ("test a question") | employer_id, ask_id, question, mode | 2 min | `knowledge.ask:{uid}:{ask_id}` |
+| `company_doc.extract` | An API from before engineering context | document_id | 15 min | Runs `knowledge.index` |
 | `workplace.refresh` | Worker (after extraction, post-call commitments), API (approvals, edits) | employer_id | 10 min | `workplace.refresh:{uid}:{employer_id}:{memory_version}` |
 | `pack.build` (company) | API (the start screen picked the company), worker (refresh), scheduler (standup time), gateway (it rendered one itself) | mode, context `employer:{id}`, day | 10 min | `pack.build:{uid}:employer:{id}:{mode}:{memory_version}:{day}:{embedding}` |
 | `employer.purge` | API (delete all data for a company) | employer_id | 30 min | `employer.purge:{employer_id}` |
@@ -1517,6 +1580,17 @@ speak from, in the shape given for the question type, not sentences to read out.
 
 **At work.** In a standup or meeting at a company the system block gets a paragraph more (only then, so interview prompts stay byte-identical): facts about the user's work there (tasks, tickets, decisions, commitments, the company's systems, people and terms) follow the rule for personal facts: only from `<session_pack>` or `<memory>`, cited, never invented, and when entries on one item have different dates the newest is its status. The interview rule on questions about the company, pay or culture does not apply. A standup gives the user's update from the standup section; a meeting is technical and open, not a status report: the company's systems, stack and decisions where they apply, general knowledge for the rest. The technical, system design, standup and "other" deep shapes have work versions (`prompts.WORKPLACE_SHAPES`).
 
+**Work types.** At work the detector may give four more types, each with its own detailed-answer shape, because a standup's status shape is wrong for all of them (in the analysed standups an architecture question was typed `standup_status`, and "tell me about it" got a pull request's contents). They are the gateway's own, like `follow`: on the wire each goes out as a protocol type every app knows, and `questions.type` keeps the real one.
+
+| Type | When | Shape | Sent as |
+| --- | --- | --- | --- |
+| decision | Why something was chosen, whether it was on purpose, what was agreed | What was chosen; why; what was rejected and why not; the tradeoff. A part no entry states is left out. 3 or 4 lines, under 60 words | technical |
+| how_it_works | How a part, flow or calculation of the team's system works, where something lives, what it is called | Three short steps in order with the company's own names, then one limit an entry states; a single fact asked for is one line. Under 70 words | technical |
+| status_follow_up | A follow-up on one item of the user's work | That item only, from its newest entry: where it stands, what is left, when. Under 40 words | standup_status |
+| estimate_risk | How long, how hard, whether it is doable, what could go wrong, whether the plan changes | A size or date only if an entry has one; otherwise what it depends on, the main risk an entry states, and when the user will come back with a number. Under 50 words | other |
+
+A problem, a limit or a cost raised about the user's own work needs a reply even when it is said as a statement and nothing is asked: two such turns got no card in November. The standup and meeting styles never name the interview's suggestion marker: named, the model put it on cited facts.
+
 **Named tools and missing details, measured.** In the 2026-10-28 interview a question on the user's experience with the HubSpot API, which the resume names, got "my concrete experience is CRM-oriented REST APIs" and "I'd approach HubSpot through its documentation": grounded, but it undersold the user and named nothing specific; asked where the user lives, both passes wrote "[your city, state]". On a fictional profile shaped like that call (live, gpt-6-luna and gpt-6.1-sol, old prompts and digest against new): the new fast pass led with the resume's HubSpot workflow and webhook line, cited, then CRM objects, associations, private-app tokens and OAuth scopes, rate limits and webhook signatures; the deep pass added v3 objects, batch upserts, 429 backoff and idempotent webhook handling. The old pair named HubSpot only as something to approach. Location: no placeholder in 3 of 3 new answers (old: 4 of 4 had one). Pay: neither new answer said the band suits the user (old: 1 of 2 did). The detector typed the motivation, HubSpot and location questions `other`, `technical` and `other` 3 of 3 each.
 
 **Company workspaces, measured.** `copilot-company-eval` (evals/README.md) answers 8 standup and 12 meeting questions for the benchmark candidate at a fictional employer, from two weeks of work logs and three documents run through the real extraction, and grades each answer against the company's own material. Before (the career digest only, as before company workspaces) and after (company packs and live search), 2 answers per question and pass, October 2026, gpt-6-luna and gpt-6.1-sol: answers with no invented facts went from 31% to 94% (fast) and 25% to 100% (deep) on standups, 83% to 100% in meetings; completeness from 1.1 to 3.6 and 4.0 of 5 on standups, 2.0 to 3.5 and 3.8 in meetings, with correctness 4.9 to 5.0 and "sounds spoken" 4.6 to 5.0 (3.5 to 4.9 before). Two misses in the first after-run changed the code: an outdated ticket status (newest entry per ticket in search) and a document's owner dropped by extraction (summaries say who owns a system). Latency is not measured yet: the benchmark on the Stage 0 VM (`copilot-bench run --company`, which reports the memory stages, and the interview script interleaved with main) stopped when the OpenAI account ran out of credits; until it runs, the 30 ms and 150 ms waits are the design bounds, and the full-text query is a local Postgres call over one company's few hundred nodes.
@@ -1602,7 +1676,8 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `DELETE /employers/{id}?confirm=<name>` | Delete all data for this company (the name must match; 409 while a call there is live); enqueues `employer.purge` |
 | `GET /employers/{id}/logs?before=`, `GET`, `PUT`, `DELETE /employers/{id}/logs/{day}` | The work log: one entry per day; `PUT` seals the text and enqueues `worklog.extract` when it changed; each entry lists its attachments and the facts that came from it |
 | `POST /employers/{id}/logs/{day}/attachments` | A file for that day's log, as the raw body (`Content-Type`, `X-File-Name`); sealed before it is stored; the log is extracted again |
-| `GET`, `POST /employers/{id}/documents`; `DELETE .../documents/{doc}` | Company material: uploaded through the API (at most 10 MB) so it is sealed before storage; enqueues `company_doc.extract`; lists pending and approved proposals per document |
+| `GET`, `POST /employers/{id}/documents`; `GET`, `DELETE .../documents/{doc}` | Engineering context: a Markdown or text file uploaded through the API (at most 10 MB) so it is sealed before storage; enqueues `knowledge.index`; a file of an earlier one's name replaces it once indexed. The list gives each file's status, sections, facts and error; `GET` one gives its sections' headings and its facts; `DELETE` removes the file, its sections and its facts the user did not edit |
+| `POST /employers/{id}/knowledge/ask`; `GET .../knowledge/ask/{ask_id}` | Test a question: enqueues `knowledge.ask` (202), then `pending`, `done` (type, answer, sources) or `failed` |
 | `GET /employers/{id}/memory?kind=`; `PATCH`, `DELETE /memory/{id}` | A company's facts; edit (marked `edited`, kept by re-extraction) or archive |
 | `GET /proposals?employer_id=`; `POST /proposals/{id}/approve` (optional edited title or summary), `/reject`; `POST /proposals/bulk` (`ids`, or every pending proposal of a `company_document_id`) | One-tap approval of document facts, one by one or per document |
 | `GET /employers/{id}/packs`; `POST /employers/{id}/packs/{mode}` | A company's standup and meeting packs: `ready`, `stale`, `none`; `POST` (the start screen picked the company) enqueues a build unless the pack is current |
@@ -1637,7 +1712,7 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
 - **Long calls:** a helper extends the message's visibility timeout every minute while an Opus call runs.
 - **Model calls:** workers use the same router as the gateway: Sonnet for session packs, summaries and feedback; Opus only for memory extraction; Flex first, then Standard. The digest needs no model.
 - **Account deletion:** `user.delete` removes the Cognito user with `AdminDeleteUser` first, so no new session can start, then the S3 prefix, Valkey keys, data keys and rows.
-- **Company workspaces:** `copilot_worker.workplace` runs `worklog.extract`, `company_doc.extract`, `workplace.refresh` (node vectors from the configured embedder, then both packs) and `employer.purge`; `pack.build` for an `employer:` context renders the pack with `copilot_core.workplace`, the same code the gateway renders with. At a user's standup time the scheduler also builds each current company's standup pack.
+- **Company workspaces:** `copilot_worker.workplace` runs `worklog.extract`, `workplace.refresh` (node vectors from the configured embedder, then both packs) and `employer.purge`; `pack.build` for an `employer:` context renders the pack with `copilot_core.workplace`, the same code the gateway renders with. At a user's standup time the scheduler also builds each current company's standup pack. `copilot_worker.knowledge` runs `knowledge.index`, `knowledge.publish` and `knowledge.ask` ([Engineering context](#engineering-context)).
 - **Resume versions:** `copilot_worker.documents` runs `resume.extract` (one version's content into its nodes) and `memory.extract` (JDs); `digest.rebuild` renders each version's digest and sends the builds of the applications paired with it whose pack is not current; `pack.build` for an application reads its pairing (`copilot_core.resumes`). `user.delete` also revokes the Career-OS link.
 - **Not built yet:** `tools.sync` comes with phase 3; memory proposals from interview post-call work come with phase 2.
 

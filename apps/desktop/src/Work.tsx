@@ -1,11 +1,12 @@
 // Work: the companies the user works at (apart from the jobs they apply to), and per company a
-// daily work log, its material (documents whose facts wait for approval) and its facts.
+// daily work log, its engineering context (documents kept as searchable sections and facts,
+// with a box to test a question against them) and its facts.
 // Standup and meeting calls answer from these (the Call screen picks the company).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, rest, type CompanyDocument, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
-import { ACCEPT, plural, useOnShow, when } from "./shared";
+import { api, rest, type AskResult, type CompanyDocument, type DocumentDetail, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
+import { ACCEPT, TEXT_ACCEPT, plural, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
-import { KIND_LABELS, byKind, itemLine, localDay } from "./workday";
+import { KIND_LABELS, QUESTION_TYPE_LABELS, byKind, itemDetails, itemLine, localDay } from "./workday";
 import {
   Badge,
   Banner,
@@ -24,6 +25,7 @@ import {
   PageHeader,
   Select,
   SkeletonList,
+  Spinner,
   Tabs,
   Textarea,
   required,
@@ -130,7 +132,7 @@ export function Work({ active = true }: { active?: boolean }) {
             </Button>
           }
         >
-          Standups and meetings answer from your work log and the company's material.
+          Standups and meetings answer from your work log and the company's engineering documents.
         </EmptyState>
       ) : (
         <>
@@ -156,7 +158,7 @@ export function Work({ active = true }: { active?: boolean }) {
               onChange={setTab}
               items={[
                 { value: "log", label: "Log", content: <LogTab employer={employer} /> },
-                { value: "material", label: "Material", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
+                { value: "material", label: "Engineering context", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
                 { value: "facts", label: "Facts", content: <FactsTab employer={employer} /> },
               ]}
             />
@@ -485,6 +487,7 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
   const [busy, setBusy] = useState(false);
   const [writing, setWriting] = useState(false);
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
+  const [detail, setDetail] = useState<CompanyDocument | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
@@ -508,7 +511,7 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
     try {
       await api.uploadCompanyFile(`/employers/${employer.id}/documents`, f);
       await load();
-      toast({ tone: "success", text: `Uploaded ${f.name}. Its facts appear here to review once read.` });
+      toast({ tone: "success", text: `Uploaded ${f.name}. It is being read; answers can use it in a minute.` });
       return true;
     } catch (e) {
       toast({ tone: "error", text: `${f.name}: ${e}` });
@@ -534,20 +537,26 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
         <input
           ref={file}
           type="file"
-          accept={ACCEPT}
+          accept={TEXT_ACCEPT}
+          multiple
           hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
+          onChange={async (e) => {
+            const files = Array.from(e.target.files ?? []);
             e.target.value = "";
-            if (f) upload(f);
+            // One at a time: each is sealed and stored before the next starts.
+            for (const f of files) await upload(f);
           }}
         />
         <Button onClick={() => file.current?.click()} loading={busy}>
-          Upload a file…
+          Upload files…
         </Button>
         <Button onClick={() => setWriting(true)}>Write or paste text…</Button>
-        <span className="ui-field-hint">Architecture notes, wiki pages, meeting notes, specs: PDF, Markdown or text. You review its facts before they are kept.</span>
+        <span className="ui-field-hint">
+          Architecture and design documents, decision records, READMEs, diagrams as text, notes: Markdown or text, several at once. A file with the name of an earlier one replaces it.
+        </span>
       </div>
+
+      <TestQuestion employer={employer} ready={(docs ?? []).some((d) => (d.sections ?? 0) > 0)} />
 
       {pendingDocs.length > 0 && (
         <section className="ui-section" aria-labelledby="review-title">
@@ -599,7 +608,7 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
         <h2 className="ui-section-title" id="docs-title">
           Documents
         </h2>
-        <ListState items={docs} error={error} onRetry={load} loadingLabel="documents" empty={<EmptyState title="No documents yet">Upload or paste the company's notes, so meetings can answer from them.</EmptyState>}>
+        <ListState items={docs} error={error} onRetry={load} loadingLabel="documents" empty={<EmptyState title="No documents yet">Upload or paste the company's engineering documents, so standups and meetings can answer how things work and why.</EmptyState>}>
           {(list) => (
             <List label="Documents">
               {list.map((d) => (
@@ -607,14 +616,18 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
                   key={d.id}
                   title={d.name}
                   fullTitle={d.name}
-                  meta={d.created_at ? when(d.created_at) : undefined}
+                  meta={documentMeta(d)}
                   trailing={
                     d.status === "ingesting" ? (
                       <Badge tone="warning">Reading</Badge>
                     ) : d.status === "failed" ? (
                       <Badge tone="danger">Could not read it</Badge>
+                    ) : (d.sections ?? 0) === 0 ? (
+                      <Badge tone="neutral">Waiting to be read</Badge>
                     ) : (
-                      <Badge tone="success">{plural(d.approved_proposals ?? 0, "fact")} kept</Badge>
+                      <Badge tone="success">
+                        {plural(d.sections ?? 0, "section")}, {plural(d.facts ?? 0, "fact")}
+                      </Badge>
                     )
                   }
                   actions={
@@ -622,13 +635,14 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
                       label={`Actions for ${d.name}`}
                       trigger="⋯"
                       items={[
+                        { label: "What it gave…", onSelect: () => setDetail(d) },
                         {
                           label: "Delete…",
                           danger: true,
                           onSelect: () =>
                             setConfirm({
                               title: `Delete ${d.name}?`,
-                              body: "The document and the facts kept from it are deleted.",
+                              body: "The document, its sections and the facts taken from it are deleted. Facts you edited stay.",
                               label: "Delete document",
                               run: () => decide(() => rest.deleteCompanyDocument(employer.id, d.id)),
                             }),
@@ -644,10 +658,175 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
       </section>
 
       <WriteText open={writing} onOpenChange={setWriting} upload={upload} />
+      <DocumentGave employer={employer} document={detail} onClose={() => setDetail(null)} />
       <ConfirmDialog open={confirm !== null} onOpenChange={(o) => !o && setConfirm(null)} title={confirm?.title ?? ""} confirmLabel={confirm?.label ?? "OK"} onConfirm={() => confirm?.run()}>
         {confirm?.body}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/// A file's second line: when it came, what it replaces, and why it could not be read.
+function documentMeta(d: CompanyDocument): string | undefined {
+  const parts = [d.created_at ? when(d.created_at) : "", d.replaces ? "replaces the earlier upload once read" : "", d.status === "failed" || d.error ? (d.error ?? "") : ""];
+  return parts.filter(Boolean).join(" · ") || undefined;
+}
+
+/// What one file gave: the headings of its sections and the facts taken from it, each with
+/// what its kind carries (a decision's reason and what was rejected, a flow's steps).
+function DocumentGave({ employer, document, onClose }: { employer: Employer; document: CompanyDocument | null; onClose: () => void }) {
+  const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const id = document?.id;
+  useEffect(() => {
+    setDetail(null);
+    setError(null);
+    if (!id) return;
+    let live = true;
+    rest
+      .companyDocument(employer.id, id)
+      .then((d) => live && setDetail(d))
+      .catch((e) => live && setError(String(e)));
+    return () => {
+      live = false;
+    };
+  }, [employer.id, id]);
+  return (
+    <Dialog
+      open={document !== null}
+      onOpenChange={(o) => !o && onClose()}
+      size="lg"
+      title={document ? `What ${document.name} gave` : ""}
+      footer={
+        <Button variant="primary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      {error && <Banner tone="danger">{error}</Banner>}
+      {!detail && !error && <Spinner label="Loading what the file gave" />}
+      {detail && (
+        <div className="ui-stack doc-gave">
+          {detail.error && <Banner tone="warning">{detail.error}</Banner>}
+          <section aria-label="Sections">
+            <h3 className="ui-section-title">Sections searched during a call ({detail.sections})</h3>
+            {detail.headings.length === 0 ? (
+              <p className="ui-text-2">{detail.sections > 0 ? "The file has no headings; it is cut by paragraphs." : "None yet."}</p>
+            ) : (
+              <ul className="doc-headings">
+                {detail.headings.map((h) => (
+                  <li key={h}>{h}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+          {detail.facts.length === 0 && <p className="ui-text-2">No facts yet. They appear once the file is read.</p>}
+          {byKind(detail.facts).map(([kind, list]) => (
+            <section key={kind} aria-label={KIND_LABELS[kind]}>
+              <h3 className="ui-section-title">
+                {KIND_LABELS[kind]} ({list.length})
+              </h3>
+              <ul className="doc-facts">
+                {list.map((item) => (
+                  <li key={item.id}>
+                    <span>{itemLine(item)}</span>
+                    {itemDetails(item).map((line) => (
+                      <span key={line} className="ui-text-2">
+                        {line}
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <p className="ui-field-hint">Edit or remove a fact under Facts.</p>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+const ASK_POLL_MS = 1000;
+const ASK_TRIES = 90;
+
+/// "Test a question": ask what a teammate might, and see the answer a standup would show,
+/// the type it gets and where each fact came from. A worker answers; the box polls for it.
+function TestQuestion({ employer, ready }: { employer: Employer; ready: boolean }) {
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [result, setResult] = useState<AskResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = useRef(0);
+  useEffect(() => () => void (run.current += 1), []);
+
+  const ask = async () => {
+    const text = question.trim();
+    if (text.length < 3 || asking) return;
+    const mine = (run.current += 1);
+    setAsking(true);
+    setResult(null);
+    setError(null);
+    try {
+      const started = await rest.askKnowledge(employer.id, text);
+      for (let n = 0; n < ASK_TRIES && run.current === mine; n += 1) {
+        await new Promise((r) => setTimeout(r, ASK_POLL_MS));
+        const got = await rest.askedKnowledge(employer.id, started.ask_id);
+        if (got.status === "pending") continue;
+        if (run.current === mine) setResult(got);
+        return;
+      }
+      if (run.current === mine) setError("No answer yet. The server may be busy; try again.");
+    } catch (e) {
+      if (run.current === mine) setError(String(e));
+    } finally {
+      if (run.current === mine) setAsking(false);
+    }
+  };
+
+  return (
+    <section className="ui-section" aria-labelledby="ask-title">
+      <h2 className="ui-section-title" id="ask-title">
+        Test a question
+      </h2>
+      <form
+        className="ask-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          ask();
+        }}
+      >
+        <Input aria-label="A question a teammate might ask" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Why did we choose the queue over a state machine?" maxLength={500} />
+        <Button type="submit" variant="primary" loading={asking} disabled={question.trim().length < 3}>
+          Ask
+        </Button>
+      </form>
+      {!ready && !result && !asking && <p className="ui-field-hint">Upload a document first; the answer comes from what it holds and from your work log.</p>}
+      {asking && <Spinner size="sm" label="Answering as a standup would" />}
+      {error && <Banner tone="danger">{error}</Banner>}
+      {result?.status === "failed" && <Banner tone="danger">{result.error ?? "The question could not be answered."}</Banner>}
+      {result?.status === "done" && (
+        <div className="ask-result" aria-label="Answer">
+          <Badge tone="neutral" icon={false}>
+            {QUESTION_TYPE_LABELS[result.type ?? ""] ?? result.type}
+          </Badge>
+          <p className="ask-answer">{result.answer}</p>
+          <h3 className="ui-section-title">Sources</h3>
+          {(result.sources ?? []).length === 0 ? (
+            <p className="ui-text-2">None cited: the answer is general knowledge, or says what it will confirm.</p>
+          ) : (
+            <ul className="doc-headings">
+              {(result.sources ?? []).map((s) => (
+                <li key={`${s.kind}:${s.label}`}>
+                  {s.kind === "section" ? "Document: " : "Fact: "}
+                  {s.label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

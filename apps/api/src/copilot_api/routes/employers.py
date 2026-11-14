@@ -5,10 +5,12 @@
   meeting sessions) and enqueues `employer.purge` for its files and packs.
 - Work logs: one entry per company and day. Saving one seals its text with the user's data
   key and enqueues `worklog.extract`; its attachments are sealed files under the company.
-- Company documents: uploaded through the API (not a presigned URL) so the file is sealed
-  before it is stored; `company_doc.extract` turns it into proposals.
-- Memory and proposals: the company's facts, to view, edit and archive; proposals from
-  documents, approved or rejected one by one or per document.
+- Company documents (engineering context): uploaded through the API (not a presigned URL)
+  so the file is sealed before it is stored; `knowledge.index` turns it into searchable
+  sections and facts, kept at once. A file of the same name replaces the earlier upload
+  once it is indexed. "Test a question" answers one question as a standup would.
+- Memory and proposals: the company's facts, to view, edit and archive; proposals left from
+  before engineering context, approved or rejected one by one or per document.
 - Packs: picking a company on the start screen asks for its standup or meeting pack, built
   only when the company's memory changed since the last one.
 """
@@ -24,7 +26,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import Services, SvcDep, UserDep
-from copilot_core import jobs, keys
+from copilot_core import jobs, keys, knowledge
 from copilot_core.auth import Principal
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
@@ -36,6 +38,9 @@ from copilot_core.workplace import WORKPLACE_KINDS, local_today, memory_version
 router = APIRouter()
 
 CONTENT_TYPES = ("application/pdf", "text/plain", "text/markdown")
+# Engineering context reads text only for now; a work log's attachment may still be a PDF.
+KNOWLEDGE_TYPES = ("text/plain", "text/markdown")
+MAX_QUESTION_CHARS = 500
 MAX_LOG_CHARS = 50_000
 MAX_ATTACHMENTS = 10
 
@@ -75,6 +80,12 @@ class ProposalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=300)
     summary: str | None = Field(default=None, min_length=1, max_length=1000)
+
+
+class AskIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=3, max_length=MAX_QUESTION_CHARS)
+    mode: Literal["standup", "meeting"] = "standup"
 
 
 class BulkDecision(BaseModel):
@@ -592,11 +603,12 @@ async def list_documents(employer_id: UUID, svc: SvcDep, user: UserDep) -> dict[
         await _require_employer(conn, employer_id)
         rows = await conn.fetch(
             "select d.id, d.name_enc, d.key_version, d.content_type, d.size_bytes, d.status,"
-            " d.created_at,"
+            " d.created_at, d.chunk_count, d.error, d.replaces,"
             " (select count(*) from app.memory_proposals p where p.company_document_id = d.id"
             "  and p.status = 'pending') as pending,"
-            " (select count(*) from app.memory_proposals p where p.company_document_id = d.id"
-            "  and p.status = 'approved') as approved"
+            " (select count(*) from app.memory_nodes n where n.employer_id = d.employer_id"
+            "  and n.status = 'active' and n.source->>'type' = 'company_document'"
+            "  and n.source->>'ref' = d.id::text) as facts"
             " from app.company_documents d where d.employer_id = $1 and d.work_log_id is null"
             " order by d.id desc",
             employer_id,
@@ -609,12 +621,66 @@ async def list_documents(employer_id: UUID, svc: SvcDep, user: UserDep) -> dict[
                 "size_bytes": r["size_bytes"],
                 "status": r["status"],
                 "created_at": _iso(r["created_at"]),
+                "sections": r["chunk_count"],
+                "facts": r["facts"],
+                "error": r["error"],
+                "replaces": str(r["replaces"]) if r["replaces"] else None,
                 "pending_proposals": r["pending"],
-                "approved_proposals": r["approved"],
+                # Apps from before engineering context list a document for a call only
+                # when this is above zero: its facts are what they meant.
+                "approved_proposals": r["facts"],
             }
             for r in rows
         ]
     return {"documents": out}
+
+
+@router.get("/employers/{employer_id}/documents/{document_id}")
+async def get_document(
+    employer_id: UUID, document_id: UUID, svc: SvcDep, user: UserDep
+) -> dict[str, Any]:
+    """What one file gave: its sections' headings and the facts extracted from it."""
+    async with svc.tx(user) as conn:
+        await _require_employer(conn, employer_id)
+        doc = await conn.fetchrow(
+            "select id, name_enc, key_version, status, error, chunk_count"
+            " from app.company_documents where id = $1 and employer_id = $2"
+            " and work_log_id is null",
+            document_id,
+            employer_id,
+        )
+        if doc is None:
+            raise HTTPException(404, "no such document")
+        name = await _doc_name(svc, conn, user, doc)
+        headings: list[str] = []
+        for r in await conn.fetch(
+            "select id, body_enc, key_version from app.knowledge_chunks"
+            " where document_id = $1 order by ord",
+            document_id,
+        ):
+            raw = await svc.crypto.decrypt(
+                conn, user.user_id, "knowledge_chunks", str(r["id"]), r["body_enc"],
+                r["key_version"],
+            )  # fmt: skip
+            path = str(json.loads(raw).get("path") or "")
+            if path and (not headings or headings[-1] != path):
+                headings.append(path)
+        facts = await conn.fetch(
+            f"select {NODE_COLUMNS} from app.memory_nodes where employer_id = $1"
+            " and status = 'active' and source->>'type' = 'company_document'"
+            " and source->>'ref' = $2 order by kind, title",
+            employer_id,
+            str(document_id),
+        )
+    return {
+        "id": str(document_id),
+        "name": name,
+        "status": doc["status"],
+        "error": doc["error"],
+        "sections": doc["chunk_count"],
+        "headings": headings,
+        "facts": [_node(r) for r in facts],
+    }
 
 
 @router.post("/employers/{employer_id}/documents", status_code=201)
@@ -626,25 +692,68 @@ async def upload_document(
     content_type: Annotated[str | None, Header()] = None,
     x_file_name: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
-    """Upload company material; the raw file is the body. Its facts come back as proposals."""
+    """Upload a document of the company's engineering context; the raw file is the body.
+    It is indexed at once (`knowledge.index`). A file with the name of an earlier upload
+    replaces it: the earlier one goes when this one is indexed, so answers never lose it in
+    between."""
     upload, kind, name = await _read_upload(request, svc, content_type, x_file_name)
+    if kind not in KNOWLEDGE_TYPES:
+        raise HTTPException(415, "Markdown and text files only for now (.md, .txt)")
     async with svc.tx(user) as conn:
         await _require_employer(conn, employer_id)
+        older = await _same_name(svc, conn, user, employer_id, name)
         doc = await _store_document(svc, conn, user, employer_id, upload, kind, name, None)
+        if older is not None:
+            await conn.execute(
+                "update app.company_documents set replaces = $2 where id = $1",
+                UUID(doc["id"]),
+                older,
+            )
     sha = doc.pop("sha256")
-    await svc.enqueue(
-        "company_doc.extract", f"company_doc.extract:{user.user_id}:{doc['id']}:{sha}",
-        user.user_id, {"document_id": doc["id"]},
-    )  # fmt: skip
-    return {**doc, "pending_proposals": 0, "approved_proposals": 0}
+    await svc.queue.send(jobs.knowledge_index(user.user_id, UUID(doc["id"]), sha))
+    return {
+        **doc,
+        "sections": 0,
+        "facts": 0,
+        "error": None,
+        "replaces": str(older) if older else None,
+        "pending_proposals": 0,
+        "approved_proposals": 0,
+    }
+
+
+async def _same_name(
+    svc: Services, conn: Conn, user: Principal, employer_id: UUID, name: str
+) -> UUID | None:
+    """The newest earlier upload with this file name (names are sealed, so they are opened
+    and compared here), ignoring case and spaces around it."""
+    wanted = " ".join(name.lower().split())
+    rows = await conn.fetch(
+        "select id, name_enc, key_version from app.company_documents"
+        " where employer_id = $1 and work_log_id is null order by id desc",
+        employer_id,
+    )
+    for r in rows:
+        if " ".join((await _doc_name(svc, conn, user, r)).lower().split()) == wanted:
+            return r["id"]
+    return None
+
+
+async def _publish(svc: Services, conn: Conn, user: Principal, employer_id: UUID) -> None:
+    """The company's sections changed: open the new set for live calls."""
+    rows = await conn.fetch(
+        "select id from app.knowledge_chunks where employer_id = $1", employer_id
+    )
+    version = knowledge.live_version(r["id"] for r in rows)
+    await svc.queue.send(jobs.knowledge_publish(user.user_id, employer_id, version))
 
 
 @router.delete("/employers/{employer_id}/documents/{document_id}", status_code=204)
 async def delete_document(
     employer_id: UUID, document_id: UUID, svc: SvcDep, user: UserDep
 ) -> Response:
-    """Delete a document or an attachment. Facts already approved from a document stay; an
-    attachment's log is extracted again without it."""
+    """Delete a document or an attachment. A document's sections go with it, and so do its
+    facts, except those the user edited; an attachment's log is extracted again without it."""
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
             "delete from app.company_documents where id = $1 and employer_id = $2"
@@ -656,6 +765,16 @@ async def delete_document(
             raise HTTPException(404, "no such document")
         log_id = row["work_log_id"]
         sha = None
+        if log_id is None:
+            await conn.execute(
+                "delete from app.memory_nodes where employer_id = $1"
+                " and source->>'type' = 'company_document' and source->>'ref' = $2"
+                " and coalesce(body->>'edited', '') <> 'true'",
+                employer_id,
+                str(document_id),
+            )
+            await _refresh(svc, conn, user, employer_id)
+            await _publish(svc, conn, user, employer_id)
         if log_id is not None:
             log_row = await conn.fetchrow(
                 "select text_enc, key_version from app.work_logs where id = $1", log_id
@@ -963,7 +1082,15 @@ async def ensure_pack(
         version = await memory_version(conn, user.user_id, employer_id)
         settings = _body(await conn.fetchval("select settings from app.users where id = $1",
                                              user.user_id))  # fmt: skip
+        sections = await conn.fetch(
+            "select id from app.knowledge_chunks where employer_id = $1", employer_id
+        )
     today = local_today(settings).isoformat()
+    if sections and not await svc.valkey.exists(keys.knowledge(user.user_id, employer_id)):
+        # The live copy of the company's sections expired: open it again before the call.
+        live = knowledge.live_version(r["id"] for r in sections)
+        stamp = datetime.now(UTC).strftime("%Y%m%d%H%M")
+        await svc.queue.send(jobs.knowledge_publish(user.user_id, employer_id, live, stamp))
     state = await _pack_state(svc, user, employer_id, mode, version)
     if state["status"] == "ready" and (mode != "standup" or state.get("day") == today):
         return state
@@ -973,3 +1100,35 @@ async def ensure_pack(
         )
     )
     return {**state, "status": "building"}
+
+
+# --- engineering context: test a question --------------------------------------------------
+
+
+@router.post("/employers/{employer_id}/knowledge/ask", status_code=202)
+async def ask_knowledge(
+    employer_id: UUID, body: AskIn, svc: SvcDep, user: UserDep
+) -> dict[str, Any]:
+    """Ask one question as a standup or meeting would be asked it. A worker answers from
+    the company's digest, facts and document sections; fetch the result with the id."""
+    async with svc.tx(user) as conn:
+        await _require_employer(conn, employer_id)
+    ask_id = uuid7()
+    await svc.queue.send(
+        jobs.knowledge_ask(user.user_id, employer_id, ask_id, body.question.strip(), body.mode)
+    )
+    return {"ask_id": str(ask_id), "status": "pending"}
+
+
+@router.get("/employers/{employer_id}/knowledge/ask/{ask_id}")
+async def asked_knowledge(
+    employer_id: UUID, ask_id: UUID, svc: SvcDep, user: UserDep
+) -> dict[str, Any]:
+    """`pending` until the worker has answered (a few seconds), then `done` with the type,
+    the answer and its sources, or `failed`. Kept ten minutes."""
+    async with svc.tx(user) as conn:
+        await _require_employer(conn, employer_id)
+    raw = await svc.valkey.get(keys.knowledge_ask(user.user_id, ask_id))
+    if raw is None:
+        return {"ask_id": str(ask_id), "status": "pending"}
+    return {"ask_id": str(ask_id), **_body(text(raw))}

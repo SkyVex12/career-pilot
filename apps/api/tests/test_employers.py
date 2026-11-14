@@ -10,6 +10,7 @@ import pytest
 
 from copilot_api.testing import Api
 from copilot_core import keys
+from copilot_core.auth import Principal
 from copilot_core.ids import uuid7
 from copilot_core.storage import employer_prefix
 
@@ -171,16 +172,19 @@ async def test_attachments_are_sealed_and_change_the_logs_content(api: Api) -> N
     assert bad.status_code == 415
 
 
-async def test_company_documents_go_to_extraction_and_stay_with_their_company(api: Api) -> None:
+async def test_company_documents_are_indexed_and_stay_with_their_company(api: Api) -> None:
     uid, h = api.user()
     eid = await company(api, h)
     other = await company(api, h, "Old Corp")
     r = await upload(api, h, f"/v1/employers/{eid}/documents", b"# Dispatch\nGo on ECS.", "arch.md")
     assert r.status_code == 201, r.text
     doc = r.json()
-    [job] = api.take("company_doc.extract")
+    assert (doc["status"], doc["sections"], doc["facts"], doc["replaces"]) == (
+        "ingesting", 0, 0, None,
+    )  # fmt: skip
+    [job] = api.take("knowledge.index")
     assert job["payload"] == {"document_id": doc["id"]}
-    assert job["idempotency_key"].startswith(f"company_doc.extract:{uid}:{doc['id']}:")
+    assert job["idempotency_key"].startswith(f"knowledge.index:{uid}:{doc['id']}:")
     docs = (await api.client.get(f"/v1/employers/{eid}/documents", headers=h)).json()["documents"]
     assert [d["name"] for d in docs] == ["arch.md"]
     assert (await api.client.get(f"/v1/employers/{other}/documents", headers=h)).json() == {
@@ -190,6 +194,117 @@ async def test_company_documents_go_to_extraction_and_stay_with_their_company(ap
     r = await api.client.delete(f"/v1/employers/{other}/documents/{doc['id']}", headers=h)
     assert r.status_code == 404
     assert (await api.client.get(f"/v1/employers/{other}/logs/{DAY}", headers=h)).status_code == 404
+    # Engineering context reads text for now: a PDF is refused here, not stored and failed.
+    pdf = await api.client.post(
+        f"/v1/employers/{eid}/documents",
+        headers={**h, "content-type": "application/pdf", "x-file-name": "a.pdf"},
+        content=b"%PDF-1.7",
+    )
+    assert pdf.status_code == 415
+    assert "Markdown and text" in pdf.json()["detail"]
+
+
+def drain(api: Api) -> list[dict[str, Any]]:
+    """Every job enqueued so far, removed from the queue."""
+    out = list(api.jobs.sent)
+    api.jobs.sent.clear()
+    return out
+
+
+async def _indexed(api: Api, uid: uuid.UUID, eid: str, doc: str, title: str) -> uuid.UUID:
+    """What knowledge.index leaves for a document: one sealed section and one fact."""
+    chunk = uuid7()
+    async with api.svc.tx(Principal(uid, "Alex", None)) as conn:
+        sealed, version = await api.svc.crypto.encrypt(
+            conn, uid, "knowledge_chunks", str(chunk),
+            json.dumps({"doc": "arch.md", "path": "Dispatch > Queue", "text": "SQS FIFO."}),
+        )  # fmt: skip
+    await api.admin.execute(
+        "insert into app.knowledge_chunks (id, user_id, employer_id, document_id, ord, body_enc,"
+        " key_version) values ($1, $2, $3, $4, 0, $5, $6)",
+        chunk, uid, uuid.UUID(eid), uuid.UUID(doc), sealed, version,
+    )  # fmt: skip
+    await api.admin.execute(
+        "update app.company_documents set status = 'ingested', chunk_count = 1 where id = $1",
+        uuid.UUID(doc),
+    )
+    return await _node(
+        api, uid, eid, "decision", title, source={"type": "company_document", "ref": doc},
+        body={"why": "Ordering per route"},
+    )  # fmt: skip
+
+
+async def test_a_file_shows_what_it_gave_and_takes_it_along_when_deleted(api: Api) -> None:
+    uid, h = api.user()
+    eid = await company(api, h)
+    path = f"/v1/employers/{eid}/documents"
+    doc = (await upload(api, h, path, b"# Dispatch\n## Queue\nSQS FIFO.", "arch.md")).json()
+    kept = await _indexed(api, uid, eid, doc["id"], "Keep SQS")
+    edited = await _node(
+        api, uid, eid, "term", "Linehaul",
+        source={"type": "company_document", "ref": doc["id"]}, body={"edited": True},
+    )  # fmt: skip
+    drain(api)
+    [listed] = (await api.client.get(path, headers=h)).json()["documents"]
+    assert (listed["status"], listed["sections"], listed["facts"]) == ("ingested", 1, 2)
+    assert listed["approved_proposals"] == 2  # what apps before engineering context read
+    detail = (await api.client.get(f"{path}/{doc['id']}", headers=h)).json()
+    assert detail["headings"] == ["Dispatch > Queue"]
+    assert {f["title"]: f["kind"] for f in detail["facts"]} == {
+        "Keep SQS": "decision", "Linehaul": "term",
+    }  # fmt: skip
+    assert detail["facts"][0]["body"]["why"] == "Ordering per route"
+    _, b = api.user("B")
+    assert (await api.client.get(f"{path}/{doc['id']}", headers=b)).status_code == 404
+
+    # A second upload of the same name is marked to replace the first once it is indexed.
+    again = (await upload(api, h, path, b"# Dispatch v2", " Arch.MD ")).json()
+    assert again["replaces"] == doc["id"]
+    drain(api)
+    # Deleting a file removes its sections and facts, except a fact the user edited, and
+    # asks for the packs and the live copy to be rebuilt.
+    assert (await api.client.delete(f"{path}/{doc['id']}", headers=h)).status_code == 204
+    left = await api.admin.fetch(
+        "select id from app.memory_nodes where employer_id = $1", uuid.UUID(eid)
+    )
+    assert [r["id"] for r in left] == [edited]
+    assert kept not in {r["id"] for r in left}
+    assert (
+        await api.admin.fetchval(
+            "select count(*) from app.knowledge_chunks where employer_id = $1", uuid.UUID(eid)
+        )
+        == 0
+    )
+    assert {j["type"] for j in drain(api)} == {"workplace.refresh", "knowledge.publish"}
+
+
+async def test_a_test_question_is_answered_by_a_worker_and_fetched(api: Api) -> None:
+    uid, h = api.user()
+    eid = await company(api, h)
+    path = f"/v1/employers/{eid}/knowledge/ask"
+    r = await api.client.post(path, headers=h, json={"question": "Why SQS for dispatch?"})
+    assert r.status_code == 202, r.text
+    ask = r.json()["ask_id"]
+    [job] = api.take("knowledge.ask")
+    assert job["payload"] == {
+        "employer_id": eid, "ask_id": ask, "question": "Why SQS for dispatch?",
+        "mode": "standup",
+    }  # fmt: skip
+    assert (await api.client.get(f"{path}/{ask}", headers=h)).json() == {
+        "ask_id": ask, "status": "pending",
+    }  # fmt: skip
+    result = {"status": "done", "type": "decision", "answer": "- Ordering per route",
+              "sources": [{"kind": "section", "label": "arch.md > Queue"}]}  # fmt: skip
+    await api.svc.valkey.set(keys.knowledge_ask(uid, ask), json.dumps(result), ex=60)
+    assert (await api.client.get(f"{path}/{ask}", headers=h)).json() == {"ask_id": ask, **result}
+    # Another user sees neither the company nor the answer.
+    _, b = api.user("B")
+    assert (await api.client.get(f"{path}/{ask}", headers=b)).status_code == 404
+    assert (await api.client.post(path, headers=h, json={"question": "x"})).status_code == 422
+    other = await api.client.post(
+        f"/v1/employers/{uuid7()}/knowledge/ask", headers=h, json={"question": "Why SQS?"}
+    )
+    assert other.status_code == 404
 
 
 async def _node(

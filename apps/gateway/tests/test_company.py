@@ -397,3 +397,87 @@ async def test_switching_from_meeting_to_standup_loads_the_standup_pack(env: Env
     fast = cap.of("fast")[-1]
     assert "## Standup on" in fast.system[2].text
     assert "a standup at Fernhill Logistics" in fast.system[0].text
+
+
+async def test_a_standup_answers_from_the_companys_documents(env: Env, db: Db) -> None:
+    """Engineering context: the company's digest is its own cached block, a question about
+    how something works is typed and shaped as one (and reaches the app as a type it knows),
+    and the answer gets the passage of the document that states the fact, cited by file and
+    section. Another company's sections never reach the prompt."""
+    from copilot_core.knowledge import LiveChunk, LiveIndex
+
+    documented = uuid7()
+    await db.admin.execute(
+        "insert into app.memory_nodes (id, user_id, employer_id, kind, domain, title, summary,"
+        " body, source) values ($1, $2, $3, 'decision', 'workplace', 'Queue stays on SQS',"
+        " 'Keep SQS FIFO for the dispatch queue', $4, $5)",
+        documented,
+        USER_A,
+        db.fernhill,
+        json.dumps(
+            {"why": "Ordering per route is enough", "alternatives": ["Kafka: no one runs it"]}
+        ),
+        json.dumps({"type": "company_document", "ref": str(uuid7())}),
+    )
+    limits = LiveChunk(
+        id=uuid7(),
+        document_id=uuid7(),
+        doc="dispatch.md",
+        path="Dispatch > Limits",
+        text="A route takes at most 120 parcels; the 121st goes to the next.",
+    )
+    other = LiveChunk(
+        id=uuid7(),
+        document_id=uuid7(),
+        doc="old.md",
+        path="Routes",
+        text="At Old Corp a route takes 999 parcels.",
+    )
+    vk: Any = env.client()
+    await vk.set(keys.knowledge(USER_A, db.fernhill), LiveIndex(chunks=[limits]).model_dump_json())
+    await vk.set(keys.knowledge(USER_A, db.oldcorp), LiveIndex(chunks=[other]).model_dump_json())
+    requests: list[tuple[str, LLMRequest]] = []
+
+    def reply(job: str, req: LLMRequest) -> Reply:
+        requests.append((job, req))
+        if job == "detector":
+            asked = "parcels" in str(req.content).split("<utterance>")[-1]
+            return Reply([json.dumps({"answer": "how_it_works" if asked else "none"})])
+        cite = re.search(r"\[(n:k[0-9a-f]+)\]", str(req.content))
+        return Reply([f"- At most 120 parcels a route [{cite.group(1)}]\n" if cite else "- ?\n"])
+
+    env.providers = [ScriptedProvider("anthropic", reply)]
+    try:
+        async with GatewayServer(env.services(env.settings(), pool=db.pool)) as server:
+            c = ProtocolClient(server.url)
+            await c.start("standup", employer_id=str(db.fernhill))
+            await asyncio.sleep(0.5)  # the sections load with the model warm-up
+            await c.say("How many parcels does a route take before it is full?")
+            shown = await c.wait_type("question.detected")
+            fast_done = await c.wait_type("answer.done", pass_="fast")
+            await c.wait_type("answer.done", pass_="deep")
+            await c.send({"type": "session.end"})
+            await c.closed()
+    finally:
+        await db.admin.execute("delete from app.memory_nodes where id = $1", documented)
+        await vk.delete(keys.knowledge(USER_A, db.fernhill), keys.knowledge(USER_A, db.oldcorp))
+    assert shown["question_type"] == "technical"  # how_it_works, as every app knows it
+    fast = next(r for j, r in requests if j == "fast")
+    deep = next(r for j, r in requests if j == "deep")
+    tags = [b.text.split(">")[0] for b in fast.system[1:]]
+    assert tags == ["<digest", "<company_digest", "<session_pack"]
+    digest = fast.system[2].text
+    assert "Queue stays on SQS: Keep SQS FIFO for the dispatch queue." in digest
+    assert "Why: Ordering per route is enough. Rejected: Kafka: no one runs it." in digest
+    found = MEMORY.search(str(fast.content))
+    assert found is not None
+    assert "(doc: dispatch.md > Dispatch > Limits) A route takes at most 120 parcels" in (
+        found.group(1)
+    )
+    assert "Question (how_it_works): " in str(deep.content)
+    assert "Shape: How it works here, from the entries" in str(deep.content)
+    for request in (fast, deep):
+        assert "Old Corp" not in str(request.content) + "".join(b.text for b in request.system)
+    # The citation is a source the app can show: the file and its section.
+    [ref] = fast_done["memory_refs"]
+    assert (ref["node_id"], ref["label"]) == (str(limits.id), "dispatch.md > Dispatch > Limits")

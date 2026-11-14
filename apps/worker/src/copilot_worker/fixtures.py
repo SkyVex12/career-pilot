@@ -28,7 +28,9 @@ import openai
 
 from copilot_core.llm import AnthropicProvider, LLMProvider, OpenAIProvider
 
-DIGEST_BLOCK = re.compile(r"<digest>(.*?)</digest>", re.S)
+# A test question (knowledge.ask) has no career digest to cite: its ids are those of the
+# request's <memory> lines.
+DIGEST_BLOCK = re.compile(r"<(?:digest|memory)>(.*?)</(?:digest|memory)>", re.S)
 SHORT_ID = re.compile(r"\[(n:[0-9a-z]{2,8})\]")
 REF = re.compile(rb"\{\{ref:(\d+)\}\}")
 

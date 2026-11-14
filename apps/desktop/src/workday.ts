@@ -37,8 +37,38 @@ export const KIND_LABELS: Record<WorkplaceKind, string> = {
   decision: "Decisions",
   project: "Projects",
   system: "Systems",
+  flow: "How it works",
+  constraint: "Limits",
+  risk: "Open risks",
   person: "People",
   term: "Terms",
+};
+
+/// What a fact from a document carries besides its one line: a decision's reason, what was
+/// rejected and the tradeoff; a component's neighbours; a flow's steps.
+export function itemDetails(item: MemoryItem): string[] {
+  const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
+  const out: string[] = [];
+  if (text(item.body.why)) out.push(`Why: ${text(item.body.why)}`);
+  if (list(item.body.alternatives).length) out.push(`Rejected: ${list(item.body.alternatives).join("; ")}`);
+  if (text(item.body.tradeoff)) out.push(`Tradeoff: ${text(item.body.tradeoff)}`);
+  if (list(item.body.talks_to).length) out.push(`Talks to: ${list(item.body.talks_to).join(", ")}`);
+  list(item.body.steps).forEach((s, n) => out.push(`${n + 1}. ${s}`));
+  return out;
+}
+
+/// The type a standup gives a question, as the test box names it.
+export const QUESTION_TYPE_LABELS: Record<string, string> = {
+  decision: "Decision",
+  how_it_works: "How it works",
+  status_follow_up: "Status follow-up",
+  estimate_risk: "Estimate or risk",
+  standup_status: "Status",
+  technical: "Technical",
+  system_design: "Design",
+  respond: "Reply",
+  other: "Other",
 };
 
 /// A fact as one line: its title, its summary when it says more, and the state of work.

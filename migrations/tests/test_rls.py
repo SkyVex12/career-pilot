@@ -35,7 +35,7 @@ APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # resume_versions: metadata columns only (a column grant), never the text or file.
 GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
                   "employers", "resume_versions", "profiles", "integrations",
-                  "identities"}  # fmt: skip
+                  "identities", "knowledge_chunks"}  # fmt: skip
 # integrations: the Career-OS link's status only (a column grant), never the token.
 # Tables the gateway reads through a table-wide grant (the other two have column grants).
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
@@ -113,6 +113,15 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "sha256": "0" * 64,
         "content_type": "text/markdown",
         "size_bytes": 10,
+    },
+    "knowledge_chunks": lambda w, n: {
+        "id": uuid.uuid4(),
+        "user_id": w.user_id,
+        "employer_id": w.employer_id,
+        "document_id": w.company_document_id,
+        "ord": n,
+        "body_enc": b"ciphertext",
+        "key_version": 1,
     },
     "user_keys": lambda w, n: {"user_id": w.user_id, "version": n + 1, "encrypted_dek": b"dek"},
     "applications": lambda w, n: {
@@ -528,6 +537,8 @@ REFERENCES = [
     ("memory_proposals", "employer_id", "employers"),
     ("memory_proposals", "company_document_id", "company_documents"),
     ("sessions", "employer_id", "employers"),
+    ("knowledge_chunks", "employer_id", "employers"),
+    ("knowledge_chunks", "document_id", "company_documents"),
     ("resume_versions", "application_id", "applications"),
     ("resume_versions", "document_id", "documents"),
     ("applications", "resume_version_id", "resume_versions"),
@@ -589,9 +600,11 @@ async def test_cannot_repoint_reference_to_another_users_row(
 ) -> None:
     # transcript_segments' key includes session_id; move seg_id so the update cannot collide
     # with user B's seeded segment, which would fail on the key before the foreign key check.
-    # work_logs is unique per (employer, day) the same way.
+    # work_logs is unique per (employer, day) the same way, knowledge_chunks per
+    # (document, ord).
     extra = {"transcript_segments": ", seg_id = seg_id + 1000",
-             "work_logs": ", day = day + 1000"}.get(child, "")  # fmt: skip
+             "work_logs": ", day = day + 1000",
+             "knowledge_chunks": ", ord = ord + 1000"}.get(child, "")  # fmt: skip
     sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
     status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
     # A resume version never moves to another application: its trigger refuses first.

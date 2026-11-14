@@ -60,3 +60,13 @@ def rate_limit(uid: Id, window: str) -> str:
 def employer_pack_field(employer_id: Id, mode: str) -> str:
     """The `pack:{uid}:index` field of a company's standup or meeting pack."""
     return f"employer:{employer_id}:{mode}"
+
+
+def knowledge(uid: Id, employer_id: Id) -> str:
+    """A company's document sections, opened for live calls (copilot_core.knowledge.LiveIndex)."""
+    return f"kb:{{{uid}}}:{employer_id}"
+
+
+def knowledge_ask(uid: Id, ask_id: Id) -> str:
+    """The result of one "test a question" on a company's engineering context."""
+    return f"kbask:{{{uid}}}:{ask_id}"

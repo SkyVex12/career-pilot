@@ -126,3 +126,47 @@ async def test_failed_and_stuck_work_logs_are_retried_hourly(stack: Stack) -> No
     queue.sent.clear()
     await scheduler.tick(now)  # the same hour: nothing again
     assert not [m for m in queue.sent if m["type"] == "worklog.extract"]
+
+
+@pytest.mark.stack
+async def test_documents_without_an_index_are_indexed_hourly(stack: Stack) -> None:
+    # The migration of documents uploaded before engineering context: they are "ingested"
+    # with no index, and the scheduler sends each to knowledge.index. Failed ones too.
+    uid = await stack.new_user()
+    eid = uuid7()
+    await stack.admin.execute(
+        "insert into app.employers (id, user_id, name) values ($1, $2, 'Index Co')", eid, uid
+    )
+    now = datetime(2031, 3, 6, 14, 10, tzinfo=UTC)
+    docs = {}
+    for name, status, indexed, kind, age_h in (
+        ("old", "ingested", None, "text/markdown", 400),  # from before: indexed now
+        ("done", "ingested", "sha-done", "text/markdown", 5),  # has its index: left alone
+        ("failed", "failed", None, "text/plain", 3),  # failed: tried again
+        ("gave-up", "failed", None, "text/markdown", 24 * 9),  # failed long ago: given up
+        ("running", "ingesting", None, "text/markdown", 0.2),  # still running: left alone
+        ("stuck", "ingesting", None, "text/markdown", 4),  # stuck for hours: tried again
+        ("pdf", "ingested", None, "application/pdf", 400),  # not read yet: left alone
+    ):
+        docs[name] = uuid7()
+        await stack.admin.execute(
+            "insert into app.company_documents (id, user_id, employer_id, name_enc, key_version,"
+            " s3_key, sha256, content_type, size_bytes, status, indexed_sha256, created_at)"
+            " values ($1, $2, $3, $4, 1, $5, $6, $7, 1, $8, $9, $10)",
+            docs[name], uid, eid, b"\x00", f"k/{name}", f"sha-{name}", kind, status, indexed,
+            now - timedelta(hours=age_h),
+        )  # fmt: skip
+    queue = MemoryJobQueue()
+    scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    await stack.ctx.valkey.delete(
+        *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
+    )
+    await scheduler.tick(now)
+    mine = {str(v): k for k, v in docs.items()}
+    sent = [m for m in queue.sent if m["type"] == "knowledge.index"]
+    found = {mine[m["payload"]["document_id"]] for m in sent if m["payload"]["document_id"] in mine}
+    assert found == {"old", "failed", "stuck"}
+    assert all(m["idempotency_key"].endswith(":20310306T14") for m in sent)
+    queue.sent.clear()
+    await scheduler.tick(now)  # the same hour: nothing again
+    assert not [m for m in queue.sent if m["type"] == "knowledge.index"]

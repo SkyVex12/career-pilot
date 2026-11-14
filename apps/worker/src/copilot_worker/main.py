@@ -12,14 +12,14 @@ import signal
 
 from copilot_core import __version__, logs
 from copilot_core.dotenv import load_dotenv
-from copilot_worker import documents, packs, sessionlog, system, workplace
+from copilot_worker import documents, knowledge, packs, sessionlog, system, workplace
 from copilot_worker.config import WorkerSettings
 from copilot_worker.context import build_ctx, close_ctx
 from copilot_worker.runtime import Consumer, JobRuns, SqsQueue
 
 SERVICE = "worker"
 # Importing them registers their handlers.
-HANDLER_MODULES = (documents, packs, sessionlog, system, workplace)
+HANDLER_MODULES = (documents, knowledge, packs, sessionlog, system, workplace)
 
 
 def health_body() -> bytes:

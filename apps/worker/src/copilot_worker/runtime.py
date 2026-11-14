@@ -48,7 +48,10 @@ VISIBILITY: dict[str, int] = {
     "user.delete": 1800,
     "sessions.sweep": 120,
     "worklog.extract": 900,
-    "company_doc.extract": 900,
+    "company_doc.extract": 900,  # from before engineering context: runs knowledge.index
+    "knowledge.index": 900,
+    "knowledge.publish": 300,
+    "knowledge.ask": 120,
     "workplace.refresh": 600,
     "employer.purge": 1800,
 }

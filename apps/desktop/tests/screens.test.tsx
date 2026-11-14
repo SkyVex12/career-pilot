@@ -243,6 +243,78 @@ describe("Work", () => {
     await waitFor(() => expect(ipc.apiCalls("DELETE")[0].path).toBe("/employers/e1?confirm=Fernhill"));
   });
 
+  it("engineering context: each file's status, what it gave, and a test question with its sources", async () => {
+    workRoutes();
+    const doc = { content_type: "text/markdown", size_bytes: 10, created_at: new Date().toISOString(), pending_proposals: 0 };
+    ipc.api("GET", /^\/employers\/e1\/documents$/, () => ({
+      documents: [
+        { ...doc, id: "d1", name: "dispatch.md", status: "ingested", sections: 6, facts: 9 },
+        { ...doc, id: "d2", name: "scan.md", status: "failed", sections: 0, facts: 0, error: "The file has no text." },
+        { ...doc, id: "d3", name: "new.md", status: "ingesting", sections: 0, facts: 0, replaces: "d1" },
+      ],
+    }));
+    ipc.api("GET", /^\/employers\/e1\/documents\/d1$/, () => ({
+      id: "d1",
+      name: "dispatch.md",
+      status: "ingested",
+      error: null,
+      sections: 6,
+      headings: ["Dispatch > Decisions"],
+      facts: [
+        {
+          id: "n1",
+          kind: "decision",
+          title: "Keep SQS",
+          summary: "Keep SQS FIFO for the dispatch queue",
+          body: { why: "Ordering per route is enough", alternatives: ["Kafka: nobody runs it"] },
+          day: null,
+          status: "active",
+          source: { type: "company_document", ref: "d1" },
+          edited: false,
+        },
+      ],
+    }));
+    let polls = 0;
+    ipc.api("POST", /^\/employers\/e1\/knowledge\/ask$/, () => ({ ask_id: "a1", status: "pending" }));
+    ipc.api("GET", /^\/employers\/e1\/knowledge\/ask\/a1$/, () => {
+      polls += 1;
+      if (polls < 2) return { ask_id: "a1", status: "pending" };
+      return {
+        ask_id: "a1",
+        status: "done",
+        type: "decision",
+        answer: "- We kept SQS FIFO\n- Kafka was rejected",
+        sources: [{ kind: "section", label: "dispatch.md > Dispatch > Decisions" }],
+      };
+    });
+    wrap(<Work />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Engineering context/ }));
+    expect(await screen.findByText("6 sections, 9 facts")).toBeInTheDocument();
+    expect(screen.getByText("Could not read it")).toBeInTheDocument();
+    expect(screen.getByText(/The file has no text\./)).toBeInTheDocument();
+    expect(screen.getByText("Reading")).toBeInTheDocument();
+    expect(screen.getByText(/replaces the earlier upload once read/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Actions for dispatch.md" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "What it gave…" }));
+    const gave = await screen.findByRole("dialog", { name: "What dispatch.md gave" });
+    expect(await within(gave).findByText("Dispatch > Decisions")).toBeInTheDocument();
+    expect(within(gave).getByText("Keep SQS: Keep SQS FIFO for the dispatch queue")).toBeInTheDocument();
+    expect(within(gave).getByText("Why: Ordering per route is enough")).toBeInTheDocument();
+    expect(within(gave).getByText("Rejected: Kafka: nobody runs it")).toBeInTheDocument();
+    await userEvent.click(within(gave).getByRole("button", { name: "Done" }));
+
+    const ask = screen.getByRole("button", { name: "Ask" });
+    expect(ask).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("A question a teammate might ask"), "Why SQS for dispatch?");
+    await userEvent.click(ask);
+    const answer = await screen.findByLabelText("Answer", {}, { timeout: 5000 });
+    expect(ipc.apiCalls("POST").slice(-1)[0].body).toEqual({ question: "Why SQS for dispatch?" });
+    expect(within(answer).getByText("Decision")).toBeInTheDocument();
+    expect(within(answer).getByText(/We kept SQS FIFO/)).toBeInTheDocument();
+    expect(within(answer).getByText("Document: dispatch.md > Dispatch > Decisions")).toBeInTheDocument();
+  }, 15000);
+
   it("field checks", () => {
     expect(checkEmployer({ name: " ", started: "", ended: "" })).toEqual({ name: "Enter the company's name." });
     expect(checkEmployer({ name: "A", started: "2024-05-01", ended: "2024-01-01" })).toEqual({ ended: "The end can't be before the start." });
