@@ -272,3 +272,77 @@ case), so read it as a direction.
 
 **Spend for this analysis:** 37 embedding calls for the search replay, under $0.001. No
 model calls, no speech to text.
+
+## 8. What this branch changed
+
+You chose the recommended design, without PDF reading and without speaker separation. Each
+part has tests that fail on main.
+
+| Finding | Change | Tests |
+| --- | --- | --- |
+| Material never extracted (9) | A document is kept whole as sealed sections, searched by keyword in the gateway's memory, and extracted into components, decisions with their reason and rejected alternatives, flows, constraints, risks and terms (`knowledge.index`) | `test_a_company_document_becomes_sealed_sections_and_facts_at_once`, `test_keyword_search_finds_the_one_line_extraction_would_drop`, `test_a_document_is_cut_at_its_headings_and_keeps_their_path` |
+| No map to preload | The company digest, rendered from the facts with no model call, its own cached block in every standup and meeting prompt | `test_the_company_digest_is_a_system_map_with_reasons_and_the_same_bytes_each_time`, `test_at_work_the_digest_is_its_own_cached_block_and_a_gap_gets_the_safe_answer` |
+| Right fact not retrieved (4) | A short question, or one that points back, is searched again with the company's names from the last lines of the call | `test_a_short_question_that_points_back_is_searched_with_the_calls_names` |
+| Wrong type (3), shape (2) | Four work types with their own shapes: decision, how it works, status follow-up, estimate or risk; sent to the app as types it knows | `test_work_questions_have_their_own_types_and_shapes`, `test_a_standup_answers_from_the_companys_documents` |
+| Not detected (6) | A problem, limit or cost stated about the user's own work is a turn | the detector rule check in `test_work_questions_have_their_own_types_and_shapes`; live in the eval |
+| No card said it did not know | At work, what no entry states is not filled in: the answer gives what is known and says the user will confirm the rest | the prompt check; the eval's two uncovered questions |
+| Facts marked as suggestions | The standup and meeting styles no longer name the marker | `test_a_standup_answer_is_never_told_about_the_suggestion_marker` |
+| Approval filtered nothing | A document's facts are kept at once; each file shows what it gave | the API and desktop tests |
+| Re-upload did not replace | A file of an earlier one's name replaces it once it is indexed | `test_a_new_upload_of_the_same_file_replaces_the_old_one` |
+| A document could stick at "Reading" | Any failure marks the file failed with a reason; the scheduler retries hourly for a week, and indexes the documents from before | `test_a_failed_extraction_keeps_the_sections_and_says_so`, `test_documents_without_an_index_are_indexed_hourly` |
+
+Desktop: the Material tab is now Engineering context, with several files per upload, each
+file's status, a view of what a file gave, and a box that tests a question and shows the
+answer with its type and sources.
+
+**One change from the proposal.** The proposal kept the sections' keyword index in Postgres
+and had the gateway open the few sections it returned. The gateway has no grant on the data
+keys, and giving it one would widen what a gateway compromise exposes. So the database
+holds the sections sealed, with only their vectors readable; a worker opens a company's
+sections into Valkey for live calls, where session packs already hold its facts, and the
+gateway searches them by keyword in memory.
+
+**Not in this branch:** PDF reading (a PDF is refused at upload with a message), speaker
+separation for three-person calls (the cards for a teammate in S11), and "too slow" (turns
+17 and 28, covered by the earlier latency work).
+
+## 9. Before and after
+
+`copilot-knowledge-eval` (evals/README.md, "Engineering context") asks the 35 turns of
+section 3, moved to a fictional company with invented documents, plus two questions no
+document answers. "Before" is main's code on the same fixtures.
+
+| | Before (main) | After |
+| --- | --- | --- |
+| Detected | 30/37 | 35/37 |
+| Type right | 10/37 | 33/37 |
+| Fact in the short answer's prompt | 19/31 | 31/31 |
+| Fact in the detailed answer's prompt | 24/31 | 31/31 |
+| of which preloaded, with no search | 10/31 | 28/31 |
+| Short answer correct | 19/33 | 29/33 |
+| Detailed answer correct | 20/33 | 30/33 |
+| Detailed answer correct, of the cards shown | 20/26 | 30/31 |
+| Says it will confirm when nothing covers it | 2/2 | 2/2 |
+| Detector, p50 | 1,093 ms | 1,047 ms |
+| Short answer's first token, p50 | 1,132 ms | 875 ms |
+| Detailed answer's first token, p50 | 1,617 ms | 1,281 ms |
+| Short answer's prompt, p50 | 2,984 tokens | 5,911 tokens |
+
+- One run each; answers vary by a question or two between runs, and the latency rows are
+  within the provider's drift. What they do show: a prompt twice as long, cached, did not
+  make the first token later.
+- "Type right" on main is low by construction: it has no type for a decision or a
+  mechanism. The answer rows are the ones that compare like with like.
+- Still missed after: two concerns said as statements (turns 21 and 26; both fired in an
+  earlier run, so the statement rule works on most turns, not on every one), and one
+  estimate (turn 4) whose answer did not name the report the plan was about.
+- Main's extraction kept 40 facts from the four fixture documents; the new one 30 sections
+  and a 10,000-character digest.
+- The fixtures are not the real documents and the eval has no audio, so it measures the
+  prompts, the search and the models, not timing in a call. The next standup is the check.
+
+**Spend for the build and the eval:** about $0.45. Three runs of the questions (about
+$0.10, $0.10 and $0.08) and one two-question check ($0.02) at the configured prices, and two
+extraction runs (14k and 9k tokens, and one call that timed out) on the extraction model,
+which has no configured price (about $0.12 if it costs what gpt-6.1-sol does). No speech to
+text, no new infrastructure.

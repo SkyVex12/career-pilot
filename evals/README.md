@@ -181,8 +181,8 @@ uv run copilot-company-eval run --label company-after --variant after --reps 2
 uv run copilot-company-eval compare company-before company-after
 ```
 
-- `prepare` runs the worker's own extraction (`worklog` and `company_doc` jobs, `.env` models)
-  on the material in a scratch database, approves the document facts as a user would, and saves
+- `prepare` runs the worker's own extraction (`worklog` and `knowledge` jobs, `.env` models)
+  on the material in a scratch database (document facts are kept at once), and saves
   the company's memory to `company/memory.json` (committed, so runs need no extraction).
 - `run --variant after` loads that memory into a scratch database, renders the standup and
   meeting packs with `copilot_core.workplace` (the meeting with its title, agenda and the facts
@@ -201,3 +201,49 @@ same company: the gateway renders the company's pack at session start and search
 (in a scratch database) for every question, and the summary adds the memory stages
 (`memory_wait_ms`, `memory_fts_ms`, `memory_hybrid_ms` and the deep pass's). `--user-id` names
 the user the gateway signs in, for a gateway with Google sign-in (the uuid5 of the token's sub).
+
+## Engineering context
+
+`copilot-knowledge-eval` checks whether standup answers handle technical questions from a
+company's documents. `knowledge/questions.toml` holds the 35 technical turns of the standups
+analysed in docs/analysis/2026-11-14-standup-technical.md, in order, moved to a fictional
+company (its four documents are in `knowledge/docs/`, its recent work in `[[item]]`), plus two
+questions no document answers. Every line is invented wording. Each question has the call's
+lines before it, the detector types that give the right shape, the document that holds the
+fact, a pattern the prompt must contain for the fact to count as retrieved, and the patterns a
+correct answer does and does not contain.
+
+Each question runs the live path's pieces in order: the detector prompt on its route; the
+company's pack and digest, memory search and section search; the short and the detailed
+answer on their routes. A question the detector does not fire on gets no answer, as in a
+call, and counts as wrong.
+
+```sh
+uv run copilot-knowledge-eval run --label after --database-url postgresql://postgres:...@host/postgres
+uv run copilot-knowledge-eval compare before after
+```
+
+`run` extracts the documents once per label in a scratch database (kept in
+`knowledge/results/<label>/prepared.json`, local only, so a rerun asks the questions again
+without extracting) and writes `summary.json` and `answers.json`. A label costs about $0.10
+for the questions plus the extraction (about 14k tokens on the extraction model).
+
+The same file runs against another checkout's code, which is how `before` was made from
+main: add a worktree of that commit, copy `knowledge/` and `knowledge_eval.py` into it, and
+run `uv run python -m copilot_evals.knowledge_eval run --label before ...` there. Where
+`copilot_core.knowledge` does not exist the documents go through that checkout's own
+extraction with every proposal approved, and there are no sections and no digest.
+
+| | before (main) | after |
+| --- | --- | --- |
+| Detected | 30/37 | 35/37 |
+| Type right | 10/37 | 33/37 |
+| Fact in the short answer's prompt | 19/31 | 31/31 |
+| Fact in the detailed answer's prompt | 24/31 | 31/31 |
+| Short answer correct | 19/33 | 29/33 |
+| Detailed answer correct | 20/33 | 30/33 |
+| Says it will confirm when nothing covers it | 2/2 | 2/2 |
+
+One run each (2026-11-14, gpt-6-luna and gpt-6.1-sol); answers vary run to run by a question
+or two. The sections' vector search is not part of this eval (its sections are not in the
+database); keyword search and the digest are.

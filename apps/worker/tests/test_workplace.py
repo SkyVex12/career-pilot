@@ -378,6 +378,7 @@ async def test_purge_deletes_one_companys_files_packs_and_cached_answers(stack: 
             keys.pack_index(uid), mapping={keys.employer_pack_field(e, "meeting"): f"p-{e}"}
         )
         await stack.ctx.valkey.set(keys.qa(uid, f"q-{e}"), json.dumps({"employer": str(e)}))
+        await stack.ctx.valkey.set(keys.knowledge(uid, e), "{}")
     await stack.run(
         jobs.envelope("employer.purge", f"employer.purge:{gone}", uid, {"employer_id": str(gone)})
     )
@@ -388,6 +389,8 @@ async def test_purge_deletes_one_companys_files_packs_and_cached_answers(stack: 
     assert await stack.ctx.valkey.get(keys.pack(uid, f"p-{gone}")) is None
     assert await stack.ctx.valkey.get(keys.qa(uid, f"q-{gone}")) is None
     assert await stack.ctx.valkey.get(keys.qa(uid, f"q-{keep}")) is not None
+    assert await stack.ctx.valkey.get(keys.knowledge(uid, gone)) is None
+    assert await stack.ctx.valkey.get(keys.knowledge(uid, keep)) is not None
 
 
 async def test_standup_commitments_go_back_to_the_company(stack: Stack) -> None:

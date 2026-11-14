@@ -10,7 +10,8 @@
 - `workplace.refresh`: after the company's memory changed, embed the nodes that have no vector
   from the current model and rebuild the company's standup and meeting packs.
 - `employer.purge`: after "delete all data for this company" removed the rows, delete the
-  company's sealed files, its packs and the exact-repeat answers given from them.
+  company's sealed files, its packs, the live copy of its document sections and the
+  exact-repeat answers given from them.
 
 Idempotency: the extraction keys name the content's SHA-256, and each handler checks that
 the row still has that content before writing, so a stale or repeated job changes nothing.
@@ -517,6 +518,8 @@ async def employer_purge(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     eid = str(job.payload["employer_id"])
     removed = await ctx.store.delete_prefix(employer_prefix(uid, UUID(eid)))
+    # The live copy of its document sections (copilot_core.knowledge) goes with it.
+    await ctx.valkey.delete(keys.knowledge(uid, eid))
     index = await ctx.valkey.hgetall(keys.pack_index(uid))
     pack_ids: set[str] = set()
     for field, value in index.items():
