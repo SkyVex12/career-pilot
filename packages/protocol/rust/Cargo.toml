@@ -4,7 +4,6 @@ version = "0.0.0"
 description = "Realtime protocol types, generated from protocol.schema.json"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 [dependencies]

@@ -4,7 +4,6 @@ version = "0.0.0"
 description = "Desktop client core: audio capture, echo cancellation, VAD and the gateway connection"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 [dependencies]
