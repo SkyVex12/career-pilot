@@ -299,7 +299,8 @@ async def test_the_prompt_cache_is_written_at_session_start(env) -> None:
     to its first token against 1.0 s). The session now writes it before any question."""
     await seed_memory(env)
     provider = use(env)
-    async with GatewayServer(env.services()) as gw:
+    # The fast pass's prewarm alone; the default also warms the light detailed answer.
+    async with GatewayServer(env.services(env.settings(prewarm_jobs=["fast"]))) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
         await asyncio.sleep(0.3)  # the prewarm runs right after session.ready

@@ -82,6 +82,9 @@ class Detection:
     # call's own length) it includes the wait for the text and whatever ran before the speech
     # end, so it is the detector's real place on the path of the card.
     decided_ms: int | None = None
+    # How much reasoning the detailed answer needs, "deep" or "light" (the Decisions API's
+    # third question); None when the detector did not say, and the type decides.
+    depth: str | None = None
 
     def fires(self) -> bool:
         return self.decision == "answer" and self.qtype != "small_talk"

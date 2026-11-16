@@ -706,6 +706,7 @@ class Session:
             detector_ms=detection.latency_ms,
             match=match,
             decided_ms=detection.decided_ms,
+            depth=detection.depth,
         )
         self.emit(
             models.QuestionDetected,
@@ -772,6 +773,7 @@ class Session:
         q.addressed = True
         q.detector_ms = detection.latency_ms
         q.decided_ms = detection.decided_ms
+        q.depth = detection.depth
         q.speculative = speculative
         q.detected_at = datetime.now(UTC)
         self.emit(
@@ -803,6 +805,8 @@ class Session:
                 q.detector_ms = detection.latency_ms
             if detection.decided_ms is not None:
                 q.decided_ms = detection.decided_ms
+            if detection.depth is not None:
+                q.depth = detection.depth
             q.first_shown = True
 
     # STT callbacks.
@@ -1303,7 +1307,7 @@ class Session:
         ctx = self._prompt_ctx
         for job in self.settings.prewarm_jobs:
             req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
-            if job == "deep":
+            if job in ("deep", "deep_light"):
                 req = prompts.deep_pass(
                     ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
                 )
@@ -1821,7 +1825,7 @@ class Session:
             ok = detection.done() and not detection.cancelled() and not detection.exception()
             found = detection.result() if ok else None
             if found is not None and found.fires() and not reply:
-                q.qtype, q.detector_ms = found.qtype, found.latency_ms
+                q.qtype, q.detector_ms, q.depth = found.qtype, found.latency_ms, found.depth
             if not (q.cancelled or q.discarded):
                 self.answers.confirm(qid, q.text, None)
                 self.conv.question(str(qid), q.text, self.capture_now)

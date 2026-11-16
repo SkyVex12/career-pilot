@@ -143,6 +143,13 @@ class Settings(CoreSettings):
     # technical and system_design started on their own; that list is the setting to turn the
     # deep pass's cost down (ARCHITECTURE.md, "Cost estimate").
     deep_pass_auto: bool = True
+    # Which model writes the detailed answer (answer.AnswerEngine.deep_job): "by_need", the
+    # deep model only when the detector says the answer needs expert reasoning, else the fast
+    # model with the detailed answer's prompt (route "deep_light"); "always_deep", as before.
+    # On the VM (2026-11-16) gpt-6-luna's detailed answer showed its first word at 1.0 s and was
+    # done at 3.0 s, against 3.1 s and 8.0 s on gpt-6.1-sol; as complete on stories, less so on
+    # technical depth, design and the job and goals questions.
+    deep_routing: Literal["by_need", "always_deep"] = "by_need"
     deep_pass_auto_types: Annotated[list[QuestionType], NoDecode] = Field(
         default_factory=lambda: [
             "behavioral",
@@ -223,15 +230,17 @@ class Settings(CoreSettings):
     # again within this long of a question's end and the user has not spoken, the next
     # question is the same one continued, and its passes get both parts. 0: off.
     continuation_gap_ms: int = 5000
-    # Passes whose prompt cache is written at session start (and on a mode change), so the
-    # first question is not cold. Only the fast pass by default: the first word waits on it.
     # While a session is live, open (or keep open) each model provider's connection this often,
     # with a free request (ModelRouter.warm), so the first call after a quiet spell does not
     # pay a new TLS handshake: about 0.7 s more to the first token, measured 2026-11-16, while
     # idle connections are dropped after llm_keepalive_s (120 s). None: only at session start.
     llm_warm_interval_s: float | None = 60.0
-    prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(
-        default_factory=lambda: ["fast"]
+    # Passes whose prompt cache is written at session start (and on a mode change), so the
+    # first question is not cold: the fast pass, whose first word everyone waits on, and the
+    # light detailed answer, on the same cheap model (about $0.0002 a session). The deep
+    # model's is not: one cache write on it costs about as much as a detailed answer.
+    prewarm_jobs: Annotated[list[Literal["fast", "deep", "deep_light"]], NoDecode] = Field(
+        default_factory=lambda: ["fast", "deep_light"]
     )
 
     # Claude routes beyond the shared model ids.

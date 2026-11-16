@@ -814,11 +814,27 @@ DECISION_WORK_TYPES = {
 }
 
 
+# Which model writes the detailed answer (2026-11-16): the deep model only where the answer
+# needs expert reasoning. On the answer eval's 31 questions, gpt-6-luna wrote detailed answers
+# as complete as gpt-6.1-sol's for stories (4.33 against 4.44) in 1.0 s instead of 3.1 s to the
+# first word, and fell behind on technical depth (isolation levels, exactly-once), design, and
+# questions about the job and the user's goals.
+DECISION_DEPTH = {
+    "deep": "The detailed answer needs expert reasoning: how something works in depth, a "
+    "technical choice and its tradeoffs and edge cases, a system design, or a careful, "
+    "well-argued answer about the job, the company, pay or {user_name}'s goals",
+    "light": "A short or familiar answer is enough: a story or summary of {user_name}'s own "
+    "experience, a status or update, a reply to a remark, a short factual question, a "
+    "follow-up on one item",
+}
+
+
 def detector_decision(
     user_name: str, transcript: str, utterance: str, mode: str = "interview", turns: str = ""
 ) -> DecisionRequest:
     """The detector as a Decisions API request: the same rules as `detector`, in a developer
-    message, and two choice questions: `turn` (answer, wait or none) and `type`."""
+    message, and three choice questions: `turn` (answer, wait or none), `type`, and `depth`
+    (whether the detailed answer needs the deep model)."""
     req = detector(user_name, transcript, utterance, 0, mode, turns)
     rules, _, rest = req.system[0].text.partition("Return JSON only:\n")
     # The JSON line goes; the decision comes back as typed choices.
@@ -862,25 +878,36 @@ def detector_decision(
                 "need? (If not, pick the closest.)",
                 "choices": choices(types),
             },
+            {
+                "type": "choice",
+                "name": "depth",
+                "instructions": "If it needs an answer, how much reasoning does the detailed "
+                "answer need? (If not, pick the closest.)",
+                "choices": choices(DECISION_DEPTH),
+            },
         ],
     )
 
 
 def read_decision(answers: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """The detector's decision from a Decisions API response's answers (as dicts): decision
-    "answer", "wait" or "none", the type, and the turn question's confidence. A refusal or a
-    missing answer counts as none."""
+    "answer", "wait" or "none", the type, the turn question's confidence and the depth
+    ("deep" or "light"). A refusal or a missing answer counts as none."""
     by_name = {a.get("name"): a for a in answers}
     turn = by_name.get("turn") or {}
     kind = by_name.get("type") or {}
+    depth = by_name.get("depth") or {}
     decision = str(turn.get("choice")) if turn.get("type") == "choice" else "none"
     if decision not in DECISION_TURN:
         decision = "none"
     qtype = str(kind.get("choice")) if kind.get("type") == "choice" else "other"
+    level = str(depth.get("choice")) if depth.get("type") == "choice" else None
     return {
         "decision": decision,
         "qtype": qtype,
         "confidence": float(turn.get("confidence") or 0.0),
+        # None when the answer is missing: the gateway then routes by the type.
+        "depth": level if level in DECISION_DEPTH else None,
     }
 
 
