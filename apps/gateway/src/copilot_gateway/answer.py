@@ -51,6 +51,8 @@ from copilot_protocol import models
 log = logging.getLogger(__name__)
 
 CACHE_READ_TIMEOUT_S = 0.1
+# The types whose detailed answer goes to the deep model when the detector gave no depth.
+DEEP_BY_TYPE = frozenset({"technical", "system_design", "coding", "other"})
 # Shorter questions ("why?", "and then?") mean something different each time they are asked,
 # so the exact-repeat cache never serves or keeps them.
 CACHE_MIN_WORDS = 4
@@ -133,6 +135,7 @@ class Question:
     detector_ms: int | None
     match: "asyncio.Task[object] | None"
     decided_ms: int | None = None  # t0 to the detector's decision (turn.Detection.decided_ms)
+    depth: str | None = None  # "deep" or "light" from the detector (turn.Detection.depth)
     detected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     turn_end_ms: int | None = None
     final_ms: int | None = None  # t0 to the STT final (None: no final, or a forced question)
@@ -280,7 +283,10 @@ class AnswerEngine:
     def __init__(self, host: AnswerHost) -> None:
         self.host = host
         self.questions: OrderedDict[UUID, Question] = OrderedDict()
-        self.stats = {"prepared_hits": 0, "cache_hits": 0, "model_passes": 0, "cancelled": 0}
+        self.stats = {
+            "prepared_hits": 0, "cache_hits": 0, "model_passes": 0, "cancelled": 0,
+            "deep_light": 0,
+        }  # fmt: skip
         self._background: set[asyncio.Task[None]] = set()
 
     # Question lifecycle, driven by the turn detector and client messages.
@@ -599,7 +605,10 @@ class AnswerEngine:
                 return
             self.stats["model_passes"] += 1
             state["start_at"] = time.monotonic()
-            job = pass_
+            job = self.deep_job(q) if pass_ == "deep" else pass_
+            state["job"] = job
+            if job == "deep_light":
+                self.stats["deep_light"] += 1
             memory, memory_stats = await host.memory_lines(q.text, pass_)
             state["memory"] = memory_stats
             req = self._request(q, pass_, memory)
@@ -709,7 +718,7 @@ class AnswerEngine:
             "streamed_chars": sum(len(p) for p in state["parts"]),
         }
         req = cast(LLMRequest | None, state.get("req"))
-        routes = self.host.router.routes.get(pass_) or []
+        routes = self.host.router.routes.get(str(state.get("job") or pass_)) or []
         finished = cast(LLMDone | None, state.get("done"))
         if finished is not None:
             # The pass ran to its end while held, so its real usage is known.
@@ -753,6 +762,19 @@ class AnswerEngine:
             ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory,
             style=self.host.answer_style(), shown=q.fast_text,
         )  # fmt: skip
+
+    def deep_job(self, q: Question) -> str:
+        """Which route writes the detailed answer (`deep_routing`): "deep" (the deep model)
+        when the detector says the answer needs expert reasoning, "deep_light" (the fast
+        model, with the detailed answer's prompt) when it says a short or familiar answer is
+        enough. With no word from the detector (the Responses API detector, a forced question,
+        a follow card), the type decides: technical, system design, coding and the job and
+        goals questions ("other") get the deep model."""
+        if self.host.settings.deep_routing != "by_need":
+            return "deep"
+        if q.depth in ("deep", "light"):
+            return "deep" if q.depth == "deep" else "deep_light"
+        return "deep" if q.qtype in DEEP_BY_TYPE else "deep_light"
 
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit. A reply to a

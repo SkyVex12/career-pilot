@@ -306,7 +306,8 @@ async def test_openai_session_records_model_tokens_and_cost(env) -> None:
     # deep pass; the log carries provider, model, tier, tokens and cost from config prices.
     captured: list[dict[str, Any]] = []
     env.providers = [OpenAIProvider("openai", openai_client(captured))]
-    settings = env.settings(**OPENAI_SETTINGS)
+    # The fast pass's prewarm only: the light detailed answer's is checked in test_decisions.
+    settings = env.settings(**OPENAI_SETTINGS, prewarm_jobs=["fast"])
     async with GatewayServer(env.services(settings)) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
@@ -383,7 +384,7 @@ def test_the_fast_pass_hedges_on_the_priority_tier() -> None:
     assert second.params["service_tier"] == "priority"
     assert first.model == second.model == "gpt-6-luna"
     router = build_router(settings, [provider])
-    assert router.hedge_after_s == {"detector": 1.2, "fast": 1.2, "deep": 4.5}
+    assert router.hedge_after_s == {"detector": 1.2, "fast": 1.2, "deep": 4.5, "deep_light": 1.2}
     off = openai_settings(fast_hedge_ms=None, openai_fast_retry_tier=None, deep_hedge_ms=None)
     assert build_router(off, [provider]).hedge_after_s == {"detector": 1.2}
     assert all("service_tier" not in r.params for r in build_routes(off, [provider])["fast"])

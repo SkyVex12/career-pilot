@@ -69,7 +69,10 @@ def detection_from(answers: Sequence[Mapping[str, Any]], mode: str) -> tuple[Det
     allowed = set(prompts.QUESTION_TYPES) - {"small_talk"}
     if mode in prompts.GROUP_MODES:
         allowed |= set(prompts.WORK_TYPES)
-    return Detection("answer", qtype if qtype in allowed else "other"), got["confidence"]
+    return (
+        Detection("answer", qtype if qtype in allowed else "other", depth=got["depth"]),
+        got["confidence"],
+    )
 
 
 class Decider(Protocol):

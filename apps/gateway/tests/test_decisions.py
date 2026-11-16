@@ -9,6 +9,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx2
 import openai
@@ -24,11 +25,16 @@ from .test_openai import OPENAI_SETTINGS, openai_settings
 FIXTURE = Path(__file__).parent / "fixtures" / "openai_decision.json"
 
 
-def answers(turn: str, qtype: str, confidence: float = 0.9) -> list[dict[str, Any]]:
-    return [
+def answers(
+    turn: str, qtype: str, confidence: float = 0.9, depth: str | None = None
+) -> list[dict[str, Any]]:
+    out = [
         {"type": "choice", "name": "turn", "choice": turn, "confidence": confidence},
         {"type": "choice", "name": "type", "choice": qtype, "confidence": 0.6},
     ]
+    if depth is not None:
+        out.append({"type": "choice", "name": "depth", "choice": depth, "confidence": 0.8})
+    return out
 
 
 def test_the_decisions_request_carries_the_detector_rules_and_two_questions() -> None:
@@ -44,8 +50,9 @@ def test_the_decisions_request_carries_the_detector_rules_and_two_questions() ->
     assert "Return JSON" not in rules
     assert "An open question about Alex Rivera's own situation" in rules
     assert "<utterance>\nWhere are you based?\n</utterance>" in user
-    turn, kind = req.questions
-    assert (turn["name"], kind["name"]) == ("turn", "type")
+    turn, kind, depth = req.questions
+    assert (turn["name"], kind["name"], depth["name"]) == ("turn", "type", "depth")
+    assert [c["value"] for c in depth["choices"]] == ["deep", "light"]
     assert [c["value"] for c in turn["choices"]] == ["answer", "wait", "none"]
     interview = {c["value"] for c in kind["choices"]}
     assert interview == {"behavioral", "technical", "system_design", "coding", "other", "respond"}
@@ -87,7 +94,7 @@ async def test_the_openai_provider_decides_through_the_decisions_endpoint() -> N
     assert request.url.path == "/v1/decisions"
     body = json.loads(request.content)
     assert body["model"] == "gpt-6-luna"
-    assert [q["name"] for q in body["questions"]] == ["turn", "type"]
+    assert [q["name"] for q in body["questions"]] == ["turn", "type", "depth"]
     assert got.answers[0]["choice"] == "answer"
     # Only input is billed: the recorded call read 1,327 tokens and wrote none.
     assert got.usage == LLMUsage(input_tokens=1327, cached_tokens=0, output_tokens=0)
@@ -208,3 +215,85 @@ async def test_a_session_decides_on_the_decisions_api_alone(env) -> None:
     assert all(e["output_tokens"] == 0 for e in decided)
     assert all(e["cost_usd"] is not None for e in decided)
     assert decided[0]["confidence"] == 0.9
+
+
+def test_the_depth_question_says_which_model_writes_the_detailed_answer() -> None:
+    """2026-11-16: gpt-6-luna's detailed answer was done in 3.0 s against 8.0 s on gpt-6.1-sol,
+    as complete on stories and less so on technical depth, design and the job questions. The
+    deep model writes only what needs expert reasoning."""
+    from copilot_gateway.answer import AnswerEngine, Question
+
+    assert detection_from(answers("answer", "technical", depth="light"), "interview")[0].depth == (
+        "light"
+    )
+    assert detection_from(answers("answer", "technical"), "interview")[0].depth is None
+
+    class Host:
+        def __init__(self, routing: str) -> None:
+            self.settings = openai_settings(deep_routing=routing)
+
+    def job(routing: str, qtype: str, depth: str | None) -> str:
+        q = Question(
+            qid=uuid4(), text="q", qtype=qtype, confidence=0.9, addressed=True,
+            speculative=False, forced=False, t0=0.0, detector_ms=None, match=None, depth=depth,
+        )  # fmt: skip
+        return AnswerEngine(Host(routing)).deep_job(q)  # pyright: ignore[reportArgumentType]
+
+    assert job("by_need", "behavioral", "deep") == "deep"
+    assert job("by_need", "technical", "light") == "deep_light"
+    # No word from the detector: the type decides.
+    assert job("by_need", "technical", None) == "deep"
+    assert job("by_need", "other", None) == "deep"
+    assert job("by_need", "behavioral", None) == "deep_light"
+    assert job("by_need", "standup_status", None) == "deep_light"
+    assert job("always_deep", "behavioral", "light") == "deep"
+
+
+def test_the_light_detailed_answer_runs_on_the_fast_model() -> None:
+    from copilot_gateway.router import build_routes
+
+    routes = build_routes(openai_settings(), [ScriptedProvider("openai")])
+    assert [r.model for r in routes["deep_light"]] == [r.model for r in routes["fast"]]
+    assert routes["deep_light"][0].params == routes["fast"][0].params
+    claude = build_routes(openai_settings(), [ScriptedProvider("anthropic")])
+    assert "thinking" not in claude["deep_light"][0].params
+    assert claude["deep_light"][0].model == claude["fast"][0].model
+
+
+async def test_a_session_routes_the_detailed_answer_by_its_depth(env) -> None:
+    class Routed(OpenAIScripted):
+        async def decide(self, model, input, questions):  # type: ignore[no-untyped-def]
+            text = str(input[1]["content"][0]["text"])
+            depth = "deep" if "design" in text.split("<utterance>")[-1] else "light"
+            return Decided(
+                answers("answer", "technical", depth=depth), LLMUsage(1300), "openai", model
+            )
+
+    provider = Routed()
+    env.providers = [provider]
+    async with GatewayServer(env.services(env.settings(**OPENAI_SETTINGS))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        for text in ("How would you design a rate limiter?", "How did your day go so far?"):
+            await c.say(text)
+            q = await c.wait_type("question.detected", speculative=False, text=text)
+            await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    deep_models = [model for job, model in provider.calls if job == "deep"]
+    assert deep_models == ["gpt-6.1-sol", "gpt-6-luna"]
+
+
+async def test_a_session_warms_the_light_detailed_answers_cache_too(env) -> None:
+    provider = ScriptedProvider("anthropic")
+    env.providers = [provider]
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await asyncio.sleep(0.3)
+        await c.send({"type": "session.end"})
+        await c.closed()
+    # The fast pass's prefix, then the detailed answer's on the same cheap model.
+    assert len(provider.prewarms) == 2
+    assert all(model == provider.prewarms[0][0] for model, _ in provider.prewarms)
+    assert "talking" not in provider.prewarms[1][1].system[0].text
