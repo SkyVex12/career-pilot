@@ -53,7 +53,7 @@ import contextlib
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -69,6 +69,10 @@ class Detection:
     qtype: str
     latency_ms: int = 0
     error: str | None = None
+    # The speech end to this decision, set by the turn that used it. Unlike `latency_ms` (the
+    # call's own length) it includes the wait for the text and whatever ran before the speech
+    # end, so it is the detector's real place on the path of the card.
+    decided_ms: int | None = None
 
     def fires(self) -> bool:
         return self.decision == "answer" and self.qtype != "small_talk"
@@ -768,6 +772,7 @@ class TurnDetector:
                 cand, detection = await self._decide(turn, cand)
             finally:
                 first.cancel()
+            detection = replace(detection, decided_ms=max(0, int((time.monotonic() - t0) * 1000)))
             if not detection.fires():
                 self._discard_held(turn)
                 if turn.first_qid is not None:  # shown before the detector said no

@@ -701,6 +701,7 @@ class Session:
             t0=t0,
             detector_ms=detection.latency_ms,
             match=match,
+            decided_ms=detection.decided_ms,
         )
         self.emit(
             models.QuestionDetected,
@@ -766,6 +767,7 @@ class Session:
         q.confidence = DETECTED_CONFIDENCE
         q.addressed = True
         q.detector_ms = detection.latency_ms
+        q.decided_ms = detection.decided_ms
         q.speculative = speculative
         q.detected_at = datetime.now(UTC)
         self.emit(
@@ -795,6 +797,8 @@ class Session:
             q.qtype = detection.qtype
             if detection.latency_ms:
                 q.detector_ms = detection.latency_ms
+            if detection.decided_ms is not None:
+                q.decided_ms = detection.decided_ms
             q.first_shown = True
 
     # STT callbacks.

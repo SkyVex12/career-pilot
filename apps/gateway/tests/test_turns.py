@@ -86,6 +86,28 @@ async def test_fast_pass_starts_before_the_detector_returns(env) -> None:
     assert q["question_type"] == "technical"
 
 
+async def test_the_log_says_when_the_detector_decided(env) -> None:
+    """2026-11-14 baseline: `detector_ms` is the call's own length, which says nothing about
+    when the card could show once a call starts before the speech end or restarts on the
+    final. `decided_ms`, the speech end to the decision, is kept with the answer."""
+    use(env)
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the ledger?")
+        q = await c.wait_type("question.detected", speculative=False)
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    [stored] = [
+        e
+        for e in await session_log(env, c.session_id)
+        if e["kind"] == "answer" and e.get("pass") == "fast"
+    ]
+    lat = stored["latency_ms"]
+    assert lat["detector_ms"] <= lat["decided_ms"] <= lat["release_ms"], lat
+
+
 async def test_a_false_start_never_shows(env) -> None:
     """A held pass the detector rejects is cancelled without a message, and its cost is logged."""
     provider = use(env)
@@ -403,6 +425,8 @@ async def test_a_standup_question_is_decided_while_it_is_still_being_said(env) -
         if e["kind"] == "answer" and e.get("pass") == "fast"
     ]
     assert stored["latency_ms"]["early_ms"] >= DETECTOR_S * 1000, stored
+    # The decision was there at the speech end, though the call itself took DETECTOR_S.
+    assert stored["latency_ms"]["decided_ms"] < DETECTOR_S * 1000 - 100, stored
     assert [job for job, _ in provider.calls].count("detector") == 1
 
 

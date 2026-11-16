@@ -1,0 +1,145 @@
+{
+  "fast_prompt": {
+    "passes": 26,
+    "input_tokens_per_pass": 4261,
+    "cache_hit_rate": 0.903,
+    "uncached_passes": 0,
+    "hedged_or_retried": 0
+  },
+  "fast_ready_before_decision": [
+    20,
+    23
+  ],
+  "first_shown": 8,
+  "runs": 3,
+  "stt_lag_p50_per_run_ms": [
+    657,
+    575,
+    636
+  ],
+  "stages": {
+    "detector_ms": {
+      "p50": 1469,
+      "p95": 1971,
+      "n": 35
+    },
+    "final_ms": {
+      "p50": 469,
+      "p95": 734,
+      "n": 35
+    },
+    "turn_end_ms": {
+      "p50": 1969,
+      "p95": 2629,
+      "n": 35
+    },
+    "start_ms": {
+      "p50": 469,
+      "p95": 739,
+      "n": 35
+    },
+    "first_token_ms": {
+      "p50": 1125,
+      "p95": 1594,
+      "n": 23
+    },
+    "server_first_word_ms": {
+      "p50": 1983,
+      "p95": 2629,
+      "n": 35
+    },
+    "first_word_ms": {
+      "p50": 2204,
+      "p95": 2853,
+      "n": 35
+    },
+    "deep_first_word_ms": {
+      "p50": 4414,
+      "p95": 7563,
+      "n": 35
+    },
+    "hangover_ms": {
+      "p50": 228,
+      "p95": 242,
+      "n": 35
+    },
+    "stt_final_at_ms": {
+      "p50": 703,
+      "p95": 967,
+      "n": 35
+    },
+    "decided_at_ms": {
+      "p50": 2186,
+      "p95": 2853,
+      "n": 35
+    },
+    "fast_token_at_ms": {
+      "p50": 1886,
+      "p95": 2353,
+      "n": 23
+    },
+    "deep_done_ms": {
+      "p50": 7405,
+      "p95": 10367,
+      "n": 35
+    },
+    "memory_wait_ms": null,
+    "memory_fts_ms": null,
+    "memory_hybrid_ms": null,
+    "deep_memory_wait_ms": null,
+    "deep_memory_hybrid_ms": null
+  },
+  "forced_first_word_ms": {
+    "p50": 1188,
+    "p95": 1412,
+    "n": 3
+  },
+  "first_word_p50_per_run_ms": [
+    2204,
+    2182,
+    2254
+  ],
+  "detection": {
+    "precision": 1.0,
+    "recall": 0.972,
+    "false_fires_per_run": 0.0,
+    "false_fire_utterances": {},
+    "missed": {
+      "do_differently": 1
+    },
+    "duplicate_fires_per_run": 0.0,
+    "shown_then_cancelled_per_run": 0.33,
+    "false_answers_shown_per_run": 0.33,
+    "detector_calls_per_run": 59
+  },
+  "speculative": {
+    "fast_starts_per_run": 40.0,
+    "waste_rate": 0.683,
+    "waste_cost_per_run_usd": 0.002057
+  },
+  "prepared": {
+    "opportunities": 15,
+    "hits": 12,
+    "correct": 12,
+    "wrong": 0
+  },
+  "cost": {
+    "per_run_usd": 0.0676,
+    "model_per_run_usd": 0.0555,
+    "per_live_hour_usd": 0.953,
+    "model_per_live_hour_usd": 0.783,
+    "by_kind_per_run_usd": {
+      "answer:deep": 0.045628,
+      "answer:fast": 0.00102,
+      "detector": 0.006456,
+      "pass_cancelled:fast": 0.002057,
+      "prewarm": 0.000387
+    }
+  },
+  "provider_probe_ms": 1657,
+  "label": "speed-baseline",
+  "env": {},
+  "company": false,
+  "interleaved_with": [],
+  "at": "2026-11-16T13:55:11.087693+00:00"
+}

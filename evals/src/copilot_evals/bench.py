@@ -79,6 +79,15 @@ STAGES = (
     "server_first_word_ms",
     "first_word_ms",
     "deep_first_word_ms",
+    # The path of one card from the true end of speech in the audio, each a running total
+    # (2026-11-14): the client's VAD hangover, then the STT final, the detector's decision,
+    # the fast pass's first token on the gateway, the first word at the client (first_word_ms
+    # above) and the end of the detailed answer at the client.
+    "hangover_ms",
+    "stt_final_at_ms",
+    "decided_at_ms",
+    "fast_token_at_ms",
+    "deep_done_ms",
     # Company memory (a --company run): how long each pass waited for live search, and the
     # full-text and hybrid queries themselves.
     "memory_wait_ms",
@@ -88,6 +97,16 @@ STAGES = (
     "deep_memory_hybrid_ms",
 )
 
+
+# The stages of `STAGES` that are running totals from the true end of speech, in order.
+PATH = (
+    ("hangover_ms", "speech-end frame at the gateway"),
+    ("stt_final_at_ms", "STT final"),
+    ("decided_at_ms", "detector decision"),
+    ("fast_token_at_ms", "fast pass first token"),
+    ("first_word_ms", "first word at the client"),
+    ("deep_done_ms", "detailed answer done"),
+)
 
 # Seeding the benchmark user's digest and pack.
 
@@ -557,6 +576,21 @@ def score_run(
         first_delta = q.first_delta_at.get("fast")
         anchor = forced_at if forced_at is not None else q.speech_end_at
         deep_delta = q.first_delta_at.get("deep")
+        deep_done = q.done_at.get("deep")
+        # Server timings count from the speech-end frame's arrival; the hangover (the VAD's
+        # wait plus the send) puts them on the same clock as the true end of speech.
+        hangover = (
+            round((q.end_flag_at - q.speech_end_at) * 1000)
+            if forced_at is None and q.end_flag_at is not None and q.speech_end_at is not None
+            else None
+        )
+
+        def at(*parts: Any, hangover: int | None = hangover) -> int | None:
+            if hangover is None or any(p is None for p in parts):
+                return None
+            return hangover + sum(int(p) for p in parts)
+
+        decided = stored.get("decided_ms")
         row: dict[str, Any] = {
             "question_id": q.question_id,
             "utterance": span.id if span else None,
@@ -587,6 +621,23 @@ def score_run(
             and anchor is not None
             and "expand_ms" not in q.done.get("deep", {}).get("latency_ms", {})
             else None,
+            "hangover_ms": hangover,
+            "stt_final_at_ms": at(lat.get("final_ms", stored.get("final_ms"))),
+            "decided_at_ms": at(decided),
+            "fast_token_at_ms": at(lat.get("start_ms"), lat.get("first_token_ms")),
+            "deep_done_ms": round((deep_done - anchor) * 1000)
+            if deep_done is not None
+            and anchor is not None
+            and "expand_ms" not in q.done.get("deep", {}).get("latency_ms", {})
+            else None,
+            # Was the held pass's first token in before the detector decided? Then the
+            # detector alone set when the card showed.
+            "fast_ready_first": (lat["start_ms"] + lat["first_token_ms"] <= decided)
+            if decided is not None
+            and lat.get("start_ms") is not None
+            and lat.get("first_token_ms") is not None
+            else None,
+            "first_shown": bool(stored.get("first_shown")),
             "memory_wait_ms": lat.get("memory_wait_ms"),
             "memory_fts_ms": lat.get("memory_fts_ms"),
             "memory_hybrid_ms": lat.get("memory_hybrid_ms"),
@@ -639,7 +690,24 @@ def score_run(
     detector_entries = [e for e in log if e.get("kind") == "detector"]
 
     lag = stt_lag_ms(replay, spans)
+    fast_model = [
+        e
+        for e in log
+        if e.get("kind") == "answer" and e.get("pass") == "fast" and e.get("source") == "model"
+    ]
+    fast_in = sum(int(e.get("input_tokens") or 0) for e in fast_model)
+    ended = [e for e in log if e.get("kind") == "session.ended"]
+    end: dict[str, Any] = ended[0] if ended else {}
     return {
+        # The fast pass's prompt and how much of it the provider read from its cache.
+        "fast_prompt": {
+            "passes": len(fast_model),
+            "input_tokens": fast_in,
+            "cached_tokens": sum(int(e.get("cached_tokens") or 0) for e in fast_model),
+            "uncached_passes": sum(1 for e in fast_model if not e.get("cached_tokens")),
+            "hedged_or_retried": sum(1 for e in fast_model if e.get("fallback_attempt")),
+        },
+        "turns": end.get("turns"),
         "session_id": replay.session_id,
         "stt_lag_ms": {"p50": round(pct([float(x) for x in lag], 50)), "max": max(lag)}
         if lag
@@ -730,7 +798,24 @@ def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     calls = [d["detector_calls"] for d in det if d["detector_calls"] is not None]
     lags = [run["stt_lag_ms"]["p50"] for run in runs if run.get("stt_lag_ms")]
+    prompts_ = [run["fast_prompt"] for run in runs if run.get("fast_prompt")]
+    fast_in = sum(p["input_tokens"] for p in prompts_)
+    fast_n = sum(p["passes"] for p in prompts_)
+    ready = [r["fast_ready_first"] for r in auto if r.get("fast_ready_first") is not None]
     return {
+        "fast_prompt": {
+            "passes": fast_n,
+            "input_tokens_per_pass": round(fast_in / fast_n) if fast_n else None,
+            "cache_hit_rate": round(sum(p["cached_tokens"] for p in prompts_) / fast_in, 3)
+            if fast_in
+            else None,
+            "uncached_passes": sum(p["uncached_passes"] for p in prompts_),
+            "hedged_or_retried": sum(p["hedged_or_retried"] for p in prompts_),
+        },
+        # Of the questions answered by the model: how often the held pass had its first token
+        # before the detector decided (the detector alone then set when the card showed).
+        "fast_ready_before_decision": [sum(1 for x in ready if x), len(ready)],
+        "first_shown": sum(1 for r in auto if r.get("first_shown")),
         "runs": len(runs),
         "stt_lag_p50_per_run_ms": lags,
         "stages": {k: stage(auto, k) for k in STAGES},
@@ -957,6 +1042,13 @@ def compare(labels: list[str]) -> str:
         ),
         ("First word p50 (ms)", [st(s, "first_word_ms", "p50") for s in sums]),
         ("First word p95 (ms)", [st(s, "first_word_ms", "p95") for s in sums]),
+        *[
+            (
+                f"From speech end: {name} p50 / p95",
+                [f"{st(s, k, 'p50')} / {st(s, k, 'p95')}" for s in sums],
+            )
+            for k, name in PATH
+        ],
         (
             "Server first word p50 / p95",
             [
