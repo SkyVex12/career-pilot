@@ -132,6 +132,7 @@ class Question:
     t0: float  # monotonic time the question ended (speech end, or the force message)
     detector_ms: int | None
     match: "asyncio.Task[object] | None"
+    decided_ms: int | None = None  # t0 to the detector's decision (turn.Detection.decided_ms)
     detected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     turn_end_ms: int | None = None
     final_ms: int | None = None  # t0 to the STT final (None: no final, or a forced question)
@@ -470,6 +471,8 @@ class AnswerEngine:
                 out["turn_end_ms"] = q.turn_end_ms
             if q.detector_ms is not None:
                 out["detector_ms"] = q.detector_ms
+            if q.decided_ms is not None:
+                out["decided_ms"] = q.decided_ms
             if first_token_ms is not None:
                 out["first_token_ms"] = first_token_ms
             if state["first_delta_at"] is not None:

@@ -1,0 +1,195 @@
+{
+  "fixtures": [
+    "interview_screen",
+    "standup_handoff",
+    "standup_review"
+  ],
+  "cost_usd": 0.0413,
+  "flow": {
+    "by_fixture": {
+      "interview_screen": {
+        "cards": 8,
+        "withdrawn": 0,
+        "question_one_card": [
+          7,
+          7
+        ],
+        "quiet": [
+          10,
+          10
+        ],
+        "whole_question": [
+          2,
+          2
+        ],
+        "follow": [
+          4,
+          4
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_handoff": {
+        "cards": 2,
+        "withdrawn": 0,
+        "question_one_card": [
+          2,
+          2
+        ],
+        "quiet": [
+          7,
+          7
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          0,
+          0
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_review": {
+        "cards": 6,
+        "withdrawn": 0,
+        "question_one_card": [
+          5,
+          5
+        ],
+        "quiet": [
+          9,
+          9
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          1,
+          1
+        ],
+        "update_card": [
+          1,
+          1
+        ],
+        "failed": []
+      }
+    },
+    "total": {
+      "question_one_card": [
+        14,
+        14
+      ],
+      "quiet": [
+        26,
+        26
+      ],
+      "whole_question": [
+        2,
+        2
+      ],
+      "follow": [
+        5,
+        5
+      ],
+      "update_card": [
+        1,
+        1
+      ],
+      "all": [
+        48,
+        48
+      ]
+    }
+  },
+  "detect": {
+    "model": "gpt-6-luna",
+    "api": "decisions",
+    "reps": 2,
+    "fired": [
+      28,
+      28
+    ],
+    "false_fires": [
+      4,
+      54
+    ],
+    "false_fires_by_addressee": {
+      "me": [
+        4,
+        32
+      ],
+      "other": [
+        0,
+        12
+      ],
+      "nobody": [
+        0,
+        10
+      ]
+    },
+    "type": [
+      14,
+      26
+    ],
+    "latency_p50_ms": 407,
+    "calls": 82,
+    "cost_usd": 0.0098,
+    "wrong": [
+      "false fire interview_screen line 6: answer/behavioral (a trailing remark right after a question that has its card)",
+      "type interview_screen line 24: answer/behavioral, wanted other",
+      "type standup_handoff line 4: answer/status_follow_up, wanted standup_status",
+      "type standup_handoff line 6: answer/other, wanted standup_status",
+      "type standup_review line 7: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 9: answer/status_follow_up, wanted standup_status",
+      "false fire standup_review line 14: answer/respond (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type standup_review line 17: answer/estimate_risk, wanted standup_status",
+      "false fire interview_screen line 6: answer/behavioral (a trailing remark right after a question that has its card)",
+      "type interview_screen line 24: answer/behavioral, wanted other",
+      "type standup_handoff line 4: answer/status_follow_up, wanted standup_status",
+      "type standup_handoff line 6: answer/other, wanted standup_status",
+      "type standup_review line 7: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 9: answer/status_follow_up, wanted standup_status",
+      "false fire standup_review line 14: answer/respond (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type standup_review line 17: answer/estimate_risk, wanted standup_status"
+    ]
+  },
+  "answers": {
+    "reps": 2,
+    "checks": [
+      86,
+      88
+    ],
+    "by_pass": {
+      "fast": [
+        42,
+        44
+      ],
+      "deep": [
+        44,
+        44
+      ]
+    },
+    "cost_usd": 0.0315,
+    "failed": [
+      {
+        "where": "interview_screen line 14 fast rep 0",
+        "check": "must not /(?i)what would you like to know/",
+        "answer": "- The contract ended in the summer\n- I\u2019m looking for larger-scale payments work with more system design ownership\n- What would you like to know about the transition?"
+      },
+      {
+        "where": "interview_screen line 26 fast rep 1",
+        "check": "must not /(?i)clarify/",
+        "answer": "- What I\u2019d weigh is the role\u2019s scope, level, and overall package\n- Could you clarify the expected range and compensation structure?\n- I\u2019d need to consider those details before giving an expectation"
+      }
+    ]
+  }
+}

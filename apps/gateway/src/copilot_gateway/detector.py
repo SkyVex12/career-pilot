@@ -1,7 +1,18 @@
 """Question and addressee check (ARCHITECTURE.md, "Question and addressee check").
 
-Stage 0 has no local classifier yet, so every utterance goes to Haiku (Rollout stages,
-"Detector: Haiku on every utterance"). Results are cached by text hash for the session.
+Stage 0 has no local classifier yet, so every utterance goes to a model. Results are cached by
+text hash for the session.
+
+Two ways to ask (`detector_api`):
+- "decisions" (default since 2026-11-16, OpenAI only): the Decisions API, which returns typed
+  choices instead of generated text. Two questions, whether the utterance needs a card now
+  (answer, wait or none) and its type (`prompts.detector_decision`). On the 119 labelled
+  lines of the evals it decided in 0.42 to 0.5 s at p50 against 1.2 s for the same rules on
+  the Responses API, and the detector's ~1.5 s was what 27 of 35 benchmark questions waited
+  for (docs/analysis/2026-11-14-speed-baseline.md). A second request starts alongside after
+  `decisions_hedge_ms`, or at once when the first fails (it answered 503 now and then).
+- "responses": the detector prompt on the job's routes (the Responses API on OpenAI, the
+  Messages API on Claude), one JSON field. Used when no OpenAI provider is configured.
 
 Every decision, cached or not, goes to `on_decision` as a log entry: the text's hash, the
 decision, its latency, tokens and cost. The session adds the text only with transcript consent.
@@ -13,12 +24,19 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Callable
-from dataclasses import replace
-from typing import Any
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
 
 from copilot_core import prompts
-from copilot_core.llm import AllRoutesFailedError, LLMDone, LLMUsage, ModelRouter, RefusedError
+from copilot_core.llm import (
+    AllRoutesFailedError,
+    Decided,
+    LLMDone,
+    LLMUsage,
+    ModelRouter,
+    RefusedError,
+)
 from copilot_gateway.turn import Detection
 
 log = logging.getLogger(__name__)
@@ -39,6 +57,42 @@ def parse_detection(text: str) -> Detection:
     return Detection(decision="wait" if answer == "wait" else "none", qtype="other")
 
 
+def detection_from(answers: Sequence[Mapping[str, Any]], mode: str) -> tuple[Detection, float]:
+    """A Decisions API response as the detector's decision, and the confidence of its first
+    question. A type the mode does not offer is "other"."""
+    got = prompts.read_decision([dict(a) for a in answers])
+    if got["decision"] == "wait":
+        return Detection("wait", "other"), got["confidence"]
+    if got["decision"] != "answer":
+        return NO_QUESTION, got["confidence"]
+    qtype = got["qtype"]
+    allowed = set(prompts.QUESTION_TYPES) - {"small_talk"}
+    if mode in prompts.GROUP_MODES:
+        allowed |= set(prompts.WORK_TYPES)
+    return Detection("answer", qtype if qtype in allowed else "other"), got["confidence"]
+
+
+class Decider(Protocol):
+    name: str
+
+    async def decide(
+        self,
+        model: str,
+        input: Sequence[Mapping[str, Any]],
+        questions: Sequence[Mapping[str, Any]],
+    ) -> Decided: ...
+
+
+@dataclass(frozen=True)
+class DecisionsRoute:
+    """Where the detector asks when it uses the Decisions API."""
+
+    provider: Decider
+    model: str
+    hedge_s: float | None
+    timeout_s: float
+
+
 # The log entry and the utterance (the session stores the text only with consent).
 type DecisionHook = Callable[[dict[str, Any], str], None]
 type CostFn = Callable[[LLMDone], float | None]
@@ -56,12 +110,14 @@ class Detector:
         max_tokens: int,
         on_decision: DecisionHook | None = None,
         cost: CostFn | None = None,
+        decisions: DecisionsRoute | None = None,
     ) -> None:
         self.router = router
         self.user_name = user_name
         self.max_tokens = max_tokens
         self.on_decision = on_decision
         self.cost = cost
+        self.decisions = decisions
         self.cache: OrderedDict[str, Detection] = OrderedDict()
         self.calls = 0
         # Totals for the session's end log line, so an analysis needs no per-call lines:
@@ -139,6 +195,8 @@ class Detector:
             return result
         started = time.monotonic()
         self.calls += 1
+        if self.decisions is not None:
+            return await self._decide(utterance, key, cache_key, transcript, mode, turns, started)
         req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode, turns)
         try:
             text, done = await self.router.complete("detector", req)
@@ -171,6 +229,88 @@ class Detector:
         while len(self.cache) > 256:
             self.cache.popitem(last=False)
         self._report(utterance, key, result, done, cached=False)
+        return result
+
+    async def _decide(
+        self,
+        utterance: str,
+        key: str,
+        cache_key: str,
+        transcript: str,
+        mode: str,
+        turns: str,
+        started: float,
+    ) -> Detection:
+        """The decision on the Decisions API, hedged: a second request starts alongside after
+        `hedge_s`, or at once when the first fails; the first answer wins."""
+        route = self.decisions
+        assert route is not None
+        req = prompts.detector_decision(self.user_name, transcript, utterance, mode, turns)
+
+        async def one() -> Decided:
+            return await asyncio.wait_for(
+                route.provider.decide(route.model, req.input, req.questions), route.timeout_s
+            )
+
+        racing: set[asyncio.Task[Decided]] = {asyncio.ensure_future(one())}
+        attempts, hedged = 1, False
+        errors: list[str] = []
+        won: Decided | None = None
+        try:
+            while racing and won is None:
+                wait_s = route.hedge_s if attempts == 1 else None
+                done, _ = await asyncio.wait(
+                    racing, timeout=wait_s, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done:  # no answer by the hedge time: a second request alongside
+                    attempts, hedged = 2, True
+                    racing.add(asyncio.ensure_future(one()))
+                    continue
+                for task in done:
+                    racing.discard(task)
+                    if task.exception() is None:
+                        won = task.result()
+                        break
+                    e = task.exception()
+                    errors.append(f"{type(e).__name__}: {e}"[:200])
+                if won is None and not racing and attempts < 2:
+                    attempts = 2
+                    racing.add(asyncio.ensure_future(one()))
+        except asyncio.CancelledError:
+            # The turn moved on. The provider bills what it read: estimated, 4 characters a
+            # token, as for a cancelled call on the Responses API.
+            chars = sum(
+                len(str(p.get("text", ""))) for m in req.input for p in m.get("content", [])
+            )
+            est = LLMDone(LLMUsage(input_tokens=chars // 4), None, model=route.model)
+            ms = int((time.monotonic() - started) * 1000)
+            self._report(
+                utterance, key, replace(NO_QUESTION, latency_ms=ms), est, cached=False,
+                cancelled=True, estimated=True, api="decisions",
+            )  # fmt: skip
+            raise
+        finally:
+            for task in racing:
+                task.cancel()
+        ms = int((time.monotonic() - started) * 1000)
+        if won is None:
+            log.warning("detector failed: %s", "; ".join(errors))
+            failed = replace(NO_QUESTION, error="; ".join(errors), latency_ms=ms)
+            self._report(utterance, key, failed, None, cached=False, api="decisions")
+            return replace(NO_QUESTION, error="; ".join(errors))
+        detection, confidence = detection_from(won.answers, mode)
+        result = replace(detection, latency_ms=ms)
+        done = LLMDone(
+            won.usage, "end_turn", won.provider, won.model, attempt=int(hedged or bool(errors)),
+            first_token_ms=ms, hedged=hedged,
+        )  # fmt: skip
+        self.cache[cache_key] = result
+        while len(self.cache) > 256:
+            self.cache.popitem(last=False)
+        self._report(
+            utterance, key, result, done, cached=False, api="decisions",
+            confidence=round(confidence, 3),
+        )  # fmt: skip
         return result
 
 

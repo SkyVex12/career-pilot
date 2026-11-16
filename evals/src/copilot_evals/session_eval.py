@@ -411,6 +411,23 @@ async def detect_line(
             for ln in fx.lines[: line.index]
         ]
         turns = prompts.turn_taking(user_name, spans, line.t)
+    if settings.detector_api == "decisions":
+        # As the gateway asks by default since 2026-11-16: the Decisions API, typed choices.
+        from copilot_gateway.detector import detection_from
+
+        dreq = prompts.detector_decision(
+            user_name, transcript_before(fx, line, user_name), question_text(fx, line),
+            fx.mode, turns,
+        )  # fmt: skip
+        started = time.monotonic()
+        decided = await provider.decide(settings.decisions_model, dreq.input, dreq.questions)
+        ms = (time.monotonic() - started) * 1000
+        u = decided.usage
+        price = cost_usd(
+            settings.decisions_model, "standard", u.input_tokens, u.cached_tokens, 0,
+            settings.model_prices, settings.tier_price_multipliers,
+        )  # fmt: skip
+        return detection_from(decided.answers, fx.mode)[0], ms, float(price or 0)
     req = prompts.detector(
         user_name,
         transcript_before(fx, line, user_name),
@@ -487,6 +504,7 @@ async def run_detect(fixtures: list[Fixture], user_name: str, reps: int) -> dict
     latencies.sort()
     return {
         "model": model,
+        "api": settings.detector_api,
         "reps": reps,
         "fired": [fired, expected],
         "false_fires": [false_fires, quiet],

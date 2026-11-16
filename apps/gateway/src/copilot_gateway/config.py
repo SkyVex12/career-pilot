@@ -72,8 +72,26 @@ class Settings(CoreSettings):
     # it ends a sentence, at most once per this many ms, so the decision is ready at the
     # speech end (turn.py, "Early decision"). None: off.
     early_decision_interval_ms: int | None = 700
+    # The early decision in interviews too, not only standups and meetings (2026-11-16).
+    early_decision_all_modes: bool = True
+    # Keep a held fast pass when the STT final only adds this many words at the end of the
+    # text it started on; only the detector decides again (turn.py, "Kept on a longer final").
+    # The final changed the words of 105 of 141 utterances in October's benchmark runs, and
+    # each change restarted the pass. None: every change restarts it.
+    held_keep_added_words: int | None = 2
     stage1_min_score: float = 0.3
     detector_max_tokens: int = 80
+    # How the detector asks (detector.py): "decisions" is OpenAI's Decisions API, typed
+    # choices in about 0.5 s against 1.2 s for the same rules as generated JSON (2026-11-16,
+    # the 119 labelled lines of the evals); it needs an OpenAI provider and falls back to
+    # "responses" without one. "responses" is the detector prompt on the job's routes.
+    detector_api: Literal["decisions", "responses"] = "decisions"
+    # The Decisions API's model (gpt-6-luna is the only one it serves, November 2026), when a
+    # second request starts alongside the first (None: only after a failure), and how long a
+    # request may take before it counts as failed.
+    decisions_model: str = "gpt-6-luna"
+    decisions_hedge_ms: int | None = 900
+    decisions_timeout_ms: int = 3000
     # A detector request with no first token after this long gets a second one alongside it
     # (the job's retry route), and the first to answer is used. Benchmark, October 2026: 5% of
     # detector calls stalled until the 3 s first-token timeout and its retry (5 to 6 s), while
@@ -207,6 +225,11 @@ class Settings(CoreSettings):
     continuation_gap_ms: int = 5000
     # Passes whose prompt cache is written at session start (and on a mode change), so the
     # first question is not cold. Only the fast pass by default: the first word waits on it.
+    # While a session is live, open (or keep open) each model provider's connection this often,
+    # with a free request (ModelRouter.warm), so the first call after a quiet spell does not
+    # pay a new TLS handshake: about 0.7 s more to the first token, measured 2026-11-16, while
+    # idle connections are dropped after llm_keepalive_s (120 s). None: only at session start.
+    llm_warm_interval_s: float | None = 60.0
     prewarm_jobs: Annotated[list[Literal["fast", "deep"]], NoDecode] = Field(
         default_factory=lambda: ["fast"]
     )

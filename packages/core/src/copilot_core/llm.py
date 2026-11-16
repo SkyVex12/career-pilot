@@ -88,6 +88,17 @@ class LLMDone:
 type LLMChunk = str | LLMDone
 
 
+@dataclass(frozen=True)
+class Decided:
+    """A Decisions API response: its answers as dicts (each with `type`, `name` and, for a
+    choice, `choice`, `confidence` and `probabilities`) and its usage."""
+
+    answers: list[dict[str, Any]]
+    usage: LLMUsage
+    provider: str = ""
+    model: str = ""
+
+
 class LLMProvider(Protocol):
     name: str
 
@@ -396,6 +407,28 @@ class OpenAIProvider:
             provider=self.name,
             model=model,
         )
+
+    async def decide(
+        self,
+        model: str,
+        input: Sequence[Mapping[str, Any]],
+        questions: Sequence[Mapping[str, Any]],
+    ) -> "Decided":
+        """One call to the Decisions API (POST /v1/decisions): typed answers to `questions`
+        about `input`, not generated text. Only input tokens are billed; the output count is
+        reported as 0 so cost comes from the input alone."""
+        d = await self.client.decisions.create(
+            model=model,
+            input=cast(Any, list(input)),
+            questions=cast(Any, list(questions)),
+        )
+        u = d.usage
+        details = u.input_tokens_details if u else None
+        usage = LLMUsage(
+            input_tokens=u.input_tokens if u else 0,
+            cached_tokens=(details.cached_tokens or 0) if details else 0,
+        )
+        return Decided([a.model_dump() for a in d.answers], usage, self.name, model)
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]

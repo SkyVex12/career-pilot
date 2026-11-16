@@ -44,6 +44,15 @@ says no and the card is withdrawn (`question.cancelled`). The detector's ~1 s wa
 path of every card: across 151 real questions the first word came at 1.9 s (p50), and the
 user had started answering before it on 56% of interview questions.
 
+Kept on a longer final (2026-11-16): the STT final usually ends with one to three words the
+interim text lacked (56 of 141 finals in October's benchmark runs), and every such final
+restarted the held fast pass, so its first token always counted from the final, 0.7 s after
+the speech end. When the new text only extends the held pass's text by at most
+`keep_added_words` words at its end, the pass is kept and only the detector decides again on
+the whole text; the card shows the whole question. The same holds for a pass started early,
+on a sentence end while the speaker was still talking, which may now happen in every call
+(`early_all_modes`), not only in group calls.
+
 The turn-detection model sits behind `TurnModel`; Stage 0 ships `NoTurnModel`, so only the
 silence timer decides.
 """
@@ -53,7 +62,7 @@ import contextlib
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -69,6 +78,10 @@ class Detection:
     qtype: str
     latency_ms: int = 0
     error: str | None = None
+    # The speech end to this decision, set by the turn that used it. Unlike `latency_ms` (the
+    # call's own length) it includes the wait for the text and whatever ran before the speech
+    # end, so it is the detector's real place on the path of the card.
+    decided_ms: int | None = None
 
     def fires(self) -> bool:
         return self.decision == "answer" and self.qtype != "small_talk"
@@ -389,6 +402,8 @@ class TurnDetector:
         early_interval_ms: int | None = None,
         carry_gap_ms: int = 0,
         first_show_min_words: int | None = None,
+        keep_added_words: int | None = None,
+        early_all_modes: bool = False,
     ) -> None:
         self.host = host
         self.silence_s = silence_timer_ms / 1000
@@ -412,6 +427,13 @@ class TurnDetector:
         self.carry_depth = 0
         # One-on-one calls: show a plain question before the detector decides; None: off.
         self.first_show_min_words = first_show_min_words
+        # A held fast pass started on a text that the final (or the speech end's text) only
+        # extends by at most this many words at its end is kept: only the detector and the
+        # prepared match restart on the new text (module doc, "Kept on a longer final").
+        # None: every change restarts the pass too.
+        self.keep_added_words = keep_added_words
+        # Early decision in every call, not only group calls.
+        self.early_all_modes = early_all_modes
         self.speaking = False
         self.early: _Early | None = None
         self.early_at = 0.0
@@ -434,6 +456,7 @@ class TurnDetector:
         self.carried = 0
         self.first_shown = 0
         self.first_withdrawn = 0
+        self.held_kept = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -459,7 +482,7 @@ class TurnDetector:
 
     def _maybe_early(self) -> None:
         """Start step 1 on the live text when it ends a sentence (the module doc)."""
-        if self.early_s is None or not self.group_call():
+        if self.early_s is None or not (self.group_call() or self.early_all_modes):
             return
         text = self.utterance()
         if not text or text[-1] not in ".?!" or len(_words(text)) < self.hold_min_words:
@@ -676,6 +699,22 @@ class TurnDetector:
             text, detection, speculative=speculative, t0=turn.t0, match=match
         )
 
+    def _extends(self, checked: str, text: str) -> bool:
+        """`text` is `checked` with at most `keep_added_words` more words at its end (or only
+        a "?" more): the question the held pass answers is still the one being asked."""
+        n = self.keep_added_words
+        if n is None:
+            return False
+        before, after = _words(checked), _words(text)
+        return bool(before) and after[: len(before)] == before and len(after) - len(before) <= n
+
+    def _redetect(self, turn: _Turn, text: str, match: "asyncio.Task[object] | None") -> _Candidate:
+        """The detector on the longer text; the held pass and its prepared match stay."""
+        self.held_kept += 1
+        detection = asyncio.ensure_future(self.host.detect(text))
+        turn.cand = _Candidate(text, detection, match)
+        return turn.cand
+
     def _start(self, turn: _Turn, text: str) -> _Candidate:
         """Step 1 on this text: the detector, the prepared match and a held fast pass."""
         detection = asyncio.ensure_future(self.host.detect(text))
@@ -710,9 +749,14 @@ class TurnDetector:
             elif not cand.detection.done():
                 await asyncio.wait({cand.detection})
             if self._changed(turn, cand):
-                cand.cancel()
                 self.final_rechecks += 1
-                cand = self._start(turn, self._text(turn))
+                final = self._text(turn)
+                if turn.held_qid is not None and self._extends(cand.text, final):
+                    cand.detection.cancel()
+                    cand = self._redetect(turn, final, cand.match)
+                else:
+                    cand.cancel()
+                    cand = self._start(turn, final)
                 continue
             if not cand.detection.done():
                 continue  # the final came and changed nothing: the decision is still coming
@@ -748,11 +792,19 @@ class TurnDetector:
     async def _turn(self, turn: _Turn) -> None:
         t0 = turn.t0
         early, turn.early = turn.early, None
+        early_longer = False
         if early is not None and (
             not self.utterance() or materially_changed(early.cand.text, self.utterance())
         ):
-            self._drop_early(early)  # the speaker went on past that sentence
-            early = None
+            if (
+                self.utterance()
+                and early.held is not None
+                and self._extends(early.cand.text, self.utterance())
+            ):
+                early_longer = True  # a few more words: keep its pass, decide again
+            else:
+                self._drop_early(early)  # the speaker went on past that sentence
+                early = None
         if not self.utterance():  # no text yet: start on the first interim or final
             await self._wait_text(t0 + self.final_wait_s)
             if not self.utterance():
@@ -761,6 +813,9 @@ class TurnDetector:
         try:
             if early is not None:
                 cand = self._adopt(turn, early)
+                if early_longer:
+                    cand.detection.cancel()
+                    cand = self._redetect(turn, self.utterance(), cand.match)
             else:
                 cand = self._start(turn, self.utterance())
             first = asyncio.ensure_future(self._first(turn))
@@ -768,6 +823,7 @@ class TurnDetector:
                 cand, detection = await self._decide(turn, cand)
             finally:
                 first.cancel()
+            detection = replace(detection, decided_ms=max(0, int((time.monotonic() - t0) * 1000)))
             if not detection.fires():
                 self._discard_held(turn)
                 if turn.first_qid is not None:  # shown before the detector said no

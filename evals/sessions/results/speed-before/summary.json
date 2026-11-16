@@ -1,0 +1,186 @@
+{
+  "fixtures": [
+    "interview_screen",
+    "standup_handoff",
+    "standup_review"
+  ],
+  "cost_usd": 0.0552,
+  "flow": {
+    "by_fixture": {
+      "interview_screen": {
+        "cards": 8,
+        "withdrawn": 0,
+        "question_one_card": [
+          7,
+          7
+        ],
+        "quiet": [
+          10,
+          10
+        ],
+        "whole_question": [
+          2,
+          2
+        ],
+        "follow": [
+          4,
+          4
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_handoff": {
+        "cards": 2,
+        "withdrawn": 0,
+        "question_one_card": [
+          2,
+          2
+        ],
+        "quiet": [
+          7,
+          7
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          0,
+          0
+        ],
+        "update_card": [
+          0,
+          0
+        ],
+        "failed": []
+      },
+      "standup_review": {
+        "cards": 6,
+        "withdrawn": 0,
+        "question_one_card": [
+          5,
+          5
+        ],
+        "quiet": [
+          9,
+          9
+        ],
+        "whole_question": [
+          0,
+          0
+        ],
+        "follow": [
+          1,
+          1
+        ],
+        "update_card": [
+          1,
+          1
+        ],
+        "failed": []
+      }
+    },
+    "total": {
+      "question_one_card": [
+        14,
+        14
+      ],
+      "quiet": [
+        26,
+        26
+      ],
+      "whole_question": [
+        2,
+        2
+      ],
+      "follow": [
+        5,
+        5
+      ],
+      "update_card": [
+        1,
+        1
+      ],
+      "all": [
+        48,
+        48
+      ]
+    }
+  },
+  "detect": {
+    "model": "gpt-6-luna",
+    "api": "responses",
+    "reps": 2,
+    "fired": [
+      28,
+      28
+    ],
+    "false_fires": [
+      6,
+      54
+    ],
+    "false_fires_by_addressee": {
+      "me": [
+        6,
+        32
+      ],
+      "other": [
+        0,
+        12
+      ],
+      "nobody": [
+        0,
+        10
+      ]
+    },
+    "type": [
+      14,
+      26
+    ],
+    "latency_p50_ms": 1297,
+    "calls": 82,
+    "cost_usd": 0.0046,
+    "wrong": [
+      "type interview_screen line 5: answer/other, wanted behavioral",
+      "type interview_screen line 24: answer/technical, wanted other",
+      "false fire interview_screen line 26: answer/other (a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant))",
+      "false fire interview_screen line 28: answer/other (Sure. One fifty to one sixty with a possible annua)",
+      "type standup_handoff line 4: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 9: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 12: answer/decision, wanted respond",
+      "false fire standup_review line 14: answer/standup_status (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type standup_review line 17: answer/estimate_risk, wanted standup_status",
+      "type interview_screen line 5: answer/other, wanted behavioral",
+      "type interview_screen line 24: answer/technical, wanted other",
+      "false fire interview_screen line 26: answer/other (a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant))",
+      "false fire interview_screen line 28: answer/other (Sure. One fifty to one sixty with a possible annua)",
+      "type standup_handoff line 4: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 9: answer/status_follow_up, wanted standup_status",
+      "type standup_review line 12: answer/decision, wanted respond",
+      "false fire standup_review line 14: answer/standup_status (a statement in the middle of a turn (2026-11-03: a card, replaced twice in 21 s))",
+      "type standup_review line 17: answer/estimate_risk, wanted standup_status"
+    ]
+  },
+  "answers": {
+    "reps": 2,
+    "checks": [
+      88,
+      88
+    ],
+    "by_pass": {
+      "fast": [
+        44,
+        44
+      ],
+      "deep": [
+        44,
+        44
+      ]
+    },
+    "cost_usd": 0.0506,
+    "failed": []
+  }
+}
