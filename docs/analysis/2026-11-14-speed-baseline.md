@@ -163,3 +163,110 @@ OpenAI model measured here gets there.
 
 Three benchmark runs, $0.20 (models $0.17, Deepgram $0.03); the model probe $0.004; the
 local checks and the BERT-mini check $0 (offline). About $0.21 of the $2 limit.
+
+## 6. What this round built
+
+Your call after section 4: no Priority tier for now; the detector on OpenAI's Decisions API
+alone (no Responses detector beside it); its answers and types improved; fixes 4 and 5. Fix 2
+was asked for too, but the measurements below removed its premise, so it is not built.
+
+Two ideas were tested first and dropped:
+
+- **The verdict inside the fast answer** (the fast pass's first line says ANSWER, WAIT or
+  SKIP): no faster, because a request costs about 1.1 s to its first token whatever it
+  returns (verdict line 1.36 s at p50 against the detector's whole call at 1.20 s), and worse
+  at detection (14 false cards in 68 interview lines against 4). About $0.04.
+- **Published local question classifiers** (Hugging Face): they tell a question from a
+  statement, not whether it needs a card; 20 to 34 of 34 interview lines that need none
+  passed as questions.
+
+| Change | Setting | Tests |
+| --- | --- | --- |
+| The detector on the Decisions API: the same rules as a developer message, two choice questions (needs a card now: answer, wait or none; and the answer type), hedged at 0.9 s and retried at once on a failure | `detector_api` (decisions; `responses` as before), `decisions_model`, `decisions_hedge_ms`, `decisions_timeout_ms` | `test_decisions.py` (6), on a recorded response |
+| The answer types and turn rules tuned for it: open questions about the user's situation and "what questions do you have for me?" need an answer; a hand-off with a closing "okay?" does not; at work, checks, choices and problems said as statements need one, and the work types come before the general ones | — | the request test; the tuning runs below |
+| Fix 5: a held fast pass is kept when the final only adds up to 2 words; the early start (at a sentence end, while the speaker talks) runs in interviews too | `held_keep_added_words` (2), `early_decision_all_modes` (on) | `test_a_held_pass_is_kept_when_the_final_only_adds_a_word`, `test_a_final_with_other_words_or_the_setting_off_restarts_the_pass`, `test_an_interview_question_is_decided_while_it_is_still_being_said` |
+| Fix 4: a live session warms each model connection every 60 s with a free request | `llm_warm_interval_s` (60) | `test_model_connections_are_kept_warm_through_a_quiet_spell` |
+| `decided_ms` in each answer's stored latency; the benchmark's path from the speech end | — | `test_the_log_says_when_the_detector_decided` |
+
+**Tuning the Decisions detector.** On the 119 labelled lines (tuning set), then on 56 lines it
+was not tuned on (held out: the knowledge eval's 37 standup turns, all needing a card, and the
+answer eval's 19 interview questions, one of which, "have you worked here before?", is now a
+screening check that needs none):
+
+| | Responses detector | Decisions, first version | Decisions, shipped |
+| --- | --- | --- | --- |
+| Interview questions caught (tuning, per run) | 35 / 35 | 33 / 35 | 35 / 35 |
+| Interview lines wrongly given a card | 1.5 / 34 | 2 / 34 | 1 / 34 |
+| Standup questions caught | 18.5 / 19 | 18 / 19 | 18 / 19 |
+| Standup lines wrongly given a card | 1 / 31 | 1 / 31 | 1 / 31 |
+| Held out: standup turns caught | 34 / 37 | — | 32 / 37 |
+| Held out: interview questions caught | 18 / 19 | — | 18 / 19 |
+| Decision time p50 / p95 | 1.20 / 2.20 s | 0.42 / 0.83 s | 0.50 / 0.95 to 1.55 s |
+
+The held-out standup misses are problems raised about the user's work as a statement
+("I still get that column with empty cells") and one name check; the Responses detector misses
+two of those kinds too. The confidence the API returns is logged with each decision. Its
+prompt is below the API's 1,024-token cache minimum, so nothing is cached.
+
+**Benchmark, before and after** (3 runs each, from the true end of speech, the same desk):
+
+| Stage, p50 / p95 (ms) | Before | After |
+| --- | --- | --- |
+| Speech-end frame at the gateway | 228 / 242 | 227 / 236 |
+| STT final | 703 / 967 | 635 / 783 |
+| Detector decision | 2,186 / 2,853 | **1,114 / 1,497** |
+| Fast pass first token | 1,886 / 2,353 | **1,423 / 2,189** |
+| **First word at the client** | **2,204 / 2,853** | **1,310 / 2,068** |
+| Detailed answer done | 7,405 / 10,367 | 6,364 / 9,403 |
+| Detector call | 1,469 / 1,971 | 468 / 843 |
+| Questions under 1.0 s / 1.5 s | 0 / 0 of 35 | 2 / 25 of 40 |
+| Precision / recall | 1.00 / 0.97 | 1.00 / 1.00 |
+| Shown then withdrawn per run | 0.33 | 0 |
+| Prepared hits (right / chances, wrong) | 12 / 15, 0 | 10 / 17, 0 |
+| Cost per live hour | $0.95 | $1.03 |
+
+- The provider probe was faster in the after runs (1.20 s against 1.66 s median for a raw
+  detector call): part of the gain may be the hour, not the code. The detector's own share is
+  not in doubt: 0.47 s against 1.47 s at p50 under any probe value seen this month.
+- **The wait has moved.** Before, 27 of 35 cards had their answer ready and waited for the
+  detector. After, on 24 of 30 model answers the decision came first and the card waited for
+  the fast pass's first token (about 0.94 s after its request). Per run, 5 held passes were
+  kept on a longer final and 5 turns used the early start.
+- **Prepared answers hit less** (10 of 17 against 12 of 15): the decision now often comes
+  before the question's embedding (0.5 to 0.8 s), the model's text goes out first, and a
+  later prepared hit is dropped, as designed. This is also why fix 2 is not built: it would
+  show a prepared hit before the detector, but the detector now decides at about the time the
+  match does, so it would save nothing and add withdrawn cards.
+- Cost rose $0.08 an hour: one more question answered per run with its detailed answer, and
+  detailed answers cancelled by the next question coming sooner. The detector costs the same
+  ($0.0067 a run against $0.0065).
+- The target (1.0 s / 1.5 s) is still missed: 1.31 s and 2.07 s. What is left is the fast
+  pass's own first token; the next levers are a faster model for it (or the Priority tier you
+  held back), and the prepared answer waiting a little for its match.
+
+**Session eval** (2 repetitions each; "before" is this branch with `COPILOT_DETECTOR_API=responses`, the same detector as main):
+
+| | Before | After |
+| --- | --- | --- |
+| Flow: all checks (offline) | 48 / 48 | 48 / 48 |
+| Flow: cards shown, then withdrawn | 0 | 0 |
+| Detect: questions for me fired | 28 / 28 | 28 / 28 |
+| Detect: false fires | 6 / 54 | 4 / 54 |
+| Detect: type right | 14 / 26 | 14 / 26 |
+| Detect: latency p50 | 1,297 ms | 407 ms |
+| Answers: fast | 44 / 44 | **42 / 44** |
+| Answers: deep | 44 / 44 | 44 / 44 |
+
+The fast answer's score dropped by two checks. The fast-answer prompt is not changed by this
+branch (the answer part does not use the detector at all), and the two failures are checks
+that have failed before: once "what would you like to know about the transition?" and once
+"could you clarify the expected range" on the misheard pay figure (the 2026-11-11 run failed
+the same one). That is run-to-run variance, but it is a drop on this run. "Type right" is low
+on both because the fixture's standup labels predate the work types: 6 of the 12 misses are a
+work type the design now prefers (`status_follow_up` or `estimate_risk` where the label says
+`standup_status`).
+
+**Spend for the round:** baseline benchmark $0.20, after benchmark $0.22, probes and checks
+$0.02, the verdict test $0.05, the Decisions comparisons and tuning $0.16, two session evals
+$0.10: about $0.75 of the $2 limit. No new infrastructure; the Decisions API is the same
+OpenAI account.
