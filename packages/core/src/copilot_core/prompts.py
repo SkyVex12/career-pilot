@@ -738,6 +738,152 @@ def detector(
     )
 
 
+@dataclass(frozen=True)
+class DecisionRequest:
+    """A detector call on OpenAI's Decisions API (POST /v1/decisions): the call so far as
+    input messages and the questions it answers with typed choices, not generated text."""
+
+    input: list[dict[str, Any]]
+    questions: list[dict[str, Any]]
+
+
+# The detector on the Decisions API (2026-11-16). Two questions instead of one JSON field:
+# whether the utterance needs a card now, then its type among answer types only, so "none"
+# never competes with a type. On the 119 labelled lines the one-question version caught as
+# many questions as the Responses detector at 0.42 s against 1.20 s (p50); these rules add
+# what it got wrong: open questions about the user's situation, a hand-off with a closing
+# "okay?", and a choice put to the user.
+DECISION_RULES = """
+More on what needs an answer:
+- An open question about {user_name}'s own situation (where they are based, the pay they
+  expect, when they could start, how their search is going) needs an answer, of type other.
+  Only a yes-or-no check of a fact {user_name} already knows needs none.
+- "What questions do you have for me?" and "do you have any questions for us?" need an
+  answer, of type other.
+- The other side saying what happens next, or what they will do, needs none, even when it
+  ends in "okay?" or "right?".
+- A choice put to {user_name} soon after they spoke ("should I leave it or move it?", "does
+  that make more sense to you, or should it stay?") needs an answer.
+- When the utterance is the end of a question whose start is the line before it in
+  <transcript>, judge the whole question."""
+
+DECISION_TURN = {
+    "answer": "It needs talking points for {user_name} now: a complete question or remark for "
+    "them that needs a reply with substance, including a problem, limit or cost raised about "
+    "their own work even when said as a statement",
+    "wait": "It would need an answer, but the utterance stops mid-sentence or mid-thought",
+    "none": "Anything else: for someone else, small talk, an audio check, a request to do "
+    "something now, an offer to start or present something (shall I start with an overview "
+    "of the role?), a yes-or-no check of their own situation, the other side's own update",
+}
+
+DECISION_TYPES = {
+    "behavioral": "A past situation of {user_name}'s, or their background and experience in "
+    "their own words: tell me about a time, how did you handle, walk me through your "
+    "background, your experience with clients",
+    "technical": "How something works, a technical choice, or {user_name}'s experience with a "
+    "named tool, language, platform or field, including how many years of it",
+    "system_design": "Design a system or an architecture",
+    "coding": "Write, read or analyse code",
+    "other": "The job and {user_name}'s situation: why they are looking or leaving, why this "
+    "role or company, pay, location, availability, notice, the hiring process, their "
+    "questions for the interviewer, culture, the future",
+    "respond": "Not a question: a request, a task, a reminder or a concern aimed at "
+    "{user_name}, or a check right after they spoke; needs a short reply",
+}
+# At work the general types give way to the work types for anything about the team's own
+# system or the user's own items (the detector's group rule says the same).
+DECISION_AT_WORK = {
+    "technical": "General technical knowledge, not about the team's own system or "
+    "{user_name}'s own work items (those have their own types below)",
+    "other": "Anything else that needs an answer and fits no other type",
+    "respond": "A request, task or reminder for {user_name}, or a check right after they "
+    "spoke, that none of the work types below fits; needs a short reply",
+}
+DECISION_WORK_TYPES = {
+    "standup_status": "{user_name}'s own update or plan as a whole, or an open hand-off to "
+    "them (anything from your side?)",
+    "decision": "Why something at work was chosen or built that way, whether it was on "
+    "purpose, what was agreed",
+    "how_it_works": "How a part, flow or calculation of the team's own system works, where "
+    "something lives, what it is called; or a problem or limit raised about it",
+    "status_follow_up": "A follow-up on one item of {user_name}'s work: is it done, merged or "
+    "out, what is left on it",
+    "estimate_risk": "How long, by when, how hard, whether it is doable, what could go wrong, "
+    "whether it changes the plan",
+}
+
+
+def detector_decision(
+    user_name: str, transcript: str, utterance: str, mode: str = "interview", turns: str = ""
+) -> DecisionRequest:
+    """The detector as a Decisions API request: the same rules as `detector`, in a developer
+    message, and two choice questions: `turn` (answer, wait or none) and `type`."""
+    req = detector(user_name, transcript, utterance, 0, mode, turns)
+    rules, _, rest = req.system[0].text.partition("Return JSON only:\n")
+    # The JSON line goes; the decision comes back as typed choices.
+    rules += "Decide by these rules:\n" + rest.split("\n", 1)[1]
+    rules += DECISION_RULES.format(user_name=user_name)
+    names = {"user_name": user_name}
+    types = dict(DECISION_TYPES)
+    if mode in GROUP_MODES:
+        types.update(DECISION_AT_WORK)
+        types.update(DECISION_WORK_TYPES)
+
+    turn_question = (
+        f"Does the latest utterance (<utterance>) need talking points for {user_name} now?"
+    )
+    if mode in GROUP_MODES:
+        turn_question += (
+            f" A check or a choice put to {user_name}, a hand-off of work to them, and a "
+            f"problem, limit or cost raised about their own work need them, even when said as "
+            f"a statement."
+        )
+
+    def choices(table: dict[str, str]) -> list[dict[str, str]]:
+        return [{"value": k, "description": v.format(**names)} for k, v in table.items()]
+
+    return DecisionRequest(
+        input=[
+            {"role": "developer", "content": [{"type": "input_text", "text": rules}]},
+            {"role": "user", "content": [{"type": "input_text", "text": str(req.content)}]},
+        ],
+        questions=[
+            {
+                "type": "choice",
+                "name": "turn",
+                "instructions": turn_question,
+                "choices": choices({k: v for k, v in DECISION_TURN.items()}),
+            },
+            {
+                "type": "choice",
+                "name": "type",
+                "instructions": "If it needs talking points, which kind of answer does it "
+                "need? (If not, pick the closest.)",
+                "choices": choices(types),
+            },
+        ],
+    )
+
+
+def read_decision(answers: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The detector's decision from a Decisions API response's answers (as dicts): decision
+    "answer", "wait" or "none", the type, and the turn question's confidence. A refusal or a
+    missing answer counts as none."""
+    by_name = {a.get("name"): a for a in answers}
+    turn = by_name.get("turn") or {}
+    kind = by_name.get("type") or {}
+    decision = str(turn.get("choice")) if turn.get("type") == "choice" else "none"
+    if decision not in DECISION_TURN:
+        decision = "none"
+    qtype = str(kind.get("choice")) if kind.get("type") == "choice" else "other"
+    return {
+        "decision": decision,
+        "qtype": qtype,
+        "confidence": float(turn.get("confidence") or 0.0),
+    }
+
+
 def summary(
     user_name: str, mode: str, previous: str, new_lines: str, max_tokens: int
 ) -> LLMRequest:

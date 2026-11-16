@@ -447,3 +447,87 @@ async def test_an_early_decision_is_dropped_when_the_speaker_goes_on(env) -> Non
     # Only one card: the pass held on the first sentence never showed.
     assert len({m["question_id"] for m in c.of_type("question.detected")}) == 1
     assert [job for job, _ in provider.calls].count("detector") >= 2
+
+
+async def test_a_held_pass_is_kept_when_the_final_only_adds_a_word(env) -> None:
+    """2026-11-16 baseline: the final changed the words of most utterances, almost always by
+    adding the last one to three, and every change restarted the held fast pass, so its first
+    token counted from the final. Now only the detector decides again; the pass stays."""
+    provider = use(env)
+    env.stt.final_suffix = " ledger?"
+    env.stt.final_delay_s = 0.25
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.say("How did you scale the")
+        q = await c.wait_type("question.detected", speculative=False)
+        fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.turns.held_kept == 1
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert q["text"] == "How did you scale the ledger?"
+    assert [job for job, _ in provider.calls].count("fast") == 1
+    assert fast["latency_ms"]["start_ms"] < 150, fast["latency_ms"]  # from the speech end
+    decisions = [e for e in await session_log(env, c.session_id) if e["kind"] == "detector"]
+    assert [bool(e.get("cancelled")) for e in decisions] == [True, False]
+
+
+async def test_a_final_with_other_words_or_the_setting_off_restarts_the_pass(env) -> None:
+    for suffix, keep in ((" ledger for the payments team?", 2), (" ledger?", None)):
+        provider = use(env)
+        env.stt.final_suffix = suffix
+        env.stt.final_delay_s = 0.25
+        settings = env.settings(held_keep_added_words=keep)
+        async with GatewayServer(env.services(settings)) as gw:
+            c = ProtocolClient(gw.url)
+            await c.start()
+            await c.say("How did you scale the")
+            q = await c.wait_type("question.detected", speculative=False)
+            await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+            session = next(iter(gw.manager.sessions.values()))
+            assert session.turns.held_kept == 0
+            await c.send({"type": "session.end"})
+            await c.closed()
+        assert [job for job, _ in provider.calls].count("fast") == 2, suffix
+
+
+async def test_an_interview_question_is_decided_while_it_is_still_being_said(env) -> None:
+    """The early decision of standups (2026-10-30), in interviews too: the detector and the
+    held pass start at a sentence end while the speaker is still talking."""
+    for all_modes, used in ((True, 1), (False, 0)):
+        use(env, detector_says("technical"))
+        settings = env.settings(early_decision_all_modes=all_modes)
+        async with GatewayServer(env.services(settings)) as gw:
+            c = ProtocolClient(gw.url)
+            await c.start(mode="interview")
+            await c.frame(0, 0b01, text_frame_audio("How did you scale the ledger?"), 0)
+            await asyncio.sleep(DETECTOR_S + 0.3)
+            await c.frame(0, 0b10, b"", 1500)
+            q = await c.wait_type("question.detected", speculative=False)
+            await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+            session = next(iter(gw.manager.sessions.values()))
+            assert session.turns.early_used == used, all_modes
+            await c.send({"type": "session.end"})
+            await c.closed()
+
+
+async def test_model_connections_are_kept_warm_through_a_quiet_spell(env) -> None:
+    """A new connection cost about 0.7 s more to the detector's first token than a warm one
+    (2026-11-16), and idle ones close after 120 s: a live session opens them again every
+    llm_warm_interval_s with a free request."""
+
+    class Warmed(ScriptedProvider):
+        warms = 0
+
+        async def warm(self, model: str) -> None:
+            Warmed.warms += 1
+
+    env.providers = [Warmed("anthropic")]
+    async with GatewayServer(env.services(env.settings(llm_warm_interval_s=0.2))) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await asyncio.sleep(0.9)
+        assert Warmed.warms >= 4  # once at the start, then every 0.2 s
+        await c.send({"type": "session.end"})
+        await c.closed()

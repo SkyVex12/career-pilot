@@ -21,6 +21,7 @@ from typing import Any, Literal
 from copilot_core.llm import FallbackHook, LLMProvider, ModelRouter, Route
 from copilot_core.providers import make_providers, openai_params
 from copilot_gateway.config import Settings
+from copilot_gateway.detector import DecisionsRoute
 
 Family = Literal["haiku", "sonnet"]
 # "summary" is the call's rolling summary (conversation memory): background, on the cheapest
@@ -118,4 +119,29 @@ def build_router(
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
         on_fallback=on_fallback,
         hedge_after_s={job: ms / 1000 for job, ms in hedges.items() if ms} or None,
+    )
+
+
+def decisions_route(settings: Settings, router: ModelRouter) -> DecisionsRoute | None:
+    """The detector's Decisions API route (`detector_api` "decisions"): the OpenAI provider
+    of the detector's routes, if there is one that can decide; else None, and the detector
+    asks on its routes as before."""
+    if settings.detector_api != "decisions":
+        return None
+    provider = next(
+        (
+            r.provider
+            for r in router.routes.get("detector", [])
+            if r.provider.name == "openai" and hasattr(r.provider, "decide")
+        ),
+        None,
+    )
+    if provider is None:
+        return None
+    hedge = settings.decisions_hedge_ms
+    return DecisionsRoute(
+        provider=provider,  # pyright: ignore[reportArgumentType]
+        model=settings.decisions_model,
+        hedge_s=hedge / 1000 if hedge else None,
+        timeout_s=settings.decisions_timeout_ms / 1000,
     )

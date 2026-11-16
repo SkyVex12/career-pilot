@@ -68,6 +68,7 @@ from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector, named_or_model
 from copilot_gateway.retrieval import CompanyMemory
+from copilot_gateway.router import decisions_route
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
 from copilot_gateway.turn import (
@@ -240,6 +241,7 @@ class Session:
             self.settings.detector_max_tokens,
             on_decision=self._log_detection,
             cost=self._cost,
+            decisions=decisions_route(self.settings, svc.router),
         )
         self.matcher = PreparedMatcher(
             svc.embedder,
@@ -260,6 +262,8 @@ class Session:
             early_interval_ms=self.settings.early_decision_interval_ms,
             carry_gap_ms=self.settings.continuation_gap_ms,
             first_show_min_words=self.settings.first_show_min_words,
+            keep_added_words=self.settings.held_keep_added_words,
+            early_all_modes=self.settings.early_decision_all_modes,
         )
         self.answers = AnswerEngine(self)
         self.dedupe = audio.FrameDedupe(
@@ -1156,6 +1160,7 @@ class Session:
                     "carried": self.turns.carried,
                     "first_shown": self.turns.first_shown,
                     "first_withdrawn": self.turns.first_withdrawn,
+                    "held_kept": self.turns.held_kept,
                 },
                 prior.get("turns"),
             ),
@@ -1225,6 +1230,8 @@ class Session:
                 tg.create_task(self._lease_loop())
                 tg.create_task(self._flush_loop())
                 tg.create_task(self._watchdog())
+                if self.settings.llm_warm_interval_s:
+                    tg.create_task(self._keep_warm(self.settings.llm_warm_interval_s))
                 if self.matcher.stale:
                     tg.create_task(self._rebuild_stale_pack())
         except* asyncio.CancelledError:
@@ -1232,6 +1239,16 @@ class Session:
         except* Exception as eg:
             log.error("session %s failed", self.sid, exc_info=eg)
             await self.abandon(CLOSE_INTERNAL, "internal error")
+
+    async def _keep_warm(self, every_s: float) -> None:
+        """Keep the model connections open through a quiet spell (llm_warm_interval_s). The
+        warm-up request is free, and its failures only cost the head start."""
+        while True:
+            await asyncio.sleep(every_s)
+            try:
+                await self.router.warm()
+            except Exception as e:  # never ends the session's task group
+                log.info("keeping the model connections warm failed: %s", type(e).__name__)
 
     async def _lease_loop(self) -> None:
         while True:
