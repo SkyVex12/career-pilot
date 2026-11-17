@@ -17,7 +17,7 @@ import { LiveNow, MODE_LABEL } from "./calls";
 import { STOPPED, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { defaultEmployer, packLabel } from "./workday";
-import { PackBadge, plural, relative } from "./shared";
+import { PackBadge, plural, relative, useShowCount } from "./shared";
 import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, Input, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
 
 // The post-call view (with the call's replay) loads when a call ends.
@@ -81,6 +81,10 @@ export interface CallProps {
   onOpenLive: (live: LiveSession) => Promise<void>;
   /** An interview to start a call for, chosen elsewhere (Applications' "Start"). */
   preset?: { target: string; n: number } | null;
+  /** The Call tab is shown. It stays mounted while hidden, so each time it is shown again it
+   * reloads what other screens may have changed: applications and packs (a Career-OS pull),
+   * resumes, companies and their documents. */
+  active?: boolean;
 }
 
 export function CallScreen(props: CallProps) {
@@ -105,15 +109,8 @@ export function CallScreen(props: CallProps) {
 
 // --- Setup ---------------------------------------------------------------------------------
 
-function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs, locked, onCareerOsChanged, onSettingsSaved, onSettings, onResumes }: CallProps) {
-  const [hasResume, setHasResume] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (!tokenSet) return;
-    rest.resumes().then(
-      (r) => setHasResume(Boolean(r.base) || r.versions.length > 0),
-      () => setHasResume(null),
-    );
-  }, [tokenSet]);
+function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs, locked, onCareerOsChanged, onSettingsSaved, onSettings, onResumes, active = true }: CallProps) {
+  const hasResume = useHasResume(tokenSet, useShowCount(active));
   const browserSignIn = release || environment === "cloud";
   const linkNeeded = careerOs?.available && (careerOs.required || !careerOs.connected);
   const showLink = Boolean(linkNeeded || locked || careerOs?.connected);
@@ -203,11 +200,16 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 
 // --- Ready and live -----------------------------------------------------------------------------
 
-function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset }: CallProps) {
+function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset, active = true }: CallProps) {
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => (read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets"));
+  const shown = useShowCount(active);
   const catalog = useCatalog(tokenSet);
+  const reloadCatalog = catalog.reload;
+  useEffect(() => {
+    if (tokenSet && shown > 0) reloadCatalog();
+  }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   const [target, setTarget] = useState("");
   const [title, setTitle] = useState("");
   const [platform, setPlatform] = useState("zoom");
@@ -215,24 +217,17 @@ function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSe
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [more, setMore] = useState(false);
-  const work = useCompanies(tokenSet);
+  const work = useCompanies(tokenSet, shown);
   const [employerId, setEmployerId] = useState("");
   const [agenda, setAgenda] = useState("");
   const atWork = atWorkMode(mode);
-  const materials = useMaterials(atWork && tokenSet ? employerId : "");
+  const materials = useMaterials(atWork && tokenSet ? employerId : "", shown);
   const [materialIds, setMaterialIds] = useState<string[]>([]);
-  const [hasResume, setHasResume] = useState<boolean | null>(null);
+  const hasResume = useHasResume(tokenSet, shown);
   useEffect(() => setMaterialIds([]), [employerId]);
   useEffect(() => {
     if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, read(LAST_COMPANY)));
   }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!tokenSet) return;
-    rest.resumes().then(
-      (r) => setHasResume(Boolean(r.base) || r.versions.length > 0),
-      () => setHasResume(null),
-    );
-  }, [tokenSet]);
   const pack = usePackFor(atWork && !running ? employerId : "", mode);
 
   const interviews = upcoming(catalog.interviews ?? []);
@@ -767,29 +762,55 @@ export function DevicePickers({ settings, disabled, onSaved }: { settings: Setti
 
 // --- Companies and their material (standups and meetings) -------------------------------------
 
-function useCompanies(ready: boolean): { employers: Employer[] | null; error: string | null } {
+/** Whether the user has any resume yet; asked again each time `shown` changes. */
+function useHasResume(ready: boolean, shown: number): boolean | null {
+  const [hasResume, setHasResume] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    rest.resumes().then(
+      (r) => !cancelled && setHasResume(Boolean(r.base) || r.versions.length > 0),
+      () => !cancelled && setHasResume(null),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, shown]);
+  return hasResume;
+}
+
+/** The user's companies; asked again each time `shown` changes (one added under Work). */
+function useCompanies(ready: boolean, shown: number): { employers: Employer[] | null; error: string | null } {
   const [employers, setEmployers] = useState<Employer[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!ready) return;
+    let cancelled = false;
     rest.employers().then(
       (r) => {
+        if (cancelled) return;
         setEmployers(r.employers);
         setError(null);
       },
-      (e) => setError(String(e)),
+      (e) => !cancelled && setError(String(e)),
     );
-  }, [ready]);
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, shown]);
   return { employers, error };
 }
 
-/** A company's documents that have given facts: the ones a call can focus on. */
-function useMaterials(employerId: string): { documents: CompanyDocument[] | null; error: string | null } {
+/** A company's documents that have given facts: the ones a call can focus on. Asked again each
+ * time `shown` changes; the list empties only when the company changes, so a refresh does not flicker. */
+function useMaterials(employerId: string, shown: number): { documents: CompanyDocument[] | null; error: string | null } {
   const [documents, setDocuments] = useState<CompanyDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setDocuments(null);
     setError(null);
+  }, [employerId]);
+  useEffect(() => {
     if (!employerId) return;
     let cancelled = false;
     rest.companyDocuments(employerId).then(
@@ -799,7 +820,7 @@ function useMaterials(employerId: string): { documents: CompanyDocument[] | null
     return () => {
       cancelled = true;
     };
-  }, [employerId]);
+  }, [employerId, shown]);
   return { documents, error };
 }
 
