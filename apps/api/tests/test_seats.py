@@ -40,7 +40,9 @@ async def invite(api: Api, h: dict[str, str], sid: uuid.UUID, email: str, **body
     )
 
 
-async def test_invite_accept_admit_change_and_remove(api: Api) -> None:
+async def test_an_invite_lets_the_guest_in_at_once(api: Api) -> None:
+    """The host's invite is the permission: the seat is admitted, and the guest can join with
+    nothing to accept and no one to wait for. The host can still narrow or remove it."""
     host, hh, _ = await account(api, "Alex")
     guest, gh, guest_email = await account(api, "Blair")
     sid = await live_call(api, host)
@@ -49,12 +51,13 @@ async def test_invite_accept_admit_change_and_remove(api: Api) -> None:
     assert (r.status_code, r.json()) == (202, {"status": "sent"})
     listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["seats"]
     assert [(s["name"], s["status"], s["capabilities"]) for s in listed] == [
-        ("Blair", "invited", ["view", "note"])
+        ("Blair", "admitted", ["view", "note"])
     ]
+    assert listed[0]["admitted_at"] is not None
     seat_id = listed[0]["seat_id"]
     rec = await mirror(api, sid, seat_id)
     assert rec is not None
-    assert rec.status == "invited"
+    assert rec.admitted
     assert rec.host_name == "Alex"
     assert rec.guest_id == str(guest)
     ctl = await api.svc.valkey.xrange(keys.sess_ctl(sid))
@@ -62,26 +65,9 @@ async def test_invite_accept_admit_change_and_remove(api: Api) -> None:
     assert ctl[-1][1] == {b"k": b"seats"}
 
     mine = (await api.client.get("/v1/seats", headers=gh)).json()["seats"]
-    assert [(s["seat_id"], s["host_name"], s["mode"], s["title"]) for s in mine] == [
-        (seat_id, "Alex", "interview", "Acme")
+    assert [(s["seat_id"], s["status"], s["host_name"], s["title"]) for s in mine] == [
+        (seat_id, "admitted", "Alex", "Acme")
     ]
-    # Admitting before the guest accepts is refused.
-    r = await api.client.patch(
-        f"/v1/sessions/{sid}/seats/{seat_id}", headers=hh, json={"admit": True}
-    )
-    assert r.status_code == 409
-    r = await api.client.post(f"/v1/seats/{seat_id}/accept", headers=gh)
-    assert r.json()["status"] == "accepted"
-    assert (await mirror(api, sid, seat_id)).status == "accepted"  # type: ignore[union-attr]
-    r = await api.client.patch(
-        f"/v1/sessions/{sid}/seats/{seat_id}", headers=hh, json={"admit": True}
-    )
-    assert r.status_code == 200
-    assert r.json()["status"] == "admitted"
-    rec = await mirror(api, sid, seat_id)
-    assert rec is not None
-    assert rec.admitted
-    assert rec.rev == 3
     # Narrower: notes off. The mirror carries it at once, with a new rev.
     r = await api.client.patch(
         f"/v1/sessions/{sid}/seats/{seat_id}", headers=hh, json={"capabilities": []}
@@ -90,7 +76,7 @@ async def test_invite_accept_admit_change_and_remove(api: Api) -> None:
     rec = await mirror(api, sid, seat_id)
     assert rec is not None
     assert rec.capabilities == ["view"]
-    assert rec.rev == 4
+    assert rec.rev == 2
     r = await api.client.delete(f"/v1/sessions/{sid}/seats/{seat_id}", headers=hh)
     assert r.status_code == 204
     assert (await mirror(api, sid, seat_id)).status == "removed"  # type: ignore[union-attr]
@@ -100,6 +86,8 @@ async def test_invite_accept_admit_change_and_remove(api: Api) -> None:
     assert r.status_code == 204
     r = await api.client.delete(f"/v1/sessions/{sid}/seats/{uuid.uuid4()}", headers=hh)
     assert r.status_code == 404
+    # Removed, the guest may be invited again.
+    assert (await invite(api, hh, sid, guest_email)).status_code == 202
 
 
 async def test_an_invite_says_nothing_about_who_has_an_account(api: Api) -> None:
@@ -124,59 +112,31 @@ async def test_only_the_host_of_a_live_call_invites(api: Api) -> None:
     assert (await invite(api, hh, uuid.uuid4(), guest_email)).status_code == 404
 
 
-async def test_a_guest_answers_only_their_own_invite_and_only_while_live(api: Api) -> None:
+async def test_a_guest_sees_only_their_own_seats_and_only_while_live(api: Api) -> None:
     host, hh, _ = await account(api, "Alex")
     _, gh, guest_email = await account(api, "Blair")
     _, oh, _ = await account(api, "Other")
     sid = await live_call(api, host)
     await invite(api, hh, sid, guest_email)
-    seat_id = (await api.client.get("/v1/seats", headers=gh)).json()["seats"][0]["seat_id"]
-    assert (await api.client.post(f"/v1/seats/{seat_id}/accept", headers=oh)).status_code == 404
+    assert len((await api.client.get("/v1/seats", headers=gh)).json()["seats"]) == 1
     assert (await api.client.get("/v1/seats", headers=oh)).json()["seats"] == []
     await api.svc.valkey.hset(keys.sess_state(sid), "status", "ended")
     assert (await api.client.get("/v1/seats", headers=gh)).json()["seats"] == []
-    assert (await api.client.post(f"/v1/seats/{seat_id}/accept", headers=gh)).status_code == 409
     # After the call the guest has nothing of it, as the host's History does.
     assert (await api.client.get(f"/v1/sessions/{sid}", headers=gh)).status_code == 404
-
-
-async def test_declining_closes_the_invite(api: Api) -> None:
-    host, hh, _ = await account(api, "Alex")
-    _, gh, guest_email = await account(api, "Blair")
-    sid = await live_call(api, host)
-    await invite(api, hh, sid, guest_email)
-    seat_id = (await api.client.get("/v1/seats", headers=gh)).json()["seats"][0]["seat_id"]
-    assert (await api.client.post(f"/v1/seats/{seat_id}/decline", headers=gh)).json()[
-        "status"
-    ] == "declined"
-    assert (await mirror(api, sid, seat_id)).status == "declined"  # type: ignore[union-attr]
-    assert (await api.client.post(f"/v1/seats/{seat_id}/accept", headers=gh)).status_code == 404
-    listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["seats"]
-    assert [s["status"] for s in listed] == ["declined"]
-    # Declined, the guest may be invited again.
-    assert (await invite(api, hh, sid, guest_email)).status_code == 202
-    listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["seats"]
-    assert [s["status"] for s in listed] == ["declined", "invited"]
 
 
 async def test_limits(api: Api) -> None:
     host, hh, _ = await account(api, "Alex")
     sid = await live_call(api, host)
-    guests = [await account(api, f"Guest {i}") for i in range(seats.MAX_OPEN + 1)]
-    for _, _, email in guests[: seats.MAX_OPEN]:
+    guests = [await account(api, f"Guest {i}") for i in range(seats.MAX_GUESTS + 1)]
+    # Every invite admits: at most MAX_GUESTS of them per call.
+    for _, _, email in guests[: seats.MAX_GUESTS]:
         assert (await invite(api, hh, sid, email)).status_code == 202
-    assert (await invite(api, hh, sid, guests[-1][2])).status_code == 409  # too many open
-    # At most MAX_GUESTS admitted.
-    for i, (_, gh, _) in enumerate(guests[: seats.MAX_GUESTS + 1]):
-        seat_id = (await api.client.get("/v1/seats", headers=gh)).json()["seats"][0]["seat_id"]
-        await api.client.post(f"/v1/seats/{seat_id}/accept", headers=gh)
-        r = await api.client.patch(
-            f"/v1/sessions/{sid}/seats/{seat_id}", headers=hh, json={"admit": True}
-        )
-        assert r.status_code == (200 if i < seats.MAX_GUESTS else 409), r.text
+    assert (await invite(api, hh, sid, guests[-1][2])).status_code == 409
     # Invites per hour, per host account, across calls.
     other = await live_call(api, host)
-    sent = seats.MAX_OPEN + 1
+    sent = seats.MAX_GUESTS + 1
     codes = []
     for _ in range(seats.INVITES_PER_HOUR - sent + 1):
         codes.append((await invite(api, hh, other, "nobody-here@example.com")).status_code)
@@ -200,9 +160,7 @@ async def test_host_changes_can_be_sent_again(api: Api) -> None:
     sid = await live_call(api, host)
     await invite(api, hh, sid, guest_email)
     seat_id = (await api.client.get("/v1/seats", headers=gh)).json()["seats"][0]["seat_id"]
-    await api.client.post(f"/v1/seats/{seat_id}/accept", headers=gh)
     path = f"/v1/sessions/{sid}/seats/{seat_id}"
-    assert (await api.client.patch(path, headers=hh, json={"admit": True})).status_code == 200
     await api.svc.valkey.delete(keys.sess_seats(sid))  # as if the mirror write was lost
     assert (await api.client.patch(path, headers=hh, json={"admit": True})).status_code == 200
     rec = await mirror(api, sid, seat_id)

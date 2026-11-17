@@ -175,7 +175,7 @@
     { "type": "auth.expiring", "seq": 417, "expires_in_s": 120 },
     { "type": "error", "seq": 418, "code": "rate_limited", "message": "Too many requests", "fatal": true, "retry_after_ms": 1000 },
     { "type": "error", "seq": 419, "code": "bad_message", "message": "Unknown message type", "fatal": false },
-    { "type": "seats.update", "seq": 420, "seats": [{ "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "name": "Pavlo", "status": "admitted", "capabilities": ["view", "note"] }] },
+    { "type": "seats.update", "seq": 420, "seats": [{ "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "name": "Pavlo", "status": "admitted", "capabilities": ["view", "note"], "connected": true }] },
     { "type": "seats.update", "seq": 421, "seats": [] },
     { "type": "seat.note", "seq": 422, "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "note_id": "0192f3d0-0000-7a00-8000-0000000000a1", "name": "Pavlo", "text": "Mention the 40% latency cut", "at": "2026-11-17T15:04:05Z" },
     { "type": "sharing", "seq": 423, "on": false },

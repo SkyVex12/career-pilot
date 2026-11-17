@@ -247,7 +247,7 @@
           "enum": ["answer", "respond"]
         },
         "note_id": {
-          "description": "The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log. The text is the note's.",
+          "description": "The host pressed Ask AI on a guest's note (seat.note): the note's id, for the session log. The text is the note's.",
           "$ref": "#/$defs/Uuid"
         }
       },
@@ -531,7 +531,11 @@
         "seat_id": { "$ref": "#/$defs/Uuid" },
         "name": { "type": "string" },
         "status": { "$ref": "#/$defs/SeatStatus" },
-        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" } }
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" } },
+        "connected": {
+          "description": "An admitted guest's app is following the call now. Absent: not known (an older gateway).",
+          "type": "boolean"
+        }
       },
       "required": ["seat_id", "name", "status", "capabilities"]
     },

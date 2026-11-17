@@ -352,7 +352,7 @@ export const api = {
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
   setAnswerStyle: (style: AnswerStyle) => invoke<void>("set_answer_style", { style }),
-  // Guest seats (ARCHITECTURE.md, "Guest seats"). The host: Ask this on a note, and pause or
+  // Guest seats (ARCHITECTURE.md, "Guest seats"). The host: Ask AI on a note, and pause or
   // resume what guests see. The guest: join an admitted seat, leave it, send a note.
   askNote: (noteId: string, text: string) => invoke<void>("ask_note", { noteId, text }),
   setSharing: (on: boolean) => invoke<void>("set_sharing", { on }),

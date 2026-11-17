@@ -1,6 +1,6 @@
 // Guest seats (ARCHITECTURE.md, "Guest seats"): the reducer folds the seat messages; a guest's
 // overlay is read only, says whose private call it is, and sends notes when allowed; the host
-// sees who is watching and the guests' notes apart from the answers, with Ask this.
+// sees who is watching and the guests' notes in a chat apart from the answers, with Ask AI.
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { emit } from "@tauri-apps/api/event";
@@ -82,14 +82,21 @@ describe("the session reducer", () => {
     const note = srv({ type: "seat.note", seat_id: SEAT, note_id: "n1", name: "Pavlo", text: "Ask about on-call", at: "2026-11-17T15:00:00Z" });
     let s = fold([
       live(),
-      srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "note"] }, { seat_id: "x", name: "Dana", status: "accepted", capabilities: ["view"] }] }),
+      srv({
+        type: "seats.update",
+        seats: [
+          { seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "note"], connected: true },
+          { seat_id: "x", name: "Dana", status: "admitted", capabilities: ["view"], connected: false },
+        ],
+      }),
       note,
       note,
       srv({ type: "sharing", on: false }),
     ]);
     expect(s.notes.map((x) => [x.name, x.text, x.asked])).toEqual([["Pavlo", "Ask about on-call", false]]);
     expect(s.sharing).toBe(false);
-    expect(watchingText(openSeats(s.seats))).toBe("Pavlo · 1 waiting");
+    // Pavlo follows the call; Dana is invited and has not joined.
+    expect(watchingText(openSeats(s.seats))).toBe("Pavlo · 1 invited");
     s = reduce(s, { type: "note_asked", id: "n1" });
     expect(s.notes[0].asked).toBe(true);
     expect(s.seat).toBeNull();
@@ -145,18 +152,20 @@ describe("the host's overlay", () => {
     ];
   };
 
-  it("shows who is watching, and notes apart from the answers, with Ask this", async () => {
+  it("shows who is watching, and notes as a chat apart from the answers, with Ask AI", async () => {
     start(hostEvents());
     expect(await screen.findByText(/Pavlo/, { selector: ".ov-watching" })).toHaveAttribute("role", "status");
     const lane = await screen.findByRole("region", { name: "Notes from guests" });
-    expect(within(lane).getByText("Note from Pavlo · only you see this")).toBeInTheDocument();
+    expect(within(lane).getByRole("heading", { name: "Notes from guests · only you see them" })).toBeInTheDocument();
+    expect(within(lane).getByText("Ask about on-call")).toBeInTheDocument();
+    expect(lane.querySelector(".ov-notes-body")).not.toBeNull(); // the part that scrolls
     const card = (await screen.findAllByRole("article")).find((a) => a.classList.contains("card"));
     expect(card && within(card).queryByText("Ask about on-call")).toBeNull(); // not in the answers
-    await userEvent.click(within(lane).getByRole("button", { name: "Ask this" }));
+    // One button per note: Ask AI.
+    expect(within(lane).getAllByRole("button").map((b) => b.textContent)).toEqual(["Ask AI"]);
+    await userEvent.click(within(lane).getByRole("button", { name: "Ask AI" }));
     expect(ipc.calls.find((c) => c.cmd === "ask_note")?.args).toEqual({ noteId: "n1", text: "Ask about on-call" });
     expect(await within(lane).findByRole("button", { name: "Asked" })).toBeDisabled();
-    await userEvent.click(within(lane).getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByRole("region", { name: "Notes from guests" })).not.toBeInTheDocument();
   });
 
   it("invites from the gear", async () => {
@@ -168,26 +177,30 @@ describe("the host's overlay", () => {
     expect(ipc.apiCalls("POST")).toEqual([
       { method: "POST", path: "/sessions/s1/seats", body: { email: "pavlo@example.com", capabilities: ["view", "note"] } },
     ]);
-    expect(await screen.findByText(/If pavlo@example.com has a Copilot account/)).toBeInTheDocument();
+    expect(await screen.findByText(/they can join from their Call screen now/)).toBeInTheDocument();
   });
 });
 
 describe("a guest's invites", () => {
-  it("accepts, waits to be let in, then joins", async () => {
-    let status = "invited";
+  const invited = () =>
     ipc.api("GET", /^\/seats$/, () => ({
-      seats: [{ seat_id: SEAT, session_id: "s1", host_name: "Alex", mode: "interview", title: null, status, capabilities: ["view"], expires_at: null }],
+      seats: [{ seat_id: SEAT, session_id: "s1", host_name: "Alex", mode: "interview", title: null, status: "admitted", capabilities: ["view"], expires_at: null }],
     }));
-    ipc.api("POST", /^\/seats\/.+\/accept$/, () => {
-      status = "accepted";
-      return { status };
-    });
+
+  it("shows Join at once: nothing to accept, no one to wait for", async () => {
+    invited();
     render(<GuestInvites running={false} />);
-    await userEvent.click(await screen.findByRole("button", { name: "Accept" }));
-    expect(await screen.findByText(/Waiting for Alex to let you in/)).toBeInTheDocument();
-    status = "admitted";
-    await act(() => new Promise((r) => setTimeout(r, 5100)));
-    await userEvent.click(await screen.findByRole("button", { name: "Join" }));
+    expect(await screen.findByText("Alex invited you to watch a call")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Join" }));
     expect(ipc.calls.find((c) => c.cmd === "seat_join")?.args).toEqual({ request: { session_id: "s1", seat_id: SEAT } });
-  }, 10000);
+  });
+
+  it("Not now hides the invite here", async () => {
+    invited();
+    render(<GuestInvites running={false} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    expect(screen.queryByText("Alex invited you to watch a call")).not.toBeInTheDocument();
+    expect(ipc.calls.some((c) => c.cmd === "seat_join")).toBe(false);
+  });
 });

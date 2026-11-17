@@ -456,6 +456,10 @@ export interface SeatInfo {
   name: string;
   status: SeatStatus;
   capabilities: Capability[];
+  /**
+   * An admitted guest's app is following the call now. Absent: not known (an older gateway).
+   */
+  connected?: boolean;
 }
 /**
  * Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or the answer models.

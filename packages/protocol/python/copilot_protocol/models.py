@@ -186,7 +186,7 @@ class QuestionForce(BaseModel):
     """
     note_id: UUID | None = None
     """
-    The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log. The text is the note's.
+    The host pressed Ask AI on a guest's note (seat.note): the note's id, for the session log. The text is the note's.
     """
 
 
@@ -639,6 +639,10 @@ class SeatInfo(BaseModel):
             "device.control",
         ]
     ]
+    connected: bool | None = None
+    """
+    An admitted guest's app is following the call now. Absent: not known (an older gateway).
+    """
 
 
 class SharingSet(BaseModel):

@@ -1,10 +1,12 @@
 """Guest seats on a live call (ARCHITECTURE.md, "Guest seats").
 
 The host (the profile the call runs for, `UserDep`) invites another Copilot account by email,
-admits them once they accept, changes what they may do, and removes them, all while the call
-is live. The guest (always an account, `AccountDep`) lists their open seats and accepts or
-declines. After the call a guest has no access to anything of it: no History, no transcript;
-only the host's own session routes show it.
+changes what they may do, and removes them, all while the call is live. The invite is the
+host's permission: the seat is admitted at once, and the guest (always an account,
+`AccountDep`) sees it with Join, with nothing to accept and no one to wait for (until
+2026-11-17 the guest accepted and the host then let them in; `accept`, `decline` and
+`admit` stay for seats from then). After the call a guest has no access to anything of it:
+no History, no transcript; only the host's own session routes show it.
 
 Every change is written to `app.session_seats` first and then mirrored into Valkey
 (`copilot_core.seats.publish`), which is what the gateway checks; the mirror also tells the
@@ -165,8 +167,15 @@ async def invite(
             session_id,
             list(seats.OPEN),
         )
+        admitted = await conn.fetchval(
+            "select count(*) from app.session_seats where session_id = $1"
+            " and status = 'admitted' and expires_at > now()",
+            session_id,
+        )
     if open_count >= seats.MAX_OPEN:
         raise HTTPException(409, f"a call has at most {seats.MAX_OPEN} open invites")
+    if admitted >= seats.MAX_GUESTS:
+        raise HTTPException(409, f"a call has at most {seats.MAX_GUESTS} guests")
     async with svc.tx(account) as conn:
         host_name = await conn.fetchval(
             "select display_name from app.users where id = $1", account.user_id
@@ -187,13 +196,13 @@ async def invite(
             row = await conn.fetchrow(
                 "insert into app.session_seats (id, user_id, session_id, host_account_id,"
                 " guest_id, host_name, guest_name, guest_email, mode, title, status,"
-                " capabilities, expires_at)"
-                " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'invited', $11, $12)"
+                " capabilities, expires_at, admitted_at)"
+                " values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'admitted', $11, $12, $13)"
                 f" returning {SEAT_COLUMNS}",
                 seat_id, user.user_id, session_id, account.user_id, guest["id"],
                 (host_name or "Your host")[:200], (guest["display_name"] or body.email)[:200],
                 body.email, mode or "interview", (state.get("title") or None),
-                body.capabilities, now + timedelta(seconds=seats.INVITE_TTL_S),
+                body.capabilities, now + timedelta(seconds=seats.SEAT_MAX_S), now,
             )  # fmt: skip
     except asyncpg.UniqueViolationError:
         return sent  # already invited to this call

@@ -3,11 +3,11 @@
 // allowed, sends notes that only the host sees.
 //
 // The host's side: who is watching (a chip in the overlay's header), the guests' notes in a
-// lane of their own (never mixed into the answers, each with Ask this), and a panel to invite,
+// lane of their own (never mixed into the answers, each with Ask AI), and a panel to invite,
 // admit, allow notes, remove, and pause what guests see.
 // The guest's side: the invites (Call screen), a notice that this is someone else's private
 // call, the note box when notes are allowed, and Leave.
-import { useCallback, useEffect, useState, type Dispatch } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
 import type { SeatInfo } from "@copilot/protocol";
 import { api, inTauri, rest, type MySeat } from "./api";
 import { MODE_LABEL } from "./calls";
@@ -24,11 +24,17 @@ export function openSeats(seats: SeatInfo[]): SeatInfo[] {
   return seats.filter((x) => OPEN.has(x.status));
 }
 
-/** "Pavlo, Dana", or "Pavlo · 1 waiting": who watches, then who waits to be let in. */
+/** An admitted guest whose app follows the call now. A gateway that does not say counts as
+ * connected, as before. */
+export function isWatching(x: SeatInfo): boolean {
+  return x.status === "admitted" && x.connected !== false;
+}
+
+/** "Pavlo, Dana", or "Pavlo · 1 invited": who watches, then who is invited and has not joined. */
 export function watchingText(seats: SeatInfo[]): string {
-  const admitted = seats.filter((x) => x.status === "admitted").map((x) => x.name);
-  const waiting = seats.filter((x) => x.status === "accepted").length;
-  const parts = [admitted.join(", "), waiting ? `${waiting} waiting` : ""].filter(Boolean);
+  const watching = seats.filter(isWatching).map((x) => x.name);
+  const invited = seats.filter((x) => OPEN.has(x.status) && !isWatching(x)).length;
+  const parts = [watching.join(", "), invited ? `${invited} invited` : ""].filter(Boolean);
   return parts.join(" · ");
 }
 
@@ -43,7 +49,7 @@ export const NOTE_RESULT: Record<NonNullable<SentNote["result"]>, string> = {
 const STATUS_TEXT: Record<SeatInfo["status"], string> = {
   invited: "Invited",
   accepted: "Wants to watch",
-  admitted: "Watching",
+  admitted: "Invited, not joined yet",
   declined: "Declined",
   removed: "Removed",
   expired: "Invite expired",
@@ -65,13 +71,19 @@ export function WatchingChip({ s }: { s: SessionView }) {
   );
 }
 
-/** The guests' notes, apart from the answers. Ask this asks the note on the call, as a typed
- * question; nothing else of a note ever reaches the call or a model. */
+/** The guests' notes, apart from the answers: a small chat that scrolls, newest at the bottom
+ * and followed while the host reads there. Ask AI asks a note on the call, as a typed question;
+ * nothing else of a note ever reaches the call or a model. */
 export function NotesLane({ s, dispatch }: { s: SessionView; dispatch: Dispatcher }) {
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-  const notes = s.notes.filter((n) => !dismissed.has(n.id)).slice(-3);
-  if (notes.length === 0) return null;
+  const body = useRef<HTMLOListElement>(null);
+  const atBottom = useRef(true);
+  const count = s.notes.length;
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }, [count]);
+  if (count === 0) return null;
   const ask = (id: string, text: string) => {
     setError(null);
     api.askNote(id, text).then(
@@ -81,20 +93,27 @@ export function NotesLane({ s, dispatch }: { s: SessionView; dispatch: Dispatche
   };
   return (
     <section className="ov-notes" aria-label="Notes from guests">
-      {notes.map((n) => (
-        <article key={n.id} className="ov-note">
-          <p className="ov-note-from">Note from {n.name} · only you see this</p>
-          <p className="ov-note-text">{n.text}</p>
-          <div className="ov-note-tools">
-            <button type="button" className="ov-ask-btn" disabled={n.asked || !s.running} onClick={() => ask(n.id, n.text)}>
-              {n.asked ? "Asked" : "Ask this"}
+      <h2 className="ov-notes-head">Notes from guests · only you see them</h2>
+      <ol
+        className="ov-notes-body"
+        ref={body}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
+        {s.notes.map((n) => (
+          <li key={n.id} className="ov-note">
+            <p className="ov-note-from">
+              {n.name} <span className="ov-note-time">{noteTime(n.at)}</span>
+            </p>
+            <p className="ov-note-text">{n.text}</p>
+            <button type="button" className="ov-note-ask" disabled={n.asked || !s.running} onClick={() => ask(n.id, n.text)}>
+              {n.asked ? "Asked" : "Ask AI"}
             </button>
-            <button type="button" className="ov-ask-btn" onClick={() => setDismissed((d) => new Set(d).add(n.id))}>
-              Dismiss
-            </button>
-          </div>
-        </article>
-      ))}
+          </li>
+        ))}
+      </ol>
       {error && (
         <p className="ov-ask-error" role="alert">
           {error}
@@ -102,6 +121,12 @@ export function NotesLane({ s, dispatch }: { s: SessionView; dispatch: Dispatche
       )}
     </section>
   );
+}
+
+/** "15:04", in the reader's time. */
+function noteTime(at: string): string {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 const CONSENT_KEY = "seats.consent-seen";
@@ -147,7 +172,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
         // Shown again next time; harmless.
       }
       setEmail("");
-    }, `If ${email.trim()} has a Copilot account, they see your invite in their app now.`);
+    }, `If ${email.trim()} has a Copilot account, they can join from their Call screen now.`);
   const seats = s.seats.filter((x) => x.status !== "removed");
   return (
     <div className="seat-panel">
@@ -176,7 +201,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
           {seats.map((x) => (
             <li key={x.seat_id} className="seat-row">
               <span className="seat-name">{x.name}</span>
-              <span className="seat-status">{STATUS_TEXT[x.status]}</span>
+              <span className="seat-status">{isWatching(x) ? "Watching" : STATUS_TEXT[x.status]}</span>
               <span className="seat-actions">
                 {x.status === "accepted" && (
                   <Button size="sm" disabled={busy} onClick={() => guarded(() => rest.admitGuest(sid, x.seat_id))}>
@@ -193,7 +218,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
                 )}
                 {OPEN.has(x.status) && (
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => guarded(() => rest.removeGuest(sid, x.seat_id))}>
-                    {x.status === "admitted" ? "Remove" : "Cancel"}
+                    {isWatching(x) ? "Remove" : "Cancel invite"}
                   </Button>
                 )}
               </span>
@@ -315,10 +340,13 @@ export function Watching({ s, dispatch }: { s: SessionView; dispatch: Dispatcher
   );
 }
 
-/** Invites to someone else's live call, on the Call screen when no call runs here. Polled
- * every 5 s; the poll never wakes the server, since an invite only exists during a call. */
+/** Invites to someone else's live call, on the Call screen when no call runs here: Join opens
+ * the call at once (the host's invite is the permission; there is nothing to accept). Not now
+ * hides it here; the host can remove it. Polled every 5 s; the poll never wakes the server,
+ * since an invite only exists during a call. */
 export function GuestInvites({ running, onJoined }: { running: boolean; onJoined?: () => void }) {
   const [seats, setSeats] = useState<MySeat[]>([]);
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
     if (!inTauri) return;
@@ -331,40 +359,35 @@ export function GuestInvites({ running, onJoined }: { running: boolean; onJoined
     if (!running) load();
   }, [running, load]);
   usePolling(load, 5000, !running);
-  if (running || seats.length === 0) return null;
-  const act = (f: () => Promise<unknown>) => {
+  const shown = seats.filter((x) => x.status === "admitted" && !hidden.has(x.seat_id));
+  if (running || shown.length === 0) return null;
+  const join = (x: MySeat) => {
     setError(null);
-    f().then(load, (e) => setError(String(e)));
+    api.seatJoin(x.session_id, x.seat_id).then(
+      () => onJoined?.(),
+      (e) => setError(String(e)),
+    );
   };
   return (
     <section className="seat-invites" aria-label="Invites to watch a call">
-      {seats.map((x) => (
+      {shown.map((x) => (
         <Banner
           key={x.seat_id}
           tone="info"
           title={`${x.host_name} invited you to watch a call`}
           action={
-            x.status === "invited" ? (
-              <span className="ui-row-inline">
-                <Button size="sm" onClick={() => act(() => rest.acceptSeat(x.seat_id))}>
-                  Accept
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => act(() => rest.declineSeat(x.seat_id))}>
-                  Decline
-                </Button>
-              </span>
-            ) : x.status === "admitted" ? (
-              <Button size="sm" onClick={() => act(async () => {
-                await api.seatJoin(x.session_id, x.seat_id);
-                onJoined?.();
-              })}>
+            <span className="ui-row-inline">
+              <Button size="sm" onClick={() => join(x)}>
                 Join
               </Button>
-            ) : undefined
+              <Button size="sm" variant="ghost" onClick={() => setHidden((h) => new Set(h).add(x.seat_id))}>
+                Not now
+              </Button>
+            </span>
           }
         >
           {MODE_LABEL[x.mode] ?? x.mode}
-          {x.title ? ` · ${x.title}` : ""}. {x.status === "accepted" ? `Waiting for ${x.host_name} to let you in.` : x.status === "admitted" ? "You can join now." : "You would see the call read only; only the host sees your notes."}
+          {x.title ? ` · ${x.title}` : ""}. You see the call read only; only {x.host_name} sees your notes.
         </Banner>
       ))}
       {error && <Banner tone="danger">{error}</Banner>}

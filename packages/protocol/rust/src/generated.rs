@@ -744,7 +744,7 @@ pub struct QuestionForce {
     /// said (or to text), as the detector's respond type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<QuestionForceKind>,
-    /// The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log.
+    /// The host pressed Ask AI on a guest's note (seat.note): the note's id, for the session log.
     /// The text is the note's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note_id: Option<Uuid>,
@@ -1308,6 +1308,9 @@ pub struct SeatInfo {
     pub name: String,
     pub status: SeatStatus,
     pub capabilities: Vec<Capability>,
+    /// An admitted guest's app is following the call now. Absent: not known (an older gateway).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connected: Option<bool>,
 }
 
 impl Validate for SeatInfo {
