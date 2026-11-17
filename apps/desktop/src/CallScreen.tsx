@@ -15,7 +15,7 @@ import { DeviceTest } from "./AudioCheck";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
-import { STOPPED, type SessionView } from "./session";
+import { STOPPED, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { defaultEmployer, packLabel } from "./workday";
 import { PackBadge, plural, relative, useShowCount } from "./shared";
@@ -96,8 +96,11 @@ export function CallScreen(props: CallProps) {
   // The post-call view for the call that just ended.
   useEffect(() => {
     if (session.running) setPostCall(null);
-    else if (session.stopped === "ended" && session.sessionId) setPostCall(session.sessionId);
-  }, [session.stopped, session.sessionId, session.running]);
+    else {
+      const ended = postCallFor(session);
+      if (ended) setPostCall(ended);
+    }
+  }, [session]);
 
   if (!tokenSet || locked) return <Setup {...props} />;
   if (postCall && !session.running) {
@@ -304,7 +307,9 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
         ? `${application.company} · ${application.role}`
         : "No application (your base resume only)";
 
-  const stopped = session.stopped && session.stopped !== "ended" && !running ? session.stopped : null;
+  // Leaving someone's call needs no word; the end of it does, as a note, not a warning.
+  const stopped = session.stopped && session.stopped !== "ended" && session.stopped !== "left" && !running ? session.stopped : null;
+  const watchedEnded = session.seat && !running && session.stopped === "ended" ? session.seat.hostName : null;
 
   if (session.seat && running) {
     // Watching someone else's call: none of this app's own call controls apply.
@@ -337,6 +342,7 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
       <PageHeader title="Call" />
       {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
       {tokenSet && <GuestInvites running={running} />}
+      {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
       {stopped && (
         <Banner
           tone={stopped === "outdated" ? "info" : "warning"}

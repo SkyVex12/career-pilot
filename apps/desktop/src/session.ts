@@ -395,7 +395,15 @@ export const STOPPED: Record<StopReason, string> = {
   outdated: "Updating the app",
   seat_removed: "The host removed you from the call",
   seat_closed: "This seat is closed",
+  left: "You left the call",
 };
+
+/** The call whose post-call screen to show, if any: one of this app's own calls that ended.
+ * A guest never gets one: the call was someone else's, and it may still be going on. */
+export function postCallFor(s: SessionView): string | null {
+  if (s.running || s.seat) return null;
+  return s.stopped === "ended" ? s.sessionId : null;
+}
 
 /// One badge for the overlay: the connection first, then the worst component status.
 export function badge(s: SessionView): { state: BadgeState | "off"; text: string } {

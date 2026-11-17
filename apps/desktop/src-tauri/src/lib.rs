@@ -1294,10 +1294,14 @@ async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoin
 }
 
 /// Stop watching: the seat stays this account's until the host removes it or the call ends.
+/// The overlay goes away with the call it showed.
 #[tauri::command]
-fn seat_leave(state: State<'_, AppState>) {
+fn seat_leave(app: AppHandle, state: State<'_, AppState>) {
     if let Some(seat) = state.seat.lock().unwrap().take() {
         seat.leave();
+    }
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.hide();
     }
 }
 

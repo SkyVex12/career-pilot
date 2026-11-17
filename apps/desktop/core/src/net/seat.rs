@@ -188,7 +188,7 @@ impl Seat {
                         _ = tokio::time::sleep(wait) => {}
                         cmd = self.rx.recv() => {
                             if matches!(cmd, Some(SeatCommandMsg::Leave) | None) {
-                                break StopReason::Ended;
+                                break StopReason::Left;
                             }
                         }
                     }
