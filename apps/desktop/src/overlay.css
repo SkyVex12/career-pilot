@@ -472,11 +472,6 @@ html[data-window="overlay"] #root {
   font-size: var(--fs-deep);
   line-height: 1.5;
 }
-.cite {
-  margin-left: 2px;
-  color: var(--ov-text-3);
-  font-size: 12px;
-}
 .suggested {
   color: var(--ov-text-2);
   font-style: italic;
