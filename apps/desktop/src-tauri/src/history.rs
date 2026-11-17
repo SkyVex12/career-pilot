@@ -57,9 +57,39 @@ fn slot(event: &Value) -> Option<(String, bool)> {
     }
 }
 
+/// What a guest's `seat.snapshot` replaces: the call's conversation and status, as the UI's
+/// reducer does. The seat's own messages and the connection's events stay.
+fn replaced_by_snapshot(entry: &Value) -> bool {
+    let e = &entry["event"];
+    str_of(e, "kind") == "server"
+        && matches!(
+            str_of(&e["message"], "type"),
+            "transcript.partial"
+                | "transcript.final"
+                | "question.detected"
+                | "question.cancelled"
+                | "answer.delta"
+                | "answer.done"
+                | "answer.error"
+                | "status"
+                | "seat.snapshot"
+        )
+}
+
 impl History {
     /// Store an event; returns its number `n`.
     pub fn push(&mut self, event: Value) -> u64 {
+        if str_of(&event, "kind") == "server" && str_of(&event["message"], "type") == "seat.snapshot" {
+            // Later deltas must not merge into an answer from before the snapshot, which the
+            // snapshot replaces: start the conversation over from it.
+            self.entries.retain(|e| !replaced_by_snapshot(e));
+            self.slots.clear();
+            for (i, e) in self.entries.iter().enumerate() {
+                if let Some((key, _)) = slot(&e["event"]) {
+                    self.slots.insert(key, i);
+                }
+            }
+        }
         let n = self.next;
         self.next += 1;
         if let Some((key, merge)) = slot(&event)
@@ -153,6 +183,18 @@ mod tests {
                 "answer.delta:Situation",
             ]
         );
+    }
+
+    #[test]
+    fn a_guest_snapshot_replaces_the_conversation_before_it() {
+        let mut h = History::default();
+        h.push(server(json!({ "type": "seat.ready", "seq": 1 })));
+        h.push(delta("q1", "fast", "- Old "));
+        h.push(server(json!({ "type": "seat.snapshot", "seq": 9, "messages": [] })));
+        h.push(delta("q1", "fast", "more"));
+        assert_eq!(texts(&h), vec!["seat.ready:", "seat.snapshot:", "answer.delta:more"]);
+        h.push(server(json!({ "type": "seat.snapshot", "seq": 12, "messages": [] })));
+        assert_eq!(texts(&h), vec!["seat.ready:", "seat.snapshot:"]);
     }
 
     #[test]

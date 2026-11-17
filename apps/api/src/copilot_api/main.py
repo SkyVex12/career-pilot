@@ -29,6 +29,7 @@ from copilot_api.routes import (
     me,
     profiles,
     resumes,
+    seats,
     sessions,
 )
 from copilot_api.tokens import TokenService
@@ -184,7 +185,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     for module in (auth, email_auth, career_os_auth, me, profiles, career_os):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
-    for module in (documents, applications, resumes, sessions, employers):
+    for module in (documents, applications, resumes, sessions, seats, employers):
         app.include_router(module.router, prefix="/v1", dependencies=[Depends(require_link)])
     return app
 

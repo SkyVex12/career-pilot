@@ -17,6 +17,10 @@ text padded to pcm16 frames (`testing.text_frame_audio`), on either channel: the
 mic stream is a second TextSTT. Real microphone audio produces no transcript; typed questions
 still get scripted answers.
 
+With --guest-token and --seat, a second account (the guest) gets that seat, admitted with
+`view` and `note`, on every call the dev user starts, so a guest client can join it on
+`/v1/seat` (ARCHITECTURE.md, "Guest seats").
+
 The process prints one line, `listening <port>`, once it accepts connections. The desktop
 client's integration test (apps/desktop/core/tests/gateway.rs) starts these processes.
 """
@@ -29,6 +33,7 @@ import time
 from typing import Any
 from uuid import UUID
 
+from copilot_core import keys, seats
 from copilot_core.jobs import JobQueue, MemoryJobQueue, SqsJobQueue
 from copilot_gateway.auth import Principal, StaticVerifier
 from copilot_gateway.config import Settings
@@ -38,6 +43,7 @@ from copilot_gateway.store import GatewayStore
 from copilot_gateway.testing import GatewayServer, ScriptedProvider, TextSTT, TextSTTControl
 
 DEV_USER = UUID("0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b")
+GUEST_USER = UUID("0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6d")
 
 # Shorter timers than production, as in the gateway's own tests, so a test call is quick.
 FAST_TIMERS: dict[str, Any] = {
@@ -46,7 +52,26 @@ FAST_TIMERS: dict[str, Any] = {
     "final_wait_max_ms": 500,
     "lease_renew_s": 0.5,
     "lease_ttl_s": 3.0,
+    "seat_poll_s": 0.1,
+    "seat_block_ms": 200,
+    "seat_view_interval_s": 0.2,
+    "seat_view_wait_s": 0.5,
 }
+
+
+async def seat_every_call(client: Any, seat_id: str) -> None:
+    """The guest's seat, admitted, on each call the dev user starts."""
+    seen: set[str] = set()
+    while True:
+        raw = await client.get(keys.user_active_session(DEV_USER))
+        sid = raw.decode() if isinstance(raw, bytes) else raw
+        if sid and sid not in seen:
+            seen.add(sid)
+            record = seats.SeatRecord(
+                seat_id, str(GUEST_USER), "Guest User", "admitted", ["view", "note"], 1, "Dev User"
+            )
+            await seats.publish(client, sid, record, 7200)
+        await asyncio.sleep(0.05)
 
 
 def parse_token(spec: str) -> tuple[str, float | None]:
@@ -77,6 +102,8 @@ async def serve_gateway(args: argparse.Namespace) -> None:
         token: Principal(DEV_USER, "Dev User", expires)
         for token, expires in map(parse_token, args.token)
     }
+    for token in args.guest_token:
+        principals[token] = Principal(GUEST_USER, "Guest User", None)
     control = TextSTTControl()
     me_control = TextSTTControl()
     queue: JobQueue = MemoryJobQueue()
@@ -97,8 +124,11 @@ async def serve_gateway(args: argparse.Namespace) -> None:
     server.server.config.port = args.port
     async with server:
         print(f"listening {server.port}", flush=True)
+        seating = asyncio.create_task(seat_every_call(client, args.seat)) if args.seat else None
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.Event().wait()
+        if seating is not None:
+            seating.cancel()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,6 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--min-client-version", default="", help="the oldest desktop app served (e.g. 0.2.0)"
     )
+    parser.add_argument(
+        "--guest-token", action="append", default=[], help="a token of the guest account"
+    )
+    parser.add_argument("--seat", default="", help="the guest's seat id on every call")
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("give at least one --token")

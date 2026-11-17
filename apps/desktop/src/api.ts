@@ -9,7 +9,7 @@ import type { AnswerStyle, Channel, LatencyMs, Mode, QuestionType, ServerMessage
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** "outdated": the gateway closed with 4426; the app is updating. */
-export type StopReason = "ended" | "no_minutes" | "session_active" | "replaced" | "unauthorized" | "outdated";
+export type StopReason = "ended" | "no_minutes" | "session_active" | "replaced" | "unauthorized" | "outdated" | "seat_removed" | "seat_closed";
 
 export type ConnectionState =
   | { state: "connecting"; attempt: number }
@@ -352,6 +352,13 @@ export const api = {
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
   setAnswerStyle: (style: AnswerStyle) => invoke<void>("set_answer_style", { style }),
+  // Guest seats (ARCHITECTURE.md, "Guest seats"). The host: Ask this on a note, and pause or
+  // resume what guests see. The guest: join an admitted seat, leave it, send a note.
+  askNote: (noteId: string, text: string) => invoke<void>("ask_note", { noteId, text }),
+  setSharing: (on: boolean) => invoke<void>("set_sharing", { on }),
+  seatJoin: (sessionId: string, seatId: string) => invoke<void>("seat_join", { request: { session_id: sessionId, seat_id: seatId } }),
+  seatLeave: () => invoke<void>("seat_leave"),
+  seatNote: (text: string) => invoke<string>("seat_note", { text }),
   /** The session's events so far (compacted), whether one is running, and the next event's n. */
   snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
@@ -594,6 +601,30 @@ export interface SessionDetail extends Partial<SessionItem> {
   status: SessionStatus;
   outputs: Partial<Record<OutputKind, string>>;
   questions: number;
+}
+
+/** A guest seat as the host lists it (GET /sessions/{id}/seats). */
+export interface HostSeat {
+  seat_id: string;
+  name: string;
+  email: string;
+  status: "invited" | "accepted" | "admitted" | "declined" | "removed" | "expired" | "ended";
+  capabilities: string[];
+  created_at: string | null;
+  accepted_at: string | null;
+  admitted_at: string | null;
+}
+
+/** An open seat of this account on someone else's live call (GET /seats). */
+export interface MySeat {
+  seat_id: string;
+  session_id: string;
+  host_name: string;
+  mode: Mode;
+  title: string | null;
+  status: "invited" | "accepted" | "admitted";
+  capabilities: string[];
+  expires_at: string | null;
 }
 
 /** GET /sessions/live: the profile's call still running on the gateway. */
@@ -840,6 +871,16 @@ export const rest = {
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
   replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
+  inviteGuest: (sessionId: string, email: string, note: boolean) =>
+    call<{ status: string }>("POST", `/sessions/${sessionId}/seats`, { email, capabilities: note ? ["view", "note"] : ["view"] }),
+  seatsOf: (sessionId: string) => call<{ seats: HostSeat[] }>("GET", `/sessions/${sessionId}/seats`),
+  admitGuest: (sessionId: string, seatId: string) => call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { admit: true }),
+  setGuestNotes: (sessionId: string, seatId: string, note: boolean) =>
+    call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities: note ? ["view", "note"] : ["view"] }),
+  removeGuest: (sessionId: string, seatId: string) => call<null>("DELETE", `/sessions/${sessionId}/seats/${seatId}`),
+  mySeats: () => call<{ seats: MySeat[] }>("GET", "/seats"),
+  acceptSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/accept`),
+  declineSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/decline`),
 
   employers: () => call<{ employers: Employer[] }>("GET", "/employers"),
   createEmployer: (fields: EmployerFields & { name: string }) => call<Employer>("POST", "/employers", fields),

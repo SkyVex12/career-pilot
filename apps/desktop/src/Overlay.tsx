@@ -17,6 +17,7 @@ import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
+import { GuestNoteBox, GuestNotice, GuestPanel, NotesLane, WatchingChip } from "./seats";
 import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
@@ -170,10 +171,14 @@ export default function Overlay() {
   }, [stepText]);
 
   const offKey = prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G");
+  // Watching someone else's call (a guest seat): read only, nothing acts on the call.
+  const guest = s.seat !== null;
+  const host = s.seat?.hostName ?? "";
   return (
     <div className={cx("ov", compact && "is-compact")} style={{ "--ov-alpha": opacity } as CSSProperties}>
       <header className="ov-head" data-tauri-drag-region>
         <StatusBadge s={s} />
+        {!guest && <WatchingChip s={s} />}
         <span className="ov-speaking" data-tauri-drag-region>
           {s.speaking.them && <span className="ov-pill">them</span>}
           {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}
@@ -189,7 +194,16 @@ export default function Overlay() {
             if (inTauri) getCurrentWindow().startResizeDragging("SouthEast");
           }}
         />
-        <OverlayMenu opacity={opacity} onOpacity={setOpacityLive} onTop={onTop} onToggleOnTop={setOnTop} clickThrough={clickThrough} hotkeys={hotkeys} running={s.running} />
+        <OverlayMenu
+          opacity={opacity}
+          onOpacity={setOpacityLive}
+          onTop={onTop}
+          onToggleOnTop={setOnTop}
+          clickThrough={clickThrough}
+          hotkeys={hotkeys}
+          running={s.running}
+          guests={!guest && s.running ? <GuestPanel s={s} /> : null}
+        />
         <IconButton label="Minimize overlay" icon="–" size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
         <IconButton label="Hide overlay" icon="✕" size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
       </header>
@@ -198,6 +212,7 @@ export default function Overlay() {
           Click-through on · <Kbd>{offKey}</Kbd> turns it off
         </div>
       )}
+      <GuestNotice s={s} />
 
       <ConversationView
         s={s}
@@ -205,13 +220,28 @@ export default function Overlay() {
         layout={view.layout}
         textScale={view.textScale}
         live
+        readOnly={guest}
+        meLabel={guest ? host : undefined}
         onExpand={(id) => dispatch({ type: "deep_requested", id })}
-        emptyAnswers={s.running ? "Listening. Press the hotkey to answer the last thing said." : "No call running. Start one in the Copilot window."}
+        emptyAnswers={
+          guest
+            ? `Watching ${host}'s call. Answers appear here as ${host} gets them.`
+            : s.running
+              ? "Listening. Press the hotkey to answer the last thing said."
+              : "No call running. Start one in the Copilot window."
+        }
         emptyTranscript={s.running ? "Nothing heard yet." : "No call."}
-        showMe={false}
+        showMe={guest}
       />
 
-      <AskBox disabled={!s.running} />
+      {guest ? (
+        <GuestNoteBox s={s} dispatch={dispatch} />
+      ) : (
+        <>
+          <NotesLane s={s} dispatch={dispatch} />
+          <AskBox disabled={!s.running} />
+        </>
+      )}
       <span className="ov-grip" aria-hidden="true" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
     </div>
   );
@@ -250,7 +280,13 @@ export function ConversationView({
   emptyAnswers,
   emptyTranscript,
   showMe,
+  readOnly = false,
+  meLabel,
 }: {
+  /** Watching someone else's call (a guest seat): nothing on a card acts on the call. */
+  readOnly?: boolean;
+  /** Whose the "me" lines are when they are not the reader's (a guest sees the host's). */
+  meLabel?: string;
   /** The user's own words: shown in History, left out live (the user knows what they said). */
   showMe: boolean;
   s: SessionView;
@@ -270,7 +306,7 @@ export function ConversationView({
   const scale = { "--ov-scale": textScale } as CSSProperties;
   const nowId = live ? (questions[questions.length - 1]?.id ?? null) : null;
   const card = (q: QuestionView) => (
-    <QuestionCard key={q.id} q={q} now={q.id === nowId} compact={compact} onExpand={() => onExpand?.(q.id)} past={ratings ? { rating: ratings[q.id] ?? null } : null} />
+    <QuestionCard key={q.id} q={q} now={q.id === nowId} compact={compact} onExpand={() => onExpand?.(q.id)} past={ratings ? { rating: ratings[q.id] ?? null } : null} readOnly={readOnly} />
   );
   const answersList = (list: QuestionView[]) =>
     list.length === 0 ? (
@@ -302,7 +338,7 @@ export function ConversationView({
     return (
       <div className="ov-body ov-stacked" style={scale}>
         <ScrollPane className="ov-pane-flow" size={contentSize(shown)} live={live} label="Conversation">
-          {shown.length === 0 && !now ? <p className="ov-empty">{emptyAnswers}</p> : <Flow items={shown} card={card} />}
+          {shown.length === 0 && !now ? <p className="ov-empty">{emptyAnswers}</p> : <Flow items={shown} card={card} meLabel={meLabel} />}
         </ScrollPane>
         {now && (
           <section className="ov-now-pinned" aria-label="Current suggestion">
@@ -321,7 +357,7 @@ export function ConversationView({
   return (
     <div className="ov-body ov-split" style={scale}>
       <ScrollPane className="ov-pane-transcript" title="Transcript" size={transcriptSize} live={live} label="Transcript">
-        {blocks.length === 0 ? <p className="ov-empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} />}
+        {blocks.length === 0 ? <p className="ov-empty">{emptyTranscript}</p> : <Transcript blocks={blocks} onAsked={toCard} meLabel={meLabel} />}
       </ScrollPane>
       <AnswersPane title="Suggestions" paneRef={answersPane} newestId={nowId}>
         {answersList(ordered)}
@@ -417,12 +453,12 @@ function ScrollPane({ className, title, size, live, label, children }: { classNa
 }
 
 /** The other side's words as joined blocks; a block that got a suggestion links to its card. */
-function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (id: string) => void }) {
+function Transcript({ blocks, onAsked, meLabel }: { blocks: TranscriptBlock[]; onAsked: (id: string) => void; meLabel?: string }) {
   return (
     <ol className="tx">
       {blocks.map((b) => (
         <li key={b.key} className={`line ${b.who}`}>
-          <span className="who">{b.who === "me" ? "You" : "Them"}</span>
+          <span className="who">{b.who === "me" ? (meLabel ?? "You") : "Them"}</span>
           <p>
             {b.parts.map((p, i) => (
               <span key={p.key} className={p.final ? undefined : "partial"}>
@@ -443,14 +479,14 @@ function Transcript({ blocks, onAsked }: { blocks: TranscriptBlock[]; onAsked: (
 }
 
 /** One column: lines and questions in the order they came. */
-function Flow({ items, card }: { items: ConversationItem[]; card: (q: QuestionView) => ReactNode }) {
+function Flow({ items, card, meLabel }: { items: ConversationItem[]; card: (q: QuestionView) => ReactNode; meLabel?: string }) {
   return (
     <ol className="ov-flow">
       {items.map((it) => {
         if (it.kind === "question") return <li key={it.key}>{card(it.question)}</li>;
         return (
           <li key={it.key} className={`msg ${it.kind}`}>
-            <span className="who">{it.kind === "me" ? "You said" : "Them"}</span>
+            <span className="who">{it.kind === "me" ? (meLabel ?? "You said") : "Them"}</span>
             <p className={it.final ? "" : "partial"}>{it.kind === "me" ? `“${it.text}”` : it.text}</p>
           </li>
         );
@@ -469,7 +505,10 @@ function OverlayMenu({
   clickThrough,
   hotkeys,
   running,
+  guests,
 }: {
+  /** The host's guests (invite, admit, notes, remove, pause sharing), while a call runs. */
+  guests?: ReactNode;
   opacity: number;
   onOpacity: (v: number) => void;
   onTop: boolean;
@@ -547,6 +586,15 @@ function OverlayMenu({
               }}
             />
           </div>
+          {guests && (
+            <>
+              <div className="ov-menu-sep" />
+              <div className="ov-menu-row">
+                <span className="ov-menu-label">Guests</span>
+                {guests}
+              </div>
+            </>
+          )}
           <div className="ov-menu-sep" />
           <Button
             variant="ghost"
@@ -589,7 +637,10 @@ function QuestionCard({
   compact,
   onExpand,
   past,
+  readOnly = false,
 }: {
+  /** A guest's view: no expand, no thumbs; the host's choices show as they come. */
+  readOnly?: boolean;
   q: QuestionView;
   /** The newest question: the largest type, in the fixed place. */
   now: boolean;
@@ -646,7 +697,8 @@ function QuestionCard({
           <PassStatus state={deep} />
         </div>
       ) : (
-        !past && (
+        !past &&
+        !readOnly && (
           <button type="button" className="ov-get-deep" onClick={expand}>
             Get the detailed answer ▾
           </button>
@@ -656,12 +708,16 @@ function QuestionCard({
       <footer className="card-tools">
         <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />
         {deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
-        <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
-          👍
-        </button>
-        <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
-          👎
-        </button>
+        {!readOnly && (
+          <>
+            <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
+              👍
+            </button>
+            <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
+              👎
+            </button>
+          </>
+        )}
         {!compact && q.fast.refs.length > 0 && (
           <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use copilot_protocol::{
     AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerStyle, AnswerStyleSet, Channel, ClientMessage,
-    Mode, ModeSet, QuestionForce, QuestionForceKind,
+    Mode, ModeSet, QuestionForce, QuestionForceKind, SharingSet,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -191,19 +191,30 @@ impl Engine {
 
     /// The hotkey (no text) or a typed question.
     pub async fn force_question(&self, text: Option<String>) {
-        self.force(text, None).await;
+        self.force(text, None, None).await;
+    }
+
+    /// Ask this, on a guest's note (seat.note): the note's text as a typed question, with its
+    /// id for the session log. The host's choice; a guest can never ask on the call.
+    pub async fn ask_note(&self, note_id: Uuid, text: String) {
+        self.force(Some(text), None, Some(note_id)).await;
+    }
+
+    /// Pause (false) or resume what the call's guests see.
+    pub async fn set_sharing(&self, on: bool) {
+        self.send(ClientMessage::SharingSet(SharingSet { on })).await;
     }
 
     /// The Respond button: a suggested reply to what was just said, for a remark that needs
     /// one but is not a question (a request, a reminder, "makes sense?").
     pub async fn respond(&self, text: Option<String>) {
-        self.force(text, Some(QuestionForceKind::Respond)).await;
+        self.force(text, Some(QuestionForceKind::Respond), None).await;
     }
 
-    async fn force(&self, text: Option<String>, kind: Option<QuestionForceKind>) {
+    async fn force(&self, text: Option<String>, kind: Option<QuestionForceKind>, note_id: Option<Uuid>) {
         self.latency.lock().unwrap().on_force(Instant::now());
         let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-        self.send(ClientMessage::QuestionForce(QuestionForce { text, kind })).await;
+        self.send(ClientMessage::QuestionForce(QuestionForce { text, kind, note_id })).await;
     }
 
     pub async fn expand(&self, question_id: Uuid) {

@@ -74,6 +74,13 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1
 return 0
 """
 
+# The host's view snapshot for guests, fenced like every other write of the session.
+PUT_VIEW_LUA = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+return 1
+"""
+
 DEL_IF_LUA = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
@@ -82,6 +89,17 @@ return 0
 
 def make_client(settings: Settings) -> Client:
     opts: dict[str, Any] = {"socket_timeout": 1.0, "socket_connect_timeout": 1.0}
+    if settings.valkey_cluster:
+        return ValkeyCluster.from_url(settings.valkey_url, **opts)
+    return valkey_async.Valkey.from_url(settings.valkey_url, **opts)
+
+
+def make_blocking_client(settings: Settings) -> Client:
+    """For blocking stream reads (guest seats) only: a socket timeout past the longest block,
+    and connections of its own, so a read that waits never holds one the session's writes
+    need."""
+    timeout = settings.seat_block_ms / 1000 + 4.0
+    opts: dict[str, Any] = {"socket_timeout": timeout, "socket_connect_timeout": 1.0}
     if settings.valkey_cluster:
         return ValkeyCluster.from_url(settings.valkey_url, **opts)
     return valkey_async.Valkey.from_url(settings.valkey_url, **opts)
@@ -98,13 +116,16 @@ class LeaseLostError(Exception):
 class GatewayStore:
     """Valkey access shared by all sessions on this gateway task."""
 
-    def __init__(self, client: Client, settings: Settings) -> None:
+    def __init__(self, client: Client, settings: Settings, blocking: Client | None = None) -> None:
         self.client = client
+        # Blocking stream reads (guest seats) go through their own client when one is given.
+        self.blocking = blocking if blocking is not None else client
         self.settings = settings
         self._append = client.register_script(APPEND_LUA)
         self._renew = client.register_script(RENEW_LUA)
         self._del_if = client.register_script(DEL_IF_LUA)
         self._expire_if = client.register_script(EXPIRE_IF_LUA)
+        self._put_view = client.register_script(PUT_VIEW_LUA)
 
     async def ping(self) -> bool:
         try:
@@ -230,6 +251,91 @@ class GatewayStore:
             keys.sess_state(sid),
             mapping={"status": "ended", "ended_reason": reason, "updated_at": str(time.time())},
         )
+
+    # Guest seats (ARCHITECTURE.md, "Guest seats").
+
+    async def put_view(self, sid: UUID, task_id: str, view: str) -> bool:
+        """Write the guests' view snapshot, only while this task holds the session."""
+        result = await self._put_view(
+            keys=[keys.sess_lease(sid), keys.sess_view(sid)],
+            args=[task_id, view, self.settings.state_ttl_s],
+        )
+        return int(cast(int, result)) == 1
+
+    async def get_view(self, sid: UUID | str) -> str | None:
+        raw = await self.client.get(keys.sess_view(sid))
+        return None if raw is None else _s(raw)
+
+    async def has_seats(self, sid: UUID | str) -> bool:
+        return bool(await self.client.exists(keys.sess_seats(sid)))
+
+    async def read_ctl(
+        self, sid: UUID, after: str, block_ms: int
+    ) -> list[tuple[str, dict[str, str]]]:
+        """Entries of the session's control stream after `after`, waiting up to block_ms."""
+        reply = await self.blocking.xread({keys.sess_ctl(sid): after}, count=100, block=block_ms)
+        out: list[tuple[str, dict[str, str]]] = []
+        for _, entries in cast(list[tuple[Any, list[tuple[Any, dict[Any, Any]]]]], reply or []):
+            for entry_id, fields in entries:
+                out.append((_s(entry_id), {_s(k): _s(v) for k, v in fields.items()}))
+        return out
+
+    async def add_ctl(self, sid: UUID | str, fields: Mapping[str, str]) -> None:
+        key = keys.sess_ctl(sid)
+        async with self.client.pipeline(transaction=False) as pipe:
+            pipe.xadd(key, dict(fields), maxlen=1000, approximate=True)
+            pipe.expire(key, self.settings.state_ttl_s)
+            await pipe.execute()
+
+    async def put_result(self, sid: UUID | str, seat_id: str, command_id: str, result: str) -> None:
+        key = keys.sess_ctl_results(sid)
+        async with self.client.pipeline(transaction=False) as pipe:
+            pipe.xadd(
+                key, {"s": seat_id, "c": command_id, "r": result}, maxlen=1000, approximate=True
+            )
+            pipe.expire(key, self.settings.state_ttl_s)
+            await pipe.execute()
+
+    async def stream_tail(self, sid: UUID | str) -> tuple[str, str]:
+        """The last ids of the event and result streams ('0-0' when empty)."""
+        ids: list[str] = []
+        for key in (keys.sess_events(sid), keys.sess_ctl_results(sid)):
+            entries = cast(list[tuple[Any, Any]], await self.client.xrevrange(key, count=1))
+            ids.append(_s(entries[0][0]) if entries else "0-0")
+        return ids[0], ids[1]
+
+    async def read_feed(
+        self, sid: UUID | str, events_after: str, results_after: str, block_ms: int
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, dict[str, str]]]]:
+        """New host messages (entry id, JSON) and command results, waiting up to block_ms."""
+        reply = await self.blocking.xread(
+            {keys.sess_events(sid): events_after, keys.sess_ctl_results(sid): results_after},
+            count=500,
+            block=block_ms,
+        )
+        events: list[tuple[str, str]] = []
+        results: list[tuple[str, dict[str, str]]] = []
+        for stream, entries in cast(
+            list[tuple[Any, list[tuple[Any, dict[Any, Any]]]]], reply or []
+        ):
+            name = _s(stream)
+            for entry_id, fields in entries:
+                f = {_s(k): _s(v) for k, v in fields.items()}
+                if name == keys.sess_events(sid):
+                    events.append((_s(entry_id), f.get("m", "")))
+                else:
+                    results.append((_s(entry_id), f))
+        return events, results
+
+    async def claim_seat_conn(self, seat_id: str, conn_id: str) -> None:
+        await self.client.set(keys.seat_conn(seat_id), conn_id, ex=self.settings.state_ttl_s)
+
+    async def seat_conn(self, seat_id: str) -> str | None:
+        raw = await self.client.get(keys.seat_conn(seat_id))
+        return None if raw is None else _s(raw)
+
+    async def release_seat_conn(self, seat_id: str, conn_id: str) -> None:
+        await self._del_if(keys=[keys.seat_conn(seat_id)], args=[conn_id])
 
     # Digest, packs and the exact-repeat cache.
 

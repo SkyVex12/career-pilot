@@ -306,6 +306,29 @@ async def test_session_ended_without_any_flush_creates_the_row(stack: Stack) -> 
     )
 
 
+async def test_the_end_of_a_session_closes_its_guest_seats(stack: Stack) -> None:
+    uid = await stack.new_user()
+    log = GatewayLog(stack, uid)
+    await log.start()
+    seat_ids = [uuid7() for _ in range(3)]
+    for seat_id, status in zip(seat_ids, ("admitted", "invited", "declined"), strict=True):
+        guest = await stack.new_user("Blair")
+        await stack.admin.execute(
+            "insert into app.session_seats (id, user_id, session_id, host_account_id, guest_id,"
+            " host_name, guest_name, guest_email, mode, status, expires_at)"
+            " values ($1, $2, $3, $2, $4, 'A', 'B', 'b@x', 'interview', $5, now() + interval '1h')",
+            seat_id, uid, log.sid, guest, status,
+        )  # fmt: skip
+    await log.end(seconds=30)
+    await stack.run(log.ended_job())
+    rows = await stack.admin.fetch(
+        "select status, ended_at from app.session_seats where session_id = $1 order by id",
+        log.sid,
+    )
+    assert [r["status"] for r in rows] == ["ended", "ended", "declined"]
+    assert all(r["ended_at"] is not None for r in rows[:2])
+
+
 async def test_a_session_ended_without_a_summary_is_ready_with_no_outputs(stack: Stack) -> None:
     """The user chose "keep the transcript only": no post-call job, the session is ready."""
     uid = await stack.new_user()

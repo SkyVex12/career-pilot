@@ -3,7 +3,7 @@
 // conversation comes back (the core keeps the session's events, compacted; see
 // src-tauri/src/history.rs).
 import { useEffect, useReducer } from "react";
-import type { MemoryRef, QuestionType } from "@copilot/protocol";
+import type { Capability, MemoryRef, Mode, QuestionType, SeatInfo, ServerMessage } from "@copilot/protocol";
 import { api, inTauri, onEvent, type ConnectionState, type Numbered, type QuestionLatency, type Replay, type ReplayPass, type StopReason, type UiEvent } from "./api";
 
 export interface PassView {
@@ -38,6 +38,35 @@ export interface TranscriptLine {
 
 export type BadgeState = "ok" | "degraded" | "reconnecting";
 
+/** A guest's note, as the host sees it (seat.note). `asked`: the host pressed Ask this. */
+export interface NoteView {
+  id: string;
+  seatId: string;
+  name: string;
+  text: string;
+  at: string;
+  asked: boolean;
+}
+
+/** The call this app watches as a guest (seat.ready, seat.host, seat.update). */
+export interface GuestSeat {
+  sessionId: string;
+  seatId: string;
+  hostName: string;
+  mode: Mode;
+  title: string | null;
+  capabilities: Capability[];
+  hostConnected: boolean;
+  sharing: boolean;
+}
+
+/** A note this guest sent, and what became of it (seat.command.result). */
+export interface SentNote {
+  id: string;
+  text: string;
+  result: "ok" | "denied" | "expired" | "rate_limited" | "failed" | null;
+}
+
 /// One entry of the conversation, in the order it first appeared: a transcript line (either
 /// side) or a question with its answers.
 export type TimelineRef = { kind: "line"; key: string } | { kind: "question"; id: string };
@@ -59,6 +88,14 @@ export interface SessionView {
   latency: Record<string, QuestionLatency>;
   log: string[];
   speaking: { them: boolean; me: boolean };
+  /** Guest seats, the host's side: the call's seats, the guests' notes, and whether guests see
+   * the call (ARCHITECTURE.md, "Guest seats"). */
+  seats: SeatInfo[];
+  notes: NoteView[];
+  sharing: boolean;
+  /** Guest seats, the guest's side: the call this app watches, or null in a call of its own. */
+  seat: GuestSeat | null;
+  sentNotes: SentNote[];
 }
 
 /// Before session.ready says otherwise (an older gateway): the three types it auto-starts.
@@ -79,9 +116,19 @@ export const initial: SessionView = {
   latency: {},
   log: [],
   speaking: { them: false, me: false },
+  seats: [],
+  notes: [],
+  sharing: true,
+  seat: null,
+  sentNotes: [],
 };
 
-type Action = { type: "event"; event: UiEvent } | { type: "reset"; running: boolean } | { type: "deep_requested"; id: string };
+type Action =
+  | { type: "event"; event: UiEvent }
+  | { type: "reset"; running: boolean }
+  | { type: "deep_requested"; id: string }
+  | { type: "note_sent"; id: string; text: string }
+  | { type: "note_asked"; id: string };
 
 export function deepStartsAlone(s: SessionView, type: QuestionType): boolean {
   return (s.deepAuto ?? AUTO_DEEP).includes(type);
@@ -99,6 +146,8 @@ function log(s: SessionView, line: string): SessionView {
 export function reduce(s: SessionView, a: Action): SessionView {
   if (a.type === "reset") return { ...initial, running: a.running };
   if (a.type === "deep_requested") return updateQuestion(s, a.id, (q) => ({ ...q, deepRequested: true }));
+  if (a.type === "note_sent") return { ...s, sentNotes: [...s.sentNotes.slice(-49), { id: a.id, text: a.text, result: null }] };
+  if (a.type === "note_asked") return { ...s, notes: s.notes.map((n) => (n.id === a.id ? { ...n, asked: true } : n)) };
   const e = a.event;
   switch (e.kind) {
     case "connection": {
@@ -186,6 +235,44 @@ export function reduce(s: SessionView, a: Action): SessionView {
       return log(s, `gateway error ${m.code}${m.fatal ? " (fatal)" : ""}: ${m.message}`);
     case "session.ready":
       return log({ ...s, deepAuto: m.deep_auto_types ?? null }, `session ready, ${m.limits.max_minutes} min limit${m.me_audio ? ", your words live" : ""}`);
+    // Guest seats, the host's side.
+    case "seats.update":
+      return { ...s, seats: m.seats };
+    case "seat.note":
+      if (s.notes.some((n) => n.id === m.note_id)) return s;
+      return { ...s, notes: [...s.notes, { id: m.note_id, seatId: m.seat_id, name: m.name, text: m.text, at: m.at, asked: false }] };
+    case "sharing":
+      return { ...s, sharing: m.on };
+    // Guest seats, the guest's side.
+    case "seat.ready":
+      return log(
+        {
+          ...s,
+          seat: {
+            sessionId: m.session_id,
+            seatId: m.seat_id,
+            hostName: m.host_name,
+            mode: m.mode,
+            title: m.title ?? null,
+            capabilities: m.capabilities,
+            hostConnected: m.host_connected,
+            sharing: m.sharing,
+          },
+        },
+        `watching ${m.host_name}'s call`,
+      );
+    case "seat.snapshot": {
+      // The call so far replaces whatever was shown; the seat itself and the notes stay.
+      let next: SessionView = { ...s, questions: [], transcript: [], timeline: [], status: {} };
+      for (const raw of m.messages) next = reduce(next, { type: "event", event: { kind: "server", message: raw as unknown as ServerMessage } });
+      return next;
+    }
+    case "seat.host":
+      return s.seat ? { ...s, seat: { ...s.seat, hostConnected: m.connected, sharing: m.sharing } } : s;
+    case "seat.update":
+      return s.seat ? { ...s, seat: { ...s.seat, capabilities: m.capabilities } } : s;
+    case "seat.command.result":
+      return { ...s, sentNotes: s.sentNotes.map((n) => (n.id === m.command_id ? { ...n, result: m.result } : n)) };
     default:
       return s;
   }
@@ -306,6 +393,8 @@ export const STOPPED: Record<StopReason, string> = {
   replaced: "Continued in another app",
   unauthorized: "Sign-in rejected",
   outdated: "Updating the app",
+  seat_removed: "The host removed you from the call",
+  seat_closed: "This seat is closed",
 };
 
 /// One badge for the overlay: the connection first, then the worst component status.
@@ -315,6 +404,8 @@ export function badge(s: SessionView): { state: BadgeState | "off"; text: string
   if (c.state === "connecting") return { state: "reconnecting", text: "Connecting" };
   if (c.state === "reconnecting") return { state: "reconnecting", text: "Reconnecting" };
   if (c.state === "stopped") return { state: "off", text: STOPPED[c.reason] };
+  if (s.seat && !s.seat.hostConnected) return { state: "reconnecting", text: `${s.seat.hostName} is reconnecting` };
+  if (s.seat && !s.seat.sharing) return { state: "degraded", text: `${s.seat.hostName} paused sharing` };
   const statuses = Object.entries(s.status).filter(([, v]) => v.state !== "ok");
   const worst = statuses.find(([, v]) => v.state === "reconnecting") ?? statuses[0];
   if (worst) return { state: worst[1].state, text: worst[1].message || `${worst[0]} ${worst[1].state}` };

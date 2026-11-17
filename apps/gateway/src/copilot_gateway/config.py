@@ -298,6 +298,22 @@ class Settings(CoreSettings):
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
 
+    # Guest seats (ARCHITECTURE.md, "Guest seats"). Off: /v1/seat refuses every guest (4412)
+    # and host sessions never look for seats; the host's call is unchanged either way.
+    seats_enabled: bool = True
+    seat_max_guests: int = 2  # admitted at once, per session (the API enforces it first)
+    # How often a session with no seats looks for its first one, and how long one blocking
+    # read waits (so a removal or the end of the call reaches a guest within about this).
+    seat_poll_s: float = 1.0
+    seat_block_ms: int = 1000
+    # The host's view snapshot is written at most this often, and only once a seat exists.
+    seat_view_interval_s: float = 2.0
+    seat_queue_max: int = 5000  # a guest further behind than this gets a fresh snapshot
+    seat_note_ttl_s: float = 60.0  # a note older than this when the host's session reads it
+    seat_note_min_interval_s: float = 1.0
+    seat_notes_per_minute: int = 30
+    seat_view_wait_s: float = 1.5  # how long a join waits for the host's first snapshot
+
     def prepared_threshold(self, model_id: str | None) -> PreparedThreshold:
         found = self.prepared_answer_thresholds.get(model_id or "")
         return found or PreparedThreshold(min_similarity=self.prepared_answer_min_similarity)

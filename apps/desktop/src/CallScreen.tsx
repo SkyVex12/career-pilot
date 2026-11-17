@@ -14,6 +14,7 @@ import { applicationOption, resumeLabel } from "./pairing";
 import { DeviceTest } from "./AudioCheck";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
+import { GuestInvites, GuestPanel, Watching } from "./seats";
 import { STOPPED, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { defaultEmployer, packLabel } from "./workday";
@@ -64,6 +65,8 @@ const atWorkMode = (mode: Mode) => mode === "standup" || mode === "meeting";
 
 export interface CallProps {
   session: SessionView;
+  /** The session's reducer: a guest's notes are recorded as sent (seats.tsx). */
+  dispatch?: Parameters<typeof Watching>[0]["dispatch"];
   /** Signed in (cloud) or the dev token set (local). */
   tokenSet: boolean;
   environment: string;
@@ -200,7 +203,7 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 
 // --- Ready and live -----------------------------------------------------------------------------
 
-function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset, active = true }: CallProps) {
+function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset, active = true }: CallProps) {
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => (read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets"));
@@ -303,6 +306,16 @@ function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSe
 
   const stopped = session.stopped && session.stopped !== "ended" && !running ? session.stopped : null;
 
+  if (session.seat && running) {
+    // Watching someone else's call: none of this app's own call controls apply.
+    return (
+      <>
+        <PageHeader title="Call" />
+        <Watching s={session} dispatch={dispatch ?? (() => undefined)} />
+      </>
+    );
+  }
+
   if (running) {
     return (
       <Live
@@ -323,6 +336,7 @@ function Ready({ session, tokenSet, environment, settings, onSettingsSaved, onSe
     <>
       <PageHeader title="Call" />
       {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
+      {tokenSet && <GuestInvites running={running} />}
       {stopped && (
         <Banner
           tone={stopped === "outdated" ? "info" : "warning"}
@@ -580,6 +594,9 @@ function Live({
             <SegmentedControl label="Detailed answer" value={answerStyle} options={ANSWER_STYLES} onChange={onAnswerStyle} />
           </Field>
         </div>
+      </Card>
+      <Card title="Guests">
+        <GuestPanel s={session} />
       </Card>
       {message && <Banner tone="danger">{message}</Banner>}
       <ConfirmDialog

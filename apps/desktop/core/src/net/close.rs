@@ -32,6 +32,10 @@ pub enum StopReason {
     Unauthorized,
     /// 4426: this app is older than the server supports. Do not reconnect; update.
     Outdated,
+    /// Guest seats only. 4411: the host removed this guest.
+    SeatRemoved,
+    /// Guest seats only. 4412: the seat is not open (not admitted, closed, expired, seats off).
+    SeatClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,14 +88,64 @@ pub fn on_close(code: Option<u16>, ctx: CloseContext) -> CloseAction {
             refresh_token: false,
         },
         Some(CloseCode::Internal) => Reconnect { resume, delay: Delay::Backoff, refresh_token: false },
-        // 1006 and anything not in the table: the network or the task died.
-        None => Reconnect { resume, delay: Delay::Backoff, refresh_token: false },
+        // 1006 and anything not in the table: the network or the task died. (The seat codes
+        // are never a host session's.)
+        Some(CloseCode::SeatRemoved | CloseCode::SeatClosed) | None => {
+            Reconnect { resume, delay: Delay::Backoff, refresh_token: false }
+        }
+    }
+}
+
+/// A guest seat's connection (`/v1/seat`; ARCHITECTURE.md, "Guest seats"). `Reconnect` always
+/// joins again with the last seq: the seat, not a session, is what is resumed. `leaving`: the
+/// guest left, so any close ends it.
+pub fn on_seat_close(code: Option<u16>, leaving: bool, refreshed_after_401: bool) -> CloseAction {
+    use CloseAction::{Reconnect, Stop};
+    if leaving {
+        return Stop(StopReason::Ended);
+    }
+    let again = |delay| Reconnect { resume: true, delay, refresh_token: false };
+    match code.and_then(CloseCode::from_code) {
+        Some(CloseCode::Normal) => Stop(StopReason::Ended), // the call ended
+        Some(CloseCode::SeatRemoved) => Stop(StopReason::SeatRemoved),
+        Some(CloseCode::SeatClosed | CloseCode::NoStart) => Stop(StopReason::SeatClosed),
+        Some(CloseCode::Replaced) => Stop(StopReason::Replaced),
+        Some(CloseCode::ClientOutdated) => Stop(StopReason::Outdated),
+        Some(CloseCode::Unauthorized) if refreshed_after_401 => Stop(StopReason::Unauthorized),
+        Some(CloseCode::Unauthorized) => Reconnect { resume: true, delay: Delay::Now, refresh_token: true },
+        Some(CloseCode::GoingAway) => again(Delay::Now),
+        // Never a seat's, but harmless to retry.
+        Some(CloseCode::NoMinutes | CloseCode::SessionActive) => Stop(StopReason::SeatClosed),
+        Some(CloseCode::RateLimited | CloseCode::Internal) | None => again(Delay::Backoff),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seat_stops_on_its_own_codes_and_rejoins_otherwise() {
+        let rejoin = |delay| CloseAction::Reconnect { resume: true, delay, refresh_token: false };
+        let cases = [
+            (Some(1000), CloseAction::Stop(StopReason::Ended)),
+            (Some(4411), CloseAction::Stop(StopReason::SeatRemoved)),
+            (Some(4412), CloseAction::Stop(StopReason::SeatClosed)),
+            (Some(4408), CloseAction::Stop(StopReason::SeatClosed)),
+            (Some(4410), CloseAction::Stop(StopReason::Replaced)),
+            (Some(4426), CloseAction::Stop(StopReason::Outdated)),
+            (Some(4401), CloseAction::Reconnect { resume: true, delay: Delay::Now, refresh_token: true }),
+            (Some(1001), rejoin(Delay::Now)),
+            (Some(4500), rejoin(Delay::Backoff)),
+            (Some(4429), rejoin(Delay::Backoff)),
+            (None, rejoin(Delay::Backoff)),
+        ];
+        for (code, want) in cases {
+            assert_eq!(on_seat_close(code, false, false), want, "close {code:?}");
+        }
+        assert_eq!(on_seat_close(Some(4401), false, true), CloseAction::Stop(StopReason::Unauthorized));
+        assert_eq!(on_seat_close(None, true, false), CloseAction::Stop(StopReason::Ended));
+    }
 
     fn live() -> CloseContext {
         CloseContext { has_session: true, ..Default::default() }
@@ -111,6 +165,9 @@ mod tests {
             (4408, reconnect(false, Delay::Backoff)),
             (4409, CloseAction::Stop(StopReason::SessionActive)),
             (4410, CloseAction::Stop(StopReason::Replaced)),
+            // The seat codes are never a host session's: like any unknown close.
+            (4411, reconnect(true, Delay::Backoff)),
+            (4412, reconnect(true, Delay::Backoff)),
             (4426, CloseAction::Stop(StopReason::Outdated)),
             (4429, reconnect(true, Delay::Backoff)),
             (4500, reconnect(true, Delay::Backoff)),

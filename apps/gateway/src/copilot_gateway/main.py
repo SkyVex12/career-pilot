@@ -22,8 +22,9 @@ from copilot_core.pricing import missing_prices
 from copilot_gateway.auth import make_verifier
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
+from copilot_gateway.seatrelay import SeatRelay
 from copilot_gateway.session import Services, SessionManager
-from copilot_gateway.store import GatewayStore, make_client
+from copilot_gateway.store import GatewayStore, make_blocking_client, make_client
 from copilot_gateway.stt import STTFactory
 from copilot_gateway.stt.deepgram import DeepgramSTT
 
@@ -99,7 +100,7 @@ def build_services(settings: Settings) -> Services:
     return Services(
         identities=identities,
         settings=settings,
-        store=GatewayStore(make_client(settings), settings),
+        store=GatewayStore(make_client(settings), settings, make_blocking_client(settings)),
         jobs=SqsJobQueue(
             settings.sqs_queue_url, settings.aws_region, endpoint_url=settings.sqs_endpoint or None
         ),
@@ -120,11 +121,15 @@ def create_app(services: Services | None = None) -> FastAPI:
         if svc.identities is not None:
             svc.identities.pool = svc.pool
         app.state.manager = SessionManager(svc)
+        # Guests' connections (/v1/seat): apart from the hosts' sessions, sharing only the
+        # auth checks (seatrelay.py).
+        app.state.seats = SeatRelay(svc, app.state.manager)
         warm = asyncio.create_task(svc.router.warm())
         try:
             yield
         finally:
             warm.cancel()
+            await app.state.seats.shutdown()
             await app.state.manager.shutdown()
             if owned_pool and svc.pool is not None:
                 await svc.pool.close()
@@ -139,6 +144,11 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def session(ws: WebSocket) -> None:  # pyright: ignore[reportUnusedFunction]
         manager: SessionManager = ws.app.state.manager
         await manager.handle(ws)
+
+    @app.websocket("/v1/seat")
+    async def seat(ws: WebSocket) -> None:  # pyright: ignore[reportUnusedFunction]
+        relay: SeatRelay = ws.app.state.seats
+        await relay.handle(ws)
 
     return app
 

@@ -297,8 +297,10 @@ status() {
 # The VM runs only while someone uses it: the desktop app starts it through the wake function
 # (infra/gcp/wake), and this check (copilot-idle.timer, every five minutes) stops it after
 # `copilot-idle-minutes` (metadata; 0 or unset: never) with no live session, no API request
-# and no queued job. The app's background poll of GET /v1/sessions/live does not count, so an
-# app left open does not keep the VM running. A stopped VM bills only its disks.
+# and no queued job. The app's background polls of GET /v1/sessions/live and GET /v1/seats
+# (invites to someone else's call) do not count, so an app left open does not keep the VM
+# running. A guest following a call holds a gateway connection, as the call itself does. A
+# stopped VM bills only its disks.
 idle_reason() {
   local minutes=$1 up requests sessions queued
   up=$(cut -d. -f1 /proc/uptime)
@@ -308,9 +310,9 @@ idle_reason() {
   # cannot be told, the VM stays up: stopping mid-call is worse than an hour's cost.
   sessions=$(ss -Htn state established '( sport = :8081 )' | wc -l) || sessions=unknown
   [ "$sessions" = 0 ] || { echo "live session connections: $sessions"; return; }
-  # Requests through nginx (its JSON access log), except the app's live-session poll.
+  # Requests through nginx (its JSON access log), except the app's background polls.
   requests=$(docker logs --since "${minutes}m" copilot-proxy 2>/dev/null |
-    grep '"service":"proxy"' | grep -cv -e '"path":"/v1/sessions/live"' -e '"path":"/healthz"' || true)
+    grep '"service":"proxy"' | grep -cv -e '"path":"/v1/sessions/live"' -e '"path":"/v1/seats"' -e '"path":"/healthz"' || true)
   [ "${requests:-0}" -eq 0 ] || { echo "$requests request(s) in the last $minutes min"; return; }
   # Jobs waiting or running on the workers (ElasticMQ's queue).
   queued=$(curl -sf -m 5 "http://127.0.0.1:9324/000000000000/jobs?Action=GetQueueAttributes&AttributeName.1=ApproximateNumberOfMessages&AttributeName.2=ApproximateNumberOfMessagesNotVisible&AttributeName.3=ApproximateNumberOfMessagesDelayed" |
