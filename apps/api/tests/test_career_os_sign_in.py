@@ -443,11 +443,21 @@ async def test_unlinking_is_blocked_while_career_os_is_the_only_way_in(
 ) -> None:
     out = await signed_in(api, fake, "u1")
     uid = uuid.UUID((await me(api, bearer(out)))["id"])
-    r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    # The account has an email sign-in with its Career-OS address too, but on a stage where
+    # email codes are off it is no way in.
+    api.svc.settings.email_sign_in = False
+    try:
+        r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    finally:
+        api.svc.settings.email_sign_in = True
     assert code_of(r) == (409, "only_sign_in_method")
     assert await link_of(api, uid) == ("active", "user", "u1")
     assert await identity_of(api, "user:u1") == uid
     assert not fake.revoked
+    # Where email codes are on, that address is a way in: unlinking is allowed.
+    r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    assert r.status_code == 204
+    fake.revoked.clear()
 
     # With another way in, unlinking works, and takes the Career-OS sign-in with it.
     gid, google = await google_account(api)

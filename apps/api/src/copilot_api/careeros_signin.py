@@ -604,12 +604,15 @@ class CareerOsSignIn:
     # --- Unlinking ----------------------------------------------------------------------------
 
     @staticmethod
-    async def only_method(conn: Any) -> bool:
-        """Whether Career-OS is the account's only sign-in method (in the account's
-        transaction): unlinking it then would lock the person out."""
+    async def only_method(conn: Any, email_sign_in: bool) -> bool:
+        """Whether Career-OS is the account's only way in (in the account's transaction):
+        unlinking it then would lock the person out. An email sign-in counts only on a stage
+        where email codes are on (`email_sign_in`): a Career-OS account gets one with its
+        address, which is no way in where codes cannot be sent."""
         rows = await conn.fetch("select provider from app.identities")
         providers = {str(r["provider"]) for r in rows}
-        return CAREER_OS in providers and providers == {CAREER_OS}
+        usable = providers if email_sign_in else providers - {"email"}
+        return CAREER_OS in providers and usable == {CAREER_OS}
 
     @staticmethod
     async def forget(conn: Any, user_id: UUID) -> None:
