@@ -4,9 +4,12 @@ in Valkey, written here as the gateway writes it."""
 
 import json
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
+import jwt as pyjwt
 import pytest
+from pydantic import SecretStr
 
 from copilot_api.testing import Api
 from copilot_core import keys, seats
@@ -172,3 +175,74 @@ async def test_host_changes_can_be_sent_again(api: Api) -> None:
     rec = await mirror(api, sid, seat_id)
     assert rec is not None
     assert rec.status == "removed"
+
+
+@pytest.fixture
+def voice_on(api: Api) -> Iterator[None]:
+    """A LiveKit project for the API (a name that resolves nowhere: removals log and go on)."""
+    s = api.svc.settings
+    s.livekit_url, s.livekit_api_key = "wss://lk.invalid", "APItest"
+    s.livekit_api_secret = SecretStr("t" * 40)
+    try:
+        yield
+    finally:
+        s.livekit_url = s.livekit_api_key = s.livekit_api_secret = None
+
+
+def lk_claims(token: str) -> dict[str, Any]:
+    return pyjwt.decode(token, "t" * 40, algorithms=["HS256"])
+
+
+async def test_voice_is_granted_only_where_livekit_is_set_up(api: Api) -> None:
+    host, hh, _ = await account(api, "Alex")
+    _, _, guest_email = await account(api, "Blair")
+    sid = await live_call(api, host)
+    r = await invite(api, hh, sid, guest_email, capabilities=["view", "voice"])
+    assert r.status_code == 422
+    assert (await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)).status_code == 404
+
+
+async def test_the_host_listens_and_a_guest_with_voice_speaks(api: Api, voice_on: None) -> None:
+    host, hh, _ = await account(api, "Alex")
+    _, gh, guest_email = await account(api, "Blair")
+    _, oh, other_email = await account(api, "Other")
+    sid = await live_call(api, host)
+    assert (
+        await invite(api, hh, sid, guest_email, capabilities=["view", "voice"])
+    ).status_code == 202
+    assert (await invite(api, hh, sid, other_email)).status_code == 202  # no voice
+    mine = {
+        s["name"]: s
+        for s in (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["seats"]
+    }
+
+    r = await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)
+    assert r.status_code == 200, r.text
+    host_token = r.json()
+    assert (host_token["url"], host_token["room"], host_token["identity"]) == (
+        "wss://lk.invalid",
+        f"seat-{sid}",
+        "host",
+    )
+    video = lk_claims(host_token["token"])["video"]
+    assert (video["canSubscribe"], video["canPublish"]) == (True, False)
+
+    seat = mine["Blair"]["seat_id"]
+    r = await api.client.post(f"/v1/seats/{seat}/voice", headers=gh)
+    assert r.status_code == 200, r.text
+    c = lk_claims(r.json()["token"])
+    assert c["sub"] == f"seat:{seat}"
+    assert (c["video"]["canPublish"], c["video"]["canSubscribe"]) == (True, False)
+    assert c["video"]["canPublishSources"] == ["microphone"]
+
+    # No voice granted, someone else's seat, or voice taken away: no token.
+    other = mine["Other"]["seat_id"]
+    assert (await api.client.post(f"/v1/seats/{other}/voice", headers=oh)).status_code == 403
+    assert (await api.client.post(f"/v1/seats/{seat}/voice", headers=oh)).status_code == 404
+    r = await api.client.patch(
+        f"/v1/sessions/{sid}/seats/{seat}", headers=hh, json={"capabilities": ["view"]}
+    )
+    assert r.status_code == 200  # LiveKit unreachable here: the removal is logged, not fatal
+    assert (await api.client.post(f"/v1/seats/{seat}/voice", headers=gh)).status_code == 403
+    await api.svc.valkey.hset(keys.sess_state(sid), "status", "ended")
+    assert (await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)).status_code == 409

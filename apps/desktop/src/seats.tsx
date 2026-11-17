@@ -9,7 +9,8 @@
 // call, the note box when notes are allowed, and Leave.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
 import type { SeatInfo } from "@copilot/protocol";
-import { api, inTauri, rest, type MySeat } from "./api";
+import { api, inTauri, rest, type MySeat, type VoiceDevice } from "./api";
+import { VOICE_OFF, onVoiceStatus, voiceCommand, type VoiceOutput, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
 import type { SentNote, SessionView } from "./session";
 import { usePolling } from "./usePolling";
@@ -209,12 +210,20 @@ export function GuestPanel({ s }: { s: SessionView }) {
                   </Button>
                 )}
                 {x.status === "admitted" && (
-                  <Switch
-                    label="Notes"
-                    checked={x.capabilities.includes("note")}
-                    disabled={busy}
-                    onChange={(on) => guarded(() => rest.setGuestNotes(sid, x.seat_id, on))}
-                  />
+                  <>
+                    <Switch
+                      label="Notes"
+                      checked={x.capabilities.includes("note")}
+                      disabled={busy}
+                      onChange={(on) => guarded(() => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, "note", on)))}
+                    />
+                    <Switch
+                      label="Voice"
+                      checked={x.capabilities.includes("voice")}
+                      disabled={busy}
+                      onChange={(on) => guarded(() => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, "voice", on)))}
+                    />
+                  </>
                 )}
                 {OPEN.has(x.status) && (
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => guarded(() => rest.removeGuest(sid, x.seat_id))}>
@@ -234,6 +243,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
           onChange={(on) => guarded(() => api.setSharing(on))}
         />
       )}
+      <HostVoice s={s} />
     </div>
   );
 }
@@ -335,6 +345,7 @@ export function Watching({ s, dispatch }: { s: SessionView; dispatch: Dispatcher
           Leave
         </Button>
       </div>
+      <GuestTalk s={s} />
       <GuestNoteBox s={s} dispatch={dispatch} />
     </div>
   );
@@ -392,5 +403,195 @@ export function GuestInvites({ running, onJoined }: { running: boolean; onJoined
       ))}
       {error && <Banner tone="danger">{error}</Banner>}
     </section>
+  );
+}
+
+
+// --- Voice ---------------------------------------------------------------------------------
+
+/** The seats whose voice may play: admitted, holding `voice` (their LiveKit identities). */
+export function voiceIdentities(seats: SeatInfo[]): string[] {
+  return seats.filter((x) => x.status === "admitted" && x.capabilities.includes("voice")).map((x) => `seat:${x.seat_id}`);
+}
+
+function withCapability(caps: string[], cap: string, on: boolean): string[] {
+  const rest = caps.filter((c) => c !== cap);
+  return on ? [...rest, cap] : rest;
+}
+
+/** The main window's voice (voice.ts), as it reports it. */
+export function useVoice(active: boolean): VoiceStatus {
+  const [status, setStatus] = useState<VoiceStatus>(VOICE_OFF);
+  useEffect(() => {
+    if (!active || !inTauri) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    onVoiceStatus((v) => setStatus(v)).then((f) => {
+      if (disposed) f();
+      else off = f;
+    });
+    void voiceCommand({ cmd: "status" });
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, [active]);
+  return status;
+}
+
+const VOICE_DEVICE_KEY = "seats.voice-device";
+
+function savedDevice(): string {
+  try {
+    return window.localStorage.getItem(VOICE_DEVICE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Why a device cannot carry guests' voice, or null when it may (the checks still run). */
+export function deviceProblem(d: VoiceDevice): string | null {
+  if (d.call) return "the call plays here";
+  if (!d.private) return "not headphones";
+  return null;
+}
+
+/** The window's output device, with what Windows says about it (matched by name). */
+function annotate(o: VoiceOutput, known: VoiceDevice[]): string | null {
+  const d = known.find((k) => k.name.toLowerCase() === o.label.trim().toLowerCase());
+  return d ? deviceProblem(d) : "not known to Windows";
+}
+
+/** The host's side of voice: headphones for it, on and off, mute. */
+export function HostVoice({ s }: { s: SessionView }) {
+  const wanted = voiceIdentities(s.seats);
+  const status = useVoice(s.running);
+  const [known, setKnown] = useState<VoiceDevice[]>([]);
+  const [device, setDevice] = useState(savedDevice);
+  const allowed = wanted.join(",");
+  const on = status.host === "on";
+  useEffect(() => {
+    if (on && inTauri) void voiceCommand({ cmd: "host_allowed", identities: allowed ? allowed.split(",") : [] });
+  }, [allowed, on]);
+  const listed = wanted.length > 0 && status.host === "off";
+  useEffect(() => {
+    if (!listed || !inTauri) return;
+    void voiceCommand({ cmd: "outputs" });
+    api.voiceDevices().then(setKnown, () => setKnown([]));
+  }, [listed]);
+  if (wanted.length === 0 && status.host === "off") return null;
+  const start = () => {
+    if (!s.sessionId) return;
+    try {
+      window.localStorage.setItem(VOICE_DEVICE_KEY, device);
+    } catch {
+      // Remembered only for convenience.
+    }
+    void voiceCommand({ cmd: "host_on", deviceId: device, sessionId: s.sessionId, allowed: wanted });
+  };
+  const checking = status.host === "checking";
+  return (
+    <div className="seat-voice" aria-label="Guests' voice">
+      <span className="seat-name">Guests' voice</span>
+      {on ? (
+        <>
+          <span className="seat-hint">On your headphones only; never on the call.</span>
+          <Switch label="Mute guests" checked={status.hostMuted} onChange={(m) => void voiceCommand({ cmd: "host_mute", on: m })} />
+          <Button size="sm" variant="ghost" onClick={() => void voiceCommand({ cmd: "host_off" })}>
+            Turn off
+          </Button>
+        </>
+      ) : (
+        <>
+          <select className="ui-input" aria-label="Headphones for guests' voice" value={device} onChange={(e) => setDevice(e.target.value)} disabled={checking}>
+            <option value="">Choose headphones…</option>
+            {status.outputs.map((o) => {
+              const problem = annotate(o, known);
+              return (
+                <option key={o.deviceId} value={o.deviceId} disabled={problem !== null}>
+                  {o.label}
+                  {problem ? ` (${problem})` : ""}
+                </option>
+              );
+            })}
+          </select>
+          <Button size="sm" disabled={checking || !device} onClick={start}>
+            {checking ? "Checking…" : "Turn on"}
+          </Button>
+          <span className="seat-hint">A short tone plays on them to check that nothing reaches the call or your microphone.</span>
+        </>
+      )}
+      {status.error && (
+        <p className="seat-error" role="alert">
+          {status.error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The overlay header's mute for guests' voice, while it is on. */
+export function VoiceMute({ s }: { s: SessionView }) {
+  const status = useVoice(s.running && !s.seat);
+  if (status.host !== "on") return null;
+  const muted = status.hostMuted;
+  return (
+    <button
+      type="button"
+      className={cx("ov-voice-mute", muted && "is-muted")}
+      aria-pressed={muted}
+      title={muted ? "Guests are muted: click to hear them" : "Mute guests' voice"}
+      onClick={() => void voiceCommand({ cmd: "host_mute", on: !muted })}
+    >
+      {muted ? "🔇 Guests" : "🔊 Guests"}
+    </button>
+  );
+}
+
+/** The guest's Talk: held (or kept on), their microphone goes to the host alone. */
+export function GuestTalk({ s }: { s: SessionView }) {
+  const seatId = s.seat && s.running && s.seat.capabilities.includes("voice") ? s.seat.seatId : null;
+  const status = useVoice(seatId !== null);
+  const [keep, setKeep] = useState(false);
+  useEffect(() => {
+    if (!inTauri) return;
+    if (seatId) void voiceCommand({ cmd: "guest_on", seatId });
+    else void voiceCommand({ cmd: "guest_off" });
+  }, [seatId]);
+  if (!seatId || !s.seat) return null;
+  const talk = (on: boolean) => void voiceCommand({ cmd: "guest_talk", on });
+  const host = s.seat.hostName;
+  const ready = status.guest === "on";
+  return (
+    <div className="ov-talk">
+      <button
+        type="button"
+        className={cx("ov-talk-btn", status.talking && "is-talking")}
+        disabled={!ready || keep}
+        onPointerDown={() => talk(true)}
+        onPointerUp={() => talk(false)}
+        onPointerLeave={() => !keep && status.talking && talk(false)}
+      >
+        {status.talking ? `Talking to ${host}…` : `Hold to talk to ${host}`}
+      </button>
+      <label className="ov-talk-keep">
+        <input
+          type="checkbox"
+          checked={keep}
+          disabled={!ready}
+          onChange={(e) => {
+            setKeep(e.target.checked);
+            talk(e.target.checked);
+          }}
+        />
+        Keep talking
+      </label>
+      {status.guest === "connecting" && <span className="ov-note-result">Connecting voice…</span>}
+      {status.error && (
+        <span className="ov-ask-error" role="alert">
+          {status.error}
+        </span>
+      )}
+    </div>
   );
 }

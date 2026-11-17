@@ -359,6 +359,8 @@ export const api = {
   seatJoin: (sessionId: string, seatId: string) => invoke<void>("seat_join", { request: { session_id: sessionId, seat_id: seatId } }),
   seatLeave: () => invoke<void>("seat_leave"),
   seatNote: (text: string) => invoke<string>("seat_note", { text }),
+  // Guest seats' voice: what Windows says each output device is (the window plays voice).
+  voiceDevices: () => invoke<VoiceDevice[]>("voice_devices"),
   /** The session's events so far (compacted), whether one is running, and the next event's n. */
   snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
@@ -601,6 +603,15 @@ export interface SessionDetail extends Partial<SessionItem> {
   status: SessionStatus;
   outputs: Partial<Record<OutputKind, string>>;
   questions: number;
+}
+
+/** An output device for guests' voice: only headphones that are not the call's own qualify. */
+export interface VoiceDevice {
+  id: string;
+  name: string;
+  form_factor: "headphones" | "headset" | "speakers" | "other" | "unknown";
+  private: boolean;
+  call: boolean;
 }
 
 /** A guest seat as the host lists it (GET /sessions/{id}/seats). */
@@ -875,9 +886,11 @@ export const rest = {
     call<{ status: string }>("POST", `/sessions/${sessionId}/seats`, { email, capabilities: note ? ["view", "note"] : ["view"] }),
   seatsOf: (sessionId: string) => call<{ seats: HostSeat[] }>("GET", `/sessions/${sessionId}/seats`),
   admitGuest: (sessionId: string, seatId: string) => call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { admit: true }),
-  setGuestNotes: (sessionId: string, seatId: string, note: boolean) =>
-    call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities: note ? ["view", "note"] : ["view"] }),
+  setGuestCapabilities: (sessionId: string, seatId: string, capabilities: string[]) =>
+    call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities }),
   removeGuest: (sessionId: string, seatId: string) => call<null>("DELETE", `/sessions/${sessionId}/seats/${seatId}`),
+  hostVoice: (sessionId: string) => call<{ url: string; token: string }>("POST", `/sessions/${sessionId}/voice`),
+  guestVoice: (seatId: string) => call<{ url: string; token: string }>("POST", `/seats/${seatId}/voice`),
   mySeats: () => call<{ seats: MySeat[] }>("GET", "/seats"),
   acceptSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/accept`),
   declineSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/decline`),

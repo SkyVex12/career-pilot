@@ -64,6 +64,12 @@ fn find(id: Option<&str>, output: bool) -> Result<Device, CaptureError> {
     device.ok_or(CaptureError::NoDevice(what))
 }
 
+/// The id of the device `id` names, or of the default one when it names none (guest seats'
+/// voice compares it with the call's own output: voice/isolation.rs).
+pub fn resolve(id: Option<&str>, output: bool) -> Option<String> {
+    find(id, output).ok().and_then(|d| d.id().ok()).map(|i| i.to_string())
+}
+
 fn open(
     device: &Device,
     loopback: bool,

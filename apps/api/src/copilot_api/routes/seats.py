@@ -17,6 +17,7 @@ say who uses Copilot; the host's own seat list then shows the invite only if the
 Invites are limited per call and per hour.
 """
 
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -28,11 +29,12 @@ from pydantic import BaseModel, Field, field_validator
 from valkey.exceptions import ValkeyError
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
-from copilot_core import keys, seats
+from copilot_core import keys, livekit, seats
 from copilot_core.auth import Principal
 from copilot_core.ids import uuid7
 from copilot_core.valkey_client import text
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -150,6 +152,33 @@ async def _invite_allowed(svc: Services, account: Principal) -> bool:
     return int(count) <= seats.INVITES_PER_HOUR
 
 
+def _voice_ready(svc: Services, capabilities: list[str] | None) -> None:
+    """Voice can be granted only where LiveKit is set up."""
+    if capabilities and "voice" in capabilities and svc.settings.livekit() is None:
+        raise HTTPException(422, "Voice is not set up on this server.")
+
+
+async def _drop_voice(svc: Services, session_id: UUID, seat_id: UUID) -> None:
+    """Take a guest out of the call's voice room now (best effort: their seat's mirror says no
+    voice too, and the host's app plays no one without it)."""
+    lk = svc.settings.livekit()
+    if lk is None:
+        return
+    try:
+        await lk.remove(livekit.room_of(session_id), livekit.guest_identity(seat_id))
+    except livekit.LiveKitError as e:
+        log.warning("seat %s: voice not removed from LiveKit now: %s", seat_id, e)
+
+
+def _voice(
+    lk: livekit.LiveKit, session_id: UUID, identity: str, name: str, guest: bool
+) -> dict[str, Any]:
+    room = livekit.room_of(session_id)
+    token = lk.token(room, identity, name, publish_mic=guest, subscribe=not guest)
+    return {"url": lk.url, "room": room, "identity": identity, "token": token,
+            "expires_in": livekit.TOKEN_TTL_S}  # fmt: skip
+
+
 # The host.
 
 
@@ -158,6 +187,7 @@ async def invite(
     session_id: UUID, body: InviteBody, svc: SvcDep, user: UserDep, account: AccountDep
 ) -> dict[str, str]:
     state = await _hosts_live_call(svc, user, session_id)
+    _voice_ready(svc, body.capabilities)
     if not await _invite_allowed(svc, account):
         raise HTTPException(429, "too many invites; wait a while")
     async with svc.tx(user) as conn:
@@ -228,6 +258,7 @@ async def change_seat(
     session_id: UUID, seat_id: UUID, body: SeatPatch, svc: SvcDep, user: UserDep
 ) -> dict[str, Any]:
     await _hosts_live_call(svc, user, session_id)
+    _voice_ready(svc, body.capabilities)
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
             f"select {SEAT_COLUMNS} from app.session_seats where id = $1 and session_id = $2"
@@ -236,6 +267,7 @@ async def change_seat(
         )  # fmt: skip
         if row is None:
             raise HTTPException(404, "no such seat")
+        had_voice = "voice" in row["capabilities"]
         status = _status(row)
         if status not in seats.OPEN:
             raise HTTPException(409, f"the seat is {status}")
@@ -263,6 +295,8 @@ async def change_seat(
         )
     assert row is not None
     await _publish(svc, session_id, _record(row))
+    if had_voice and "voice" not in row["capabilities"]:
+        await _drop_voice(svc, session_id, seat_id)
     return _host_view(row)
 
 
@@ -288,7 +322,18 @@ async def remove_seat(session_id: UUID, seat_id: UUID, svc: SvcDep, user: UserDe
             if row is None:
                 raise HTTPException(404, "no open seat with that id")
     await _publish(svc, session_id, _record(row))
+    await _drop_voice(svc, session_id, seat_id)
     return Response(status_code=204)
+
+
+@router.post("/sessions/{session_id}/voice")
+async def host_voice(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    """The host's way into the call's voice room: listen only. 404 when voice is not set up."""
+    await _hosts_live_call(svc, user, session_id)
+    lk = svc.settings.livekit()
+    if lk is None:
+        raise HTTPException(404, "Voice is not set up on this server.")
+    return _voice(lk, session_id, livekit.HOST, "Host", guest=False)
 
 
 # The guest.
@@ -344,6 +389,32 @@ async def _answer(svc: Services, account: Principal, seat_id: UUID, accept: bool
     status = "accepted" if accept else "declined"
     await _publish(svc, sid, _record(row, status=status, rev=row["rev"] + 1))
     return {"seat_id": str(seat_id), "session_id": str(sid), "status": status}
+
+
+@router.post("/seats/{seat_id}/voice")
+async def guest_voice(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
+    """A guest's way into the call's voice room: their microphone only, to the host. Only for
+    an admitted seat with voice, on a call that is live."""
+    lk = svc.settings.livekit()
+    if lk is None:
+        raise HTTPException(404, "Voice is not set up on this server.")
+    async with svc.tx(account) as conn:
+        row = await conn.fetchrow(
+            f"select {SEAT_COLUMNS} from app.session_seats where id = $1 and guest_id = $2"
+            " and status = 'admitted' and expires_at > now()",
+            seat_id,
+            account.user_id,
+        )
+    if row is None:
+        raise HTTPException(404, "no open seat with that id")
+    if "voice" not in row["capabilities"]:
+        raise HTTPException(403, "The host has not turned on your voice.")
+    state = await _live_state(svc, row["session_id"])
+    if state.get("user_id") != str(row["user_id"]) or state.get("status") in (None, "ended"):
+        raise HTTPException(409, "the call is not live")
+    return _voice(
+        lk, row["session_id"], livekit.guest_identity(seat_id), row["guest_name"], guest=True
+    )
 
 
 @router.post("/seats/{seat_id}/accept")

@@ -207,3 +207,23 @@ variable "career_os_site_url" {
     error_message = "career_os_site_url must be an https:// URL."
   }
 }
+
+variable "livekit_url" {
+  type        = string
+  default     = ""
+  description = "The LiveKit Cloud project for guest seats' voice, wss://<project>.livekit.cloud. Empty leaves voice off and creates no secret. Setting it creates the livekit-api-secret secret, to fill with `stage.py secrets set livekit-api-secret` before the next API restart."
+  validation {
+    condition     = var.livekit_url == "" || can(regex("^wss://[a-z0-9.-]+$", var.livekit_url))
+    error_message = "livekit_url is empty, or wss://<host>."
+  }
+}
+
+variable "livekit_api_key" {
+  type        = string
+  default     = ""
+  description = "The LiveKit project's API key (an id, not a secret: the secret is in Secret Manager)."
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]*$", var.livekit_api_key))
+    error_message = "livekit_api_key is letters and digits."
+  }
+}

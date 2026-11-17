@@ -756,3 +756,55 @@ html[data-window="overlay"] #root {
 .ov-menu .seat-panel {
   color: var(--ov-text);
 }
+
+/* Guest seats' voice: the host's mute in the header, the guest's Talk. */
+.ov-voice-mute {
+  padding: 0 var(--space-3);
+  border: 1px solid rgb(141 180 255 / 0.4);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ov-fast);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-voice-mute.is-muted {
+  border-color: rgb(242 184 75 / 0.5);
+  color: var(--ov-warn);
+}
+.ov-talk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--ov-line);
+}
+.ov-talk-btn {
+  min-height: 34px;
+  padding: 0 var(--space-5);
+  border: 1px solid rgb(91 208 138 / 0.5);
+  border-radius: var(--radius-md);
+  background: var(--ov-raise);
+  color: var(--ov-live);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+.ov-talk-btn.is-talking {
+  background: rgb(91 208 138 / 0.18);
+}
+.ov-talk-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ov-talk-keep {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ov-text-2);
+  font-size: 13px;
+}

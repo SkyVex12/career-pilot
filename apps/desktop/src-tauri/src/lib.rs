@@ -13,6 +13,7 @@ mod program_name;
 mod release;
 mod settings;
 mod stealth;
+mod voice;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1911,6 +1912,11 @@ pub fn run() {
             });
             // Reopen where it was last left, recovering onto a monitor that still exists.
             place_overlay(app.handle());
+            // Guest seats' voice runs in the main window (src/voice.ts): its microphone,
+            // asked for only while a guest talks, needs no WebView2 prompt.
+            if let Some(main) = app.get_webview_window("main") {
+                voice::allow_microphone(&main);
+            }
             // Both windows exist now. A saved stealth choice excludes them from capture.
             // The overlay stays hidden here, so applying stealth does not paint it.
             program_name::cleanup_previous();
@@ -1970,6 +1976,9 @@ pub fn run() {
             seat_note,
             ask_note,
             set_sharing,
+            voice_devices,
+            voice_rules,
+            voice_listen,
             show_overlay,
             minimize_overlay,
             overlay_prefs,
@@ -1986,6 +1995,43 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// --- Guest seats' voice (voice.rs; the audio itself is src/voice.ts) ---------------------------
+
+/// The output devices, each with what Windows says it is and whether it is the call's own.
+#[tauri::command]
+async fn voice_devices(state: State<'_, AppState>) -> Res<Vec<voice::VoiceDevice>> {
+    let call = state.settings.lock().unwrap().output_device.clone();
+    tauri::async_runtime::spawn_blocking(move || voice::devices(call.as_deref()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Rules 1 and 2 for the output device the window names: another device than the call's own,
+/// and headphones or a headset. Err: why not, in words.
+#[tauri::command]
+async fn voice_rules(state: State<'_, AppState>, name: String) -> Res<()> {
+    let call = state.settings.lock().unwrap().output_device.clone();
+    tauri::async_runtime::spawn_blocking(move || voice::rules(&name, call.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|r| r.message())
+}
+
+/// Rule 3: listen as the call does for `ms` while the window plays the test tone on the voice
+/// device. Err: the tone came through (or could not be listened for).
+#[tauri::command]
+async fn voice_listen(state: State<'_, AppState>, ms: u32) -> Res<()> {
+    let (call, mic) = {
+        let s = state.settings.lock().unwrap();
+        (s.output_device.clone(), s.mic_device.clone())
+    };
+    let ms = ms.clamp(500, 5_000);
+    tauri::async_runtime::spawn_blocking(move || voice::listen(ms, call.as_deref(), mic.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|r| r.message())
 }
 
 #[cfg(test)]

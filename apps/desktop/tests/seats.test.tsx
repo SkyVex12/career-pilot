@@ -1,14 +1,15 @@
 // Guest seats (ARCHITECTURE.md, "Guest seats"): the reducer folds the seat messages; a guest's
 // overlay is read only, says whose private call it is, and sends notes when allowed; the host
 // sees who is watching and the guests' notes in a chat apart from the answers, with Ask AI.
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { emit } from "@tauri-apps/api/event";
-import { describe, expect, it } from "vitest";
+import { emit, listen } from "@tauri-apps/api/event";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Numbered, UiEvent } from "../src/api";
 import Overlay from "../src/Overlay";
-import { GuestInvites, openSeats, watchingText } from "../src/seats";
+import { GuestInvites, deviceProblem, openSeats, voiceIdentities, watchingText } from "../src/seats";
 import { badge, initial, postCallFor, reduce, type SessionView } from "../src/session";
+import { VOICE_OFF, type VoiceCmd, type VoiceStatus } from "../src/voice";
 import { ipc } from "./ipc";
 
 let n = 0;
@@ -224,5 +225,72 @@ describe("a guest's invites", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
     expect(screen.queryByText("Alex invited you to watch a call")).not.toBeInTheDocument();
     expect(ipc.calls.some((c) => c.cmd === "seat_join")).toBe(false);
+  });
+});
+
+describe("guests' voice", () => {
+  let cmds: VoiceCmd[] = [];
+  let unlisten: (() => void) | null = null;
+  beforeEach(async () => {
+    cmds = [];
+    unlisten = await listen<VoiceCmd>("voice:cmd", (e) => cmds.push(e.payload));
+  });
+  afterEach(() => unlisten?.());
+  const voiceStatus = (over: Partial<VoiceStatus>) => act(() => emit("voice:status", { ...VOICE_OFF, ...over }));
+
+  it("plays only admitted seats that hold voice, on headphones that are not the call's", () => {
+    expect(
+      voiceIdentities([
+        { seat_id: "a", name: "A", status: "admitted", capabilities: ["view", "voice"] },
+        { seat_id: "b", name: "B", status: "admitted", capabilities: ["view", "note"] },
+        { seat_id: "c", name: "C", status: "removed", capabilities: ["view", "voice"] },
+      ]),
+    ).toEqual(["seat:a"]);
+    const d = { id: "x", name: "X", form_factor: "headphones" as const, private: true, call: false };
+    expect(deviceProblem(d)).toBeNull();
+    expect(deviceProblem({ ...d, call: true })).toBe("the call plays here");
+    expect(deviceProblem({ ...d, form_factor: "speakers", private: false })).toBe("not headphones");
+  });
+
+  it("a guest with voice connects, then holds Talk", async () => {
+    n = 0;
+    start([live(), ready(["view", "voice"]), snapshot()]);
+    const talk = await screen.findByRole("button", { name: "Hold to talk to Alex" });
+    await waitFor(() => expect(cmds).toContainEqual({ cmd: "guest_on", seatId: SEAT }));
+    expect(talk).toBeDisabled(); // not connected yet
+    await voiceStatus({ guest: "on" });
+    await waitFor(() => expect(talk).toBeEnabled());
+    fireEvent.pointerDown(talk);
+    fireEvent.pointerUp(talk);
+    await waitFor(() => expect(cmds.filter((c) => c.cmd === "guest_talk")).toEqual([{ cmd: "guest_talk", on: true }, { cmd: "guest_talk", on: false }]));
+  });
+
+  it("no voice granted: no Talk", async () => {
+    n = 0;
+    start([live(), ready(["view", "note"]), snapshot()]);
+    await screen.findByText(/You are viewing Alex's private call/);
+    expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
+  });
+
+  it("the host turns voice on with headphones; a refusal says why", async () => {
+    n = 0;
+    ipc.handle("voice_devices", () => [
+      { id: "wasapi:spk", name: "Speakers (Realtek)", form_factor: "speakers", private: false, call: true },
+      { id: "wasapi:hp", name: "Headphones (USB)", form_factor: "headphones", private: true, call: false },
+    ]);
+    start([
+      live(),
+      srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "voice"], connected: true }] }),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    await waitFor(() => expect(cmds).toContainEqual({ cmd: "outputs" }));
+    await voiceStatus({ outputs: [{ deviceId: "d-spk", label: "Speakers (Realtek)" }, { deviceId: "d-hp", label: "Headphones (USB)" }] });
+    const pick = await screen.findByRole("combobox", { name: "Headphones for guests' voice" });
+    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) (the call plays here)" })).toBeDisabled();
+    await userEvent.selectOptions(pick, "d-hp");
+    await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: [`seat:${SEAT}`] });
+    await voiceStatus({ error: "The test tone on those headphones reached the call or the microphone, so guests' voice stays off." });
+    expect(await screen.findByText(/reached the call or the microphone/)).toBeInTheDocument();
   });
 });

@@ -17,7 +17,7 @@ import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
-import { GuestNoteBox, GuestNotice, GuestPanel, NotesLane, WatchingChip } from "./seats";
+import { GuestNoteBox, GuestNotice, GuestPanel, GuestTalk, NotesLane, VoiceMute, WatchingChip } from "./seats";
 import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
@@ -179,6 +179,7 @@ export default function Overlay() {
       <header className="ov-head" data-tauri-drag-region>
         <StatusBadge s={s} />
         {!guest && <WatchingChip s={s} />}
+        {!guest && <VoiceMute s={s} />}
         <span className="ov-speaking" data-tauri-drag-region>
           {s.speaking.them && <span className="ov-pill">them</span>}
           {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}
@@ -235,7 +236,10 @@ export default function Overlay() {
       />
 
       {guest ? (
-        <GuestNoteBox s={s} dispatch={dispatch} />
+        <>
+          <GuestTalk s={s} />
+          <GuestNoteBox s={s} dispatch={dispatch} />
+        </>
       ) : (
         <>
           <NotesLane s={s} dispatch={dispatch} />
