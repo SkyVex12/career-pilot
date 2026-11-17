@@ -821,3 +821,15 @@
   gap: var(--space-3);
   margin-bottom: var(--space-6);
 }
+.seat-voice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.seat-voice select {
+  flex: 1;
+  min-width: 160px;
+}

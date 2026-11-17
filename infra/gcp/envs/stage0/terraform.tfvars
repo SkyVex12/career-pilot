@@ -83,3 +83,8 @@ career_os_site_url = "https://career-os-delta.vercel.app"
 # Every account must link a Career-OS account before it can use the app (decided 2026-10-29,
 # with sign-in open to any Google account).
 require_career_os = true
+
+# Guest seats' voice (ARCHITECTURE.md, "Guest seats"): the LiveKit Cloud project. Its API
+# secret is in Secret Manager (`stage.py secrets set livekit-api-secret`), never here.
+livekit_url     = "wss://career-pilot-ddkho0gw.livekit.cloud"
+livekit_api_key = "API2nBeE9wrk399"

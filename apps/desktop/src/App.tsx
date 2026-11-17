@@ -9,6 +9,7 @@ import { Applications } from "./Applications";
 import { CallScreen } from "./CallScreen";
 import { Resumes } from "./Resumes";
 import { useSession } from "./session";
+import { startVoice } from "./voice";
 import { Shell, type Tab } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
@@ -22,6 +23,8 @@ const DebugPanel = lazy(() => import("./Debug").then((m) => ({ default: m.DebugP
 
 export default function App() {
   const [session, dispatch] = useSession();
+  // Guest seats' voice lives in this window alone (voice.ts); the overlay drives it by events.
+  useEffect(() => (inTauri ? startVoice() : undefined), []);
   const [tab, setTab] = useState<Tab>("start");
   // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
   // refresh in the background (useOnShow) instead of starting from nothing.

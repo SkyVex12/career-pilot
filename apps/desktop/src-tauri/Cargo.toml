@@ -36,6 +36,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["serde"] }
 
+# The main window's microphone permission for guest seats' voice (voice.rs): the versions
+# Tauri's own WebView2 (wry) uses.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
 [features]
 # Release builds (the installer teammates use): the stage's URLs from apps/desktop/release.json
 # (or COPILOT_RELEASE_CONFIG), no local environment or dev token, and the updater.

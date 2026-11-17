@@ -73,6 +73,7 @@ SECRETS = (
     "email-signing-key",
     "email-public-key",
     "email-smtp-password",
+    "livekit-api-secret",
 )
 GENERATED_DB = ("db-postgres", "db-app-api", "db-app-gateway", "db-app-worker", "db-app-system")
 IMAGES = ("gateway", "api", "worker", "proxy")

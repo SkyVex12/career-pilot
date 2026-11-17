@@ -38,12 +38,17 @@ locals {
   smtp_secret = {
     email-smtp-password = "Resend API key, used as the SMTP password for sign-in mail"
   }
+  # Guest seats' voice (ARCHITECTURE.md, "Guest seats"): exists once livekit_url is set.
+  livekit_secret = {
+    livekit-api-secret = "LiveKit Cloud API secret: the API signs guest-seat voice tokens"
+  }
   # Career-OS sign-in issues the same tokens, so it needs the keypair even while email is off.
   own_tokens = var.email_from != "" || var.career_os_site_url != ""
   secrets = merge(
     local.base_secrets,
     local.own_tokens ? local.token_key_secrets : {},
     var.email_from == "" ? {} : local.smtp_secret,
+    var.livekit_url == "" ? {} : local.livekit_secret,
   )
   secret = { for k, _ in local.secrets : k => "{{secret:${local.prefix}-${k}}}" }
 
@@ -143,6 +148,11 @@ locals {
       COPILOT_SMTP_USERNAME = "resend"
       COPILOT_EMAIL_FROM    = var.email_from
       COPILOT_SMTP_PASSWORD = "{{secret:${local.prefix}-email-smtp-password}}"
+      }, var.livekit_url == "" ? {} : {
+      # Guest seats' voice: unset, voice is off and the rest of guest seats works.
+      COPILOT_LIVEKIT_URL        = var.livekit_url
+      COPILOT_LIVEKIT_API_KEY    = var.livekit_api_key
+      COPILOT_LIVEKIT_API_SECRET = "{{secret:${local.prefix}-livekit-api-secret}}"
     })
     worker = merge(local.model_env, local.data_env, {
       HOST                        = "127.0.0.1"

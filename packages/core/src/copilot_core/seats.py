@@ -25,7 +25,7 @@ from copilot_core import keys
 CAPABILITIES = (
     "view", "note", "voice", "control.answer", "control.session", "device.view", "device.control",
 )  # fmt: skip
-GRANTABLE = frozenset({"view", "note"})
+GRANTABLE = frozenset({"view", "note", "voice"})
 
 OPEN = ("invited", "accepted", "admitted")
 CLOSED = ("declined", "removed", "expired", "ended")

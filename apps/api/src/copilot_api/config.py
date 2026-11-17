@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, SecretStr
 
 from copilot_core.config import DataSettings
+from copilot_core.livekit import LiveKit
 
 
 class ApiSettings(DataSettings):
@@ -34,3 +35,17 @@ class ApiSettings(DataSettings):
     smtp_port: int = 587
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
+
+    # Guest seats' voice (ARCHITECTURE.md, "Guest seats"): the LiveKit Cloud project. Without
+    # all three, voice is off: it cannot be granted and no token is given; the rest of guest
+    # seats works as before. The secret comes from the secret store.
+    livekit_url: str | None = None  # wss://<project>.livekit.cloud
+    livekit_api_key: str | None = None
+    livekit_api_secret: SecretStr | None = None
+
+    def livekit(self) -> "LiveKit | None":
+        if not (self.livekit_url and self.livekit_api_key and self.livekit_api_secret):
+            return None
+        return LiveKit(
+            self.livekit_url, self.livekit_api_key, self.livekit_api_secret.get_secret_value()
+        )

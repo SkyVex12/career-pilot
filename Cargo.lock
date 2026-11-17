@@ -709,6 +709,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -730,6 +731,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webview2-com",
+ "windows-core",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ pub mod engine;
 pub mod latency;
 pub mod net;
 pub mod oauth;
+pub mod voice;
 pub mod wake;
 
 pub use copilot_protocol as protocol;
