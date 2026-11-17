@@ -211,6 +211,10 @@ body {
   flex: 1;
   min-width: 0;
 }
+/* A segmented control keeps its own width: stretched, it leaves an empty bar after the last option. */
+.ui-field-control > .ui-segmented {
+  flex: none;
+}
 
 .ui-input {
   display: block;

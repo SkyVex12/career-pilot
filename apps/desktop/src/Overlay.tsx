@@ -6,8 +6,8 @@
 //   below what is being read; scrolled down, a new question offers "New answer ↑".
 // - each pass says its state in words and an icon (thinking, writing with a caret, done,
 //   stopped, failed), and space is held for it, so the first words push nothing.
-// - the opacity setting fades the window's background and chrome; the answers keep a backing
-//   and their text stays opaque, so they stay readable over whatever is behind.
+// - the opacity setting fades the window's background only; all text stays opaque, and the
+//   answers keep a backing, so they stay readable over whatever is behind.
 // The transcript pane (split) keeps following its newest line. Text size steps with A-/A+ or
 // Ctrl+plus/minus/0; compact shows the answers only; hotkeys, click-through, keep on top, copy,
 // thumbs, the typed question (Ask) and the reply button (Answer) are as before.
@@ -529,7 +529,7 @@ function OverlayMenu({
               onChange={(e) => onOpacity(Number(e.target.value))}
             />
             <span className="ov-menu-hint">
-              The background fades; answers stay readable. Step it anytime: {hotkeys.opacity_up && <Kbd>{prettyKey(hotkeys.opacity_up)}</Kbd>}{" "}
+              The background fades; text stays solid. Step it anytime: {hotkeys.opacity_up && <Kbd>{prettyKey(hotkeys.opacity_up)}</Kbd>}{" "}
               {hotkeys.opacity_down && <Kbd>{prettyKey(hotkeys.opacity_down)}</Kbd>}
             </span>
           </div>
