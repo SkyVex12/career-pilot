@@ -330,6 +330,7 @@ class GuestConn:
         reader = asyncio.create_task(self._reader())
         try:
             await self.store.claim_seat_conn(self.seat_id, self.conn_id)
+            await self._tell_host()  # the host's list shows the guest as watching
             self.host_connected = ready["host_connected"]
             self._send(models.SeatReady.model_validate({**ready, "seq": 1}))
             await self.sync()
@@ -345,10 +346,16 @@ class GuestConn:
                 await self.ws.close(code, reason)
             with contextlib.suppress(*UNAVAILABLE):
                 await self.store.release_seat_conn(self.seat_id, self.conn_id)
+                await self._tell_host()
             log.info(
                 "seat closed: code=%s reason=%s sent=%d resets=%d notes=%d",
                 code, reason, self.sent, self.resets, self.notes,
             )  # fmt: skip
+
+    async def _tell_host(self) -> None:
+        """The seat list changed for the host: this guest started or stopped watching."""
+        with contextlib.suppress(*UNAVAILABLE):
+            await self.store.add_ctl(self.sid, {"k": seats.CTL_SEATS})
 
     def close(self, code: int, reason: str) -> None:
         if self.closing is None:

@@ -677,31 +677,63 @@ html[data-window="overlay"] #root {
 .ov-notes {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
   border-top: 1px solid var(--ov-line);
 }
+.ov-notes-head {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--ov-deep);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.ov-notes-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: calc(132px * var(--ov-scale));
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  overflow-y: auto;
+  list-style: none;
+}
 .ov-note {
-  padding: var(--space-3) var(--space-4);
+  align-self: flex-start;
+  max-width: 92%;
+  padding: var(--space-2) var(--space-4);
   border: 1px dashed rgb(195 166 255 / 0.55);
   border-radius: var(--radius-md);
   background: rgb(195 166 255 / 0.08);
 }
 .ov-note-from {
-  margin: 0 0 var(--space-2);
+  margin: 0;
   color: var(--ov-deep);
   font-size: var(--fs-meta);
   font-weight: 600;
 }
+.ov-note-time {
+  color: var(--ov-text-3);
+  font-weight: 400;
+}
 .ov-note-text {
-  margin: 0 0 var(--space-3);
+  margin: var(--space-1) 0 var(--space-2);
   color: var(--ov-text);
   font-size: var(--fs-tx);
   white-space: pre-wrap;
 }
-.ov-note-tools {
-  display: flex;
-  gap: var(--space-2);
+.ov-note-ask {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid rgb(195 166 255 / 0.55);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ov-deep);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-note-ask:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .ov-note-result {
   align-self: center;

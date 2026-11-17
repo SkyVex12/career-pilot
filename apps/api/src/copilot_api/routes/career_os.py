@@ -227,7 +227,7 @@ async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
     another sign-in first."""
     uid = user.user_id
     async with svc.tx(user) as conn:
-        if await CareerOsSignIn.only_method(conn):
+        if await CareerOsSignIn.only_method(conn, svc.settings.email_sign_in):
             raise HTTPException(409, {
                 "code": "only_sign_in_method",
                 "message": "Career-OS is the only way you sign in to this account. Add another "

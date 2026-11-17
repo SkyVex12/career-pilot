@@ -455,3 +455,27 @@ async def test_a_guest_too_far_behind_gets_a_fresh_snapshot(env) -> None:
         assert host.close_code is None
         assert guest.close_code is None
         await host.send({"type": "session.end"})
+
+
+async def test_the_host_sees_who_is_following_the_call(env) -> None:
+    """An invited guest shows as not yet joined, as watching while their app follows the call,
+    and as not joined again once they leave."""
+    async with GatewayServer(fast(env)) as a:
+        host = ProtocolClient(a.url)
+        await host.start()
+        sid = host.session_id
+        seat_id = await publish(env, sid)
+
+        def connected(m: dict[str, Any], value: bool) -> bool:
+            return m["type"] == "seats.update" and any(
+                x["seat_id"] == seat_id and x.get("connected") is value for x in m["seats"]
+            )
+
+        await host.wait(lambda m: connected(m, False))
+        guest = await join(a, sid, seat_id)
+        await guest.wait_type("seat.snapshot")
+        await host.wait(lambda m: connected(m, True))
+        start = len(host.messages)
+        await guest.close()
+        await host.wait(lambda m: connected(m, False), start=start)
+        await host.send({"type": "session.end"})

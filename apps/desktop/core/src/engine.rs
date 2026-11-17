@@ -194,7 +194,7 @@ impl Engine {
         self.force(text, None, None).await;
     }
 
-    /// Ask this, on a guest's note (seat.note): the note's text as a typed question, with its
+    /// Ask AI, on a guest's note (seat.note): the note's text as a typed question, with its
     /// id for the session log. The host's choice; a guest can never ask on the call.
     pub async fn ask_note(&self, note_id: Uuid, text: String) {
         self.force(Some(text), None, Some(note_id)).await;

@@ -151,12 +151,9 @@ async def test_case_5_a_new_person_lands_signed_in_and_connected(
     mine = await me(api, bearer(out))
     uid = uuid.UUID(mine["id"])
     assert mine["display_name"] == "Alex Doe"
-    # Career-OS's address is not verified: it is not the account's.
-    assert fake.emails["u1"] not in mine["email"]
-    assert mine["email"].endswith("@career-os.invalid")
-    assert [(m["provider"], m["label"]) for m in mine["sign_in_methods"]] == [
-        ("career_os", "Alex Doe")
-    ]
+    # Career-OS's address is the account's own, and an email sign-in with it lands here too.
+    assert mine["email"] == fake.emails["u1"]
+    assert sorted(m["provider"] for m in mine["sign_in_methods"]) == ["career_os", "email"]
     assert await identity_of(api, "user:u1") == uid
     # Connected, with no second approval: today's link, for that Career-OS user.
     assert await link_of(api, uid) == ("active", "user", "u1")
@@ -446,11 +443,21 @@ async def test_unlinking_is_blocked_while_career_os_is_the_only_way_in(
 ) -> None:
     out = await signed_in(api, fake, "u1")
     uid = uuid.UUID((await me(api, bearer(out)))["id"])
-    r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    # The account has an email sign-in with its Career-OS address too, but on a stage where
+    # email codes are off it is no way in.
+    api.svc.settings.email_sign_in = False
+    try:
+        r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    finally:
+        api.svc.settings.email_sign_in = True
     assert code_of(r) == (409, "only_sign_in_method")
     assert await link_of(api, uid) == ("active", "user", "u1")
     assert await identity_of(api, "user:u1") == uid
     assert not fake.revoked
+    # Where email codes are on, that address is a way in: unlinking is allowed.
+    r = await api.client.delete("/v1/career-os/connection", headers=bearer(out))
+    assert r.status_code == 204
+    fake.revoked.clear()
 
     # With another way in, unlinking works, and takes the Career-OS sign-in with it.
     gid, google = await google_account(api)
@@ -866,3 +873,45 @@ async def test_masked_emails() -> None:
     assert mask_email("profile-1@profiles.invalid") is None
     assert mask_email("") is None
     assert mask_email(None) is None
+
+
+# --- The Career-OS address ------------------------------------------------------------------
+
+
+async def test_an_email_code_or_google_sign_in_with_the_address_lands_in_the_same_account(
+    api: Api, fake: FakeCareerOs
+) -> None:
+    from copilot_core.identities import account_for_email
+
+    uid = uuid.UUID((await me(api, bearer(await signed_in(api, fake, "u2"))))["id"])
+    joined, _ = await account_for_email(api.svc.pool, fake.emails["u2"])
+    assert joined == uid
+    _, google = await google_account(api, fake.emails["u2"])
+    assert uuid.UUID((await me(api, google))["id"]) == uid
+
+
+async def test_an_account_with_its_own_address_keeps_it(api: Api, fake: FakeCareerOs) -> None:
+    uid, headers = await google_account(api)
+    own = (await me(api, headers))["email"]
+    assert (await cos(api, fake, "u2", headers)).json() == {"status": "added"}
+    assert (await me(api, headers))["email"] == own
+    assert (
+        await api.admin.fetchval(
+            "select count(*) from app.identities where user_id = $1 and provider = 'email'", uid
+        )
+        == 0
+    )
+
+
+async def test_an_address_another_account_has_stays_with_it(api: Api, fake: FakeCareerOs) -> None:
+    """Case 4's "a separate account": the address is the other account's, so the new one keeps
+    its placeholder."""
+    other, _ = await google_account(api, fake.emails["u3"])
+    asked = (await cos(api, fake, "u3")).json()
+    assert asked["status"] == "existing_or_new"
+    r = await api.client.post(
+        COMPLETE, json={"ticket": asked["ticket"], "choice": "new"}, headers=IP
+    )
+    mine = await me(api, bearer(r.json()))
+    assert mine["email"].endswith("@career-os.invalid")
+    assert uuid.UUID(mine["id"]) != other

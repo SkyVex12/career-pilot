@@ -84,8 +84,9 @@ log = logging.getLogger(__name__)
 # A link code works for ten minutes on Career-OS; a ticket ends before it does.
 TICKET_TTL_S = 8 * 60
 CLIENT_LIMIT = (Limit(20, 15 * 60),)
-# The address of an account made by a Career-OS sign-in: `app.users.email` must be unique and
-# Career-OS's address is not verified, so it is never stored as the account's.
+# The address of an account made by a Career-OS sign-in, until Career-OS's own replaces it
+# (`own_address`). It stays only when Career-OS has none, or another account has it:
+# `app.users.email` is unique.
 PLACEHOLDER_DOMAIN = "career-os.invalid"
 PLACEHOLDER_DOMAINS = (PLACEHOLDER_DOMAIN, "profiles.invalid")
 
@@ -135,6 +136,34 @@ def mask_email(email: str | None) -> str | None:
 
 def placeholder_email(user_id: UUID) -> str:
     return f"career-os-{user_id}@{PLACEHOLDER_DOMAIN}"
+
+
+async def own_address(conn: Any, user_id: UUID, email: str | None) -> bool:
+    """Make Career-OS's address the account's own, in the account's transaction, when the
+    account still has the placeholder: as `app.users.email`, and as an email sign-in, so a
+    guest-seat invite finds the account and an email-code or Google sign-in with that address
+    lands in it ("the same address is the same account"). Career-OS's addresses are trusted
+    (the owner's decision, 2026-11-17). An account with a real address keeps it, and an
+    address another account has is left to that account. True when the address was set."""
+    address = (email or "").strip().lower()
+    if not 3 <= len(address) <= 320 or "@" not in address or address.endswith(".invalid"):
+        return False
+    current = await conn.fetchval("select email from app.users where id = $1", user_id)
+    if current is None or not str(current).endswith(f"@{PLACEHOLDER_DOMAIN}"):
+        return False
+    try:
+        async with conn.transaction():  # a savepoint: another account may have the address
+            await conn.execute("update app.users set email = $2 where id = $1", user_id, address)
+            await conn.execute(
+                "insert into app.identities (provider, subject, user_id, email)"
+                " values ('email', $1, $2, $1)",
+                address, user_id,
+            )  # fmt: skip
+    except asyncpg.UniqueViolationError:
+        log.info("career-os sign-in: user %s keeps its placeholder; the address is taken", user_id)
+        return False
+    log.info("career-os sign-in: user %s has its Career-OS address now", user_id)
+    return True
 
 
 def tokens_out(t: Tokens) -> dict[str, Any]:
@@ -351,7 +380,7 @@ class CareerOsSignIn:
 
     async def _create(self, person: CareerOsPerson, link_code: str) -> tuple[UUID, str]:
         """A new account for this Career-OS account: the users row, the identity and the link
-        together. Its address is a placeholder: Career-OS's is not verified."""
+        together. Its address is Career-OS's (`own_address`)."""
         user_id = uuid7()
         linked = await self._link(link_code, "Career Pilot (Career-OS sign-in)", person)
         await self._write(user_id, person, linked, new_account=True)
@@ -380,6 +409,7 @@ class CareerOsSignIn:
                 if owner != user_id:  # another account recorded it a moment ago
                     raise SignInError("identity_elsewhere")
                 await links.write(self.crypto, conn, user_id, linked)
+                await own_address(conn, user_id, person.email)
         except asyncpg.UniqueViolationError as e:
             # The account got another Career-OS sign-in a moment ago (identities_one_career_os).
             await self._revoke(str(linked["token"]))
@@ -574,12 +604,15 @@ class CareerOsSignIn:
     # --- Unlinking ----------------------------------------------------------------------------
 
     @staticmethod
-    async def only_method(conn: Any) -> bool:
-        """Whether Career-OS is the account's only sign-in method (in the account's
-        transaction): unlinking it then would lock the person out."""
+    async def only_method(conn: Any, email_sign_in: bool) -> bool:
+        """Whether Career-OS is the account's only way in (in the account's transaction):
+        unlinking it then would lock the person out. An email sign-in counts only on a stage
+        where email codes are on (`email_sign_in`): a Career-OS account gets one with its
+        address, which is no way in where codes cannot be sent."""
         rows = await conn.fetch("select provider from app.identities")
         providers = {str(r["provider"]) for r in rows}
-        return CAREER_OS in providers and providers == {CAREER_OS}
+        usable = providers if email_sign_in else providers - {"email"}
+        return CAREER_OS in providers and usable == {CAREER_OS}
 
     @staticmethod
     async def forget(conn: Any, user_id: UUID) -> None:

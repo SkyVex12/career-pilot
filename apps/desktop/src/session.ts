@@ -38,7 +38,7 @@ export interface TranscriptLine {
 
 export type BadgeState = "ok" | "degraded" | "reconnecting";
 
-/** A guest's note, as the host sees it (seat.note). `asked`: the host pressed Ask this. */
+/** A guest's note, as the host sees it (seat.note). `asked`: the host pressed Ask AI. */
 export interface NoteView {
   id: string;
   seatId: string;

@@ -1695,7 +1695,7 @@ class Session:
                 await self._auth_refresh(message.access_token)
             case models.QuestionForce():
                 if message.note_id is not None:
-                    # Ask this, on a guest's note: the host chose to ask it. The note's text
+                    # Ask AI, on a guest's note: the host chose to ask it. The note's text
                     # is the typed question, as any typed question.
                     self.log_entry({"kind": "seat.ask", "note_id": str(message.note_id)})
                 self._force(message.text, respond=message.kind == "respond")

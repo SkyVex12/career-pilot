@@ -1312,7 +1312,7 @@ fn seat_note(state: State<'_, AppState>, text: String) -> Res<Uuid> {
     Ok(seat.note(text))
 }
 
-/// Host: Ask this, on a guest's note. The note's words become a typed question.
+/// Host: Ask AI, on a guest's note. The note's words become a typed question.
 #[tauri::command]
 async fn ask_note(state: State<'_, AppState>, note_id: Uuid, text: String) -> Res<()> {
     state.engine()?.ask_note(note_id, text).await;

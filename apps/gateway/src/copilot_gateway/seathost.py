@@ -145,7 +145,14 @@ class SeatDesk:
     async def _seats_changed(self) -> None:
         self.listed_at = time.monotonic()
         records = await seats.read_all(self.store.client, self.s.sid)
-        listed = [r.info() for r in sorted(records.values(), key=lambda r: r.seat_id)]
+        listed: list[dict[str, Any]] = []
+        for r in sorted(records.values(), key=lambda r: r.seat_id):
+            info = r.info()
+            if r.admitted:
+                # Following the call now: the relay holds the seat's connection key (and tells
+                # this desk when it takes or drops it, so the host sees it at once).
+                info["connected"] = await self.store.seat_conn(r.seat_id) is not None
+            listed.append(info)
         if listed != self.last_seats:
             self.last_seats = listed
             if self.s.knows_seats:
