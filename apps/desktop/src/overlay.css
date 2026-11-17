@@ -1,7 +1,7 @@
 /* The overlay (Overlay.tsx) and History's replay of a call, drawn the same way. Always dark: it
    floats over whatever is on screen. Tokens only (ui/tokens.css, the --ov-* set).
-   Opacity: --ov-alpha (the setting, 0.3 to 1) fades the window's background and chrome; each
-   answer card keeps a backing of at least 62% and opaque text, so it stays readable over light
+   Opacity: --ov-alpha (the setting, 0.3 to 1) fades the window's background only; all text
+   stays opaque, and each answer card keeps a backing of at least 62%, so it stays readable over light
    content (docs/design/ui-proposal.md, "Overlay rules", 4). Type: --ov-scale (A-/A+) multiplies
    every size through calc(), so wrapping is computed at the real size; nothing is under 12 px. */
 
@@ -41,17 +41,16 @@ html[data-window="overlay"] #root {
   container: overlay / inline-size;
 }
 
-/* Chrome (header, transcript, ask box) fades with the setting, never below 45%. */
-.ov-head,
-.ov-ask,
-.ov-pane-transcript,
-.ov-clickthrough {
-  opacity: max(0.45, calc(0.35 + 0.65 * var(--ov-alpha)));
-}
+/* Only backgrounds follow the setting; text and controls stay fully opaque. No CSS `opacity`
+   on the chrome: below 1 it fades the text too, and it makes the header a stacking context,
+   which traps the gear's panel under the panes so it cannot be clicked. */
 
 /* --- Header --- */
 
 .ov-head {
+  /* Its own layer above the panes, so the gear's panel (inside it) is drawn and clicked on top. */
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -472,11 +471,6 @@ html[data-window="overlay"] #root {
   color: var(--ov-text);
   font-size: var(--fs-deep);
   line-height: 1.5;
-}
-.cite {
-  margin-left: 2px;
-  color: var(--ov-text-3);
-  font-size: 12px;
 }
 .suggested {
   color: var(--ov-text-2);

@@ -214,6 +214,7 @@ export function Applications({
             <ApplicationView
               key={selected}
               id={selected}
+              stamp={listStamp(applications?.find((a) => a.id === selected))}
               interviews={(interviews ?? []).filter((i) => i.job_id === selected)}
               onBack={() => setSelected(null)}
               onChanged={reload}
@@ -426,14 +427,24 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
   );
 }
 
+/** What the list knows of an application that its open view also shows: when the list reloads
+ * (shown again, polled while a pack builds, after a pull) and this changes, the view reloads. */
+export function listStamp(a: ApplicationItem | undefined): string {
+  if (!a) return "";
+  return JSON.stringify([a.updated_at, a.pack?.pack_id ?? null, a.pack?.available ?? null, a.resume?.version_id ?? null, a.resume?.status ?? null, a.career_os?.pulled_at ?? null]);
+}
+
 function ApplicationView({
   id,
+  stamp,
   interviews,
   onBack,
   onChanged,
   onDeleted,
 }: {
   id: string;
+  /** listStamp of its row in the list; the view reloads when it changes. */
+  stamp: string;
   interviews: InterviewItem[];
   onBack: () => void;
   onChanged: () => void;
@@ -455,7 +466,7 @@ function ApplicationView({
   }, [id]);
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, stamp]);
   usePolling(load, 3000, !!app && app.versions.some((v) => v.status === "extracting"));
 
   const saved = (a: ApplicationDetail | null) => {

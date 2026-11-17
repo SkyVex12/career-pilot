@@ -1,5 +1,5 @@
 // Small pieces the screens share: a pack's state, dates, plurals, and refreshing a kept-open tab.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PackInfo } from "./api";
 import { Badge } from "./ui";
 
@@ -51,6 +51,14 @@ export function useOnShow(active: boolean, f: () => unknown) {
     if (active && !seen.current) latest.current();
     seen.current = active;
   }, [active]);
+}
+
+/** Counts the times a kept-mounted screen has been shown again, for effects that load data:
+ * put it in their dependencies so they fetch afresh each time the screen comes back. */
+export function useShowCount(active: boolean): number {
+  const [n, setN] = useState(0);
+  useOnShow(active, () => setN((v) => v + 1));
+  return n;
 }
 
 /** A text file read in the app; a PDF goes up as a file instead. */

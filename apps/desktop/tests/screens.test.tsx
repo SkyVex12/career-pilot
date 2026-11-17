@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
-import { Applications, checkApplication, filterApplications } from "../src/Applications";
+import { Applications, checkApplication, filterApplications, listStamp } from "../src/Applications";
 import { CallScreen, type CallProps } from "../src/CallScreen";
 import { clashWith, duplicateHotkeys, prettyKey, recordKey } from "../src/hotkeys";
 import { Resumes } from "../src/Resumes";
@@ -56,6 +56,16 @@ function appRoutes(apps = [app("a1", "Northwind", "Backend", "interview"), app("
 }
 
 describe("Applications", () => {
+  it("the open view's stamp changes when its pack is built, it is pulled again, or its resume changes", () => {
+    const a = app("a1", "Northwind", "Backend");
+    const building = { ...a, pack: null };
+    expect(listStamp(undefined)).toBe("");
+    expect(listStamp(building)).not.toBe(listStamp(a));
+    expect(listStamp({ ...a, career_os: { application_id: "c1", pulled_at: "2026-11-17T10:00:00Z", content_hash: null } })).not.toBe(listStamp(a));
+    expect(listStamp({ ...a, resume: { ...a.resume!, status: "extracting" } })).not.toBe(listStamp(a));
+    expect(listStamp({ ...a, note: "only in the view's form" })).toBe(listStamp(a));
+  });
+
   it("loading: a skeleton", () => {
     ipc.api("GET", /.*/, () => pending());
     wrap(<Applications />);
@@ -520,6 +530,20 @@ describe("Call", () => {
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
     const start = ipc.calls.find((c) => c.cmd === "start_session");
     expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: "i1", job_id: "a1", store_transcript: true });
+  });
+
+  it("shown again: an application pulled meanwhile appears in Call for without a restart", async () => {
+    callRoutes();
+    const apps = [app("a1", "Northwind", "Backend", "interview")];
+    ipc.api("GET", /^\/applications$/, () => ({ applications: apps }));
+    const { rerender } = wrap(<CallScreen {...callProps({ active: true })} />);
+    await screen.findByRole("heading", { name: /Northwind · Engineer/ });
+    expect(screen.queryByRole("option", { name: /Lumen/ })).toBeNull();
+    // Hidden on another tab while a Career-OS pull adds an application, then shown again.
+    rerender(<ToastProvider><CallScreen {...callProps({ active: false })} /></ToastProvider>);
+    apps.push(app("a2", "Lumen", "Payments"));
+    rerender(<ToastProvider><CallScreen {...callProps({ active: true })} /></ToastProvider>);
+    expect(await screen.findByRole("option", { name: /Lumen/ })).toBeInTheDocument();
   });
 
   it("live: End call asks how to save it, then ends with a summary", async () => {

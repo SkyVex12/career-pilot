@@ -168,6 +168,7 @@ export default function App() {
               onResumes={() => setTab("resumes")}
               onOpenLive={openLive}
               preset={preset}
+              active={tab === "start"}
             />,
           )}
           {page(
