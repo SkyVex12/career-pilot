@@ -135,6 +135,44 @@ Every live dependency has a fallback, so a failure makes answers slower or thinn
 | Valkey unavailable | Connection errors | Gateway keeps the session in memory and buffers logs until Valkey returns | Nothing, unless the gateway also restarts |
 | Model declines (refusal) | `stop_reason: "refusal"`; on OpenAI a `refusal` output item, the content filter or a policy failure, mapped to the same stop reason | Direct API: server-side `fallbacks: "default"`. Bedrock has no server-side fallback, so the gateway retries on the next route with another model (Sonnet 5, thinking off; never `between_tools`, which only Sonnet 5.5 accepts). OpenAI: the next route with another model (another provider in the list). A refusal after text has streamed ends that pass | The fallback model's answer, or `answer.error` with code `refused` (also when every route refused) |
 
+### Guest seats
+
+The host (the person running a call) can invite another Copilot account to follow the call live: the same overlay, as it streams, from the guest's own app. The guest is seen and heard only by the host. Nothing a guest sends reaches the call, the other side, either STT stream, the conversation memory or the answer models, unless the host chooses to ask it (Ask this). Phase 1 is view and typed notes. Later phases build on the same seats, grants and audit: voice to the host (WebRTC), control of the copilot through the same command path, and the host's screen with remote input.
+
+**Seats and capabilities.** A seat is one guest on one live call (`app.session_seats`, migration 0017). Its `capabilities` say what the guest may do: `view` (always), `note`, and, in later phases, `voice`, `control.answer`, `control.session`, `device.view`, `device.control`. A release grants only what it knows how to enforce (`copilot_core.seats.GRANTABLE`: `view` and `note` now). Every change raises the seat's `rev`.
+
+1. The host invites by email (overlay gear or Call screen). The answer is the same whether or not the address has an account, and invites are limited (`MAX_OPEN` 5 open per call, `INVITES_PER_HOUR` 10 per host). An unanswered invite lapses after 10 minutes.
+2. The guest accepts in their own app (`GET /seats`, polled only while the stage is awake, and not counted by the VM's idle check).
+3. The host admits them (at most `MAX_GUESTS`, 2, at once), can change what they may do, and can remove them at any time. A removed guest is closed within about a second, on whichever gateway task they are.
+4. When the call ends the gateway closes every guest, and the `session.ended` worker marks the seats `ended`. A guest never sees anything of the call afterwards: no History, no transcript.
+
+**Who reads what.** The host reads and writes their sessions' seats under the usual tenant policy (`user_id` is the session's owner, the account or a profile). The guest, always an account, reads only their own open seats (`guest_reads`), and changes nothing but their answer, through `app.seat_answer`. Finding the guest's account for an invite is a policy on `app.users` that matches only inside the transaction that sets `app.seat_lookup` to that one address, and never a profile.
+
+**The live mirror.** After every change the API writes the seat to `sess:{sid}:seats` (a `SeatRecord`: guest, status, capabilities, `rev`, expiry, the host's name) and appends `{"k": "seats"}` to `sess:{sid}:ctl`. Postgres is the record; the mirror is what the gateway checks, on every command and every second of a guest's connection.
+
+**The host's side: `SeatDesk`.** A task of its own beside the session's task group, never inside it, so a failure there is logged and retried and never touches the call. It runs only on the task that holds the session's lease:
+
+- It waits for the call's first seat with one `EXISTS` a second; a call nobody is invited to costs nothing more.
+- It reads `sess:{sid}:ctl`: a changed seat list becomes `seats.update` for the host; a guest's note is checked against the seat as it stands then (admitted, `note`, the same guest, not past its 60 s), becomes `seat.note` for the host, and its result goes to `sess:{sid}:ctlres`. Where it read up to is in the session state (`ctl_last`), so a resume elsewhere carries on from there.
+- It folds every message the host is sent into the guests' view (`seatview.ViewFold`: finished lines, questions, answers with their chunks merged, the latest status) and writes it to `sess:{sid}:view`, fenced by the lease, at most every 2 s once a seat exists. A session resumed on another task rebuilds the fold from that view and the events after it.
+
+**The guests' side: the seat relay** (`/v1/seat`, `seatrelay.py`). A guest's connection never calls `attach`, never takes the lease or the active-session slot, uses no minutes and no STT, and may land on any gateway task.
+
+- The first message is `seat.join`. The seat must be the guest's, admitted, on a call still live, in the mirror and in `app.session_seats`. A newer connection for the same seat closes the older one with 4410 (the guest's own; the host's 4410 path is untouched).
+- The guest gets `seat.ready`, then the whole call so far as one `seat.snapshot` (the host's view plus the events after it), then each later host message the allow-list lets through, in seq order, with no gap and no duplicate. The snapshot does not depend on the event stream's 2,000-entry trim. A guest who falls `seat_queue_max` messages behind gets a fresh snapshot rather than an ever longer queue; nobody else waits for them.
+- One `SessionFeed` per call per task makes a single blocking read of the call's event and result streams for all its guests there, on a Valkey client of its own (a socket timeout longer than the block, connections apart from the session's writes). Once a second it reads the seat list and the call's state: removed (4411), closed or expired (4412), a new grant (`seat.update`), the host's connection lost or back and sharing paused or resumed (`seat.host`), the call ended (1000).
+- Following the session, not the host's socket: when the host's app takes the call over from another computer (the host's 4410), guests carry on.
+
+**The allow-list.** A guest gets `transcript.partial`, `transcript.final`, `question.detected`, `question.cancelled`, `answer.delta`, `answer.done` (without usage, source or timings), `answer.error` and `status`, and nothing else: never `session.ready`, `auth.expiring`, `error`, `seats.update`, `seat.note`, `sharing`, nor any type added later until it is added to `seatview.FORWARDED` on purpose. The host can pause sharing (`sharing.set`): the marker sits in the event stream, so nothing from the paused stretch reaches a guest, live, in a snapshot, or after a reconnect.
+
+**Ask this.** On a note, the host's Ask this sends the existing `question.force` with the note's text and its `note_id`, for the log. That is the only way a guest's words reach a model, and it is the host's action.
+
+**Notes are not kept.** A note lives in the host's event stream for its 2-hour TTL (so the host's reconnect replay has it), never in Postgres, History or the session log, which records only that one came (`seat.note`, the seat and its length).
+
+**Settings** (gateway): `seats_enabled` (on; off refuses every guest with 4412 and the host's call is unchanged), `seat_max_guests` 2, `seat_poll_s` 1, `seat_block_ms` 1000, `seat_view_interval_s` 2, `seat_queue_max` 5000, `seat_note_ttl_s` 60, `seat_note_min_interval_s` 1, `seat_notes_per_minute` 30, `seat_view_wait_s` 1.5.
+
+**Known limits.** A call resumed on another gateway task before its first invite has a fold built from the event stream only, so a guest invited later may miss the start of a very long call. Stage 0 is plain HTTP: what a guest sees crosses the wire unencrypted, as the host's own traffic does (see [Security and privacy](#security-and-privacy)). A host's seat list shows an invite only when the address has an account, so a host learns that much; the per-hour limit bounds it.
+
 ### Memory system
 
 Memory is a per-user career knowledge graph with embeddings, compiled into three tiers so most questions never wait on search. Every fact keeps its source and a timestamp.
@@ -317,7 +355,7 @@ One Aurora PostgreSQL database holds everything durable; Valkey holds everything
 | Store | Holds |
 | --- | --- |
 | Aurora PostgreSQL Serverless v2 + pgvector (Graviton) | Memory graph tables and embeddings, sessions, transcripts. Users keyed by Cognito user id, with row-level security on every user table. A Career-OS link is a sealed token in `app.integrations`. Production keeps minimum capacity above zero; staging scales to zero (resume can take up to about a minute) |
-| ElastiCache Serverless for Valkey | Live session state, session packs as versioned JSON, pub/sub between gateway tasks, rate limits, a semantic answer cache keyed per user (never shared across users), live session logs. Priced 33% below the Redis OSS serverless option, from about $6 a month |
+| ElastiCache Serverless for Valkey | Live session state, session packs as versioned JSON, blocking stream reads between gateway tasks (guest seats), rate limits, a semantic answer cache keyed per user (never shared across users), live session logs. Priced 33% below the Redis OSS serverless option, from about $6 a month |
 | S3 | Uploaded documents, encrypted with per-user data keys under one KMS key; company documents and work log attachments are sealed by the API with the user's data key before they are stored (under `uploads/{uid}/employers/{employer_id}/`). No audio is ever stored: both sides are transcribed live |
 | SQS with fair queues | Background jobs. User id as the message group id, so one heavy user (a large tool sync) never delays everyone else |
 | EventBridge Scheduler | Timed jobs: standup packs before meetings, weekly digest rebuild |
@@ -526,7 +564,7 @@ This section is the contract between the desktop client and the gateway. Message
 
 ### Connection and auth
 
-- **Endpoint:** `wss://rt.<domain>/v1/session`, one WebSocket per live session.
+- **Endpoint:** `wss://rt.<domain>/v1/session`, one WebSocket per live session. A guest following someone's call connects to `/v1/seat` instead ([Guest seats](#guest-seats)), with the same auth and nothing else in common.
 - **Auth:** `Authorization: Bearer <Cognito access token>` on the upgrade request. Never put the token in the URL, because URLs end up in load balancer logs. An invalid token closes the socket with `4401`.
 - **First message:** the client must send `session.start` or `session.resume` within 5 seconds, or the server closes with `4408`.
 - **Heartbeat:** WebSocket ping frames from the client every 30 seconds, which also keep the load balancer's idle timeout from closing a quiet call. The server closes a socket that has been silent for 90 seconds: the application never sees the client's ping frames, so the gateway's server (uvicorn) pings every 30 seconds and closes a socket that does not answer within 60.
@@ -591,7 +629,7 @@ All messages are JSON objects with a `type` field.
 | `session.start` | `mode` (interview, standup, meeting), `job_id?`, `interview_id?` (a scheduled interview; its pack is loaded first), `meeting_title?`, `employer_id?` (a standup or meeting at this company: its pack and its memory; ignored in interviews, and when it is not the user's), `agenda?` (at most 2,000 characters, added to the meeting pack), `material_ids?` (a standup or meeting at a company: up to 20 of its documents to focus on; their approved facts go in the session pack under "look here first", and live search still covers the whole company), `platform`, `client_version`, `consent.store_transcript`, `audio.sample_rate` (16000), `audio.encoding` (pcm16) | First message of a new session |
 | `session.resume` | `session_id`, `last_seq` | First message after a reconnect |
 | `auth.refresh` | `access_token` | Before the current token expires |
-| `question.force` | `text?`, `kind?` | Hotkey pressed (no text) or a typed question (with text); `kind: "respond"` (the overlay's Answer button) asks for a reply to a remark instead. A gateway sends desktop apps before 0.1.5 `other` for the `respond` type, which they cannot parse |
+| `question.force` | `text?`, `kind?`, `note_id?` | Hotkey pressed (no text) or a typed question (with text); `note_id`: the host pressed Ask this on a guest's note (logged as `seat.ask`); `kind: "respond"` (the overlay's Answer button) asks for a reply to a remark instead. A gateway sends desktop apps before 0.1.5 `other` for the `respond` type, which they cannot parse |
 | `screenshot` | `image` (base64 JPEG, at most 1.5 MB), `question_id?` | Coding question from the screen |
 | `answer.expand` | `question_id` | User opens the deep answer |
 | `answer.feedback` | `question_id`, `rating` (up, down), `reason?` | Thumbs on an answer |
@@ -599,6 +637,9 @@ All messages are JSON objects with a `type` field.
 | `mode.set` | `mode` | User switches mode mid-call; between standup and meeting at a company, that company's pack for the new mode is loaded |
 | `answer_style.set` | `answer_style` (bullets, paragraph) | User switches the detailed answer's style on the Session tab mid-call; applies to the next answers. `session.start` carries the starting `answer_style?` (absent: bullets) |
 | `session.end` | `summarize?` | User ends the session. `summarize: false` keeps the transcript only: no post-call outputs, the session is ready at once |
+| `sharing.set` | `on` | Host: pause (`false`) or resume what guests see ([Guest seats](#guest-seats)); answered with `sharing` |
+| `seat.join` | `session_id`, `seat_id`, `last_seq`, `client_version` | Guest, on `/v1/seat` only: the first message. `last_seq` is the last host `seq` the guest processed |
+| `seat.command` | `command_id`, `kind` (`note`), `text` (1 to 1,000 characters) | Guest, on `/v1/seat` only: a note for the host; `seat.command.result` says how it went |
 
 Example:
 
@@ -624,8 +665,16 @@ Example:
 | `status` | `component` (stt, llm, memory), `state` (ok, degraded, reconnecting), `message` | Drives the small status badge in the overlay |
 | `auth.expiring` | `expires_in_s` | Ask the client to send `auth.refresh` now |
 | `error` | `code`, `message`, `fatal`, `retry_after_ms?` | Protocol or server error; `fatal: true` is followed by a close. `retry_after_ms` comes before a `4429` close, and with a non-fatal `rate_limited`. Non-fatal codes drop the offending message and keep the session: `bad_message`, `bad_frame`, `frame_too_large`, `message_too_large`, `unexpected_message`, `unknown_question`, `rate_limited`, `nothing_to_answer`, `not_implemented` (screenshots, for now) |
+| `seats.update` | `seats` (`seat_id`, `name`, `status`, `capabilities`) | Host: the call's guest seats, all of them, after any change (an invite that lapsed shows as `expired`). Sent only to apps after 0.2.14 |
+| `seat.note` | `seat_id`, `note_id`, `name`, `text`, `at` | Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or a model. Apps after 0.2.14 |
+| `sharing` | `on` | Host: guests see the call, or nothing of it, from here |
+| `seat.ready` | `session_id`, `seat_id`, `host_name`, `mode`, `title?`, `started_at?`, `capabilities`, `host_connected`, `sharing` | Guest: the seat is open; a `seat.snapshot` follows |
+| `seat.snapshot` | `messages` (server messages a guest may see, answer chunks merged) | Guest: the call so far up to `seq`; replaces what the guest showed. Live messages after it follow |
+| `seat.host` | `connected`, `sharing` | Guest: the host's app lost or regained its connection, or sharing paused or resumed; the call goes on |
+| `seat.update` | `capabilities` | Guest: the host changed what this seat may do |
+| `seat.command.result` | `command_id`, `result` (`ok`, `denied`, `expired`, `rate_limited`, `failed`) | Guest: what became of a `seat.command` |
 
-Every server message also carries `seq`. Example:
+Every server message also carries `seq`. On `/v1/seat` the host's messages keep the host's `seq`; the seat's own messages carry the guest's current position and do not advance it. Example:
 
 ```json
 {"type": "answer.delta", "seq": 412, "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
@@ -658,10 +707,14 @@ A session moves through `connecting`, `active`, `reconnecting` (zero or more tim
 | `4426` | The app is older than the server supports (`min_client_version`; the `error` before it has code `client_outdated`) | Do not reconnect; update at once (never during another session). An app from before `4426` existed (0.1.0) gets `4410` instead, since it would reconnect on a code it does not know |
 | `4429` | Rate limited | Retry after the `retry_after_ms` in the preceding `error` |
 | `4500` | Internal error | Reconnect and resume |
+| `4411` | Guest seat only: the host removed this guest | Do not reconnect; say so |
+| `4412` | Guest seat only: the seat is not open (not admitted, closed, expired, another call's, or seats are off) | Do not reconnect |
 
 **Reconnect policy:** backoff of 250 ms, 500 ms, 1 s, 2 s, then every 5 s, each with random jitter of up to 20% added; it starts over once a connection has delivered a message or stayed up 3 seconds. While disconnected, the client keeps the last 10 seconds of speech audio, both channels', in a ring buffer and resends it after resume; flag-only frames ride along in order, so a speech start or end during the outage still arrives. A resume has no acknowledgement: the client counts it as accepted on the first server message, or after 500 ms without a close. When a resume closes with `4408` (the session is gone), the client starts a new session: `frame_seq` starts again at 0, the ring is cleared, and `capture_ms` counts from the new start. A `4401` gets one token refresh; a second `4401` right after it stops the client.
 
 **Limits:** one live session per user; binary frames at most 64 KB; JSON messages at most 256 KB, except `screenshot` at most 2 MB; `question.force` at most once per second. A message over a limit, and a `question.force` sent too soon, get a non-fatal `error` and are dropped; the session continues.
+
+**Guest seats** (`/v1/seat`): at most 2 admitted guests and 5 open invites per call, 10 invites per host an hour, an invite lapses after 10 minutes and a seat after 12 hours at most; a guest's JSON messages at most 8 KB, a note at most 1,000 characters, one a second and 30 a minute (`rate_limited` result); a note older than 60 s when the host's session reads it is `expired`. A guest connection sends no audio (`bad_frame`) and nothing but `seat.command` and `auth.refresh` (`unexpected_message`).
 
 ## 2. Data model
 
@@ -679,7 +732,7 @@ Aurora PostgreSQL 16 or later with pgvector, one schema `app`. Valkey for live s
 | --- | --- | --- |
 | `app_owner` | Migrations only | Owns all tables |
 | `app_api` | Copilot API | Read and write user tables, under row-level security |
-| `app_gateway` | Gateway | Read only: `users`, `profiles` (to check a session's profile), `applications` (and the `jobs` view), `interviews`, `memory_nodes`, `memory_edges`, `employers`, `knowledge_chunks` (ids and vectors; it cannot open the sealed text), and the metadata columns of `resume_versions` (never the raw work logs, documents, resume text or files) |
+| `app_gateway` | Gateway | Read only: `users`, `profiles` (to check a session's profile), `applications` (and the `jobs` view), `interviews`, `memory_nodes`, `memory_edges`, `employers`, `knowledge_chunks` (ids and vectors; it cannot open the sealed text), `session_seats` (to check a guest's seat), and the metadata columns of `resume_versions` (never the raw work logs, documents, resume text or files) |
 | `app_worker` | Workers | Read and write user tables, under row-level security |
 | `app_system` | Workers, system jobs only (usage report, user delete) | `BYPASSRLS`, used by no other code path |
 
@@ -1104,6 +1157,8 @@ async with pool.acquire() as conn, conn.transaction():
 
 `set_config(..., true)` is scoped to the transaction, so the setting cannot leak to the next user of a pooled connection. In staging, watch the RDS Proxy pinning metric (`DatabaseConnectionsCurrentlySessionPinned`) to confirm this pattern does not pin connections.
 
+**Guest seats (migration 0017).** `app.session_seats` has the tenant policy on `user_id` (the session's owner) and two more: `guest_reads`, for select, lets the guest (`guest_id`) read their own seats while they are open; `seat_lookup`, on `app.users`, matches the one account (never a profile) whose email equals `app.seat_lookup`, which the API sets only in the transaction that looks up an invite's address. A guest answers an invite through `app.seat_answer(seat, accept)` (security definer, the API's only), which changes nothing but the status.
+
 ### Hybrid memory search
 
 One query fuses vector and full-text results with reciprocal rank fusion. Only vectors from the query's embedding model take part (`embedding_model`, migration 0005; a check keeps it set exactly when `embedding` is), so nodes embedded by another model are found by full text until they are embedded again. A user has thousands of nodes, not millions, so the vector part is an exact scan inside that user's rows and needs no vector index in v1. Add an HNSW index with iterative scans only if one user's node count passes about 50,000 or search p95 passes 30 ms.
@@ -1173,6 +1228,11 @@ ElastiCache Serverless runs in cluster mode, so keys used together must hash to 
 | `rl:{uid}:{window}` | counter | Window length | Gateway, API | Rate limits |
 | `kb:{uid}:{employer_id}` | string (JSON) | 30 days, rewritten when the sections change | Worker | A company's document sections opened for live calls (file name, heading path, text); the gateway searches them by keyword in memory. Deleted with the company |
 | `kbask:{uid}:{ask_id}` | string (JSON) | 10 min | Worker | The result of one "test a question" |
+| `sess:{sid}:seats` | hash | 2 h | API | Seat id to its live record (guest, status, capabilities, `rev`, expiry, host's name), mirrored from `app.session_seats` after every change; what the gateway checks |
+| `sess:{sid}:ctl` | stream, about 1,000 entries | 2 h | API, gateway (relay) | Into the host's session: `seats` (the list changed) and guests' notes; read by the task holding the lease, from `ctl_last` in the session state |
+| `sess:{sid}:ctlres` | stream, about 1,000 entries | 2 h | Gateway (host's session) | Each guest command's result, for the relay |
+| `sess:{sid}:view` | string (JSON) | 2 h | Gateway (host's session, fenced) | The overlay as a guest sees it, folded, with its `seq` and sharing state; written at most every 2 s once a seat exists |
+| `seat:{seat_id}:conn` | string | 2 h | Gateway (relay) | The one relay connection serving a seat; a newer one takes it over |
 
 The semantic cache is not a separate store: each session pack carries prepared answers with embeddings, and the gateway compares the live question against those 30 or so vectors in memory. Exact repeats hit `qa:{uid}:{qhash}`. Nothing is shared between users.
 
@@ -1324,7 +1384,7 @@ Python uses uv workspaces, Ruff, Pyright and pytest. TypeScript uses pnpm. Proto
 
 ```
 apps/gateway/
-  main.py         FastAPI app: /v1/session WebSocket route, /healthz
+  main.py         FastAPI app: /v1/session and /v1/seat WebSocket routes, /healthz
   session.py      Session: owns the task group and session state
   audio.py        frame parsing, per-channel dedupe by frame_seq
   stt/            deepgram.py, assemblyai.py behind one STTStream interface
@@ -1337,6 +1397,9 @@ apps/gateway/
   answer.py       fast and deep passes, cancellation
   router.py       model routes and fallbacks
   store.py        Valkey state, events and log streams
+  seathost.py     guest seats, the host's side: notes, the seat list, the guests' view
+  seatrelay.py    guest seats, the guests' side: /v1/seat, one feed per call per task
+  seatview.py     what a guest may see: the allow-list and the view fold
 ```
 
 Each session is one `asyncio.TaskGroup`. If any task fails, the group cancels the rest and the session moves to `reconnecting`:
@@ -1682,6 +1745,12 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `GET /sessions/{id}/transcript` | Decrypted transcript, if stored |
 | `GET /sessions/{id}/replay` | The call as the overlay showed it: transcript, kept questions, their answers and ratings, timed from the start (History) |
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |
+| `POST /sessions/{id}/seats` | Host, on a live call: invite an account by email (`capabilities`: `view`, `note`). 202 `{"status": "sent"}` whether or not the address has an account; 409 over 5 open invites; 429 over 10 an hour |
+| `GET /sessions/{id}/seats` | Host: the call's seats, with their status (`expired` once lapsed) |
+| `PATCH /sessions/{id}/seats/{seat_id}` | Host: `admit: true` (a guest who accepted; 409 over 2 admitted), `capabilities`. Safe to send again: an admit already done is not refused, and the mirror is written again. 503 when the change is recorded but Valkey could not take it: send it again |
+| `DELETE /sessions/{id}/seats/{seat_id}` | Host: remove a guest or withdraw an invite; a connected guest is closed within a second. Sent again for a removed seat, it writes the mirror again (204), so a removal always reaches the gateway |
+| `GET /seats` | Guest (the account, whatever profile is chosen): open seats on calls still live. Not counted by the Stage 0 VM's idle check |
+| `POST /seats/{seat_id}/accept`, `/decline` | Guest: answer an invite |
 | `POST /integrations/{provider}/connect`, `GET .../callback`, `DELETE` | Connect and disconnect GitHub, Jira, Slack, calendars |
 | `GET /usage` | Minutes used this period |
 | `GET`, `POST /employers`; `PATCH /employers/{id}` | Companies the user works at: add, edit, archive (`status`) |

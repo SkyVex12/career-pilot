@@ -43,7 +43,7 @@ use super::ring::{FrameRing, RingFrame};
 use crate::audio::OutFrame;
 use crate::auth::{AuthError, Token, TokenProvider};
 
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 pub const PING_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -688,7 +688,7 @@ impl Client {
     }
 }
 
-async fn connect(url: &str, token: &Token) -> Result<Ws, String> {
+pub(crate) async fn connect(url: &str, token: &Token) -> Result<Ws, String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     let auth = HeaderValue::from_str(&format!("Bearer {}", token.access_token)).map_err(|e| e.to_string())?;
     request.headers_mut().insert("Authorization", auth);

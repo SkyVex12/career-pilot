@@ -33,6 +33,7 @@ use copilot_client::emailauth::{ApiBase, CodeSent, EmailFailure, EmailTokenProvi
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, ConnectionState, StartParams};
 use copilot_client::net::close::StopReason;
+use copilot_client::net::seat::{self, SeatHandle, SeatParams};
 use copilot_client::oauth::{self, OAuthTokenProvider};
 use copilot_client::protocol::{AnswerStyle, Mode};
 use copilot_client::wake::{self, Progress};
@@ -84,6 +85,8 @@ struct AppState {
     /// For the email sign-in's calls to the API, which may have to wake the server first.
     handle: AppHandle,
     engine: Mutex<Option<Arc<Engine>>>,
+    /// A guest seat on someone else's call (net/seat.rs); never at the same time as `engine`.
+    seat: Mutex<Option<SeatHandle>>,
     history: Arc<Mutex<History>>,
     /// `desktop-<version>`: the gateway's client_version and the API's x-copilot-client.
     client: String,
@@ -676,9 +679,10 @@ async fn api_call(
     path: String,
     body: Option<Value>,
 ) -> Res<Value> {
-    // The Session screen polls the live calls every ten seconds; that alone does not keep or
-    // start the VM (copilotctl idle ignores it too).
-    let wake = !(method == "GET" && path == "/sessions/live");
+    // The Session screen polls the live calls every ten seconds, and the invites to someone
+    // else's call (guest seats); that alone does not keep or start the VM (copilotctl idle
+    // ignores both too).
+    let wake = !(method == "GET" && (path == "/sessions/live" || path == "/seats"));
     state.api(&app, wake).await?.call(&method, &path, body.as_ref()).await.map_err(|e| api_error(&app, e))
 }
 
@@ -1067,6 +1071,9 @@ async fn launch(
     adopt: Option<Adopt>,
 ) -> Res<()> {
     let _starting = state.begin_start()?;
+    if state.seat.lock().unwrap().is_some() {
+        return Err("Leave the call you are watching before you start your own.".into());
+    }
     let tokens = state.tokens()?;
     tokens.current().await.map_err(|e| e.to_string())?;
     let settings = state.settings.lock().unwrap().clone();
@@ -1226,7 +1233,97 @@ async fn set_answer_style(state: State<'_, AppState>, style: AnswerStyle) -> Res
 #[tauri::command]
 fn snapshot(state: State<'_, AppState>) -> (Vec<serde_json::Value>, bool, u64) {
     let (events, next) = state.history.lock().unwrap().snapshot();
-    (events, state.engine.lock().unwrap().is_some(), next)
+    let running = state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some();
+    (events, running, next)
+}
+
+/// Join someone else's live call as a guest (ARCHITECTURE.md, "Guest seats"), once the host
+/// admitted this account (`GET /seats`). The overlay shows the call read only, from the
+/// gateway's `/v1/seat`; nothing of this app's audio is used, and the overlay stays out of
+/// screen capture whatever the stealth setting, since the call is someone else's.
+#[derive(Debug, Deserialize)]
+struct SeatJoinRequest {
+    session_id: Uuid,
+    seat_id: Uuid,
+}
+
+#[tauri::command]
+async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoinRequest) -> Res<()> {
+    if state.engine.lock().unwrap().is_some() {
+        return Err("End your own call before you join someone else's.".into());
+    }
+    if let Some(old) = state.seat.lock().unwrap().take() {
+        old.leave();
+    }
+    let tokens = state.tokens()?;
+    tokens.current().await.map_err(|e| e.to_string())?;
+    let settings = state.settings.lock().unwrap().clone();
+    let url = state.fill_url(&app, &settings.seat_url(), true).await?;
+    state.history.lock().unwrap().clear();
+    let sink = {
+        let app = app.clone();
+        let history = state.history.clone();
+        Arc::new(move |event: UiEvent| emit(&app, &history, &event))
+    };
+    let params = SeatParams {
+        url,
+        session_id: request.session_id,
+        seat_id: request.seat_id,
+        client_version: state.client.clone(),
+    };
+    let (handle, task) = seat::spawn(params, tokens, sink);
+    *state.seat.lock().unwrap() = Some(handle.clone());
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = task.await;
+        let state = app2.state::<AppState>();
+        {
+            let mut slot = state.seat.lock().unwrap();
+            if slot.as_ref().is_some_and(|s| s.seat_id == handle.seat_id) {
+                *slot = None;
+            }
+        }
+        let stealth_on = state.settings.lock().unwrap().stealth;
+        stealth::exclude_overlay(&app2, stealth_on);
+    });
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.show();
+        stealth::exclude_overlay(&app, true);
+    }
+    Ok(())
+}
+
+/// Stop watching: the seat stays this account's until the host removes it or the call ends.
+#[tauri::command]
+fn seat_leave(state: State<'_, AppState>) {
+    if let Some(seat) = state.seat.lock().unwrap().take() {
+        seat.leave();
+    }
+}
+
+/// A note for the host of the call this app watches; returns its id (its result names it).
+#[tauri::command]
+fn seat_note(state: State<'_, AppState>, text: String) -> Res<Uuid> {
+    let text = text.trim().to_string();
+    if text.is_empty() || text.chars().count() > 1000 {
+        return Err("A note is 1 to 1,000 characters.".into());
+    }
+    let seat = state.seat.lock().unwrap().clone().ok_or("not watching a call")?;
+    Ok(seat.note(text))
+}
+
+/// Host: Ask this, on a guest's note. The note's words become a typed question.
+#[tauri::command]
+async fn ask_note(state: State<'_, AppState>, note_id: Uuid, text: String) -> Res<()> {
+    state.engine()?.ask_note(note_id, text).await;
+    Ok(())
+}
+
+/// Host: pause (false) or resume what the call's guests see.
+#[tauri::command]
+async fn set_sharing(state: State<'_, AppState>, on: bool) -> Res<()> {
+    state.engine()?.set_sharing(on).await;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1738,6 +1835,7 @@ pub fn run() {
                 handle: app.handle().clone(),
                 secrets,
                 engine: Mutex::new(None),
+                seat: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
                 client: format!("desktop-{version}"),
                 started: Instant::now(),
@@ -1863,6 +1961,11 @@ pub fn run() {
             set_answer_style,
             snapshot,
             live_status,
+            seat_join,
+            seat_leave,
+            seat_note,
+            ask_note,
+            set_sharing,
             show_overlay,
             minimize_overlay,
             overlay_prefs,

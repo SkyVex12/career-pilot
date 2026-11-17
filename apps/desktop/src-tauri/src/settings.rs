@@ -179,6 +179,19 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// The gateway's guest seat URL (`/v1/seat`): following someone else's call. The account
+    /// is the guest, whatever profile is chosen, so no profile is named.
+    pub fn seat_url(&self) -> String {
+        let url = self.active_urls().0.trim();
+        let base = url.split('?').next().unwrap_or(url);
+        match base.strip_suffix("/v1/session") {
+            Some(root) => format!("{root}/v1/seat"),
+            None => format!("{}/v1/seat", base.trim_end_matches('/')),
+        }
+    }
+}
+
 /// A warning for the settings screen when a URL sends traffic in the clear to another
 /// machine: Stage 0 in the cloud has no TLS and is only safe behind its IP allow-list.
 pub fn insecure_url_warning(url: &str) -> Option<String> {
@@ -223,6 +236,16 @@ mod tests {
         assert_eq!(s.session_url(), "ws://127.0.0.1:8081/v1/session");
         s.profile = Some(String::new());
         assert_eq!(s.session_url(), "ws://127.0.0.1:8081/v1/session");
+    }
+
+    #[test]
+    fn a_guest_seat_names_no_profile() {
+        let mut s =
+            Settings { profile: Some("0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6b".into()), ..Settings::default() };
+        assert_eq!(s.seat_url(), "ws://127.0.0.1:8081/v1/seat");
+        s.environment = Environment::Cloud;
+        s.cloud_gateway_url = "ws://{host}/v1/session".into();
+        assert_eq!(s.seat_url(), "ws://{host}/v1/seat");
     }
 
     #[test]

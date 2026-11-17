@@ -156,6 +156,9 @@ class Generator:
             return "f64", checks, False
         if t == "boolean":
             return "bool", [], False
+        if t == "object" and "properties" not in s:
+            # Any JSON object, parsed by the reader (seat.snapshot's messages).
+            return "serde_json::Map<String, serde_json::Value>", [], False
         if t == "array":
             inner, checks, nested = self.field(owner, name, s["items"])
             if checks:

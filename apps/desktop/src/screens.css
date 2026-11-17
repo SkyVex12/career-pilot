@@ -761,3 +761,61 @@
 .doc-facts > li > span {
   display: block;
 }
+
+/* Guest seats (seats.tsx): the host's guest panel (Call screen and the overlay's gear) and a
+   guest's invites. Colors are inherited, so the same panel reads in either window. */
+.seat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.seat-invite {
+  display: flex;
+  gap: var(--space-3);
+}
+.seat-invite .ui-input {
+  flex: 1;
+  min-width: 0;
+}
+.seat-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  opacity: 0.8;
+}
+.seat-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+.seat-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.seat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.seat-name {
+  font-weight: 600;
+}
+.seat-status {
+  font-size: var(--text-sm);
+  opacity: 0.8;
+}
+.seat-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.seat-invites {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}

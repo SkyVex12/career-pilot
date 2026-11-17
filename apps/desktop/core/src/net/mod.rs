@@ -4,3 +4,4 @@ pub mod backoff;
 pub mod client;
 pub mod close;
 pub mod ring;
+pub mod seat;

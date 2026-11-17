@@ -22,7 +22,10 @@
         { "$ref": "#/$defs/LatencyReport" },
         { "$ref": "#/$defs/ModeSet" },
         { "$ref": "#/$defs/AnswerStyleSet" },
-        { "$ref": "#/$defs/SessionEnd" }
+        { "$ref": "#/$defs/SessionEnd" },
+        { "$ref": "#/$defs/SharingSet" },
+        { "$ref": "#/$defs/SeatJoin" },
+        { "$ref": "#/$defs/SeatCommand" }
       ],
       "discriminator": { "propertyName": "type" }
     },
@@ -40,7 +43,15 @@
         { "$ref": "#/$defs/AnswerError" },
         { "$ref": "#/$defs/Status" },
         { "$ref": "#/$defs/AuthExpiring" },
-        { "$ref": "#/$defs/ServerError" }
+        { "$ref": "#/$defs/ServerError" },
+        { "$ref": "#/$defs/SeatsUpdate" },
+        { "$ref": "#/$defs/SeatNote" },
+        { "$ref": "#/$defs/Sharing" },
+        { "$ref": "#/$defs/SeatReady" },
+        { "$ref": "#/$defs/SeatSnapshot" },
+        { "$ref": "#/$defs/SeatHost" },
+        { "$ref": "#/$defs/SeatUpdate" },
+        { "$ref": "#/$defs/SeatCommandResult" }
       ],
       "discriminator": { "propertyName": "type" }
     },
@@ -234,6 +245,10 @@
           "description": "answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.",
           "type": "string",
           "enum": ["answer", "respond"]
+        },
+        "note_id": {
+          "description": "The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log. The text is the note's.",
+          "$ref": "#/$defs/Uuid"
         }
       },
       "required": ["type"]
@@ -482,9 +497,9 @@
     },
 
     "CloseCode": {
-      "description": "WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume).",
+      "description": "WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume). Guest seats only: 4411 the host removed the guest (do not reconnect); 4412 the seat is not open (not admitted, closed, or another session's; do not reconnect).",
       "type": "integer",
-      "enum": [1000, 1001, 4401, 4403, 4408, 4409, 4410, 4426, 4429, 4500],
+      "enum": [1000, 1001, 4401, 4403, 4408, 4409, 4410, 4411, 4412, 4426, 4429, 4500],
       "x-enum-varnames": [
         "Normal",
         "GoingAway",
@@ -493,10 +508,158 @@
         "NoStart",
         "SessionActive",
         "Replaced",
+        "SeatRemoved",
+        "SeatClosed",
         "ClientOutdated",
         "RateLimited",
         "Internal"
       ]
+    },
+    "Capability": {
+      "description": "What a guest seat may do. view: follow the overlay (always granted). note: typed notes to the host. The others are for later phases and are refused for now.",
+      "type": "string",
+      "enum": ["view", "note", "voice", "control.answer", "control.session", "device.view", "device.control"]
+    },
+    "SeatStatus": {
+      "type": "string",
+      "enum": ["invited", "accepted", "admitted", "declined", "removed", "expired", "ended"]
+    },
+    "SeatInfo": {
+      "description": "One guest seat as the host sees it.",
+      "type": "object",
+      "properties": {
+        "seat_id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/SeatStatus" },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" } }
+      },
+      "required": ["seat_id", "name", "status", "capabilities"]
+    },
+    "SharingSet": {
+      "description": "Host: pause (on: false) or resume what guests see. While paused, nothing of the call reaches a guest, then or on a later replay.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "sharing.set" },
+        "on": { "type": "boolean" }
+      },
+      "required": ["type", "on"]
+    },
+    "SeatJoin": {
+      "description": "Guest: the first message on /v1/seat. last_seq is the last host seq the guest processed (0: none), so a reconnect continues where it stopped.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.join" },
+        "session_id": { "$ref": "#/$defs/Uuid" },
+        "seat_id": { "$ref": "#/$defs/Uuid" },
+        "last_seq": { "type": "integer", "minimum": 0 },
+        "client_version": { "type": "string" }
+      },
+      "required": ["type", "session_id", "seat_id", "last_seq", "client_version"]
+    },
+    "SeatCommand": {
+      "description": "Guest: an action on the call, carried out by the host's session if the seat may (seat.command.result says how it went). note: text for the host alone, never for the call, the transcript or the answer models.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.command" },
+        "command_id": { "$ref": "#/$defs/Uuid" },
+        "kind": { "type": "string", "enum": ["note"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      },
+      "required": ["type", "command_id", "kind", "text"]
+    },
+    "SeatsUpdate": {
+      "description": "Host: the call's guest seats changed (invited, accepted, admitted, permissions, removed). The whole list.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seats.update" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "seats": { "type": "array", "items": { "$ref": "#/$defs/SeatInfo" } }
+      },
+      "required": ["type", "seq", "seats"]
+    },
+    "SeatNote": {
+      "description": "Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or the answer models.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.note" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "seat_id": { "$ref": "#/$defs/Uuid" },
+        "note_id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string" },
+        "text": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "seq", "seat_id", "note_id", "name", "text", "at"]
+    },
+    "Sharing": {
+      "description": "Host: guests see the call (on) or nothing of it (off), after sharing.set.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "sharing" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "on": { "type": "boolean" }
+      },
+      "required": ["type", "seq", "on"]
+    },
+    "SeatReady": {
+      "description": "Guest: the seat is open. seq is the host's position the guest starts from; a seat.snapshot follows.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.ready" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "session_id": { "$ref": "#/$defs/Uuid" },
+        "seat_id": { "$ref": "#/$defs/Uuid" },
+        "host_name": { "type": "string" },
+        "mode": { "$ref": "#/$defs/Mode" },
+        "title": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" } },
+        "host_connected": { "type": "boolean" },
+        "sharing": { "type": "boolean" }
+      },
+      "required": ["type", "seq", "session_id", "seat_id", "host_name", "mode", "capabilities", "host_connected", "sharing"]
+    },
+    "SeatSnapshot": {
+      "description": "Guest: the call so far, as the overlay shows it (each message a ServerMessage the guest may see, answer chunks merged), up to seq. Replaces everything the guest showed before; live messages after seq follow.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.snapshot" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "messages": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["type", "seq", "messages"]
+    },
+    "SeatHost": {
+      "description": "Guest: the host's app lost (connected: false) or regained its connection to the call, or paused or resumed sharing; the call itself goes on.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.host" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "connected": { "type": "boolean" },
+        "sharing": { "type": "boolean" }
+      },
+      "required": ["type", "seq", "connected", "sharing"]
+    },
+    "SeatUpdate": {
+      "description": "Guest: the host changed what this seat may do.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.update" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "capabilities": { "type": "array", "items": { "$ref": "#/$defs/Capability" } }
+      },
+      "required": ["type", "seq", "capabilities"]
+    },
+    "SeatCommandResult": {
+      "description": "Guest: what became of a seat.command. ok: done. denied: the seat may not (any more). expired: it waited too long (the host was reconnecting). rate_limited: too many too fast. failed: it could not be done.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "seat.command.result" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "command_id": { "$ref": "#/$defs/Uuid" },
+        "result": { "type": "string", "enum": ["ok", "denied", "expired", "rate_limited", "failed"] }
+      },
+      "required": ["type", "seq", "command_id", "result"]
     },
     "ClientOutdated": {
       "description": "The app is older than the oldest version the server supports (its min_client_version setting). The REST API answers any request with HTTP 426 and this as the JSON body; the gateway sends an error with code client_outdated (this message) before closing with 4426. The app names its version as desktop-<version>: in session.start's client_version and in the x-copilot-client header of API requests.",

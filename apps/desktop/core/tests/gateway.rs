@@ -250,6 +250,7 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
         .send(ClientMessage::QuestionForce(QuestionForce {
             text: Some("How would you shard the ledger table?".into()),
             kind: None,
+            note_id: None,
         }))
         .await;
     let (q2, text) = call.question().await;
@@ -269,7 +270,9 @@ async fn a_call_with_questions_answers_and_a_dropped_socket() {
 
     // The hotkey: no text, so the gateway answers what it heard.
     tokio::time::sleep(Duration::from_millis(1_100)).await;
-    call.handle.send(ClientMessage::QuestionForce(QuestionForce { text: None, kind: None })).await;
+    call.handle
+        .send(ClientMessage::QuestionForce(QuestionForce { text: None, kind: None, note_id: None }))
+        .await;
     let (q3, _) = call.question().await;
     call.answer_done(q3, Pass::Fast).await;
 
@@ -313,6 +316,7 @@ async fn the_respond_button_gets_a_reply_typed_respond() {
         .send(ClientMessage::QuestionForce(QuestionForce {
             text: Some("Can you send me the migration numbers by Friday?".into()),
             kind: Some(QuestionForceKind::Respond),
+            note_id: None,
         }))
         .await;
     let detected =
@@ -459,6 +463,7 @@ async fn auth_expiring_is_answered_with_auth_refresh() {
         .send(ClientMessage::QuestionForce(QuestionForce {
             text: Some("What is your biggest strength?".into()),
             kind: None,
+            note_id: None,
         }))
         .await;
     let (q, _) = call.question().await;
@@ -529,4 +534,82 @@ async fn a_gateway_restart_mid_call_resumes_the_session() {
     assert_eq!(reason, StopReason::Ended);
     let seqs: Vec<u64> = call.server_messages().iter().map(|m| m.seq()).collect();
     assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>(), "no gap or repeat across the restart");
+}
+
+/// A guest seat (ARCHITECTURE.md, "Guest seats"): the offline gateway admits the guest on the
+/// call; the guest's client follows it from `/v1/seat`, sends a note only the host gets, and
+/// stops when the call ends. The host's connection is never touched.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_follows_the_call_and_sends_the_host_a_note() {
+    use copilot_client::engine::UiEvent;
+    use copilot_client::net::seat::{self, SeatParams};
+
+    const GUEST: &str = "guest-token-0123456789";
+    let seat_id = Uuid::now_v7();
+    let gw =
+        Gateway::start_with(0, &[TOKEN], None, &["--guest-token", GUEST, "--seat", &seat_id.to_string()]);
+    let mut call = Call::start(&gw.url(), tokens(TOKEN), None);
+    let (sid, _) = call.live().await;
+    call.say("Tell me about a time you scaled a system?");
+    let (q1, _) = call.question().await;
+    call.server("the first answer", |m| matches!(m, ServerMessage::AnswerDone(d) if d.question_id == q1))
+        .await;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let sink: copilot_client::engine::EventSink = Arc::new(move |e| {
+        let _ = tx.send(e);
+    });
+    let params = SeatParams {
+        url: gw.url().replace("/v1/session", "/v1/seat"),
+        session_id: sid,
+        seat_id,
+        client_version: "test".into(),
+    };
+    let (guest, task) = seat::spawn(params, tokens(GUEST), sink);
+    let mut seen: Vec<String> = Vec::new();
+    let mut next = async |what: &str, pick: &dyn Fn(&UiEvent) -> bool| -> UiEvent {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(e)) => {
+                    seen.push(format!("{e:?}").chars().take(80).collect());
+                    if pick(&e) {
+                        return e;
+                    }
+                }
+                _ => panic!("guest: no {what}; saw {seen:#?}"),
+            }
+        }
+    };
+    next("live", &|e| matches!(e, UiEvent::Connection { state: ConnectionState::Live { .. } })).await;
+    let snap =
+        next("the snapshot", &|e| matches!(e, UiEvent::Server { message: ServerMessage::SeatSnapshot(_) }))
+            .await;
+    let UiEvent::Server { message: ServerMessage::SeatSnapshot(snap) } = snap else { unreachable!() };
+    assert!(
+        snap.messages.iter().any(|m| m.get("question_id").and_then(|v| v.as_str()) == Some(&q1.to_string()))
+    );
+
+    // Live: the next question reaches the guest too.
+    call.say("What would you do differently next time?");
+    let (q2, _) = call.question().await;
+    next("the live question", &|e| {
+        matches!(e, UiEvent::Server { message: ServerMessage::QuestionDetected(q) } if q.question_id == q2)
+    })
+    .await;
+
+    // A note: the host gets it; the guest gets the result.
+    let command_id = guest.note("Mention the latency cut".into());
+    let note = call.server("the note", |m| matches!(m, ServerMessage::SeatNote(_))).await;
+    let ServerMessage::SeatNote(note) = note else { unreachable!() };
+    assert_eq!((note.text.as_str(), note.note_id), ("Mention the latency cut", command_id));
+    next("the note's result", &|e| {
+        matches!(e, UiEvent::Server { message: ServerMessage::SeatCommandResult(r) } if r.command_id == command_id)
+    })
+    .await;
+
+    // The call ends: the guest stops, as ended.
+    call.handle.command(Command::End { summarize: true }).await;
+    let reason = tokio::time::timeout(Duration::from_secs(15), task).await.expect("the seat stops").unwrap();
+    assert_eq!(reason, StopReason::Ended);
 }

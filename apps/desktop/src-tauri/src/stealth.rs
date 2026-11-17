@@ -107,6 +107,17 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
     }
 }
 
+/// Leave the overlay out of screen capture, or not, whatever the stealth setting: a guest
+/// following someone's call keeps that private call out of their own screen shares
+/// (ARCHITECTURE.md, "Guest seats"). Only while the overlay is on screen (see `apply`).
+pub fn exclude_overlay(app: &AppHandle, exclude: bool) {
+    let Some(window) = app.webview_windows().remove("overlay") else { return };
+    if window.is_visible().unwrap_or(false) {
+        set_window("overlay", &window, affinity(exclude));
+        restore_overlay_transparency(&window);
+    }
+}
+
 /// Every visible window's caption. The hidden overlay is left alone so it does not paint white.
 /// Task Manager lists each visible window under the program name, so a window left as "Copilot"
 /// stays on screen as its own row.

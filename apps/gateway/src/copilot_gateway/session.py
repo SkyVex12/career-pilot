@@ -69,6 +69,7 @@ from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector, named_or_model
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.router import decisions_route
+from copilot_gateway.seathost import SeatDesk
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
 from copilot_gateway.turn import (
@@ -343,6 +344,8 @@ class Session:
         self.flushed_upto = restored.get("flushed_upto", "")
         self.ending = False
         self.lost = False
+        # Guest seats: runs beside the call, never inside its task group (seathost.py).
+        self.seatdesk = SeatDesk(self, dict(restored), resumed=bool(restored))
         self.core_task: asyncio.Task[None] | None = None
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
@@ -360,6 +363,7 @@ class Session:
         message = cls.model_validate({"type": _type_of(cls), "seq": self.seq, **fields})
         data = message.model_dump_json(exclude_none=True, by_alias=True)
         self.ring.append((self.seq, data))
+        self.seatdesk.observe(self.seq, data)
         self.writer.event(self.seq, data)
         self.writer.set_state(last_seq=str(self.seq), updated_at=str(time.time()))
         if self.send_q is not None:
@@ -1222,6 +1226,7 @@ class Session:
 
     def start_core(self) -> None:
         self.core_task = asyncio.create_task(self._run_core())
+        self.seatdesk.start()
 
     async def _run_core(self) -> None:
         try:
@@ -1523,6 +1528,7 @@ class Session:
 
     async def _stop(self) -> None:
         self.manager.forget(self)
+        await self.seatdesk.stop()
         self.conv.close()
         for task in list(self._settling):
             task.cancel()
@@ -1556,6 +1562,9 @@ class Session:
         q: asyncio.Queue[str | None] = asyncio.Queue()
         self.ws, self.send_q, self.disconnected_at = ws, q, None
         self.auth_warned = False
+        # Connected again (a resume on this same task left "reconnecting" before): GET
+        # /sessions/live and the guests' "host reconnecting" read this.
+        self.writer.set_state(status="active")
         if replay is None:
             replay = [(s, m) for s, m in self.ring if s > last_seq]
         for _, message in replay:
@@ -1685,6 +1694,10 @@ class Session:
             case models.AuthRefresh():
                 await self._auth_refresh(message.access_token)
             case models.QuestionForce():
+                if message.note_id is not None:
+                    # Ask this, on a guest's note: the host chose to ask it. The note's text
+                    # is the typed question, as any typed question.
+                    self.log_entry({"kind": "seat.ask", "note_id": str(message.note_id)})
                 self._force(message.text, respond=message.kind == "respond")
             case models.Screenshot():
                 self.error("not_implemented", "screenshots are not supported yet")
@@ -1719,6 +1732,12 @@ class Session:
                 self.info.answer_style = message.answer_style
                 self.writer.set_state(answer_style=message.answer_style)
                 self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
+            case models.SharingSet():
+                # Guests see nothing from here until sharing is on again (seatview.py): the
+                # marker sits in the event stream, so replays and snapshots honour it too.
+                self.writer.set_state(sharing="1" if message.on else "0")
+                self.log_entry({"kind": "sharing", "on": message.on})
+                self.emit(models.Sharing, on=message.on)
             case models.SessionEnd():
                 # The user may skip the post-call outputs and keep the transcript only; the
                 # worker reads this from the state when the session ends.
@@ -1748,6 +1767,10 @@ class Session:
             return
         self.principal = principal
         self.auth_warned = False
+
+    @property
+    def knows_seats(self) -> bool:
+        return versions.knows_seats(self.info.client_version)
 
     @property
     def knows_respond(self) -> bool:

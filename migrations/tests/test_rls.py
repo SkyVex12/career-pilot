@@ -35,7 +35,7 @@ APP_ROLES = ["app_api", "app_worker", "app_gateway"]
 # resume_versions: metadata columns only (a column grant), never the text or file.
 GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes", "memory_edges",
                   "employers", "resume_versions", "profiles", "integrations",
-                  "identities", "knowledge_chunks"}  # fmt: skip
+                  "identities", "knowledge_chunks", "session_seats"}  # fmt: skip
 # integrations: the Career-OS link's status only (a column grant), never the token.
 # Tables the gateway reads through a table-wide grant (the other two have column grants).
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
@@ -65,6 +65,8 @@ class World:
 
 
 NOW = datetime(2026, 10, 5, 15, 0, tzinfo=UTC)
+# A third account, the guest on both users' seats (migration 0017): neither A nor B.
+GUEST_ID = uuid.UUID("0192f3a9-55c2-7b10-a4e1-00000000009e")
 RELS = ["part_of", "demonstrates", "used", "worked_with", "about", "follows_up"]
 PROVIDERS = ["github", "jira", "slack", "google_calendar", "microsoft_calendar"]
 
@@ -246,6 +248,20 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "user_id": w.user_id,
         "email": f"{w.user_id}@example.com",
     },
+    "session_seats": lambda w, n: {
+        "id": uuid.uuid4(),
+        "user_id": w.user_id,
+        "session_id": w.session_id if n == 0 else uuid.uuid4(),
+        "host_account_id": w.user_id,
+        "guest_id": GUEST_ID,
+        "host_name": "Host",
+        "guest_name": "Guest",
+        "guest_email": "guest@example.com",
+        "mode": "interview",
+        "status": "admitted",
+        "capabilities": ["view", "note"],
+        "expires_at": NOW + timedelta(hours=12),
+    },
     "refresh_tokens": lambda w, n: {
         "token_hash": uuid.uuid4().hex * 2,
         "user_id": w.user_id,
@@ -316,6 +332,11 @@ async def db() -> AsyncIterator[Db]:
         await json_codecs(conn)
         a, b = World(), World()
         async with conn.transaction():  # seeded as the superuser, which bypasses RLS
+            await conn.execute(
+                "insert into app.users (id, email, display_name) values ($1, 'guest@example.com',"
+                " 'Guest')",
+                GUEST_ID,
+            )
             for w in (a, b):
                 for table, make in ROWS.items():
                     await insert(conn, table, make(w, 0))

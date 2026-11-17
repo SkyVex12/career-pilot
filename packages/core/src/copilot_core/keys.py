@@ -70,3 +70,33 @@ def knowledge(uid: Id, employer_id: Id) -> str:
 def knowledge_ask(uid: Id, ask_id: Id) -> str:
     """The result of one "test a question" on a company's engineering context."""
     return f"kbask:{{{uid}}}:{ask_id}"
+
+
+# Guest seats (ARCHITECTURE.md, "Guest seats"). All but the connection key are the session's,
+# in its slot, so one blocking read can follow a session's events and command results.
+
+
+def sess_seats(sid: Id) -> str:
+    """Hash from seat id to the seat's live record (copilot_core.seats.SeatRecord), written by
+    the API after each change of `app.session_seats`."""
+    return f"sess:{{{sid}}}:seats"
+
+
+def sess_ctl(sid: Id) -> str:
+    """Stream into the host's session: seat changes from the API, guests' commands."""
+    return f"sess:{{{sid}}}:ctl"
+
+
+def sess_ctl_results(sid: Id) -> str:
+    """Stream back to the seat relay: what became of each guest command."""
+    return f"sess:{{{sid}}}:ctlres"
+
+
+def sess_view(sid: Id) -> str:
+    """The overlay as a guest sees it, folded (copilot_gateway.seatview), with its seq."""
+    return f"sess:{{{sid}}}:view"
+
+
+def seat_conn(seat_id: Id) -> str:
+    """The id of the one relay connection serving a seat; a newer one takes it over."""
+    return f"seat:{{{seat_id}}}:conn"

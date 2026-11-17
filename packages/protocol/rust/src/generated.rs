@@ -31,6 +31,12 @@ pub enum ClientMessage {
     AnswerStyleSet(AnswerStyleSet),
     #[serde(rename = "session.end")]
     SessionEnd(SessionEnd),
+    #[serde(rename = "sharing.set")]
+    SharingSet(SharingSet),
+    #[serde(rename = "seat.join")]
+    SeatJoin(SeatJoin),
+    #[serde(rename = "seat.command")]
+    SeatCommand(SeatCommand),
 }
 
 impl ClientMessage {
@@ -48,6 +54,9 @@ impl ClientMessage {
             Self::ModeSet(_) => "mode.set",
             Self::AnswerStyleSet(_) => "answer_style.set",
             Self::SessionEnd(_) => "session.end",
+            Self::SharingSet(_) => "sharing.set",
+            Self::SeatJoin(_) => "seat.join",
+            Self::SeatCommand(_) => "seat.command",
         }
     }
 }
@@ -66,6 +75,9 @@ impl Validate for ClientMessage {
             Self::ModeSet(m) => m.validate(),
             Self::AnswerStyleSet(m) => m.validate(),
             Self::SessionEnd(m) => m.validate(),
+            Self::SharingSet(m) => m.validate(),
+            Self::SeatJoin(m) => m.validate(),
+            Self::SeatCommand(m) => m.validate(),
         }
     }
 }
@@ -136,6 +148,24 @@ impl From<SessionEnd> for ClientMessage {
     }
 }
 
+impl From<SharingSet> for ClientMessage {
+    fn from(m: SharingSet) -> Self {
+        Self::SharingSet(m)
+    }
+}
+
+impl From<SeatJoin> for ClientMessage {
+    fn from(m: SeatJoin) -> Self {
+        Self::SeatJoin(m)
+    }
+}
+
+impl From<SeatCommand> for ClientMessage {
+    fn from(m: SeatCommand) -> Self {
+        Self::SeatCommand(m)
+    }
+}
+
 /// Any JSON message the gateway sends to the client. Every server message carries seq.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -162,6 +192,22 @@ pub enum ServerMessage {
     AuthExpiring(AuthExpiring),
     #[serde(rename = "error")]
     ServerError(ServerError),
+    #[serde(rename = "seats.update")]
+    SeatsUpdate(SeatsUpdate),
+    #[serde(rename = "seat.note")]
+    SeatNote(SeatNote),
+    #[serde(rename = "sharing")]
+    Sharing(Sharing),
+    #[serde(rename = "seat.ready")]
+    SeatReady(SeatReady),
+    #[serde(rename = "seat.snapshot")]
+    SeatSnapshot(SeatSnapshot),
+    #[serde(rename = "seat.host")]
+    SeatHost(SeatHost),
+    #[serde(rename = "seat.update")]
+    SeatUpdate(SeatUpdate),
+    #[serde(rename = "seat.command.result")]
+    SeatCommandResult(SeatCommandResult),
 }
 
 impl ServerMessage {
@@ -179,6 +225,14 @@ impl ServerMessage {
             Self::Status(_) => "status",
             Self::AuthExpiring(_) => "auth.expiring",
             Self::ServerError(_) => "error",
+            Self::SeatsUpdate(_) => "seats.update",
+            Self::SeatNote(_) => "seat.note",
+            Self::Sharing(_) => "sharing",
+            Self::SeatReady(_) => "seat.ready",
+            Self::SeatSnapshot(_) => "seat.snapshot",
+            Self::SeatHost(_) => "seat.host",
+            Self::SeatUpdate(_) => "seat.update",
+            Self::SeatCommandResult(_) => "seat.command.result",
         }
     }
 
@@ -196,6 +250,14 @@ impl ServerMessage {
             Self::Status(m) => m.seq,
             Self::AuthExpiring(m) => m.seq,
             Self::ServerError(m) => m.seq,
+            Self::SeatsUpdate(m) => m.seq,
+            Self::SeatNote(m) => m.seq,
+            Self::Sharing(m) => m.seq,
+            Self::SeatReady(m) => m.seq,
+            Self::SeatSnapshot(m) => m.seq,
+            Self::SeatHost(m) => m.seq,
+            Self::SeatUpdate(m) => m.seq,
+            Self::SeatCommandResult(m) => m.seq,
         }
     }
 }
@@ -214,6 +276,14 @@ impl Validate for ServerMessage {
             Self::Status(m) => m.validate(),
             Self::AuthExpiring(m) => m.validate(),
             Self::ServerError(m) => m.validate(),
+            Self::SeatsUpdate(m) => m.validate(),
+            Self::SeatNote(m) => m.validate(),
+            Self::Sharing(m) => m.validate(),
+            Self::SeatReady(m) => m.validate(),
+            Self::SeatSnapshot(m) => m.validate(),
+            Self::SeatHost(m) => m.validate(),
+            Self::SeatUpdate(m) => m.validate(),
+            Self::SeatCommandResult(m) => m.validate(),
         }
     }
 }
@@ -281,6 +351,54 @@ impl From<AuthExpiring> for ServerMessage {
 impl From<ServerError> for ServerMessage {
     fn from(m: ServerError) -> Self {
         Self::ServerError(m)
+    }
+}
+
+impl From<SeatsUpdate> for ServerMessage {
+    fn from(m: SeatsUpdate) -> Self {
+        Self::SeatsUpdate(m)
+    }
+}
+
+impl From<SeatNote> for ServerMessage {
+    fn from(m: SeatNote) -> Self {
+        Self::SeatNote(m)
+    }
+}
+
+impl From<Sharing> for ServerMessage {
+    fn from(m: Sharing) -> Self {
+        Self::Sharing(m)
+    }
+}
+
+impl From<SeatReady> for ServerMessage {
+    fn from(m: SeatReady) -> Self {
+        Self::SeatReady(m)
+    }
+}
+
+impl From<SeatSnapshot> for ServerMessage {
+    fn from(m: SeatSnapshot) -> Self {
+        Self::SeatSnapshot(m)
+    }
+}
+
+impl From<SeatHost> for ServerMessage {
+    fn from(m: SeatHost) -> Self {
+        Self::SeatHost(m)
+    }
+}
+
+impl From<SeatUpdate> for ServerMessage {
+    fn from(m: SeatUpdate) -> Self {
+        Self::SeatUpdate(m)
+    }
+}
+
+impl From<SeatCommandResult> for ServerMessage {
+    fn from(m: SeatCommandResult) -> Self {
+        Self::SeatCommandResult(m)
     }
 }
 
@@ -626,6 +744,10 @@ pub struct QuestionForce {
     /// said (or to text), as the detector's respond type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<QuestionForceKind>,
+    /// The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log.
+    /// The text is the note's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_id: Option<Uuid>,
 }
 
 impl Validate for QuestionForce {
@@ -1054,7 +1176,9 @@ impl Validate for ServerError {
 /// or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active;
 /// 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app
 /// is older than the server supports (do not reconnect; update first; the error before it is
-/// client_outdated); 4429 rate limited; 4500 internal error (resume).
+/// client_outdated); 4429 rate limited; 4500 internal error (resume). Guest seats only: 4411 the
+/// host removed the guest (do not reconnect); 4412 the seat is not open (not admitted, closed, or
+/// another session's; do not reconnect).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CloseCode {
     Normal = 1000,
@@ -1064,13 +1188,15 @@ pub enum CloseCode {
     NoStart = 4408,
     SessionActive = 4409,
     Replaced = 4410,
+    SeatRemoved = 4411,
+    SeatClosed = 4412,
     ClientOutdated = 4426,
     RateLimited = 4429,
     Internal = 4500,
 }
 
 impl CloseCode {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Normal,
         Self::GoingAway,
         Self::Unauthorized,
@@ -1078,6 +1204,8 @@ impl CloseCode {
         Self::NoStart,
         Self::SessionActive,
         Self::Replaced,
+        Self::SeatRemoved,
+        Self::SeatClosed,
         Self::ClientOutdated,
         Self::RateLimited,
         Self::Internal,
@@ -1096,11 +1224,342 @@ impl CloseCode {
             4408 => Some(Self::NoStart),
             4409 => Some(Self::SessionActive),
             4410 => Some(Self::Replaced),
+            4411 => Some(Self::SeatRemoved),
+            4412 => Some(Self::SeatClosed),
             4426 => Some(Self::ClientOutdated),
             4429 => Some(Self::RateLimited),
             4500 => Some(Self::Internal),
             _ => None,
         }
+    }
+}
+
+/// What a guest seat may do. view: follow the overlay (always granted). note: typed notes to the
+/// host. The others are for later phases and are refused for now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Capability {
+    #[serde(rename = "view")]
+    View,
+    #[serde(rename = "note")]
+    Note,
+    #[serde(rename = "voice")]
+    Voice,
+    #[serde(rename = "control.answer")]
+    ControlAnswer,
+    #[serde(rename = "control.session")]
+    ControlSession,
+    #[serde(rename = "device.view")]
+    DeviceView,
+    #[serde(rename = "device.control")]
+    DeviceControl,
+}
+
+impl Capability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::View => "view",
+            Self::Note => "note",
+            Self::Voice => "voice",
+            Self::ControlAnswer => "control.answer",
+            Self::ControlSession => "control.session",
+            Self::DeviceView => "device.view",
+            Self::DeviceControl => "device.control",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SeatStatus {
+    #[serde(rename = "invited")]
+    Invited,
+    #[serde(rename = "accepted")]
+    Accepted,
+    #[serde(rename = "admitted")]
+    Admitted,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "removed")]
+    Removed,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "ended")]
+    Ended,
+}
+
+impl SeatStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Invited => "invited",
+            Self::Accepted => "accepted",
+            Self::Admitted => "admitted",
+            Self::Declined => "declined",
+            Self::Removed => "removed",
+            Self::Expired => "expired",
+            Self::Ended => "ended",
+        }
+    }
+}
+
+/// One guest seat as the host sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatInfo {
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub seat_id: Uuid,
+    pub name: String,
+    pub status: SeatStatus,
+    pub capabilities: Vec<Capability>,
+}
+
+impl Validate for SeatInfo {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Host: pause (on: false) or resume what guests see. While paused, nothing of the call reaches a
+/// guest, then or on a later replay.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SharingSet {
+    pub on: bool,
+}
+
+impl Validate for SharingSet {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Guest: the first message on /v1/seat. last_seq is the last host seq the guest processed (0:
+/// none), so a reconnect continues where it stopped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatJoin {
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub session_id: Uuid,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub seat_id: Uuid,
+    pub last_seq: u64,
+    pub client_version: String,
+}
+
+impl Validate for SeatJoin {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
+}
+
+/// Guest: an action on the call, carried out by the host's session if the seat may
+/// (seat.command.result says how it went). note: text for the host alone, never for the call, the
+/// transcript or the answer models.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatCommand {
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub command_id: Uuid,
+    pub kind: SeatCommandKind,
+    pub text: String,
+}
+
+impl Validate for SeatCommand {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.text;
+            check::min_len("text", v, 1)?;
+            check::max_len("text", v, 1000)?;
+        }
+        Ok(())
+    }
+}
+
+/// Host: the call's guest seats changed (invited, accepted, admitted, permissions, removed). The
+/// whole list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatsUpdate {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub seats: Vec<SeatInfo>,
+}
+
+impl Validate for SeatsUpdate {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        {
+            let v = &self.seats;
+            for item in v {
+                item.validate()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or the
+/// answer models.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatNote {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub seat_id: Uuid,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub note_id: Uuid,
+    pub name: String,
+    pub text: String,
+    pub at: String,
+}
+
+impl Validate for SeatNote {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        {
+            let v = &self.at;
+            check::date_time("at", v)?;
+        }
+        Ok(())
+    }
+}
+
+/// Host: guests see the call (on) or nothing of it (off), after sharing.set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Sharing {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub on: bool,
+}
+
+impl Validate for Sharing {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        Ok(())
+    }
+}
+
+/// Guest: the seat is open. seq is the host's position the guest starts from; a seat.snapshot
+/// follows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatReady {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub session_id: Uuid,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub seat_id: Uuid,
+    pub host_name: String,
+    pub mode: Mode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    pub capabilities: Vec<Capability>,
+    pub host_connected: bool,
+    pub sharing: bool,
+}
+
+impl Validate for SeatReady {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        if let Some(v) = &self.started_at {
+            check::date_time("started_at", v)?;
+        }
+        Ok(())
+    }
+}
+
+/// Guest: the call so far, as the overlay shows it (each message a ServerMessage the guest may see,
+/// answer chunks merged), up to seq. Replaces everything the guest showed before; live messages
+/// after seq follow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatSnapshot {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub messages: Vec<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl Validate for SeatSnapshot {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        Ok(())
+    }
+}
+
+/// Guest: the host's app lost (connected: false) or regained its connection to the call, or paused
+/// or resumed sharing; the call itself goes on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatHost {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub connected: bool,
+    pub sharing: bool,
+}
+
+impl Validate for SeatHost {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        Ok(())
+    }
+}
+
+/// Guest: the host changed what this seat may do.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatUpdate {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub capabilities: Vec<Capability>,
+}
+
+impl Validate for SeatUpdate {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        Ok(())
+    }
+}
+
+/// Guest: what became of a seat.command. ok: done. denied: the seat may not (any more). expired: it
+/// waited too long (the host was reconnecting). rate_limited: too many too fast. failed: it could
+/// not be done.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeatCommandResult {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub command_id: Uuid,
+    pub result: SeatCommandResultResult,
+}
+
+impl Validate for SeatCommandResult {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        Ok(())
     }
 }
 
@@ -1280,6 +1739,46 @@ impl StatusState {
             Self::Ok => "ok",
             Self::Degraded => "degraded",
             Self::Reconnecting => "reconnecting",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SeatCommandKind {
+    #[serde(rename = "note")]
+    Note,
+}
+
+impl SeatCommandKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Note => "note",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SeatCommandResultResult {
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "denied")]
+    Denied,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "rate_limited")]
+    RateLimited,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+impl SeatCommandResultResult {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Denied => "denied",
+            Self::Expired => "expired",
+            Self::RateLimited => "rate_limited",
+            Self::Failed => "failed",
         }
     }
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 
 class Consent(BaseModel):
@@ -183,6 +183,10 @@ class QuestionForce(BaseModel):
     kind: Literal["answer", "respond"] | None = None
     """
     answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.
+    """
+    note_id: UUID | None = None
+    """
+    The host pressed Ask this on a guest's note (seat.note): the note's id, for the session log. The text is the note's.
     """
 
 
@@ -596,12 +600,275 @@ class ServerError(BaseModel):
 
 
 class CloseCode(
-    RootModel[Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4426, 4429, 4500]]
+    RootModel[
+        Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4411, 4412, 4426, 4429, 4500]
+    ]
 ):
-    root: Literal[1000, 1001, 4401, 4403, 4408, 4409, 4410, 4426, 4429, 4500]
+    root: Literal[
+        1000, 1001, 4401, 4403, 4408, 4409, 4410, 4411, 4412, 4426, 4429, 4500
+    ]
     """
-    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume).
+    WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume). Guest seats only: 4411 the host removed the guest (do not reconnect); 4412 the seat is not open (not admitted, closed, or another session's; do not reconnect).
     """
+
+
+class SeatInfo(BaseModel):
+    """
+    One guest seat as the host sees it.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    seat_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    name: str
+    status: Literal[
+        "invited", "accepted", "admitted", "declined", "removed", "expired", "ended"
+    ]
+    capabilities: list[
+        Literal[
+            "view",
+            "note",
+            "voice",
+            "control.answer",
+            "control.session",
+            "device.view",
+            "device.control",
+        ]
+    ]
+
+
+class SharingSet(BaseModel):
+    """
+    Host: pause (on: false) or resume what guests see. While paused, nothing of the call reaches a guest, then or on a later replay.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["sharing.set"]
+    on: bool
+
+
+class SeatJoin(BaseModel):
+    """
+    Guest: the first message on /v1/seat. last_seq is the last host seq the guest processed (0: none), so a reconnect continues where it stopped.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.join"]
+    session_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    seat_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    last_seq: Annotated[int, Field(ge=0)]
+    client_version: str
+
+
+class SeatCommand(BaseModel):
+    """
+    Guest: an action on the call, carried out by the host's session if the seat may (seat.command.result says how it went). note: text for the host alone, never for the call, the transcript or the answer models.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.command"]
+    command_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    kind: Literal["note"]
+    text: Annotated[str, Field(max_length=1000, min_length=1)]
+
+
+class SeatsUpdate(BaseModel):
+    """
+    Host: the call's guest seats changed (invited, accepted, admitted, permissions, removed). The whole list.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seats.update"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    seats: list[SeatInfo]
+
+
+class SeatNote(BaseModel):
+    """
+    Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or the answer models.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.note"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    seat_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    note_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    name: str
+    text: str
+    at: AwareDatetime
+
+
+class Sharing(BaseModel):
+    """
+    Host: guests see the call (on) or nothing of it (off), after sharing.set.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["sharing"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    on: bool
+
+
+class SeatReady(BaseModel):
+    """
+    Guest: the seat is open. seq is the host's position the guest starts from; a seat.snapshot follows.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.ready"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    session_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    seat_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    host_name: str
+    mode: Literal["interview", "standup", "meeting"]
+    """
+    Session mode; picks the session pack and prompt template.
+    """
+    title: str | None = None
+    started_at: AwareDatetime | None = None
+    capabilities: list[
+        Literal[
+            "view",
+            "note",
+            "voice",
+            "control.answer",
+            "control.session",
+            "device.view",
+            "device.control",
+        ]
+    ]
+    host_connected: bool
+    sharing: bool
+
+
+class SeatSnapshot(BaseModel):
+    """
+    Guest: the call so far, as the overlay shows it (each message a ServerMessage the guest may see, answer chunks merged), up to seq. Replaces everything the guest showed before; live messages after seq follow.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.snapshot"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    messages: list[dict[str, Any]]
+
+
+class SeatHost(BaseModel):
+    """
+    Guest: the host's app lost (connected: false) or regained its connection to the call, or paused or resumed sharing; the call itself goes on.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.host"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    connected: bool
+    sharing: bool
+
+
+class SeatUpdate(BaseModel):
+    """
+    Guest: the host changed what this seat may do.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.update"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    capabilities: list[
+        Literal[
+            "view",
+            "note",
+            "voice",
+            "control.answer",
+            "control.session",
+            "device.view",
+            "device.control",
+        ]
+    ]
+
+
+class SeatCommandResult(BaseModel):
+    """
+    Guest: what became of a seat.command. ok: done. denied: the seat may not (any more). expired: it waited too long (the host was reconnecting). rate_limited: too many too fast. failed: it could not be done.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["seat.command.result"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    command_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    result: Literal["ok", "denied", "expired", "rate_limited", "failed"]
 
 
 class ClientOutdated(BaseModel):
@@ -657,6 +924,9 @@ class ClientMessage(
         | ModeSet
         | AnswerStyleSet
         | SessionEnd
+        | SharingSet
+        | SeatJoin
+        | SeatCommand
     ]
 ):
     root: Annotated[
@@ -670,7 +940,10 @@ class ClientMessage(
         | LatencyReport
         | ModeSet
         | AnswerStyleSet
-        | SessionEnd,
+        | SessionEnd
+        | SharingSet
+        | SeatJoin
+        | SeatCommand,
         Field(discriminator="type"),
     ]
     """
@@ -691,6 +964,14 @@ class ServerMessage(
         | Status
         | AuthExpiring
         | ServerError
+        | SeatsUpdate
+        | SeatNote
+        | Sharing
+        | SeatReady
+        | SeatSnapshot
+        | SeatHost
+        | SeatUpdate
+        | SeatCommandResult
     ]
 ):
     root: Annotated[
@@ -704,7 +985,15 @@ class ServerMessage(
         | AnswerError
         | Status
         | AuthExpiring
-        | ServerError,
+        | ServerError
+        | SeatsUpdate
+        | SeatNote
+        | Sharing
+        | SeatReady
+        | SeatSnapshot
+        | SeatHost
+        | SeatUpdate
+        | SeatCommandResult,
         Field(discriminator="type"),
     ]
     """

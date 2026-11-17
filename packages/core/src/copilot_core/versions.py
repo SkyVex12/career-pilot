@@ -60,6 +60,17 @@ def knows_respond(client: str | None) -> bool:
     return v is None or v[:3] > LAST_WITHOUT_RESPOND
 
 
+# The last release without guest seats: it would warn on every seats.update, seat.note and
+# sharing message, so the gateway sends them only to later apps (which are also the only
+# ones that can invite).
+LAST_WITHOUT_SEATS = (0, 2, 14)
+
+
+def knows_seats(client: str | None) -> bool:
+    v = desktop_version(client)
+    return v is None or v[:3] > LAST_WITHOUT_SEATS
+
+
 def knows_4426(client: str) -> bool:
     v = desktop_version(client)
     return v is None or v[:3] > LAST_WITHOUT_4426

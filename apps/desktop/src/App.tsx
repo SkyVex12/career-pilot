@@ -21,7 +21,7 @@ const SettingsScreen = lazy(() => import("./SettingsScreen").then((m) => ({ defa
 const DebugPanel = lazy(() => import("./Debug").then((m) => ({ default: m.DebugPanel })));
 
 export default function App() {
-  const [session] = useSession();
+  const [session, dispatch] = useSession();
   const [tab, setTab] = useState<Tab>("start");
   // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
   // refresh in the background (useOnShow) instead of starting from nothing.
@@ -152,6 +152,7 @@ export default function App() {
             "start",
             <CallScreen
               session={session}
+              dispatch={dispatch}
               tokenSet={tokenSet}
               environment={environment}
               release={Boolean(view?.release)}

@@ -55,7 +55,11 @@
     },
     { "type": "mode.set", "mode": "meeting" },
     { "type": "answer_style.set", "answer_style": "paragraph" },
-    { "type": "session.end" }
+    { "type": "session.end" },
+    { "type": "question.force", "text": "Ask about the ledger migration", "note_id": "0192f3d0-0000-7a00-8000-0000000000a1" },
+    { "type": "sharing.set", "on": false },
+    { "type": "seat.join", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "last_seq": 0, "client_version": "desktop-0.2.15" },
+    { "type": "seat.command", "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "kind": "note", "text": "Mention the 40% latency cut" }
   ],
   "server": [
     {
@@ -170,7 +174,17 @@
     { "type": "status", "seq": 416, "component": "stt", "state": "reconnecting", "message": "Reconnecting transcription" },
     { "type": "auth.expiring", "seq": 417, "expires_in_s": 120 },
     { "type": "error", "seq": 418, "code": "rate_limited", "message": "Too many requests", "fatal": true, "retry_after_ms": 1000 },
-    { "type": "error", "seq": 419, "code": "bad_message", "message": "Unknown message type", "fatal": false }
+    { "type": "error", "seq": 419, "code": "bad_message", "message": "Unknown message type", "fatal": false },
+    { "type": "seats.update", "seq": 420, "seats": [{ "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "name": "Pavlo", "status": "admitted", "capabilities": ["view", "note"] }] },
+    { "type": "seats.update", "seq": 421, "seats": [] },
+    { "type": "seat.note", "seq": 422, "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "note_id": "0192f3d0-0000-7a00-8000-0000000000a1", "name": "Pavlo", "text": "Mention the 40% latency cut", "at": "2026-11-17T15:04:05Z" },
+    { "type": "sharing", "seq": 423, "on": false },
+    { "type": "seat.ready", "seq": 412, "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "host_name": "Alex", "mode": "interview", "title": "Acme onsite", "started_at": "2026-11-17T15:00:00Z", "capabilities": ["view", "note"], "host_connected": true, "sharing": true },
+    { "type": "seat.ready", "seq": 1, "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "host_name": "Alex", "mode": "standup", "capabilities": ["view"], "host_connected": false, "sharing": true },
+    { "type": "seat.snapshot", "seq": 412, "messages": [{ "type": "transcript.final", "seq": 400, "channel": "them", "seg_id": 7, "text": "Tell me about a migration.", "start_ms": 1000, "end_ms": 2400 }] },
+    { "type": "seat.host", "seq": 412, "connected": false, "sharing": true },
+    { "type": "seat.update", "seq": 412, "capabilities": ["view"] },
+    { "type": "seat.command.result", "seq": 412, "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "result": "ok" }
   ],
   "invalid": [
     { "side": "client", "why": "unknown type", "message": { "type": "session.pause" } },

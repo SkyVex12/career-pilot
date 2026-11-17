@@ -18,7 +18,10 @@ export type ClientMessage =
   | LatencyReport
   | ModeSet
   | AnswerStyleSet
-  | SessionEnd;
+  | SessionEnd
+  | SharingSet
+  | SeatJoin
+  | SeatCommand;
 /**
  * Session mode; picks the session pack and prompt template.
  */
@@ -49,7 +52,15 @@ export type ServerMessage =
   | AnswerError
   | Status
   | AuthExpiring
-  | ServerError;
+  | ServerError
+  | SeatsUpdate
+  | SeatNote
+  | Sharing
+  | SeatReady
+  | SeatSnapshot
+  | SeatHost
+  | SeatUpdate
+  | SeatCommandResult;
 /**
  * Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
  */
@@ -70,6 +81,19 @@ export type QuestionType =
  * Audio source: them = system output (the other side), me = microphone (the user).
  */
 export type Channel = "them" | "me";
+export type SeatStatus =
+  "invited" | "accepted" | "admitted" | "declined" | "removed" | "expired" | "ended";
+/**
+ * What a guest seat may do. view: follow the overlay (always granted). note: typed notes to the host. The others are for later phases and are refused for now.
+ */
+export type Capability =
+  | "view"
+  | "note"
+  | "voice"
+  | "control.answer"
+  | "control.session"
+  | "device.view"
+  | "device.control";
 
 /**
  * First message of a new session.
@@ -148,6 +172,10 @@ export interface QuestionForce {
    * answer (the default): answer it as a question. respond: suggest a reply to what was just said (or to text), as the detector's respond type.
    */
   kind?: "answer" | "respond";
+  /**
+   * UUID (v7 for ids we generate), lowercase hex with dashes.
+   */
+  note_id?: string;
 }
 /**
  * Coding question from the screen. The whole message is at most 2 MB.
@@ -215,6 +243,32 @@ export interface SessionEnd {
    * Whether to write the post-call outputs (summary, standup report, commitments). Absent means true; false keeps the transcript only.
    */
   summarize?: boolean;
+}
+/**
+ * Host: pause (on: false) or resume what guests see. While paused, nothing of the call reaches a guest, then or on a later replay.
+ */
+export interface SharingSet {
+  type: "sharing.set";
+  on: boolean;
+}
+/**
+ * Guest: the first message on /v1/seat. last_seq is the last host seq the guest processed (0: none), so a reconnect continues where it stopped.
+ */
+export interface SeatJoin {
+  type: "seat.join";
+  session_id: Uuid;
+  seat_id: Uuid;
+  last_seq: number;
+  client_version: string;
+}
+/**
+ * Guest: an action on the call, carried out by the host's session if the seat may (seat.command.result says how it went). note: text for the host alone, never for the call, the transcript or the answer models.
+ */
+export interface SeatCommand {
+  type: "seat.command";
+  command_id: Uuid;
+  kind: "note";
+  text: string;
 }
 /**
  * Session accepted; audio may flow.
@@ -386,11 +440,99 @@ export interface ServerError {
   fatal: boolean;
   retry_after_ms?: number;
 }
+/**
+ * Host: the call's guest seats changed (invited, accepted, admitted, permissions, removed). The whole list.
+ */
+export interface SeatsUpdate {
+  type: "seats.update";
+  seq: Seq;
+  seats: SeatInfo[];
+}
+/**
+ * One guest seat as the host sees it.
+ */
+export interface SeatInfo {
+  seat_id: Uuid;
+  name: string;
+  status: SeatStatus;
+  capabilities: Capability[];
+}
+/**
+ * Host: a guest's note. Only the host sees it; it never reaches the call, the transcript or the answer models.
+ */
+export interface SeatNote {
+  type: "seat.note";
+  seq: Seq;
+  seat_id: Uuid;
+  note_id: Uuid;
+  name: string;
+  text: string;
+  at: string;
+}
+/**
+ * Host: guests see the call (on) or nothing of it (off), after sharing.set.
+ */
+export interface Sharing {
+  type: "sharing";
+  seq: Seq;
+  on: boolean;
+}
+/**
+ * Guest: the seat is open. seq is the host's position the guest starts from; a seat.snapshot follows.
+ */
+export interface SeatReady {
+  type: "seat.ready";
+  seq: Seq;
+  session_id: Uuid;
+  seat_id: Uuid;
+  host_name: string;
+  mode: Mode;
+  title?: string;
+  started_at?: string;
+  capabilities: Capability[];
+  host_connected: boolean;
+  sharing: boolean;
+}
+/**
+ * Guest: the call so far, as the overlay shows it (each message a ServerMessage the guest may see, answer chunks merged), up to seq. Replaces everything the guest showed before; live messages after seq follow.
+ */
+export interface SeatSnapshot {
+  type: "seat.snapshot";
+  seq: Seq;
+  messages: {}[];
+}
+/**
+ * Guest: the host's app lost (connected: false) or regained its connection to the call, or paused or resumed sharing; the call itself goes on.
+ */
+export interface SeatHost {
+  type: "seat.host";
+  seq: Seq;
+  connected: boolean;
+  sharing: boolean;
+}
+/**
+ * Guest: the host changed what this seat may do.
+ */
+export interface SeatUpdate {
+  type: "seat.update";
+  seq: Seq;
+  capabilities: Capability[];
+}
+/**
+ * Guest: what became of a seat.command. ok: done. denied: the seat may not (any more). expired: it waited too long (the host was reconnecting). rate_limited: too many too fast. failed: it could not be done.
+ */
+export interface SeatCommandResult {
+  type: "seat.command.result";
+  seq: Seq;
+  command_id: Uuid;
+  result: "ok" | "denied" | "expired" | "rate_limited" | "failed";
+}
 
 /**
- * WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume).
+ * WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume). Guest seats only: 4411 the host removed the guest (do not reconnect); 4412 the seat is not open (not admitted, closed, or another session's; do not reconnect).
  */
-export type CloseCode = 1000 | 1001 | 4401 | 4403 | 4408 | 4409 | 4410 | 4426 | 4429 | 4500;
+export type CloseCode =
+  1000 | 1001 | 4401 | 4403 | 4408 | 4409 | 4410 | 4411 | 4412 | 4426 | 4429 | 4500;
 
 /**
  * The app is older than the oldest version the server supports (its min_client_version setting). The REST API answers any request with HTTP 426 and this as the JSON body; the gateway sends an error with code client_outdated (this message) before closing with 4426. The app names its version as desktop-<version>: in session.start's client_version and in the x-copilot-client header of API requests.

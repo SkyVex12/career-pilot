@@ -368,6 +368,14 @@ async def session_flush(job: Job, ctx: Ctx) -> None:
 async def session_ended(job: Job, ctx: Ctx) -> None:
     sid = UUID(job.payload["session_id"])
     uid = job.uid
+    # Guest seats end with the call, whatever else happens to it (ARCHITECTURE.md, "Guest
+    # seats"): no guest reads anything of it afterwards. The gateway has closed them already.
+    async with ctx.user(uid) as conn:
+        await conn.execute(
+            "update app.session_seats set status = 'ended', ended_at = now(), rev = rev + 1"
+            " where session_id = $1 and status in ('invited', 'accepted', 'admitted')",
+            sid,
+        )
     result = await flush_log(ctx, uid, sid, None, final=True)
     if not result.session_exists:
         return

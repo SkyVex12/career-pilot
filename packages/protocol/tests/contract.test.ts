@@ -66,6 +66,12 @@ function clientSummary(m: ClientMessage): string {
       return m.answer_style;
     case "session.end":
       return "end";
+    case "sharing.set":
+      return `${m.on}`;
+    case "seat.join":
+      return `${m.session_id} ${m.seat_id} ${m.last_seq} ${m.client_version}`;
+    case "seat.command":
+      return `${m.command_id} ${m.kind} ${m.text}`;
     default:
       return assertNever(m);
   }
@@ -95,6 +101,22 @@ function serverSummary(m: ServerMessage): string {
       return `${m.seq} ${m.expires_in_s}`;
     case "error":
       return `${m.seq} ${m.code} ${m.fatal} ${m.retry_after_ms ?? ""}`;
+    case "seats.update":
+      return `${m.seq} ${m.seats.map((x) => `${x.seat_id}:${x.status}:${x.capabilities.join("+")}`).join(",")}`;
+    case "seat.note":
+      return `${m.seq} ${m.seat_id} ${m.note_id} ${m.name} ${m.at} ${m.text}`;
+    case "sharing":
+      return `${m.seq} ${m.on}`;
+    case "seat.ready":
+      return `${m.seq} ${m.seat_id} ${m.host_name} ${m.mode} ${m.capabilities.join("+")} ${m.host_connected} ${m.sharing}`;
+    case "seat.snapshot":
+      return `${m.seq} ${m.messages.length}`;
+    case "seat.host":
+      return `${m.seq} ${m.connected} ${m.sharing}`;
+    case "seat.update":
+      return `${m.seq} ${m.capabilities.join("+")}`;
+    case "seat.command.result":
+      return `${m.seq} ${m.command_id} ${m.result}`;
     default:
       return assertNever(m);
   }

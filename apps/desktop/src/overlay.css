@@ -657,3 +657,70 @@ html[data-window="overlay"] #root {
   color: var(--ov-text-2);
   font-size: 13px;
 }
+
+/* Guest seats (seats.tsx). The host: who is watching, and the guests' notes in their own
+   lane, set apart from the answers by a dashed edge and a label that says only the host sees
+   them. The guest: the notice that this is someone else's private call. */
+.ov-watching {
+  padding: 0 var(--space-3);
+  border: 1px solid rgb(141 180 255 / 0.4);
+  border-radius: 999px;
+  color: var(--ov-fast);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ov-watching.is-paused {
+  border-color: rgb(242 184 75 / 0.5);
+  color: var(--ov-warn);
+}
+.ov-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--ov-line);
+}
+.ov-note {
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed rgb(195 166 255 / 0.55);
+  border-radius: var(--radius-md);
+  background: rgb(195 166 255 / 0.08);
+}
+.ov-note-from {
+  margin: 0 0 var(--space-2);
+  color: var(--ov-deep);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+.ov-note-text {
+  margin: 0 0 var(--space-3);
+  color: var(--ov-text);
+  font-size: var(--fs-tx);
+  white-space: pre-wrap;
+}
+.ov-note-tools {
+  display: flex;
+  gap: var(--space-2);
+}
+.ov-note-result {
+  align-self: center;
+  color: var(--ov-text-2);
+  font-size: 12px;
+}
+.ov-guest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: rgb(141 180 255 / 0.12);
+  border-bottom: 1px solid rgb(141 180 255 / 0.35);
+  color: var(--ov-text);
+  font-size: 13px;
+}
+.ov-guest > span {
+  flex: 1;
+}
+.ov-menu .seat-panel {
+  color: var(--ov-text);
+}
