@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { Numbered, UiEvent } from "../src/api";
 import Overlay from "../src/Overlay";
 import { GuestInvites, openSeats, watchingText } from "../src/seats";
-import { badge, initial, reduce, type SessionView } from "../src/session";
+import { badge, initial, postCallFor, reduce, type SessionView } from "../src/session";
 import { ipc } from "./ipc";
 
 let n = 0;
@@ -100,6 +100,28 @@ describe("the session reducer", () => {
     s = reduce(s, { type: "note_asked", id: "n1" });
     expect(s.notes[0].asked).toBe(true);
     expect(s.seat).toBeNull();
+  });
+});
+
+describe("when a guest stops watching", () => {
+  const stop = (reason: "left" | "ended") => ev({ kind: "stopped", reason });
+
+  it("never opens a post-call screen: the call was someone else's", () => {
+    n = 0;
+    expect(postCallFor(fold([live(), ready(), snapshot(), stop("left")]))).toBeNull();
+    expect(postCallFor(fold([live(), ready(), snapshot(), stop("ended")]))).toBeNull();
+    // The host's own call that ended still gets one.
+    n = 0;
+    expect(postCallFor(fold([live(), stop("ended")]))).toBe("s1");
+  });
+
+  it("the overlay drops the guest's notice and note box", async () => {
+    n = 0;
+    start([live(), ready(), snapshot()]);
+    await screen.findByText(/You are viewing Alex's private call/);
+    await act(() => emit("copilot://event", stop("left")));
+    expect(screen.queryByText(/You are viewing Alex's private call/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Note to Alex" })).not.toBeInTheDocument();
   });
 });
 

@@ -242,7 +242,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
 
 /** Always shown while watching: whose call this is, and that it is private. */
 export function GuestNotice({ s }: { s: SessionView }) {
-  if (!s.seat) return null;
+  if (!s.seat || !s.running) return null;
   const host = s.seat.hostName;
   return (
     <div className="ov-guest" role="note">
@@ -260,7 +260,7 @@ export function GuestNotice({ s }: { s: SessionView }) {
 export function GuestNoteBox({ s, dispatch }: { s: SessionView; dispatch: Dispatcher }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  if (!s.seat || !s.seat.capabilities.includes("note")) return null;
+  if (!s.seat || !s.running || !s.seat.capabilities.includes("note")) return null;
   const live = s.connection?.state === "live";
   const last = s.sentNotes[s.sentNotes.length - 1];
   const send = () => {

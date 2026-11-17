@@ -34,6 +34,8 @@ pub enum StopReason {
     Outdated,
     /// Guest seats only. 4411: the host removed this guest.
     SeatRemoved,
+    /// Guest seats only: the guest left. The host's call goes on.
+    Left,
     /// Guest seats only. 4412: the seat is not open (not admitted, closed, expired, seats off).
     SeatClosed,
 }
@@ -102,7 +104,7 @@ pub fn on_close(code: Option<u16>, ctx: CloseContext) -> CloseAction {
 pub fn on_seat_close(code: Option<u16>, leaving: bool, refreshed_after_401: bool) -> CloseAction {
     use CloseAction::{Reconnect, Stop};
     if leaving {
-        return Stop(StopReason::Ended);
+        return Stop(StopReason::Left);
     }
     let again = |delay| Reconnect { resume: true, delay, refresh_token: false };
     match code.and_then(CloseCode::from_code) {
@@ -144,7 +146,8 @@ mod tests {
             assert_eq!(on_seat_close(code, false, false), want, "close {code:?}");
         }
         assert_eq!(on_seat_close(Some(4401), false, true), CloseAction::Stop(StopReason::Unauthorized));
-        assert_eq!(on_seat_close(None, true, false), CloseAction::Stop(StopReason::Ended));
+        assert_eq!(on_seat_close(None, true, false), CloseAction::Stop(StopReason::Left));
+        assert_eq!(on_seat_close(Some(1000), true, false), CloseAction::Stop(StopReason::Left));
     }
 
     fn live() -> CloseContext {
