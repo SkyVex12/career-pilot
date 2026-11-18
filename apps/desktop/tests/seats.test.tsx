@@ -10,6 +10,7 @@ import Overlay from "../src/Overlay";
 import { GuestInvites, deviceProblem, openSeats, voiceIdentities, watchingText } from "../src/seats";
 import { badge, initial, postCallFor, reduce, type SessionView } from "../src/session";
 import { VOICE_OFF, type VoiceCmd, type VoiceStatus } from "../src/voice";
+import { SCREEN_OFF } from "../src/screen";
 import { ipc } from "./ipc";
 
 let n = 0;
@@ -177,7 +178,7 @@ describe("the host's overlay", () => {
 
   it("shows who is watching, and notes as a chat apart from the answers, with Ask AI", async () => {
     start(hostEvents());
-    expect(await screen.findByText(/Pavlo/, { selector: ".ov-watching" })).toHaveAttribute("role", "status");
+    expect(await screen.findByRole("button", { name: "Pavlo" })).toHaveAttribute("aria-haspopup", "dialog"); // the Guests button
     const lane = await screen.findByRole("region", { name: "Notes from guests" });
     expect(within(lane).getByRole("heading", { name: "Notes from guests · only you see them" })).toBeInTheDocument();
     expect(within(lane).getByText("Ask about on-call")).toBeInTheDocument();
@@ -191,16 +192,31 @@ describe("the host's overlay", () => {
     expect(await within(lane).findByRole("button", { name: "Asked" })).toBeDisabled();
   });
 
-  it("invites from the gear", async () => {
+  it("invites from the Guests button, with what the guest may do chosen there and remembered", async () => {
+    window.localStorage.removeItem("seats.invite-caps");
+    ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
     ipc.api("POST", /^\/sessions\/s1\/seats$/, () => ({ status: "sent" }));
     start(hostEvents());
-    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Guest's Copilot email" }), "pavlo@example.com");
-    await userEvent.click(screen.getByRole("button", { name: "Invite" }));
+    expect(screen.queryByText("Guests", { selector: ".ov-menu-label" })).toBeNull(); // not in the gear any more
+    await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Guests" });
+    const chips = within(dialog).getByRole("group", { name: "What a new guest may do" });
+    // Notes only, the first time.
+    expect(within(chips).getByRole("button", { name: "Notes" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(within(chips).getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false"));
+    // Control brings the screen with it.
+    await userEvent.click(within(chips).getByRole("button", { name: "Control" }));
+    expect(within(chips).getByRole("button", { name: "Screen" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")).toEqual([
-      { method: "POST", path: "/sessions/s1/seats", body: { email: "pavlo@example.com", capabilities: ["view", "note"] } },
+      { method: "POST", path: "/sessions/s1/seats", body: { email: "dana@example.com", capabilities: ["view", "note", "device.view", "device.control"] } },
     ]);
     expect(await screen.findByText(/they can join from their Call screen now/)).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("seats.invite-caps") ?? "[]")).toEqual(["note", "device.view", "device.control"]);
+    // Escape closes it.
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Guests" })).toBeNull();
   });
 });
 
@@ -272,7 +288,18 @@ describe("guests' voice", () => {
     expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
   });
 
-  it("the host may pick any device, warned; an error says why", async () => {
+  it("turns on by itself once a guest may talk, on Windows' default output the first time", async () => {
+    window.localStorage.removeItem("seats.voice-device");
+    n = 0;
+    start([
+      live(),
+      srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "voice"], connected: true }] }),
+    ]);
+    await waitFor(() => expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "", sessionId: "s1", allowed: [`seat:${SEAT}`] }));
+    expect(cmds.filter((c) => c.cmd === "host_on")).toHaveLength(1); // once a call
+  });
+
+  it("the host may switch to any device while it plays, warned; an error says why, with Try again", async () => {
     n = 0;
     ipc.handle("voice_devices", () => [
       { id: "wasapi:spk", name: "Speakers (Realtek)", form_factor: "speakers", private: false, call: true },
@@ -283,25 +310,26 @@ describe("guests' voice", () => {
       live(),
       srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "voice"], connected: true }] }),
     ]);
-    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    const outputs = [
+      { deviceId: "d-spk", label: "Speakers (Realtek)" },
+      { deviceId: "d-hp", label: "Headphones (USB)" },
+      { deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" }, // Chromium adds the USB id
+    ];
+    await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
     await waitFor(() => expect(cmds).toContainEqual({ cmd: "outputs" }));
-    await voiceStatus({
-      outputs: [
-        { deviceId: "d-spk", label: "Speakers (Realtek)" },
-        { deviceId: "d-hp", label: "Headphones (USB)" },
-        { deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" }, // Chromium adds the USB id
-      ],
-    });
+    await voiceStatus({ host: "on", device: "", outputs });
     const pick = await screen.findByRole("combobox", { name: "Headphones for guests' voice" });
     // Any device can be picked, the call's own included; one that isn't headphones is warned about.
     expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) ⚠ not headphones" })).toBeEnabled();
     expect(within(pick).getByRole("option", { name: "Speakers (Logi USB Headset) (046d:0a64) ⚠ not headphones" })).toBeEnabled();
-    expect(within(pick).getByRole("option", { name: "Headphones (USB)" })).toBeEnabled();
+    expect(within(pick).getByRole("option", { name: "Windows default output" })).toBeEnabled();
     await userEvent.selectOptions(pick, "d-hp");
-    await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    expect(cmds).toContainEqual({ cmd: "host_device", deviceId: "d-hp" });
+    expect(window.localStorage.getItem("seats.voice-device")).toBe("d-hp"); // the next call starts there
+    await voiceStatus({ host: "off", error: "Voice was disconnected.", outputs });
+    expect(await screen.findByText(/Voice was disconnected\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: [`seat:${SEAT}`] });
-    await voiceStatus({ error: "Voice was disconnected." });
-    expect(await screen.findByText("Voice was disconnected.")).toBeInTheDocument();
   });
 });
 
@@ -314,28 +342,47 @@ describe("the guest panel", () => {
     ];
   };
 
+  const open = async (name = "Blue Angel") => {
+    await userEvent.click(await screen.findByRole("button", { name }));
+    return screen.findByRole("dialog", { name: "Guests" });
+  };
+
   it("offers Voice only where the server can carry it", async () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: false }));
     start(events());
-    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    await open();
     const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
-    expect(within(perms).getByRole("switch", { name: /Notes/ })).toBeInTheDocument();
-    expect(within(perms).queryByRole("switch", { name: /Voice/ })).not.toBeInTheDocument();
+    expect(within(perms).getByRole("button", { name: "Notes" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(perms).queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
   });
 
-  it("with voice set up, each guest has a Voice switch, and an error shows by that guest", async () => {
+  it("with voice set up, each guest has a Voice chip, and an error shows by that guest", async () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true }));
     ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => {
       throw "Voice is not set up on this server. (HTTP 422)";
     });
     start(events());
-    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    await open();
     const card = (await screen.findByRole("group", { name: "What Blue Angel may do" })).closest("li") as HTMLElement;
-    await userEvent.click(await within(card).findByRole("switch", { name: /Voice/ }));
+    await userEvent.click(await within(card).findByRole("button", { name: "Voice" }));
     expect(await within(card).findByRole("alert")).toHaveTextContent("Voice is not set up on this server.");
   });
 
-  it("with the screen set up, a Screen switch grants device.view, and Your screen offers to share", async () => {
+  it("the host's Stop takes the guest's Control away, so it stays stopped until given again", async () => {
+    ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => ({}));
+    n = 0;
+    start([
+      live(),
+      srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Blue Angel", status: "admitted", capabilities: ["view", "device.view", "device.control"], connected: true }] }),
+    ]);
+    await screen.findByRole("button", { name: "Blue Angel" });
+    await act(() => emit("screen:status", { ...SCREEN_OFF, host: "on", surface: "monitor", stopped: [{ identity: `seat:${SEAT}`, name: "Blue Angel" }] }));
+    await waitFor(() =>
+      expect(ipc.apiCalls("PATCH")).toEqual([{ method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "device.view"] } }]),
+    );
+  });
+
+  it("with the screen set up, Screen and Control chips grant it, and Your screen offers to share", async () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
     ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => ({}));
     n = 0;
@@ -343,16 +390,16 @@ describe("the guest panel", () => {
       live(),
       srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Blue Angel", status: "admitted", capabilities: ["view", "note", "device.view"], connected: true }] }),
     ]);
-    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    await open();
     const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
-    const sw = await within(perms).findByRole("switch", { name: /Screen/ });
-    expect(sw).toBeChecked();
-    await userEvent.click(sw);
+    const chip = await within(perms).findByRole("button", { name: "Screen" });
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(chip);
     expect(ipc.apiCalls("PATCH")).toEqual([
       { method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "note"] } },
     ]);
-    const control = within(perms).getByRole("switch", { name: /Control/ });
-    expect(control).not.toBeChecked();
+    const control = within(perms).getByRole("button", { name: "Control" });
+    expect(control).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(control);
     expect(ipc.apiCalls("PATCH")[1]).toEqual({
       method: "PATCH",
@@ -360,7 +407,8 @@ describe("the guest panel", () => {
       body: { capabilities: ["view", "note", "device.view", "device.control"] },
     });
     const yours = screen.getByRole("region", { name: "Your screen" });
-    expect(within(yours).getByText(/Blue Angel may see your screen once you share it/)).toBeInTheDocument();
-    expect(within(yours).getByRole("button", { name: "Share my screen" })).toBeEnabled();
+    expect(within(yours).getByText(/Blue Angel will see it/)).toBeInTheDocument();
+    expect(within(yours).getByRole("button", { name: "Share screen" })).toBeEnabled();
   });
+
 });

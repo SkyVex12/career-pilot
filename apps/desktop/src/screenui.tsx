@@ -1,15 +1,16 @@
 // Guest seats' screen in the UI (screen.ts; ARCHITECTURE.md, "Guest seats", phases 4 and 5).
 //
-// The host's side: "Your screen" in the guest panel (Share my screen, Stop, and for each guest
-// who may control: Let them control, Stop control), and chips in the overlay's header while
-// the screen is shared, while a guest controls it, and when a guest asks to, so the host always
-// knows and is one click (or Ctrl+Alt+End) from stopping it.
+// The host's side: "Your screen" in the guest panel (Share screen, Stop sharing, Stop control),
+// and chips in the overlay's header while the screen is shared and while a guest controls it,
+// so the host always knows and is one click (or Ctrl+Alt+End) from stopping it. A guest with
+// Control controls as soon as the host shares a whole screen (screen.ts); the host's Stop takes
+// their Control away, which the header's chip does here.
 // The guest's side: the host's screen on the Call screen while watching, full screen on a
-// click; with control, Ask to control, and while the host lets them, their mouse and keys on
-// the picture go to the host's computer.
+// click; with Control, their mouse and keys on the picture go to the host's computer, Stop
+// controlling gives it back and Take control takes it again.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import type { RemoteTrack } from "livekit-client";
-import { inTauri } from "./api";
+import { inTauri, rest } from "./api";
 import {
   GUEST_OFF,
   GuestScreen,
@@ -69,9 +70,8 @@ export function screenControllersOf(s: SessionView): Person[] {
     .map((x) => ({ identity: `seat:${x.seat_id}`, name: x.name }));
 }
 
-const SURFACE: Record<string, string> = { monitor: "your whole screen", window: "a window", browser: "a tab" };
-
-/** The guest panel's "Your screen": shown once a guest may see it. */
+/** The guest panel's "Your screen": shown once a guest may see it. One button to share; then
+ * who controls, and the one thing to do about it. */
 export function HostScreenSection({ s }: { s: SessionView }) {
   const viewers = screenViewers(s);
   const controllers = screenControllersOf(s);
@@ -81,37 +81,38 @@ export function HostScreenSection({ s }: { s: SessionView }) {
   const sid = s.sessionId;
   const on = status.host === "on";
   const whole = status.surface === "monitor";
+  const names = (people: { name: string }[]) => people.map((p) => p.name).join(" and ");
+  const asking = status.asking.find((a) => a.identity !== status.controller?.identity);
   return (
     <section className="seat-section seat-screen" aria-label="Your screen">
-      <h3 className="seat-section-title">Your screen</h3>
       {on ? (
         <>
-          <span className="seat-hint">
-            Sharing {SURFACE[status.surface ?? ""] ?? "your screen"}
-            {viewers.length > 0 ? ` with ${viewers.join(" and ")}` : ""}. The overlay is never shown.
-          </span>
-          {controllers.length > 0 && !whole && <span className="seat-hint">Share a whole screen to let a guest control it.</span>}
-          {whole &&
-            controllers.map((p) => {
-              const controlling = status.controller?.identity === p.identity;
-              const asking = status.asking.some((a) => a.identity === p.identity);
-              return (
-                <div key={p.identity} className="seat-control">
-                  <span className="seat-hint">
-                    {controlling ? `${p.name} is controlling your screen. ${STOP_CONTROL_KEY} stops it anywhere.` : asking ? `${p.name} asks to control your screen.` : `${p.name} may control your screen if you let them.`}
-                  </span>
-                  {controlling ? (
-                    <Button size="sm" variant="danger" onClick={() => void endControl()}>
-                      Stop control
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant={asking ? "primary" : "secondary"} onClick={() => void allowControl(p)}>
-                      Let {p.name} control
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
+          <div className="seat-invite">
+            <span className="seat-hint seat-grow">Sharing {whole ? "your screen" : "a window"}{viewers.length > 0 ? ` with ${viewers.join(" and ")}` : ""}.</span>
+            <Button size="sm" variant="ghost" onClick={() => void stopScreen()}>
+              Stop sharing
+            </Button>
+          </div>
+          {status.controller ? (
+            <div className="seat-invite seat-control">
+              <span className="seat-hint seat-grow">
+                {status.controller.name} controls it. {STOP_CONTROL_KEY} stops it anywhere.
+              </span>
+              <Button size="sm" variant="danger" onClick={() => void endControl()}>
+                Stop control
+              </Button>
+            </div>
+          ) : (
+            controllers.length > 0 && !whole && <span className="seat-hint">A window is view only. Share your whole screen to give {names(controllers)} control.</span>
+          )}
+          {asking && (
+            <div className="seat-invite">
+              <span className="seat-hint seat-grow">{asking.name} asks to take over.</span>
+              <Button size="sm" onClick={() => void allowControl(asking)}>
+                Let {asking.name} control
+              </Button>
+            </div>
+          )}
           {status.choose && (
             <div className="seat-invite" role="group" aria-label="Which screen you share">
               <select className="ui-input" aria-label="Which screen you share" value={monitor} onChange={(e) => setMonitor(e.target.value)}>
@@ -124,28 +125,21 @@ export function HostScreenSection({ s }: { s: SessionView }) {
                 ))}
               </select>
               <Button size="sm" disabled={!monitor} onClick={() => status.choose && void allowControl(status.choose.person, monitor)}>
-                Let {status.choose.person.name} control
+                OK
               </Button>
             </div>
           )}
-          <div className="seat-invite">
-            <Button size="sm" variant="ghost" onClick={() => void stopScreen()}>
-              Stop sharing
-            </Button>
-          </div>
         </>
       ) : (
-        <>
-          <span className="seat-hint">
-            {viewers.join(" and ")} may see your screen once you share it. You choose a screen or a window; the overlay is never shown.
+        <div className="seat-invite">
+          <span className="seat-hint seat-grow">
+            {controllers.length > 0 ? `Pick your whole screen so ${names(controllers)} can control it.` : `${viewers.join(" and ")} will see it. The overlay is never shown.`}
           </span>
-          <div className="seat-invite">
-            {/* The picker must open from this click (screen.ts). */}
-            <Button size="sm" disabled={status.host === "starting"} onClick={() => void shareScreen(sid)}>
-              {status.host === "starting" ? "Choosing…" : "Share my screen"}
-            </Button>
-          </div>
-        </>
+          {/* The picker must open from this click (screen.ts). */}
+          <Button size="sm" disabled={status.host === "starting"} onClick={() => void shareScreen(sid)}>
+            {status.host === "starting" ? "Choosing…" : "Share screen"}
+          </Button>
+        </div>
       )}
       {status.error && (
         <p className="seat-error" role="alert">
@@ -170,6 +164,25 @@ export function ScreenChip({ s }: { s: SessionView }) {
   useEffect(() => {
     if (!s.running && status.host !== "off") void stopScreen();
   }, [s.running, status.host]);
+  // The host stopped control: the guests it held back lose Control, so it stays stopped until
+  // the host gives it again on their card.
+  const stoppedKey = status.stopped.map((p) => p.identity).join(",");
+  useEffect(() => {
+    const sid = s.sessionId;
+    if (!inTauri || !sid || !stoppedKey) return;
+    for (const identity of stoppedKey.split(",")) {
+      const seat = s.seats.find((x) => `seat:${x.seat_id}` === identity);
+      if (!seat?.capabilities.includes("device.control")) continue;
+      void rest
+        .setGuestCapabilities(
+          sid,
+          seat.seat_id,
+          seat.capabilities.filter((c) => c !== "device.control"),
+        )
+        .catch(() => undefined);
+    }
+    // Once per stop: `stoppedKey` changes when it does.
+  }, [stoppedKey]);
   if (status.host !== "on") return null;
   const asking = status.asking[0];
   return (
@@ -349,7 +362,7 @@ export function GuestScreenView({ s }: { s: SessionView }) {
         <span className="screen-view-actions">
           {watching && state.control && !state.controlling && (
             <Button size="sm" disabled={state.asked} onClick={() => void guest?.ask()}>
-              {state.asked ? "Asked…" : "Ask to control"}
+              {state.asked ? `Waiting for ${host}…` : "Take control"}
             </Button>
           )}
           {controlling && (

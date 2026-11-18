@@ -882,8 +882,9 @@ export const rest = {
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
   replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
-  inviteGuest: (sessionId: string, email: string, note: boolean) =>
-    call<{ status: string }>("POST", `/sessions/${sessionId}/seats`, { email, capabilities: note ? ["view", "note"] : ["view"] }),
+  /** Invite with what the guest may do besides watching (`view` is always included). */
+  inviteGuest: (sessionId: string, email: string, capabilities: string[]) =>
+    call<{ status: string }>("POST", `/sessions/${sessionId}/seats`, { email, capabilities: ["view", ...capabilities.filter((c) => c !== "view")] }),
   /** The call's seats, and whether this server can carry guests' voice and the host's screen. */
   seatsOf: (sessionId: string) => call<{ seats: HostSeat[]; voice?: boolean; screen?: boolean }>("GET", `/sessions/${sessionId}/seats`),
   admitGuest: (sessionId: string, seatId: string) => call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { admit: true }),

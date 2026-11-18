@@ -17,7 +17,7 @@ import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
-import { GuestNoteBox, GuestNotice, GuestPanel, GuestTalk, NotesLane, VoiceMute, WatchingChip } from "./seats";
+import { GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane, VoiceMute } from "./seats";
 import { startScreenHost } from "./screen";
 import { ScreenChip } from "./screenui";
 import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
@@ -182,7 +182,7 @@ export default function Overlay() {
     <div className={cx("ov", compact && "is-compact")} style={{ "--ov-alpha": opacity } as CSSProperties}>
       <header className="ov-head" data-tauri-drag-region>
         <StatusBadge s={s} />
-        {!guest && <WatchingChip s={s} />}
+        {!guest && <GuestsButton s={s} />}
         {!guest && <VoiceMute s={s} />}
         {!guest && <ScreenChip s={s} />}
         <span className="ov-speaking" data-tauri-drag-region>
@@ -208,7 +208,6 @@ export default function Overlay() {
           clickThrough={clickThrough}
           hotkeys={hotkeys}
           running={s.running}
-          guests={!guest && s.running ? <GuestPanel s={s} /> : null}
         />
         <IconButton label="Minimize overlay" icon="–" size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
         <IconButton label="Hide overlay" icon="✕" size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
@@ -514,10 +513,7 @@ function OverlayMenu({
   clickThrough,
   hotkeys,
   running,
-  guests,
 }: {
-  /** The host's guests (invite, admit, notes, remove, pause sharing), while a call runs. */
-  guests?: ReactNode;
   opacity: number;
   onOpacity: (v: number) => void;
   onTop: boolean;
@@ -595,15 +591,6 @@ function OverlayMenu({
               }}
             />
           </div>
-          {guests && (
-            <>
-              <div className="ov-menu-sep" />
-              <div className="ov-menu-row">
-                <span className="ov-menu-label">Guests</span>
-                {guests}
-              </div>
-            </>
-          )}
           <div className="ov-menu-sep" />
           <Button
             variant="ghost"

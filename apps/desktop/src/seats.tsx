@@ -2,9 +2,11 @@
 // account to follow a live call; the guest watches it read only in their own overlay and, if
 // allowed, sends notes that only the host sees.
 //
-// The host's side: who is watching (a chip in the overlay's header), the guests' notes in a
-// lane of their own (never mixed into the answers, each with Ask AI), and a panel to invite,
-// admit, allow notes, remove, and pause what guests see.
+// The host's side: a Guests button in the overlay's header (who is watching, at a glance) that
+// opens the guest panel; the guests' notes in a lane of their own (never mixed into the answers,
+// each with Ask AI). The panel invites with what the guest may do already chosen (chips, as
+// last time), changes it on each guest's card, shares the screen, picks where guests' voice
+// plays, and pauses what guests see. Guests' voice turns on by itself once a guest may talk.
 // The guest's side: the invites (Call screen), a notice that this is someone else's private
 // call, the note box when notes are allowed, and Leave.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
@@ -12,10 +14,10 @@ import type { SeatInfo } from "@copilot/protocol";
 import { api, inTauri, rest, type MySeat, type VoiceDevice } from "./api";
 import { VOICE_OFF, onVoiceStatus, voiceCommand, windowsName, type VoiceOutput, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
-import { GuestScreenView, HostScreenSection } from "./screenui";
+import { GuestScreenView, HostScreenSection, STOP_CONTROL_KEY } from "./screenui";
 import type { SentNote, SessionView } from "./session";
 import { usePolling } from "./usePolling";
-import { Badge, Banner, Button, Checkbox, Input, Switch, cx } from "./ui";
+import { Badge, Banner, Button, Input, Switch, cx } from "./ui";
 
 type Dispatcher = Dispatch<{ type: "note_sent"; id: string; text: string } | { type: "note_asked"; id: string }>;
 
@@ -60,15 +62,55 @@ const STATUS_TEXT: Record<SeatInfo["status"], string> = {
 
 // --- The host ------------------------------------------------------------------------------
 
-/** The overlay header's chip: who is watching, and whether sharing is paused. */
-export function WatchingChip({ s }: { s: SessionView }) {
-  const seats = openSeats(s.seats);
-  const text = watchingText(seats);
-  if (!text) return null;
+/** The overlay header's Guests button: who is watching at a glance (or "Guests"), and the guest
+ * panel in a popover. It also keeps guests' voice on while a guest may talk, so it runs whether
+ * or not the panel is open. */
+export function GuestsButton({ s }: { s: SessionView }) {
+  useGuestVoice(s);
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!panel.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node)) setOpen(false);
+    };
+    // Esc closes it wherever focus is (a button that just went busy drops focus to the page).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+      button.current?.focus();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  if (!s.running || s.seat) return null;
+  const text = watchingText(openSeats(s.seats));
+  const paused = !s.sharing && text !== "";
   return (
-    <span className={cx("ov-watching", !s.sharing && "is-paused")} role="status" title={s.sharing ? "Guests watching this call" : "Sharing paused: guests see nothing"} data-tauri-drag-region>
-      <span aria-hidden="true">👁 </span>
-      {s.sharing ? text : `${text} · paused`}
+    <span className="ov-menu-wrap">
+      <button
+        ref={button}
+        type="button"
+        className={cx("ov-watching", paused && "is-paused")}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title={paused ? "Sharing paused: guests see nothing. Click for guests" : text ? "Guests watching this call: click to manage" : "Invite a guest to this call"}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span aria-hidden="true">👥 </span>
+        {text ? (paused ? `${text} · paused` : text) : "Guests"}
+      </button>
+      {open && (
+        <div ref={panel} className="ov-menu ov-guests" role="dialog" aria-label="Guests">
+          <GuestPanel s={s} />
+        </div>
+      )}
     </span>
   );
 }
@@ -141,31 +183,85 @@ function consentSeen(): boolean {
   }
 }
 
-/** Invite, admit, allow notes, remove; and pause what guests see. In the overlay's gear and on
- * the Call screen while a call runs. */
+/** What a guest may do: a chip each, on the invite and on each guest's card. Voice and the
+ * screen show only where the server can carry them. Control goes with the screen. */
+export const PERMS: { cap: string; label: string; icon: string; title: string; needs?: "voice" | "screen" }[] = [
+  { cap: "note", label: "Notes", icon: "✎", title: "May send you notes only you see" },
+  { cap: "voice", label: "Voice", icon: "🎙", title: "May talk to you. You hear them on your headphones, never on the call", needs: "voice" },
+  { cap: "device.view", label: "Screen", icon: "🖥", title: "Sees your screen while you share it", needs: "screen" },
+  {
+    cap: "device.control",
+    label: "Control",
+    icon: "🖱",
+    title: `Uses your mouse and keys while you share a whole screen. Stop it any time, or press ${STOP_CONTROL_KEY}`,
+    needs: "screen",
+  },
+];
+
+type Media = { voice: boolean; screen: boolean };
+
+/** The capabilities among `caps` this server can grant. */
+function grantable(caps: string[], media: Media): string[] {
+  return caps.filter((c) => {
+    const p = PERMS.find((x) => x.cap === c);
+    return p !== undefined && (!p.needs || media[p.needs]);
+  });
+}
+
+function PermChips({ label, caps, media, disabled, onToggle }: { label: string; caps: string[]; media: Media; disabled?: boolean; onToggle: (cap: string, on: boolean) => void }) {
+  return (
+    <div className="seat-chips" role="group" aria-label={label}>
+      {PERMS.filter((p) => !p.needs || media[p.needs]).map((p) => {
+        const on = caps.includes(p.cap);
+        return (
+          <button key={p.cap} type="button" className="seat-chip" aria-pressed={on} title={p.title} disabled={disabled} onClick={() => onToggle(p.cap, !on)}>
+            <span aria-hidden="true">{p.icon}</span> {p.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const INVITE_CAPS_KEY = "seats.invite-caps";
+
+/** What the next guest may do: as the host chose for the last one; notes only at first. */
+export function savedInviteCaps(): string[] {
+  try {
+    const v: unknown = JSON.parse(window.localStorage.getItem(INVITE_CAPS_KEY) ?? "null");
+    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v;
+  } catch {
+    // Nothing saved, or unreadable: the first-time choice.
+  }
+  return ["note"];
+}
+
+function saveInviteCaps(caps: string[]) {
+  try {
+    window.localStorage.setItem(INVITE_CAPS_KEY, JSON.stringify(caps));
+  } catch {
+    // Remembered only for convenience.
+  }
+}
+
+/** Invite with what the guest may do, change it per guest, remove; the screen, guests' voice,
+ * and pausing what guests see. In the overlay's Guests popover and on the Call screen. */
 export function GuestPanel({ s }: { s: SessionView }) {
   const sid = s.sessionId;
   const [email, setEmail] = useState("");
-  const [notes, setNotes] = useState(true);
+  const [caps, setCaps] = useState(savedInviteCaps);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [seatErrors, setSeatErrors] = useState<Record<string, string>>({});
-  const [voiceAvailable, setVoiceAvailable] = useState(false);
-  const [screenAvailable, setScreenAvailable] = useState(false);
+  const [media, setMedia] = useState<Media>({ voice: false, screen: false });
   const [showConsent] = useState(() => !consentSeen());
-  // Whether the server can carry voice and the screen at all: no switch that can only fail.
+  // Whether the server can carry voice and the screen at all: no chip that can only fail.
   useEffect(() => {
     if (!sid || !inTauri) return;
     rest.seatsOf(sid).then(
-      (r) => {
-        setVoiceAvailable(r.voice === true);
-        setScreenAvailable(r.screen === true);
-      },
-      () => {
-        setVoiceAvailable(false);
-        setScreenAvailable(false);
-      },
+      (r) => setMedia({ voice: r.voice === true, screen: r.screen === true }),
+      () => setMedia({ voice: false, screen: false }),
     );
   }, [sid]);
   const guarded = async (f: () => Promise<unknown>, done?: string) => {
@@ -195,22 +291,21 @@ export function GuestPanel({ s }: { s: SessionView }) {
   if (!sid || !s.running || s.seat) return null;
   const invite = () =>
     guarded(async () => {
-      await rest.inviteGuest(sid, email.trim(), notes);
+      await rest.inviteGuest(sid, email.trim(), grantable(caps, media));
+      saveInviteCaps(caps);
       try {
         window.localStorage.setItem(CONSENT_KEY, "1");
       } catch {
         // Shown again next time; harmless.
       }
       setEmail("");
-    }, `If ${email.trim()} has a Copilot account, they can join from their Call screen now.`);
+    }, `Invited. If ${email.trim()} has a Copilot account, they can join from their Call screen now.`);
   const seats = s.seats.filter((x) => x.status !== "removed");
   const toggle = (x: SeatInfo, cap: string, on: boolean) =>
     forSeat(x.seat_id, () => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, cap, on)));
   return (
     <div className="seat-panel">
       <section className="seat-section" aria-label="Invite a guest">
-        <h3 className="seat-section-title">Invite a guest</h3>
-        {showConsent && <p className="seat-hint">Guests see this call live, including the other side's words. Invite only people the call's participants would be fine with.</p>}
         <form
           className="seat-invite"
           onSubmit={(e) => {
@@ -218,12 +313,13 @@ export function GuestPanel({ s }: { s: SessionView }) {
             if (email.trim()) void invite();
           }}
         >
-          <Input type="email" aria-label="Guest's Copilot email" placeholder="Guest's Copilot email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
+          <Input type="email" aria-label="Guest's Copilot email" placeholder="Invite by Copilot email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
           <Button size="sm" type="submit" disabled={busy || !email.trim()}>
             Invite
           </Button>
         </form>
-        <Checkbox checked={notes} onChange={setNotes} label="Allow notes to me" />
+        <PermChips label="What a new guest may do" caps={caps} media={media} disabled={busy} onToggle={(cap, on) => setCaps((c) => withCapability(c, cap, on))} />
+        {showConsent && <p className="seat-hint">Guests see this call live, including the other side's words. Invite only people the call's participants would be fine with.</p>}
         {message && <p className="seat-hint">{message}</p>}
         {error && (
           <p className="seat-error" role="alert">
@@ -232,53 +328,37 @@ export function GuestPanel({ s }: { s: SessionView }) {
         )}
       </section>
       {seats.length > 0 && (
-        <section className="seat-section" aria-label="Guests">
-          <h3 className="seat-section-title">Guests</h3>
-          <ul className="seat-list">
-            {seats.map((x) => (
-              <li key={x.seat_id} className="seat-card">
-                <div className="seat-card-head">
-                  <span className="seat-name">{x.name}</span>
-                  <span className={cx("seat-status", isWatching(x) && "is-watching")}>{isWatching(x) ? "Watching" : STATUS_TEXT[x.status]}</span>
-                  <span className="seat-card-actions">
-                    {x.status === "accepted" && (
-                      <Button size="sm" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.admitGuest(sid, x.seat_id))}>
-                        Let in
-                      </Button>
-                    )}
-                    {OPEN.has(x.status) && (
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.removeGuest(sid, x.seat_id))}>
-                        {isWatching(x) ? "Remove" : "Cancel invite"}
-                      </Button>
-                    )}
-                  </span>
-                </div>
-                {x.status === "admitted" && (
-                  <div className="seat-card-perms" role="group" aria-label={`What ${x.name} may do`}>
-                    <Switch label="Notes" checked={x.capabilities.includes("note")} disabled={busy} onChange={(on) => toggle(x, "note", on)} />
-                    {voiceAvailable && <Switch label="Voice" checked={x.capabilities.includes("voice")} disabled={busy} onChange={(on) => toggle(x, "voice", on)} />}
-                    {screenAvailable && <Switch label="Screen" checked={x.capabilities.includes("device.view")} disabled={busy} onChange={(on) => toggle(x, "device.view", on)} />}
-                    {screenAvailable && (
-                      <Switch
-                        label="Control"
-                        hint="Only when you let them, on a whole screen you share"
-                        checked={x.capabilities.includes("device.control")}
-                        disabled={busy}
-                        onChange={(on) => toggle(x, "device.control", on)}
-                      />
-                    )}
-                  </div>
-                )}
-                {seatErrors[x.seat_id] && (
-                  <p className="seat-error" role="alert">
-                    {seatErrors[x.seat_id]}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ul className="seat-list" aria-label="Guests">
+          {seats.map((x) => (
+            <li key={x.seat_id} className="seat-card">
+              <div className="seat-card-head">
+                <span className="seat-name">{x.name}</span>
+                <span className={cx("seat-status", isWatching(x) && "is-watching")}>{isWatching(x) ? "Watching" : STATUS_TEXT[x.status]}</span>
+                <span className="seat-card-actions">
+                  {x.status === "accepted" && (
+                    <Button size="sm" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.admitGuest(sid, x.seat_id))}>
+                      Let in
+                    </Button>
+                  )}
+                  {OPEN.has(x.status) && (
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.removeGuest(sid, x.seat_id))}>
+                      {isWatching(x) ? "Remove" : "Cancel invite"}
+                    </Button>
+                  )}
+                </span>
+              </div>
+              {x.status === "admitted" && <PermChips label={`What ${x.name} may do`} caps={x.capabilities} media={media} disabled={busy} onToggle={(cap, on) => toggle(x, cap, on)} />}
+              {seatErrors[x.seat_id] && (
+                <p className="seat-error" role="alert">
+                  {seatErrors[x.seat_id]}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
+      <HostScreenSection s={s} />
+      <HostVoice s={s} />
       {openSeats(s.seats).some((x) => x.status === "admitted") && (
         <section className="seat-section" aria-label="Sharing">
           <Switch
@@ -289,8 +369,6 @@ export function GuestPanel({ s }: { s: SessionView }) {
           />
         </section>
       )}
-      <HostScreenSection s={s} />
-      <HostVoice s={s} />
     </div>
   );
 }
@@ -514,69 +592,86 @@ function annotate(o: VoiceOutput, known: VoiceDevice[]): string | null {
   return d ? deviceProblem(d) : "not known to Windows";
 }
 
-/** The host's side of voice: headphones for it, on and off, mute. */
+function saveDevice(id: string) {
+  try {
+    window.localStorage.setItem(VOICE_DEVICE_KEY, id);
+  } catch {
+    // Remembered only for convenience.
+  }
+}
+
+/** Guests' voice on by itself once a guest may talk (on the headphones used last, or Windows'
+ * default output), off when none may, and who is heard kept in step. Tried once a call: after
+ * an error, Try again in the panel. */
+export function useGuestVoice(s: SessionView) {
+  const hosting = s.running && !s.seat && s.sessionId !== null;
+  const status = useVoice(hosting);
+  const key = hosting ? voiceIdentities(s.seats).join(",") : "";
+  const tried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!inTauri || !hosting || !s.sessionId) return;
+    const ids = key ? key.split(",") : [];
+    if (status.host === "on") {
+      void voiceCommand(ids.length > 0 ? { cmd: "host_allowed", identities: ids } : { cmd: "host_off" });
+      return;
+    }
+    if (ids.length === 0) {
+      tried.current = null;
+      return;
+    }
+    if (status.host !== "off" || tried.current === s.sessionId) return;
+    tried.current = s.sessionId;
+    void voiceCommand({ cmd: "host_on", deviceId: savedDevice(), sessionId: s.sessionId, allowed: ids });
+  }, [hosting, key, status.host, s.sessionId]);
+}
+
+/** Where guests' voice plays (switchable while it plays), and why it stopped. It turns on by
+ * itself (useGuestVoice); the header's button mutes it. */
 export function HostVoice({ s }: { s: SessionView }) {
   const wanted = voiceIdentities(s.seats);
   const status = useVoice(s.running);
   const [known, setKnown] = useState<VoiceDevice[]>([]);
-  const [device, setDevice] = useState(savedDevice);
-  const allowed = wanted.join(",");
-  const on = status.host === "on";
+  const [chosen, setChosen] = useState(savedDevice);
+  const shown = wanted.length > 0 || status.host !== "off";
   useEffect(() => {
-    if (on && inTauri) void voiceCommand({ cmd: "host_allowed", identities: allowed ? allowed.split(",") : [] });
-  }, [allowed, on]);
-  const listed = wanted.length > 0 && status.host === "off";
-  useEffect(() => {
-    if (!listed || !inTauri) return;
+    if (!shown || !inTauri) return;
     void voiceCommand({ cmd: "outputs" });
     api.voiceDevices().then(setKnown, () => setKnown([]));
-  }, [listed]);
-  if (wanted.length === 0 && status.host === "off") return null;
-  const start = () => {
-    if (!s.sessionId) return;
-    try {
-      window.localStorage.setItem(VOICE_DEVICE_KEY, device);
-    } catch {
-      // Remembered only for convenience.
-    }
-    void voiceCommand({ cmd: "host_on", deviceId: device, sessionId: s.sessionId, allowed: wanted });
+  }, [shown]);
+  if (!shown || !s.sessionId) return null;
+  const sid = s.sessionId;
+  const on = (deviceId: string) => void voiceCommand({ cmd: "host_on", deviceId, sessionId: sid, allowed: wanted });
+  const choose = (deviceId: string) => {
+    setChosen(deviceId);
+    saveDevice(deviceId);
+    if (status.host === "on") void voiceCommand({ cmd: "host_device", deviceId });
+    else if (status.host === "off") on(deviceId);
   };
-  const checking = status.host === "checking";
+  const value = status.device ?? chosen;
   return (
     <section className="seat-section seat-voice" aria-label="Guests' voice">
-      <h3 className="seat-section-title">Guests' voice</h3>
-      {on ? (
-        <>
-          <span className="seat-hint">On your headphones only; never on the call.</span>
-          <Switch label="Mute guests" checked={status.hostMuted} onChange={(m) => void voiceCommand({ cmd: "host_mute", on: m })} />
-          <Button size="sm" variant="ghost" onClick={() => void voiceCommand({ cmd: "host_off" })}>
-            Turn off
-          </Button>
-        </>
-      ) : (
-        <>
-          <div className="seat-invite">
-            <select className="ui-input" aria-label="Headphones for guests' voice" value={device} onChange={(e) => setDevice(e.target.value)} disabled={checking}>
-              <option value="">Choose headphones…</option>
-              {status.outputs.map((o) => {
-                const problem = annotate(o, known);
-                return (
-                  <option key={o.deviceId} value={o.deviceId}>
-                    {o.label}
-                    {problem ? ` ⚠ ${problem}` : ""}
-                  </option>
-                );
-              })}
-            </select>
-            <Button size="sm" disabled={checking || !device} onClick={start}>
-              {checking ? "Turning on…" : "Turn on"}
-            </Button>
-          </div>
-        </>
-      )}
-      {status.error && (
+      <label className="seat-voice-row">
+        <span className="seat-hint">Guests' voice on</span>
+        <select className="ui-input" aria-label="Headphones for guests' voice" value={value} onChange={(e) => choose(e.target.value)} disabled={status.host === "checking"}>
+          <option value="">Windows default output</option>
+          {status.outputs.map((o) => {
+            const problem = annotate(o, known);
+            return (
+              <option key={o.deviceId} value={o.deviceId}>
+                {o.label}
+                {problem ? ` ⚠ ${problem}` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      {status.host === "checking" && <span className="seat-hint">Turning on…</span>}
+      {status.host === "off" && status.error && (
         <p className="seat-error" role="alert">
-          {status.error}
+          {status.error}{" "}
+          <Button size="sm" variant="ghost" onClick={() => on(value)}>
+            Try again
+          </Button>
         </p>
       )}
     </section>

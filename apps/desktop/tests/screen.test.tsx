@@ -139,11 +139,12 @@ describe("the host's screen", () => {
 });
 
 describe("control of the host's screen", () => {
+  // Pavlo has Control, and controls as soon as a whole screen is shared: no ask, no let.
   async function controlling() {
     const t = host({}, fakeScreenTrack("monitor", 1920, 1080)); // 16:9: the main monitor
-    await t.h.share("s1");
     t.h.setAllowed([PAVLO, BLAIR]);
-    await t.h.allow(PAVLO);
+    await t.h.share("s1");
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     return t;
   }
 
@@ -228,41 +229,74 @@ describe("control of the host's screen", () => {
       }),
     );
     t.h.setAllowed([PAVLO]);
-    await t.h.allow(PAVLO);
-    expect(params).toMatchObject({ encodings: [{ maxFramerate: 60, maxBitrate: ENCODING.control.maxBitrate }], degradationPreference: "balanced" });
-    await t.h.endControl(null);
+    await vi.waitFor(() => expect(params).toMatchObject({ encodings: [{ maxFramerate: 60, maxBitrate: ENCODING.control.maxBitrate }], degradationPreference: "balanced" }));
+    await t.h.endControl(null, "host");
     expect(params).toMatchObject({ encodings: [{ maxFramerate: 30, maxBitrate: ENCODING.watch.maxBitrate }], degradationPreference: "maintain-resolution" });
   });
 
-  it("ends, letting go of everything, when the grant goes, on Stop, or when the guest gives it back", async () => {
+  it("when the grant goes, control ends with everything let go, and passes to the next guest who may", async () => {
     const t = await controlling();
     t.h.setAllowed([BLAIR]);
-    await vi.waitFor(() => expect(t.log).toContain("end"));
-    expect(t.h.status.controller).toBeNull();
-    expect(t.room.sent[t.room.sent.length - 1]).toEqual({ topic: TOPIC.control, to: ["seat:p"], body: { on: false } });
-
-    const u = await controlling();
-    await u.h.endControl(null);
-    expect(u.log[u.log.length - 1]).toBe("end");
-
-    const v = await controlling();
-    v.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
-    await vi.waitFor(() => expect(v.h.status.controller).toBeNull());
-
-    const w = await controlling();
-    await w.h.stop(null);
-    expect(w.log[w.log.length - 1]).toBe("end");
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(BLAIR));
+    expect(t.log).toEqual(["begin 0,0 2560x1440", "end", "begin 0,0 2560x1440"]);
+    expect(t.room.sent.slice(-2)).toEqual([
+      { topic: TOPIC.control, to: ["seat:p"], body: { on: false } },
+      { topic: TOPIC.control, to: ["seat:b"], body: { on: true } },
+    ]);
+    // The share stopping ends it.
+    await t.h.stop(null);
+    expect(t.log[t.log.length - 1]).toBe("end");
   });
 
-  it("a guest's ask shows to the host, from a guest who may only", async () => {
-    const t = host();
-    await t.h.share("s1");
-    t.h.setAllowed([PAVLO]);
-    t.room.emit("dataReceived", data({}), { identity: "seat:x" }, 0, TOPIC.ask);
+  it("the host's Stop holds for everyone until their Control is given again, and names them to take it away", async () => {
+    const t = await controlling();
+    await t.h.endControl(null, "host");
+    expect(t.h.status.controller).toBeNull();
+    expect(t.h.status.stopped).toEqual([PAVLO, BLAIR]);
+    expect(t.log[t.log.length - 1]).toBe("end"); // no one took over
+    // Asking does not get it back.
     t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
-    await vi.waitFor(() => expect(t.h.status.asking).toEqual([PAVLO]));
-    await t.h.allow(PAVLO);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.h.status.controller).toBeNull();
+    // The UI takes Control away (the list empties), then the host gives it again: it works again.
+    t.h.setAllowed([]);
+    expect(t.h.status.stopped).toEqual([]);
+    t.h.setAllowed([PAVLO]);
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+  });
+
+  it("a guest who gives control back takes it again with Take control; meanwhile another guest may", async () => {
+    const t = await controlling();
+    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(BLAIR)); // Pavlo held back, Blair next
+    t.room.emit("dataReceived", data({}), { identity: "seat:b" }, 0, TOPIC.release);
+    await vi.waitFor(() => expect(t.h.status.controller).toBeNull()); // both held back now
+    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+  });
+
+  it("while someone controls, another guest's Take control shows to the host, from a guest who may only", async () => {
+    const t = await controlling();
+    t.room.emit("dataReceived", data({}), { identity: "seat:x" }, 0, TOPIC.ask);
+    t.room.emit("dataReceived", data({}), { identity: "seat:b" }, 0, TOPIC.ask);
+    await vi.waitFor(() => expect(t.h.status.asking).toEqual([BLAIR]));
+    await t.h.allow(BLAIR);
+    expect(t.h.status.controller).toEqual(BLAIR);
     expect(t.h.status.asking).toEqual([]);
+  });
+
+  it("waits for a guest to be in the room, and tells one who joins late", async () => {
+    const t = host({}, fakeScreenTrack("monitor", 1920, 1080));
+    const there = new Map<string, unknown>();
+    Object.assign(t.room, { remoteParticipants: there });
+    t.h.setAllowed([PAVLO]);
+    await t.h.share("s1");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.h.status.controller).toBeNull();
+    there.set("seat:p", {});
+    t.room.emit("participantConnected", { identity: "seat:p" });
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+    expect(t.room.sent).toEqual([{ topic: TOPIC.control, to: ["seat:p"], body: { on: true } }]);
   });
 
   it("is refused for a window share, for a guest without the grant, and before sharing", async () => {
@@ -280,17 +314,22 @@ describe("control of the host's screen", () => {
     expect(u.deps.begin).not.toHaveBeenCalled();
   });
 
-  it("asks the host which monitor when several fit, then begins on that one", async () => {
+  it("asks the host which monitor when several fit, once per share", async () => {
     const twin: Monitor = { id: "\\\\.\\DISPLAY3", rect: { x: -2560, y: 0, w: 2560, h: 1440 }, primary: false };
     const t = host({ monitors: vi.fn(async () => [MAIN, twin]) });
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
-    await t.h.allow(PAVLO);
-    expect(t.h.status.choose?.monitors.map((m) => m.id)).toEqual([MAIN.id, twin.id]);
+    await vi.waitFor(() => expect(t.h.status.choose?.monitors.map((m) => m.id)).toEqual([MAIN.id, twin.id]));
     expect(t.deps.begin).not.toHaveBeenCalled();
     await t.h.allow(PAVLO, twin.id);
     expect(t.log).toEqual(["begin -2560,0 2560x1440"]);
     expect(t.h.status.choose).toBeNull();
+    // Given back and taken again: the same screen, without asking.
+    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
+    await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
+    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+    expect(t.log[t.log.length - 1]).toBe("begin -2560,0 2560x1440");
   });
 });
 
@@ -440,9 +479,9 @@ describe("how fast the guest sees the screen", () => {
 
   it("the host sends the controlling guest's ping straight back, and no one else's", async () => {
     const t = host({}, fakeScreenTrack("monitor", 1920, 1080));
-    await t.h.share("s1");
     t.h.setAllowed([PAVLO, BLAIR]);
-    await t.h.allow(PAVLO);
+    await t.h.share("s1");
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     t.room.sent.length = 0;
     t.room.emit("dataReceived", data({ t: 5 }), { identity: "seat:b" }, 0, TOPIC.ping); // may, but does not control
     t.room.emit("dataReceived", data({ t: 7 }), { identity: "seat:p" }, 0, TOPIC.ping);
