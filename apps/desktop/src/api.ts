@@ -884,7 +884,8 @@ export const rest = {
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
   inviteGuest: (sessionId: string, email: string, note: boolean) =>
     call<{ status: string }>("POST", `/sessions/${sessionId}/seats`, { email, capabilities: note ? ["view", "note"] : ["view"] }),
-  seatsOf: (sessionId: string) => call<{ seats: HostSeat[] }>("GET", `/sessions/${sessionId}/seats`),
+  /** The call's seats, and whether this server can carry guests' voice (`voice`). */
+  seatsOf: (sessionId: string) => call<{ seats: HostSeat[]; voice?: boolean }>("GET", `/sessions/${sessionId}/seats`),
   admitGuest: (sessionId: string, seatId: string) => call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { admit: true }),
   setGuestCapabilities: (sessionId: string, seatId: string, capabilities: string[]) =>
     call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities }),

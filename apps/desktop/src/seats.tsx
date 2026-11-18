@@ -149,7 +149,17 @@ export function GuestPanel({ s }: { s: SessionView }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [seatErrors, setSeatErrors] = useState<Record<string, string>>({});
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
   const [showConsent] = useState(() => !consentSeen());
+  // Whether the server can carry voice at all: no switch that can only fail.
+  useEffect(() => {
+    if (!sid || !inTauri) return;
+    rest.seatsOf(sid).then(
+      (r) => setVoiceAvailable(r.voice === true),
+      () => setVoiceAvailable(false),
+    );
+  }, [sid]);
   const guarded = async (f: () => Promise<unknown>, done?: string) => {
     setError(null);
     setMessage(null);
@@ -159,6 +169,17 @@ export function GuestPanel({ s }: { s: SessionView }) {
       if (done) setMessage(done);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const forSeat = async (seatId: string, f: () => Promise<unknown>) => {
+    setSeatErrors(({ [seatId]: _gone, ...rest }) => rest);
+    setBusy(true);
+    try {
+      await f();
+    } catch (e) {
+      setSeatErrors((m) => ({ ...m, [seatId]: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -175,73 +196,80 @@ export function GuestPanel({ s }: { s: SessionView }) {
       setEmail("");
     }, `If ${email.trim()} has a Copilot account, they can join from their Call screen now.`);
   const seats = s.seats.filter((x) => x.status !== "removed");
+  const toggle = (x: SeatInfo, cap: string, on: boolean) =>
+    forSeat(x.seat_id, () => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, cap, on)));
   return (
     <div className="seat-panel">
-      {showConsent && <p className="seat-hint">Guests see this call live, including the other side's words. Invite only people the call's participants would be fine with.</p>}
-      <form
-        className="seat-invite"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (email.trim()) void invite();
-        }}
-      >
-        <Input type="email" aria-label="Guest's Copilot email" placeholder="Guest's Copilot email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
-        <Button size="sm" type="submit" disabled={busy || !email.trim()}>
-          Invite
-        </Button>
-      </form>
-      <Checkbox checked={notes} onChange={setNotes} label="Allow notes to me" />
-      {message && <p className="seat-hint">{message}</p>}
-      {error && (
-        <p className="seat-error" role="alert">
-          {error}
-        </p>
-      )}
+      <section className="seat-section" aria-label="Invite a guest">
+        <h3 className="seat-section-title">Invite a guest</h3>
+        {showConsent && <p className="seat-hint">Guests see this call live, including the other side's words. Invite only people the call's participants would be fine with.</p>}
+        <form
+          className="seat-invite"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (email.trim()) void invite();
+          }}
+        >
+          <Input type="email" aria-label="Guest's Copilot email" placeholder="Guest's Copilot email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
+          <Button size="sm" type="submit" disabled={busy || !email.trim()}>
+            Invite
+          </Button>
+        </form>
+        <Checkbox checked={notes} onChange={setNotes} label="Allow notes to me" />
+        {message && <p className="seat-hint">{message}</p>}
+        {error && (
+          <p className="seat-error" role="alert">
+            {error}
+          </p>
+        )}
+      </section>
       {seats.length > 0 && (
-        <ul className="seat-list" aria-label="Guests">
-          {seats.map((x) => (
-            <li key={x.seat_id} className="seat-row">
-              <span className="seat-name">{x.name}</span>
-              <span className="seat-status">{isWatching(x) ? "Watching" : STATUS_TEXT[x.status]}</span>
-              <span className="seat-actions">
-                {x.status === "accepted" && (
-                  <Button size="sm" disabled={busy} onClick={() => guarded(() => rest.admitGuest(sid, x.seat_id))}>
-                    Let in
-                  </Button>
-                )}
+        <section className="seat-section" aria-label="Guests">
+          <h3 className="seat-section-title">Guests</h3>
+          <ul className="seat-list">
+            {seats.map((x) => (
+              <li key={x.seat_id} className="seat-card">
+                <div className="seat-card-head">
+                  <span className="seat-name">{x.name}</span>
+                  <span className={cx("seat-status", isWatching(x) && "is-watching")}>{isWatching(x) ? "Watching" : STATUS_TEXT[x.status]}</span>
+                  <span className="seat-card-actions">
+                    {x.status === "accepted" && (
+                      <Button size="sm" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.admitGuest(sid, x.seat_id))}>
+                        Let in
+                      </Button>
+                    )}
+                    {OPEN.has(x.status) && (
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => forSeat(x.seat_id, () => rest.removeGuest(sid, x.seat_id))}>
+                        {isWatching(x) ? "Remove" : "Cancel invite"}
+                      </Button>
+                    )}
+                  </span>
+                </div>
                 {x.status === "admitted" && (
-                  <>
-                    <Switch
-                      label="Notes"
-                      checked={x.capabilities.includes("note")}
-                      disabled={busy}
-                      onChange={(on) => guarded(() => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, "note", on)))}
-                    />
-                    <Switch
-                      label="Voice"
-                      checked={x.capabilities.includes("voice")}
-                      disabled={busy}
-                      onChange={(on) => guarded(() => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, "voice", on)))}
-                    />
-                  </>
+                  <div className="seat-card-perms" role="group" aria-label={`What ${x.name} may do`}>
+                    <Switch label="Notes" checked={x.capabilities.includes("note")} disabled={busy} onChange={(on) => toggle(x, "note", on)} />
+                    {voiceAvailable && <Switch label="Voice" checked={x.capabilities.includes("voice")} disabled={busy} onChange={(on) => toggle(x, "voice", on)} />}
+                  </div>
                 )}
-                {OPEN.has(x.status) && (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => guarded(() => rest.removeGuest(sid, x.seat_id))}>
-                    {isWatching(x) ? "Remove" : "Cancel invite"}
-                  </Button>
+                {seatErrors[x.seat_id] && (
+                  <p className="seat-error" role="alert">
+                    {seatErrors[x.seat_id]}
+                  </p>
                 )}
-              </span>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {openSeats(s.seats).some((x) => x.status === "admitted") && (
-        <Switch
-          label="Share the call with guests"
-          hint={s.sharing ? "Guests see the call as it happens" : "Paused: guests see nothing of the call, now or later"}
-          checked={s.sharing}
-          onChange={(on) => guarded(() => api.setSharing(on))}
-        />
+        <section className="seat-section" aria-label="Sharing">
+          <Switch
+            label="Share the call with guests"
+            hint={s.sharing ? "Guests see the call as it happens" : "Paused: guests see nothing of the call, now or later"}
+            checked={s.sharing}
+            onChange={(on) => guarded(() => api.setSharing(on))}
+          />
+        </section>
       )}
       <HostVoice s={s} />
     </div>
@@ -491,8 +519,8 @@ export function HostVoice({ s }: { s: SessionView }) {
   };
   const checking = status.host === "checking";
   return (
-    <div className="seat-voice" aria-label="Guests' voice">
-      <span className="seat-name">Guests' voice</span>
+    <section className="seat-section seat-voice" aria-label="Guests' voice">
+      <h3 className="seat-section-title">Guests' voice</h3>
       {on ? (
         <>
           <span className="seat-hint">On your headphones only; never on the call.</span>
@@ -503,21 +531,23 @@ export function HostVoice({ s }: { s: SessionView }) {
         </>
       ) : (
         <>
-          <select className="ui-input" aria-label="Headphones for guests' voice" value={device} onChange={(e) => setDevice(e.target.value)} disabled={checking}>
-            <option value="">Choose headphones…</option>
-            {status.outputs.map((o) => {
-              const problem = annotate(o, known);
-              return (
-                <option key={o.deviceId} value={o.deviceId} disabled={problem !== null}>
-                  {o.label}
-                  {problem ? ` (${problem})` : ""}
-                </option>
-              );
-            })}
-          </select>
-          <Button size="sm" disabled={checking || !device} onClick={start}>
-            {checking ? "Checking…" : "Turn on"}
-          </Button>
+          <div className="seat-invite">
+            <select className="ui-input" aria-label="Headphones for guests' voice" value={device} onChange={(e) => setDevice(e.target.value)} disabled={checking}>
+              <option value="">Choose headphones…</option>
+              {status.outputs.map((o) => {
+                const problem = annotate(o, known);
+                return (
+                  <option key={o.deviceId} value={o.deviceId} disabled={problem !== null}>
+                    {o.label}
+                    {problem ? ` (${problem})` : ""}
+                  </option>
+                );
+              })}
+            </select>
+            <Button size="sm" disabled={checking || !device} onClick={start}>
+              {checking ? "Checking…" : "Turn on"}
+            </Button>
+          </div>
           <span className="seat-hint">A short tone plays on them to check that nothing reaches the call or your microphone.</span>
         </>
       )}
@@ -526,7 +556,7 @@ export function HostVoice({ s }: { s: SessionView }) {
           {status.error}
         </p>
       )}
-    </div>
+    </section>
   );
 }
 

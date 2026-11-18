@@ -764,11 +764,29 @@
 }
 
 /* Guest seats (seats.tsx): the host's guest panel (Call screen and the overlay's gear) and a
-   guest's invites. Colors are inherited, so the same panel reads in either window. */
+   guest's invites. Colors are inherited, so the same panel reads in either window; lines and
+   cards are mixed from the text color for the same reason. */
 .seat-panel {
   display: flex;
   flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+.seat-section {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
+}
+.seat-section + .seat-section {
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+.seat-section-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  opacity: 0.75;
+  letter-spacing: 0.02em;
 }
 .seat-invite {
   display: flex;
@@ -781,39 +799,66 @@
 .seat-hint {
   margin: 0;
   font-size: var(--text-sm);
+  line-height: 1.45;
   opacity: 0.8;
 }
 .seat-error {
   margin: 0;
   color: var(--danger);
   font-size: var(--text-sm);
+  line-height: 1.45;
 }
 .seat-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.seat-row {
+.seat-card {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.seat-card-head {
+  display: flex;
   align-items: center;
   gap: var(--space-3);
+  min-width: 0;
 }
 .seat-name {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .seat-status {
-  font-size: var(--text-sm);
-  opacity: 0.8;
+  flex: none;
+  padding: 1px var(--space-3);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: var(--text-xs);
+  opacity: 0.85;
 }
-.seat-actions {
+.seat-status.is-watching {
+  color: var(--success, #2f9e63);
+  opacity: 1;
+}
+.seat-card-actions {
   display: flex;
-  align-items: center;
+  flex: none;
   gap: var(--space-2);
   margin-left: auto;
+}
+.seat-card-perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-7);
 }
 .seat-invites {
   display: flex;
@@ -821,15 +866,7 @@
   gap: var(--space-3);
   margin-bottom: var(--space-6);
 }
-.seat-voice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
 .seat-voice select {
   flex: 1;
-  min-width: 160px;
+  min-width: 0;
 }
