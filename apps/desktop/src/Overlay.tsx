@@ -15,12 +15,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
+import { CodeAnswer } from "./CodeAnswer";
+import { CodingBar } from "./CodingBar";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane, VoiceMute } from "./seats";
 import { startScreenHost } from "./screen";
 import { ScreenChip } from "./screenui";
-import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
+import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
 
@@ -247,6 +249,7 @@ export default function Overlay() {
       ) : (
         <>
           <NotesLane s={s} dispatch={dispatch} />
+          <CodingBar running={s.running} />
           <AskBox disabled={!s.running} />
         </>
       )}
@@ -646,7 +649,15 @@ function QuestionCard({
   past: { rating: "up" | "down" | null } | null;
 }) {
   const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
-  const deepStarted = q.deep.text.length > 0 || q.deep.done || q.deepRequested;
+  // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
+  const screen = isScreenQuestion(q);
+  const Text = screen ? CodeAnswer : AnswerText;
+  // A screen's code pass runs only when a task needs code or an exact output: its section
+  // shows while the reading says one is coming, and with whatever it wrote.
+  const codeComing = q.screen?.tasks.some((t) => SECOND_PASS_KINDS.has(t.kind)) ?? false;
+  const deepStarted = screen
+    ? q.deep.text.length > 0 || q.deep.error !== null || (codeComing && !q.deep.done)
+    : q.deep.text.length > 0 || q.deep.done || q.deepRequested;
   const fast = passState(q.fast, "fast");
   const deep = passState(q.deep, "deep");
   // Space stays held for the talking points until the detailed answer is done, so nothing
@@ -669,19 +680,20 @@ function QuestionCard({
         {q.text}
         {q.speculative && <span className="ui-visually-hidden"> (still listening)</span>}
       </p>
+      {q.screen && <ScreenTasks reading={q.screen} />}
 
-      <div role="group" className={cx("points pass pass-fast", holdFast && "is-held")} aria-label="Talking points">
-        {q.fast.text && <AnswerText text={q.fast.text} streaming={!q.fast.done} />}
+      <div role="group" className={cx("points pass pass-fast", holdFast && "is-held", screen && "is-code")} aria-label={screen ? "Answer" : "Talking points"}>
+        {q.fast.text && <Text text={q.fast.text} streaming={!q.fast.done} />}
         <PassStatus state={fast} />
       </div>
 
       {deepStarted ? (
-        <div role="group" className="deep pass pass-deep" aria-label="Detailed answer">
+        <div role="group" className={cx("deep pass pass-deep", screen && "is-code")} aria-label={screen ? "Code" : "Detailed answer"}>
           <span className="pass-title" aria-hidden="true">
-            Detailed
+            {screen ? "Code" : "Detailed"}
           </span>
           {q.deep.text ? (
-            <AnswerText text={q.deep.text} streaming={!q.deep.done} />
+            <Text text={q.deep.text} streaming={!q.deep.done} />
           ) : (
             !q.deep.done && (
               <div className="ov-reserve" aria-hidden="true">
@@ -694,7 +706,8 @@ function QuestionCard({
         </div>
       ) : (
         !past &&
-        !readOnly && (
+        !readOnly &&
+        !screen && (
           <button type="button" className="ov-get-deep" onClick={expand}>
             Get the detailed answer ▾
           </button>
@@ -702,8 +715,8 @@ function QuestionCard({
       )}
 
       <footer className="card-tools">
-        <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />
-        {deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
+        {!screen && <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />}
+        {!screen && deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
         {!readOnly && (
           <>
             <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
@@ -721,6 +734,32 @@ function QuestionCard({
         )}
       </footer>
     </article>
+  );
+}
+
+/** The task kinds a screen's second pass answers (copilot_core.screen DEEP_KINDS). */
+const SECOND_PASS_KINDS = new Set(["code", "fix", "complete", "output"]);
+
+const KIND_LABELS: Record<string, string> = {
+  code: "Code", choice: "Choice", short: "Short answer", output: "Output", fix: "Fix the bug",
+  sql: "SQL", complete: "Complete", design: "Design",
+};
+
+/** What the screen holds, in screen order, and the language it is in. */
+function ScreenTasks({ reading }: { reading: NonNullable<QuestionView["screen"]> }) {
+  if (reading.tasks.length === 0) {
+    return <p className="screen-tasks is-unreadable">Nothing to answer on this shot{reading.unreadable ? `: ${reading.unreadable}` : ""}. Take another.</p>;
+  }
+  return (
+    <ul className="screen-tasks" aria-label="Tasks on the screen">
+      {reading.tasks.map((t) => (
+        <li key={t.n} className="screen-task">
+          {reading.tasks.length > 1 && <span className="screen-task-n">{t.n}</span>}
+          {KIND_LABELS[t.kind] ?? t.kind}
+          {t.language && <span className="screen-task-lang"> · {t.language}</span>}
+        </li>
+      ))}
+    </ul>
   );
 }
 

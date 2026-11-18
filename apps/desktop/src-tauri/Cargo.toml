@@ -35,6 +35,9 @@ tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["serde"] }
+# Coding mode's shots (shots.rs): shrink and encode them as lossless WebP. Pure Rust.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+base64 = "0.22"
 
 # The main window's microphone permission for guest seats' voice (voice.rs): the versions
 # Tauri's own WebView2 (wry) uses.
@@ -50,6 +53,9 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# Coding mode's shots: the window in front through PrintWindow (PW_RENDERFULLCONTENT), or the
+# monitor under the cursor (GDI). Windows only: on Linux it pulls in PipeWire and Wayland.
+xcap = "0.9.10"
 
 [features]
 # Release builds (the installer teammates use): the stage's URLs from apps/desktop/release.json

@@ -855,3 +855,201 @@ button.ov-watching[aria-expanded="true"] {
   background: rgb(141 180 255 / 0.12);
   color: var(--ov-fast);
 }
+
+/* Coding mode (CodingBar.tsx, CodeAnswer.tsx): the bar that takes and sends shots, the tasks a
+   screen holds, and answers with code. Code keeps an opaque dark backing, whatever the
+   opacity setting, so it reads like an editor over any screen. */
+.ov-coding {
+  padding: var(--space-2) var(--space-3) 0;
+  border-top: 1px solid var(--ov-line);
+}
+.ov-coding-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ov-coding-solve:not(:disabled) {
+  border-color: var(--ov-fast);
+  color: var(--ov-fast);
+}
+.ov-seg {
+  display: inline-flex;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.ov-seg-btn {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--ov-text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ov-seg-btn.is-on {
+  background: var(--ov-raise);
+  color: var(--ov-text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--ov-fast);
+}
+.ov-coding-lang {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-md);
+  background: rgb(0 0 0 / 0.35);
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 13px;
+}
+.ov-coding-lang option {
+  background: rgb(var(--ov-panel));
+}
+.ov-shots {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+}
+.ov-shot {
+  position: relative;
+  flex: none;
+  width: 88px;
+  height: 50px;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+  background: #000;
+}
+.ov-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+.ov-shot-n {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.75);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ov-shot-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.75);
+  color: #fff;
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.ov-coding .ov-ask-error {
+  margin: var(--space-1) 0 0;
+}
+
+.screen-tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-meta);
+}
+.screen-task {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--ov-raise);
+  color: var(--ov-text-2);
+}
+.screen-task-n {
+  margin-right: 4px;
+  color: var(--ov-text-3);
+  font-weight: 600;
+}
+.screen-task-lang {
+  color: var(--ov-fast);
+}
+.screen-tasks.is-unreadable {
+  display: block;
+  color: var(--ov-warn);
+}
+
+.code-answer p {
+  margin: 0 0 var(--space-1);
+}
+.code-answer code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+.code-answer p code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.08);
+}
+.code-answer strong {
+  color: var(--ov-text);
+}
+.code-task {
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--ov-fast);
+  font-size: 1em;
+}
+.code-answer .code-text:first-child .code-task:first-child {
+  margin-top: 0;
+}
+.code-block {
+  margin: var(--space-2) 0;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: var(--radius-md);
+  background: #0d1117;
+  overflow: hidden;
+}
+.code-block figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px var(--space-2);
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  color: var(--ov-text-3);
+  font-size: 12px;
+}
+.code-block pre {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: calc(13px * var(--ov-scale));
+  line-height: 1.5;
+  color: #e6edf3;
+  tab-size: 4;
+}
+.code-block.is-open pre::after {
+  content: "▍";
+  color: var(--ov-fast);
+}
+.pass.is-code {
+  font-size: var(--fs-deep);
+}
+/* Highlighting (highlight.js classes), a dark editor palette. */
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-type { color: #ff7b72; }
+.hljs-title, .hljs-title.function_, .hljs-title.class_ { color: #d2a8ff; }
+.hljs-string, .hljs-regexp, .hljs-char.escape_ { color: #a5d6ff; }
+.hljs-number, .hljs-literal, .hljs-symbol { color: #79c0ff; }
+.hljs-comment, .hljs-quote { color: #8b949e; font-style: italic; }
+.hljs-params, .hljs-variable, .hljs-attr { color: #ffa657; }
+.hljs-meta { color: #79c0ff; }

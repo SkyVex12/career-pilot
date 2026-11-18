@@ -13,6 +13,7 @@ mod program_name;
 mod release;
 mod remote;
 mod settings;
+mod shots;
 mod stealth;
 mod voice;
 
@@ -37,7 +38,7 @@ use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, Connec
 use copilot_client::net::close::StopReason;
 use copilot_client::net::seat::{self, SeatHandle, SeatParams};
 use copilot_client::oauth::{self, OAuthTokenProvider};
-use copilot_client::protocol::{AnswerStyle, Mode};
+use copilot_client::protocol::{AnswerMode, AnswerStyle, Mode, ScreenImage, ScreenImageMediaType};
 use copilot_client::wake::{self, Progress};
 use history::History;
 use hotkeys::Action;
@@ -63,6 +64,10 @@ const SETTINGS_EVENT: &str = "copilot://settings";
 /// The overlay's live comfort prefs (opacity, view, click-through), pushed to the overlay
 /// window when a hotkey or a move between monitors changes them.
 const OVERLAY_EVENT: &str = "copilot://overlay";
+/// Coding mode: the tray's shots changed (a list of `shots::ShotView`), and what went wrong
+/// with a hotkey's shot (a message), since a hotkey has no caller to return an error to.
+const SHOTS_EVENT: &str = "copilot://coding-shots";
+const SHOTS_ERROR_EVENT: &str = "copilot://coding-error";
 /// The overlay asked to open the main window's Settings screen ("All settings…").
 const OPEN_SETTINGS_EVENT: &str = "copilot://open-settings";
 /// The on-demand server (wake.rs): {"state": "starting" | "ready" | "failed", "detail"}.
@@ -105,6 +110,8 @@ struct AppState {
     server_host: Mutex<Option<String>>,
     /// One start at a time; other calls wait for it.
     server_start: tokio::sync::Mutex<()>,
+    /// Coding mode's tray: the shots of one problem, waiting for Solve (shots.rs).
+    shots: Mutex<Vec<shots::Shot>>,
 }
 
 #[derive(Default)]
@@ -561,6 +568,8 @@ fn save_settings(
             layouts: kept.layouts,
             overlay_monitor: kept.overlay_monitor,
             overlay_on_top: kept.overlay_on_top,
+            coding_mode: kept.coding_mode,
+            coding_language: kept.coding_language,
             ..settings.clone()
         }
     });
@@ -1209,6 +1218,135 @@ async fn respond(state: State<'_, AppState>, text: Option<String>) -> Res<()> {
     Ok(())
 }
 
+/// Coding mode: a shot of the problem's window (shots.rs), on a worker thread: capturing and
+/// encoding take 100 to 400 ms. With stealth off, the overlay is kept out of a monitor grab
+/// (a window grab never shows it); a guest's overlay is already kept out.
+async fn take_shot(app: &AppHandle) -> Res<shots::Shot> {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let excluded = state.settings.lock().unwrap().stealth || state.seat.lock().unwrap().is_some();
+        let keep_out = |on: bool| {
+            if excluded {
+                return;
+            }
+            stealth::exclude_overlay(&app, on);
+            if on {
+                // The affinity is set on the window's own thread; let it land first.
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        };
+        let shot = shots::grab(std::process::id(), &keep_out)?;
+        tracing::info!(
+            "coding shot {}: {:?}, {}x{}, {} KB, capture {} ms, encode {} ms",
+            shot.id,
+            shot.source,
+            shot.width,
+            shot.height,
+            shot.bytes() / 1024,
+            shot.capture_ms,
+            shot.encode_ms
+        );
+        Ok(shot)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn emit_shots(app: &AppHandle) {
+    let views: Vec<shots::ShotView> =
+        app.state::<AppState>().shots.lock().unwrap().iter().map(|s| s.view()).collect();
+    let _ = app.emit(SHOTS_EVENT, views);
+}
+
+fn tray_full(app: &AppHandle) -> Res<()> {
+    if app.state::<AppState>().shots.lock().unwrap().len() >= shots::MAX_SHOTS {
+        return Err(format!("{} shots at most: solve these, or remove one", shots::MAX_SHOTS));
+    }
+    Ok(())
+}
+
+/// The Add shot hotkey and button: one more shot of this problem into the tray.
+async fn add_shot(app: &AppHandle) -> Res<()> {
+    tray_full(app)?;
+    let shot = take_shot(app).await?;
+    tray_full(app)?;
+    app.state::<AppState>().shots.lock().unwrap().push(shot);
+    emit_shots(app);
+    Ok(())
+}
+
+/// The Solve hotkey and button: the tray's shots (or, with none, one taken now) sent as one
+/// problem, in the overlay's answer mode and language. The tray empties once they are sent.
+async fn solve(app: &AppHandle) -> Res<()> {
+    let state = app.state::<AppState>();
+    let engine = state
+        .engine()
+        .map_err(|_| "Start a session first: shots are answered in a running session".to_string())?;
+    let mut shots: Vec<shots::Shot> = state.shots.lock().unwrap().clone();
+    if shots.is_empty() {
+        shots.push(take_shot(app).await?);
+    }
+    let (mode, language) = {
+        let s = state.settings.lock().unwrap();
+        (s.coding_mode.clone(), s.coding_language.clone())
+    };
+    let answer_mode = if mode == "assessment" { AnswerMode::Assessment } else { AnswerMode::Interview };
+    let images = shots
+        .iter()
+        .map(|s| ScreenImage {
+            data: s.data.clone(),
+            media_type: match s.media_type {
+                "image/jpeg" => ScreenImageMediaType::ImageJpeg,
+                "image/png" => ScreenImageMediaType::ImagePng,
+                _ => ScreenImageMediaType::ImageWebp,
+            },
+            width: u64::from(s.width),
+            height: u64::from(s.height),
+            title: s.title.as_ref().map(|t| t.chars().take(300).collect()),
+        })
+        .collect();
+    let sent: Vec<u32> = shots.iter().map(|s| s.id).collect();
+    engine.screenshot(images, answer_mode, Some(language)).await;
+    // Shots added while this one was being taken stay for the next problem.
+    state.shots.lock().unwrap().retain(|s| !sent.contains(&s.id));
+    emit_shots(app);
+    Ok(())
+}
+
+#[tauri::command]
+async fn coding_add_shot(app: AppHandle) -> Res<()> {
+    add_shot(&app).await
+}
+
+#[tauri::command]
+async fn coding_solve(app: AppHandle) -> Res<()> {
+    solve(&app).await
+}
+
+#[tauri::command]
+fn coding_remove_shot(app: AppHandle, state: State<'_, AppState>, id: u32) {
+    state.shots.lock().unwrap().retain(|s| s.id != id);
+    emit_shots(&app);
+}
+
+#[tauri::command]
+fn coding_shots(state: State<'_, AppState>) -> Vec<shots::ShotView> {
+    state.shots.lock().unwrap().iter().map(|s| s.view()).collect()
+}
+
+/// The overlay's answer mode ("interview" or "assessment") and language ("" lets the screen
+/// decide), kept across calls.
+#[tauri::command]
+fn set_coding_prefs(state: State<'_, AppState>, mode: String, language: String) {
+    let mode = if mode == "assessment" { mode } else { "interview".to_string() };
+    let language: String = language.trim().chars().take(40).collect();
+    state.update_settings(|s| {
+        s.coding_mode = mode;
+        s.coding_language = language;
+    });
+}
+
 #[tauri::command]
 async fn expand_answer(state: State<'_, AppState>, question_id: Uuid) -> Res<()> {
     state.engine()?.expand(question_id).await;
@@ -1496,6 +1634,15 @@ fn dispatch(app: &AppHandle, action: Action) {
         Action::ClickThroughOff => apply_click_through(app, false),
         Action::OpacityUp => nudge_opacity(app, 1),
         Action::OpacityDown => nudge_opacity(app, -1),
+        Action::AddShot | Action::Solve => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let done = if action == Action::AddShot { add_shot(&app).await } else { solve(&app).await };
+                if let Err(e) = done {
+                    let _ = app.emit(SHOTS_ERROR_EVENT, e);
+                }
+            });
+        }
         Action::StopControl => {
             // A guest controlling the screen stops at once, whatever the windows do.
             remote::end();
@@ -1897,6 +2044,7 @@ pub fn run() {
                 overlay: OverlayState::default(),
                 server_host: Mutex::new(None),
                 server_start: tokio::sync::Mutex::new(()),
+                shots: Mutex::new(Vec::new()),
             });
             #[cfg(feature = "release")]
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
@@ -2018,6 +2166,11 @@ pub fn run() {
             open_session,
             end_live_session,
             force_question,
+            coding_add_shot,
+            coding_solve,
+            coding_remove_shot,
+            coding_shots,
+            set_coding_prefs,
             respond,
             expand_answer,
             send_feedback,

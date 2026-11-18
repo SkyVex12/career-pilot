@@ -16,6 +16,13 @@ export const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string
   },
   { key: "opacity_up_hotkey", action: "opacity_up", label: "Overlay more opaque" },
   { key: "opacity_down_hotkey", action: "opacity_down", label: "Overlay more see-through" },
+  {
+    key: "add_shot_hotkey",
+    action: "add_shot",
+    label: "Coding: add a shot",
+    hint: "The window in front, into the tray. Scroll or switch files and add more, up to 6.",
+  },
+  { key: "solve_hotkey", action: "solve", label: "Coding: solve", hint: "Sends the tray's shots as one problem; with none, takes one first." },
 ];
 
 const KEY_LABELS: Record<string, string> = {

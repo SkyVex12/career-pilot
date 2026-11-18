@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use copilot_protocol::{
-    AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerStyle, AnswerStyleSet, Channel, ClientMessage,
-    Mode, ModeSet, QuestionForce, QuestionForceKind, SharingSet,
+    AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerMode, AnswerStyle, AnswerStyleSet, Channel,
+    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ScreenImage, Screenshot, SharingSet,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -215,6 +215,26 @@ impl Engine {
         self.latency.lock().unwrap().on_force(Instant::now());
         let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         self.send(ClientMessage::QuestionForce(QuestionForce { text, kind, note_id })).await;
+    }
+
+    /// Coding mode: the shots of one problem, answered as a question (ARCHITECTURE.md,
+    /// "Coding mode"). Its first word is timed from now, as a forced question's is.
+    pub async fn screenshot(
+        &self,
+        images: Vec<ScreenImage>,
+        answer_mode: AnswerMode,
+        language: Option<String>,
+    ) {
+        self.latency.lock().unwrap().on_force(Instant::now());
+        let language = language.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        self.send(ClientMessage::Screenshot(Screenshot {
+            images,
+            question_id: None,
+            answer_mode: Some(answer_mode),
+            language,
+            default_language: None,
+        }))
+        .await;
     }
 
     pub async fn expand(&self, question_id: Uuid) {
