@@ -189,39 +189,27 @@ export function ScreenChip({ s }: { s: SessionView }) {
   );
 }
 
-/** A controlling guest's mouse and keys on the picture, in batches about every 16 ms; a move
- * followed by another is sent as the last one only. Keys held when the picture loses focus are
+/** A controlling guest's mouse and keys on the picture, each sent the moment it happens (the
+ * browser already gives at most one move a frame). Keys held when the picture loses focus are
  * let go. */
 function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTMLVideoElement | null>) {
-  const batch = useRef<InputEvent[]>([]);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const held = useRef(new Set<string>());
-  const flush = useCallback(() => {
-    timer.current = null;
-    const events = batch.current;
-    batch.current = [];
-    if (guest && events.length > 0) void guest.send(events).catch(() => undefined);
-  }, [guest]);
-  const push = useCallback(
-    (e: InputEvent) => {
-      if (!on) return;
-      const last = batch.current[batch.current.length - 1];
-      if (e.t === "move" && last?.t === "move") batch.current[batch.current.length - 1] = e;
-      else batch.current.push(e);
-      if (e.t !== "move") flush();
-      else if (!timer.current) timer.current = setTimeout(flush, 16);
+  const send = useCallback(
+    (events: InputEvent[]) => {
+      if (on && guest && events.length > 0) void guest.send(events).catch(() => undefined);
     },
-    [on, flush],
+    [on, guest],
   );
+  const push = useCallback((e: InputEvent) => send([e]), [send]);
   const spot = (e: { clientX: number; clientY: number }) => {
     const el = video.current;
     if (!el) return null;
     return pictureSpot(e.clientX, e.clientY, el.getBoundingClientRect(), el.videoWidth, el.videoHeight);
   };
   const letGo = useCallback(() => {
-    for (const code of held.current) push({ t: "key_up", code });
+    send([...held.current].map((code): InputEvent => ({ t: "key_up", code })));
     held.current.clear();
-  }, [push]);
+  }, [send]);
   useEffect(() => {
     if (!on) held.current.clear();
   }, [on]);

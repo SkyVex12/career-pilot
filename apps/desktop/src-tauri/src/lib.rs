@@ -2069,8 +2069,10 @@ fn remote_begin(target: remote::Rect) {
 }
 
 /// The controlling guest's events, carried out on that monitor. Err when no one controls.
+/// Async so it runs on a worker thread: a plain command waits its turn on the UI thread,
+/// behind the windows' own work, which the guest feels as lag. SendInput works from any thread.
 #[tauri::command]
-fn remote_input(events: Vec<remote::Input>) -> Res<()> {
+async fn remote_input(events: Vec<remote::Input>) -> Res<()> {
     remote::input(&events)
 }
 

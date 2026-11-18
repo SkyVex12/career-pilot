@@ -5,6 +5,7 @@
 // the grant, and the app lets go of what was held. LiveKit, the picker and the app are faked.
 import { describe, expect, it, vi } from "vitest";
 import {
+  ENCODING,
   GuestScreen,
   HostScreen,
   MAX_EVENTS_PER_S,
@@ -174,6 +175,60 @@ describe("control of the host's screen", () => {
     await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(2));
   });
 
+  it("moves never wait in line: while the app is busy only the newest is kept, ahead of what follows", async () => {
+    const t = await controlling();
+    let free: () => void = () => undefined;
+    vi.mocked(t.deps.input).mockImplementationOnce(async (events) => {
+      t.log.push(`input ${events.map((e) => e.t).join(",")}`);
+      await new Promise<void>((r) => (free = r));
+    });
+    const move = (x: number) => data({ events: [{ t: "move", x, y: 0.5 }] });
+    t.room.emit("dataReceived", move(0.1), { identity: "seat:p" }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(1));
+    t.room.emit("dataReceived", move(0.2), { identity: "seat:p" }, 0, TOPIC.input);
+    t.room.emit("dataReceived", move(0.3), { identity: "seat:p" }, 0, TOPIC.input);
+    t.room.emit("dataReceived", data({ events: [{ t: "down", button: 0, x: 0.3, y: 0.5 }] }), { identity: "seat:p" }, 0, TOPIC.input);
+    free();
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(t.deps.input).mock.calls[1][0]).toEqual([
+      { t: "move", x: 0.3, y: 0.5 },
+      { t: "down", button: 0, x: 0.3, y: 0.5 },
+    ]);
+    // Moves alone: the newest goes as soon as the app is free.
+    vi.mocked(t.deps.input).mockImplementationOnce(async () => {
+      await new Promise<void>((r) => (free = r));
+    });
+    t.room.emit("dataReceived", move(0.4), { identity: "seat:p" }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(3));
+    t.room.emit("dataReceived", move(0.5), { identity: "seat:p" }, 0, TOPIC.input);
+    t.room.emit("dataReceived", move(0.6), { identity: "seat:p" }, 0, TOPIC.input);
+    free();
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(4));
+    expect(vi.mocked(t.deps.input).mock.calls[3][0]).toEqual([{ t: "move", x: 0.6, y: 0.5 }]);
+  });
+
+  it("sends twice the frames while a guest controls, and goes back after", async () => {
+    const params = { encodings: [{ maxBitrate: 0, maxFramerate: 0 }], degradationPreference: "" };
+    const sender = {
+      getParameters: () => structuredClone(params),
+      setParameters: vi.fn(async (p: typeof params) => {
+        Object.assign(params, p);
+      }),
+    };
+    const track = Object.assign(fakeScreenTrack("monitor", 1920, 1080), { sender });
+    const t = host({}, track);
+    await t.h.share("s1");
+    expect(t.room.localParticipant.publishTrack).toHaveBeenCalledWith(
+      track,
+      expect.objectContaining({ videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate } }),
+    );
+    t.h.setAllowed([PAVLO]);
+    await t.h.allow(PAVLO);
+    expect(params).toMatchObject({ encodings: [{ maxFramerate: 60, maxBitrate: ENCODING.control.maxBitrate }], degradationPreference: "balanced" });
+    await t.h.endControl(null);
+    expect(params).toMatchObject({ encodings: [{ maxFramerate: 30, maxBitrate: ENCODING.watch.maxBitrate }], degradationPreference: "maintain-resolution" });
+  });
+
   it("ends, letting go of everything, when the grant goes, on Stop, or when the guest gives it back", async () => {
     const t = await controlling();
     t.h.setAllowed([BLAIR]);
@@ -321,6 +376,21 @@ describe("the guest's view", () => {
     expect(room.sent[room.sent.length - 1]).toEqual({ topic: TOPIC.input, to: ["host"], body: { events: [{ t: "key_down", code: "KeyA" }] } });
     room.emit("dataReceived", data({ on: false }), { identity: "host" }, 0, TOPIC.control);
     expect(t.g.state.controlling).toBe(false);
+  });
+
+  it("shows frames at once, and sends moves lossy but clicks and keys reliably", async () => {
+    const t = guest({ token: vi.fn(async () => ({ url: "wss://lk", token: "t", control: true })) });
+    await t.g.open();
+    const room = t.rooms[0];
+    const video = { kind: "video", setPlayoutDelay: vi.fn() };
+    room.emit("trackSubscribed", video, {}, { identity: "host" });
+    expect(video.setPlayoutDelay).toHaveBeenCalledWith(0);
+    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    await t.g.send([{ t: "move", x: 0.1, y: 0.1 }]);
+    await t.g.send([{ t: "down", button: 0, x: 0.1, y: 0.1 }]);
+    await t.g.send([{ t: "key_down", code: "KeyA" }]);
+    const reliable = vi.mocked(room.localParticipant.publishData).mock.calls.map((c) => (c[1] as unknown as { reliable: boolean }).reliable);
+    expect(reliable).toEqual([false, true, true]);
   });
 
   it("without control, cannot even ask", async () => {

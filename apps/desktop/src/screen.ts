@@ -89,6 +89,14 @@ export const TOPIC = { input: "input", ask: "ask", release: "release", control: 
 /** At most this many of a guest's events a second; the rest are dropped. */
 export const MAX_EVENTS_PER_S = 600;
 
+/** The shared picture's encoding: sharp text while guests only watch; while a guest controls,
+ * twice the frames (and the bits for them), and frames are kept over sharpness when the line
+ * is short, so the pointer and what it moves keep up with the guest's hand. */
+export const ENCODING = {
+  watch: { maxBitrate: 5_000_000, maxFramerate: 30, degradation: "maintain-resolution" },
+  control: { maxBitrate: 8_000_000, maxFramerate: 60, degradation: "balanced" },
+} as const;
+
 export interface Grant {
   url: string;
   token: string;
@@ -112,6 +120,8 @@ export const hostDeps: HostDeps = {
   capture: () =>
     createLocalScreenTracks({
       audio: false,
+      // Captured at up to 60 frames, so control can send them all (ENCODING).
+      resolution: { width: 1920, height: 1080, frameRate: 60 },
       contentHint: "detail",
       selfBrowserSurface: "exclude",
       surfaceSwitching: "exclude",
@@ -144,6 +154,8 @@ export class HostScreen {
   private allowed: Person[] = [];
   private queue: Promise<void> = Promise.resolve();
   private pending = 0;
+  /** The newest move that came while the app was busy: only where the pointer ends up counts. */
+  private spare: InputEvent | null = null;
   private window = { start: 0, count: 0 };
 
   constructor(
@@ -193,7 +205,8 @@ export class HostScreen {
       await room.localParticipant.publishTrack(video, {
         source: Track.Source.ScreenShare,
         simulcast: false,
-        videoEncoding: { maxBitrate: 2_500_000, maxFramerate: 15 },
+        videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
+        degradationPreference: ENCODING.watch.degradation,
       });
       const surface = video.mediaStreamTrack.getSettings().displaySurface ?? null;
       this.set({ host: "on", surface, error: null });
@@ -254,6 +267,7 @@ export class HostScreen {
       await this.deps.begin(target.rect);
       this.set({ controller: person, choose: null, asking: this.status.asking.filter((p) => p.identity !== person.identity), error: null });
       await this.tell(person.identity, true);
+      await this.tune("control");
     } catch (e) {
       this.set({ choose: null, error: e instanceof Error ? e.message : String(e) });
     }
@@ -264,10 +278,32 @@ export class HostScreen {
     const was = this.status.controller;
     if (!was && !this.status.choose) return;
     this.set({ controller: null, choose: null, error: error ?? this.status.error });
+    this.spare = null;
     try {
       await this.deps.end();
     } finally {
       if (was) await this.tell(was.identity, false);
+      if (was) await this.tune("watch");
+    }
+  }
+
+  /** The picture's encoding for watching or for control (ENCODING), changed on the live share. */
+  private async tune(mode: keyof typeof ENCODING): Promise<void> {
+    const video = this.tracks.find((t) => t.kind === Track.Kind.Video);
+    const sender = video?.sender;
+    if (!sender) return;
+    const want = ENCODING[mode];
+    try {
+      const p = sender.getParameters() as RTCRtpSendParameters & { degradationPreference?: string };
+      if (!p.encodings?.length) return;
+      for (const e of p.encodings) {
+        e.maxBitrate = want.maxBitrate;
+        e.maxFramerate = want.maxFramerate;
+      }
+      p.degradationPreference = want.degradation;
+      await sender.setParameters(p);
+    } catch {
+      // The share keeps its encoding; control works the same, only less smoothly.
     }
   }
 
@@ -306,23 +342,41 @@ export class HostScreen {
     } catch {
       return;
     }
-    // At most MAX_EVENTS_PER_S a second, and not when the app falls behind (moves only).
+    // At most MAX_EVENTS_PER_S a second.
     const now = this.deps.now();
     if (now - this.window.start >= 1000) this.window = { start: now, count: 0 };
     const room = MAX_EVENTS_PER_S - this.window.count;
     if (room <= 0) return;
     events = events.slice(0, room);
-    if (this.pending > 8) events = events.filter((e) => e.t !== "move");
     if (events.length === 0) return;
     this.window.count += events.length;
+    // Moves never wait in line: while the app is busy, only the newest is kept, and it goes
+    // next. Anything else goes in order, after the move kept before it.
+    if (this.pending > 0 && events.every((e) => e.t === "move")) {
+      this.spare = events[events.length - 1];
+      return;
+    }
+    if (this.spare) {
+      events = [this.spare, ...events];
+      this.spare = null;
+    }
+    await this.run(events);
+  }
+
+  private run(events: InputEvent[]): Promise<void> {
     this.pending += 1;
     this.queue = this.queue
       .then(() => this.deps.input(events))
       .catch(() => undefined)
       .finally(() => {
         this.pending -= 1;
+        const spare = this.spare;
+        if (this.pending === 0 && spare && this.status.controller) {
+          this.spare = null;
+          void this.run([spare]);
+        }
       });
-    await this.queue;
+    return this.queue;
   }
 }
 
@@ -443,6 +497,13 @@ export class GuestScreen {
       this.room = room;
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: RemoteParticipant) => {
         if (who.identity !== HOST || track.kind !== Track.Kind.Video) return;
+        // Show each frame as soon as it can be: no smoothing buffer, which would cost the
+        // guest's hand its feel of the screen.
+        try {
+          track.setPlayoutDelay(0);
+        } catch {
+          // Not supported here: the browser's own buffer stays.
+        }
         this.track = track;
         this.set({ state: "watching" });
       });
@@ -470,9 +531,9 @@ export class GuestScreen {
     }
   }
 
-  private async publish(topic: string, body: unknown): Promise<void> {
+  private async publish(topic: string, body: unknown, reliable = true): Promise<void> {
     await this.room?.localParticipant.publishData(encoder.encode(JSON.stringify(body)), {
-      reliable: true,
+      reliable,
       destinationIdentities: [HOST],
       topic,
     });
@@ -491,10 +552,12 @@ export class GuestScreen {
     this.set({ controlling: false, asked: false });
   }
 
-  /** The guest's mouse and keys, while the host lets them control. */
+  /** The guest's mouse and keys, while the host lets them control. Moves alone go lossy: one
+   * that is lost is overtaken by the next, where a resent one would hold up all after it.
+   * Clicks, keys and the wheel always arrive (each carries its own spot). */
   async send(events: InputEvent[]): Promise<void> {
     if (!this.state.controlling || events.length === 0) return;
-    await this.publish(TOPIC.input, { events });
+    await this.publish(TOPIC.input, { events }, !events.every((e) => e.t === "move"));
   }
 
   /** Taken out of the room (grants changed) or the connection dropped: try again a few times. */
