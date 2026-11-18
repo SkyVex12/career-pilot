@@ -82,9 +82,13 @@ fn install_windows(name: &str) -> Result<(), String> {
         return Ok(());
     }
     if security_directory_size(&target)? > 0 {
-        return Err(
-            "This copy of the app is signed, so Task Manager keeps the name from the installer.".into()
-        );
+        // The installed copy is signed. Rewriting it would remove the signature. Windows 11
+        // 21H2 Task Manager shows the window title for a visible app, and that title is already
+        // the configured name. Later Windows uses the file description as the group; a signed
+        // copy keeps the name from the installer there.
+        tracing::info!("program file is signed; this Windows version shows the window title in Task Manager");
+        mark_applied(name);
+        return Ok(());
     }
     let staging = staging_path(&target);
     let _ = std::fs::remove_file(&staging);

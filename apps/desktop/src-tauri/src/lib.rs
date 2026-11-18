@@ -1737,6 +1737,9 @@ pub fn run() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    // Before any window. Windows 11 21H2 cannot exclude a WebView2 window from capture
+    // after pointer input is turned on, and that switch can only be chosen once.
+    stealth::prepare();
     // One app per computer (2026-10-29: two copies on one computer ran two sessions on the
     // same microphone and speakers, under two profiles). A second launch brings the running
     // app's window forward instead.
@@ -1755,6 +1758,19 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
                 window.app_handle().exit(0);
+            }
+            // Build 22000 drops capture exclusion when the WebView finishes attaching.
+            // Putting it back on focus covers that. Later Windows keeps the first call.
+            if matches!(event, WindowEvent::Focused(true)) && stealth::capture_needs_repeat() {
+                let app = window.app_handle();
+                let Some(state) = app.try_state::<AppState>() else { return };
+                let (on, name) = {
+                    let settings = state.settings.lock().unwrap();
+                    (settings.stealth, settings.display_name.clone())
+                };
+                if on {
+                    stealth::apply(app, true, &name);
+                }
             }
         })
         .plugin(tauri_plugin_opener::init())
