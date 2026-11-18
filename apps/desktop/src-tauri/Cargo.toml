@@ -41,6 +41,9 @@ uuid = { version = "1", features = ["serde"] }
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
+# HWND for moving the WebView while stealth mode sets capture exclusion on Windows 11 21H2
+# (stealth.rs). The version webview2-com itself uses.
+windows = { version = "0.62", features = ["Win32_Foundation"] }
 
 [features]
 # Release builds (the installer teammates use): the stage's URLs from apps/desktop/release.json

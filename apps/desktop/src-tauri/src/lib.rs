@@ -1727,19 +1727,12 @@ fn open_main_settings(app: AppHandle) -> Res<()> {
 /// The app's log file, emptied once it passes 2 MB so it never grows without bound.
 /// `None` off Windows or when the folder cannot be written; logs then go to stderr.
 fn open_log_file() -> Option<std::fs::File> {
-    let dir = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
-        .join("com.copilot.desktop")
-        .join("logs");
+    let dir =
+        std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("com.copilot.desktop").join("logs");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("desktop.log");
     let too_big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 2 * 1024 * 1024);
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(!too_big)
-        .write(true)
-        .truncate(too_big)
-        .open(path)
-        .ok()
+    std::fs::OpenOptions::new().create(true).append(!too_big).write(true).truncate(too_big).open(path).ok()
 }
 
 /// The overlay's "Quit": close the whole app.
@@ -1750,8 +1743,7 @@ fn quit_app(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let filter =
-        || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    let filter = || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
     // The installed app has no console, so its warnings go to a file a teammate can send:
     // %LOCALAPPDATA%\com.copilot.desktop\logs\desktop.log, beside updates.log.
     match open_log_file() {
@@ -1763,9 +1755,6 @@ pub fn run() {
         None => tracing_subscriber::fmt().with_env_filter(filter()).init(),
     }
     tracing::info!("starting on Windows build {}", stealth::build_number());
-    // Before any window. Windows 11 21H2 cannot exclude a WebView2 window from capture
-    // after pointer input is turned on, and that switch can only be chosen once.
-    stealth::prepare();
     // One app per computer (2026-10-29: two copies on one computer ran two sessions on the
     // same microphone and speakers, under two profiles). A second launch brings the running
     // app's window forward instead.
@@ -1969,7 +1958,11 @@ pub fn run() {
             };
             let name = stealth::normalize_display_name(&name)
                 .unwrap_or_else(|_| stealth::DEFAULT_DISPLAY_NAME.to_string());
-            tracing::info!("version {}, stealth {}", app.package_info().version, if on { "on" } else { "off" });
+            tracing::info!(
+                "version {}, stealth {}",
+                app.package_info().version,
+                if on { "on" } else { "off" }
+            );
             if on {
                 stealth::apply(app.handle(), true, &name);
             } else {

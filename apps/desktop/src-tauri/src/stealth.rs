@@ -5,11 +5,11 @@
 //! That flag omits the window. `WDA_MONITOR` (0x1) is never used: it paints a black rectangle
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
-//! Windows 11 21H2 (build 22000) rejects the flag with "not enough memory" once WebView2 has
-//! turned on pointer input, so the window stays in screenshots. Pointer input is turned off
-//! before any window exists on builds before 22H2. That build also keeps the flag only after a
-//! frame refresh, and a transparent overlay stays white there unless the frame covers the
-//! whole client area.
+//! Windows 11 21H2 (build 22000) rejects the flag with "not enough memory" while the window
+//! holds WebView2's content, a child window that msedgewebview2.exe owns. There the WebView
+//! moves to a hidden window while the flag is set, then moves back. That build also gets a
+//! frame refresh after the flag, and a transparent overlay stays white there unless the frame
+//! covers the whole client area.
 //!
 //! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
 //! window title is the configured display name. Task Manager's process name is the executable's
@@ -93,19 +93,6 @@ pub fn normalize_display_name(raw: &str) -> Result<String, String> {
 /// The affinity to pass to `SetWindowDisplayAffinity`. Exclusion is `0x11`, never `WDA_MONITOR`.
 pub(crate) fn affinity(exclude: bool) -> u32 {
     if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }
-}
-
-/// Call before any window is created. On Windows 11 21H2, WebView2's pointer input makes
-/// `SetWindowDisplayAffinity` fail, and that switch can only be set once per process.
-pub fn prepare() {
-    #[cfg(windows)]
-    if windows_build() < WINDOWS_11_22H2 {
-        let turned_off = unsafe { EnableMouseInPointer(0) };
-        if turned_off == 0 {
-            let err = unsafe { GetLastError() };
-            tracing::warn!("stealth mode: pointer input stayed on ({err}); capture exclusion may not apply");
-        }
-    }
 }
 
 /// Windows 11 21H2 drops capture exclusion until it is applied again. Later builds do not.
@@ -205,27 +192,39 @@ fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
             return;
         }
     };
-    // Settings and overlay commands run on worker threads. Change the affinity on the thread
-    // that owns the window, so the frame refresh below is not a cross-thread send that waits on
-    // the UI thread, and the window's state changes where Windows expects it to.
+    // Settings and overlay commands run on worker threads. `with_webview` runs on the thread
+    // that owns the window, and hands over the WebView2 controller that build 22000 needs.
     let label = label.to_string();
-    let queued =
-        window.run_on_main_thread(move || set_window_now(&label, hwnd as *mut std::ffi::c_void, affinity));
+    let queued = window.with_webview(move |webview| {
+        set_window_now(&label, hwnd as *mut std::ffi::c_void, affinity, &webview.controller())
+    });
     if let Err(e) = queued {
         tracing::warn!("stealth mode: could not reach the window thread: {e}");
     }
 }
 
 #[cfg(windows)]
-fn set_window_now(label: &str, hwnd: *mut std::ffi::c_void, affinity: u32) {
+fn set_window_now(
+    label: &str,
+    hwnd: *mut std::ffi::c_void,
+    affinity: u32,
+    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+) {
     let build = windows_build();
+    // Already as asked: nothing to do. The focus repeat on 21H2 then costs nothing, and the
+    // WebView is not moved again on every focus.
+    if current_affinity(hwnd) == Some(affinity) {
+        return;
+    }
     // Read the error before anything else can overwrite it.
     let mut failed = set_affinity(hwnd, affinity);
-    // Error 8 is ERROR_NOT_ENOUGH_MEMORY. On build 22000 that is what WebView2's pointer
-    // input turns this call into. Turn pointer input off and try once more.
+    // Build 22000 answers ERROR_NOT_ENOUGH_MEMORY (8) for a window that has a child window
+    // from another process (desktop.log, 2026-11-18: every call failed, at start and later,
+    // with pointer input off). WebView2's content is such a child: msedgewebview2.exe owns
+    // it. Move the WebView to a hidden window, set the flag, and move it back.
     if failed == Some(ERROR_NOT_ENOUGH_MEMORY) && build < WINDOWS_11_22H2 {
-        let _ = unsafe { EnableMouseInPointer(0) };
-        failed = set_affinity(hwnd, affinity);
+        log_foreign_children(label, hwnd);
+        failed = set_with_webview_parked(hwnd, affinity, controller);
     }
     if let Some(err) = failed {
         tracing::warn!(
@@ -261,6 +260,88 @@ fn set_window_now(label: &str, hwnd: *mut std::ffi::c_void, affinity: u32) {
 fn current_affinity(hwnd: *mut std::ffi::c_void) -> Option<u32> {
     let mut kept = 0u32;
     (unsafe { GetWindowDisplayAffinity(hwnd, &mut kept) } != 0).then_some(kept)
+}
+
+/// Set the affinity while the WebView's window sits under a hidden window of this process,
+/// then put the WebView back. `SetParentWindow` is WebView2's own way to move its content to
+/// another parent. The content is hidden from the screen for a moment while it is moved.
+/// Returns the affinity error, as `set_affinity` does.
+#[cfg(windows)]
+fn set_with_webview_parked(
+    hwnd: *mut std::ffi::c_void,
+    affinity: u32,
+    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+) -> Option<u32> {
+    use windows::Win32::Foundation::HWND;
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+    // A hidden window with no taskbar button. STATIC is a system class: nothing to register.
+    let park = unsafe {
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if park.is_null() {
+        let err = unsafe { GetLastError() };
+        tracing::warn!("stealth mode: no hidden window to hold the WebView (error {err})");
+        return Some(ERROR_NOT_ENOUGH_MEMORY);
+    }
+    let result = match unsafe { controller.SetParentWindow(HWND(park)) } {
+        Ok(()) => {
+            let result = set_affinity(hwnd, affinity);
+            if result.is_some() {
+                // Still refused with the WebView moved out: the log says what is left.
+                log_foreign_children("with the WebView moved out, the window", hwnd);
+            }
+            if let Err(e) = unsafe { controller.SetParentWindow(HWND(hwnd)) } {
+                tracing::warn!("stealth mode: the WebView could not move back to its window: {e}");
+            }
+            let _ = unsafe { controller.NotifyParentWindowPositionChanged() };
+            result
+        }
+        Err(e) => {
+            tracing::warn!("stealth mode: the WebView could not move to a hidden window: {e}");
+            Some(ERROR_NOT_ENOUGH_MEMORY)
+        }
+    };
+    unsafe { DestroyWindow(park) };
+    result
+}
+
+/// Log the child windows that another process owns, by class: the evidence for why build
+/// 22000 refuses the affinity.
+#[cfg(windows)]
+fn log_foreign_children(label: &str, hwnd: *mut std::ffi::c_void) {
+    unsafe extern "system" fn visit(child: *mut std::ffi::c_void, found: isize) -> i32 {
+        let found = unsafe { &mut *(found as *mut Vec<String>) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(child, &mut pid) };
+        if pid != unsafe { GetCurrentProcessId() } {
+            let mut name = [0u16; 128];
+            let len = unsafe { GetClassNameW(child, name.as_mut_ptr(), name.len() as i32) };
+            found.push(String::from_utf16_lossy(&name[..len.max(0) as usize]));
+        }
+        1
+    }
+    let mut found: Vec<String> = Vec::new();
+    unsafe { EnumChildWindows(hwnd, Some(visit), &mut found as *mut Vec<String> as isize) };
+    tracing::info!(
+        "stealth mode: {label} has {} child window(s) from another process: {}",
+        found.len(),
+        found.join(", ")
+    );
 }
 
 /// The Windows build number for the log. 0 when it cannot be read, or off Windows.
@@ -388,7 +469,28 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
     fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
-    fn EnableMouseInPointer(enable: i32) -> i32;
+    fn CreateWindowExW(
+        ex_style: u32,
+        class: *const u16,
+        name: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        parent: *mut std::ffi::c_void,
+        menu: *mut std::ffi::c_void,
+        instance: *mut std::ffi::c_void,
+        param: *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn DestroyWindow(hwnd: *mut std::ffi::c_void) -> i32;
+    fn EnumChildWindows(
+        parent: *mut std::ffi::c_void,
+        visit: Option<unsafe extern "system" fn(*mut std::ffi::c_void, isize) -> i32>,
+        param: isize,
+    ) -> i32;
+    fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, pid: *mut u32) -> u32;
+    fn GetClassNameW(hwnd: *mut std::ffi::c_void, name: *mut u16, len: i32) -> i32;
     fn SetWindowPos(
         hwnd: *mut std::ffi::c_void,
         after: *mut std::ffi::c_void,
@@ -425,6 +527,7 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetLastError() -> u32;
+    fn GetCurrentProcessId() -> u32;
 }
 
 #[cfg(not(windows))]
