@@ -811,3 +811,25 @@ html[data-window="overlay"] #root {
   color: var(--ov-text-2);
   font-size: 13px;
 }
+/* The screen is shared with guests (screenui.tsx): in sight while it lasts, one click stops it. */
+.ov-screen-chip {
+  padding: 0 var(--space-3);
+  border: 1px solid rgb(242 184 75 / 0.6);
+  border-radius: 999px;
+  background: rgb(242 184 75 / 0.12);
+  color: var(--ov-warn);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+.ov-screen-chip.is-control {
+  border-color: rgb(255 107 107 / 0.7);
+  background: rgb(255 107 107 / 0.16);
+  color: var(--ov-bad);
+}
+.ov-screen-chip.is-ask {
+  border-color: rgb(141 180 255 / 0.6);
+  background: rgb(141 180 255 / 0.12);
+  color: var(--ov-fast);
+}

@@ -10,6 +10,7 @@ import { CallScreen } from "./CallScreen";
 import { Resumes } from "./Resumes";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
+import { startScreenHost } from "./screen";
 import { Shell, type Tab } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
@@ -25,6 +26,8 @@ export default function App() {
   const [session, dispatch] = useSession();
   // Guest seats' voice lives in this window alone (voice.ts); the overlay drives it by events.
   useEffect(() => (inTauri ? startVoice() : undefined), []);
+  // Sharing the screen runs in the window where the host clicked (screen.ts).
+  useEffect(() => (inTauri ? startScreenHost() : undefined), []);
   const [tab, setTab] = useState<Tab>("start");
   // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
   // refresh in the background (useOnShow) instead of starting from nothing.

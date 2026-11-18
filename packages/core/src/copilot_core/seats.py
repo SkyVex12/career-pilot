@@ -25,7 +25,9 @@ from copilot_core import keys
 CAPABILITIES = (
     "view", "note", "voice", "control.answer", "control.session", "device.view", "device.control",
 )  # fmt: skip
-GRANTABLE = frozenset({"view", "note", "voice"})
+GRANTABLE = frozenset({"view", "note", "voice", "device.view", "device.control"})
+# The capabilities carried over LiveKit: granted only where it is set up.
+MEDIA = frozenset({"voice", "device.view", "device.control"})
 
 OPEN = ("invited", "accepted", "admitted")
 CLOSED = ("declined", "removed", "expired", "ended")

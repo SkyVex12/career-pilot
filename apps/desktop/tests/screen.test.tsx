@@ -1,0 +1,340 @@
+// Guest seats' screen (src/screen.ts): the host shares only what they picked, from the click,
+// and stops cleanly; a guest watches only the host's video, and comes back by itself when
+// taken out of the room while it may still watch. Control (phase 5): only a guest who may, only
+// after the host lets them, only on a whole-screen share, on the shared monitor; it ends with
+// the grant, and the app lets go of what was held. LiveKit, the picker and the app are faked.
+import { describe, expect, it, vi } from "vitest";
+import {
+  GuestScreen,
+  HostScreen,
+  MAX_EVENTS_PER_S,
+  TOPIC,
+  matchingMonitors,
+  pictureSpot,
+  type GuestDeps,
+  type HostDeps,
+  type InputEvent,
+  type Monitor,
+  type ScreenStatus,
+} from "../src/screen";
+import { withCapability } from "../src/seats";
+
+type Handler = (...args: unknown[]) => void;
+
+function fakeRoom() {
+  const handlers = new Map<string, Handler[]>();
+  const sent: { topic: string; to: string[]; body: unknown }[] = [];
+  return {
+    handlers,
+    sent,
+    on(event: string, f: Handler) {
+      handlers.set(event, [...(handlers.get(event) ?? []), f]);
+      return this;
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const f of handlers.get(event) ?? []) f(...args);
+    },
+    connect: vi.fn(async () => undefined),
+    disconnect: vi.fn(async () => undefined),
+    localParticipant: {
+      publishTrack: vi.fn(async () => undefined),
+      publishData: vi.fn(async (data: Uint8Array, o: { topic: string; destinationIdentities: string[] }) => {
+        sent.push({ topic: o.topic, to: o.destinationIdentities, body: JSON.parse(new TextDecoder().decode(data)) });
+      }),
+    },
+  };
+}
+
+function fakeScreenTrack(surface = "monitor", width = 1920, height = 1080) {
+  const ended: (() => void)[] = [];
+  return {
+    kind: "video",
+    stop: vi.fn(),
+    ended: () => ended.forEach((f) => f()),
+    mediaStreamTrack: {
+      getSettings: () => ({ displaySurface: surface, width, height }),
+      addEventListener: (_: string, f: () => void) => ended.push(f),
+    },
+  };
+}
+
+const MAIN: Monitor = { id: "\\\\.\\DISPLAY1", rect: { x: 0, y: 0, w: 2560, h: 1440 }, primary: true };
+const SIDE: Monitor = { id: "\\\\.\\DISPLAY2", rect: { x: 2560, y: 0, w: 1280, h: 1024 }, primary: false };
+
+function host(over: Partial<HostDeps> = {}, track = fakeScreenTrack()) {
+  const room = fakeRoom();
+  const log: string[] = [];
+  let now = 0;
+  const deps: HostDeps = {
+    newRoom: () => room as never,
+    capture: vi.fn(async () => [track as never]),
+    token: vi.fn(async () => ({ url: "wss://lk", token: "host-token" })),
+    monitors: vi.fn(async () => [MAIN, SIDE]),
+    begin: vi.fn(async (r) => {
+      log.push(`begin ${r.x},${r.y} ${r.w}x${r.h}`);
+    }),
+    input: vi.fn(async (events: InputEvent[]) => {
+      log.push(`input ${events.map((e) => e.t).join(",")}`);
+    }),
+    end: vi.fn(async () => {
+      log.push("end");
+    }),
+    now: () => now,
+    ...over,
+  };
+  const statuses: ScreenStatus[] = [];
+  const h = new HostScreen(deps, (s) => statuses.push(s));
+  return {
+    h, deps, room, track, statuses, log,
+    tick: (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
+const PAVLO = { identity: "seat:p", name: "Pavlo" };
+const BLAIR = { identity: "seat:b", name: "Blair" };
+const data = (body: unknown) => new TextEncoder().encode(JSON.stringify(body));
+
+describe("the host's screen", () => {
+  it("opens the picker first, then joins and shares that track, with no audio", async () => {
+    const t = host();
+    await t.h.share("s1");
+    expect(t.deps.capture).toHaveBeenCalledBefore(t.deps.token as never);
+    expect(t.deps.token).toHaveBeenCalledWith("s1");
+    expect(t.room.connect).toHaveBeenCalledWith("wss://lk", "host-token", { autoSubscribe: false });
+    expect(t.room.localParticipant.publishTrack).toHaveBeenCalledWith(t.track, expect.objectContaining({ source: "screen_share" }));
+    expect(t.h.status).toMatchObject({ host: "on", surface: "monitor", controller: null, error: null });
+  });
+
+  it("a closed picker is no error and joins nothing", async () => {
+    const t = host({ capture: vi.fn(async () => Promise.reject(new DOMException("denied", "NotAllowedError"))) });
+    await t.h.share("s1");
+    expect(t.h.status).toMatchObject({ host: "off", surface: null, error: null });
+    expect(t.deps.token).not.toHaveBeenCalled();
+  });
+
+  it("a refused token stops the capture and says why", async () => {
+    const t = host({ token: vi.fn(async () => Promise.reject(new Error("Screen sharing is not set up on this server."))) });
+    await t.h.share("s1");
+    expect(t.track.stop).toHaveBeenCalled();
+    expect(t.h.status).toMatchObject({ host: "off", error: "Screen sharing is not set up on this server." });
+  });
+
+  it("stops when the system's own stop ends the capture, and on Stop", async () => {
+    const t = host();
+    await t.h.share("s1");
+    t.track.ended();
+    await vi.waitFor(() => expect(t.room.disconnect).toHaveBeenCalled());
+    expect(t.h.status.host).toBe("off");
+    const u = host();
+    await u.h.share("s1");
+    await u.h.stop(null);
+    expect(u.track.stop).toHaveBeenCalled();
+    expect(u.h.sharing).toBe(false);
+  });
+});
+
+describe("control of the host's screen", () => {
+  async function controlling() {
+    const t = host({}, fakeScreenTrack("monitor", 1920, 1080)); // 16:9: the main monitor
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO, BLAIR]);
+    await t.h.allow(PAVLO);
+    return t;
+  }
+
+  it("begins on the shared monitor and tells the guest", async () => {
+    const t = await controlling();
+    expect(t.log).toEqual(["begin 0,0 2560x1440"]);
+    expect(t.h.status.controller).toEqual(PAVLO);
+    expect(t.room.sent).toEqual([{ topic: TOPIC.control, to: ["seat:p"], body: { on: true } }]);
+  });
+
+  it("carries out only the controlling guest's events", async () => {
+    const t = await controlling();
+    const move = { events: [{ t: "move", x: 0.5, y: 0.5 }] };
+    t.room.emit("dataReceived", data(move), { identity: "seat:b" }, 0, TOPIC.input); // may, but does not control
+    t.room.emit("dataReceived", data(move), { identity: "seat:x" }, 0, TOPIC.input); // may not
+    t.room.emit("dataReceived", data(move), { identity: "seat:p" }, 0, "chat"); // another topic
+    t.room.emit("dataReceived", data(move), { identity: "seat:p" }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(t.log).toContain("input move"));
+    expect(t.deps.input).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes at most so many events a second", async () => {
+    const t = await controlling();
+    const many = { events: Array.from({ length: MAX_EVENTS_PER_S + 50 }, () => ({ t: "key_down", code: "KeyA" })) };
+    t.room.emit("dataReceived", data(many), { identity: "seat:p" }, 0, TOPIC.input);
+    t.room.emit("dataReceived", data(many), { identity: "seat:p" }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(t.deps.input).mock.calls[0][0]).toHaveLength(MAX_EVENTS_PER_S);
+    t.tick(1000);
+    t.room.emit("dataReceived", data({ events: [{ t: "key_up", code: "KeyA" }] }), { identity: "seat:p" }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(t.deps.input).toHaveBeenCalledTimes(2));
+  });
+
+  it("ends, letting go of everything, when the grant goes, on Stop, or when the guest gives it back", async () => {
+    const t = await controlling();
+    t.h.setAllowed([BLAIR]);
+    await vi.waitFor(() => expect(t.log).toContain("end"));
+    expect(t.h.status.controller).toBeNull();
+    expect(t.room.sent[t.room.sent.length - 1]).toEqual({ topic: TOPIC.control, to: ["seat:p"], body: { on: false } });
+
+    const u = await controlling();
+    await u.h.endControl(null);
+    expect(u.log[u.log.length - 1]).toBe("end");
+
+    const v = await controlling();
+    v.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
+    await vi.waitFor(() => expect(v.h.status.controller).toBeNull());
+
+    const w = await controlling();
+    await w.h.stop(null);
+    expect(w.log[w.log.length - 1]).toBe("end");
+  });
+
+  it("a guest's ask shows to the host, from a guest who may only", async () => {
+    const t = host();
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO]);
+    t.room.emit("dataReceived", data({}), { identity: "seat:x" }, 0, TOPIC.ask);
+    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
+    await vi.waitFor(() => expect(t.h.status.asking).toEqual([PAVLO]));
+    await t.h.allow(PAVLO);
+    expect(t.h.status.asking).toEqual([]);
+  });
+
+  it("is refused for a window share, for a guest without the grant, and before sharing", async () => {
+    const t = host({}, fakeScreenTrack("window"));
+    await t.h.allow(PAVLO);
+    expect(t.h.status.error).toBe("Share your screen first.");
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO]);
+    await t.h.allow(PAVLO);
+    expect(t.h.status.error).toBe("Share a whole screen to let a guest control it.");
+    const u = host();
+    await u.h.share("s1");
+    await u.h.allow(PAVLO);
+    expect(u.h.status.error).toBe("Pavlo may not control your screen.");
+    expect(u.deps.begin).not.toHaveBeenCalled();
+  });
+
+  it("asks the host which monitor when several fit, then begins on that one", async () => {
+    const twin: Monitor = { id: "\\\\.\\DISPLAY3", rect: { x: -2560, y: 0, w: 2560, h: 1440 }, primary: false };
+    const t = host({ monitors: vi.fn(async () => [MAIN, twin]) });
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO]);
+    await t.h.allow(PAVLO);
+    expect(t.h.status.choose?.monitors.map((m) => m.id)).toEqual([MAIN.id, twin.id]);
+    expect(t.deps.begin).not.toHaveBeenCalled();
+    await t.h.allow(PAVLO, twin.id);
+    expect(t.log).toEqual(["begin -2560,0 2560x1440"]);
+    expect(t.h.status.choose).toBeNull();
+  });
+});
+
+describe("placing the guest's pointer", () => {
+  it("matches monitors by shape", () => {
+    expect(matchingMonitors([MAIN, SIDE], 1280, 720)).toEqual([MAIN]);
+    expect(matchingMonitors([MAIN, SIDE], 1280, 1024)).toEqual([SIDE]);
+  });
+
+  it("finds the spot in a letterboxed picture, and nothing in the bars", () => {
+    // A 1000x500 box showing a 16:9 picture: 1000x562.5 would not fit, so 888.9x500, centred.
+    const box = { left: 0, top: 0, width: 1000, height: 500 };
+    expect(pictureSpot(500, 250, box, 1920, 1080)).toEqual({ x: 0.5, y: 0.5 });
+    expect(pictureSpot(20, 250, box, 1920, 1080)).toBeNull();
+    expect(pictureSpot(500, 250, box, 0, 0)).toBeNull();
+  });
+});
+
+function guest(over: Partial<GuestDeps> = {}) {
+  const rooms: ReturnType<typeof fakeRoom>[] = [];
+  const deps: GuestDeps = {
+    newRoom: () => {
+      const r = fakeRoom();
+      rooms.push(r);
+      return r as never;
+    },
+    token: vi.fn(async () => ({ url: "wss://lk", token: "guest-token", control: false })),
+    ...over,
+  };
+  const states: string[] = [];
+  const g = new GuestScreen(deps, "seat-1", (s) => states.push(s.state), async () => undefined);
+  return { g, deps, rooms, states };
+}
+
+describe("the guest's view", () => {
+  it("waits for the host, then shows only the host's video", async () => {
+    const t = guest();
+    await t.g.open();
+    expect(t.g.state.state).toBe("waiting");
+    const room = t.rooms[0];
+    room.emit("trackSubscribed", { kind: "video" }, {}, { identity: "seat:other" });
+    expect(t.g.track).toBeNull();
+    const video = { kind: "video" };
+    room.emit("trackSubscribed", video, {}, { identity: "host" });
+    expect(t.g.track).toBe(video);
+    expect(t.g.state.state).toBe("watching");
+    room.emit("trackUnsubscribed", video);
+    expect(t.g.state.state).toBe("waiting");
+  });
+
+  it("comes back with a new token when taken out of the room, and stops when refused", async () => {
+    const token = vi
+      .fn<GuestDeps["token"]>()
+      .mockResolvedValueOnce({ url: "wss://lk", token: "t1", control: false })
+      .mockResolvedValueOnce({ url: "wss://lk", token: "t2", control: true })
+      .mockRejectedValueOnce(new Error("The host has not let you see their screen."));
+    const t = guest({ token });
+    await t.g.open();
+    t.rooms[0].emit("disconnected");
+    await vi.waitFor(() => expect(t.g.state).toMatchObject({ state: "waiting", control: true }));
+    t.rooms[1].emit("disconnected");
+    await vi.waitFor(() => expect(t.g.state).toMatchObject({ state: "off", error: "The host has not let you see their screen." }));
+  });
+
+  it("leaving closes the room and does not come back", async () => {
+    const t = guest();
+    await t.g.open();
+    await t.g.close();
+    t.rooms[0].emit("disconnected");
+    expect(t.rooms[0].disconnect).toHaveBeenCalled();
+    expect(t.deps.token).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks, controls only on the host's word, and sends its events to the host alone", async () => {
+    const t = guest({ token: vi.fn(async () => ({ url: "wss://lk", token: "t", control: true })) });
+    await t.g.open();
+    const room = t.rooms[0];
+    await t.g.send([{ t: "move", x: 0.1, y: 0.1 }]);
+    expect(room.sent).toEqual([]); // not controlling: nothing goes out
+    await t.g.ask();
+    expect(room.sent).toEqual([{ topic: TOPIC.ask, to: ["host"], body: {} }]);
+    expect(t.g.state.asked).toBe(true);
+    room.emit("dataReceived", data({ on: true }), { identity: "seat:other" }, 0, TOPIC.control);
+    expect(t.g.state.controlling).toBe(false); // only the host's word counts
+    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    expect(t.g.state).toMatchObject({ controlling: true, asked: false });
+    await t.g.send([{ t: "key_down", code: "KeyA" }]);
+    expect(room.sent[room.sent.length - 1]).toEqual({ topic: TOPIC.input, to: ["host"], body: { events: [{ t: "key_down", code: "KeyA" }] } });
+    room.emit("dataReceived", data({ on: false }), { identity: "host" }, 0, TOPIC.control);
+    expect(t.g.state.controlling).toBe(false);
+  });
+
+  it("without control, cannot even ask", async () => {
+    const t = guest();
+    await t.g.open();
+    await t.g.ask();
+    expect(t.rooms[0].sent).toEqual([]);
+  });
+});
+
+describe("screen grants", () => {
+  it("control needs the screen, and goes with it", () => {
+    expect(withCapability(["view"], "device.control", true)).toEqual(["view", "device.view", "device.control"]);
+    expect(withCapability(["view", "device.view", "device.control"], "device.view", false)).toEqual(["view"]);
+    expect(withCapability(["view", "device.view", "device.control"], "device.control", false)).toEqual(["view", "device.view"]);
+  });
+});

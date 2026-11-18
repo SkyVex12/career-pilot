@@ -11,6 +11,7 @@ mod hotkeys;
 mod layout;
 mod program_name;
 mod release;
+mod remote;
 mod settings;
 mod stealth;
 mod voice;
@@ -1486,6 +1487,11 @@ fn dispatch(app: &AppHandle, action: Action) {
         Action::ClickThroughOff => apply_click_through(app, false),
         Action::OpacityUp => nudge_opacity(app, 1),
         Action::OpacityDown => nudge_opacity(app, -1),
+        Action::StopControl => {
+            // A guest controlling the screen stops at once, whatever the windows do.
+            remote::end();
+            let _ = app.emit("remote:stopped", ());
+        }
     }
 }
 
@@ -1772,6 +1778,8 @@ pub fn run() {
         // process alive with no window to show, and a second launch had nothing to bring forward.
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
+                // A guest's control ends with the app: nothing they held stays pressed.
+                remote::end();
                 window.app_handle().exit(0);
             }
             // Build 22000 drops capture exclusion when the WebView finishes attaching.
@@ -2013,6 +2021,10 @@ pub fn run() {
             ask_note,
             set_sharing,
             voice_devices,
+            remote_monitors,
+            remote_begin,
+            remote_input,
+            remote_end,
             show_overlay,
             minimize_overlay,
             overlay_prefs,
@@ -2040,6 +2052,32 @@ async fn voice_devices(state: State<'_, AppState>) -> Res<Vec<voice::VoiceDevice
     tauri::async_runtime::spawn_blocking(move || voice::devices(call.as_deref()))
         .await
         .map_err(|e| e.to_string())
+}
+
+// --- Guest seats' remote input (remote.rs; the decisions are in src/screen.ts) ---------------
+
+/// The monitors, to match the shared picture to one.
+#[tauri::command]
+fn remote_monitors() -> Vec<remote::Monitor> {
+    remote::monitors()
+}
+
+/// A guest begins controlling the shared monitor `target`.
+#[tauri::command]
+fn remote_begin(target: remote::Rect) {
+    remote::begin(target);
+}
+
+/// The controlling guest's events, carried out on that monitor. Err when no one controls.
+#[tauri::command]
+fn remote_input(events: Vec<remote::Input>) -> Res<()> {
+    remote::input(&events)
+}
+
+/// Control ends: everything the guest held is let go.
+#[tauri::command]
+fn remote_end() {
+    remote::end();
 }
 
 #[cfg(test)]

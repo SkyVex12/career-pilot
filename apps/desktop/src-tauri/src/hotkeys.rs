@@ -19,11 +19,16 @@ pub enum Action {
     ClickThroughOff,
     OpacityUp,
     OpacityDown,
+    /// Ends a guest's control of the screen (remote.rs). A fixed key, always registered.
+    StopControl,
 }
 
 /// The key the click-through "off" switch falls back to when the user has cleared or mistyped
 /// its binding, so there is never a state where click-through is on and no key turns it off.
 pub const CLICK_THROUGH_OFF_FALLBACK: &str = "CommandOrControl+Shift+G";
+
+/// The key that ends a guest's control of the screen, whatever the windows show.
+pub const STOP_CONTROL: &str = "CommandOrControl+Alt+End";
 
 /// Each action and the accelerator the user has bound to it (trimmed). An empty string means
 /// the action is unbound, which is allowed for every action except the click-through off
@@ -132,6 +137,12 @@ pub fn to_register(s: &Settings) -> Vec<(Shortcut, Action)> {
             None => out.push((sc, action)),
         }
     }
+    // Stopping a guest's control keeps its key unless the user bound it to something else.
+    if let Ok(sc) = parse(STOP_CONTROL)
+        && !out.iter().any(|(k, _)| *k == sc)
+    {
+        out.push((sc, Action::StopControl));
+    }
     out
 }
 
@@ -203,14 +214,28 @@ mod tests {
         s.opacity_up_hotkey = same.into();
         s.opacity_down_hotkey = same.into();
         let reg = to_register(&s);
-        // One key, and it drives the off switch: click-through can always be escaped.
-        assert_eq!(reg.len(), 1);
+        // One key for them all, and it drives the off switch: click-through can always be
+        // escaped. (Stop control keeps its own fixed key.)
+        assert_eq!(reg.len(), 2);
         assert_eq!(reg[0].1, Action::ClickThroughOff);
+        assert_eq!(reg[1].1, Action::StopControl);
 
         // And with the off switch cleared, the fallback key registers it on its own.
         let mut s = settings();
         s.click_through_off_hotkey = "".into();
         let reg = to_register(&s);
         assert!(reg.iter().any(|(_, a)| *a == Action::ClickThroughOff));
+    }
+
+    #[test]
+    fn stop_control_has_its_key_unless_the_user_took_it() {
+        let reg = to_register(&settings());
+        let stop = parse(STOP_CONTROL).unwrap();
+        assert!(reg.contains(&(stop, Action::StopControl)));
+        let mut s = settings();
+        s.hotkey = STOP_CONTROL.into();
+        let reg = to_register(&s);
+        assert!(reg.contains(&(stop, Action::ForceQuestion)));
+        assert!(!reg.iter().any(|(_, a)| *a == Action::StopControl));
     }
 }
