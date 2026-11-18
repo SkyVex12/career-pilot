@@ -199,6 +199,8 @@ async def test_voice_is_granted_only_where_livekit_is_set_up(api: Api) -> None:
     sid = await live_call(api, host)
     r = await invite(api, hh, sid, guest_email, capabilities=["view", "voice"])
     assert r.status_code == 422
+    listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()
+    assert listed["voice"] is False  # the app offers no voice switch
     assert (await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)).status_code == 404
 
 
@@ -216,6 +218,7 @@ async def test_the_host_listens_and_a_guest_with_voice_speaks(api: Api, voice_on
         for s in (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["seats"]
     }
 
+    assert (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()["voice"] is True
     r = await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)
     assert r.status_code == 200, r.text
     host_token = r.json()

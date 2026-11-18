@@ -756,6 +756,9 @@ html[data-window="overlay"] #root {
 .ov-menu .seat-panel {
   color: var(--ov-text);
 }
+.ov-menu .seat-status.is-watching {
+  color: var(--ov-live);
+}
 
 /* Guest seats' voice: the host's mute in the header, the guest's Talk. */
 .ov-voice-mute {

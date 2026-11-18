@@ -1755,7 +1755,7 @@ Base URL `https://api.<domain>/v1`. Every request carries a Cognito access token
 | `GET /sessions/{id}/replay` | The call as the overlay showed it: transcript, kept questions, their answers and ratings, timed from the start (History) |
 | `DELETE /sessions/{id}` | Delete a session and its logs; approved facts stay |
 | `POST /sessions/{id}/seats` | Host, on a live call: invite an account by email (`capabilities`: `view`, `note`); the seat is admitted at once. 202 `{"status": "sent"}` whether or not the address has an account; 409 over 2 guests; 429 over 10 an hour |
-| `GET /sessions/{id}/seats` | Host: the call's seats, with their status (`expired` once lapsed) |
+| `GET /sessions/{id}/seats` | Host: the call's seats, with their status (`expired` once lapsed), and `voice`: whether this server can carry guests' voice (the app offers the Voice switch only then) |
 | `PATCH /sessions/{id}/seats/{seat_id}` | Host: `capabilities`; `admit: true` only for a seat from before direct join (a guest who accepted; 409 over 2 admitted). Safe to send again: an admit already done is not refused, and the mirror is written again. 503 when the change is recorded but Valkey could not take it: send it again |
 | `DELETE /sessions/{id}/seats/{seat_id}` | Host: remove a guest or withdraw an invite; a connected guest is closed within a second. Sent again for a removed seat, it writes the mirror again (204), so a removal always reaches the gateway |
 | `POST /sessions/{id}/voice` | Host, on a live call: a LiveKit token to hear guests (subscribe only); 404 when voice is not set up |

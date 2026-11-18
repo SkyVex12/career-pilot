@@ -250,7 +250,8 @@ async def list_seats(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, 
             session_id,
             user.user_id,
         )
-    return {"seats": [_host_view(r) for r in rows]}
+    # `voice`: this server can carry guests' voice (LiveKit is set up), so the app offers it.
+    return {"seats": [_host_view(r) for r in rows], "voice": svc.settings.livekit() is not None}
 
 
 @router.patch("/sessions/{session_id}/seats/{seat_id}")
