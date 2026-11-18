@@ -84,8 +84,9 @@ type ScreenCmd =
 
 const CMD = "screen:cmd";
 const STATUS = "screen:status";
-/** Data topics: the guest's events and asks, the host's word on control. */
-export const TOPIC = { input: "input", ask: "ask", release: "release", control: "control" } as const;
+/** Data topics: the guest's events and asks, the host's word on control, and the controlling
+ * guest's ping (the host sends it straight back) to time the input path. */
+export const TOPIC = { input: "input", ask: "ask", release: "release", control: "control", ping: "ping", pong: "pong" } as const;
 /** At most this many of a guest's events a second; the rest are dropped. */
 export const MAX_EVENTS_PER_S = 600;
 
@@ -328,6 +329,15 @@ export class HostScreen {
   private async data(payload: Uint8Array, who: RemoteParticipant, topic?: string): Promise<void> {
     const person = this.allowed.find((a) => a.identity === who.identity);
     if (!person) return; // no device.control: nothing a guest sends counts
+    if (topic === TOPIC.ping) {
+      // Straight back, untouched: the guest times the round trip of its input.
+      if (this.status.controller?.identity === who.identity && payload.length <= 64) {
+        void this.room?.localParticipant
+          .publishData(new Uint8Array(payload), { reliable: false, destinationIdentities: [who.identity], topic: TOPIC.pong })
+          .catch(() => undefined);
+      }
+      return;
+    }
     if (topic === TOPIC.ask) {
       if (this.status.controller?.identity !== who.identity && !this.status.asking.some((p) => p.identity === who.identity)) {
         this.set({ asking: [...this.status.asking, person] });
@@ -478,6 +488,8 @@ export class GuestScreen {
   state: GuestScreenState = GUEST_OFF;
   room: Room | null = null;
   track: RemoteTrack | null = null;
+  /** The last round trip of a ping over the input path (guest → host → guest), in ms. */
+  inputMs: number | null = null;
   private closed = false;
   private retries = 0;
 
@@ -486,11 +498,19 @@ export class GuestScreen {
     private seatId: string,
     private onChange: (s: GuestScreenState, track: RemoteTrack | null) => void,
     private wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private now: () => number = () => performance.now(),
   ) {}
 
   private set(patch: Partial<GuestScreenState>) {
     this.state = { ...this.state, ...patch };
+    if (!this.state.controlling) this.inputMs = null;
     this.onChange(this.state, this.track);
+  }
+
+  /** Time the input path once (while controlling); the answer lands in `inputMs`. */
+  async ping(): Promise<void> {
+    if (!this.state.controlling) return;
+    await this.publish(TOPIC.ping, { t: this.now() }, false);
   }
 
   async open(): Promise<void> {
@@ -519,7 +539,17 @@ export class GuestScreen {
         this.set({ state: "waiting", controlling: false, asked: false });
       });
       room.on(RoomEvent.DataReceived, (payload: Uint8Array, who?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-        if (who?.identity !== HOST || topic !== TOPIC.control) return;
+        if (who?.identity !== HOST) return;
+        if (topic === TOPIC.pong) {
+          try {
+            const sent = (JSON.parse(decoder.decode(payload)) as { t?: unknown }).t;
+            if (typeof sent === "number" && this.state.controlling) this.inputMs = Math.max(0, this.now() - sent);
+          } catch {
+            // Not our ping: ignored.
+          }
+          return;
+        }
+        if (topic !== TOPIC.control) return;
         try {
           const on = (JSON.parse(decoder.decode(payload)) as { on?: unknown }).on === true;
           this.set({ controlling: on, asked: false });
@@ -588,6 +618,69 @@ export class GuestScreen {
     this.track = null;
     if (room) await room.disconnect();
   }
+}
+
+// --- How fast the guest sees the screen ---------------------------------------------------
+
+/** What the guest's readout shows; null where the browser did not say. */
+export interface ViewStats {
+  /** Network round trip to the media server, ms. */
+  networkMs: number | null;
+  /** Frames shown a second. */
+  fps: number | null;
+  /** Time to decode a frame, ms (over the last interval). */
+  decodeMs: number | null;
+  /** Time a frame waits in the receive buffer, ms (over the last interval). */
+  bufferMs: number | null;
+  /** The codec, e.g. "H264". */
+  codec: string | null;
+}
+
+/** The running totals one interval is measured against. */
+export interface StatsSample {
+  decodeS: number;
+  decoded: number;
+  bufferS: number;
+  emitted: number;
+}
+
+type Stat = Record<string, unknown> & { type?: string; id?: string };
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const ms = (s: number) => Math.round(s * 10_000) / 10; // seconds to ms, one decimal
+
+/** Read a video receiver's stats (getStats) against the previous sample. */
+export function readStats(report: Iterable<Stat>, prev: StatsSample | null): { stats: ViewStats; sample: StatsSample | null } {
+  const all = [...report];
+  const byId = new Map(all.filter((s) => typeof s.id === "string").map((s) => [s.id as string, s]));
+  const inbound = all.find((s) => s.type === "inbound-rtp" && (s.kind === "video" || s.mediaType === "video"));
+  const stats: ViewStats = { networkMs: null, fps: null, decodeMs: null, bufferMs: null, codec: null };
+
+  // The pair the connection runs on: the transport says which, else the nominated one.
+  const transport = all.find((s) => s.type === "transport");
+  const chosen = typeof transport?.selectedCandidatePairId === "string" ? byId.get(transport.selectedCandidatePairId) : undefined;
+  const pair = chosen ?? all.find((s) => s.type === "candidate-pair" && s.nominated === true && s.state === "succeeded");
+  const rtt = num(pair?.currentRoundTripTime);
+  if (rtt !== null) stats.networkMs = Math.round(rtt * 1000);
+  if (!inbound) return { stats, sample: null };
+
+  const fps = num(inbound.framesPerSecond);
+  if (fps !== null) stats.fps = Math.round(fps);
+  const codec = typeof inbound.codecId === "string" ? byId.get(inbound.codecId) : undefined;
+  if (typeof codec?.mimeType === "string") stats.codec = codec.mimeType.split("/")[1] ?? null;
+
+  const sample: StatsSample = {
+    decodeS: num(inbound.totalDecodeTime) ?? 0,
+    decoded: num(inbound.framesDecoded) ?? 0,
+    bufferS: num(inbound.jitterBufferDelay) ?? 0,
+    emitted: num(inbound.jitterBufferEmittedCount) ?? 0,
+  };
+  if (prev) {
+    const frames = sample.decoded - prev.decoded;
+    if (frames > 0) stats.decodeMs = ms((sample.decodeS - prev.decodeS) / frames);
+    const out = sample.emitted - prev.emitted;
+    if (out > 0) stats.bufferMs = ms((sample.bufferS - prev.bufferS) / out);
+  }
+  return { stats, sample };
 }
 
 /** Where a point of the element falls in the picture shown with `object-fit: contain`, 0 to 1

@@ -20,6 +20,7 @@ import {
   guestDeps,
   onScreenStatus,
   pictureSpot,
+  readStats,
   screenControllers,
   shareScreen,
   stopScreen,
@@ -27,6 +28,8 @@ import {
   type InputEvent,
   type Person,
   type ScreenStatus,
+  type StatsSample,
+  type ViewStats,
 } from "./screen";
 import type { SessionView } from "./session";
 import { Button, cx } from "./ui";
@@ -258,6 +261,47 @@ function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTM
   };
 }
 
+/** How fast the guest sees the screen, read once a second while watching; while controlling,
+ * the input path is timed too (a ping the host sends straight back). */
+function useViewStats(guest: GuestScreen | null, track: RemoteTrack | null, controlling: boolean) {
+  const [stats, setStats] = useState<(ViewStats & { inputMs: number | null }) | null>(null);
+  useEffect(() => {
+    if (!track) {
+      setStats(null);
+      return;
+    }
+    let prev: StatsSample | null = null;
+    let live = true;
+    const tick = async () => {
+      if (controlling) void guest?.ping().catch(() => undefined);
+      const report = await track.getRTCStatsReport().catch(() => undefined);
+      if (!live || !report) return;
+      const read = readStats(report.values() as Iterable<Record<string, unknown>>, prev);
+      prev = read.sample;
+      setStats({ ...read.stats, inputMs: controlling ? (guest?.inputMs ?? null) : null });
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [guest, track, controlling]);
+  return stats;
+}
+
+/** The readout's parts, in plain words, leaving out what the browser did not say. */
+export function statsLine(s: ViewStats & { inputMs: number | null }): string {
+  const parts: string[] = [];
+  if (s.inputMs !== null) parts.push(`Your input ${Math.round(s.inputMs)} ms there and back`);
+  if (s.networkMs !== null) parts.push(`Network ${s.networkMs} ms`);
+  if (s.fps !== null) parts.push(`${s.fps} fps`);
+  if (s.decodeMs !== null) parts.push(`Decode ${s.decodeMs} ms`);
+  if (s.bufferMs !== null) parts.push(`Buffer ${s.bufferMs} ms`);
+  if (s.codec) parts.push(s.codec);
+  return parts.join(" · ");
+}
+
 /** The host's screen, for a guest who may see it (main window, while watching). */
 export function GuestScreenView({ s }: { s: SessionView }) {
   const seat = s.seat;
@@ -294,6 +338,7 @@ export function GuestScreenView({ s }: { s: SessionView }) {
   }, [track]);
   const controlling = state.controlling && state.state === "watching";
   const handlers = useControl(guest, controlling, video);
+  const stats = useViewStats(guest, state.state === "watching" ? track : null, controlling);
   if (!seatId || !seat) return null;
   const host = seat.hostName;
   const watching = state.state === "watching";
@@ -335,6 +380,14 @@ export function GuestScreenView({ s }: { s: SessionView }) {
           </span>
         )}
       </div>
+      {state.state === "watching" && stats && statsLine(stats) && (
+        <p
+          className="screen-view-stats"
+          title="Your input: a ping to the host's computer and back. Network: to the media server and back. Decode and Buffer: per frame on this computer."
+        >
+          {statsLine(stats)}
+        </p>
+      )}
     </section>
   );
 }
