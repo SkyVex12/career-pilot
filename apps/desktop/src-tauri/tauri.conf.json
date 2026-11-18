@@ -17,7 +17,8 @@
         "width": 1080,
         "height": 780,
         "minWidth": 720,
-        "minHeight": 520
+        "minHeight": 520,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       }
     ],
     "security": {

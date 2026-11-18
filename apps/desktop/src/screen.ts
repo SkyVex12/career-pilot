@@ -92,6 +92,8 @@ export const MAX_EVENTS_PER_S = 600;
 /** The shared picture's encoding: sharp text while guests only watch; while a guest controls,
  * twice the frames (and the bits for them), and frames are kept over sharpness when the line
  * is short, so the pointer and what it moves keep up with the guest's hand. */
+export const SCREEN_CODEC = "h264";
+
 export const ENCODING = {
   watch: { maxBitrate: 5_000_000, maxFramerate: 30, degradation: "maintain-resolution" },
   control: { maxBitrate: 8_000_000, maxFramerate: 60, degradation: "balanced" },
@@ -205,6 +207,10 @@ export class HostScreen {
       await room.localParticipant.publishTrack(video, {
         source: Track.Source.ScreenShare,
         simulcast: false,
+        // H.264: Windows encodes it on the graphics card where it can, which is faster than
+        // VP8 in software and leaves the CPU to the call. Every guest is this app (WebView2),
+        // which plays it.
+        videoCodec: SCREEN_CODEC,
         videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
         degradationPreference: ENCODING.watch.degradation,
       });

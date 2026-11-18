@@ -207,7 +207,7 @@ describe("control of the host's screen", () => {
     expect(vi.mocked(t.deps.input).mock.calls[3][0]).toEqual([{ t: "move", x: 0.6, y: 0.5 }]);
   });
 
-  it("sends twice the frames while a guest controls, and goes back after", async () => {
+  it("shares in H.264, sends twice the frames while a guest controls, and goes back after", async () => {
     const params = { encodings: [{ maxBitrate: 0, maxFramerate: 0 }], degradationPreference: "" };
     const sender = {
       getParameters: () => structuredClone(params),
@@ -220,7 +220,10 @@ describe("control of the host's screen", () => {
     await t.h.share("s1");
     expect(t.room.localParticipant.publishTrack).toHaveBeenCalledWith(
       track,
-      expect.objectContaining({ videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate } }),
+      expect.objectContaining({
+        videoCodec: "h264",
+        videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
+      }),
     );
     t.h.setAllowed([PAVLO]);
     await t.h.allow(PAVLO);

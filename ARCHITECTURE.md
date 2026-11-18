@@ -201,6 +201,8 @@ The host (the person running a call) can invite another Copilot account to follo
   - `remote_input` is async, so it runs on a worker thread rather than waiting behind the UI thread.
   - The picture is captured at up to 60 frames a second. While guests only watch, it is sent at 30 frames and 5 Mb/s, keeping text sharp. While a guest controls, it is sent at 60 frames and 8 Mb/s and keeps frames over sharpness when bandwidth is short. This changes on the live share (`ENCODING`).
   - The guest shows each frame at once, with playout delay 0.
+  - The share is H.264, which Windows encodes on the graphics card where it can. That is faster than VP8 in software, and leaves the CPU to the call. Every guest is this app (WebView2), which plays H.264.
+  - Every window opens WebView2 with flags that keep it at full speed when it is hidden, minimized or covered (`BROWSER_ARGS` in `lib.rs`; tauri.conf.json gives the main window the same string, and a test checks they match). The sharing window is often out of sight during a call, and it carries out the guest's input. Windows sharing a profile must use the very same flags, or WebView2 won't open the second.
 - **Ending.** Control ends on any of:
   - Stop control, or the overlay chip ("controls · Stop");
   - the fixed hotkey Ctrl+Alt+End, handled in Rust whatever the windows show;
