@@ -2013,8 +2013,6 @@ pub fn run() {
             ask_note,
             set_sharing,
             voice_devices,
-            voice_rules,
-            voice_listen,
             show_overlay,
             minimize_overlay,
             overlay_prefs,
@@ -2042,32 +2040,6 @@ async fn voice_devices(state: State<'_, AppState>) -> Res<Vec<voice::VoiceDevice
     tauri::async_runtime::spawn_blocking(move || voice::devices(call.as_deref()))
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Rule 1 for the output device the window names: another device than the call's own. Err:
-/// why not, in words.
-#[tauri::command]
-async fn voice_rules(state: State<'_, AppState>, name: String) -> Res<()> {
-    let call = state.settings.lock().unwrap().output_device.clone();
-    tauri::async_runtime::spawn_blocking(move || voice::rules(&name, call.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|r| r.message())
-}
-
-/// Rule 3: listen as the call does for `ms` while the window plays the test tone on the voice
-/// device. Err: the tone came through (or could not be listened for).
-#[tauri::command]
-async fn voice_listen(state: State<'_, AppState>, ms: u32) -> Res<()> {
-    let (call, mic) = {
-        let s = state.settings.lock().unwrap();
-        (s.output_device.clone(), s.mic_device.clone())
-    };
-    let ms = ms.clamp(500, 5_000);
-    tauri::async_runtime::spawn_blocking(move || voice::listen(ms, call.as_deref(), mic.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|r| r.message())
 }
 
 #[cfg(test)]

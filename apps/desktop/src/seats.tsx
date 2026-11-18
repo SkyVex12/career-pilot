@@ -480,7 +480,6 @@ function savedDevice(): string {
 /** What to warn about a device for guests' voice, or null. Only a warning: the host may pick
  * it anyway, and the checks on Turn on decide. */
 export function deviceProblem(d: VoiceDevice): string | null {
-  if (d.call) return "the call plays here";
   if (!d.private) return "not headphones";
   return null;
 }
@@ -547,10 +546,9 @@ export function HostVoice({ s }: { s: SessionView }) {
               })}
             </select>
             <Button size="sm" disabled={checking || !device} onClick={start}>
-              {checking ? "Checking…" : "Turn on"}
+              {checking ? "Turning on…" : "Turn on"}
             </Button>
           </div>
-          <span className="seat-hint">A short tone plays on them to check that nothing reaches the call or your microphone.</span>
         </>
       )}
       {status.error && (

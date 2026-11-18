@@ -238,7 +238,7 @@ describe("guests' voice", () => {
   afterEach(() => unlisten?.());
   const voiceStatus = (over: Partial<VoiceStatus>) => act(() => emit("voice:status", { ...VOICE_OFF, ...over }));
 
-  it("plays only admitted seats that hold voice, on headphones that are not the call's", () => {
+  it("plays only admitted seats that hold voice, and warns about devices that aren't headphones", () => {
     expect(
       voiceIdentities([
         { seat_id: "a", name: "A", status: "admitted", capabilities: ["view", "voice"] },
@@ -248,7 +248,7 @@ describe("guests' voice", () => {
     ).toEqual(["seat:a"]);
     const d = { id: "x", name: "X", form_factor: "headphones" as const, private: true, call: false };
     expect(deviceProblem(d)).toBeNull();
-    expect(deviceProblem({ ...d, call: true })).toBe("the call plays here");
+    expect(deviceProblem({ ...d, call: true })).toBeNull(); // the call's own device is allowed
     expect(deviceProblem({ ...d, form_factor: "speakers", private: false })).toBe("not headphones");
   });
 
@@ -272,7 +272,7 @@ describe("guests' voice", () => {
     expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
   });
 
-  it("the host may pick any device, warned; a refusal says why", async () => {
+  it("the host may pick any device, warned; an error says why", async () => {
     n = 0;
     ipc.handle("voice_devices", () => [
       { id: "wasapi:spk", name: "Speakers (Realtek)", form_factor: "speakers", private: false, call: true },
@@ -293,15 +293,15 @@ describe("guests' voice", () => {
       ],
     });
     const pick = await screen.findByRole("combobox", { name: "Headphones for guests' voice" });
-    // Warned about, still selectable: the checks on Turn on decide.
-    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) ⚠ the call plays here" })).toBeEnabled();
+    // Any device can be picked, the call's own included; one that isn't headphones is warned about.
+    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) ⚠ not headphones" })).toBeEnabled();
     expect(within(pick).getByRole("option", { name: "Speakers (Logi USB Headset) (046d:0a64) ⚠ not headphones" })).toBeEnabled();
     expect(within(pick).getByRole("option", { name: "Headphones (USB)" })).toBeEnabled();
     await userEvent.selectOptions(pick, "d-hp");
     await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
     expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: [`seat:${SEAT}`] });
-    await voiceStatus({ error: "The test tone on those headphones reached the call or the microphone, so guests' voice stays off." });
-    expect(await screen.findByText(/reached the call or the microphone/)).toBeInTheDocument();
+    await voiceStatus({ error: "Voice was disconnected." });
+    expect(await screen.findByText("Voice was disconnected.")).toBeInTheDocument();
   });
 });
 

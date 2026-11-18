@@ -1,18 +1,10 @@
 //! Guest seats' voice in the app (ARCHITECTURE.md, "Guest seats", phase 2).
 //!
-//! The audio is WebRTC in the main window (LiveKit's JavaScript SDK; src/voice.ts). What
-//! keeps it out of the call is here, in Rust, where the call's own devices are known:
-//!
-//! - `rules`: the chosen output device, found by the name the window shows for it, is not the
-//!   device the call is captured from. Whether Windows calls it headphones is only a warning
-//!   in the picker: the host may know better, and the tone below decides;
-//! - `listen`: while the window plays a test tone through the exact path guests' voice takes,
-//!   capture as the call does and say whether the tone came through.
-//!
-//! The window turns voice on only when both pass.
+//! The audio is WebRTC in the main window (LiveKit's JavaScript SDK; src/voice.ts). Here: the
+//! output devices for the picker, with what Windows says each is, and the microphone grant.
 
 use copilot_client::audio::capture;
-use copilot_client::voice::isolation::{self, FormFactor, Refusal};
+use copilot_client::voice::isolation::{self, FormFactor};
 use serde::Serialize;
 
 /// An output device as the voice picker shows it.
@@ -21,9 +13,10 @@ pub struct VoiceDevice {
     pub id: String,
     pub name: String,
     pub form_factor: FormFactor,
-    /// Headphones or a headset, as Windows says: anything else is warned about, not refused.
+    /// Headphones or a headset, as Windows says: anything else is warned about.
     pub private: bool,
-    /// The device the call plays on and is captured from (rule 1): never for voice.
+    /// The device the call plays on and is captured from. Allowed: guests heard there are
+    /// transcribed like the call, which the host accepts.
     pub call: bool,
 }
 
@@ -43,25 +36,6 @@ pub fn devices(call_output: Option<&str>) -> Vec<VoiceDevice> {
             }
         })
         .collect()
-}
-
-/// Rule 1 for the output device the window calls `name` (Windows' name for it): refused when
-/// it is the call's own device. A name Windows does not know is let through: the tone decides.
-pub fn rules(name: &str, call_output: Option<&str>) -> Result<(), Refusal> {
-    let call = capture::resolve(call_output, true);
-    for device in devices(call_output).iter().filter(|d| d.name.eq_ignore_ascii_case(name.trim())) {
-        isolation::check(Some(&device.id), call.as_deref())?;
-    }
-    Ok(())
-}
-
-/// Rule 3's listening half: the tone heard in the call's loopback and the microphone, in ms.
-pub fn listen(ms: u32, call_output: Option<&str>, mic: Option<&str>) -> Result<(), Refusal> {
-    match isolation::listen_for_tone(ms, call_output, mic) {
-        Ok((loopback_ms, mic_ms)) => isolation::tone_leaks(loopback_ms, mic_ms),
-        // The call's devices cannot be opened to listen: nothing proves the tone stayed out.
-        Err(_) => Err(Refusal::NoDevice),
-    }
 }
 
 /// WebView2 asks before a page may use the microphone. Guest seats' voice runs in the main
