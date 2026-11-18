@@ -34,6 +34,18 @@ pub trait AudioSource: Send {
     fn stop(&mut self);
 }
 
+/// No audio at all: an online test with no call (coding mode). No device is opened, so
+/// nothing asks for the microphone and nothing listens to the speakers.
+pub struct SilentSource;
+
+impl AudioSource for SilentSource {
+    fn start(&mut self, _tx: SyncSender<Packet>) -> Result<(), CaptureError> {
+        Ok(())
+    }
+
+    fn stop(&mut self) {}
+}
+
 /// Plays two prepared buffers as "them" and "me", in 10 ms packets at real time, then
 /// silence (or nothing, for "them", as WASAPI loopback does while nothing plays).
 pub struct FakeSource {

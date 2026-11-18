@@ -320,3 +320,22 @@ async def test_no_follow_up_context_once_the_problem_is_old_or_unreadable(env) -
         await c.send({"type": "session.end"})
         await c.closed()
     assert "<last_problem>" not in str(requests_for(provider, "fast")[-1].content)
+
+
+async def test_an_online_test_has_no_call(env) -> None:
+    # Phase 4: no audio and nothing transcribed; screenshots and typed questions answered.
+    async with GatewayServer(env.services()) as gw:
+        c = ProtocolClient(gw.url)
+        ready = await c.start(no_call=True, platform="test")
+        assert ready["me_audio"] is False  # the app sends no mic audio
+        session = next(iter(gw.manager.sessions.values()))
+        assert session.stt is None
+        assert session.stt_me is None
+        await c.send({"type": "screenshot", "images": [image()], "answer_mode": "assessment"})
+        q = await c.wait_type("question.detected", question_type="coding")
+        await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
+        state = await env.client().hgetall(keys.sess_state(c.session_id))
+        assert state[b"no_call"] == b"1"
+        assert state[b"platform"] == b"test"
+        await c.send({"type": "session.end"})
+        await c.closed()

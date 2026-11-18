@@ -208,6 +208,10 @@
         "answer_style": {
           "description": "The detailed answer's style; absent means bullets.",
           "$ref": "#/$defs/AnswerStyle"
+        },
+        "no_call": {
+          "description": "An online test with no call (coding mode): the client sends no audio and nothing is transcribed; screenshots and typed questions are answered, and keep the session from ending as idle.",
+          "type": "boolean"
         }
       },
       "required": ["type", "mode", "platform", "client_version", "consent", "audio"]

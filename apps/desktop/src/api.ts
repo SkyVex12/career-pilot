@@ -246,6 +246,8 @@ export interface StartRequest {
   store_transcript: boolean;
   /** How the detailed answer is written (the Session tab). */
   answer_style?: AnswerStyle;
+  /** An online test with no call (coding mode): no audio, nothing transcribed. */
+  no_call?: boolean;
 }
 
 /** src-tauri release.rs UpdateState (release builds). */
@@ -371,6 +373,7 @@ export const api = {
         platform: live.platform ?? "",
         next_frame: [Math.max(0, live.next_frame.them), Math.max(0, live.next_frame.me)],
         me_audio: live.me_audio,
+        no_call: live.no_call ?? false,
         elapsed_ms: live.started_at ? Math.max(0, Date.now() - Date.parse(live.started_at)) : 0,
       },
     }),
@@ -701,6 +704,8 @@ export interface LiveSession {
   connected: boolean;
   next_frame: { them: number; me: number };
   me_audio: boolean;
+  /** An online test with no call (coding mode); absent from older stages. */
+  no_call?: boolean;
 }
 
 export interface Segment {

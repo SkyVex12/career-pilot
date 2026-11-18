@@ -137,6 +137,10 @@ class SessionStart(BaseModel):
     """
     The detailed answer's style; absent means bullets.
     """
+    no_call: bool | None = None
+    """
+    An online test with no call (coding mode): the client sends no audio and nothing is transcribed; screenshots and typed questions are answered, and keep the session from ending as idle.
+    """
 
 
 class SessionResume(BaseModel):
