@@ -107,6 +107,7 @@ fn start_params(job_id: Option<Uuid>, interview_id: Option<Uuid>, store_transcri
         client_version: "test".into(),
         store_transcript,
         answer_style: None,
+        no_call: false,
     }
 }
 

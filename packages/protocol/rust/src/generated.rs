@@ -677,6 +677,11 @@ pub struct SessionStart {
     /// The detailed answer's style; absent means bullets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_style: Option<AnswerStyle>,
+    /// An online test with no call (coding mode): the client sends no audio and nothing is
+    /// transcribed; screenshots and typed questions are answered, and keep the session from ending
+    /// as idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_call: Option<bool>,
 }
 
 impl Validate for SessionStart {

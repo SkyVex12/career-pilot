@@ -38,6 +38,7 @@ fn start_params() -> StartParams {
         client_version: "test".into(),
         store_transcript: true,
         answer_style: Some(copilot_protocol::AnswerStyle::Paragraph),
+        no_call: false,
     }
 }
 

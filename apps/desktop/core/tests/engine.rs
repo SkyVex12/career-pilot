@@ -56,6 +56,7 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
             client_version: "test".into(),
             store_transcript: false,
             answer_style: None,
+            no_call: false,
         },
     );
     let engine = Engine::start(config, Arc::new(StaticTokens::one(TOKEN)), parts, sink).unwrap();

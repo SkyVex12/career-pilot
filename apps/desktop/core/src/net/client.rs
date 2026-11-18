@@ -77,6 +77,8 @@ pub struct StartParams {
     pub store_transcript: bool,
     /// How the detailed answer is written (the Session tab); None: the gateway's default.
     pub answer_style: Option<AnswerStyle>,
+    /// An online test with no call: no audio is sent, nothing is transcribed.
+    pub no_call: bool,
 }
 
 impl StartParams {
@@ -94,6 +96,7 @@ impl StartParams {
             consent: Consent { store_transcript: self.store_transcript },
             audio: AudioFormat { sample_rate: 16_000, encoding: "pcm16".into() },
             answer_style: self.answer_style,
+            no_call: self.no_call.then_some(true),
         })
     }
 }
