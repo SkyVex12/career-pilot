@@ -199,37 +199,79 @@ fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
 #[cfg(windows)]
 fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
     let hwnd = match window.hwnd() {
-        Ok(hwnd) => hwnd,
+        Ok(hwnd) => hwnd.0 as usize,
         Err(e) => {
             tracing::warn!("stealth mode: no window handle for {label}: {e}");
             return;
         }
     };
+    // Settings and overlay commands run on worker threads. Change the affinity on the thread
+    // that owns the window, so the frame refresh below is not a cross-thread send that waits on
+    // the UI thread, and the window's state changes where Windows expects it to.
+    let label = label.to_string();
+    let queued =
+        window.run_on_main_thread(move || set_window_now(&label, hwnd as *mut std::ffi::c_void, affinity));
+    if let Err(e) = queued {
+        tracing::warn!("stealth mode: could not reach the window thread: {e}");
+    }
+}
+
+#[cfg(windows)]
+fn set_window_now(label: &str, hwnd: *mut std::ffi::c_void, affinity: u32) {
+    let build = windows_build();
     // Read the error before anything else can overwrite it.
-    let mut failed = set_affinity(hwnd.0, affinity);
+    let mut failed = set_affinity(hwnd, affinity);
     // Error 8 is ERROR_NOT_ENOUGH_MEMORY. On build 22000 that is what WebView2's pointer
     // input turns this call into. Turn pointer input off and try once more.
-    if failed == Some(ERROR_NOT_ENOUGH_MEMORY) && windows_build() < WINDOWS_11_22H2 {
+    if failed == Some(ERROR_NOT_ENOUGH_MEMORY) && build < WINDOWS_11_22H2 {
         let _ = unsafe { EnableMouseInPointer(0) };
-        failed = set_affinity(hwnd.0, affinity);
+        failed = set_affinity(hwnd, affinity);
     }
     if let Some(err) = failed {
         tracing::warn!(
-            "stealth mode: {label} could not change capture exclusion (SetWindowDisplayAffinity error {err}). \
-             The window stays visible. This Windows version or this window may not support it, \
-             and capture tools that ignore display affinity can still show the app."
+            "stealth mode: {label} could not change capture exclusion on build {build} \
+             (SetWindowDisplayAffinity error {err}). The window stays visible to capture."
         );
         return;
     }
     // Build 22000 applies the affinity only after DWM rebuilds the frame, and that rebuild
     // can clear it. Set the flag again afterwards. Later builds already pick it up above.
-    if windows_build() < WINDOWS_11_22H2 {
-        refresh_frame(hwnd.0);
-        if let Some(err) = set_affinity(hwnd.0, affinity) {
+    if build < WINDOWS_11_22H2 {
+        refresh_frame(hwnd);
+        if let Some(err) = set_affinity(hwnd, affinity) {
             tracing::warn!(
                 "stealth mode: {label} could not keep capture exclusion after the frame refresh (error {err})"
             );
         }
+    }
+    // Read back what Windows kept. A call that succeeds but does not stick shows no error
+    // code, so the log says which it was.
+    match current_affinity(hwnd) {
+        Some(kept) if kept == affinity => {
+            tracing::info!("stealth mode: {label} capture affinity {kept:#x} on build {build}")
+        }
+        Some(kept) => tracing::warn!(
+            "stealth mode: {label} asked for affinity {affinity:#x} on build {build}; Windows kept {kept:#x}"
+        ),
+        None => tracing::warn!("stealth mode: {label} affinity could not be read back on build {build}"),
+    }
+}
+
+#[cfg(windows)]
+fn current_affinity(hwnd: *mut std::ffi::c_void) -> Option<u32> {
+    let mut kept = 0u32;
+    (unsafe { GetWindowDisplayAffinity(hwnd, &mut kept) } != 0).then_some(kept)
+}
+
+/// The Windows build number for the log. 0 when it cannot be read, or off Windows.
+pub fn build_number() -> u32 {
+    #[cfg(windows)]
+    {
+        windows_build()
+    }
+    #[cfg(not(windows))]
+    {
+        0
     }
 }
 
@@ -345,6 +387,7 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 #[link(name = "user32")]
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+    fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
     fn EnableMouseInPointer(enable: i32) -> i32;
     fn SetWindowPos(
         hwnd: *mut std::ffi::c_void,
