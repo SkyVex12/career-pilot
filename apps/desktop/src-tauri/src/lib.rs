@@ -1763,9 +1763,6 @@ pub fn run() {
         None => tracing_subscriber::fmt().with_env_filter(filter()).init(),
     }
     tracing::info!("starting on Windows build {}", stealth::build_number());
-    // Before any window. Windows 11 21H2 cannot exclude a WebView2 window from capture
-    // after pointer input is turned on, and that switch can only be chosen once.
-    stealth::prepare();
     // One app per computer (2026-10-29: two copies on one computer ran two sessions on the
     // same microphone and speakers, under two profiles). A second launch brings the running
     // app's window forward instead.
