@@ -18,6 +18,8 @@ import { AnswerText } from "./AnswerText";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestNoteBox, GuestNotice, GuestPanel, GuestTalk, NotesLane, VoiceMute, WatchingChip } from "./seats";
+import { startScreenHost } from "./screen";
+import { ScreenChip } from "./screenui";
 import { badge, conversation, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
@@ -157,6 +159,8 @@ export default function Overlay() {
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
   const stepText = view.stepText;
+  // Sharing the screen runs in the window where the host clicked (screen.ts).
+  useEffect(() => (inTauri ? startScreenHost() : undefined), []);
 
   // Ctrl+plus / Ctrl+minus / Ctrl+0 size the text while the overlay has focus.
   useEffect(() => {
@@ -180,6 +184,7 @@ export default function Overlay() {
         <StatusBadge s={s} />
         {!guest && <WatchingChip s={s} />}
         {!guest && <VoiceMute s={s} />}
+        {!guest && <ScreenChip s={s} />}
         <span className="ov-speaking" data-tauri-drag-region>
           {s.speaking.them && <span className="ov-pill">them</span>}
           {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}

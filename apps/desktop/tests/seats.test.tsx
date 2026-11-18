@@ -334,4 +334,25 @@ describe("the guest panel", () => {
     await userEvent.click(await within(card).findByRole("switch", { name: /Voice/ }));
     expect(await within(card).findByRole("alert")).toHaveTextContent("Voice is not set up on this server.");
   });
+
+  it("with the screen set up, a Screen switch grants device.view, and Your screen offers to share", async () => {
+    ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
+    ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => ({}));
+    n = 0;
+    start([
+      live(),
+      srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Blue Angel", status: "admitted", capabilities: ["view", "note", "device.view"], connected: true }] }),
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
+    const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
+    const sw = await within(perms).findByRole("switch", { name: /Screen/ });
+    expect(sw).toBeChecked();
+    await userEvent.click(sw);
+    expect(ipc.apiCalls("PATCH")).toEqual([
+      { method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "note"] } },
+    ]);
+    const yours = screen.getByRole("region", { name: "Your screen" });
+    expect(within(yours).getByText(/Blue Angel may see your screen once you share it/)).toBeInTheDocument();
+    expect(within(yours).getByRole("button", { name: "Share my screen" })).toBeEnabled();
+  });
 });

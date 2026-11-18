@@ -12,6 +12,7 @@ import type { SeatInfo } from "@copilot/protocol";
 import { api, inTauri, rest, type MySeat, type VoiceDevice } from "./api";
 import { VOICE_OFF, onVoiceStatus, voiceCommand, windowsName, type VoiceOutput, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
+import { GuestScreenView, HostScreenSection } from "./screenui";
 import type { SentNote, SessionView } from "./session";
 import { usePolling } from "./usePolling";
 import { Badge, Banner, Button, Checkbox, Input, Switch, cx } from "./ui";
@@ -151,13 +152,20 @@ export function GuestPanel({ s }: { s: SessionView }) {
   const [error, setError] = useState<string | null>(null);
   const [seatErrors, setSeatErrors] = useState<Record<string, string>>({});
   const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [screenAvailable, setScreenAvailable] = useState(false);
   const [showConsent] = useState(() => !consentSeen());
-  // Whether the server can carry voice at all: no switch that can only fail.
+  // Whether the server can carry voice and the screen at all: no switch that can only fail.
   useEffect(() => {
     if (!sid || !inTauri) return;
     rest.seatsOf(sid).then(
-      (r) => setVoiceAvailable(r.voice === true),
-      () => setVoiceAvailable(false),
+      (r) => {
+        setVoiceAvailable(r.voice === true);
+        setScreenAvailable(r.screen === true);
+      },
+      () => {
+        setVoiceAvailable(false);
+        setScreenAvailable(false);
+      },
     );
   }, [sid]);
   const guarded = async (f: () => Promise<unknown>, done?: string) => {
@@ -249,6 +257,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
                   <div className="seat-card-perms" role="group" aria-label={`What ${x.name} may do`}>
                     <Switch label="Notes" checked={x.capabilities.includes("note")} disabled={busy} onChange={(on) => toggle(x, "note", on)} />
                     {voiceAvailable && <Switch label="Voice" checked={x.capabilities.includes("voice")} disabled={busy} onChange={(on) => toggle(x, "voice", on)} />}
+                    {screenAvailable && <Switch label="Screen" checked={x.capabilities.includes("device.view")} disabled={busy} onChange={(on) => toggle(x, "device.view", on)} />}
                   </div>
                 )}
                 {seatErrors[x.seat_id] && (
@@ -271,6 +280,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
           />
         </section>
       )}
+      <HostScreenSection s={s} />
       <HostVoice s={s} />
     </div>
   );
@@ -373,6 +383,7 @@ export function Watching({ s, dispatch }: { s: SessionView; dispatch: Dispatcher
           Leave
         </Button>
       </div>
+      <GuestScreenView s={s} />
       <GuestTalk s={s} />
       <GuestNoteBox s={s} dispatch={dispatch} />
     </div>
@@ -442,9 +453,12 @@ export function voiceIdentities(seats: SeatInfo[]): string[] {
   return seats.filter((x) => x.status === "admitted" && x.capabilities.includes("voice")).map((x) => `seat:${x.seat_id}`);
 }
 
-function withCapability(caps: string[], cap: string, on: boolean): string[] {
-  const rest = caps.filter((c) => c !== cap);
-  return on ? [...rest, cap] : rest;
+/** A seat's capabilities with one turned on or off. Control goes with the screen: it needs
+ * `device.view`, and goes when that does. */
+export function withCapability(caps: string[], cap: string, on: boolean): string[] {
+  const gone = on ? [cap] : cap === "device.view" ? [cap, "device.control"] : [cap];
+  const rest = caps.filter((c) => !gone.includes(c));
+  return on ? [...rest, ...(cap === "device.control" && !rest.includes("device.view") ? ["device.view"] : []), cap] : rest;
 }
 
 /** The main window's voice (voice.ts), as it reports it. */

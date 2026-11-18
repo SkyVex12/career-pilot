@@ -37,11 +37,15 @@ from copilot_core.valkey_client import text
 log = logging.getLogger(__name__)
 router = APIRouter()
 
+SCREEN = frozenset({"device.view", "device.control"})
+
 
 def _caps(value: list[str]) -> list[str]:
     unknown = [c for c in value if c not in seats.GRANTABLE]
     if unknown:
         raise ValueError(f"not grantable now: {', '.join(unknown)}")
+    if "device.control" in value and "device.view" not in value:
+        raise ValueError("device.control needs device.view: a guest controls only what they see")
     return ["view", *sorted({c for c in value if c != "view"})]
 
 
@@ -152,10 +156,12 @@ async def _invite_allowed(svc: Services, account: Principal) -> bool:
     return int(count) <= seats.INVITES_PER_HOUR
 
 
-def _voice_ready(svc: Services, capabilities: list[str] | None) -> None:
-    """Voice can be granted only where LiveKit is set up."""
-    if capabilities and "voice" in capabilities and svc.settings.livekit() is None:
-        raise HTTPException(422, "Voice is not set up on this server.")
+def _media_ready(svc: Services, capabilities: list[str] | None) -> None:
+    """Voice and the screen can be granted only where LiveKit is set up."""
+    wanted = seats.MEDIA.intersection(capabilities or ())
+    if wanted and svc.settings.livekit() is None:
+        what = "Voice" if "voice" in wanted else "Screen sharing"
+        raise HTTPException(422, f"{what} is not set up on this server.")
 
 
 async def _drop_voice(svc: Services, session_id: UUID, seat_id: UUID) -> None:
@@ -170,11 +176,25 @@ async def _drop_voice(svc: Services, session_id: UUID, seat_id: UUID) -> None:
         log.warning("seat %s: voice not removed from LiveKit now: %s", seat_id, e)
 
 
+async def _drop_screen(svc: Services, session_id: UUID, seat_id: UUID) -> None:
+    """Take a guest out of the call's screen room now, after their screen grants changed or
+    the seat closed (best effort, as for voice; the host's app also obeys only the grants in
+    its seats). A guest who may still watch comes back with a token for what they may do."""
+    lk = svc.settings.livekit()
+    if lk is None:
+        return
+    try:
+        await lk.remove(livekit.screen_room_of(session_id), livekit.guest_identity(seat_id))
+    except livekit.LiveKitError as e:
+        log.warning("seat %s: screen not removed from LiveKit now: %s", seat_id, e)
+
+
 def _voice(
     lk: livekit.LiveKit, session_id: UUID, identity: str, name: str, guest: bool
 ) -> dict[str, Any]:
     room = livekit.room_of(session_id)
-    token = lk.token(room, identity, name, publish_mic=guest, subscribe=not guest)
+    publish = ("microphone",) if guest else ()
+    token = lk.token(room, identity, name, publish=publish, subscribe=not guest)
     return {"url": lk.url, "room": room, "identity": identity, "token": token,
             "expires_in": livekit.TOKEN_TTL_S}  # fmt: skip
 
@@ -187,7 +207,7 @@ async def invite(
     session_id: UUID, body: InviteBody, svc: SvcDep, user: UserDep, account: AccountDep
 ) -> dict[str, str]:
     state = await _hosts_live_call(svc, user, session_id)
-    _voice_ready(svc, body.capabilities)
+    _media_ready(svc, body.capabilities)
     if not await _invite_allowed(svc, account):
         raise HTTPException(429, "too many invites; wait a while")
     async with svc.tx(user) as conn:
@@ -250,8 +270,10 @@ async def list_seats(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, 
             session_id,
             user.user_id,
         )
-    # `voice`: this server can carry guests' voice (LiveKit is set up), so the app offers it.
-    return {"seats": [_host_view(r) for r in rows], "voice": svc.settings.livekit() is not None}
+    # `voice`, `screen`: this server can carry guests' voice and the host's screen (LiveKit is
+    # set up), so the app offers them.
+    media = svc.settings.livekit() is not None
+    return {"seats": [_host_view(r) for r in rows], "voice": media, "screen": media}
 
 
 @router.patch("/sessions/{session_id}/seats/{seat_id}")
@@ -259,7 +281,7 @@ async def change_seat(
     session_id: UUID, seat_id: UUID, body: SeatPatch, svc: SvcDep, user: UserDep
 ) -> dict[str, Any]:
     await _hosts_live_call(svc, user, session_id)
-    _voice_ready(svc, body.capabilities)
+    _media_ready(svc, body.capabilities)
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
             f"select {SEAT_COLUMNS} from app.session_seats where id = $1 and session_id = $2"
@@ -269,6 +291,7 @@ async def change_seat(
         if row is None:
             raise HTTPException(404, "no such seat")
         had_voice = "voice" in row["capabilities"]
+        had_screen = SCREEN.intersection(row["capabilities"])
         status = _status(row)
         if status not in seats.OPEN:
             raise HTTPException(409, f"the seat is {status}")
@@ -298,6 +321,8 @@ async def change_seat(
     await _publish(svc, session_id, _record(row))
     if had_voice and "voice" not in row["capabilities"]:
         await _drop_voice(svc, session_id, seat_id)
+    if had_screen and had_screen != SCREEN.intersection(row["capabilities"]):
+        await _drop_screen(svc, session_id, seat_id)
     return _host_view(row)
 
 
@@ -324,6 +349,7 @@ async def remove_seat(session_id: UUID, seat_id: UUID, svc: SvcDep, user: UserDe
                 raise HTTPException(404, "no open seat with that id")
     await _publish(svc, session_id, _record(row))
     await _drop_voice(svc, session_id, seat_id)
+    await _drop_screen(svc, session_id, seat_id)
     return Response(status_code=204)
 
 
@@ -335,6 +361,24 @@ async def host_voice(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, 
     if lk is None:
         raise HTTPException(404, "Voice is not set up on this server.")
     return _voice(lk, session_id, livekit.HOST, "Host", guest=False)
+
+
+def _screen(lk: livekit.LiveKit, room: str, identity: str, token: str) -> dict[str, Any]:
+    return {"url": lk.url, "room": room, "identity": identity, "token": token,
+            "expires_in": livekit.TOKEN_TTL_S}  # fmt: skip
+
+
+@router.post("/sessions/{session_id}/screen")
+async def host_screen(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    """The host's way into the call's screen room: share the screen (no audio) and receive
+    the data of guests who may control. 404 when LiveKit is not set up."""
+    await _hosts_live_call(svc, user, session_id)
+    lk = svc.settings.livekit()
+    if lk is None:
+        raise HTTPException(404, "Screen sharing is not set up on this server.")
+    room = livekit.screen_room_of(session_id)
+    token = lk.token(room, livekit.HOST, "Host", publish=("screen_share",), subscribe=True)
+    return _screen(lk, room, livekit.HOST, token)
 
 
 # The guest.
@@ -426,3 +470,32 @@ async def accept(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, A
 @router.post("/seats/{seat_id}/decline")
 async def decline(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
     return await _answer(svc, account, seat_id, False)
+
+
+@router.post("/seats/{seat_id}/screen")
+async def guest_screen(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
+    """A guest's way into the call's screen room: watch the host's screen, and with
+    `device.control` also send their mouse and keys to the host. Only for an admitted seat
+    with `device.view`, on a call that is live."""
+    lk = svc.settings.livekit()
+    if lk is None:
+        raise HTTPException(404, "Screen sharing is not set up on this server.")
+    async with svc.tx(account) as conn:
+        row = await conn.fetchrow(
+            f"select {SEAT_COLUMNS} from app.session_seats where id = $1 and guest_id = $2"
+            " and status = 'admitted' and expires_at > now()",
+            seat_id,
+            account.user_id,
+        )
+    if row is None:
+        raise HTTPException(404, "no open seat with that id")
+    if "device.view" not in row["capabilities"]:
+        raise HTTPException(403, "The host has not let you see their screen.")
+    state = await _live_state(svc, row["session_id"])
+    if state.get("user_id") != str(row["user_id"]) or state.get("status") in (None, "ended"):
+        raise HTTPException(409, "the call is not live")
+    room = livekit.screen_room_of(row["session_id"])
+    identity = livekit.guest_identity(seat_id)
+    control = "device.control" in row["capabilities"]
+    token = lk.token(room, identity, row["guest_name"], subscribe=True, data=control)
+    return _screen(lk, room, identity, token) | {"control": control}

@@ -249,3 +249,78 @@ async def test_the_host_listens_and_a_guest_with_voice_speaks(api: Api, voice_on
     assert (await api.client.post(f"/v1/seats/{seat}/voice", headers=gh)).status_code == 403
     await api.svc.valkey.hset(keys.sess_state(sid), "status", "ended")
     assert (await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)).status_code == 409
+
+
+async def test_the_screen_is_granted_only_where_livekit_is_set_up(api: Api) -> None:
+    host, hh, _ = await account(api, "Alex")
+    _, _, guest_email = await account(api, "Blair")
+    sid = await live_call(api, host)
+    r = await invite(api, hh, sid, guest_email, capabilities=["view", "device.view"])
+    assert r.status_code == 422
+    listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()
+    assert listed["screen"] is False
+    assert (await api.client.post(f"/v1/sessions/{sid}/screen", headers=hh)).status_code == 404
+
+
+async def test_control_needs_view(api: Api, voice_on: None) -> None:
+    host, hh, _ = await account(api, "Alex")
+    _, _, guest_email = await account(api, "Blair")
+    sid = await live_call(api, host)
+    r = await invite(api, hh, sid, guest_email, capabilities=["view", "device.control"])
+    assert r.status_code == 422
+
+
+async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on: None) -> None:
+    host, hh, _ = await account(api, "Alex")
+    _, gh, guest_email = await account(api, "Blair")
+    _, oh, other_email = await account(api, "Other")
+    sid = await live_call(api, host)
+    r = await invite(api, hh, sid, guest_email, capabilities=["view", "device.view"])
+    assert r.status_code == 202
+    assert (await invite(api, hh, sid, other_email)).status_code == 202  # no screen
+    listed = (await api.client.get(f"/v1/sessions/{sid}/seats", headers=hh)).json()
+    assert listed["screen"] is True
+    mine = {s["name"]: s for s in listed["seats"]}
+
+    # The host: its own room, sharing the screen only.
+    r = await api.client.post(f"/v1/sessions/{sid}/screen", headers=hh)
+    assert r.status_code == 200, r.text
+    assert (r.json()["room"], r.json()["identity"]) == (f"screen-{sid}", "host")
+    video = lk_claims(r.json()["token"])["video"]
+    assert video["canPublishSources"] == ["screen_share"]
+
+    # A guest who may watch: subscribe only, no data.
+    seat = mine["Blair"]["seat_id"]
+    r = await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)
+    assert r.status_code == 200, r.text
+    assert r.json()["control"] is False
+    video = lk_claims(r.json()["token"])["video"]
+    assert (video["canPublish"], video["canSubscribe"], video["canPublishData"]) == (
+        False,
+        True,
+        False,
+    )
+
+    # With control: data too, still nothing published.
+    r = await api.client.patch(
+        f"/v1/sessions/{sid}/seats/{seat}",
+        headers=hh,
+        json={"capabilities": ["view", "device.view", "device.control"]},
+    )
+    assert r.status_code == 200, r.text
+    r = await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)
+    assert r.json()["control"] is True
+    video = lk_claims(r.json()["token"])["video"]
+    assert (video["canPublish"], video["canPublishData"]) == (False, True)
+
+    # Without the grant, someone else's seat, the grant taken away, or the call over: none.
+    other = mine["Other"]["seat_id"]
+    assert (await api.client.post(f"/v1/seats/{other}/screen", headers=oh)).status_code == 403
+    assert (await api.client.post(f"/v1/seats/{seat}/screen", headers=oh)).status_code == 404
+    r = await api.client.patch(
+        f"/v1/sessions/{sid}/seats/{seat}", headers=hh, json={"capabilities": ["view"]}
+    )
+    assert r.status_code == 200
+    assert (await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)).status_code == 403
+    await api.svc.valkey.hset(keys.sess_state(sid), "status", "ended")
+    assert (await api.client.post(f"/v1/sessions/{sid}/screen", headers=hh)).status_code == 409
