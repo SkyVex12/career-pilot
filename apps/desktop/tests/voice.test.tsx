@@ -1,9 +1,8 @@
-// Guest seats' voice in the window (src/voice.ts): the host hears guests only on headphones that
-// passed the isolation checks, routed before anything plays, never on another device; a
-// guest's microphone opens only while they talk. LiveKit, the audio elements and the Rust checks
-// are faked.
+// Guest seats' voice in the window (src/voice.ts): the host hears guests on the device they
+// picked, routed before anything plays, never on another device; a guest's microphone opens
+// only while they talk. LiveKit and the audio elements are faked.
 import { describe, expect, it, vi } from "vitest";
-import { VoiceController, toneWav, windowsName, type VoiceCmd, type VoiceDeps, type VoiceStatus } from "../src/voice";
+import { VoiceController, windowsName, type VoiceCmd, type VoiceDeps, type VoiceStatus } from "../src/voice";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -62,12 +61,6 @@ function setup(over: Partial<VoiceDeps> = {}) {
     },
     devices: async () => devices,
     unlockLabels: vi.fn(async () => undefined),
-    rules: vi.fn(async (label: string) => {
-      log.push(`rules ${label}`);
-    }),
-    listen: vi.fn(async (ms: number) => {
-      log.push(`listen ${ms}`);
-    }),
     hostToken: vi.fn(async () => ({ url: "wss://lk", token: "host-token" })),
     guestToken: vi.fn(async () => ({ url: "wss://lk", token: "guest-token" })),
     onDeviceChange: (f) => {
@@ -76,9 +69,6 @@ function setup(over: Partial<VoiceDeps> = {}) {
         changed = null;
       };
     },
-    sleep: async () => undefined,
-    objectUrl: () => "blob:tone",
-    revokeUrl: () => undefined,
     ...over,
   };
   const statuses: VoiceStatus[] = [];
@@ -97,24 +87,20 @@ const host: VoiceCmd = { cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allo
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("the host's voice", () => {
-  it("checks the device, the tone through the voice's own path, then listens to guests", async () => {
+  it("makes sure the window can play on the device, then listens to guests", async () => {
     const t = setup();
     await t.c.handle(host);
-    expect(t.log).toEqual(["rules Headphones (USB)", "listen 2000", "route d-hp", "play d-hp"]);
+    expect(t.log).toEqual(["route d-hp"]);
     expect(t.deps.hostToken).toHaveBeenCalledWith("s1");
     expect(t.room.connect).toHaveBeenCalledWith("wss://lk", "host-token", { autoSubscribe: true });
     expect(t.c.status.host).toBe("on");
   });
 
-  it("a refusal of the call's own device, or a tone that leaked, keeps voice off and says why", async () => {
-    const refused = setup({ rules: vi.fn(async () => Promise.reject("Guests' voice needs other headphones than the device the call plays on")) });
-    await refused.c.handle(host);
-    expect(refused.c.status).toMatchObject({ host: "off", error: "Guests' voice needs other headphones than the device the call plays on" });
-    expect(refused.deps.hostToken).not.toHaveBeenCalled();
-    const leaked = setup({ listen: vi.fn(async () => Promise.reject("The test tone on those headphones reached the call")) });
-    await leaked.c.handle(host);
-    expect(leaked.c.status).toMatchObject({ host: "off", error: "The test tone on those headphones reached the call" });
-    expect(leaked.room.connect).not.toHaveBeenCalled();
+  it("a voice token the server refuses keeps voice off and says why", async () => {
+    const t = setup({ hostToken: vi.fn(async () => Promise.reject("Voice is not set up on this server.")) });
+    await t.c.handle(host);
+    expect(t.c.status).toMatchObject({ host: "off", error: "Voice is not set up on this server." });
+    expect(t.room.connect).not.toHaveBeenCalled();
   });
 
   it("a window that cannot route sound to a device gets no voice", async () => {
@@ -167,14 +153,6 @@ describe("device names", () => {
     expect(windowsName("Speakers (Logi USB Headset) (046d:0a64)")).toBe("Speakers (Logi USB Headset)");
     expect(windowsName("Speakers (Realtek(R) Audio)")).toBe("Speakers (Realtek(R) Audio)");
   });
-
-  it("checks a USB headset under Windows' name", async () => {
-    const usb = { ...HP, label: "Headphones (Logi USB Headset) (046d:0a64)" } as MediaDeviceInfo;
-    const t = setup();
-    t.setDevices([DEFAULT, usb]);
-    await t.c.handle(host);
-    expect(t.log[0]).toBe("rules Headphones (Logi USB Headset)");
-  });
 });
 
 describe("the guest's voice", () => {
@@ -195,13 +173,5 @@ describe("the guest's voice", () => {
     const t = setup();
     await t.c.handle({ cmd: "guest_talk", on: true });
     expect(t.c.status.error).toBe("Voice is not connected.");
-  });
-});
-
-describe("the test tone", () => {
-  it("is 1.2 s of 16-bit mono WAV", () => {
-    const wav = toneWav(48_000);
-    expect(wav.size).toBe(44 + 57_600 * 2);
-    expect(wav.type).toBe("audio/wav");
   });
 });
