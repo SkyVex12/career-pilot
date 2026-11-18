@@ -5,8 +5,11 @@
 //! That flag omits the window. `WDA_MONITOR` (0x1) is never used: it paints a black rectangle
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
-//! Windows 11 21H2 (build 22000) keeps the flag only after a frame refresh, and a transparent
-//! overlay stays white there unless the frame covers the whole client area.
+//! Windows 11 21H2 (build 22000) rejects the flag with "not enough memory" once WebView2 has
+//! turned on pointer input, so the window stays in screenshots. Pointer input is turned off
+//! before any window exists on builds before 22H2. That build also keeps the flag only after a
+//! frame refresh, and a transparent overlay stays white there unless the frame covers the
+//! whole client area.
 //!
 //! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
 //! window title is the configured display name. Task Manager's process name is the executable's
@@ -17,7 +20,12 @@
 //! affinity while it is hidden makes Windows paint an opaque white rectangle where the overlay
 //! sits, so those calls wait until the overlay is actually on screen.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::{AppHandle, Manager, WebviewWindow};
+
+/// Stops a focus event raised by applying stealth from applying it again.
+static APPLYING: AtomicBool = AtomicBool::new(false);
 
 /// `WDA_NONE`: capture includes the window again.
 const WDA_NONE: u32 = 0x0000_0000;
@@ -87,9 +95,37 @@ pub(crate) fn affinity(exclude: bool) -> u32 {
     if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }
 }
 
+/// Call before any window is created. On Windows 11 21H2, WebView2's pointer input makes
+/// `SetWindowDisplayAffinity` fail, and that switch can only be set once per process.
+pub fn prepare() {
+    #[cfg(windows)]
+    if windows_build() < WINDOWS_11_22H2 {
+        let turned_off = unsafe { EnableMouseInPointer(0) };
+        if turned_off == 0 {
+            let err = unsafe { GetLastError() };
+            tracing::warn!("stealth mode: pointer input stayed on ({err}); capture exclusion may not apply");
+        }
+    }
+}
+
+/// Windows 11 21H2 drops capture exclusion until it is applied again. Later builds do not.
+pub(crate) fn capture_needs_repeat() -> bool {
+    #[cfg(windows)]
+    {
+        windows_build() < WINDOWS_11_22H2
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Apply capture exclusion, the taskbar button, and the window title. One window failing does
 /// not stop the others, and a failure does not hide or close anything.
 pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
+    if APPLYING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let affinity = affinity(on);
     for (label, window) in app.webview_windows() {
         if label == "overlay" {
@@ -107,6 +143,7 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
         set_window(&label, &window, affinity);
         present(&label, &window, on, display_name);
     }
+    APPLYING.store(false, Ordering::Release);
 }
 
 /// Leave the overlay out of screen capture, or not, whatever the stealth setting: a guest
@@ -169,8 +206,13 @@ fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
         }
     };
     // Read the error before anything else can overwrite it.
-    let failed =
-        unsafe { if SetWindowDisplayAffinity(hwnd.0, affinity) == 0 { Some(GetLastError()) } else { None } };
+    let mut failed = set_affinity(hwnd.0, affinity);
+    // Error 8 is ERROR_NOT_ENOUGH_MEMORY. On build 22000 that is what WebView2's pointer
+    // input turns this call into. Turn pointer input off and try once more.
+    if failed == Some(ERROR_NOT_ENOUGH_MEMORY) && windows_build() < WINDOWS_11_22H2 {
+        let _ = unsafe { EnableMouseInPointer(0) };
+        failed = set_affinity(hwnd.0, affinity);
+    }
     if let Some(err) = failed {
         tracing::warn!(
             "stealth mode: {label} could not change capture exclusion (SetWindowDisplayAffinity error {err}). \
@@ -179,11 +221,21 @@ fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
         );
         return;
     }
-    // Build 22000 applies the affinity only after DWM rebuilds the frame. Later builds already
-    // pick it up from the call above.
-    if windows_build() < 22621 {
+    // Build 22000 applies the affinity only after DWM rebuilds the frame, and that rebuild
+    // can clear it. Set the flag again afterwards. Later builds already pick it up above.
+    if windows_build() < WINDOWS_11_22H2 {
         refresh_frame(hwnd.0);
+        if let Some(err) = set_affinity(hwnd.0, affinity) {
+            tracing::warn!(
+                "stealth mode: {label} could not keep capture exclusion after the frame refresh (error {err})"
+            );
+        }
     }
+}
+
+#[cfg(windows)]
+fn set_affinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> Option<u32> {
+    unsafe { if SetWindowDisplayAffinity(hwnd, affinity) == 0 { Some(GetLastError()) } else { None } }
 }
 
 /// Capture affinity clears the blur region tao used to make the overlay transparent. Put that
@@ -202,7 +254,7 @@ fn restore_overlay_transparency(window: &WebviewWindow) {
         let _ = DeleteObject(region);
         // Build 22000 paints the client area opaque white unless the glass frame covers it.
         // Later Windows already stays transparent from the blur region alone.
-        if windows_build() < 22621 {
+        if windows_build() < WINDOWS_11_22H2 {
             let margins = DwmMargins { left: -1, right: -1, top: -1, bottom: -1 };
             let _ = DwmExtendFrameIntoClientArea(hwnd.0, &margins);
         }
@@ -229,6 +281,11 @@ fn refresh_frame(hwnd: *mut std::ffi::c_void) {
         );
     }
 }
+
+#[cfg(windows)]
+const WINDOWS_11_22H2: u32 = 22621;
+#[cfg(windows)]
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 
 #[cfg(windows)]
 fn windows_build() -> u32 {
@@ -288,6 +345,7 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 #[link(name = "user32")]
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+    fn EnableMouseInPointer(enable: i32) -> i32;
     fn SetWindowPos(
         hwnd: *mut std::ffi::c_void,
         after: *mut std::ffi::c_void,
