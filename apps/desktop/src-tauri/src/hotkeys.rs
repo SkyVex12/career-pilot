@@ -19,6 +19,9 @@ pub enum Action {
     ClickThroughOff,
     OpacityUp,
     OpacityDown,
+    /// Coding mode: a shot of the window in front into the tray, and the tray sent to be solved.
+    AddShot,
+    Solve,
     /// Ends a guest's control of the screen (remote.rs). A fixed key, always registered.
     StopControl,
 }
@@ -41,6 +44,8 @@ pub fn bindings(s: &Settings) -> Vec<(Action, String)> {
         (Action::ClickThroughOff, click_through_off(s)),
         (Action::OpacityUp, s.opacity_up_hotkey.trim().to_string()),
         (Action::OpacityDown, s.opacity_down_hotkey.trim().to_string()),
+        (Action::AddShot, s.add_shot_hotkey.trim().to_string()),
+        (Action::Solve, s.solve_hotkey.trim().to_string()),
     ]
 }
 
@@ -213,6 +218,8 @@ mod tests {
         s.click_through_off_hotkey = same.into();
         s.opacity_up_hotkey = same.into();
         s.opacity_down_hotkey = same.into();
+        s.add_shot_hotkey = same.into();
+        s.solve_hotkey = same.into();
         let reg = to_register(&s);
         // One key for them all, and it drives the off switch: click-through can always be
         // escaped. (Stop control keeps its own fixed key.)

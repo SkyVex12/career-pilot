@@ -3,7 +3,7 @@
 // conversation comes back (the core keeps the session's events, compacted; see
 // src-tauri/src/history.rs).
 import { useEffect, useReducer } from "react";
-import type { Capability, MemoryRef, Mode, QuestionType, SeatInfo, ServerMessage } from "@copilot/protocol";
+import type { Capability, MemoryRef, Mode, QuestionType, ScreenReading, SeatInfo, ServerMessage } from "@copilot/protocol";
 import { api, inTauri, onEvent, type ConnectionState, type Numbered, type QuestionLatency, type Replay, type ReplayPass, type StopReason, type UiEvent } from "./api";
 
 export interface PassView {
@@ -24,6 +24,14 @@ export interface QuestionView {
   fast: PassView;
   deep: PassView;
   deepRequested: boolean;
+  /** A screenshot's question (coding mode), once the gateway has read the screen: its tasks. */
+  screen?: ScreenReading;
+}
+
+/** A screenshot's question (coding mode): its answers are code and Markdown, not talking points.
+ * Its text names the screen ("Screen: 2 tasks (choice, code)") before and after the reading. */
+export function isScreenQuestion(q: QuestionView): boolean {
+  return q.screen !== undefined || /^Screen\b/.test(q.text);
 }
 
 export interface TranscriptLine {
@@ -205,6 +213,7 @@ export function reduce(s: SessionView, a: Action): SessionView {
           speculative: m.speculative,
           cancelled: false,
           deepRequested: q.deepRequested || deepStartsAlone(s, m.question_type),
+          ...(m.screen ? { screen: m.screen } : {}),
         }));
       }
       const q: QuestionView = {
@@ -217,6 +226,7 @@ export function reduce(s: SessionView, a: Action): SessionView {
         fast: emptyPass(),
         deep: emptyPass(),
         deepRequested: deepStartsAlone(s, m.question_type),
+        ...(m.screen ? { screen: m.screen } : {}),
       };
       return { ...s, questions: [...s.questions, q], timeline: [...s.timeline, { kind: "question", id: q.id }] };
     }

@@ -75,6 +75,13 @@ export interface Settings {
   click_through_off_hotkey: string;
   opacity_up_hotkey: string;
   opacity_down_hotkey: string;
+  /** Coding mode: a shot of the window in front into the tray, and the tray sent to be solved. */
+  add_shot_hotkey: string;
+  solve_hotkey: string;
+  /** Coding mode's answer mode and the language picked for the code ("" lets the screen decide);
+   * the overlay sets these (`api.setCodingPrefs`), the settings screen sends them back unchanged. */
+  coding_mode: CodingMode;
+  coding_language: string;
   /** Per-monitor overlay frame/opacity/view and the monitor last used: the app manages these,
    * the settings screen sends them back unchanged. */
   layouts: Record<string, MonitorLayout>;
@@ -112,7 +119,26 @@ export type HotkeyAction =
   | "click_through"
   | "click_through_off"
   | "opacity_up"
-  | "opacity_down";
+  | "opacity_down"
+  | "add_shot"
+  | "solve";
+
+/** Coding mode's answer mode: a call is on (say it, then type it), or an online test (paste it). */
+export type CodingMode = "interview" | "assessment";
+
+/** A shot waiting in the coding tray (src-tauri/src/shots.rs `ShotView`). */
+export interface ShotView {
+  id: number;
+  /** The image itself, as a data URL. */
+  url: string;
+  width: number;
+  height: number;
+  title: string | null;
+  bytes: number;
+  source: "window" | "monitor";
+  capture_ms: number;
+  encode_ms: number;
+}
 
 /** Hotkeys that do not parse, and sets of hotkeys sharing one key (hotkeys.rs `Review`). */
 export interface HotkeyReview {
@@ -345,6 +371,13 @@ export const api = {
   /** End the profile's running call wherever it runs; `profile` is the app's (null: "Me"). */
   endLiveSession: (sessionId: string, profile: string | null) => invoke<string>("end_live_session", { sessionId, profile }),
   forceQuestion: (text: string | null) => invoke<void>("force_question", { text }),
+  /** Coding mode: a shot of the window in front into the tray; Solve sends the tray (or one new
+   * shot) as one problem; the tray's shots; take one out; the answer mode and language. */
+  codingAddShot: () => invoke<void>("coding_add_shot"),
+  codingSolve: () => invoke<void>("coding_solve"),
+  codingShots: () => invoke<ShotView[]>("coding_shots"),
+  codingRemoveShot: (id: number) => invoke<void>("coding_remove_shot", { id }),
+  setCodingPrefs: (mode: CodingMode, language: string) => invoke<void>("set_coding_prefs", { mode, language }),
   /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */
   respond: (text: string | null) => invoke<void>("respond", { text }),
   expandAnswer: (questionId: string) => invoke<void>("expand_answer", { questionId }),
@@ -397,6 +430,14 @@ export function onOpenSettings(handler: () => void): Promise<UnlistenFn> {
 export interface Numbered {
   n: number;
   event: UiEvent;
+}
+
+/** The coding tray changed; and what went wrong with a hotkey's shot. */
+export function onShots(handler: (shots: ShotView[]) => void): Promise<UnlistenFn> {
+  return listen<ShotView[]>("copilot://coding-shots", (e) => handler(e.payload));
+}
+export function onShotError(handler: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>("copilot://coding-error", (e) => handler(e.payload));
 }
 
 export function onEvent(handler: (e: Numbered) => void): Promise<UnlistenFn> {

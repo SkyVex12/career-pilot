@@ -64,6 +64,14 @@ pub struct Settings {
     /// Step the overlay's opacity.
     pub opacity_up_hotkey: String,
     pub opacity_down_hotkey: String,
+    /// Coding mode (shots.rs): add a shot of the window in front to the tray, and send the
+    /// tray (or one new shot) to be answered.
+    pub add_shot_hotkey: String,
+    pub solve_hotkey: String,
+    /// Coding mode's answer mode, "interview" or "assessment", and the language the user picked
+    /// for the code ("" lets the screen decide). Set from the overlay, kept across calls.
+    pub coding_mode: String,
+    pub coding_language: String,
     /// The overlay's frame, opacity and view remembered per monitor, and the monitor it was
     /// last on so it reopens there (layout.rs). Managed by the app, not the settings screen.
     pub layouts: BTreeMap<String, MonitorLayout>,
@@ -110,6 +118,10 @@ impl Default for Settings {
             click_through_off_hotkey: hotkeys::CLICK_THROUGH_OFF_FALLBACK.into(),
             opacity_up_hotkey: "CommandOrControl+Shift+Up".into(),
             opacity_down_hotkey: "CommandOrControl+Shift+Down".into(),
+            add_shot_hotkey: "CommandOrControl+Shift+A".into(),
+            solve_hotkey: "CommandOrControl+Shift+Enter".into(),
+            coding_mode: "interview".into(),
+            coding_language: String::new(),
             layouts: BTreeMap::new(),
             overlay_monitor: None,
             overlay_on_top: true,
