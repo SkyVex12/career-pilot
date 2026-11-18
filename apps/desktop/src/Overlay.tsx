@@ -652,7 +652,11 @@ function QuestionCard({
   const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
   // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
   const screen = isScreenQuestion(q);
-  const Text = screen ? CodeAnswer : AnswerText;
+  // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
+  // Java") in an otherwise spoken answer.
+  const textOf = (text: string) => (screen || text.includes("```") ? CodeAnswer : AnswerText);
+  const FastText = textOf(q.fast.text);
+  const DeepText = textOf(q.deep.text);
   // A screen's code pass runs only when a task needs code or an exact output: its section
   // shows while the reading says one is coming, and with whatever it wrote.
   const codeComing = q.screen?.tasks.some((t) => SECOND_PASS_KINDS.has(t.kind)) ?? false;
@@ -685,7 +689,7 @@ function QuestionCard({
       {q.screen && <ScreenTasks reading={q.screen} />}
 
       <div role="group" className={cx("points pass pass-fast", holdFast && "is-held", screen && "is-code")} aria-label={screen ? "Answer" : "Talking points"}>
-        {q.fast.text && <Text text={q.fast.text} streaming={!q.fast.done} />}
+        {q.fast.text && <FastText text={q.fast.text} streaming={!q.fast.done} />}
         <PassStatus state={fast} />
       </div>
 
@@ -695,7 +699,7 @@ function QuestionCard({
             {screen ? "Code" : "Detailed"}
           </span>
           {q.deep.text ? (
-            <Text text={q.deep.text} streaming={!q.deep.done} />
+            <DeepText text={q.deep.text} streaming={!q.deep.done} />
           ) : (
             !q.deep.done && (
               <div className="ov-reserve" aria-hidden="true">

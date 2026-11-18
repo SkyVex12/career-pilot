@@ -335,6 +335,77 @@ def _system(
     return [SystemBlock(text, cache=True)]
 
 
+# Follow-ups (phase 3): the last screen's problem stays open for the questions after it,
+# spoken or typed ("optimize it", "what about duplicates?", "write it in Java"). The fast pass
+# gets it as text; the deep pass gets the shots too, to read the statement again.
+
+_PROBLEM_MAX_CHARS = 8000
+
+
+@dataclass
+class Problem:
+    """The last screen's problem: its shots, what was read, and what the user was given."""
+
+    qid: Any
+    shots: tuple[Shot, ...]
+    reading: dict[str, Any] | None
+    answer: str
+    code: str
+    at: float  # monotonic time of the shot
+
+    def text(self) -> str:
+        parts: list[str] = []
+        tasks: list[dict[str, Any]] = (self.reading or {}).get("tasks") or []
+        if tasks:
+            lines: list[str] = []
+            for t in tasks:
+                bits = [f"{t.get('n')}. {t.get('kind')}"]
+                if t.get("title"):
+                    bits.append(str(t["title"]))
+                if t.get("language"):
+                    bits.append(f"in {t['language']}")
+                if t.get("signature"):
+                    bits.append(f"signature: {t['signature']}")
+                if t.get("approach"):
+                    bits.append(f"approach: {t['approach']}")
+                lines.append(", ".join(bits))
+            parts.append("Tasks on the screen:\n" + "\n".join(lines))
+        if self.answer.strip():
+            parts.append("The answer shown:\n" + self.answer.strip())
+        if self.code.strip():
+            parts.append("The code given:\n" + self.code.strip())
+        return "\n\n".join(parts)[:_PROBLEM_MAX_CHARS]
+
+
+FOLLOW_UP_FAST = (
+    "<last_problem> is the coding problem on {user_name}'s screen a moment ago and what they "
+    "were given for it. If the question is about it (a follow-up: optimize it, another case, "
+    "another language, why a line or condition is there), the cues are about that problem and "
+    "that code: what changes and why, the new complexity; no code. Otherwise ignore it."
+)
+FOLLOW_UP_DEEP = (
+    "<last_problem> is the coding problem on {user_name}'s screen a moment ago (its shots are "
+    "above) and what they were given for it. If the question is about it, answer about that "
+    "problem and that code. If it asks for changed code (another language, a faster or "
+    "lower-memory version, a case handled, a fix), give the whole code again in one "
+    "```<language> block, filling the same signature in the language asked for, a short "
+    "comment where the change is, then **What changed:** one line and **Complexity:** one "
+    "line; this replaces the shape and style below. If it asks why or how, explain from that "
+    "exact code, line by line where it helps, without code. Otherwise ignore it."
+)
+
+
+def follow_up(problem: Problem, user_name: str, deep: bool) -> str:
+    """The block and its rule, for a live question's prompt while a problem is open."""
+    rule = (FOLLOW_UP_DEEP if deep else FOLLOW_UP_FAST).replace("{user_name}", user_name)
+    return data_block("last_problem", problem.text()) + "\n" + rule
+
+
+def shot_blocks(shots: Sequence[Shot]) -> list[dict[str, Any]]:
+    """The shots as content blocks, each after a line naming it."""
+    return _shot_blocks(shots)
+
+
 def _shot_blocks(shots: Sequence[Shot]) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     for i, shot in enumerate(shots, start=1):

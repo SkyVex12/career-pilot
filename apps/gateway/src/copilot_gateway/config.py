@@ -157,6 +157,9 @@ class Settings(CoreSettings):
     screen_code_reasoning: ReasoningEffort | None = None
     # The code pass's OpenAI model (None: the deep pass's).
     screen_code_model: str | None = None
+    # Follow-ups: the last screen's problem goes with every question for this long after its
+    # shot, so "optimize it" or "write it in Java" is answered against it. 0: off.
+    screen_followup_s: float = 1800.0
     # The deep pass starts on its own once the fast pass is done (and the question is
     # confirmed), for these types; other types only on expand. Off: every deep pass waits for
     # expand. A newer confirmed question cancels it. Until October 2026 only behavioral,

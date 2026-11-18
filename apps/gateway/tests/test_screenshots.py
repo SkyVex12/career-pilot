@@ -256,3 +256,67 @@ async def test_screenshots_keep_a_quiet_session_alive(env) -> None:
         await asyncio.sleep(1.1)
         assert c.close_code is None
         assert await c.closed(timeout=5.0) == 1000  # then quiet: it ends as idle
+
+
+async def test_follow_ups_are_answered_against_the_last_problem(env) -> None:
+    provider = env.providers[0]
+    settings = env.settings(screen_code_start="after_read")
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        qid = str(uuid7())
+        await c.send({"type": "screenshot", "question_id": qid, "images": [image(title="P")]})
+        await c.wait_type("answer.done", question_id=qid, pass_="deep")
+        await asyncio.sleep(1.1)
+        await c.send({"type": "question.force", "text": "Can you write it in Java instead?"})
+        follow = await c.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != qid
+        )
+        await c.wait_type("answer.done", question_id=follow["question_id"], pass_="deep")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    fast = str(requests_for(provider, "fast")[-1].content)
+    assert "<last_problem>" in fast
+    assert "Two sum" in fast  # the reading
+    assert "return nums[n:]" in fast  # the code given
+    deep = requests_for(provider, "deep")[-1]
+    parts = blocks(deep)
+    assert parts[1]["type"] == "image"  # the problem's shot, to read the statement again
+    assert "give the whole code again" in parts[-1]["text"]
+    # A follow-up may need new code: the deep model writes it.
+    assert dict(provider.calls)["deep"] == gw.services.router.routes["deep"][0].model
+
+
+async def test_no_follow_up_context_once_the_problem_is_old_or_unreadable(env) -> None:
+    def reply(job: str, req: LLMRequest) -> Reply:
+        if job == "screen_fast" and "Shot 1 of 1, window: Desktop" in json.dumps(blocks(req)):
+            return Reply(['READ {"tasks": [], "unreadable": "a desktop"}\nTake another shot.'])
+        return default_reply(job, req)
+
+    provider = ScriptedProvider("anthropic", reply)
+    env.providers = [provider]
+    settings = env.settings(screen_code_start="after_read", screen_followup_s=2.5)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        await c.send({"type": "screenshot", "images": [image(title="P")]})
+        await c.wait_type("answer.done", pass_="deep")
+        await asyncio.sleep(1.1)
+        # Nothing readable: the problem before it stays the one follow-ups are about.
+        await c.send({"type": "screenshot", "images": [image(title="Desktop")]})
+        unreadable = await c.wait(
+            lambda m: m["type"] == "question.detected" and m.get("screen", {}).get("unreadable")
+        )
+        await c.wait_type("answer.done", question_id=unreadable["question_id"], pass_="fast")
+        await asyncio.sleep(1.1)
+        await c.send({"type": "question.force", "text": "What about duplicates in the input?"})
+        dup = await c.wait_type("question.detected", text="What about duplicates in the input?")
+        await c.wait_type("answer.done", question_id=dup["question_id"], pass_="fast")
+        assert "Two sum" in str(requests_for(provider, "fast")[-1].content)
+        await asyncio.sleep(2.6)  # past screen_followup_s
+        await c.send({"type": "question.force", "text": "How do you test your services?"})
+        late = await c.wait_type("question.detected", text="How do you test your services?")
+        await c.wait_type("answer.done", question_id=late["question_id"], pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    assert "<last_problem>" not in str(requests_for(provider, "fast")[-1].content)

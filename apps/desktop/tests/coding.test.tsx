@@ -66,6 +66,23 @@ function overlay(events: Numbered[]) {
   return render(<Overlay />);
 }
 
+describe("a follow-up about the last problem", () => {
+  it("draws the new code as code, under spoken talking points", async () => {
+    n = 0;
+    overlay([
+      srv({ type: "question.detected", question_id: "f1", text: "Can you write it in Java?", question_type: "coding", confidence: 1, speculative: false }),
+      srv({ type: "answer.delta", question_id: "f1", pass: "fast", text: "- Same two pointers\n- Arrays.sort first\n" }),
+      srv({ type: "answer.delta", question_id: "f1", pass: "deep", text: "```java\nint[][] merge(int[][] w) {\n  return w;\n}\n```\n**What changed:** Java." }),
+    ]);
+    const card = await screen.findByRole("article");
+    const points = within(card).getByRole("group", { name: "Talking points" });
+    expect(within(points).getAllByRole("listitem")).toHaveLength(2);
+    const deep = within(card).getByRole("group", { name: "Detailed answer" });
+    expect(within(deep).getByRole("button", { name: "Copy the java code" })).toBeInTheDocument();
+    expect(within(deep).getByText("What changed:").tagName).toBe("STRONG");
+  });
+});
+
 const shot = (id: number, title: string): ShotView => ({
   id, url: "data:image/webp;base64,UklGRg==", width: 1568, height: 882, title, bytes: 61_440,
   source: "window", capture_ms: 120, encode_ms: 90,
