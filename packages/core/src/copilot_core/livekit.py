@@ -18,7 +18,8 @@ LiveKit's server API (`remove`), and the host's app plays no one whose seat lack
 
 The screen:
 
-- the host's (`host`): publish the screen share only (no audio), and receive guests' data;
+- the host's (`host`): publish the screen share only (no audio), and data (telling a guest
+  when their control starts and ends);
 - a guest's: subscribe only, given for an admitted seat with `device.view`; with
   `device.control` too, also send data (their mouse and keys) to the host, whose app carries
   them out only while the host lets that guest control.

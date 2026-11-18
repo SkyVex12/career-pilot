@@ -823,3 +823,13 @@ html[data-window="overlay"] #root {
   font-weight: 600;
   cursor: pointer;
 }
+.ov-screen-chip.is-control {
+  border-color: rgb(255 107 107 / 0.7);
+  background: rgb(255 107 107 / 0.16);
+  color: var(--ov-bad);
+}
+.ov-screen-chip.is-ask {
+  border-color: rgb(141 180 255 / 0.6);
+  background: rgb(141 180 255 / 0.12);
+  color: var(--ov-fast);
+}

@@ -910,3 +910,35 @@
   opacity: 0.8;
   text-align: center;
 }
+.screen-view-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.screen-view-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  opacity: 0.85;
+}
+/* While the guest controls: a clear edge, and a crosshair (the host's own pointer shows in the picture). */
+.screen-view-frame.is-control {
+  outline: 2px solid var(--danger);
+  outline-offset: -2px;
+  cursor: crosshair;
+}
+.screen-view-frame.is-control:focus-visible {
+  outline-color: var(--accent, var(--danger));
+}
+.screen-view-frame:fullscreen {
+  border-radius: 0;
+}
+.screen-view-frame:fullscreen .screen-view-video {
+  max-height: 100vh;
+  height: 100%;
+}
+.seat-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}

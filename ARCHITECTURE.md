@@ -188,6 +188,25 @@ The host (the person running a call) can invite another Copilot account to follo
 - **The guest** sees the host's screen on the Call screen while watching (Full screen on a click), and "isn't sharing" while the host is not.
 - **Not kept.** The picture is relayed live and never stored.
 
+**Remote input (phase 5).** A guest the host gives `device.control` (which needs `device.view`) can drive the host's shared screen with their mouse and keys, one guest at a time, and only while the host lets them.
+
+- **Three gates.** The grant (the Control switch on the guest's card); a whole-screen share (a window share is view only, since its place on the desktop is not known); and the host pressing Let them control, in Your screen or on the overlay chip when the guest has asked (Ask to control).
+- **The path.** The guest's events go over LiveKit data (topic `input`, reliable, to `host` only; a guest's token has data only with `device.control`). The sharing window (`src/screen.ts`) takes them only from the guest it let control, and only from guests whose seats hold `device.control` now (the host's windows pass the list on as seats change), at most 600 a second. It hands them to the app (`remote_input`, `src-tauri/src/remote.rs`), which places them on the shared monitor and sends them with `SendInput`.
+  - **Pointer:** coordinates are 0 to 1 across the picture, so they land on that monitor alone. The monitor is matched to the picture by shape; the host is asked which one when several fit.
+  - **Keys:** sent by scan code, so the host's keyboard layout applies.
+- **Ending.** Control ends on any of:
+  - Stop control, or the overlay chip ("controls · Stop");
+  - the fixed hotkey Ctrl+Alt+End, handled in Rust whatever the windows show;
+  - the guest's Stop controlling;
+  - the grant going away;
+  - the share or the call ending;
+  - the guest leaving the room;
+  - the app closing.
+
+  The app then lets go of every key and button the guest held, so nothing stays pressed.
+- **What Windows keeps out.** Injected input never reaches elevated windows (UAC prompts, apps run as administrator) or the secure desktop (Ctrl+Alt+Del, the lock screen).
+- **The guest** sees "You control …'s screen" and a red edge on the picture. Clicking the picture gives it the keyboard; keys held when it loses focus are let go.
+
 **Known limits.** A call resumed on another gateway task before its first invite has a fold built from the event stream only, so a guest invited later may miss the start of a very long call. Stage 0 is plain HTTP: what a guest sees crosses the wire unencrypted, as the host's own traffic does (see [Security and privacy](#security-and-privacy)). A host's seat list shows an invite only when the address has an account, so a host learns that much; the per-hour limit bounds it.
 
 ### Memory system

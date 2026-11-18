@@ -258,6 +258,15 @@ export function GuestPanel({ s }: { s: SessionView }) {
                     <Switch label="Notes" checked={x.capabilities.includes("note")} disabled={busy} onChange={(on) => toggle(x, "note", on)} />
                     {voiceAvailable && <Switch label="Voice" checked={x.capabilities.includes("voice")} disabled={busy} onChange={(on) => toggle(x, "voice", on)} />}
                     {screenAvailable && <Switch label="Screen" checked={x.capabilities.includes("device.view")} disabled={busy} onChange={(on) => toggle(x, "device.view", on)} />}
+                    {screenAvailable && (
+                      <Switch
+                        label="Control"
+                        hint="Only when you let them, on a whole screen you share"
+                        checked={x.capabilities.includes("device.control")}
+                        disabled={busy}
+                        onChange={(on) => toggle(x, "device.control", on)}
+                      />
+                    )}
                   </div>
                 )}
                 {seatErrors[x.seat_id] && (

@@ -288,6 +288,7 @@ async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on
     assert (r.json()["room"], r.json()["identity"]) == (f"screen-{sid}", "host")
     video = lk_claims(r.json()["token"])["video"]
     assert video["canPublishSources"] == ["screen_share"]
+    assert video["canPublishData"] is True
 
     # A guest who may watch: subscribe only, no data.
     seat = mine["Blair"]["seat_id"]

@@ -351,6 +351,14 @@ describe("the guest panel", () => {
     expect(ipc.apiCalls("PATCH")).toEqual([
       { method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "note"] } },
     ]);
+    const control = within(perms).getByRole("switch", { name: /Control/ });
+    expect(control).not.toBeChecked();
+    await userEvent.click(control);
+    expect(ipc.apiCalls("PATCH")[1]).toEqual({
+      method: "PATCH",
+      path: `/sessions/s1/seats/${SEAT}`,
+      body: { capabilities: ["view", "note", "device.view", "device.control"] },
+    });
     const yours = screen.getByRole("region", { name: "Your screen" });
     expect(within(yours).getByText(/Blue Angel may see your screen once you share it/)).toBeInTheDocument();
     expect(within(yours).getByRole("button", { name: "Share my screen" })).toBeEnabled();

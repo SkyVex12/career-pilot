@@ -370,14 +370,16 @@ def _screen(lk: livekit.LiveKit, room: str, identity: str, token: str) -> dict[s
 
 @router.post("/sessions/{session_id}/screen")
 async def host_screen(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
-    """The host's way into the call's screen room: share the screen (no audio) and receive
-    the data of guests who may control. 404 when LiveKit is not set up."""
+    """The host's way into the call's screen room: share the screen (no audio), and talk with
+    guests who may control over data. 404 when LiveKit is not set up."""
     await _hosts_live_call(svc, user, session_id)
     lk = svc.settings.livekit()
     if lk is None:
         raise HTTPException(404, "Screen sharing is not set up on this server.")
     room = livekit.screen_room_of(session_id)
-    token = lk.token(room, livekit.HOST, "Host", publish=("screen_share",), subscribe=True)
+    token = lk.token(
+        room, livekit.HOST, "Host", publish=("screen_share",), subscribe=True, data=True
+    )
     return _screen(lk, room, livekit.HOST, token)
 
 
