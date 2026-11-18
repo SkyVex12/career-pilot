@@ -191,9 +191,26 @@ The host (the person running a call) can invite another Copilot account to follo
 **Remote input (phase 5).** A guest the host gives `device.control` (which needs `device.view`) can drive the host's shared screen with their mouse and keys, one guest at a time, and only while the host lets them.
 
 - **Three gates.** The grant (the Control switch on the guest's card); a whole-screen share (a window share is view only, since its place on the desktop is not known); and the host pressing Let them control, in Your screen or on the overlay chip when the guest has asked (Ask to control).
-- **The path.** The guest's events go over LiveKit data (topic `input`, reliable, to `host` only; a guest's token has data only with `device.control`). The sharing window (`src/screen.ts`) takes them only from the guest it let control, and only from guests whose seats hold `device.control` now (the host's windows pass the list on as seats change), at most 600 a second. It hands them to the app (`remote_input`, `src-tauri/src/remote.rs`), which places them on the shared monitor and sends them with `SendInput`.
+- **The path.** The guest's events go over LiveKit data (topic `input`, to `host` only; a guest's token has data only with `device.control`). The sharing window (`src/screen.ts`) takes them only from the guest it let control, and only from guests whose seats hold `device.control` now (the host's windows pass the list on as seats change), at most 600 a second. It hands them to the app (`remote_input`, `src-tauri/src/remote.rs`), which places them on the shared monitor and sends them with `SendInput`.
   - **Pointer:** coordinates are 0 to 1 across the picture, so they land on that monitor alone. The monitor is matched to the picture by shape; the host is asked which one when several fit.
   - **Keys:** sent by scan code, so the host's keyboard layout applies.
+- **Speed** (2026-11-18, after the first real use felt slow). Every step is kept short:
+  - The guest sends each event the moment it happens, with no batching wait.
+  - Moves alone go lossy, since a lost move is overtaken by the next one, while a resent one would hold up everything behind it. Clicks, keys and the wheel go reliably, and each click carries its own spot.
+  - The sharing window never queues moves. While the app is busy, it keeps only the newest move and sends it next, ahead of anything that follows.
+  - `remote_input` is async, so it runs on a worker thread rather than waiting behind the UI thread.
+  - The picture is captured at up to 60 frames a second. While guests only watch, it is sent at 30 frames and 5 Mb/s, keeping text sharp. While a guest controls, it is sent at 60 frames and 8 Mb/s and keeps frames over sharpness when bandwidth is short. This changes on the live share (`ENCODING`).
+  - The guest shows each frame at once, with playout delay 0.
+  - The share is H.264, which Windows encodes on the graphics card where it can. That is faster than VP8 in software, and leaves the CPU to the call. Every guest is this app (WebView2), which plays H.264.
+  - Every window opens WebView2 with flags that keep it at full speed when it is hidden, minimized or covered (`BROWSER_ARGS` in `lib.rs`; tauri.conf.json gives the main window the same string, and a test checks they match). The sharing window is often out of sight during a call, and it carries out the guest's input. Windows sharing a profile must use the very same flags, or WebView2 won't open the second.
+- **Feel and measure** (2026-11-18). These change how control feels and show where the time goes, not how fast input lands.
+  - **The guest's own arrow.** While controlling, the guest's pointer over the picture is a normal arrow. It moves with their hand at once, so they aim with it. The host's real pointer, seen in the picture, follows a moment later.
+  - **A readout under the picture**, read once a second while watching (`readStats` in `src/screen.ts`):
+    - the network round trip to the media server (the connection's chosen candidate pair);
+    - frames per second;
+    - the codec;
+    - per-frame decode time and receive-buffer time over the last second.
+  - **Timing the input path.** While controlling, the guest also pings the host over data, once a second (topic `ping`). The host sends the payload straight back (`pong`), only to the guest controlling now, so the guest sees its input's real round trip. The readout makes clear which step to speed up next: the network, the host's encoding, or the guest's decoding.
 - **Ending.** Control ends on any of:
   - Stop control, or the overlay chip ("controls · Stop");
   - the fixed hotkey Ctrl+Alt+End, handled in Rust whatever the windows show;

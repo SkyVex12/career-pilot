@@ -420,6 +420,15 @@ fn outdated(app: &AppHandle, why: &str) {
 
 type Res<T> = Result<T, String>;
 
+/// WebView2's flags, the same for every window: windows that share a profile must open with the
+/// very same flags, so tauri.conf.json gives the main window this exact string (a test checks).
+/// wry's defaults (no mini menu, no SmartScreen, sound without a click), plus: a hidden,
+/// minimized or covered window keeps its full speed. The window sharing the screen is often
+/// out of sight during a call, and it carries out the controlling guest's input.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+--autoplay-policy=no-user-gesture-required --disable-renderer-backgrounding \
+--disable-background-timer-throttling --disable-backgrounding-occluded-windows";
+
 /// What the settings screen shows of a release build: the stage it is pinned to.
 #[derive(Serialize)]
 struct ReleaseView {
@@ -1934,6 +1943,7 @@ pub fn run() {
                     .skip_taskbar(true)
                     .transparent(true)
                     .visible(false)
+                    .additional_browser_args(BROWSER_ARGS)
                     .build()?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).
             let handle = app.handle().clone();
@@ -2069,8 +2079,10 @@ fn remote_begin(target: remote::Rect) {
 }
 
 /// The controlling guest's events, carried out on that monitor. Err when no one controls.
+/// Async so it runs on a worker thread: a plain command waits its turn on the UI thread,
+/// behind the windows' own work, which the guest feels as lag. SendInput works from any thread.
 #[tauri::command]
-fn remote_input(events: Vec<remote::Input>) -> Res<()> {
+async fn remote_input(events: Vec<remote::Input>) -> Res<()> {
     remote::input(&events)
 }
 
@@ -2083,6 +2095,14 @@ fn remote_end() {
 #[cfg(test)]
 mod tests {
     use super::percent_decode;
+
+    #[test]
+    fn every_window_opens_webview2_with_the_same_flags() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let main = &conf["app"]["windows"][0];
+        assert_eq!(main["label"], "main");
+        assert_eq!(main["additionalBrowserArgs"], super::BROWSER_ARGS);
+    }
 
     #[test]
     fn file_names_are_uri_decoded() {

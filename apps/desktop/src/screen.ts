@@ -84,10 +84,21 @@ type ScreenCmd =
 
 const CMD = "screen:cmd";
 const STATUS = "screen:status";
-/** Data topics: the guest's events and asks, the host's word on control. */
-export const TOPIC = { input: "input", ask: "ask", release: "release", control: "control" } as const;
+/** Data topics: the guest's events and asks, the host's word on control, and the controlling
+ * guest's ping (the host sends it straight back) to time the input path. */
+export const TOPIC = { input: "input", ask: "ask", release: "release", control: "control", ping: "ping", pong: "pong" } as const;
 /** At most this many of a guest's events a second; the rest are dropped. */
 export const MAX_EVENTS_PER_S = 600;
+
+/** The shared picture's encoding: sharp text while guests only watch; while a guest controls,
+ * twice the frames (and the bits for them), and frames are kept over sharpness when the line
+ * is short, so the pointer and what it moves keep up with the guest's hand. */
+export const SCREEN_CODEC = "h264";
+
+export const ENCODING = {
+  watch: { maxBitrate: 5_000_000, maxFramerate: 30, degradation: "maintain-resolution" },
+  control: { maxBitrate: 8_000_000, maxFramerate: 60, degradation: "balanced" },
+} as const;
 
 export interface Grant {
   url: string;
@@ -112,6 +123,8 @@ export const hostDeps: HostDeps = {
   capture: () =>
     createLocalScreenTracks({
       audio: false,
+      // Captured at up to 60 frames, so control can send them all (ENCODING).
+      resolution: { width: 1920, height: 1080, frameRate: 60 },
       contentHint: "detail",
       selfBrowserSurface: "exclude",
       surfaceSwitching: "exclude",
@@ -144,6 +157,8 @@ export class HostScreen {
   private allowed: Person[] = [];
   private queue: Promise<void> = Promise.resolve();
   private pending = 0;
+  /** The newest move that came while the app was busy: only where the pointer ends up counts. */
+  private spare: InputEvent | null = null;
   private window = { start: 0, count: 0 };
 
   constructor(
@@ -193,7 +208,12 @@ export class HostScreen {
       await room.localParticipant.publishTrack(video, {
         source: Track.Source.ScreenShare,
         simulcast: false,
-        videoEncoding: { maxBitrate: 2_500_000, maxFramerate: 15 },
+        // H.264: Windows encodes it on the graphics card where it can, which is faster than
+        // VP8 in software and leaves the CPU to the call. Every guest is this app (WebView2),
+        // which plays it.
+        videoCodec: SCREEN_CODEC,
+        videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
+        degradationPreference: ENCODING.watch.degradation,
       });
       const surface = video.mediaStreamTrack.getSettings().displaySurface ?? null;
       this.set({ host: "on", surface, error: null });
@@ -254,6 +274,7 @@ export class HostScreen {
       await this.deps.begin(target.rect);
       this.set({ controller: person, choose: null, asking: this.status.asking.filter((p) => p.identity !== person.identity), error: null });
       await this.tell(person.identity, true);
+      await this.tune("control");
     } catch (e) {
       this.set({ choose: null, error: e instanceof Error ? e.message : String(e) });
     }
@@ -264,10 +285,32 @@ export class HostScreen {
     const was = this.status.controller;
     if (!was && !this.status.choose) return;
     this.set({ controller: null, choose: null, error: error ?? this.status.error });
+    this.spare = null;
     try {
       await this.deps.end();
     } finally {
       if (was) await this.tell(was.identity, false);
+      if (was) await this.tune("watch");
+    }
+  }
+
+  /** The picture's encoding for watching or for control (ENCODING), changed on the live share. */
+  private async tune(mode: keyof typeof ENCODING): Promise<void> {
+    const video = this.tracks.find((t) => t.kind === Track.Kind.Video);
+    const sender = video?.sender;
+    if (!sender) return;
+    const want = ENCODING[mode];
+    try {
+      const p = sender.getParameters() as RTCRtpSendParameters & { degradationPreference?: string };
+      if (!p.encodings?.length) return;
+      for (const e of p.encodings) {
+        e.maxBitrate = want.maxBitrate;
+        e.maxFramerate = want.maxFramerate;
+      }
+      p.degradationPreference = want.degradation;
+      await sender.setParameters(p);
+    } catch {
+      // The share keeps its encoding; control works the same, only less smoothly.
     }
   }
 
@@ -286,6 +329,15 @@ export class HostScreen {
   private async data(payload: Uint8Array, who: RemoteParticipant, topic?: string): Promise<void> {
     const person = this.allowed.find((a) => a.identity === who.identity);
     if (!person) return; // no device.control: nothing a guest sends counts
+    if (topic === TOPIC.ping) {
+      // Straight back, untouched: the guest times the round trip of its input.
+      if (this.status.controller?.identity === who.identity && payload.length <= 64) {
+        void this.room?.localParticipant
+          .publishData(new Uint8Array(payload), { reliable: false, destinationIdentities: [who.identity], topic: TOPIC.pong })
+          .catch(() => undefined);
+      }
+      return;
+    }
     if (topic === TOPIC.ask) {
       if (this.status.controller?.identity !== who.identity && !this.status.asking.some((p) => p.identity === who.identity)) {
         this.set({ asking: [...this.status.asking, person] });
@@ -306,23 +358,41 @@ export class HostScreen {
     } catch {
       return;
     }
-    // At most MAX_EVENTS_PER_S a second, and not when the app falls behind (moves only).
+    // At most MAX_EVENTS_PER_S a second.
     const now = this.deps.now();
     if (now - this.window.start >= 1000) this.window = { start: now, count: 0 };
     const room = MAX_EVENTS_PER_S - this.window.count;
     if (room <= 0) return;
     events = events.slice(0, room);
-    if (this.pending > 8) events = events.filter((e) => e.t !== "move");
     if (events.length === 0) return;
     this.window.count += events.length;
+    // Moves never wait in line: while the app is busy, only the newest is kept, and it goes
+    // next. Anything else goes in order, after the move kept before it.
+    if (this.pending > 0 && events.every((e) => e.t === "move")) {
+      this.spare = events[events.length - 1];
+      return;
+    }
+    if (this.spare) {
+      events = [this.spare, ...events];
+      this.spare = null;
+    }
+    await this.run(events);
+  }
+
+  private run(events: InputEvent[]): Promise<void> {
     this.pending += 1;
     this.queue = this.queue
       .then(() => this.deps.input(events))
       .catch(() => undefined)
       .finally(() => {
         this.pending -= 1;
+        const spare = this.spare;
+        if (this.pending === 0 && spare && this.status.controller) {
+          this.spare = null;
+          void this.run([spare]);
+        }
       });
-    await this.queue;
+    return this.queue;
   }
 }
 
@@ -418,6 +488,8 @@ export class GuestScreen {
   state: GuestScreenState = GUEST_OFF;
   room: Room | null = null;
   track: RemoteTrack | null = null;
+  /** The last round trip of a ping over the input path (guest → host → guest), in ms. */
+  inputMs: number | null = null;
   private closed = false;
   private retries = 0;
 
@@ -426,11 +498,19 @@ export class GuestScreen {
     private seatId: string,
     private onChange: (s: GuestScreenState, track: RemoteTrack | null) => void,
     private wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private now: () => number = () => performance.now(),
   ) {}
 
   private set(patch: Partial<GuestScreenState>) {
     this.state = { ...this.state, ...patch };
+    if (!this.state.controlling) this.inputMs = null;
     this.onChange(this.state, this.track);
+  }
+
+  /** Time the input path once (while controlling); the answer lands in `inputMs`. */
+  async ping(): Promise<void> {
+    if (!this.state.controlling) return;
+    await this.publish(TOPIC.ping, { t: this.now() }, false);
   }
 
   async open(): Promise<void> {
@@ -443,6 +523,13 @@ export class GuestScreen {
       this.room = room;
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: RemoteParticipant) => {
         if (who.identity !== HOST || track.kind !== Track.Kind.Video) return;
+        // Show each frame as soon as it can be: no smoothing buffer, which would cost the
+        // guest's hand its feel of the screen.
+        try {
+          track.setPlayoutDelay(0);
+        } catch {
+          // Not supported here: the browser's own buffer stays.
+        }
         this.track = track;
         this.set({ state: "watching" });
       });
@@ -452,7 +539,17 @@ export class GuestScreen {
         this.set({ state: "waiting", controlling: false, asked: false });
       });
       room.on(RoomEvent.DataReceived, (payload: Uint8Array, who?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-        if (who?.identity !== HOST || topic !== TOPIC.control) return;
+        if (who?.identity !== HOST) return;
+        if (topic === TOPIC.pong) {
+          try {
+            const sent = (JSON.parse(decoder.decode(payload)) as { t?: unknown }).t;
+            if (typeof sent === "number" && this.state.controlling) this.inputMs = Math.max(0, this.now() - sent);
+          } catch {
+            // Not our ping: ignored.
+          }
+          return;
+        }
+        if (topic !== TOPIC.control) return;
         try {
           const on = (JSON.parse(decoder.decode(payload)) as { on?: unknown }).on === true;
           this.set({ controlling: on, asked: false });
@@ -470,9 +567,9 @@ export class GuestScreen {
     }
   }
 
-  private async publish(topic: string, body: unknown): Promise<void> {
+  private async publish(topic: string, body: unknown, reliable = true): Promise<void> {
     await this.room?.localParticipant.publishData(encoder.encode(JSON.stringify(body)), {
-      reliable: true,
+      reliable,
       destinationIdentities: [HOST],
       topic,
     });
@@ -491,10 +588,12 @@ export class GuestScreen {
     this.set({ controlling: false, asked: false });
   }
 
-  /** The guest's mouse and keys, while the host lets them control. */
+  /** The guest's mouse and keys, while the host lets them control. Moves alone go lossy: one
+   * that is lost is overtaken by the next, where a resent one would hold up all after it.
+   * Clicks, keys and the wheel always arrive (each carries its own spot). */
   async send(events: InputEvent[]): Promise<void> {
     if (!this.state.controlling || events.length === 0) return;
-    await this.publish(TOPIC.input, { events });
+    await this.publish(TOPIC.input, { events }, !events.every((e) => e.t === "move"));
   }
 
   /** Taken out of the room (grants changed) or the connection dropped: try again a few times. */
@@ -519,6 +618,69 @@ export class GuestScreen {
     this.track = null;
     if (room) await room.disconnect();
   }
+}
+
+// --- How fast the guest sees the screen ---------------------------------------------------
+
+/** What the guest's readout shows; null where the browser did not say. */
+export interface ViewStats {
+  /** Network round trip to the media server, ms. */
+  networkMs: number | null;
+  /** Frames shown a second. */
+  fps: number | null;
+  /** Time to decode a frame, ms (over the last interval). */
+  decodeMs: number | null;
+  /** Time a frame waits in the receive buffer, ms (over the last interval). */
+  bufferMs: number | null;
+  /** The codec, e.g. "H264". */
+  codec: string | null;
+}
+
+/** The running totals one interval is measured against. */
+export interface StatsSample {
+  decodeS: number;
+  decoded: number;
+  bufferS: number;
+  emitted: number;
+}
+
+type Stat = Record<string, unknown> & { type?: string; id?: string };
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const ms = (s: number) => Math.round(s * 10_000) / 10; // seconds to ms, one decimal
+
+/** Read a video receiver's stats (getStats) against the previous sample. */
+export function readStats(report: Iterable<Stat>, prev: StatsSample | null): { stats: ViewStats; sample: StatsSample | null } {
+  const all = [...report];
+  const byId = new Map(all.filter((s) => typeof s.id === "string").map((s) => [s.id as string, s]));
+  const inbound = all.find((s) => s.type === "inbound-rtp" && (s.kind === "video" || s.mediaType === "video"));
+  const stats: ViewStats = { networkMs: null, fps: null, decodeMs: null, bufferMs: null, codec: null };
+
+  // The pair the connection runs on: the transport says which, else the nominated one.
+  const transport = all.find((s) => s.type === "transport");
+  const chosen = typeof transport?.selectedCandidatePairId === "string" ? byId.get(transport.selectedCandidatePairId) : undefined;
+  const pair = chosen ?? all.find((s) => s.type === "candidate-pair" && s.nominated === true && s.state === "succeeded");
+  const rtt = num(pair?.currentRoundTripTime);
+  if (rtt !== null) stats.networkMs = Math.round(rtt * 1000);
+  if (!inbound) return { stats, sample: null };
+
+  const fps = num(inbound.framesPerSecond);
+  if (fps !== null) stats.fps = Math.round(fps);
+  const codec = typeof inbound.codecId === "string" ? byId.get(inbound.codecId) : undefined;
+  if (typeof codec?.mimeType === "string") stats.codec = codec.mimeType.split("/")[1] ?? null;
+
+  const sample: StatsSample = {
+    decodeS: num(inbound.totalDecodeTime) ?? 0,
+    decoded: num(inbound.framesDecoded) ?? 0,
+    bufferS: num(inbound.jitterBufferDelay) ?? 0,
+    emitted: num(inbound.jitterBufferEmittedCount) ?? 0,
+  };
+  if (prev) {
+    const frames = sample.decoded - prev.decoded;
+    if (frames > 0) stats.decodeMs = ms((sample.decodeS - prev.decodeS) / frames);
+    const out = sample.emitted - prev.emitted;
+    if (out > 0) stats.bufferMs = ms((sample.bufferS - prev.bufferS) / out);
+  }
+  return { stats, sample };
 }
 
 /** Where a point of the element falls in the picture shown with `object-fit: contain`, 0 to 1

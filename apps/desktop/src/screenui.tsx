@@ -20,6 +20,7 @@ import {
   guestDeps,
   onScreenStatus,
   pictureSpot,
+  readStats,
   screenControllers,
   shareScreen,
   stopScreen,
@@ -27,6 +28,8 @@ import {
   type InputEvent,
   type Person,
   type ScreenStatus,
+  type StatsSample,
+  type ViewStats,
 } from "./screen";
 import type { SessionView } from "./session";
 import { Button, cx } from "./ui";
@@ -189,39 +192,27 @@ export function ScreenChip({ s }: { s: SessionView }) {
   );
 }
 
-/** A controlling guest's mouse and keys on the picture, in batches about every 16 ms; a move
- * followed by another is sent as the last one only. Keys held when the picture loses focus are
+/** A controlling guest's mouse and keys on the picture, each sent the moment it happens (the
+ * browser already gives at most one move a frame). Keys held when the picture loses focus are
  * let go. */
 function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTMLVideoElement | null>) {
-  const batch = useRef<InputEvent[]>([]);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const held = useRef(new Set<string>());
-  const flush = useCallback(() => {
-    timer.current = null;
-    const events = batch.current;
-    batch.current = [];
-    if (guest && events.length > 0) void guest.send(events).catch(() => undefined);
-  }, [guest]);
-  const push = useCallback(
-    (e: InputEvent) => {
-      if (!on) return;
-      const last = batch.current[batch.current.length - 1];
-      if (e.t === "move" && last?.t === "move") batch.current[batch.current.length - 1] = e;
-      else batch.current.push(e);
-      if (e.t !== "move") flush();
-      else if (!timer.current) timer.current = setTimeout(flush, 16);
+  const send = useCallback(
+    (events: InputEvent[]) => {
+      if (on && guest && events.length > 0) void guest.send(events).catch(() => undefined);
     },
-    [on, flush],
+    [on, guest],
   );
+  const push = useCallback((e: InputEvent) => send([e]), [send]);
   const spot = (e: { clientX: number; clientY: number }) => {
     const el = video.current;
     if (!el) return null;
     return pictureSpot(e.clientX, e.clientY, el.getBoundingClientRect(), el.videoWidth, el.videoHeight);
   };
   const letGo = useCallback(() => {
-    for (const code of held.current) push({ t: "key_up", code });
+    send([...held.current].map((code): InputEvent => ({ t: "key_up", code })));
     held.current.clear();
-  }, [push]);
+  }, [send]);
   useEffect(() => {
     if (!on) held.current.clear();
   }, [on]);
@@ -270,6 +261,47 @@ function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTM
   };
 }
 
+/** How fast the guest sees the screen, read once a second while watching; while controlling,
+ * the input path is timed too (a ping the host sends straight back). */
+function useViewStats(guest: GuestScreen | null, track: RemoteTrack | null, controlling: boolean) {
+  const [stats, setStats] = useState<(ViewStats & { inputMs: number | null }) | null>(null);
+  useEffect(() => {
+    if (!track) {
+      setStats(null);
+      return;
+    }
+    let prev: StatsSample | null = null;
+    let live = true;
+    const tick = async () => {
+      if (controlling) void guest?.ping().catch(() => undefined);
+      const report = await track.getRTCStatsReport().catch(() => undefined);
+      if (!live || !report) return;
+      const read = readStats(report.values() as Iterable<Record<string, unknown>>, prev);
+      prev = read.sample;
+      setStats({ ...read.stats, inputMs: controlling ? (guest?.inputMs ?? null) : null });
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [guest, track, controlling]);
+  return stats;
+}
+
+/** The readout's parts, in plain words, leaving out what the browser did not say. */
+export function statsLine(s: ViewStats & { inputMs: number | null }): string {
+  const parts: string[] = [];
+  if (s.inputMs !== null) parts.push(`Your input ${Math.round(s.inputMs)} ms there and back`);
+  if (s.networkMs !== null) parts.push(`Network ${s.networkMs} ms`);
+  if (s.fps !== null) parts.push(`${s.fps} fps`);
+  if (s.decodeMs !== null) parts.push(`Decode ${s.decodeMs} ms`);
+  if (s.bufferMs !== null) parts.push(`Buffer ${s.bufferMs} ms`);
+  if (s.codec) parts.push(s.codec);
+  return parts.join(" · ");
+}
+
 /** The host's screen, for a guest who may see it (main window, while watching). */
 export function GuestScreenView({ s }: { s: SessionView }) {
   const seat = s.seat;
@@ -306,6 +338,7 @@ export function GuestScreenView({ s }: { s: SessionView }) {
   }, [track]);
   const controlling = state.controlling && state.state === "watching";
   const handlers = useControl(guest, controlling, video);
+  const stats = useViewStats(guest, state.state === "watching" ? track : null, controlling);
   if (!seatId || !seat) return null;
   const host = seat.hostName;
   const watching = state.state === "watching";
@@ -347,6 +380,14 @@ export function GuestScreenView({ s }: { s: SessionView }) {
           </span>
         )}
       </div>
+      {state.state === "watching" && stats && statsLine(stats) && (
+        <p
+          className="screen-view-stats"
+          title="Your input: a ping to the host's computer and back. Network: to the media server and back. Decode and Buffer: per frame on this computer."
+        >
+          {statsLine(stats)}
+        </p>
+      )}
     </section>
   );
 }
