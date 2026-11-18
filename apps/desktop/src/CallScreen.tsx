@@ -220,6 +220,9 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
   const [title, setTitle] = useState("");
   const [platform, setPlatform] = useState("zoom");
   const [consent, setConsent] = useState(true);
+  // An online test (coding mode): no call, so nothing is listened to.
+  const [noCall, setNoCall] = useState(false);
+  const testing = noCall && mode === "interview";
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [more, setMore] = useState(false);
@@ -274,10 +277,16 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
         employer_id: company,
         agenda: mode === "meeting" ? agenda.trim() || null : null,
         material_ids: company ? materialIds : [],
-        platform,
+        platform: testing ? "test" : platform,
         store_transcript: consent,
         answer_style: answerStyle,
+        no_call: testing,
       });
+      if (testing) {
+        // A test is answered for pasting: the coding bar switches to Test.
+        const v = await api.getSettings();
+        await api.setCodingPrefs("assessment", v.settings.coding_language ?? "");
+      }
     } catch (e) {
       setMessage(String(e));
     } finally {
@@ -454,6 +463,16 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
             </Field>
           </div>
         )}
+        {mode === "interview" && (
+          <div className="call-consent">
+            <Checkbox
+              checked={noCall}
+              onChange={setNoCall}
+              label="Online test, no call"
+              hint="Nothing is listened to: the microphone and speakers stay closed. Solve the screen with Ctrl+Shift+Enter (or the overlay's Solve), and type questions in the overlay."
+            />
+          </div>
+        )}
         <div className="call-consent">
           <Checkbox
             checked={consent}
@@ -468,7 +487,7 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
         </div>
         <div className="call-start">
           <Button variant="primary" size="lg" loading={busy} disabled={!tokenSet} onClick={start}>
-            Start call
+            {testing ? "Start test" : "Start call"}
           </Button>
           <Button onClick={() => api.showOverlay(true)}>Show overlay</Button>
         </div>

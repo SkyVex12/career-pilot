@@ -119,6 +119,8 @@ async def live_sessions(svc: SvcDep, user: UserDep) -> dict[str, Any]:
                 "next_frame": {ch: _int(state.get(f"hw_{ch}")) + 1 for ch in ("them", "me")},
                 # Calls from before the gateway saved it: the stage transcribes the mic live.
                 "me_audio": state.get("me_audio", "1") == "1",
+                # An online test (coding mode): the app taking it over opens no audio.
+                "no_call": state.get("no_call") == "1",
             })  # fmt: skip
     return {"sessions": items}
 

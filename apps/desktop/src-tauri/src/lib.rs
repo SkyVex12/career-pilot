@@ -27,7 +27,7 @@ use copilot_client::audio::aec::{EchoCanceller, NoEchoCancellation, WebRtcAec};
 use copilot_client::audio::capture::{self, DeviceInfo, DeviceSource};
 use copilot_client::audio::check;
 use copilot_client::audio::pipeline::Levels;
-use copilot_client::audio::source::{AudioSource, Packet};
+use copilot_client::audio::source::{AudioSource, Packet, SilentSource};
 use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::BoxFuture;
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
@@ -1004,6 +1004,9 @@ struct StartRequest {
     /// The Session tab's detailed-answer style; absent from older windows.
     #[serde(default)]
     answer_style: Option<AnswerStyle>,
+    /// An online test with no call (coding mode): no audio device is opened.
+    #[serde(default)]
+    no_call: bool,
 }
 
 /// Events are numbered per session (`n`), so a window that replays the snapshot applies only
@@ -1035,6 +1038,9 @@ struct OpenRequest {
     me_audio: bool,
     /// How long the call has been running, to continue its capture clock.
     elapsed_ms: u64,
+    /// An online test with no call: no audio is opened here either.
+    #[serde(default)]
+    no_call: bool,
 }
 
 #[tauri::command]
@@ -1058,6 +1064,7 @@ async fn open_session(app: AppHandle, state: State<'_, AppState>, request: OpenR
         platform: request.platform,
         store_transcript: true,
         answer_style: None,
+        no_call: request.no_call,
     };
     launch(app, state, start, Some(adopt)).await
 }
@@ -1128,12 +1135,13 @@ async fn launch(
     };
     let aec: Box<dyn EchoCanceller> =
         if settings.echo_cancellation { Box::new(WebRtcAec::new()) } else { Box::new(NoEchoCancellation) };
-    let parts = AudioParts {
-        source: Box::new(DeviceSource::new(settings.mic_device.clone(), settings.output_device.clone())),
-        aec,
-        them_vad: vad()?,
-        me_vad: vad()?,
+    // An online test has no call: nothing is opened, nothing is sent.
+    let source: Box<dyn AudioSource> = if request.no_call {
+        Box::new(SilentSource)
+    } else {
+        Box::new(DeviceSource::new(settings.mic_device.clone(), settings.output_device.clone()))
     };
+    let parts = AudioParts { source, aec, them_vad: vad()?, me_vad: vad()? };
     let session_url = state.fill_url(&app, &settings.session_url(), true).await?;
     let mut config = ClientConfig::new(
         session_url,
@@ -1149,6 +1157,7 @@ async fn launch(
             client_version: state.client.clone(),
             store_transcript: request.store_transcript,
             answer_style: request.answer_style,
+            no_call: request.no_call,
         },
     );
     config.adopt = adopt;

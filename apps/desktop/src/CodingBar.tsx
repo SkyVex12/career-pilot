@@ -29,6 +29,7 @@ export function CodingBar({ running }: { running: boolean }) {
   useEffect(() => {
     if (!inTauri) return;
     let live = true;
+    // Read again when a session starts: starting an online test switches the mode to Test.
     void api.getSettings().then((v) => {
       if (!v?.settings) return;
       if (!live) return;
@@ -48,7 +49,7 @@ export function CodingBar({ running }: { running: boolean }) {
       live = false;
       offs.forEach((p) => void p.then((off) => off()));
     };
-  }, []);
+  }, [running]);
 
   const prefs = (m: CodingMode, l: string) => {
     setMode(m);

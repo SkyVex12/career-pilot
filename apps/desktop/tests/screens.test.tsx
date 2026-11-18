@@ -532,6 +532,18 @@ describe("Call", () => {
     expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: "i1", job_id: "a1", store_transcript: true });
   });
 
+  it("an online test starts with no call, and switches coding answers to Test", async () => {
+    callRoutes();
+    ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_language: "C" } }));
+    wrap(<CallScreen {...callProps()} />);
+    await screen.findByRole("heading", { name: /Northwind · Engineer/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Online test, no call/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Start test" }));
+    const start = ipc.calls.find((c) => c.cmd === "start_session");
+    expect(start?.args.request).toMatchObject({ mode: "interview", no_call: true, platform: "test", job_id: "a1" });
+    await waitFor(() => expect(ipc.calls.find((c) => c.cmd === "set_coding_prefs")?.args).toEqual({ mode: "assessment", language: "C" }));
+  });
+
   it("shown again: an application pulled meanwhile appears in Call for without a restart", async () => {
     callRoutes();
     const apps = [app("a1", "Northwind", "Backend", "interview")];
