@@ -70,10 +70,12 @@ export interface ScreenStatus {
   asking: Person[];
   /** More than one monitor could be the shared one: the host says which, for this guest. */
   choose: { person: Person; monitors: Monitor[] } | null;
+  /** Guests the host stopped (Stop control, the hotkey): the UI takes their Control away. */
+  stopped: Person[];
   error: string | null;
 }
 
-export const SCREEN_OFF: ScreenStatus = { host: "off", surface: null, controller: null, asking: [], choose: null, error: null };
+export const SCREEN_OFF: ScreenStatus = { host: "off", surface: null, controller: null, asking: [], choose: null, stopped: [], error: null };
 
 type ScreenCmd =
   | { cmd: "stop" }
@@ -81,6 +83,11 @@ type ScreenCmd =
   | { cmd: "controllers"; allowed: Person[] }
   | { cmd: "control"; person: Person; monitorId?: string }
   | { cmd: "control_off" };
+
+/** Why control ended: the host stopped it (their Control is then taken away), the guest gave
+ * it back (they take it again with Take control), or something else did (the grant went, the
+ * guest left, the share stopped). */
+export type EndedBy = "host" | "guest" | "other";
 
 const CMD = "screen:cmd";
 const STATUS = "screen:status";
@@ -160,6 +167,13 @@ export class HostScreen {
   /** The newest move that came while the app was busy: only where the pointer ends up counts. */
   private spare: InputEvent | null = null;
   private window = { start: 0, count: 0 };
+  /** Guests who don't get control by themselves now: they gave it back ("guest", until they
+   * take it again) or the host stopped them ("host", until their Control is given again). */
+  private blocked = new Map<string, EndedBy>();
+  /** The monitor the host picked for this share, when several fit: asked once per share. */
+  private target: Monitor | null = null;
+  private granting = false;
+  private stopping = false;
 
   constructor(
     private deps: HostDeps,
@@ -178,6 +192,7 @@ export class HostScreen {
   /** Call from the click itself: the picker comes first, while the click still counts. */
   async share(sessionId: string): Promise<void> {
     if (this.room || this.status.host === "starting") return;
+    this.stopping = false;
     this.set({ host: "starting", error: null });
     let tracks: LocalTrack[] = [];
     try {
@@ -202,6 +217,11 @@ export class HostScreen {
         if (this.status.controller?.identity === who.identity) void this.endControl(null);
         this.set({ asking: this.status.asking.filter((p) => p.identity !== who.identity) });
       });
+      // A guest who (re)joins: told if they control already, or given control if they may.
+      room.on(RoomEvent.ParticipantConnected, (who: RemoteParticipant) => {
+        if (this.status.controller?.identity === who.identity) void this.tell(who.identity, true);
+        else void this.auto();
+      });
       // The host stops it from the system's own "stop sharing", or the screen goes away.
       video.mediaStreamTrack.addEventListener("ended", () => void this.stop(null));
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
@@ -217,19 +237,24 @@ export class HostScreen {
       });
       const surface = video.mediaStreamTrack.getSettings().displaySurface ?? null;
       this.set({ host: "on", surface, error: null });
+      await this.auto();
     } catch (e) {
       await this.stop(e instanceof Error ? e.message : String(e));
     }
   }
 
   async stop(error: string | null): Promise<void> {
+    this.stopping = true;
     await this.endControl(null);
     const room = this.room;
     this.room = null;
     for (const t of this.tracks) t.stop();
     this.tracks = [];
+    this.target = null;
+    // A new share starts afresh for guests who gave control back; the host's stops hold.
+    for (const [id, by] of this.blocked) if (by === "guest") this.blocked.delete(id);
     if (room) await room.disconnect();
-    if (room || this.status.host !== "off" || error) this.set({ ...SCREEN_OFF, error });
+    if (room || this.status.host !== "off" || error) this.set({ ...SCREEN_OFF, stopped: this.status.stopped, error });
   }
 
   // --- Control ---------------------------------------------------------------------------
@@ -238,9 +263,28 @@ export class HostScreen {
   setAllowed(allowed: Person[]): void {
     this.allowed = allowed;
     const may = (p: Person | null) => p !== null && allowed.some((a) => a.identity === p.identity);
+    // Control taken away clears a stop: given again, it works again.
+    for (const id of [...this.blocked.keys()]) if (!allowed.some((a) => a.identity === id)) this.blocked.delete(id);
     if (this.status.controller && !may(this.status.controller)) void this.endControl(null);
     const asking = this.status.asking.filter((p) => may(p));
-    if (asking.length !== this.status.asking.length) this.set({ asking });
+    const stopped = this.status.stopped.filter((p) => may(p));
+    if (asking.length !== this.status.asking.length || stopped.length !== this.status.stopped.length) this.set({ asking, stopped });
+    void this.auto();
+  }
+
+  /** Is this guest in the screen's room now? (Unknown counts as yes.) */
+  private present(identity: string): boolean {
+    const there = (this.room as { remoteParticipants?: Map<string, unknown> } | null)?.remoteParticipants;
+    return there instanceof Map ? there.has(identity) : true;
+  }
+
+  /** A guest with Control controls as soon as the host shares a whole screen: the first one
+   * who is in the room and isn't held back. One at a time. */
+  private async auto(): Promise<void> {
+    if (this.granting || this.stopping || !this.room || this.status.host !== "on" || this.status.surface !== "monitor") return;
+    if (this.status.controller || this.status.choose) return;
+    const next = this.allowed.find((p) => !this.blocked.has(p.identity) && this.present(p.identity));
+    if (next) await this.allow(next);
   }
 
   private shared(): { width: number; height: number } | null {
@@ -252,13 +296,18 @@ export class HostScreen {
 
   /** Let this guest control the shared screen (`monitorId` when the host chose among several). */
   async allow(person: Person, monitorId?: string): Promise<void> {
+    if (this.granting) return;
+    this.granting = true;
     try {
       if (!this.room || this.status.host !== "on") throw new Error("Share your screen first.");
       if (this.status.surface !== "monitor") throw new Error("Share a whole screen to let a guest control it.");
       if (!this.allowed.some((a) => a.identity === person.identity)) throw new Error(`${person.name} may not control your screen.`);
+      this.blocked.delete(person.identity);
       const all = await this.deps.monitors();
       let target: Monitor | undefined;
       if (monitorId) target = all.find((m) => m.id === monitorId);
+      else if (this.target) target = all.find((m) => m.id === this.target?.id);
+      if (target) this.target = target;
       else {
         const size = this.shared();
         const fit = size ? matchingMonitors(all, size.width, size.height) : all;
@@ -277,14 +326,25 @@ export class HostScreen {
       await this.tune("control");
     } catch (e) {
       this.set({ choose: null, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      this.granting = false;
     }
   }
 
   /** Control ends: the app lets go of everything the guest held, and the guest is told. */
-  async endControl(error: string | null): Promise<void> {
+  async endControl(error: string | null, by: EndedBy = "other"): Promise<void> {
     const was = this.status.controller;
-    if (!was && !this.status.choose) return;
-    this.set({ controller: null, choose: null, error: error ?? this.status.error });
+    let stopped = this.status.stopped;
+    if (by === "host") {
+      // The host's stop holds for every guest who could take over, until Control is given again.
+      for (const p of this.allowed) this.blocked.set(p.identity, "host");
+      stopped = [...stopped, ...this.allowed.filter((p) => !stopped.some((q) => q.identity === p.identity))];
+    } else if (was && by === "guest") this.blocked.set(was.identity, "guest");
+    if (!was && !this.status.choose) {
+      if (stopped !== this.status.stopped) this.set({ stopped });
+      return;
+    }
+    this.set({ controller: null, choose: null, stopped, error: error ?? this.status.error });
     this.spare = null;
     try {
       await this.deps.end();
@@ -292,6 +352,7 @@ export class HostScreen {
       if (was) await this.tell(was.identity, false);
       if (was) await this.tune("watch");
     }
+    if (by !== "host") await this.auto();
   }
 
   /** The picture's encoding for watching or for control (ENCODING), changed on the live share. */
@@ -339,13 +400,20 @@ export class HostScreen {
       return;
     }
     if (topic === TOPIC.ask) {
-      if (this.status.controller?.identity !== who.identity && !this.status.asking.some((p) => p.identity === who.identity)) {
-        this.set({ asking: [...this.status.asking, person] });
+      // Take control: a guest who gave it back takes it again at once if no one has it;
+      // otherwise the host sees the ask. A guest the host stopped is losing Control: ignored.
+      if (this.blocked.get(who.identity) === "host" || this.status.controller?.identity === who.identity) return;
+      if (this.blocked.get(who.identity) === "guest") this.blocked.delete(who.identity);
+      if (!this.status.controller && this.status.surface === "monitor" && this.room) {
+        await this.allow(person);
+        if ((this.status.controller as Person | null)?.identity === who.identity) return;
       }
+      if (!this.status.asking.some((p) => p.identity === who.identity)) this.set({ asking: [...this.status.asking, person] });
       return;
     }
     if (topic === TOPIC.release) {
-      if (this.status.controller?.identity === who.identity) await this.endControl(null);
+      if (this.status.controller?.identity === who.identity) await this.endControl(null, "guest");
+      else this.blocked.set(who.identity, "guest");
       this.set({ asking: this.status.asking.filter((p) => p.identity !== who.identity) });
       return;
     }
@@ -408,11 +476,11 @@ export function startScreenHost(deps: HostDeps = hostDeps): () => void {
     if (!host.sharing && host.status.host === "off") return;
     if (c.cmd === "stop") void host.stop(null);
     else if (c.cmd === "control") void host.allow(c.person, c.monitorId);
-    else if (c.cmd === "control_off") void host.endControl(null);
+    else if (c.cmd === "control_off") void host.endControl(null, "host");
     else void emit(STATUS, host.status);
   });
   // The Stop control hotkey (remote.rs has ended it already).
-  const offHotkey = listen("remote:stopped", () => void host.endControl(null));
+  const offHotkey = listen("remote:stopped", () => void host.endControl(null, "host"));
   return () => {
     if (mine === host) mine = null;
     void off.then((f) => f());

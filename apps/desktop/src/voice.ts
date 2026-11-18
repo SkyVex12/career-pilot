@@ -5,9 +5,12 @@
 //
 // The host hears guests on the output device they pick, any of them, the call's own included
 // (guests are then transcribed with the call, which the host accepts); the picker warns about a
-// device Windows doesn't call headphones. Each guest's <audio> element is routed with setSinkId
-// before anything plays; if routing fails, or the device goes away, voice stops: it never falls
-// back to the default device. Web Audio mixing (which plays on the default device) is off.
+// device Windows doesn't call headphones. Voice turns on by itself once a guest may talk, on the
+// headphones the host used last, or Windows' default output ("") when those aren't there; the
+// host can switch devices while it plays. Each guest's <audio> element is routed with setSinkId
+// before anything plays; if routing fails, or a chosen device goes away mid-call, voice stops
+// rather than moving to another device. Web Audio mixing (which plays on the default device) is
+// off.
 //
 // The guest's microphone is open only while they talk (the track stops on mute), with the
 // browser's echo cancellation, noise suppression and gain control.
@@ -18,6 +21,7 @@ import { rest } from "./api";
 export type VoiceCmd =
   | { cmd: "outputs" }
   | { cmd: "host_on"; deviceId: string; sessionId: string; allowed: string[] }
+  | { cmd: "host_device"; deviceId: string }
   | { cmd: "host_off" }
   | { cmd: "host_mute"; on: boolean }
   | { cmd: "host_allowed"; identities: string[] }
@@ -34,13 +38,15 @@ export interface VoiceOutput {
 export interface VoiceStatus {
   host: "off" | "checking" | "on";
   hostMuted: boolean;
+  /** Where guests play now: the device's id, "" for Windows' default output; null when off. */
+  device: string | null;
   guest: "off" | "connecting" | "on";
   talking: boolean;
   outputs: VoiceOutput[];
   error: string | null;
 }
 
-export const VOICE_OFF: VoiceStatus = { host: "off", hostMuted: false, guest: "off", talking: false, outputs: [], error: null };
+export const VOICE_OFF: VoiceStatus = { host: "off", hostMuted: false, device: null, guest: "off", talking: false, outputs: [], error: null };
 
 const CMD = "voice:cmd";
 const STATUS = "voice:status";
@@ -135,6 +141,8 @@ export class VoiceController {
           return await this.outputs();
         case "host_on":
           return await this.hostOn(c.deviceId, c.sessionId, c.allowed);
+        case "host_device":
+          return await this.switchDevice(c.deviceId);
         case "host_off":
           return await this.stop(null);
         case "host_mute":
@@ -174,8 +182,8 @@ export class VoiceController {
     if (this.room) return;
     this.set({ host: "checking", error: null });
     await this.outputs();
-    const device = this.status.outputs.find((o) => o.deviceId === deviceId);
-    if (!device) throw new Error("Those headphones are not there any more.");
+    // The headphones used last aren't there: Windows' default output.
+    if (deviceId && !this.status.outputs.some((o) => o.deviceId === deviceId)) deviceId = "";
     await routed(this.deps.newAudio(), deviceId); // the window can play there, or no voice
 
     const grant = await this.deps.hostToken(sessionId);
@@ -195,7 +203,15 @@ export class VoiceController {
     room.on(RoomEvent.Disconnected, () => void this.stop(this.room ? "Voice was disconnected." : null));
     this.stopWatching = this.deps.onDeviceChange(() => void this.watchDevice());
     await room.connect(grant.url, grant.token, { autoSubscribe: true });
-    this.set({ host: "on", hostMuted: false, error: null });
+    this.set({ host: "on", hostMuted: false, device: deviceId, error: null });
+  }
+
+  /** Play guests on another device from now on, without a break in the call. */
+  private async switchDevice(deviceId: string): Promise<void> {
+    if (this.role !== "host" || !this.room) return;
+    for (const el of this.elements.values()) await routed(el, deviceId);
+    this.deviceId = deviceId;
+    this.set({ device: deviceId, error: null });
   }
 
   /** A guest's track, on the chosen headphones only. */
@@ -217,6 +233,7 @@ export class VoiceController {
   }
 
   private async watchDevice(): Promise<void> {
+    if (this.deviceId === "") return; // Windows' default output is always there
     const list = await this.deps.devices();
     if (!list.some((d) => d.kind === "audiooutput" && d.deviceId === this.deviceId)) {
       await this.stop("The headphones went away, so guests' voice stopped.");
@@ -256,7 +273,7 @@ export class VoiceController {
     }
     this.elements.clear();
     if (room) await room.disconnect();
-    this.set({ host: "off", hostMuted: false, guest: "off", talking: false, error });
+    this.set({ host: "off", hostMuted: false, device: null, guest: "off", talking: false, error });
   }
 }
 

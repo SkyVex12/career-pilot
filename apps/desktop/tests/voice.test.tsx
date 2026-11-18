@@ -138,6 +138,29 @@ describe("the host's voice", () => {
     expect(t.room.disconnect).toHaveBeenCalled();
   });
 
+  it("uses Windows' default output when the headphones used last aren't there", async () => {
+    const t = setup();
+    await t.c.handle({ ...host, deviceId: "d-gone" } as VoiceCmd);
+    expect(t.log).toEqual(["route "]);
+    expect(t.c.status).toMatchObject({ host: "on", device: "" });
+    // The default output is always there: a device change never stops it.
+    t.setDevices([HP]);
+    t.deviceChange();
+    await flush();
+    expect(t.c.status.host).toBe("on");
+  });
+
+  it("moves every guest to another device while it plays", async () => {
+    const t = setup();
+    await t.c.handle(host);
+    t.room.emit("trackSubscribed", track(), {}, { identity: "seat:a" });
+    await flush();
+    t.log.length = 0;
+    await t.c.handle({ cmd: "host_device", deviceId: "" });
+    expect(t.log).toEqual(["route "]);
+    expect(t.c.status).toMatchObject({ host: "on", device: "" });
+  });
+
   it("lists fixed devices only, reading their names first if WebView2 hides them", async () => {
     const t = setup();
     t.setDevices([DEFAULT, { ...HP, label: "" } as MediaDeviceInfo]);
