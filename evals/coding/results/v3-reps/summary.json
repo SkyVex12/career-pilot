@@ -1,0 +1,40 @@
+{
+ "interview": {
+  "cases": "27/28",
+  "kinds": "27/28",
+  "choice": "8/8",
+  "output": "2/2",
+  "code": "14/14",
+  "sql": "2/2",
+  "keywords": "4/4",
+  "read_ms_p50": 1828,
+  "first_word_ms_p50": 1891,
+  "first_word_ms_p95": 3407,
+  "fast_done_ms_p50": 3358,
+  "code_first_ms_p50": 4453,
+  "code_done_ms_p50": 6421,
+  "code_done_ms_p95": 7671,
+  "cost_usd": 0.1276
+ },
+ "assessment": {
+  "cases": "25/26",
+  "kinds": "25/26",
+  "choice": "8/8",
+  "output": "2/2",
+  "code": "12/12",
+  "sql": "2/2",
+  "keywords": "4/4",
+  "read_ms_p50": 2390,
+  "first_word_ms_p50": 2406,
+  "first_word_ms_p95": 3296,
+  "fast_done_ms_p50": 3062,
+  "code_first_ms_p50": 4641,
+  "code_done_ms_p50": 6000,
+  "code_done_ms_p95": 6812,
+  "cost_usd": 0.1067
+ },
+ "models": [
+  "gpt-6-luna",
+  "gpt-6.1-sol"
+ ]
+}

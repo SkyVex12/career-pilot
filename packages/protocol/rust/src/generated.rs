@@ -759,22 +759,191 @@ impl Validate for QuestionForce {
     }
 }
 
-/// Coding question from the screen. The whole message is at most 2 MB.
+/// One screenshot of the problem: the window it came from, shrunk to at most 1568 px on its long
+/// side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenImage {
+    /// The image, base64: at most 500,000 characters (about 375 KB). Lossless WebP or PNG keeps
+    /// code sharp; JPEG blurs small text.
+    pub data: String,
+    pub media_type: ScreenImageMediaType,
+    pub width: u64,
+    pub height: u64,
+    /// The captured window's title (a file name in an editor, a page in a browser), which tells
+    /// shots of different files apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl Validate for ScreenImage {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.data;
+            check::min_len("data", v, 1)?;
+            check::max_len("data", v, 500000)?;
+        }
+        {
+            let v = &self.width;
+            check::min_int("width", u64::from(*v), 1)?;
+            check::max_int("width", u64::from(*v), 4096)?;
+        }
+        {
+            let v = &self.height;
+            check::min_int("height", u64::from(*v), 1)?;
+            check::max_int("height", u64::from(*v), 4096)?;
+        }
+        if let Some(v) = &self.title {
+            check::max_len("title", v, 300)?;
+        }
+        Ok(())
+    }
+}
+
+/// Tasks on the screen (coding mode): 1 to 6 shots of one problem, in order (a long page scrolled,
+/// other files or tabs), answered together. The whole message is at most 4 MB. Answered like a
+/// question: question.detected (question_type coding, then again with screen once read),
+/// answer.delta and answer.done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Screenshot {
-    /// Base64 JPEG, at most 1.5 MB before encoding (2,000,000 base64 characters).
-    pub image: String,
-    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub images: Vec<ScreenImage>,
+    /// Made by the client so it can match the answer; absent, the gateway makes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_id: Option<Uuid>,
+    /// interview: what to say first, then code to type while talking. assessment: the answer or
+    /// complete code first, ready to paste. Absent: interview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_mode: Option<AnswerMode>,
+    /// The language the user picked for the code; it beats what the screen shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// The language when neither the screen, the call nor the user names one (a setting; Python by
+    /// default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_language: Option<String>,
 }
 
 impl Validate for Screenshot {
     fn validate(&self) -> Result<(), ValidationError> {
         {
-            let v = &self.image;
-            check::min_len("image", v, 1)?;
-            check::max_len("image", v, 2000000)?;
+            let v = &self.images;
+            check::min_items("images", v.len(), 1)?;
+            check::max_items("images", v.len(), 6)?;
+            for item in v {
+                item.validate()?;
+            }
+        }
+        if let Some(v) = &self.language {
+            check::min_len("language", v, 1)?;
+            check::max_len("language", v, 40)?;
+        }
+        if let Some(v) = &self.default_language {
+            check::min_len("default_language", v, 1)?;
+            check::max_len("default_language", v, 40)?;
+        }
+        Ok(())
+    }
+}
+
+/// How a screen's tasks are answered: interview (a call is on) or assessment (an online test, no
+/// call).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AnswerMode {
+    #[serde(rename = "interview")]
+    Interview,
+    #[serde(rename = "assessment")]
+    Assessment,
+}
+
+impl AnswerMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interview => "interview",
+            Self::Assessment => "assessment",
+        }
+    }
+}
+
+/// What a task on the screen asks for. code: write a solution; choice: pick the option(s); short: a
+/// short or conceptual answer; output: what the code prints; fix: find and fix the bug; sql: write
+/// a query; complete: complete or refactor given code; design: system design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TaskKind {
+    #[serde(rename = "code")]
+    Code,
+    #[serde(rename = "choice")]
+    Choice,
+    #[serde(rename = "short")]
+    Short,
+    #[serde(rename = "output")]
+    Output,
+    #[serde(rename = "fix")]
+    Fix,
+    #[serde(rename = "sql")]
+    Sql,
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "design")]
+    Design,
+}
+
+impl TaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Choice => "choice",
+            Self::Short => "short",
+            Self::Output => "output",
+            Self::Fix => "fix",
+            Self::Sql => "sql",
+            Self::Complete => "complete",
+            Self::Design => "design",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenTask {
+    /// Its place on the screen, from 1.
+    pub n: u64,
+    pub kind: TaskKind,
+    /// A short name for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The language of its code, if it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+impl Validate for ScreenTask {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.n;
+            check::min_int("n", u64::from(*v), 1)?;
+        }
+        Ok(())
+    }
+}
+
+/// What the screen holds, read by the fast pass. No tasks with unreadable set: the shots show
+/// nothing that can be answered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenReading {
+    pub tasks: Vec<ScreenTask>,
+    /// The language the code is written in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Why nothing could be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<String>,
+}
+
+impl Validate for ScreenReading {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.tasks;
+            for item in v {
+                item.validate()?;
+            }
         }
         Ok(())
     }
@@ -977,6 +1146,10 @@ pub struct QuestionDetected {
     pub question_type: QuestionType,
     pub confidence: f64,
     pub speculative: bool,
+    /// A screenshot question, once the screen is read: its tasks in screen order. Sent again under
+    /// the same question_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<ScreenReading>,
 }
 
 impl Validate for QuestionDetected {
@@ -989,6 +1162,9 @@ impl Validate for QuestionDetected {
             let v = &self.confidence;
             check::min_num("confidence", *v, 0.0)?;
             check::max_num("confidence", *v, 1.0)?;
+        }
+        if let Some(v) = &self.screen {
+            v.validate()?;
         }
         Ok(())
     }
@@ -1640,6 +1816,26 @@ impl QuestionForceKind {
         match self {
             Self::Answer => "answer",
             Self::Respond => "respond",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ScreenImageMediaType {
+    #[serde(rename = "image/webp")]
+    ImageWebp,
+    #[serde(rename = "image/png")]
+    ImagePng,
+    #[serde(rename = "image/jpeg")]
+    ImageJpeg,
+}
+
+impl ScreenImageMediaType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ImageWebp => "image/webp",
+            Self::ImagePng => "image/png",
+            Self::ImageJpeg => "image/jpeg",
         }
     }
 }

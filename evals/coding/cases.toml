@@ -1,0 +1,220 @@
+# Coding-mode eval cases (copilot-coding-eval). Each case is 1 to 3 shots of an original page
+# in pages/, rendered to shots/ at 1568 x 882 (`render`); `offset` scrolls the page down that
+# many pixels first, as a second shot of a long page would be.
+#
+# kinds: the tasks the screen holds, in screen order. Each [[case.task]] checks one of them
+# (`n`, from 1):
+#   choice = the correct option letters
+#   output = the exact output
+#   keywords = words a short answer must contain (any one of each group, "a|b")
+#   function + language + tests = the code is run on these cases: [args as JSON, expected as JSON]
+#   sql = rows the query must return on sql_setup (SQLite; PostgreSQL casts are dropped)
+# modes: the answer modes to run it in (default both). transcript: the call so far, used in the
+# interview mode only.
+
+default_transcript = """Them: Okay, I've pasted the problem in the shared editor. Take a minute to read it.
+Them: When you're ready, walk me through how you'd approach it before you code."""
+
+[[case]]
+id = "code_py"
+shots = [{ page = "code_py", title = "1834. Merge Booking Windows - CodeTrial - Google Chrome" }]
+kinds = ["code"]
+
+[[case.task]]
+n = 1
+function = "mergeWindows"
+language = "python"
+tests = [
+  ['[[[1,3],[2,6],[8,10],[15,18]]]', '[[1,6],[8,10],[15,18]]'],
+  ['[[[1,4],[4,5]]]', '[[1,5]]'],
+  ['[[[6,8],[1,2],[2,3]]]', '[[1,3],[6,8]]'],
+  ['[[[1,10],[2,3],[4,5]]]', '[[1,10]]'],
+]
+
+[[case]]
+id = "code_py_js_asked"
+modes = ["interview"]
+shots = [{ page = "code_py", title = "1834. Merge Booking Windows - CodeTrial - Google Chrome" }]
+kinds = ["code"]
+transcript = """Them: Okay, here's the problem on screen, the merge one.
+Them: One thing: we're a Node shop, so could you write it in JavaScript rather than Python?"""
+
+[[case.task]]
+n = 1
+function = "mergeWindows"
+language = "javascript"
+tests = [
+  ['[[[1,3],[2,6],[8,10],[15,18]]]', '[[1,6],[8,10],[15,18]]'],
+  ['[[[1,4],[4,5]]]', '[[1,5]]'],
+]
+
+[[case]]
+id = "code_js"
+shots = [{ page = "code_js", title = "SkillCheck - Backend Engineer - Question 2 - Microsoft Edge" }]
+kinds = ["code"]
+
+[[case.task]]
+n = 1
+function = "countPairs"
+language = "javascript"
+tests = [
+  ['[[3,1,4,1,5], 2]', '2'],
+  ['[[1,2,3,4,5], 1]', '4'],
+  ['[[1,3,1,5,4], 0]', '1'],
+  ['[[1,1,1,2,2], 0]', '2'],
+  ['[[-1,-3,5], 2]', '1'],
+]
+
+[[case]]
+id = "choice_single"
+shots = [{ page = "choice_single", title = "SkillCheck - Question 4 - Google Chrome" }]
+kinds = ["choice"]
+
+[[case.task]]
+n = 1
+choice = ["B"]
+
+[[case]]
+id = "choice_multi"
+shots = [{ page = "choice_multi", title = "SkillCheck - Question 9 - Google Chrome" }]
+kinds = ["choice"]
+
+[[case.task]]
+n = 1
+choice = ["A", "C", "D"]
+
+[[case]]
+id = "output"
+shots = [{ page = "output", title = "SkillCheck - Question 6 - Google Chrome" }]
+kinds = ["output"]
+
+[[case.task]]
+n = 1
+output = "4 4 5 5\nTrue False"
+
+[[case]]
+id = "fix_js"
+shots = [{ page = "fix_js", title = "SkillCheck - Frontend Engineer - Question 3 - Google Chrome" }]
+kinds = ["fix"]
+
+[[case.task]]
+n = 1
+function = "search"
+language = "javascript"
+tests = [
+  ['[[1,3,5,7], 7]', '3'],
+  ['[[1,3,5,7], 4]', '-1'],
+  ['[[], 1]', '-1'],
+  ['[[2], 2]', '0'],
+  ['[[1,3,5,7,9,11], 1]', '0'],
+  ['[[1,3,5,7,9,11], 12]', '-1'],
+]
+
+[[case]]
+id = "sql"
+shots = [{ page = "sql", title = "2207. Well-Paid Departments - CodeTrial - Google Chrome" }]
+kinds = ["sql"]
+
+[[case.task]]
+n = 1
+sql_setup = """
+CREATE TABLE departments (id INTEGER, name TEXT);
+CREATE TABLE employees (id INTEGER, name TEXT, dept_id INTEGER, salary INTEGER);
+INSERT INTO departments VALUES (1, 'Eng'), (2, 'Sales'), (3, 'Ops'), (4, 'Empty');
+INSERT INTO employees VALUES
+  (1, 'A', 1, 7000), (2, 'B', 1, 6000),
+  (3, 'C', 2, 4000), (4, 'D', 2, 5000), (5, 'E', 2, 6500),
+  (6, 'F', 3, 3000), (7, 'G', 3, 5000);
+"""
+sql = '[["Eng", 6500.0], ["Sales", 5166.67]]'
+
+[[case]]
+id = "short"
+shots = [{ page = "short", title = "SkillCheck - Question 11 - Google Chrome" }]
+kinds = ["short"]
+
+[[case.task]]
+n = 1
+keywords = ["memory|address space", "thread"]
+
+[[case]]
+id = "mixed"
+shots = [{ page = "mixed", title = "SkillCheck - Screening test - Google Chrome" }]
+kinds = ["choice", "choice", "code"]
+
+[[case.task]]
+n = 1
+choice = ["B"]
+
+[[case.task]]
+n = 2
+choice = ["C"]
+
+[[case.task]]
+n = 3
+function = "is_balanced"
+language = "python"
+tests = [
+  ['["a(b[c]{d}e)f"]', 'true'],
+  ['["([)]"]', 'false'],
+  ['["(("]', 'false'],
+  ['[""]', 'true'],
+  ['["}{"]', 'false'],
+]
+
+[[case]]
+id = "long_2_shots"
+shots = [
+  { page = "long", offset = 0, title = "SkillCheck - Platform Engineer - Question 1 - Google Chrome" },
+  { page = "long", offset = 700, title = "SkillCheck - Platform Engineer - Question 1 - Google Chrome" },
+]
+kinds = ["code"]
+
+[[case.task]]
+n = 1
+function = "busiest_window"
+language = "python"
+tests = [
+  ['[[10,1,3,2,11], 3]', '3'],
+  ['[[5,5,5], 1]', '3'],
+  ['[[1,4,7], 2]', '1'],
+  ['[[0,1000000000], 1000000000]', '1'],
+  ['[[0,999999999], 1000000000]', '2'],
+]
+# n = 200,000 in under 2 seconds: the O(n log n) the constraints ask for.
+large = "busiest_window"
+
+[[case]]
+id = "multi_file"
+shots = [
+  { page = "multi_task", title = "SkillCheck - Take-home - Google Chrome" },
+  { page = "multi_utils", title = "text_utils.py - search-task - Visual Studio Code" },
+  { page = "multi_solution", title = "solution.py - search-task - Visual Studio Code" },
+]
+kinds = ["code"]
+
+[[case.task]]
+n = 1
+function = "top_k_words"
+language = "python"
+helper = "text_utils"
+tests = [
+  ['["The cat and the hat, and THE bat!", 2]', '["the", "and"]'],
+  ['["b a c b a", 5]', '["a", "b", "c"]'],
+  ['["", 3]', '[]'],
+  ["[\"don't stop, don't\", 1]", "[\"don't\"]"],
+]
+
+[[case]]
+id = "design"
+shots = [{ page = "design", title = "Interview notes - URL shortener - Google Docs" }]
+kinds = ["design"]
+
+[[case.task]]
+n = 1
+keywords = ["cache|caching", "base62|base 62|hash|counter"]
+
+[[case]]
+id = "no_task"
+shots = [{ page = "no_task", title = "Desktop" }]
+kinds = []

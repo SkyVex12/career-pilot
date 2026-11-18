@@ -49,3 +49,6 @@ evals/bench/results/*/logs/
 # Company eval: cached node vectors per embedding model (evals/company)
 evals/company/.vectors-*.json
 evals/knowledge/results/*/prepared.json
+
+# Coding eval: raw runs stay local (evals/coding)
+evals/coding/results/*/runs.json

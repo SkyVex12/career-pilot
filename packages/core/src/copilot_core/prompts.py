@@ -549,6 +549,11 @@ def _data(tag: str, body: str) -> str:
     return f"<{tag}>\n{body.replace(f'</{tag}>', f'</ {tag}>')}\n</{tag}>"
 
 
+# For other prompt builders (copilot_core.screen): the call's blocks and a data block.
+call_blocks = _call_blocks
+data_block = _data
+
+
 MODE_PHRASES = {"interview": "an interview", "standup": "a standup", "meeting": "a meeting"}
 
 

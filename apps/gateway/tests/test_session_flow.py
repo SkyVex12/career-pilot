@@ -296,8 +296,10 @@ async def test_limits_and_bad_input(env) -> None:
         big = {"type": "mode.set", "mode": "standup", "pad": "x" * (256 * 1024)}
         await c.send(big)
         await c.wait_type("error", code="message_too_large")
-        await c.send({"type": "screenshot", "image": "aGVsbG8="})
-        await c.wait_type("error", code="not_implemented")
+        # Bytes that are not the image they claim to be.
+        hello = {"data": "aGVsbG8=", "media_type": "image/png", "width": 1, "height": 1}
+        await c.send({"type": "screenshot", "images": [hello]})
+        await c.wait_type("error", code="bad_message", message="image 1 is not a valid image/png")
         await c.send({"type": "answer.expand", "question_id": str(uuid7())})
         await c.wait_type("error", code="unknown_question")
         # Still alive after all of that.

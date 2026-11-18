@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head>
+<body>
+<div class="top"><b>Interview Notes</b><span>Shared doc</span></div>
+<div class="quiz">
+  <h2>System design: a URL shortener</h2>
+  <p>Design a service that turns long URLs into short links (like <code>sho.rt/x7Kp2</code>) and redirects visitors to the long URL.</p>
+  <ul>
+    <li>100 million new short links a month; reads are 100x the writes</li>
+    <li>Redirects must take under 50 ms at p99</li>
+    <li>Links never expire unless their owner deletes them</li>
+    <li>Owners see a click count per link, up to a few minutes stale</li>
+  </ul>
+  <p>Walk through the API, the data model, how short codes are made, and how the system scales.</p>
+</div>
+</body></html>

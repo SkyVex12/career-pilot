@@ -152,6 +152,14 @@ def default_reply(job: str, req: LLMRequest) -> Reply:
         return Reply(
             ["- Led the payments migration [n:3f2a]\n", "- Cut p95 latency 40% [n:3f2a]\n"]
         )
+    if job == "screen_fast":
+        header = "READ " + json.dumps(SCREEN_READING) + "\n"
+        return Reply(
+            [header[:30], header[30:], "### 1. Binary search\n**Answer:** B) O(log n)\n",
+             "### 2. Two sum\n**Approach:** a hash map of seen values\n"]
+        )  # fmt: skip
+    if job == "screen_code":
+        return Reply(["```python\ndef two_sum(nums, target):\n", "    return nums[n:]\n```\n"])
     return Reply(
         ["Situation: the ledger was slow. ", "Action: I moved it. ", "Result: 40% faster."]
     )
@@ -163,7 +171,22 @@ def job_of(req: LLMRequest) -> str:
     system = req.system[0].text if req.system else ""
     if system.startswith("You keep the running summary"):
         return "summary"
+    if system.startswith("You write the code for the coding tasks"):
+        return "screen_code"
+    if "with the tasks on their screen" in system:
+        return "screen_fast"
     return "fast" if "talking" in system else "deep"
+
+
+# A screen with a choice question and a coding problem, as the scripted fast pass reads it.
+SCREEN_READING = {
+    "tasks": [
+        {"n": 1, "kind": "choice", "title": "Binary search"},
+        {"n": 2, "kind": "code", "title": "Two sum", "language": "python",
+         "signature": "def two_sum(nums, target):", "approach": "one pass with a hash map"},
+    ],
+    "language": "python",
+}  # fmt: skip
 
 
 class ScriptedProvider:

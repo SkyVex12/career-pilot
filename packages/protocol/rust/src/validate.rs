@@ -36,6 +36,14 @@ pub fn max_len(field: &'static str, v: &str, n: usize) -> Result<(), ValidationE
     if len > n { fail(field, format!("must be at most {n} characters, got {len}")) } else { Ok(()) }
 }
 
+pub fn min_items(field: &'static str, len: usize, n: usize) -> Result<(), ValidationError> {
+    if len < n { fail(field, format!("must have at least {n} items, got {len}")) } else { Ok(()) }
+}
+
+pub fn max_items(field: &'static str, len: usize, n: usize) -> Result<(), ValidationError> {
+    if len > n { fail(field, format!("must have at most {n} items, got {len}")) } else { Ok(()) }
+}
+
 pub fn min_int(field: &'static str, v: u64, n: u64) -> Result<(), ValidationError> {
     if v < n { fail(field, format!("must be at least {n}, got {v}")) } else { Ok(()) }
 }

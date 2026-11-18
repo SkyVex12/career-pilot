@@ -5,7 +5,8 @@
 There is no Rust generator that turns this schema's discriminated unions into serde tagged
 enums and also emits its constraints, so this one is written for the subset the schema uses:
 objects with `properties` and `required`, string and integer enums, `const`, `$ref`, arrays,
-the `uuid` and `date-time` formats, and minimum, maximum, minLength and maxLength. Anything
+the `uuid` and `date-time` formats, and minimum, maximum, minLength, maxLength, minItems and
+maxItems. Anything
 else stops generation with an error rather than producing a type that is looser than the
 schema. Serde checks the structure and types; the generated `Validate` impls check the rest,
 and `parse_client` / `parse_server` in lib.rs run both.
@@ -39,7 +40,8 @@ RUST_KEYWORDS = {
 }  # fmt: skip
 KNOWN_KEYS = {
     "description", "type", "properties", "required", "enum", "const", "$ref", "items", "format",
-    "minimum", "maximum", "minLength", "maxLength", "oneOf", "discriminator", "title",
+    "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems", "oneOf",
+    "discriminator", "title",
     "contentEncoding", "contentMediaType", "x-binary-layout", "x-enum-varnames",
 }  # fmt: skip
 U32_MAX = 4294967295
@@ -163,7 +165,12 @@ class Generator:
             inner, checks, nested = self.field(owner, name, s["items"])
             if checks:
                 raise SchemaError(f"{owner}.{name}: checks on array items are not supported")
-            return f"Vec<{inner}>", [], nested
+            counts: list[str] = []
+            if "minItems" in s:
+                counts.append(f"check::min_items({f}, v.len(), {s['minItems']})?;")
+            if "maxItems" in s:
+                counts.append(f"check::max_items({f}, v.len(), {s['maxItems']})?;")
+            return f"Vec<{inner}>", counts, nested
         raise SchemaError(f"{owner}.{name}: unsupported schema {s}")
 
     # Emitters.

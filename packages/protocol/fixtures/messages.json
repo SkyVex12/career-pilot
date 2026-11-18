@@ -25,11 +25,17 @@
     { "type": "auth.refresh", "access_token": "eyJraWQiOiJ0ZXN0In0.eyJzdWIiOiJ0ZXN0In0.c2ln" },
     { "type": "question.force" },
     { "type": "question.force", "text": "How would you shard the ledger table?" },
-    { "type": "screenshot", "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U" },
+    { "type": "screenshot", "images": [{ "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }] },
     {
       "type": "screenshot",
-      "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U",
-      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"
+      "images": [
+        { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1568, "height": 882, "title": "Two Sum - Practice - Chrome" },
+        { "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "media_type": "image/png", "width": 1200, "height": 900, "title": "solution.py - VS Code" }
+      ],
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "answer_mode": "assessment",
+      "language": "java",
+      "default_language": "python"
     },
     { "type": "answer.expand", "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" },
     {
@@ -110,6 +116,22 @@
       "confidence": 0.92,
       "speculative": true
     },
+    {
+      "type": "question.detected",
+      "seq": 5,
+      "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+      "text": "Screen: 2 tasks (choice, code)",
+      "question_type": "coding",
+      "confidence": 1.0,
+      "speculative": false,
+      "screen": {
+        "tasks": [
+          { "n": 1, "kind": "choice", "title": "Big-O of binary search" },
+          { "n": 2, "kind": "code", "title": "Merge intervals", "language": "python" }
+        ],
+        "language": "python"
+      }
+    },
     { "type": "question.cancelled", "seq": 5, "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210" },
     {
       "type": "answer.delta",
@@ -189,6 +211,18 @@
   "invalid": [
     { "side": "client", "why": "unknown type", "message": { "type": "session.pause" } },
     { "side": "client", "why": "missing type", "message": { "mode": "meeting" } },
+    { "side": "client", "why": "screenshot without images", "message": { "type": "screenshot", "images": [] } },
+    { "side": "client", "why": "screenshot in the old shape", "message": { "type": "screenshot", "image": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==" } },
+    {
+      "side": "client",
+      "why": "screenshot media_type not in enum",
+      "message": { "type": "screenshot", "images": [{ "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/gif", "width": 1, "height": 1 }] }
+    },
+    {
+      "side": "client",
+      "why": "more than 6 screenshots",
+      "message": { "type": "screenshot", "images": [{ "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }, { "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "media_type": "image/webp", "width": 1, "height": 1 }] }
+    },
     {
       "side": "client",
       "why": "latency.report anchor not in enum",

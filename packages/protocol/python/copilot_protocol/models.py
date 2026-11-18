@@ -190,32 +190,74 @@ class QuestionForce(BaseModel):
     """
 
 
-class Screenshot(BaseModel):
+class ScreenImage(BaseModel):
     """
-    Coding question from the screen. The whole message is at most 2 MB.
+    One screenshot of the problem: the window it came from, shrunk to at most 1568 px on its long side.
     """
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    type: Literal["screenshot"]
-    image: Annotated[
+    data: Annotated[
         str,
         Field(
-            json_schema_extra={
-                "contentEncoding": "base64",
-                "contentMediaType": "image/jpeg",
-            },
-            max_length=2000000,
+            json_schema_extra={"contentEncoding": "base64"},
+            max_length=500000,
             min_length=1,
         ),
     ]
     """
-    Base64 JPEG, at most 1.5 MB before encoding (2,000,000 base64 characters).
+    The image, base64: at most 500,000 characters (about 375 KB). Lossless WebP or PNG keeps code sharp; JPEG blurs small text.
     """
-    question_id: UUID | None = None
+    media_type: Literal["image/webp", "image/png", "image/jpeg"]
+    width: Annotated[int, Field(ge=1, le=4096)]
+    height: Annotated[int, Field(ge=1, le=4096)]
+    title: Annotated[str | None, Field(max_length=300)] = None
     """
-    UUID (v7 for ids we generate), lowercase hex with dashes.
+    The captured window's title (a file name in an editor, a page in a browser), which tells shots of different files apart.
+    """
+
+
+class ScreenTask(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    n: Annotated[int, Field(ge=1)]
+    """
+    Its place on the screen, from 1.
+    """
+    kind: Literal[
+        "code", "choice", "short", "output", "fix", "sql", "complete", "design"
+    ]
+    """
+    What a task on the screen asks for. code: write a solution; choice: pick the option(s); short: a short or conceptual answer; output: what the code prints; fix: find and fix the bug; sql: write a query; complete: complete or refactor given code; design: system design.
+    """
+    title: str | None = None
+    """
+    A short name for it.
+    """
+    language: str | None = None
+    """
+    The language of its code, if it has any.
+    """
+
+
+class ScreenReading(BaseModel):
+    """
+    What the screen holds, read by the fast pass. No tasks with unreadable set: the shots show nothing that can be answered.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    tasks: list[ScreenTask]
+    language: str | None = None
+    """
+    The language the code is written in.
+    """
+    unreadable: str | None = None
+    """
+    Why nothing could be read.
     """
 
 
@@ -447,6 +489,10 @@ class QuestionDetected(BaseModel):
     """
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     speculative: bool
+    screen: ScreenReading | None = None
+    """
+    A screenshot question, once the screen is read: its tasks in screen order. Sent again under the same question_id.
+    """
 
 
 class QuestionCancelled(BaseModel):
@@ -915,46 +961,6 @@ class AudioFrameHeader(BaseModel):
     """
 
 
-class ClientMessage(
-    RootModel[
-        SessionStart
-        | SessionResume
-        | AuthRefresh
-        | QuestionForce
-        | Screenshot
-        | AnswerExpand
-        | AnswerFeedback
-        | LatencyReport
-        | ModeSet
-        | AnswerStyleSet
-        | SessionEnd
-        | SharingSet
-        | SeatJoin
-        | SeatCommand
-    ]
-):
-    root: Annotated[
-        SessionStart
-        | SessionResume
-        | AuthRefresh
-        | QuestionForce
-        | Screenshot
-        | AnswerExpand
-        | AnswerFeedback
-        | LatencyReport
-        | ModeSet
-        | AnswerStyleSet
-        | SessionEnd
-        | SharingSet
-        | SeatJoin
-        | SeatCommand,
-        Field(discriminator="type"),
-    ]
-    """
-    Any JSON message the client sends to the gateway.
-    """
-
-
 class ServerMessage(
     RootModel[
         SessionReady
@@ -1002,4 +1008,72 @@ class ServerMessage(
     ]
     """
     Any JSON message the gateway sends to the client. Every server message carries seq.
+    """
+
+
+class Screenshot(BaseModel):
+    """
+    Tasks on the screen (coding mode): 1 to 6 shots of one problem, in order (a long page scrolled, other files or tabs), answered together. The whole message is at most 4 MB. Answered like a question: question.detected (question_type coding, then again with screen once read), answer.delta and answer.done.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["screenshot"]
+    images: Annotated[list[ScreenImage], Field(max_length=6, min_length=1)]
+    question_id: UUID | None = None
+    """
+    Made by the client so it can match the answer; absent, the gateway makes one.
+    """
+    answer_mode: Literal["interview", "assessment"] | None = None
+    """
+    interview: what to say first, then code to type while talking. assessment: the answer or complete code first, ready to paste. Absent: interview.
+    """
+    language: Annotated[str | None, Field(max_length=40, min_length=1)] = None
+    """
+    The language the user picked for the code; it beats what the screen shows.
+    """
+    default_language: Annotated[str | None, Field(max_length=40, min_length=1)] = None
+    """
+    The language when neither the screen, the call nor the user names one (a setting; Python by default).
+    """
+
+
+class ClientMessage(
+    RootModel[
+        SessionStart
+        | SessionResume
+        | AuthRefresh
+        | QuestionForce
+        | Screenshot
+        | AnswerExpand
+        | AnswerFeedback
+        | LatencyReport
+        | ModeSet
+        | AnswerStyleSet
+        | SessionEnd
+        | SharingSet
+        | SeatJoin
+        | SeatCommand
+    ]
+):
+    root: Annotated[
+        SessionStart
+        | SessionResume
+        | AuthRefresh
+        | QuestionForce
+        | Screenshot
+        | AnswerExpand
+        | AnswerFeedback
+        | LatencyReport
+        | ModeSet
+        | AnswerStyleSet
+        | SessionEnd
+        | SharingSet
+        | SeatJoin
+        | SeatCommand,
+        Field(discriminator="type"),
+    ]
+    """
+    Any JSON message the client sends to the gateway.
     """
