@@ -5,6 +5,10 @@
 //! file, so the group shows it the next time the program starts. The file name stays
 //! `copilot-desktop.exe`. A signed file is left alone, because rewriting it would break the
 //! signature. Names of Windows components are rejected earlier, in `stealth::normalize_display_name`.
+//!
+//! Windows 11 21H2 (build 22000) still uses that older Task Manager, and it rejects a full path
+//! in `FileRenameInfoEx`. The rename uses a directory handle and a file name, which that build
+//! accepts. If the running file cannot be replaced, a hidden retry finishes the swap after exit.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -56,8 +60,10 @@ pub fn cleanup_previous() {
         if is_previous(&running) {
             return;
         }
+        // The staging file is the pending renamed program. Deleting it here races the swap that
+        // runs after exit, which is the path Windows 11 21H2 uses when it cannot rename the
+        // running file. The next install replaces the staging file itself.
         let _ = std::fs::remove_file(previous_path(&running));
-        let _ = std::fs::remove_file(staging_path(&running));
     }
 }
 
@@ -127,24 +133,88 @@ fn rename_replacing(from: &Path, to: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn posix_rename(from: &Path, to: &Path) -> Result<(), String> {
-    // RootDirectory is null, so the new name has to be a full path. A bare file name is read as
-    // empty and the POSIX rename deletes the file instead of moving it.
+    // Windows 11 21H2 returns an invalid-parameter error when this call is given a full path.
+    // A directory handle plus the destination file name works there. Newer Windows also accept
+    // the full path, which is the fallback. A bare file name with no directory deletes the file,
+    // so that form is never used.
+    let same_dir = from.parent().is_some() && from.parent() == to.parent();
+    if same_dir && let (Some(dir), Some(file_name)) = (from.parent(), to.file_name()) {
+        match posix_rename_relative(from, dir, file_name) {
+            Ok(()) | Err(_) if to.exists() => return Ok(()),
+            Ok(()) => {
+                return Err("Task Manager could not be updated (the program file was not renamed).".into());
+            }
+            Err(_) if from.exists() => {}
+            Err(e) => return Err(e),
+        }
+    }
+    posix_rename_full(from, to)
+}
+
+/// `FileRenameInfoEx` with the parent directory as the root. This is the form build 22000 accepts.
+#[cfg(windows)]
+fn posix_rename_relative(from: &Path, dir: &Path, file_name: &std::ffi::OsStr) -> Result<(), String> {
+    let name = wide_path(Path::new(file_name));
+    if name.len() <= 1 || name.len() > 1024 {
+        return Err("Task Manager could not be updated.".into());
+    }
+    let dir_wide = wide_path(dir);
+    let dir_handle = unsafe {
+        CreateFileW(
+            dir_wide.as_ptr(),
+            FILE_LIST_DIRECTORY | DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if dir_handle == INVALID_HANDLE_VALUE {
+        return Err(format!("Task Manager could not be updated ({}).", last_error()));
+    }
+    let info = rename_info(dir_handle, &name);
+    let result = set_rename(from, &info);
+    unsafe { CloseHandle(dir_handle) };
+    result
+}
+
+/// `FileRenameInfoEx` with a full path and no root. Later Windows builds accept this.
+#[cfg(windows)]
+fn posix_rename_full(from: &Path, to: &Path) -> Result<(), String> {
     let wide = wide_path(to);
     if wide.len() > 1024 {
         return Err("Task Manager could not be updated.".into());
     }
-    let name_bytes = u32::try_from((wide.len() - 1) * 2).unwrap_or(0);
-    // 64-bit: flags, pad, root, length, then the wide path. 32-bit has no pad before the root.
+    set_rename(from, &rename_info(std::ptr::null_mut(), &wide))?;
+    if !to.exists() {
+        return Err("Task Manager could not be updated (the program file was not renamed).".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn rename_info(root: *mut std::ffi::c_void, name: &[u16]) -> Vec<u8> {
+    let name_bytes = u32::try_from(name.len().saturating_sub(1).saturating_mul(2)).unwrap_or(0);
+    // 64-bit: flags, pad, root, length, then the wide name. 32-bit has no pad before the root.
     let header = if cfg!(target_pointer_width = "64") { 20 } else { 12 };
-    let mut info = vec![0u8; header + wide.len() * 2];
+    let mut info = vec![0u8; header + name.len() * 2];
     let flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
     info[0..4].copy_from_slice(&flags.to_le_bytes());
+    let root_at = if cfg!(target_pointer_width = "64") { 8 } else { 4 };
+    let root_bytes = (root as usize).to_le_bytes();
+    info[root_at..root_at + root_bytes.len()].copy_from_slice(&root_bytes);
     let len_at = header - 4;
     info[len_at..len_at + 4].copy_from_slice(&name_bytes.to_le_bytes());
-    for (index, unit) in wide.iter().enumerate() {
+    for (index, unit) in name.iter().enumerate() {
         let at = header + index * 2;
         info[at..at + 2].copy_from_slice(&unit.to_le_bytes());
     }
+    info
+}
+
+#[cfg(windows)]
+fn set_rename(from: &Path, info: &[u8]) -> Result<(), String> {
     let from_wide = wide_path(from);
     let handle = unsafe {
         CreateFileW(
@@ -167,9 +237,6 @@ fn posix_rename(from: &Path, to: &Path) -> Result<(), String> {
     if ok == 0 {
         return Err(format!("Task Manager could not be updated ({err})."));
     }
-    if !to.exists() {
-        return Err("Task Manager could not be updated (the program file was not renamed).".into());
-    }
     Ok(())
 }
 
@@ -178,34 +245,47 @@ fn schedule_swap(staging: &Path, target: &Path) -> Result<(), String> {
     let previous = previous_path(target);
     let prev_name = previous.file_name().unwrap_or_default();
     let pid = std::process::id();
-    let script = std::env::temp_dir().join(format!("copilot-name-swap-{pid}.ps1"));
-    let body = format!(
-        "$ErrorActionPreference = 'SilentlyContinue'\n\
-         Wait-Process -Id {pid}\n\
-         Start-Sleep -Milliseconds 600\n\
-         Remove-Item -LiteralPath {prev} -Force\n\
-         Rename-Item -LiteralPath {target} -NewName {prev_name}\n\
-         Move-Item -LiteralPath {staging} -Destination {target} -Force\n\
-         Remove-Item -LiteralPath {prev} -Force\n\
-         Remove-Item -LiteralPath {script} -Force\n",
+    // A script file is skipped when PowerShell execution is restricted, which is the default on
+    // Windows 11 21H2. One attempt 600ms after exit also loses on a machine where the file stays
+    // locked. Bypass the policy and keep trying for a while after this process is gone.
+    let command = format!(
+        "$ErrorActionPreference='SilentlyContinue'; \
+         $deadline=(Get-Date).AddSeconds(45); \
+         while ((Get-Process -Id {pid} -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {{ Start-Sleep -Milliseconds 250 }}; \
+         for ($i=0; $i -lt 40; $i++) {{ \
+           Remove-Item -LiteralPath {prev} -Force -ErrorAction SilentlyContinue; \
+           Rename-Item -LiteralPath {target} -NewName {prev_name} -ErrorAction SilentlyContinue; \
+           if (-not (Test-Path -LiteralPath {target})) {{ \
+             Move-Item -LiteralPath {staging} -Destination {target} -Force -ErrorAction SilentlyContinue; \
+             if (Test-Path -LiteralPath {target}) {{ Remove-Item -LiteralPath {prev} -Force -ErrorAction SilentlyContinue; break }} \
+           }}; \
+           Start-Sleep -Milliseconds 250 \
+         }}",
         prev = ps_quote(&previous),
         target = ps_quote(target),
         prev_name = ps_quote(Path::new(prev_name)),
         staging = ps_quote(staging),
-        script = ps_quote(&script),
     );
-    std::fs::write(&script, body).map_err(|e| format!("Task Manager could not be updated: {e}"))?;
-    spawn_hidden_powershell(&script)
+    spawn_hidden_powershell(&command)
 }
 
 #[cfg(windows)]
-fn spawn_hidden_powershell(script: &Path) -> Result<(), String> {
+fn spawn_hidden_powershell(command: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED: u32 = 0x0000_0008;
     const BREAKAWAY: u32 = 0x0100_0000;
     let mut cmd = std::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File"]).arg(script);
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        command,
+    ]);
     cmd.creation_flags(NO_WINDOW | DETACHED | BREAKAWAY);
     if cmd.spawn().is_err() {
         cmd.creation_flags(NO_WINDOW | DETACHED);
@@ -242,9 +322,36 @@ pub(crate) fn rewrite_version_file(path: &Path, name: &str) -> Result<(), String
         return Err("The program file has no Task Manager name to change.".into());
     }
     let bytes = serialize(&root)?;
-    // tauri-winres writes the version resource as language neutral (0) unless a build sets one.
-    let lang = resource_language(path).unwrap_or(0);
-    update_version_resource(path, lang, &bytes)?;
+    // tauri-winres writes the version resource as language neutral (0). A localized build, and
+    // Windows 11 21H2, can store it as 0x0409 instead. Update every language that is present,
+    // and both of those if none can be listed, so the old description is not the one Task
+    // Manager still reads.
+    let mut langs = resource_languages(path);
+    for extra in [0u16, 0x0409] {
+        if !langs.contains(&extra) {
+            langs.push(extra);
+        }
+    }
+    // A freshly copied program file can still be locked by antivirus on the first try.
+    let mut last_err = String::new();
+    let mut updated = false;
+    for attempt in 0..6 {
+        match update_version_resources(path, &langs, &bytes) {
+            Ok(()) => {
+                updated = true;
+                break;
+            }
+            Err(e) => {
+                last_err = e;
+                if attempt < 5 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+        }
+    }
+    if !updated {
+        return Err(last_err);
+    }
     if !image_loads(path) {
         return Err("Task Manager could not be updated: the program file could not be read back.".into());
     }
@@ -482,7 +589,13 @@ fn read_version_blob(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(windows)]
-fn resource_language(path: &Path) -> Option<u16> {
+struct LangList {
+    values: [u16; 8],
+    count: usize,
+}
+
+#[cfg(windows)]
+fn resource_languages(path: &Path) -> Vec<u16> {
     let wide = wide_path(path);
     let module = unsafe {
         LoadLibraryExW(
@@ -492,39 +605,43 @@ fn resource_language(path: &Path) -> Option<u16> {
         )
     };
     if module.is_null() {
-        return None;
+        return Vec::new();
     }
-    let mut lang = u16::MAX;
-    let ok = unsafe {
+    let mut list = LangList { values: [0; 8], count: 0 };
+    let _ = unsafe {
         EnumResourceLanguagesW(
             module,
             make_int_resource(RT_VERSION),
             make_int_resource(1),
-            Some(first_language),
-            (&mut lang as *mut u16).cast::<std::ffi::c_void>() as isize,
+            Some(collect_language),
+            (&mut list as *mut LangList).cast::<std::ffi::c_void>() as isize,
         )
     };
     unsafe { FreeLibrary(module) };
-    if ok == 0 || lang == u16::MAX { None } else { Some(lang) }
+    list.values[..list.count].to_vec()
 }
 
 #[cfg(windows)]
-unsafe extern "system" fn first_language(
+unsafe extern "system" fn collect_language(
     _module: *mut std::ffi::c_void,
     _kind: *const u16,
     _name: *const u16,
     language: u16,
     param: isize,
 ) -> i32 {
-    let slot = param as *mut u16;
-    if !slot.is_null() {
-        unsafe { *slot = language }
+    let list = param as *mut LangList;
+    if !list.is_null() {
+        let list = unsafe { &mut *list };
+        if list.count < list.values.len() {
+            list.values[list.count] = language;
+            list.count += 1;
+        }
     }
-    0
+    1
 }
 
 #[cfg(windows)]
-fn update_version_resource(path: &Path, lang: u16, bytes: &[u8]) -> Result<(), String> {
+fn update_version_resources(path: &Path, langs: &[u16], bytes: &[u8]) -> Result<(), String> {
     let wide = wide_path(path);
     let size = u32::try_from(bytes.len())
         .map_err(|_| "The program version information is too large.".to_string())?;
@@ -532,20 +649,22 @@ fn update_version_resource(path: &Path, lang: u16, bytes: &[u8]) -> Result<(), S
     if handle.is_null() {
         return Err(format!("Task Manager could not be updated ({}).", last_error()));
     }
-    let ok = unsafe {
-        UpdateResourceW(
-            handle,
-            make_int_resource(RT_VERSION),
-            make_int_resource(1),
-            lang,
-            bytes.as_ptr(),
-            size,
-        )
-    };
-    if ok == 0 {
-        let err = last_error();
-        unsafe { EndUpdateResourceW(handle, 1) };
-        return Err(format!("Task Manager could not be updated ({err})."));
+    for lang in langs {
+        let ok = unsafe {
+            UpdateResourceW(
+                handle,
+                make_int_resource(RT_VERSION),
+                make_int_resource(1),
+                *lang,
+                bytes.as_ptr(),
+                size,
+            )
+        };
+        if ok == 0 {
+            let err = last_error();
+            unsafe { EndUpdateResourceW(handle, 1) };
+            return Err(format!("Task Manager could not be updated ({err})."));
+        }
     }
     if unsafe { EndUpdateResourceW(handle, 0) } == 0 {
         return Err(format!("Task Manager could not be updated ({}).", last_error()));
@@ -674,6 +793,10 @@ const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
 const FILE_RENAME_INFO_EX: i32 = 22;
 #[cfg(windows)]
 const DELETE: u32 = 0x0001_0000;
+#[cfg(windows)]
+const FILE_LIST_DIRECTORY: u32 = 0x1;
+#[cfg(windows)]
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 #[cfg(windows)]
 const FILE_SHARE_READ: u32 = 0x1;
 #[cfg(windows)]

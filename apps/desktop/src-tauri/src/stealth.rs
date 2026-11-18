@@ -5,6 +5,8 @@
 //! That flag omits the window. `WDA_MONITOR` (0x1) is never used: it paints a black rectangle
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
+//! Windows 11 21H2 (build 22000) keeps the flag only after a frame refresh, and a transparent
+//! overlay stays white there unless the frame covers the whole client area.
 //!
 //! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
 //! window title is the configured display name. Task Manager's process name is the executable's
@@ -175,6 +177,12 @@ fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
              The window stays visible. This Windows version or this window may not support it, \
              and capture tools that ignore display affinity can still show the app."
         );
+        return;
+    }
+    // Build 22000 applies the affinity only after DWM rebuilds the frame. Later builds already
+    // pick it up from the call above.
+    if windows_build() < 22621 {
+        refresh_frame(hwnd.0);
     }
 }
 
@@ -192,7 +200,70 @@ fn restore_overlay_transparency(window: &WebviewWindow) {
             DwmBlurBehind { flags: DWM_BB_ENABLE | DWM_BB_BLURREGION, enable: 1, region, transition: 0 };
         let _ = DwmEnableBlurBehindWindow(hwnd.0, &blur);
         let _ = DeleteObject(region);
+        // Build 22000 paints the client area opaque white unless the glass frame covers it.
+        // Later Windows already stays transparent from the blur region alone.
+        if windows_build() < 22621 {
+            let margins = DwmMargins { left: -1, right: -1, top: -1, bottom: -1 };
+            let _ = DwmExtendFrameIntoClientArea(hwnd.0, &margins);
+        }
     }
+}
+
+/// Ask DWM to rebuild the frame so display affinity takes effect on Windows 11 21H2.
+#[cfg(windows)]
+fn refresh_frame(hwnd: *mut std::ffi::c_void) {
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn windows_build() -> u32 {
+    static BUILD: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BUILD.get_or_init(|| {
+        let mut info = OsVersionInfo {
+            size: std::mem::size_of::<OsVersionInfo>() as u32,
+            major: 0,
+            minor: 0,
+            build: 0,
+            platform: 0,
+            csd: [0; 128],
+        };
+        if unsafe { RtlGetVersion(&mut info) } == 0 { info.build } else { 0 }
+    })
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct OsVersionInfo {
+    size: u32,
+    major: u32,
+    minor: u32,
+    build: u32,
+    platform: u32,
+    csd: [u16; 128],
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct DwmMargins {
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
 }
 
 #[cfg(not(windows))]
@@ -217,6 +288,15 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 #[link(name = "user32")]
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+    fn SetWindowPos(
+        hwnd: *mut std::ffi::c_void,
+        after: *mut std::ffi::c_void,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        flags: u32,
+    ) -> i32;
 }
 
 #[cfg(windows)]
@@ -230,6 +310,13 @@ unsafe extern "system" {
 #[link(name = "dwmapi")]
 unsafe extern "system" {
     fn DwmEnableBlurBehindWindow(hwnd: *mut std::ffi::c_void, blur: *const DwmBlurBehind) -> i32;
+    fn DwmExtendFrameIntoClientArea(hwnd: *mut std::ffi::c_void, margins: *const DwmMargins) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn RtlGetVersion(info: *mut OsVersionInfo) -> i32;
 }
 
 // `GetLastError` lives in kernel32, not user32. Call it before any other Windows call.
