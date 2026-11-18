@@ -66,6 +66,11 @@ function overlay(events: Numbered[]) {
   return render(<Overlay />);
 }
 
+const shot = (id: number, title: string): ShotView => ({
+  id, url: "data:image/webp;base64,UklGRg==", width: 1568, height: 882, title, bytes: 61_440,
+  source: "window", capture_ms: 120, encode_ms: 90,
+});  // prettier-ignore
+
 describe("a screenshot's card", () => {
   const read = (tasks: { n: number; kind: string; language?: string }[]) =>
     srv({ type: "question.detected", question_id: "s1", text: "Screen: 2 tasks (choice, code), python", question_type: "coding", confidence: 1, speculative: false, screen: { tasks, language: "python" } });
@@ -91,6 +96,20 @@ describe("a screenshot's card", () => {
     await waitFor(() => expect(card.querySelector(".pass-deep .code-block")).not.toBeNull());
   });
 
+  it("shows the shots it was asked with, and one opens large on a click", async () => {
+    n = 0;
+    ipc.handle("coding_sent_shots", () => [{ question_id: "s7", shots: [shot(7, "Problem - Chrome"), shot(8, "main.c")] }]);
+    overlay([srv({ type: "question.detected", question_id: "s7", text: "Screen", question_type: "coding", confidence: 1, speculative: false })]);
+    const card = await screen.findByRole("article");
+    const strip = await within(card).findByRole("list", { name: "Shots sent" });
+    const second = within(strip).getByRole("button", { name: "Shot 2: main.c" });
+    await userEvent.click(second);
+    expect(second).toHaveAttribute("aria-expanded", "true");
+    expect(within(card).getByRole("img", { name: "Shot 2: main.c" })).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Close the shot" }));
+    expect(within(card).queryByRole("button", { name: "Close the shot" })).not.toBeInTheDocument();
+  });
+
   it("a screen with nothing to answer says so, and has no code section", async () => {
     n = 0;
     overlay([
@@ -104,10 +123,7 @@ describe("a screenshot's card", () => {
   });
 });
 
-const shot = (id: number, title: string): ShotView => ({
-  id, url: "data:image/webp;base64,UklGRg==", width: 1568, height: 882, title, bytes: 61_440,
-  source: "window", capture_ms: 120, encode_ms: 90,
-});  // prettier-ignore
+
 
 describe("the coding bar", () => {
   it("adds, shows, removes and solves shots, with the mode and language kept", async () => {

@@ -43,6 +43,8 @@ SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> tuple[str, str]:
     if provider == "openai":
         model, _ = settings.openai_route(OPENAI_JOB.get(job, job))
+        if job == "screen_code" and settings.screen_code_model:
+            model = settings.screen_code_model
         return model, model
     if provider == "bedrock":
         if family == "haiku":
@@ -56,7 +58,10 @@ def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> t
 
 def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
     if provider == "openai":
-        return openai_params(settings, OPENAI_JOB.get(job, job))
+        params = openai_params(settings, OPENAI_JOB.get(job, job))
+        if job == "screen_code" and settings.screen_code_reasoning is not None:
+            params = {**params, "reasoning": {"effort": settings.screen_code_reasoning}}
+        return params
     params: dict[str, Any] = {}
     if job == "deep":
         # Sonnet 5.5 rejects thinking {type: "disabled"}; `between_tools` is its lowest

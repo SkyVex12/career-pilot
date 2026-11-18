@@ -423,6 +423,9 @@ async def solve(router: Any, settings: Any, case: Case, mode: str) -> dict[str, 
         run["code"] = "".join(parts)
         run["code_done_ms"] = timer.ms()
 
+    if settings.screen_code_start == "with_fast":
+        # The code pass at once, reading the screen itself, as the gateway starts it.
+        code_task = asyncio.create_task(code_pass(None))
     req = screen.fast_pass("Alex", shots, max_tokens=settings.screen_fast_max_tokens, **common)
     reader = screen.ReadSplitter()
     shown: list[str] = []
@@ -435,7 +438,12 @@ async def solve(router: Any, settings: Any, case: Case, mode: str) -> dict[str, 
         if reader.done and not was_done:
             run["read_ms"] = timer.ms()
             run["reading"] = reader.reading
-            if reader.reading is not None and screen.needs_code(reader.reading):
+            needed = reader.reading is not None and screen.needs_code(reader.reading)
+            if code_task is not None and reader.reading is not None and not needed:
+                code_task.cancel()  # nothing on the screen needs it
+                run["code_ran"] = False
+                code_task = None
+            elif code_task is None and needed:
                 code_task = asyncio.create_task(code_pass(reader.reading))
         if text:
             if not shown:
@@ -449,6 +457,7 @@ async def solve(router: Any, settings: Any, case: Case, mode: str) -> dict[str, 
         code_task = asyncio.create_task(code_pass(None))
     if code_task is not None:
         await code_task
+    run["code_start"] = settings.screen_code_start
     return run
 
 

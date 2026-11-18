@@ -1792,6 +1792,7 @@ class Session:
             )
             return
         self.last_force = now
+        self.last_speech = now  # a typed question is activity: the session is in use
         if text and is_answer_command(text):
             text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
         if not text and (taken := self.turns.take_over()) is not None:
@@ -1857,6 +1858,9 @@ class Session:
             self.error("bad_message", f"question {qid} already exists")
             return
         self.last_screenshot = now
+        # Activity, as speech is: a coding session may go 10 minutes without a word
+        # (2026-11-18: one ended as idle mid-problem, between screenshots).
+        self.last_speech = now
         ask = ScreenAsk(
             shots=shots,
             answer_mode=msg.answer_mode or "interview",

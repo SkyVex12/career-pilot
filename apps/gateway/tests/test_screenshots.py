@@ -54,7 +54,8 @@ def text_of(c: ProtocolClient, qid: str, pass_: str) -> str:
 
 async def test_a_screen_is_read_answered_and_its_code_written(env) -> None:
     provider = env.providers[0]
-    async with GatewayServer(env.services()) as gw:
+    settings = env.settings(screen_code_start="after_read")
+    async with GatewayServer(env.services(settings)) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
         await c.say("Please solve it in Python, and keep memory constant.")
@@ -114,6 +115,8 @@ async def test_an_assessment_has_no_call_and_a_screen_without_code_gets_no_code_
     def reply(job: str, req: LLMRequest) -> Reply:
         if job == "screen_fast":
             return Reply(["READ " + json.dumps(reading) + "\n**Answer:** A) O(1)\n"])
+        if job == "screen_code":  # started with the shot; slower than the reading
+            return Reply(["```go\nfunc f() {}\n```"], first_delay_s=1.0)
         return default_reply(job, req)
 
     provider = ScriptedProvider("anthropic", reply)
@@ -137,14 +140,23 @@ async def test_an_assessment_has_no_call_and_a_screen_without_code_gets_no_code_
         await c.send({"type": "session.end"})
         await c.closed()
     assert text_of(c, q["question_id"], "fast") == "**Answer:** A) O(1)\n"
-    assert not requests_for(provider, "screen_code")
+    # The code pass started with the shot, read the screen itself, and was stopped unseen once
+    # the reading showed nothing needs code: no deep text, and no error for the client.
+    [early] = requests_for(provider, "screen_code")
+    assert "read the tasks from the shots yourself" in blocks(early)[-1]["text"]
     assert not any(m["type"] == "answer.delta" and m["pass"] == "deep" for m in c.messages)
+    errors = [m for m in c.messages if m["type"] == "answer.error"]
+    assert [m for m in errors if m["question_id"] == q["question_id"]] == []
     [req] = requests_for(provider, "screen_fast")
     assert "<transcript>" not in blocks(req)[-1]["text"]
     assert "all code is in go" in req.system[0].text
     log = await session_log(env, c.session_id)
     [shot_entry] = [e for e in log if e["kind"] == "screen"]
     assert "title" not in shot_entry["images"][0]  # no consent: no titles
+    [stopped] = [
+        e for e in log if e["kind"] == "pass_cancelled" and e["question_id"] == q["question_id"]
+    ]
+    assert stopped["reason"] == "code_unneeded"
     [read_entry] = [e for e in log if e["kind"] == "screen_read"]
     assert "reading" not in read_entry
     assert read_entry["kinds"] == ["choice"]
@@ -228,3 +240,19 @@ async def test_bad_and_too_many_screens(env) -> None:
         )
         await c.send({"type": "session.end"})
         await c.closed()
+
+
+async def test_screenshots_keep_a_quiet_session_alive(env) -> None:
+    # 2026-11-18: a coding session ended as idle mid-problem; shots are activity, as speech is.
+    settings = env.settings(idle_end_s=1.5)
+    async with GatewayServer(env.services(settings)) as gw:
+        c = ProtocolClient(gw.url)
+        await c.start()
+        for _ in range(3):
+            await asyncio.sleep(1.1)
+            await c.send({"type": "screenshot", "images": [image()]})
+        assert c.close_code is None
+        await c.send({"type": "question.force", "text": "And with duplicates?"})
+        await asyncio.sleep(1.1)
+        assert c.close_code is None
+        assert await c.closed(timeout=5.0) == 1000  # then quiet: it ends as idle

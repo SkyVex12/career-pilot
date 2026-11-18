@@ -261,7 +261,9 @@ _FAST_MODE = {
 }
 _FAST_CODE = {
     "interview": (
-        "**Say first:** 1 or 2 clarifying questions or assumptions to state. **Approach:** 2 "
+        "**Say first:** 1 or 2 clarifying questions on the constraints (input size, empty or "
+        "duplicate input, what to return when there is no answer) or assumptions to state. "
+        "**Approach:** 2 "
         "to 4 short lines, as {user_name} would explain it. **Complexity:** time and space. "
         "**Edge cases:** one line."
     ),
@@ -273,15 +275,17 @@ _FAST_FIX = "**Fix:** one line on the change; the corrected code comes from the 
 
 CODE_SYSTEM = """You write the code for the coding tasks on {user_name}'s screen{situation}. \
 The user turn holds the screenshots (in order; shots taken while scrolling may overlap, and \
-other files are told apart by their window titles) and <reading>, a first pass's reading of \
-them: each task's kind, language, starter signature and approach.
+other files are told apart by their window titles), and <reading>: a first pass's reading of \
+them (each task's kind, language, starter signature and approach), or none yet, when you read \
+the tasks yourself, in screen order, with the same numbers.
 
-For each task in <reading> whose kind is code, fix, complete or output, in order:
+For each task whose kind is code, fix, complete or output, in screen order:
 - code: one ```<language> block with the complete solution in the task's language, using the \
-approach in <reading> (another one only if that one is wrong or too slow for the \
-constraints). Fill the starter code exactly as shown: the same class, function name, \
-parameters, their order and types, and its imports. No main, no input reading, no printing, \
-no example calls, unless the starter code reads input or the task asks for a full program.
+approach in <reading> when there is one (another only if that one is wrong or too slow for \
+the constraints), else the approach the constraints need. Fill the starter code exactly as \
+shown: the same class, function name, parameters, their order and types, and its imports. \
+No main, no input reading, no printing, no example calls, unless the starter code reads input \
+or the task asks for a full program.
 - fix: the corrected code. When the code is over about 30 lines, only the changed lines, with \
 a line of context around them and a comment on what changed.
 - complete: the code, in the given code's style and names.
@@ -295,14 +299,20 @@ for the other tasks, no preamble, no closing line."""
 
 _CODE_MODE = {
     "interview": (
-        "A call is on: {user_name} types this while talking. A short comment at each step "
-        "says what it does, in the order they would explain it. After the block, "
-        "**Complexity:** time and space in one line. What the interviewer asked in "
-        "<transcript> (a constraint, the language, no extra memory) comes before the screen."
+        "A call is on: {user_name} types this while talking and must be able to explain every "
+        "line. A short comment at each step, and on every line whose reason is not obvious (an "
+        "index or boundary, an early return, a condition such as first > last), in the order "
+        "they would explain it. The checks the language expects, without changing the "
+        "signature (C: check what malloc returns; empty or missing input). After the block, "
+        "**Walk-through:** 2 to 4 short lines, each a condition or edge case in this code and "
+        "what it means, in words {user_name} can say when asked; then **Complexity:** time "
+        "and space in one line. What the interviewer asked in <transcript> (a constraint, the "
+        "language, no extra memory) comes before the screen."
     ),
     "assessment": (
-        "An online assessment: the code first, ready to paste, with few comments. After the "
-        "block, **Complexity:** time and space in one line. No other explanation."
+        "An online assessment: the code first, ready to paste, with few comments, and the "
+        "checks the language expects (C: what malloc returns). After the block, "
+        "**Complexity:** time and space in one line. No other explanation."
     ),
 }
 

@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import NoDecode
 
-from copilot_core.config import CoreSettings, split_list
+from copilot_core.config import CoreSettings, ReasoningEffort, split_list
 
 
 class PreparedThreshold(BaseModel):
@@ -146,6 +146,17 @@ class Settings(CoreSettings):
     # provider; they never hedge (router.py).
     screen_first_token_timeout_ms: int = 10000
     screen_code_first_token_timeout_ms: int = 15000
+    # When the code pass starts: "with_fast", at the shot, alongside the fast pass, reading the
+    # screen itself (cancelled if the reading shows no task needs it), or "after_read", once
+    # the fast pass's reading is in. And its reasoning effort on OpenAI (None: the deep pass's).
+    # 2026-11-18 (copilot-coding-eval, same hour): "with_fast" had the code done at 4.6 s
+    # (interview) and 3.5 s (test) at the median, against 6.8 s and 5.6 s after the reading,
+    # every check passing. gpt-6.1-sol takes no reasoning below "low"; gpt-6-luna at "low"
+    # was faster still (4.0 s) but missed 1 exact output in 4.
+    screen_code_start: Literal["with_fast", "after_read"] = "with_fast"
+    screen_code_reasoning: ReasoningEffort | None = None
+    # The code pass's OpenAI model (None: the deep pass's).
+    screen_code_model: str | None = None
     # The deep pass starts on its own once the fast pass is done (and the question is
     # confirmed), for these types; other types only on expand. Off: every deep pass waits for
     # expand. A newer confirmed question cancels it. Until October 2026 only behavioral,

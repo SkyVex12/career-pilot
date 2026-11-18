@@ -16,12 +16,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
 import { AnswerText } from "./AnswerText";
 import { CodeAnswer } from "./CodeAnswer";
-import { CodingBar } from "./CodingBar";
+import { CodingBar, shotTitle } from "./CodingBar";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane, VoiceMute } from "./seats";
 import { startScreenHost } from "./screen";
 import { ScreenChip } from "./screenui";
+import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
 import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
@@ -680,6 +681,7 @@ function QuestionCard({
         {q.text}
         {q.speculative && <span className="ui-visually-hidden"> (still listening)</span>}
       </p>
+      {screen && <ShotStrip questionId={q.id} />}
       {q.screen && <ScreenTasks reading={q.screen} />}
 
       <div role="group" className={cx("points pass pass-fast", holdFast && "is-held", screen && "is-code")} aria-label={screen ? "Answer" : "Talking points"}>
@@ -734,6 +736,37 @@ function QuestionCard({
         )}
       </footer>
     </article>
+  );
+}
+
+/** The shots a screenshot question was asked with, small; one opens large on a click. */
+function ShotStrip({ questionId }: { questionId: string }) {
+  const shots = useSentShots(questionId);
+  const [open, setOpen] = useState<number | null>(null);
+  if (!shots?.length) return null;
+  const big = open !== null ? shots[open] : undefined;
+  return (
+    <div className="card-shots">
+      <ol className="ov-shots" aria-label="Shots sent">
+        {shots.map((s, i) => (
+          <li key={s.id} className={cx("ov-shot", open === i && "is-open")} title={shotTitle(s)}>
+            <button type="button" className="card-shot-btn" aria-expanded={open === i} aria-label={`Shot ${i + 1}: ${s.title ?? "screen"}`} onClick={() => setOpen(open === i ? null : i)}>
+              <img src={s.url} alt="" />
+            </button>
+            {shots.length > 1 && (
+              <span className="ov-shot-n" aria-hidden="true">
+                {i + 1}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {big && (
+        <button type="button" className="card-shot-big" aria-label="Close the shot" onClick={() => setOpen(null)}>
+          <img src={big.url} alt={`Shot ${(open ?? 0) + 1}: ${big.title ?? "screen"}`} />
+        </button>
+      )}
+    </div>
   );
 }
 

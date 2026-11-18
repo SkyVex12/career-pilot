@@ -126,6 +126,12 @@ export type HotkeyAction =
 /** Coding mode's answer mode: a call is on (say it, then type it), or an online test (paste it). */
 export type CodingMode = "interview" | "assessment";
 
+/** The shots one screenshot question was asked with (lib.rs `SentShots`). */
+export interface SentShots {
+  question_id: string;
+  shots: ShotView[];
+}
+
 /** A shot waiting in the coding tray (src-tauri/src/shots.rs `ShotView`). */
 export interface ShotView {
   id: number;
@@ -376,6 +382,8 @@ export const api = {
   codingAddShot: () => invoke<void>("coding_add_shot"),
   codingSolve: () => invoke<void>("coding_solve"),
   codingShots: () => invoke<ShotView[]>("coding_shots"),
+  /** The shots of the last problems sent, by question, for their cards. */
+  codingSentShots: () => invoke<SentShots[]>("coding_sent_shots"),
   codingRemoveShot: (id: number) => invoke<void>("coding_remove_shot", { id }),
   setCodingPrefs: (mode: CodingMode, language: string) => invoke<void>("set_coding_prefs", { mode, language }),
   /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */
@@ -435,6 +443,9 @@ export interface Numbered {
 /** The coding tray changed; and what went wrong with a hotkey's shot. */
 export function onShots(handler: (shots: ShotView[]) => void): Promise<UnlistenFn> {
   return listen<ShotView[]>("copilot://coding-shots", (e) => handler(e.payload));
+}
+export function onShotsSent(handler: (sent: SentShots) => void): Promise<UnlistenFn> {
+  return listen<SentShots>("copilot://coding-sent", (e) => handler(e.payload));
 }
 export function onShotError(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("copilot://coding-error", (e) => handler(e.payload));

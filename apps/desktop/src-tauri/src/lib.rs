@@ -68,6 +68,8 @@ const OVERLAY_EVENT: &str = "copilot://overlay";
 /// with a hotkey's shot (a message), since a hotkey has no caller to return an error to.
 const SHOTS_EVENT: &str = "copilot://coding-shots";
 const SHOTS_ERROR_EVENT: &str = "copilot://coding-error";
+/// A problem's shots were sent: `SentShots`, for the card of its question.
+const SHOTS_SENT_EVENT: &str = "copilot://coding-sent";
 /// The overlay asked to open the main window's Settings screen ("All settings…").
 const OPEN_SETTINGS_EVENT: &str = "copilot://open-settings";
 /// The on-demand server (wake.rs): {"state": "starting" | "ready" | "failed", "detail"}.
@@ -112,7 +114,19 @@ struct AppState {
     server_start: tokio::sync::Mutex<()>,
     /// Coding mode's tray: the shots of one problem, waiting for Solve (shots.rs).
     shots: Mutex<Vec<shots::Shot>>,
+    /// The shots of the last problems sent, by their question, for the overlay's cards.
+    sent_shots: Mutex<std::collections::VecDeque<SentShots>>,
 }
+
+/// The shots one screenshot question was asked with (the overlay shows them on its card).
+#[derive(Clone, Serialize)]
+struct SentShots {
+    question_id: Uuid,
+    shots: Vec<shots::ShotView>,
+}
+
+/// Problems whose shots the overlay can still show (6 shots of up to 375 KB each).
+const SENT_SHOTS_KEPT: usize = 10;
 
 #[derive(Default)]
 struct OverlayState {
@@ -1307,7 +1321,18 @@ async fn solve(app: &AppHandle) -> Res<()> {
         })
         .collect();
     let sent: Vec<u32> = shots.iter().map(|s| s.id).collect();
-    engine.screenshot(images, answer_mode, Some(language)).await;
+    // The question's id is ours, so its card can show the shots it was asked with.
+    let question_id = Uuid::now_v7();
+    let record = SentShots { question_id, shots: shots.iter().map(|s| s.view()).collect() };
+    {
+        let mut kept = state.sent_shots.lock().unwrap();
+        kept.push_back(record.clone());
+        while kept.len() > SENT_SHOTS_KEPT {
+            kept.pop_front();
+        }
+    }
+    let _ = app.emit(SHOTS_SENT_EVENT, record);
+    engine.screenshot(question_id, images, answer_mode, Some(language)).await;
     // Shots added while this one was being taken stay for the next problem.
     state.shots.lock().unwrap().retain(|s| !sent.contains(&s.id));
     emit_shots(app);
@@ -1328,6 +1353,12 @@ async fn coding_solve(app: AppHandle) -> Res<()> {
 fn coding_remove_shot(app: AppHandle, state: State<'_, AppState>, id: u32) {
     state.shots.lock().unwrap().retain(|s| s.id != id);
     emit_shots(&app);
+}
+
+/// The shots of the last problems sent, for cards drawn after a reload.
+#[tauri::command]
+fn coding_sent_shots(state: State<'_, AppState>) -> Vec<SentShots> {
+    state.sent_shots.lock().unwrap().iter().cloned().collect()
 }
 
 #[tauri::command]
@@ -2045,6 +2076,7 @@ pub fn run() {
                 server_host: Mutex::new(None),
                 server_start: tokio::sync::Mutex::new(()),
                 shots: Mutex::new(Vec::new()),
+                sent_shots: Mutex::new(std::collections::VecDeque::new()),
             });
             #[cfg(feature = "release")]
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
@@ -2170,6 +2202,7 @@ pub fn run() {
             coding_solve,
             coding_remove_shot,
             coding_shots,
+            coding_sent_shots,
             set_coding_prefs,
             respond,
             expand_answer,

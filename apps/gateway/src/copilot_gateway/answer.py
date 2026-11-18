@@ -170,6 +170,7 @@ class Question:
     # A screenshot question (coding mode): its shots, and the fast pass's reading of them.
     screen: "ScreenAsk | None" = None
     reading: dict[str, Any] | None = None
+    code_unneeded: bool = False  # its code pass was stopped: the screen needs no code
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,10 @@ class AnswerEngine:
             _, old = self.questions.popitem(last=False)
             self._cancel_tasks(old)
         self.start_pass(q, "fast")
+        if q.screen is not None and self.host.settings.screen_code_start == "with_fast":
+            # The code pass at once, reading the screen itself: the reading takes 1 to 3 s,
+            # and the deep model's first token 2 to 6 s more (2026-11-18).
+            self.start_pass(q, "deep")
 
     def confirm(
         self,
@@ -396,8 +401,13 @@ class AnswerEngine:
                 **({"reading": reading} if self.host.store_text() else {}),
             }
         )
-        if screen.needs_code(reading) and not (q.superseded or q.cancelled):
-            self.start_pass(q, "deep")
+        if screen.needs_code(reading):
+            if not (q.superseded or q.cancelled):
+                self.start_pass(q, "deep")
+        elif (task := q.tasks.get("deep")) is not None and not task.done():
+            # Started with the shot, and nothing on the screen needs it.
+            q.code_unneeded = True
+            task.cancel()
 
     def release(self, qid: UUID) -> None:
         """The detector confirmed a held question (the session has just sent it): what its
@@ -778,6 +788,8 @@ class AnswerEngine:
             reason = "held_discarded"
         elif q.cancelled:
             reason = "speculative"
+        elif q.code_unneeded:
+            reason = "code_unneeded"
         else:
             reason = "stopped"
         entry: dict[str, Any] = {
