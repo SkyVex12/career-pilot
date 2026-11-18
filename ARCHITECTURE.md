@@ -203,6 +203,14 @@ The host (the person running a call) can invite another Copilot account to follo
   - The guest shows each frame at once, with playout delay 0.
   - The share is H.264, which Windows encodes on the graphics card where it can. That is faster than VP8 in software, and leaves the CPU to the call. Every guest is this app (WebView2), which plays H.264.
   - Every window opens WebView2 with flags that keep it at full speed when it is hidden, minimized or covered (`BROWSER_ARGS` in `lib.rs`; tauri.conf.json gives the main window the same string, and a test checks they match). The sharing window is often out of sight during a call, and it carries out the guest's input. Windows sharing a profile must use the very same flags, or WebView2 won't open the second.
+- **Feel and measure** (2026-11-18). These change how control feels and show where the time goes, not how fast input lands.
+  - **The guest's own arrow.** While controlling, the guest's pointer over the picture is a normal arrow. It moves with their hand at once, so they aim with it. The host's real pointer, seen in the picture, follows a moment later.
+  - **A readout under the picture**, read once a second while watching (`readStats` in `src/screen.ts`):
+    - the network round trip to the media server (the connection's chosen candidate pair);
+    - frames per second;
+    - the codec;
+    - per-frame decode time and receive-buffer time over the last second.
+  - **Timing the input path.** While controlling, the guest also pings the host over data, once a second (topic `ping`). The host sends the payload straight back (`pong`), only to the guest controlling now, so the guest sees its input's real round trip. The readout makes clear which step to speed up next: the network, the host's encoding, or the guest's decoding.
 - **Ending.** Control ends on any of:
   - Stop control, or the overlay chip ("controls · Stop");
   - the fixed hotkey Ctrl+Alt+End, handled in Rust whatever the windows show;

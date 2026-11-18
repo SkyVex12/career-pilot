@@ -12,6 +12,7 @@ import {
   TOPIC,
   matchingMonitors,
   pictureSpot,
+  readStats,
   type GuestDeps,
   type HostDeps,
   type InputEvent,
@@ -19,6 +20,7 @@ import {
   type ScreenStatus,
 } from "../src/screen";
 import { withCapability } from "../src/seats";
+import { statsLine } from "../src/screenui";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -401,6 +403,77 @@ describe("the guest's view", () => {
     await t.g.open();
     await t.g.ask();
     expect(t.rooms[0].sent).toEqual([]);
+  });
+});
+
+describe("how fast the guest sees the screen", () => {
+  const report = (decoded: number, decodeS: number, emitted: number, bufferS: number) => [
+    { type: "transport", id: "T1", selectedCandidatePairId: "CP2" },
+    { type: "candidate-pair", id: "CP1", nominated: true, state: "succeeded", currentRoundTripTime: 0.5 },
+    { type: "candidate-pair", id: "CP2", nominated: true, state: "succeeded", currentRoundTripTime: 0.042 },
+    { type: "codec", id: "C1", mimeType: "video/H264" },
+    {
+      type: "inbound-rtp", id: "IV", kind: "video", codecId: "C1", framesPerSecond: 59.6,
+      framesDecoded: decoded, totalDecodeTime: decodeS, jitterBufferEmittedCount: emitted, jitterBufferDelay: bufferS,
+    },
+  ];
+
+  it("reads the network, frames, codec, and per-frame decode and buffer time over the last second", () => {
+    const first = readStats(report(100, 0.2, 100, 1), null);
+    expect(first.stats).toEqual({ networkMs: 42, fps: 60, decodeMs: null, bufferMs: null, codec: "H264" });
+    const next = readStats(report(160, 0.32, 160, 1.6), first.sample);
+    expect(next.stats).toMatchObject({ decodeMs: 2, bufferMs: 10 });
+  });
+
+  it("falls back to the nominated pair, and says nothing it does not know", () => {
+    const r = readStats([{ type: "candidate-pair", id: "CP", nominated: true, state: "succeeded", currentRoundTripTime: 0.03 }], null);
+    expect(r.stats).toEqual({ networkMs: 30, fps: null, decodeMs: null, bufferMs: null, codec: null });
+    expect(r.sample).toBeNull();
+  });
+
+  it("puts it in plain words, leaving out the unknown", () => {
+    expect(statsLine({ inputMs: 61.4, networkMs: 42, fps: 60, decodeMs: 2, bufferMs: null, codec: "H264" })).toBe(
+      "Your input 61 ms there and back · Network 42 ms · 60 fps · Decode 2 ms · H264",
+    );
+    expect(statsLine({ inputMs: null, networkMs: null, fps: null, decodeMs: null, bufferMs: null, codec: null })).toBe("");
+  });
+
+  it("the host sends the controlling guest's ping straight back, and no one else's", async () => {
+    const t = host({}, fakeScreenTrack("monitor", 1920, 1080));
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO, BLAIR]);
+    await t.h.allow(PAVLO);
+    t.room.sent.length = 0;
+    t.room.emit("dataReceived", data({ t: 5 }), { identity: "seat:b" }, 0, TOPIC.ping); // may, but does not control
+    t.room.emit("dataReceived", data({ t: 7 }), { identity: "seat:p" }, 0, TOPIC.ping);
+    await vi.waitFor(() => expect(t.room.sent).toEqual([{ topic: TOPIC.pong, to: ["seat:p"], body: { t: 7 } }]));
+    expect(t.deps.input).not.toHaveBeenCalled();
+  });
+
+  it("the guest pings only while controlling, and times the host's answer", async () => {
+    const rooms: ReturnType<typeof fakeRoom>[] = [];
+    let now = 1000;
+    const g = new GuestScreen(
+      { newRoom: () => (rooms.push(fakeRoom()), rooms[0] as never), token: async () => ({ url: "wss://lk", token: "t", control: true }) },
+      "seat-1",
+      () => undefined,
+      async () => undefined,
+      () => now,
+    );
+    await g.open();
+    const room = rooms[0];
+    await g.ping();
+    expect(room.sent).toEqual([]);
+    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    await g.ping();
+    expect(room.sent).toEqual([{ topic: TOPIC.ping, to: ["host"], body: { t: 1000 } }]);
+    now = 1055;
+    room.emit("dataReceived", data({ t: 1000 }), { identity: "seat:other" }, 0, TOPIC.pong);
+    expect(g.inputMs).toBeNull(); // only the host's answer counts
+    room.emit("dataReceived", data({ t: 1000 }), { identity: "host" }, 0, TOPIC.pong);
+    expect(g.inputMs).toBe(55);
+    room.emit("dataReceived", data({ on: false }), { identity: "host" }, 0, TOPIC.control);
+    expect(g.inputMs).toBeNull();
   });
 });
 
