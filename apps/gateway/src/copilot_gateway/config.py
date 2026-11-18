@@ -137,6 +137,15 @@ class Settings(CoreSettings):
     fast_pass_max_tokens: int = 250
     fast_pass_priority: bool = False
     deep_pass_max_tokens: int = 800
+    # Coding mode (copilot_core.screen): the fast pass reads the screen and answers every task
+    # that needs no code, several on one page; the code pass writes complete solutions.
+    screen_fast_max_tokens: int = 1500
+    screen_code_max_tokens: int = 4000
+    screen_default_language: str = "python"
+    # First-token timeouts of coding mode's routes ("screen", "screen_code"), on every
+    # provider; they never hedge (router.py).
+    screen_first_token_timeout_ms: int = 10000
+    screen_code_first_token_timeout_ms: int = 15000
     # The deep pass starts on its own once the fast pass is done (and the question is
     # confirmed), for these types; other types only on expand. Off: every deep pass waits for
     # expand. A newer confirmed question cancels it. Until October 2026 only behavioral,
@@ -293,7 +302,8 @@ class Settings(CoreSettings):
     force_min_interval_s: float = 1.0
     max_binary_bytes: int = 64 * 1024
     max_json_bytes: int = 256 * 1024
-    max_screenshot_bytes: int = 2 * 1024 * 1024
+    # A screenshot message: up to 6 shots of at most 500,000 base64 characters each.
+    max_screenshot_bytes: int = 4 * 1024 * 1024
     ws_ping_interval_s: float = 30.0
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000

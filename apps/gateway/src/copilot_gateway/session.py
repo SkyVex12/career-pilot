@@ -34,6 +34,7 @@ from copilot_core import (
     profiles,
     prompts,
     resumes,
+    screen,
     versions,
     workplace,
 )
@@ -61,6 +62,7 @@ from copilot_gateway.answer import (
     MatchResult,
     PreparedMatcher,
     Question,
+    ScreenAsk,
     is_answer_command,
 )
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
@@ -339,6 +341,7 @@ class Session:
 
         self.last_speech = time.monotonic()
         self.last_force = 0.0
+        self.last_screenshot = 0.0
         self.disconnected_at: float | None = None
         self.auth_warned = False
         self.flushed_upto = restored.get("flushed_upto", "")
@@ -1700,7 +1703,7 @@ class Session:
                     self.log_entry({"kind": "seat.ask", "note_id": str(message.note_id)})
                 self._force(message.text, respond=message.kind == "respond")
             case models.Screenshot():
-                self.error("not_implemented", "screenshots are not supported yet")
+                self._screenshot(message)
             case models.AnswerExpand():
                 if not self.answers.expand(message.question_id):
                     self.error("unknown_question", f"no question {message.question_id}")
@@ -1825,6 +1828,84 @@ class Session:
         self.answers.add(q)
         self.answers.confirm(q.qid, text, None)
         self.conv.question(str(q.qid), text, self.capture_now)
+
+    def _screenshot(self, msg: models.Screenshot) -> None:
+        """Coding mode: the tasks on the user's screen, from 1 to 6 shots of one problem,
+        answered as a question (copilot_core.screen). A new shot replaces the answer before."""
+        s = self.settings
+        now = time.monotonic()
+        wait_s = s.force_min_interval_s - (now - self.last_screenshot)
+        if wait_s > 0:
+            self.error(
+                "rate_limited",
+                "screenshot is limited to once per second",
+                retry_after_ms=max(1, math.ceil(wait_s * 1000)),
+            )
+            return
+        shots = tuple(
+            screen.Shot(
+                data=i.data, media_type=i.media_type, width=i.width, height=i.height, title=i.title
+            )
+            for i in msg.images
+        )
+        for n, shot in enumerate(shots, start=1):
+            if not screen.image_ok(shot):
+                self.error("bad_message", f"image {n} is not a valid {shot.media_type}")
+                return
+        qid = msg.question_id or uuid7()
+        if qid in self.answers.questions:
+            self.error("bad_message", f"question {qid} already exists")
+            return
+        self.last_screenshot = now
+        ask = ScreenAsk(
+            shots=shots,
+            answer_mode=msg.answer_mode or "interview",
+            language=msg.language,
+            default_language=msg.default_language or s.screen_default_language,
+        )
+        q = Question(
+            qid=qid,
+            text=screen.summary(None),
+            qtype="coding",
+            confidence=1.0,
+            addressed=True,
+            speculative=False,
+            forced=True,
+            t0=now,
+            detector_ms=None,
+            match=None,
+            screen=ask,
+        )
+        store = self.store_text()
+        self.log_entry(
+            {
+                "kind": "screen",
+                "question_id": str(qid),
+                "answer_mode": ask.answer_mode,
+                **({"language": ask.language} if ask.language else {}),
+                # The images themselves are never stored; their window titles only with consent.
+                "images": [
+                    {
+                        "media_type": i.media_type,
+                        "width": i.width,
+                        "height": i.height,
+                        "bytes": i.size_bytes,
+                        **({"title": i.title} if store and i.title else {}),
+                    }
+                    for i in shots
+                ],
+            }
+        )
+        self.emit(
+            models.QuestionDetected,
+            question_id=qid,
+            text=q.text,
+            question_type=q.qtype,
+            confidence=1.0,
+            speculative=False,
+        )
+        self.answers.add(q)
+        self.answers.confirm(qid, q.text, None)
 
     def _force_taken(
         self, qid: UUID, text: str, detection: "asyncio.Future[Detection]", *, respond: bool

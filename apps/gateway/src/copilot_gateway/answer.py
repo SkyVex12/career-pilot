@@ -16,6 +16,10 @@ ARCHITECTURE.md, "Realtime pipeline" steps 5 and 6:
   conversation memory) after the cached blocks.
 - Without transcript consent the session log keeps question and answer metadata only, and
   nothing goes into the exact-repeat cache (it holds answer text).
+- A screenshot (coding mode, copilot_core.screen) is a question too: its fast pass reads the
+  screen (the `READ` header, taken out of the stream) and answers what needs no code, and its
+  deep pass writes the code, started as soon as the reading shows a task that needs it. No
+  prepared answer, cache or memory search, and no citation filter (it would eat `a[n:]`).
 
 Each pass runs as its own task outside the session's task group, one per question and pass.
 """
@@ -33,7 +37,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from copilot_core import prompts
+from copilot_core import prompts, screen
 from copilot_core.embed import Embedder
 from copilot_core.llm import (
     AllRoutesFailedError,
@@ -163,6 +167,19 @@ class Question:
     fast_ended: bool = False
     # The talking points as shown, so the deep pass goes beyond them instead of repeating.
     fast_text: str = ""
+    # A screenshot question (coding mode): its shots, and the fast pass's reading of them.
+    screen: "ScreenAsk | None" = None
+    reading: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ScreenAsk:
+    """What a `screenshot` message asks: its shots, the answer mode, the user's language."""
+
+    shots: tuple[screen.Shot, ...]
+    answer_mode: str
+    language: str | None
+    default_language: str
 
 
 @dataclass(frozen=True)
@@ -341,11 +358,46 @@ class AnswerEngine:
         """The deep pass starts on its own once the question is confirmed and its fast pass
         has ended, for the auto types; never for a question a newer one has replaced."""
         s = self.host.settings
+        if q.screen is not None:
+            # The code pass: started from the reading (`_on_read`), or here when the fast pass
+            # ended without one (it failed, or left the header out), unless nothing is readable.
+            if q.fast_ended and screen.needs_code(q.reading) and not q.superseded:
+                self.start_pass(q, "deep")
+            return
         if not s.deep_pass_auto or q.qtype not in s.deep_pass_auto_types:
             return
         if not (q.confirmed and q.fast_ended) or q.superseded or q.cancelled or q.discarded:
             return
         self.start_pass(q, "deep")
+
+    def _on_read(self, q: Question, reading: dict[str, Any] | None) -> None:
+        """The fast pass's reading of the screen arrived: shown with the question, kept for
+        the code pass, which starts now when a task needs code."""
+        q.reading = reading
+        if reading is None:
+            return
+        q.text = screen.summary(reading)
+        self.host.emit(
+            models.QuestionDetected,
+            question_id=q.qid,
+            text=q.text,
+            question_type=q.qtype,
+            confidence=q.confidence,
+            speculative=False,
+            screen=screen.wire_reading(reading),
+        )
+        self.host.log_entry(
+            {
+                "kind": "screen_read",
+                "question_id": str(q.qid),
+                "kinds": [t["kind"] for t in reading["tasks"]],
+                **({"language": reading["language"]} if "language" in reading else {}),
+                # Titles, signatures and approaches are the problem's text: consent only.
+                **({"reading": reading} if self.host.store_text() else {}),
+            }
+        )
+        if screen.needs_code(reading) and not (q.superseded or q.cancelled):
+            self.start_pass(q, "deep")
 
     def release(self, qid: UUID) -> None:
         """The detector confirmed a held question (the session has just sent it): what its
@@ -590,8 +642,9 @@ class AnswerEngine:
                     await prepared(answer)
                     return
             qhash = question_hash(q.text)
-            # A follow has the question's text but continues the user: never the cache.
-            reuse = cacheable(q.text) and q.qtype != "follow"
+            # A follow has the question's text but continues the user: never the cache. Nor
+            # a screenshot: its text says what the screen holds, not what it asks.
+            reuse = cacheable(q.text) and q.qtype != "follow" and q.screen is None
             # A paragraph deep answer is cached apart from a bulleted one.
             style = host.answer_style()
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
@@ -605,11 +658,16 @@ class AnswerEngine:
                 return
             self.stats["model_passes"] += 1
             state["start_at"] = time.monotonic()
-            job = self.deep_job(q) if pass_ == "deep" else pass_
+            if q.screen is not None:
+                job = "screen" if pass_ == "fast" else "screen_code"
+            else:
+                job = self.deep_job(q) if pass_ == "deep" else pass_
             state["job"] = job
             if job == "deep_light":
                 self.stats["deep_light"] += 1
-            memory, memory_stats = await host.memory_lines(q.text, pass_)
+            memory, memory_stats = (
+                await host.memory_lines(q.text, pass_) if q.screen is None else ([], {})
+            )
             state["memory"] = memory_stats
             req = self._request(q, pass_, memory)
             state["req"] = req
@@ -620,13 +678,26 @@ class AnswerEngine:
             async def stream() -> LLMDone:
                 finished: LLMDone | None = None
                 cites = CitationFilter()
+                reader = screen.ReadSplitter() if q.screen is not None and pass_ == "fast" else None
+
+                def shown_text(chunk: str) -> str:
+                    if q.screen is None:
+                        return cites.feed(chunk)
+                    if reader is None or reader.done:
+                        return chunk
+                    text = reader.feed(chunk)
+                    if reader.done:
+                        self._on_read(q, reader.reading)
+                    return text
+
                 async for chunk in host.router.stream(job, req, on_fallback):
                     if isinstance(chunk, LLMDone):
                         finished = chunk
                         state["done"] = chunk
-                    elif text := cites.feed(chunk):
+                    elif text := shown_text(chunk):
                         delta(text)
-                if rest := cites.flush():
+                rest = cites.flush() if q.screen is None else (reader.flush() if reader else "")
+                if rest:
                     delta(rest)
                 assert finished is not None
                 return finished
@@ -659,7 +730,7 @@ class AnswerEngine:
                 error("refused")
                 return
             text = "".join(state["parts"])
-            refs = cited_refs(text, host.refs())
+            refs = cited_refs(text, host.refs()) if q.screen is None else []
             done("model", refs, done_info, done_info.first_token_ms)
             if not q.cancelled and not q.superseded and host.store_text() and reuse:
                 task = asyncio.create_task(self._cache_put(qhash, slot, text, refs))
@@ -754,6 +825,21 @@ class AnswerEngine:
         ctx = self.host.prompt_context()
         transcript = self.host.call_context()
         memory = memory or []
+        if q.screen is not None:
+            ask = q.screen
+            common: dict[str, Any] = {
+                "answer_mode": ask.answer_mode,
+                "call": transcript if ask.answer_mode == "interview" else None,
+                "language": ask.language,
+                "default_language": ask.default_language,
+            }
+            if pass_ == "fast":
+                return screen.fast_pass(
+                    ctx.user_name, ask.shots, max_tokens=s.screen_fast_max_tokens, **common
+                )
+            return screen.code_pass(
+                ctx.user_name, ask.shots, q.reading, max_tokens=s.screen_code_max_tokens, **common
+            )
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.
             qtype = None if q.held else q.qtype

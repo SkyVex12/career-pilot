@@ -26,13 +26,17 @@ from copilot_gateway.detector import DecisionsRoute
 Family = Literal["haiku", "sonnet"]
 # "summary" is the call's rolling summary (conversation memory): background, on the cheapest
 # family, like the detector. "deep_light" is the detailed answer of a question that needs no
-# expert reasoning (`deep_routing`): the fast pass's model and settings.
+# expert reasoning (`deep_routing`): the fast pass's model and settings. "screen" and
+# "screen_code" are coding mode's two passes (copilot_core.screen) on the fast and deep models:
+# routes of their own because images make the first token slower (2026-11-18: 3 to 4.5 s on
+# gpt-6-luna with one 1568 x 882 shot, past the fast pass's 3 s), so they get longer
+# first-token timeouts and no hedge (a second request at 1.2 s would double every shot).
 JOBS: dict[str, Family] = {
     "detector": "haiku", "fast": "haiku", "deep": "sonnet", "summary": "haiku",
-    "deep_light": "haiku",
+    "deep_light": "haiku", "screen": "haiku", "screen_code": "sonnet",
 }  # fmt: skip
 # The job whose OpenAI model and reasoning a gateway job uses.
-OPENAI_JOB = {"deep_light": "fast"}
+OPENAI_JOB = {"deep_light": "fast", "screen": "fast", "screen_code": "deep"}
 SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
@@ -76,14 +80,20 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
         "fast": settings.openai_fast_retry_tier,
         "deep": settings.openai_deep_retry_tier,
         "deep_light": settings.openai_fast_retry_tier,
+        "screen": settings.openai_fast_retry_tier,
+        "screen_code": settings.openai_deep_retry_tier,
+    }
+    screen_timeouts = {
+        "screen": settings.screen_first_token_timeout_ms / 1000,
+        "screen_code": settings.screen_code_first_token_timeout_ms / 1000,
     }
     for job, family in JOBS.items():
         job_routes: list[Route] = []
         for i, provider in enumerate(providers):
             primary, retry = _model_ids(settings, provider.name, job, family)
             params = job_params(settings, provider.name, job)
-            timeout = None
-            if provider.name == "openai":
+            timeout = screen_timeouts.get(job)
+            if timeout is None and provider.name == "openai":
                 timeout = settings.openai_first_token_timeout_s(OPENAI_JOB.get(job, job))
             job_routes.append(Route(provider, primary, params, first_token_timeout_s=timeout))
             if i == 0:

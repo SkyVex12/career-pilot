@@ -1,0 +1,38 @@
+/* Original problem pages for the coding-mode eval, in the layout of the usual assessment
+   platforms: the problem on the left, an editor with a language picker and starter code on the
+   right. Rendered at 1568 x 882 (copilot-coding-eval render). */
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.55 "Segoe UI", Arial, sans-serif; color: #1f2328; background: #f6f8fa; }
+.top { height: 44px; background: #1b2330; color: #d7dde6; display: flex; align-items: center; gap: 18px; padding: 0 16px; font-size: 13px; }
+.top b { color: #fff; font-size: 15px; }
+.top .timer { margin-left: auto; background: #2c3747; padding: 4px 10px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.split { display: flex; height: calc(100vh - 44px); }
+.problem { width: 46%; overflow: hidden; padding: 18px 24px; background: #fff; border-right: 1px solid #d0d7de; }
+.problem h1 { font-size: 20px; margin: 0 0 6px; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: #e6f4ea; color: #1a7f37; margin-right: 6px; }
+.tag.med { background: #fff4e5; color: #9a6700; }
+.problem pre, .problem code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+.problem pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; margin: 6px 0 12px; white-space: pre-wrap; }
+.problem code { background: #eff1f3; padding: 0 4px; border-radius: 3px; }
+.problem ul { margin: 4px 0 10px; padding-left: 22px; }
+.editor { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; }
+.bar { height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #252526; color: #ccc; font-size: 13px; border-bottom: 1px solid #333; }
+.select { background: #3c3c3c; color: #fff; border: 1px solid #555; padding: 3px 26px 3px 10px; border-radius: 3px; position: relative; }
+.select::after { content: "\25BE"; position: absolute; right: 8px; }
+.tab { padding: 0 12px; height: 40px; display: flex; align-items: center; color: #9da5b4; }
+.tab.on { color: #fff; background: #1e1e1e; border-top: 2px solid #0e7ad3; }
+.code { flex: 1; margin: 0; padding: 12px 0; font: 14px/1.6 Consolas, "Cascadia Mono", monospace; color: #d4d4d4; counter-reset: ln; white-space: pre; overflow: hidden; }
+.code span.l { display: block; padding-left: 56px; position: relative; }
+.code span.l::before { counter-increment: ln; content: counter(ln); position: absolute; left: 0; width: 40px; text-align: right; color: #6e7681; }
+.kw { color: #569cd6; } .fn { color: #dcdcaa; } .st { color: #ce9178; } .cm { color: #6a9955; } .ty { color: #4ec9b0; } .nu { color: #b5cea8; }
+.run { margin-left: auto; background: #2ea043; color: #fff; padding: 4px 14px; border-radius: 4px; }
+.quiz { max-width: 980px; margin: 24px auto; background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 22px 30px; }
+.quiz h2 { font-size: 17px; margin: 0 0 10px; }
+.quiz .q { margin: 0 0 18px; }
+.quiz .opt { display: flex; gap: 10px; align-items: center; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 12px; margin: 6px 0; }
+.quiz .opt i { width: 16px; height: 16px; border: 2px solid #8c959f; border-radius: 50%; display: inline-block; }
+.quiz .opt i.box { border-radius: 3px; }
+.quiz pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 10px 12px; font: 13px/1.5 Consolas, monospace; }
+.meta { color: #57606a; font-size: 13px; margin-bottom: 14px; }
+.desk { height: 100vh; background: linear-gradient(135deg, #2b5876, #4e4376); }
+.blur { filter: blur(7px); }

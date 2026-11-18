@@ -192,6 +192,7 @@ mod tests {
             question_type: QuestionType::Behavioral,
             confidence,
             speculative,
+            screen: None,
         })
     }
 

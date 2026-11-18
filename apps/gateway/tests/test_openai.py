@@ -292,7 +292,8 @@ def test_openai_routes_need_their_models() -> None:
     routes = build_routes(openai_settings(), [P()])  # pyright: ignore[reportArgumentType]
     assert [r.label for r in routes["deep"]] == ["openai:gpt-6.1-sol", "openai:gpt-6.1-sol"]
     assert openai_params(openai_settings(openai_fast_reasoning=None), "fast") == {}
-    assert all(r.first_token_timeout_s is None for rs in routes.values() for r in rs)
+    live = {job: rs for job, rs in routes.items() if not job.startswith("screen")}
+    assert all(r.first_token_timeout_s is None for rs in live.values() for r in rs)
     s = openai_settings(openai_deep_first_token_timeout_ms=6000)
     assert [r.first_token_timeout_s for r in build_routes(s, [P()])["deep"]] == [6.0, 6.0]  # pyright: ignore[reportArgumentType]
     assert all(r.first_token_timeout_s is None for r in build_routes(s, [P()])["fast"])  # pyright: ignore[reportArgumentType]
@@ -402,3 +403,24 @@ def test_the_deep_pass_hedges_on_the_priority_tier() -> None:
     assert build_router(settings, [provider]).hedge_after_s["deep"] == 4.5
     off = openai_settings(openai_deep_retry_tier=None)
     assert all("service_tier" not in r.params for r in build_routes(off, [provider])["deep"])
+
+
+def test_screen_routes_are_the_fast_and_deep_models_with_time_for_images() -> None:
+    class P:
+        name = "openai"
+
+    s = openai_settings(openai_first_token_timeout_ms=3000, openai_deep_first_token_timeout_ms=6000)
+    routes = build_routes(s, [P()])  # pyright: ignore[reportArgumentType]
+    assert [r.model for r in routes["screen"]] == [r.model for r in routes["fast"]]
+    assert [r.model for r in routes["screen_code"]] == [r.model for r in routes["deep"]]
+    assert routes["screen"][0].params == routes["fast"][0].params
+    assert routes["screen_code"][0].params == routes["deep"][0].params
+    # An image's first token takes 1 to 3 s: past the fast pass's 3 s at times.
+    assert {r.first_token_timeout_s for r in routes["screen"]} == {10.0}
+    assert {r.first_token_timeout_s for r in routes["screen_code"]} == {15.0}
+    # No hedge: a second request at 1.2 s would double the cost of every shot.
+    router = build_router(s, [P()])  # pyright: ignore[reportArgumentType]
+    hedges = router.hedge_after_s or {}
+    assert "fast" in hedges
+    assert "screen" not in hedges
+    assert "screen_code" not in hedges

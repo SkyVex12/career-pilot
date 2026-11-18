@@ -300,7 +300,8 @@ def openai_content(content: str | Sequence[Mapping[str, Any]]) -> list[dict[str,
         elif kind == "image" and block["source"].get("type") == "base64":
             source = block["source"]
             url = f"data:{source['media_type']};base64,{source['data']}"
-            out.append({"type": "input_image", "image_url": url, "detail": "auto"})
+            # "high": "auto" may read a screenshot at low resolution, where code is unreadable.
+            out.append({"type": "input_image", "image_url": url, "detail": "high"})
         else:
             raise ValueError(f"content block {kind!r} is not supported on OpenAI")
     return out

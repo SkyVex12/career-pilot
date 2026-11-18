@@ -53,7 +53,7 @@ def test_content_blocks_map_to_responses_input() -> None:
     assert parts[2] == {
         "type": "input_image",
         "image_url": "data:image/png;base64,AA==",
-        "detail": "auto",
+        "detail": "high",
     }
     assert parts[3] == {"type": "input_text", "text": "Extract the facts."}
     assert openai_content("hi") == [{"type": "input_text", "text": "hi"}]

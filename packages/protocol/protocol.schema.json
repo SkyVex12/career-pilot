@@ -253,22 +253,91 @@
       },
       "required": ["type"]
     },
+    "ScreenImage": {
+      "description": "One screenshot of the problem: the window it came from, shrunk to at most 1568 px on its long side.",
+      "type": "object",
+      "properties": {
+        "data": {
+          "description": "The image, base64: at most 500,000 characters (about 375 KB). Lossless WebP or PNG keeps code sharp; JPEG blurs small text.",
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 1,
+          "maxLength": 500000
+        },
+        "media_type": { "type": "string", "enum": ["image/webp", "image/png", "image/jpeg"] },
+        "width": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "title": {
+          "description": "The captured window's title (a file name in an editor, a page in a browser), which tells shots of different files apart.",
+          "type": "string",
+          "maxLength": 300
+        }
+      },
+      "required": ["data", "media_type", "width", "height"]
+    },
     "Screenshot": {
-      "description": "Coding question from the screen. The whole message is at most 2 MB.",
+      "description": "Tasks on the screen (coding mode): 1 to 6 shots of one problem, in order (a long page scrolled, other files or tabs), answered together. The whole message is at most 4 MB. Answered like a question: question.detected (question_type coding, then again with screen once read), answer.delta and answer.done.",
       "type": "object",
       "properties": {
         "type": { "type": "string", "const": "screenshot" },
-        "image": {
-          "description": "Base64 JPEG, at most 1.5 MB before encoding (2,000,000 base64 characters).",
-          "type": "string",
-          "contentEncoding": "base64",
-          "contentMediaType": "image/jpeg",
-          "minLength": 1,
-          "maxLength": 2000000
+        "images": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ScreenImage" },
+          "minItems": 1,
+          "maxItems": 6
         },
-        "question_id": { "$ref": "#/$defs/Uuid" }
+        "question_id": {
+          "description": "Made by the client so it can match the answer; absent, the gateway makes one.",
+          "$ref": "#/$defs/Uuid"
+        },
+        "answer_mode": {
+          "description": "interview: what to say first, then code to type while talking. assessment: the answer or complete code first, ready to paste. Absent: interview.",
+          "$ref": "#/$defs/AnswerMode"
+        },
+        "language": {
+          "description": "The language the user picked for the code; it beats what the screen shows.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "default_language": {
+          "description": "The language when neither the screen, the call nor the user names one (a setting; Python by default).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
       },
-      "required": ["type", "image"]
+      "required": ["type", "images"]
+    },
+    "AnswerMode": {
+      "description": "How a screen's tasks are answered: interview (a call is on) or assessment (an online test, no call).",
+      "type": "string",
+      "enum": ["interview", "assessment"]
+    },
+    "TaskKind": {
+      "description": "What a task on the screen asks for. code: write a solution; choice: pick the option(s); short: a short or conceptual answer; output: what the code prints; fix: find and fix the bug; sql: write a query; complete: complete or refactor given code; design: system design.",
+      "type": "string",
+      "enum": ["code", "choice", "short", "output", "fix", "sql", "complete", "design"]
+    },
+    "ScreenTask": {
+      "type": "object",
+      "properties": {
+        "n": { "description": "Its place on the screen, from 1.", "type": "integer", "minimum": 1 },
+        "kind": { "$ref": "#/$defs/TaskKind" },
+        "title": { "description": "A short name for it.", "type": "string" },
+        "language": { "description": "The language of its code, if it has any.", "type": "string" }
+      },
+      "required": ["n", "kind"]
+    },
+    "ScreenReading": {
+      "description": "What the screen holds, read by the fast pass. No tasks with unreadable set: the shots show nothing that can be answered.",
+      "type": "object",
+      "properties": {
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/ScreenTask" } },
+        "language": { "description": "The language the code is written in.", "type": "string" },
+        "unreadable": { "description": "Why nothing could be read.", "type": "string" }
+      },
+      "required": ["tasks"]
     },
     "AnswerExpand": {
       "description": "User opens the deep answer.",
@@ -403,7 +472,11 @@
         "text": { "type": "string" },
         "question_type": { "$ref": "#/$defs/QuestionType" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "speculative": { "type": "boolean" }
+        "speculative": { "type": "boolean" },
+        "screen": {
+          "description": "A screenshot question, once the screen is read: its tasks in screen order. Sent again under the same question_id.",
+          "$ref": "#/$defs/ScreenReading"
+        }
       },
       "required": ["type", "seq", "question_id", "text", "question_type", "confidence", "speculative"]
     },

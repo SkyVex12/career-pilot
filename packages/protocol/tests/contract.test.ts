@@ -53,7 +53,7 @@ function clientSummary(m: ClientMessage): string {
     case "question.force":
       return m.text ?? "(hotkey)";
     case "screenshot":
-      return `${m.image.length} ${m.question_id ?? ""}`;
+      return `${m.images.length} ${m.images[0]?.media_type} ${m.answer_mode ?? ""} ${m.question_id ?? ""}`;
     case "answer.expand":
       return m.question_id;
     case "answer.feedback":

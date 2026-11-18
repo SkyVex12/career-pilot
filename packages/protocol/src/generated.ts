@@ -81,6 +81,11 @@ export type QuestionType =
  * Audio source: them = system output (the other side), me = microphone (the user).
  */
 export type Channel = "them" | "me";
+/**
+ * What a task on the screen asks for. code: write a solution; choice: pick the option(s); short: a short or conceptual answer; output: what the code prints; fix: find and fix the bug; sql: write a query; complete: complete or refactor given code; design: system design.
+ */
+export type TaskKind =
+  "code" | "choice" | "short" | "output" | "fix" | "sql" | "complete" | "design";
 export type SeatStatus =
   "invited" | "accepted" | "admitted" | "declined" | "removed" | "expired" | "ended";
 /**
@@ -178,15 +183,53 @@ export interface QuestionForce {
   note_id?: string;
 }
 /**
- * Coding question from the screen. The whole message is at most 2 MB.
+ * Tasks on the screen (coding mode): 1 to 6 shots of one problem, in order (a long page scrolled, other files or tabs), answered together. The whole message is at most 4 MB. Answered like a question: question.detected (question_type coding, then again with screen once read), answer.delta and answer.done.
  */
 export interface Screenshot {
   type: "screenshot";
   /**
-   * Base64 JPEG, at most 1.5 MB before encoding (2,000,000 base64 characters).
+   * @minItems 1
+   * @maxItems 6
    */
-  image: string;
-  question_id?: Uuid;
+  images:
+    | [ScreenImage]
+    | [ScreenImage, ScreenImage]
+    | [ScreenImage, ScreenImage, ScreenImage]
+    | [ScreenImage, ScreenImage, ScreenImage, ScreenImage]
+    | [ScreenImage, ScreenImage, ScreenImage, ScreenImage, ScreenImage]
+    | [ScreenImage, ScreenImage, ScreenImage, ScreenImage, ScreenImage, ScreenImage];
+  /**
+   * UUID (v7 for ids we generate), lowercase hex with dashes.
+   */
+  question_id?: string;
+  /**
+   * interview: what to say first, then code to type while talking. assessment: the answer or complete code first, ready to paste. Absent: interview.
+   */
+  answer_mode?: "interview" | "assessment";
+  /**
+   * The language the user picked for the code; it beats what the screen shows.
+   */
+  language?: string;
+  /**
+   * The language when neither the screen, the call nor the user names one (a setting; Python by default).
+   */
+  default_language?: string;
+}
+/**
+ * One screenshot of the problem: the window it came from, shrunk to at most 1568 px on its long side.
+ */
+export interface ScreenImage {
+  /**
+   * The image, base64: at most 500,000 characters (about 375 KB). Lossless WebP or PNG keeps code sharp; JPEG blurs small text.
+   */
+  data: string;
+  media_type: "image/webp" | "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  /**
+   * The captured window's title (a file name in an editor, a page in a browser), which tells shots of different files apart.
+   */
+  title?: string;
 }
 /**
  * User opens the deep answer.
@@ -331,6 +374,36 @@ export interface QuestionDetected {
   question_type: QuestionType;
   confidence: number;
   speculative: boolean;
+  screen?: ScreenReading;
+}
+/**
+ * A screenshot question, once the screen is read: its tasks in screen order. Sent again under the same question_id.
+ */
+export interface ScreenReading {
+  tasks: ScreenTask[];
+  /**
+   * The language the code is written in.
+   */
+  language?: string;
+  /**
+   * Why nothing could be read.
+   */
+  unreadable?: string;
+}
+export interface ScreenTask {
+  /**
+   * Its place on the screen, from 1.
+   */
+  n: number;
+  kind: TaskKind;
+  /**
+   * A short name for it.
+   */
+  title?: string;
+  /**
+   * The language of its code, if it has any.
+   */
+  language?: string;
 }
 /**
  * A speculative question was dropped because the speaker kept talking.
@@ -531,6 +604,11 @@ export interface SeatCommandResult {
   command_id: Uuid;
   result: "ok" | "denied" | "expired" | "rate_limited" | "failed";
 }
+
+/**
+ * How a screen's tasks are answered: interview (a call is on) or assessment (an online test, no call).
+ */
+export type AnswerMode = "interview" | "assessment";
 
 /**
  * WebSocket close codes. 1000 ended normally; 1001 server going away (resume); 4401 token invalid or expired; 4403 no minutes left; 4408 no start or resume in time; 4409 another session active; 4410 replaced by a newer connection for this session (do not reconnect or prompt); 4426 the app is older than the server supports (do not reconnect; update first; the error before it is client_outdated); 4429 rate limited; 4500 internal error (resume). Guest seats only: 4411 the host removed the guest (do not reconnect); 4412 the seat is not open (not admitted, closed, or another session's; do not reconnect).
