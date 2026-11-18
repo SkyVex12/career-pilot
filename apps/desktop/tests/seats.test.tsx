@@ -272,11 +272,12 @@ describe("guests' voice", () => {
     expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
   });
 
-  it("the host turns voice on with headphones; a refusal says why", async () => {
+  it("the host may pick any device, warned; a refusal says why", async () => {
     n = 0;
     ipc.handle("voice_devices", () => [
       { id: "wasapi:spk", name: "Speakers (Realtek)", form_factor: "speakers", private: false, call: true },
       { id: "wasapi:hp", name: "Headphones (USB)", form_factor: "headphones", private: true, call: false },
+      { id: "wasapi:logi", name: "Speakers (Logi USB Headset)", form_factor: "speakers", private: false, call: false },
     ]);
     start([
       live(),
@@ -284,9 +285,18 @@ describe("guests' voice", () => {
     ]);
     await userEvent.click(await screen.findByRole("button", { name: "Overlay settings" }));
     await waitFor(() => expect(cmds).toContainEqual({ cmd: "outputs" }));
-    await voiceStatus({ outputs: [{ deviceId: "d-spk", label: "Speakers (Realtek)" }, { deviceId: "d-hp", label: "Headphones (USB)" }] });
+    await voiceStatus({
+      outputs: [
+        { deviceId: "d-spk", label: "Speakers (Realtek)" },
+        { deviceId: "d-hp", label: "Headphones (USB)" },
+        { deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" }, // Chromium adds the USB id
+      ],
+    });
     const pick = await screen.findByRole("combobox", { name: "Headphones for guests' voice" });
-    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) (the call plays here)" })).toBeDisabled();
+    // Warned about, still selectable: the checks on Turn on decide.
+    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) ⚠ the call plays here" })).toBeEnabled();
+    expect(within(pick).getByRole("option", { name: "Speakers (Logi USB Headset) (046d:0a64) ⚠ not headphones" })).toBeEnabled();
+    expect(within(pick).getByRole("option", { name: "Headphones (USB)" })).toBeEnabled();
     await userEvent.selectOptions(pick, "d-hp");
     await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
     expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: [`seat:${SEAT}`] });

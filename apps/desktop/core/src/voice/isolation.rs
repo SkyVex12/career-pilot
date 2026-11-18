@@ -56,8 +56,6 @@ pub enum Refusal {
     /// The device "them" is captured from: a guest would be transcribed and, through the
     /// meeting app's own capture of it, heard on the call.
     SameAsCall,
-    /// Not headphones or a headset: a loudspeaker reaches the microphone.
-    NotPrivate { form_factor: FormFactor },
     /// The test tone was heard in the call's capture or the microphone.
     ToneLeaked { loopback_ms: u32, mic_ms: u32 },
 }
@@ -69,9 +67,6 @@ impl Refusal {
             Self::SameAsCall => "Guests' voice needs other headphones than the device the call plays on: \
                  on that one it would reach the call and the transcript."
                 .into(),
-            Self::NotPrivate { .. } => "Guests' voice plays on headphones or a headset only: from a speaker \
-                 the microphone would pick it up."
-                .into(),
             Self::ToneLeaked { .. } => {
                 "The test tone on those headphones reached the call or the microphone, \
                  so guests' voice stays off. Turn them down or choose others."
@@ -81,15 +76,13 @@ impl Refusal {
     }
 }
 
-/// Rules 1 and 2. `voice` and `call` are cpal device ids (`wasapi:<endpoint id>`), already
-/// resolved: the default device's own id, never "default".
-pub fn check(voice: Option<&str>, call: Option<&str>, form_factor: FormFactor) -> Result<(), Refusal> {
+/// Rule 1. `voice` and `call` are cpal device ids (`wasapi:<endpoint id>`), already resolved:
+/// the default device's own id, never "default". What kind of device it is (headphones or
+/// not) is only a warning for the host, who may know better: the test tone decides.
+pub fn check(voice: Option<&str>, call: Option<&str>) -> Result<(), Refusal> {
     let Some(voice) = voice.filter(|v| !v.is_empty()) else { return Err(Refusal::NoDevice) };
     if call.is_some_and(|c| c.eq_ignore_ascii_case(voice)) {
         return Err(Refusal::SameAsCall);
-    }
-    if !form_factor.is_private() {
-        return Err(Refusal::NotPrivate { form_factor });
     }
     Ok(())
 }
@@ -225,22 +218,10 @@ mod tests {
     const SPEAKERS: &str = "wasapi:{0.0.0.00000000}.{bbbb}";
 
     #[test]
-    fn voice_needs_its_own_private_device() {
-        assert_eq!(check(None, Some(SPEAKERS), FormFactor::Headphones), Err(Refusal::NoDevice));
-        assert_eq!(
-            check(Some(HEADPHONES), Some(HEADPHONES), FormFactor::Headphones),
-            Err(Refusal::SameAsCall)
-        );
-        assert_eq!(
-            check(Some(HEADPHONES), Some(SPEAKERS), FormFactor::Speakers),
-            Err(Refusal::NotPrivate { form_factor: FormFactor::Speakers })
-        );
-        assert_eq!(
-            check(Some(HEADPHONES), Some(SPEAKERS), FormFactor::Unknown),
-            Err(Refusal::NotPrivate { form_factor: FormFactor::Unknown })
-        );
-        assert_eq!(check(Some(HEADPHONES), Some(SPEAKERS), FormFactor::Headset), Ok(()));
-        assert_eq!(check(Some(HEADPHONES), Some(SPEAKERS), FormFactor::Headphones), Ok(()));
+    fn voice_needs_another_device_than_the_call() {
+        assert_eq!(check(None, Some(SPEAKERS)), Err(Refusal::NoDevice));
+        assert_eq!(check(Some(HEADPHONES), Some(HEADPHONES)), Err(Refusal::SameAsCall));
+        assert_eq!(check(Some(HEADPHONES), Some(SPEAKERS)), Ok(()));
     }
 
     #[test]

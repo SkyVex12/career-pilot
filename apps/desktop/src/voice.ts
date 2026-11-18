@@ -3,9 +3,10 @@
 // JavaScript SDK): no native WebRTC in the app. The voice lives in the main window alone; both
 // windows drive it with `voice:cmd` events and show its `voice:status`.
 //
-// The host hears guests on one pair of headphones, and only after all three isolation rules
-// pass (core voice/isolation.rs): (1) not the device the call is captured from, (2) Windows says
-// headphones or a headset, checked in Rust by the device's name; (3) a 1 kHz tone played through
+// The host hears guests on the output device they pick, and only after both isolation checks
+// pass (core voice/isolation.rs): (1) not the device the call is captured from, checked in Rust
+// by the device's name (a device Windows doesn't call headphones is only warned about in the
+// picker: the host may know better); (2) a 1 kHz tone played through
 // the exact path guests' voice takes (an <audio> element routed with setSinkId) is heard in
 // neither the call's loopback nor the microphone, listened for in Rust. The element is routed
 // before anything plays; if routing fails, or the headphones go away, voice stops: it never
@@ -49,6 +50,12 @@ const CMD = "voice:cmd";
 const STATUS = "voice:status";
 
 /** Ask the main window's voice to do something (from either window). */
+/** A device's name as Windows gives it. Chromium appends a USB device's vendor:product id,
+ * "Speakers (Logi USB Headset) (046d:0a64)", which Windows' own name does not have. */
+export function windowsName(label: string): string {
+  return label.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, "").trim();
+}
+
 export function voiceCommand(c: VoiceCmd): Promise<void> {
   return emit(CMD, c);
 }
@@ -210,8 +217,8 @@ export class VoiceController {
     await this.outputs();
     const device = this.status.outputs.find((o) => o.deviceId === deviceId);
     if (!device) throw new Error("Those headphones are not there any more.");
-    await this.deps.rules(device.label); // rules 1 and 2
-    // Rule 3: listen as the call does while the tone plays through the voice's own path. The
+    await this.deps.rules(windowsName(device.label)); // check 1: not the call's device
+    // Check 2: listen as the call does while the tone plays through the voice's own path. The
     // listening's result is kept, failed or not, so nothing is left unhandled if playing fails.
     const heard = this.deps.listen(2_000).then(
       () => null,
