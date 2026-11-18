@@ -2044,8 +2044,8 @@ async fn voice_devices(state: State<'_, AppState>) -> Res<Vec<voice::VoiceDevice
         .map_err(|e| e.to_string())
 }
 
-/// Rules 1 and 2 for the output device the window names: another device than the call's own,
-/// and headphones or a headset. Err: why not, in words.
+/// Rule 1 for the output device the window names: another device than the call's own. Err:
+/// why not, in words.
 #[tauri::command]
 async fn voice_rules(state: State<'_, AppState>, name: String) -> Res<()> {
     let call = state.settings.lock().unwrap().output_device.clone();

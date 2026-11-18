@@ -4,7 +4,8 @@
 //! keeps it out of the call is here, in Rust, where the call's own devices are known:
 //!
 //! - `rules`: the chosen output device, found by the name the window shows for it, is not the
-//!   device the call is captured from, and Windows says it is headphones or a headset;
+//!   device the call is captured from. Whether Windows calls it headphones is only a warning
+//!   in the picker: the host may know better, and the tone below decides;
 //! - `listen`: while the window plays a test tone through the exact path guests' voice takes,
 //!   capture as the call does and say whether the tone came through.
 //!
@@ -20,7 +21,7 @@ pub struct VoiceDevice {
     pub id: String,
     pub name: String,
     pub form_factor: FormFactor,
-    /// Headphones or a headset (rule 2).
+    /// Headphones or a headset, as Windows says: anything else is warned about, not refused.
     pub private: bool,
     /// The device the call plays on and is captured from (rule 1): never for voice.
     pub call: bool,
@@ -44,14 +45,14 @@ pub fn devices(call_output: Option<&str>) -> Vec<VoiceDevice> {
         .collect()
 }
 
-/// Rules 1 and 2 for the output device the window calls `name` (its label in WebView2 is
-/// Windows' name for it). Exactly one device must have that name; anything else is refused.
+/// Rule 1 for the output device the window calls `name` (Windows' name for it): refused when
+/// it is the call's own device. A name Windows does not know is let through: the tone decides.
 pub fn rules(name: &str, call_output: Option<&str>) -> Result<(), Refusal> {
-    let all = devices(call_output);
-    let mut named = all.iter().filter(|d| d.name.eq_ignore_ascii_case(name.trim()));
-    let (Some(device), None) = (named.next(), named.next()) else { return Err(Refusal::NoDevice) };
     let call = capture::resolve(call_output, true);
-    isolation::check(Some(&device.id), call.as_deref(), device.form_factor)
+    for device in devices(call_output).iter().filter(|d| d.name.eq_ignore_ascii_case(name.trim())) {
+        isolation::check(Some(&device.id), call.as_deref())?;
+    }
+    Ok(())
 }
 
 /// Rule 3's listening half: the tone heard in the call's loopback and the microphone, in ms.

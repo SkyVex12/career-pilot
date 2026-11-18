@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
 import type { SeatInfo } from "@copilot/protocol";
 import { api, inTauri, rest, type MySeat, type VoiceDevice } from "./api";
-import { VOICE_OFF, onVoiceStatus, voiceCommand, type VoiceOutput, type VoiceStatus } from "./voice";
+import { VOICE_OFF, onVoiceStatus, voiceCommand, windowsName, type VoiceOutput, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
 import type { SentNote, SessionView } from "./session";
 import { usePolling } from "./usePolling";
@@ -477,7 +477,8 @@ function savedDevice(): string {
   }
 }
 
-/** Why a device cannot carry guests' voice, or null when it may (the checks still run). */
+/** What to warn about a device for guests' voice, or null. Only a warning: the host may pick
+ * it anyway, and the checks on Turn on decide. */
 export function deviceProblem(d: VoiceDevice): string | null {
   if (d.call) return "the call plays here";
   if (!d.private) return "not headphones";
@@ -486,7 +487,8 @@ export function deviceProblem(d: VoiceDevice): string | null {
 
 /** The window's output device, with what Windows says about it (matched by name). */
 function annotate(o: VoiceOutput, known: VoiceDevice[]): string | null {
-  const d = known.find((k) => k.name.toLowerCase() === o.label.trim().toLowerCase());
+  const name = windowsName(o.label).toLowerCase();
+  const d = known.find((k) => k.name.toLowerCase() === name);
   return d ? deviceProblem(d) : "not known to Windows";
 }
 
@@ -537,9 +539,9 @@ export function HostVoice({ s }: { s: SessionView }) {
               {status.outputs.map((o) => {
                 const problem = annotate(o, known);
                 return (
-                  <option key={o.deviceId} value={o.deviceId} disabled={problem !== null}>
+                  <option key={o.deviceId} value={o.deviceId}>
                     {o.label}
-                    {problem ? ` (${problem})` : ""}
+                    {problem ? ` ⚠ ${problem}` : ""}
                   </option>
                 );
               })}
