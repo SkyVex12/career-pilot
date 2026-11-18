@@ -221,6 +221,7 @@ impl Engine {
     /// "Coding mode"). Its first word is timed from now, as a forced question's is.
     pub async fn screenshot(
         &self,
+        question_id: Uuid,
         images: Vec<ScreenImage>,
         answer_mode: AnswerMode,
         language: Option<String>,
@@ -229,7 +230,7 @@ impl Engine {
         let language = language.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
         self.send(ClientMessage::Screenshot(Screenshot {
             images,
-            question_id: None,
+            question_id: Some(question_id),
             answer_mode: Some(answer_mode),
             language,
             default_language: None,

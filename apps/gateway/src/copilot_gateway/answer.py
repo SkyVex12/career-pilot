@@ -170,6 +170,7 @@ class Question:
     # A screenshot question (coding mode): its shots, and the fast pass's reading of them.
     screen: "ScreenAsk | None" = None
     reading: dict[str, Any] | None = None
+    code_unneeded: bool = False  # its code pass was stopped: the screen needs no code
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,8 @@ class AnswerEngine:
             "deep_light": 0,
         }  # fmt: skip
         self._background: set[asyncio.Task[None]] = set()
+        # The last screen's problem, for the follow-ups after it (copilot_core.screen.Problem).
+        self.problem: screen.Problem | None = None
 
     # Question lifecycle, driven by the turn detector and client messages.
 
@@ -314,6 +317,10 @@ class AnswerEngine:
             _, old = self.questions.popitem(last=False)
             self._cancel_tasks(old)
         self.start_pass(q, "fast")
+        if q.screen is not None and self.host.settings.screen_code_start == "with_fast":
+            # The code pass at once, reading the screen itself: the reading takes 1 to 3 s,
+            # and the deep model's first token 2 to 6 s more (2026-11-18).
+            self.start_pass(q, "deep")
 
     def confirm(
         self,
@@ -396,8 +403,13 @@ class AnswerEngine:
                 **({"reading": reading} if self.host.store_text() else {}),
             }
         )
-        if screen.needs_code(reading) and not (q.superseded or q.cancelled):
-            self.start_pass(q, "deep")
+        if screen.needs_code(reading):
+            if not (q.superseded or q.cancelled):
+                self.start_pass(q, "deep")
+        elif (task := q.tasks.get("deep")) is not None and not task.done():
+            # Started with the shot, and nothing on the screen needs it.
+            q.code_unneeded = True
+            task.cancel()
 
     def release(self, qid: UUID) -> None:
         """The detector confirmed a held question (the session has just sent it): what its
@@ -562,6 +574,8 @@ class AnswerEngine:
             tier = done_info.service_tier if done_info else "standard"
             if pass_ == "fast":
                 q.fast_text = "".join(state["parts"])
+            if q.screen is not None:
+                self._keep_problem(q, pass_, "".join(state["parts"]))
             lat: dict[str, Any] = latency(first_token_ms)
             m = self._match_result(q) if pass_ == "fast" else None
             if m is not None and m.similarity is not None:
@@ -643,8 +657,14 @@ class AnswerEngine:
                     return
             qhash = question_hash(q.text)
             # A follow has the question's text but continues the user: never the cache. Nor
-            # a screenshot: its text says what the screen holds, not what it asks.
-            reuse = cacheable(q.text) and q.qtype != "follow" and q.screen is None
+            # a screenshot: its text says what the screen holds, not what it asks; nor a
+            # question while a problem is open: "optimize it" means that problem.
+            reuse = (
+                cacheable(q.text)
+                and q.qtype != "follow"
+                and q.screen is None
+                and self.open_problem() is None
+            )
             # A paragraph deep answer is cached apart from a bulleted one.
             style = host.answer_style()
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
@@ -778,6 +798,8 @@ class AnswerEngine:
             reason = "held_discarded"
         elif q.cancelled:
             reason = "speculative"
+        elif q.code_unneeded:
+            reason = "code_unneeded"
         else:
             reason = "stopped"
         entry: dict[str, Any] = {
@@ -840,14 +862,47 @@ class AnswerEngine:
             return screen.code_pass(
                 ctx.user_name, ask.shots, q.reading, max_tokens=s.screen_code_max_tokens, **common
             )
+        problem = self.open_problem()
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.
             qtype = None if q.held else q.qtype
-            return prompts.fast_pass(ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory)
+            follow = screen.follow_up(problem, ctx.user_name, deep=False) if problem else None
+            return prompts.fast_pass(
+                ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory, problem=follow
+            )
         return prompts.deep_pass(
             ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory,
             style=self.host.answer_style(), shown=q.fast_text,
+            problem=screen.follow_up(problem, ctx.user_name, deep=True) if problem else None,
+            images=screen.shot_blocks(problem.shots) if problem else (),
         )  # fmt: skip
+
+    def open_problem(self) -> "screen.Problem | None":
+        """The last screen's problem while follow-ups may be about it (`screen_followup_s`)."""
+        p = self.problem
+        limit = self.host.settings.screen_followup_s
+        if p is None or not limit or time.monotonic() - p.at > limit:
+            return None
+        return p
+
+    def _keep_problem(self, q: Question, pass_: str, text: str) -> None:
+        """A screenshot's answer is in: its problem is the one follow-ups are about. A screen
+        with nothing readable keeps the problem before it."""
+        if q.superseded or q.cancelled or q.screen is None:
+            return
+        if q.reading is not None and not q.reading.get("tasks"):
+            return
+        p = self.problem
+        if pass_ == "fast" or p is None or p.qid != q.qid:
+            p = screen.Problem(
+                qid=q.qid, shots=q.screen.shots, reading=q.reading, answer="", code="", at=q.t0
+            )
+            self.problem = p
+        p.reading = q.reading
+        if pass_ == "fast":
+            p.answer = text
+        else:
+            p.code = text
 
     def deep_job(self, q: Question) -> str:
         """Which route writes the detailed answer (`deep_routing`): "deep" (the deep model)
@@ -858,6 +913,8 @@ class AnswerEngine:
         goals questions ("other") get the deep model."""
         if self.host.settings.deep_routing != "by_need":
             return "deep"
+        if self.open_problem() is not None and q.qtype not in ("behavioral", "small_talk"):
+            return "deep"  # a follow-up may need new code: the deep model writes it
         if q.depth in ("deep", "light"):
             return "deep" if q.depth == "deep" else "deep_light"
         return "deep" if q.qtype in DEEP_BY_TYPE else "deep_light"

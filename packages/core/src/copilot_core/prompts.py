@@ -11,7 +11,7 @@ Blocks 1 to 3 go in `system`; 4 to 6 in the user turn, so the conversation, whic
 every line, never touches the cached prefix.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
@@ -589,14 +589,19 @@ def fast_pass(
     qtype: str | None,
     max_tokens: int,
     memory: Sequence[str] = (),
+    problem: str | None = None,
 ) -> LLMRequest:
     """`qtype` is None for a speculative pass started before the detector typed the question.
     `memory` is what live search found in time (company workspaces); usually none.
-    `transcript` is the conversation so far (a string: the recent lines alone)."""
+    `transcript` is the conversation so far (a string: the recent lines alone). `problem` is
+    the last screen's coding problem and its rule (copilot_core.screen.follow_up), while one
+    is open."""
     asked = f"Question ({qtype}): {question}" if qtype else f"Question: {question}"
     parts: list[str] = []
     if memory:
         parts.append(_data("memory", "\n".join(memory)))
+    if problem:
+        parts.append(problem)
     parts += [*_call_blocks(transcript), asked]
     user = "\n\n".join(parts)
     return LLMRequest(system=_system(FAST_SYSTEM, ctx), content=user, max_tokens=max_tokens)
@@ -612,12 +617,17 @@ def deep_pass(
     *,
     style: str = "bullets",
     shown: str = "",
+    problem: str | None = None,
+    images: Sequence[Mapping[str, Any]] = (),
 ) -> LLMRequest:
     """`style` is the detailed answer's (DEEP_STYLES); `shown` the talking points already on
-    screen, which the deep pass builds on and never restates."""
+    screen, which the deep pass builds on and never restates. `problem` is the last screen's
+    coding problem and its rule while one is open, and `images` its shots, put first."""
     parts: list[str] = []
     if memory:
         parts.append(_data("memory", "\n".join(memory)))
+    if problem:
+        parts.append(problem)
     parts += _call_blocks(transcript)
     parts.append(_data("shown_cues", shown.strip() or "(none yet)"))
     shapes = {**DEEP_SHAPES, **WORKPLACE_SHAPES} if ctx.at_work else DEEP_SHAPES
@@ -631,9 +641,11 @@ def deep_pass(
             "Citations and [~]", "Citations"
         )
     parts.append(f"Question ({qtype}): {question}\nShape: {shape}\n{how}")
-    return LLMRequest(
-        system=_system(DEEP_SYSTEM, ctx), content="\n\n".join(parts), max_tokens=max_tokens
+    text = "\n\n".join(parts)
+    content: str | list[Mapping[str, Any]] = (
+        [*images, {"type": "text", "text": text}] if images else text
     )
+    return LLMRequest(system=_system(DEEP_SYSTEM, ctx), content=content, max_tokens=max_tokens)
 
 
 # Standups and meetings are group calls, but every remote speaker is one "Them" in the

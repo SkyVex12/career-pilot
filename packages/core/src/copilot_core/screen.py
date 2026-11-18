@@ -261,7 +261,9 @@ _FAST_MODE = {
 }
 _FAST_CODE = {
     "interview": (
-        "**Say first:** 1 or 2 clarifying questions or assumptions to state. **Approach:** 2 "
+        "**Say first:** 1 or 2 clarifying questions on the constraints (input size, empty or "
+        "duplicate input, what to return when there is no answer) or assumptions to state. "
+        "**Approach:** 2 "
         "to 4 short lines, as {user_name} would explain it. **Complexity:** time and space. "
         "**Edge cases:** one line."
     ),
@@ -273,15 +275,17 @@ _FAST_FIX = "**Fix:** one line on the change; the corrected code comes from the 
 
 CODE_SYSTEM = """You write the code for the coding tasks on {user_name}'s screen{situation}. \
 The user turn holds the screenshots (in order; shots taken while scrolling may overlap, and \
-other files are told apart by their window titles) and <reading>, a first pass's reading of \
-them: each task's kind, language, starter signature and approach.
+other files are told apart by their window titles), and <reading>: a first pass's reading of \
+them (each task's kind, language, starter signature and approach), or none yet, when you read \
+the tasks yourself, in screen order, with the same numbers.
 
-For each task in <reading> whose kind is code, fix, complete or output, in order:
+For each task whose kind is code, fix, complete or output, in screen order:
 - code: one ```<language> block with the complete solution in the task's language, using the \
-approach in <reading> (another one only if that one is wrong or too slow for the \
-constraints). Fill the starter code exactly as shown: the same class, function name, \
-parameters, their order and types, and its imports. No main, no input reading, no printing, \
-no example calls, unless the starter code reads input or the task asks for a full program.
+approach in <reading> when there is one (another only if that one is wrong or too slow for \
+the constraints), else the approach the constraints need. Fill the starter code exactly as \
+shown: the same class, function name, parameters, their order and types, and its imports. \
+No main, no input reading, no printing, no example calls, unless the starter code reads input \
+or the task asks for a full program.
 - fix: the corrected code. When the code is over about 30 lines, only the changed lines, with \
 a line of context around them and a comment on what changed.
 - complete: the code, in the given code's style and names.
@@ -295,14 +299,20 @@ for the other tasks, no preamble, no closing line."""
 
 _CODE_MODE = {
     "interview": (
-        "A call is on: {user_name} types this while talking. A short comment at each step "
-        "says what it does, in the order they would explain it. After the block, "
-        "**Complexity:** time and space in one line. What the interviewer asked in "
-        "<transcript> (a constraint, the language, no extra memory) comes before the screen."
+        "A call is on: {user_name} types this while talking and must be able to explain every "
+        "line. A short comment at each step, and on every line whose reason is not obvious (an "
+        "index or boundary, an early return, a condition such as first > last), in the order "
+        "they would explain it. The checks the language expects, without changing the "
+        "signature (C: check what malloc returns; empty or missing input). After the block, "
+        "**Walk-through:** 2 to 4 short lines, each a condition or edge case in this code and "
+        "what it means, in words {user_name} can say when asked; then **Complexity:** time "
+        "and space in one line. What the interviewer asked in <transcript> (a constraint, the "
+        "language, no extra memory) comes before the screen."
     ),
     "assessment": (
-        "An online assessment: the code first, ready to paste, with few comments. After the "
-        "block, **Complexity:** time and space in one line. No other explanation."
+        "An online assessment: the code first, ready to paste, with few comments, and the "
+        "checks the language expects (C: what malloc returns). After the block, "
+        "**Complexity:** time and space in one line. No other explanation."
     ),
 }
 
@@ -323,6 +333,77 @@ def _system(
         "{user_name}", user_name
     )
     return [SystemBlock(text, cache=True)]
+
+
+# Follow-ups (phase 3): the last screen's problem stays open for the questions after it,
+# spoken or typed ("optimize it", "what about duplicates?", "write it in Java"). The fast pass
+# gets it as text; the deep pass gets the shots too, to read the statement again.
+
+_PROBLEM_MAX_CHARS = 8000
+
+
+@dataclass
+class Problem:
+    """The last screen's problem: its shots, what was read, and what the user was given."""
+
+    qid: Any
+    shots: tuple[Shot, ...]
+    reading: dict[str, Any] | None
+    answer: str
+    code: str
+    at: float  # monotonic time of the shot
+
+    def text(self) -> str:
+        parts: list[str] = []
+        tasks: list[dict[str, Any]] = (self.reading or {}).get("tasks") or []
+        if tasks:
+            lines: list[str] = []
+            for t in tasks:
+                bits = [f"{t.get('n')}. {t.get('kind')}"]
+                if t.get("title"):
+                    bits.append(str(t["title"]))
+                if t.get("language"):
+                    bits.append(f"in {t['language']}")
+                if t.get("signature"):
+                    bits.append(f"signature: {t['signature']}")
+                if t.get("approach"):
+                    bits.append(f"approach: {t['approach']}")
+                lines.append(", ".join(bits))
+            parts.append("Tasks on the screen:\n" + "\n".join(lines))
+        if self.answer.strip():
+            parts.append("The answer shown:\n" + self.answer.strip())
+        if self.code.strip():
+            parts.append("The code given:\n" + self.code.strip())
+        return "\n\n".join(parts)[:_PROBLEM_MAX_CHARS]
+
+
+FOLLOW_UP_FAST = (
+    "<last_problem> is the coding problem on {user_name}'s screen a moment ago and what they "
+    "were given for it. If the question is about it (a follow-up: optimize it, another case, "
+    "another language, why a line or condition is there), the cues are about that problem and "
+    "that code: what changes and why, the new complexity; no code. Otherwise ignore it."
+)
+FOLLOW_UP_DEEP = (
+    "<last_problem> is the coding problem on {user_name}'s screen a moment ago (its shots are "
+    "above) and what they were given for it. If the question is about it, answer about that "
+    "problem and that code. If it asks for changed code (another language, a faster or "
+    "lower-memory version, a case handled, a fix), give the whole code again in one "
+    "```<language> block, filling the same signature in the language asked for, a short "
+    "comment where the change is, then **What changed:** one line and **Complexity:** one "
+    "line; this replaces the shape and style below. If it asks why or how, explain from that "
+    "exact code, line by line where it helps, without code. Otherwise ignore it."
+)
+
+
+def follow_up(problem: Problem, user_name: str, deep: bool) -> str:
+    """The block and its rule, for a live question's prompt while a problem is open."""
+    rule = (FOLLOW_UP_DEEP if deep else FOLLOW_UP_FAST).replace("{user_name}", user_name)
+    return data_block("last_problem", problem.text()) + "\n" + rule
+
+
+def shot_blocks(shots: Sequence[Shot]) -> list[dict[str, Any]]:
+    """The shots as content blocks, each after a line naming it."""
+    return _shot_blocks(shots)
 
 
 def _shot_blocks(shots: Sequence[Shot]) -> list[dict[str, Any]]:

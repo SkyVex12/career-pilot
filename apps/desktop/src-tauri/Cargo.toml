@@ -34,7 +34,7 @@ tauri-plugin-updater = { version = "2", optional = true }
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v7"] }
 # Coding mode's shots (shots.rs): shrink and encode them as lossless WebP. Pure Rust.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 base64 = "0.22"

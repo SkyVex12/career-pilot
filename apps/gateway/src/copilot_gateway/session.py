@@ -149,6 +149,8 @@ class SessionInfo:
     resume_is_base: bool = False
     # How the detailed answer is written: "bullets" or "paragraph" (answer_style.set).
     answer_style: str = "bullets"
+    # An online test with no call (coding mode): no audio, nothing transcribed.
+    no_call: bool = False
 
 
 @dataclass
@@ -234,7 +236,7 @@ class Session:
         self.stt: ResilientSTT | None = None
         # The user's own microphone, transcribed live as a second stream (me_stt).
         self.stt_me: ResilientSTT | None = None
-        if svc.stt_providers:
+        if svc.stt_providers and not info.no_call:
             self.stt = self._stt_stream(self._on_stt, label="them")
             if self.settings.me_stt:
                 self.stt_me = self._stt_stream(self._on_me_stt, svc.stt_me_providers, label="me")
@@ -1224,6 +1226,7 @@ class Session:
             # The client sends the mic's speech audio (session.ready me_audio): a client that
             # takes the call over later (GET /sessions/live) needs to know.
             "me_audio": "1" if self.me_audio else "0",
+            "no_call": "1" if self.info.no_call else "0",
             "task_id": self.svc.task_id,
         }
 
@@ -1792,6 +1795,7 @@ class Session:
             )
             return
         self.last_force = now
+        self.last_speech = now  # a typed question is activity: the session is in use
         if text and is_answer_command(text):
             text = None  # "answer" typed into the Ask box: the same as Enter on an empty box
         if not text and (taken := self.turns.take_over()) is not None:
@@ -1857,6 +1861,9 @@ class Session:
             self.error("bad_message", f"question {qid} already exists")
             return
         self.last_screenshot = now
+        # Activity, as speech is: a coding session may go 10 minutes without a word
+        # (2026-11-18: one ended as idle mid-problem, between screenshots).
+        self.last_speech = now
         ask = ScreenAsk(
             shots=shots,
             answer_mode=msg.answer_mode or "interview",
@@ -2373,6 +2380,7 @@ class SessionManager:
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
             answer_style=msg.answer_style or "bullets",
+            no_call=bool(msg.no_call),
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -2479,6 +2487,7 @@ class SessionManager:
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
             answer_style=state.get("answer_style") or "bullets",
+            no_call=state.get("no_call") == "1",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

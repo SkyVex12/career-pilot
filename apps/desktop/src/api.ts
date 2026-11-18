@@ -126,6 +126,12 @@ export type HotkeyAction =
 /** Coding mode's answer mode: a call is on (say it, then type it), or an online test (paste it). */
 export type CodingMode = "interview" | "assessment";
 
+/** The shots one screenshot question was asked with (lib.rs `SentShots`). */
+export interface SentShots {
+  question_id: string;
+  shots: ShotView[];
+}
+
 /** A shot waiting in the coding tray (src-tauri/src/shots.rs `ShotView`). */
 export interface ShotView {
   id: number;
@@ -240,6 +246,8 @@ export interface StartRequest {
   store_transcript: boolean;
   /** How the detailed answer is written (the Session tab). */
   answer_style?: AnswerStyle;
+  /** An online test with no call (coding mode): no audio, nothing transcribed. */
+  no_call?: boolean;
 }
 
 /** src-tauri release.rs UpdateState (release builds). */
@@ -365,6 +373,7 @@ export const api = {
         platform: live.platform ?? "",
         next_frame: [Math.max(0, live.next_frame.them), Math.max(0, live.next_frame.me)],
         me_audio: live.me_audio,
+        no_call: live.no_call ?? false,
         elapsed_ms: live.started_at ? Math.max(0, Date.now() - Date.parse(live.started_at)) : 0,
       },
     }),
@@ -376,6 +385,8 @@ export const api = {
   codingAddShot: () => invoke<void>("coding_add_shot"),
   codingSolve: () => invoke<void>("coding_solve"),
   codingShots: () => invoke<ShotView[]>("coding_shots"),
+  /** The shots of the last problems sent, by question, for their cards. */
+  codingSentShots: () => invoke<SentShots[]>("coding_sent_shots"),
   codingRemoveShot: (id: number) => invoke<void>("coding_remove_shot", { id }),
   setCodingPrefs: (mode: CodingMode, language: string) => invoke<void>("set_coding_prefs", { mode, language }),
   /** A suggested reply to what was just said (or to `text`), for a remark that is not a question. */
@@ -435,6 +446,9 @@ export interface Numbered {
 /** The coding tray changed; and what went wrong with a hotkey's shot. */
 export function onShots(handler: (shots: ShotView[]) => void): Promise<UnlistenFn> {
   return listen<ShotView[]>("copilot://coding-shots", (e) => handler(e.payload));
+}
+export function onShotsSent(handler: (sent: SentShots) => void): Promise<UnlistenFn> {
+  return listen<SentShots>("copilot://coding-sent", (e) => handler(e.payload));
 }
 export function onShotError(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("copilot://coding-error", (e) => handler(e.payload));
@@ -690,6 +704,8 @@ export interface LiveSession {
   connected: boolean;
   next_frame: { them: number; me: number };
   me_audio: boolean;
+  /** An online test with no call (coding mode); absent from older stages. */
+  no_call?: boolean;
 }
 
 export interface Segment {
