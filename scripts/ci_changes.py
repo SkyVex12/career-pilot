@@ -71,6 +71,7 @@ AREAS: dict[str, tuple[str, ...]] = {
     "typescript": (
         "apps/desktop/src/",
         "apps/desktop/tests/",
+        "apps/desktop/scripts/",
         "apps/desktop/package.json",
         "apps/desktop/index.html",
         "apps/desktop/vite.config.ts",
@@ -103,6 +104,7 @@ NOTHING = (".md", ".gitignore")
 NOTHING_PREFIXES = (
     "docs/",
     ".github/workflows/release-desktop.yml",
+    ".github/workflows/desktop-macos.yml",  # its own PR/main workflow tests native Mac builds
     ".gitattributes",
     ".editorconfig",
     "LICENSE",

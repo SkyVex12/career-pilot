@@ -47,10 +47,20 @@ export function showSwitch(profiles: Profile[]): boolean {
   return profiles.some((p) => !p.me);
 }
 
-export function useProfiles(ready: boolean, saved: string | null, account: string) {
+export function useProfiles(ready: boolean, saved: string | null, account: string, onChange?: () => void) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [current, setCurrent] = useState<string | null>(saved);
-  useEffect(() => setCurrent(saved), [saved]);
+  const currentRef = useRef(current);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const applyCurrent = useCallback((next: string | null) => {
+    if (next === currentRef.current) return;
+    // Drop the old profile's call/preset before remounting its screens with the new profile.
+    onChangeRef.current?.();
+    currentRef.current = next;
+    setCurrent(next);
+  }, []);
+  useEffect(() => applyCurrent(saved), [saved, applyCurrent]);
   // Bumped on every account change, so a list loaded for the previous account is dropped.
   const generation = useRef(0);
 
@@ -63,7 +73,7 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
       setProfiles(out.items);
       if (isStale(out.items, current)) {
         await api.setProfile(null);
-        setCurrent(null);
+        applyCurrent(null);
       }
     } catch (e) {
       if (gen !== generation.current) return;
@@ -73,11 +83,13 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
       if (!refusesProfile(String(e))) return;
       setProfiles([]);
       if (current !== null) {
-        await api.setProfile(null).catch(() => undefined);
-        setCurrent(null);
+        try {
+          await api.setProfile(null);
+          applyCurrent(null);
+        } catch { /* A running call keeps its profile. */ }
       }
     }
-  }, [ready, current]);
+  }, [ready, current, applyCurrent]);
 
   // Signed out, or another account signed in: forget the old account's profiles, then load.
   useEffect(() => {
@@ -90,7 +102,7 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
     const me = profiles.find((p) => p.me);
     const next = id === null || id === me?.id ? null : id;
     await api.setProfile(next);
-    setCurrent(next);
+    applyCurrent(next);
   };
 
   const state: ProfileState = { profiles, current, here: hereOf(profiles, current) };

@@ -1,6 +1,7 @@
 // Form fields: the label above, a hint, and an inline error tied to the control.
-import { cloneElement, forwardRef, isValidElement, useId, type InputHTMLAttributes, type ReactElement, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { cloneElement, forwardRef, isValidElement, useId, type InputHTMLAttributes, type ReactElement, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { cx } from "./Button";
+import { HelpTip } from "./Feedback";
 
 export function Field({
   label,
@@ -10,9 +11,13 @@ export function Field({
   children,
   className,
   inline,
+  hideLabel,
+  hintMode = "inline",
 }: {
   label: ReactNode;
   hint?: ReactNode;
+  /** Compact explanatory help beside the title; validation stays inline. */
+  hintMode?: "inline" | "tooltip";
   error?: string | null;
   optional?: boolean;
   /** The control. It gets the id, aria-describedby and aria-invalid. */
@@ -20,6 +25,8 @@ export function Field({
   className?: string;
   /** Label beside the control (checkbox rows, short controls). */
   inline?: boolean;
+  /** Keep an accessible name without a visible heading above a compact control. */
+  hideLabel?: boolean;
 }) {
   const id = useId();
   const hintId = hint ? `${id}-hint` : undefined;
@@ -28,12 +35,14 @@ export function Field({
   const control = isValidElement(children)
     ? cloneElement(children, { id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })
     : children;
+  const help = hint && hintMode === "tooltip" && !hideLabel;
+  const heading = <label className={cx("ui-field-label", hideLabel && "ui-visually-hidden")} htmlFor={id}>
+    {label}
+    {optional && <span className="ui-field-optional"> (optional)</span>}
+  </label>;
   return (
     <div className={cx("ui-field", inline && "ui-field-inline", error && "has-error", className)}>
-      <label className="ui-field-label" htmlFor={id}>
-        {label}
-        {optional && <span className="ui-field-optional"> (optional)</span>}
-      </label>
+      {help ? <div className="ui-field-heading">{heading}<HelpTip label={label}>{hint}</HelpTip></div> : heading}
       <div className="ui-field-control">{control}</div>
       {error && (
         <p className="ui-field-error" id={errorId} role="alert">
@@ -41,7 +50,7 @@ export function Field({
         </p>
       )}
       {hint && (
-        <p className="ui-field-hint" id={hintId}>
+        <p className={help ? "ui-visually-hidden" : "ui-field-hint"} id={hintId}>
           {hint}
         </p>
       )}
@@ -57,15 +66,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   return <textarea ref={ref} className={cx("ui-input", "ui-textarea", className)} {...rest} />;
 });
 
-export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...rest }, ref) {
-  return (
-    <span className={cx("ui-select-wrap", className)}>
-      <select ref={ref} className="ui-input ui-select" {...rest}>
-        {children}
-      </select>
-    </span>
-  );
-});
+export { Select } from "./Select";
 
 export function Checkbox({
   checked,

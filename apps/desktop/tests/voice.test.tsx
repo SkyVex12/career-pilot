@@ -1,5 +1,5 @@
 // Guest seats' voice in the window (src/voice.ts): the host hears guests on the device they
-// picked, routed before anything plays, never on another device; a guest's microphone opens
+// selected for the call, routed before anything plays; a guest's microphone opens
 // only while they talk. LiveKit and the audio elements are faked.
 import { describe, expect, it, vi } from "vitest";
 import { VoiceController, windowsName, type VoiceCmd, type VoiceDeps, type VoiceStatus } from "../src/voice";
@@ -60,6 +60,7 @@ function setup(over: Partial<VoiceDeps> = {}) {
       return a as never;
     },
     devices: async () => devices,
+    callOutput: vi.fn(async () => ({ id: "wasapi:hp", name: HP.label, form_factor: "headphones" as const, private: true, call: true })),
     unlockLabels: vi.fn(async () => undefined),
     hostToken: vi.fn(async () => ({ url: "wss://lk", token: "host-token" })),
     guestToken: vi.fn(async () => ({ url: "wss://lk", token: "guest-token" })),
@@ -83,7 +84,7 @@ function setup(over: Partial<VoiceDeps> = {}) {
 }
 
 const track = () => ({ kind: "audio", attach: vi.fn(), detach: vi.fn(() => []) });
-const host: VoiceCmd = { cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: ["seat:a"] };
+const host: VoiceCmd = { cmd: "host_on", sessionId: "s1", allowed: ["seat:a"] };
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("the host's voice", () => {
@@ -138,27 +139,22 @@ describe("the host's voice", () => {
     expect(t.room.disconnect).toHaveBeenCalled();
   });
 
-  it("uses Windows' default output when the headphones used last aren't there", async () => {
-    const t = setup();
-    await t.c.handle({ ...host, deviceId: "d-gone" } as VoiceCmd);
-    expect(t.log).toEqual(["route "]);
-    expect(t.c.status).toMatchObject({ host: "on", device: "" });
-    // The default output is always there: a device change never stops it.
-    t.setDevices([HP]);
-    t.deviceChange();
-    await flush();
-    expect(t.c.status.host).toBe("on");
+  it("routes to the call's USB headset even when Windows calls it speakers", async () => {
+    const t = setup({ callOutput: async () => ({ id: "wasapi:logi", name: "Speakers (Logi USB Headset)", form_factor: "speakers", private: false, call: true }) });
+    t.setDevices([DEFAULT, HP, { ...HP, deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" } as MediaDeviceInfo]);
+    await t.c.handle(host);
+    expect(t.log).toEqual(["route d-logi"]);
+    expect(t.c.status).toMatchObject({ host: "on", device: "d-logi" });
   });
 
-  it("moves every guest to another device while it plays", async () => {
-    const t = setup();
+  it.each(["missing", "unavailable", "ambiguous"])("does not guess another output when the call device is %s", async (problem) => {
+    const t = setup(problem === "missing" ? { callOutput: async () => null } : {});
+    if (problem === "unavailable") t.setDevices([DEFAULT]);
+    if (problem === "ambiguous") t.setDevices([DEFAULT, HP, { ...HP, deviceId: "duplicate" } as MediaDeviceInfo]);
     await t.c.handle(host);
-    t.room.emit("trackSubscribed", track(), {}, { identity: "seat:a" });
-    await flush();
-    t.log.length = 0;
-    await t.c.handle({ cmd: "host_device", deviceId: "" });
-    expect(t.log).toEqual(["route "]);
-    expect(t.c.status).toMatchObject({ host: "on", device: "" });
+    expect(t.c.status).toMatchObject({ host: "off", error: expect.stringContaining("Check Call audio") });
+    expect(t.room.connect).not.toHaveBeenCalled();
+    expect(t.log).toEqual([]);
   });
 
   it("lists fixed devices only, reading their names first if WebView2 hides them", async () => {

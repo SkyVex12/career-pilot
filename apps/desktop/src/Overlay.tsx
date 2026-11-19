@@ -13,7 +13,8 @@
 // thumbs, the typed question (Ask) and the reply button (Answer) are as before.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, inTauri, onOverlayPrefs, type OverlayPrefs } from "./api";
+import { api, inTauri, onOverlayPrefs, rest, type OverlayPrefs, type SessionDetail } from "./api";
+import { Icon } from "./ui/Icon";
 import { AnswerText } from "./AnswerText";
 import { CodeAnswer } from "./CodeAnswer";
 import { CodingBar, shotTitle } from "./CodingBar";
@@ -148,7 +149,7 @@ const STATUS_ICON: Record<string, string> = { ok: "●", degraded: "▲", reconn
 export function StatusBadge({ s }: { s: SessionView }) {
   const b = badge(s);
   return (
-    <span className={`ov-status ov-status-${b.state}`} role="status" title={b.text} data-tauri-drag-region>
+    <span className={`ov-status ov-status-${b.state}`} role="status" title={b.text} data-native-drag-region>
       <span className="ov-status-icon" aria-hidden="true">
         {STATUS_ICON[b.state]}
       </span>
@@ -183,26 +184,16 @@ export default function Overlay() {
   const host = s.seat?.hostName ?? "";
   return (
     <div className={cx("ov", compact && "is-compact")} style={{ "--ov-alpha": opacity } as CSSProperties}>
-      <header className="ov-head" data-tauri-drag-region>
+      <header className="ov-head" data-native-drag-region>
         <StatusBadge s={s} />
         {!guest && <GuestsButton s={s} />}
         {!guest && <VoiceMute s={s} />}
         {!guest && <ScreenChip s={s} />}
-        <span className="ov-speaking" data-tauri-drag-region>
+        <span className="ov-speaking" data-native-drag-region>
           {s.speaking.them && <span className="ov-pill">them</span>}
           {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}
         </span>
-        <span className="ov-spacer" data-tauri-drag-region />
-        <ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />
-        <IconButton
-          label="Drag to resize"
-          icon="⤡"
-          size="sm"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            if (inTauri) getCurrentWindow().startResizeDragging("SouthEast");
-          }}
-        />
+        <span className="ov-spacer" data-native-drag-region />
         <OverlayMenu
           opacity={opacity}
           onOpacity={setOpacityLive}
@@ -211,9 +202,12 @@ export default function Overlay() {
           clickThrough={clickThrough}
           hotkeys={hotkeys}
           running={s.running}
+          controls={<ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />}
         />
-        <IconButton label="Minimize overlay" icon="–" size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
-        <IconButton label="Hide overlay" icon="✕" size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
+        <IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
+        {guest
+          ? <IconButton label="Hide overlay" icon={<Icon name="close" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
+          : <OverlayPower running={s.running} sessionId={s.sessionId} />}
       </header>
       {clickThrough && (
         <div className="ov-clickthrough" role="status">
@@ -250,12 +244,81 @@ export default function Overlay() {
       ) : (
         <>
           <NotesLane s={s} dispatch={dispatch} />
-          <CodingBar running={s.running} />
+          <CodingBar running={s.running} collapsible />
           <AskBox disabled={!s.running} />
         </>
       )}
       <span className="ov-grip" aria-hidden="true" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
     </div>
+  );
+}
+
+function OverlayPower({ running, sessionId }: { running: boolean; sessionId: string | null }) {
+  const [ending, setEnding] = useState(false);
+  const [context, setContext] = useState<Pick<SessionDetail, "mode" | "store_transcript"> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEnding(false);
+    setError(null);
+  }, [running, sessionId]);
+
+  useEffect(() => {
+    setContext(null);
+    if (!ending || !sessionId) return;
+    let current = true;
+    // The host's transcript choice is kept by the server; it is not part of the overlay feed.
+    rest.session(sessionId).then((detail) => {
+      if (current) setContext(detail);
+    }).catch(() => undefined);
+    return () => { current = false; };
+  }, [ending, sessionId]);
+
+  const activate = async () => {
+    setError(null);
+    if (running) {
+      setEnding(true);
+      return;
+    }
+    try {
+      if (inTauri) await api.openMainCall();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <>
+      <IconButton
+        label={running ? "End call" : "Return to call setup"}
+        icon={<Icon name="power" size={16} />}
+        size="sm"
+        className="ov-power"
+        onClick={() => void activate()}
+      />
+      {error && <span className="ov-power-error" role="alert">{error}</span>}
+      <ConfirmDialog
+        key={sessionId ?? "inactive"}
+        open={ending}
+        onOpenChange={setEnding}
+        title="End this call?"
+        danger={false}
+        cancelLabel="Keep going"
+        confirmLabel="Summarize and end"
+        onConfirm={() => api.endSession(true)}
+        secondaryAction={{
+          label: context?.store_transcript ? "End, transcript only" : "End without a summary",
+          onConfirm: () => api.endSession(false),
+        }}
+      >
+        {context?.mode === "standup"
+          ? "Summarize if you will need this later: the standup report and your commitments feed the next standup."
+          : context?.store_transcript
+            ? "Summarize if you will need this context later, as with standups and recurring meetings. Otherwise keep the transcript only."
+            : "Summarize if you will need this context later, as with standups and recurring meetings. Otherwise end without a summary."}
+        {context?.store_transcript === false && " The transcript is not being stored for this call, so without a summary only its length is kept."}
+      </ConfirmDialog>
+    </>
   );
 }
 
@@ -362,7 +425,7 @@ export function ConversationView({
   }
 
   const toCard = (id: string) => {
-    const el = answersPane.current?.querySelector(`[data-q="${id}"]`);
+    const el = Array.from(answersPane.current?.querySelectorAll<HTMLElement>("[data-q]") ?? []).find((card) => card.dataset.q === id);
     el?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
   const transcriptSize = `${blocks.length}:${blocks.reduce((n, b) => n + blockText(b).length, 0)}`;
@@ -517,7 +580,9 @@ function OverlayMenu({
   clickThrough,
   hotkeys,
   running,
+  controls,
 }: {
+  controls?: ReactNode;
   opacity: number;
   onOpacity: (v: number) => void;
   onTop: boolean;
@@ -536,7 +601,7 @@ function OverlayMenu({
   }, []);
   useEffect(() => {
     if (!open) return;
-    panel.current?.querySelector<HTMLElement>("input, button")?.focus();
+    panel.current?.querySelector<HTMLElement>("input")?.focus();
     const onDown = (e: MouseEvent) => {
       if (!panel.current?.contains(e.target as Node) && !gear.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -548,7 +613,7 @@ function OverlayMenu({
   };
   return (
     <span className="ov-menu-wrap">
-      <IconButton ref={gear} label="Overlay settings" icon="⚙" size="sm" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)} />
+      <IconButton ref={gear} label="Overlay settings" icon={<Icon name="settings" size={16} />} size="sm" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)} />
       {open && (
         <div
           ref={panel}
@@ -562,6 +627,7 @@ function OverlayMenu({
             }
           }}
         >
+          {controls && <div className="ov-menu-row"><span className="ov-menu-label">Display</span>{controls}</div>}
           <div className="ov-menu-row">
             <label className="ov-menu-label" htmlFor="ov-opacity">
               Opacity <span className="ov-menu-value">{Math.round(opacity * 100)}%</span>
@@ -726,10 +792,10 @@ function QuestionCard({
         {!readOnly && (
           <>
             <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
-              👍
+              <Icon name="thumbUp" size={14} />
             </button>
             <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
-              👎
+              <Icon name="thumbDown" size={14} />
             </button>
           </>
         )}
@@ -838,7 +904,7 @@ function AskBox({ disabled }: { disabled: boolean }) {
       className="ov-ask"
       onSubmit={(e) => {
         e.preventDefault();
-        send(text.trim() || null);
+        send(text.trim() || null, !text.trim());
       }}
     >
       <input
@@ -847,13 +913,10 @@ function AskBox({ disabled }: { disabled: boolean }) {
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        placeholder={disabled ? "No call running" : "Type a question, or Enter to answer what was just said"}
+        placeholder={disabled ? "No call running" : "Ask anything…"}
       />
       <button type="submit" className="ov-ask-btn" disabled={disabled}>
-        Ask
-      </button>
-      <button type="button" className="ov-ask-btn" disabled={disabled} onClick={() => send(text.trim() || null, true)} title="Suggest a reply to what was just said: a request, a reminder, a check-in">
-        Answer
+        {text.trim() ? "Ask" : "Answer"}
       </button>
       {error && (
         <span className="ov-ask-error" role="alert">

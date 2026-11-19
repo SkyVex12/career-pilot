@@ -6,6 +6,7 @@ import { api, rest, type ResumeVersion } from "./api";
 import { isTextFile, resumeStatusLabel } from "./pairing";
 import { ACCEPT, plural, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
+import { Icon } from "./ui/Icon";
 import { Badge, Banner, Button, Card, ConfirmDialog, Dialog, EmptyState, Field, Input, List, ListRow, ListState, Menu, PageHeader, SkeletonList, Textarea, useToast, type Tone } from "./ui";
 
 export function statusTone(s: ResumeVersion["status"]): Tone {
@@ -85,7 +86,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
           </Card>
         ) : (
           <EmptyState
-            icon="▧"
+            icon={<Icon name="document" size={28} />}
             title="Add your base resume"
             action={
               <Button variant="primary" onClick={() => setReplacing(true)}>
@@ -107,7 +108,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
           items={tailored}
           error={null}
           loadingLabel="tailored resumes"
-          empty={<EmptyState title="No tailored resumes">Add one to an application, on its Resume tab.</EmptyState>}
+          empty={<EmptyState icon={<Icon name="document" size={28} />} title="No tailored resumes">Add one to an application, on its Resume tab.</EmptyState>}
         >
           {(list) => (
             <List label="Tailored resumes">

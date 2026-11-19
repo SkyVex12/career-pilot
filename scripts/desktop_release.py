@@ -45,6 +45,7 @@ SHIPPED_PREFIXES = (
     "pnpm-workspace.yaml",
     "rust-toolchain.toml",
     ".github/workflows/release-desktop.yml",
+    ".github/workflows/desktop-macos.yml",
 )
 NOT_SHIPPED_PREFIXES = (
     "packages/protocol/python/",

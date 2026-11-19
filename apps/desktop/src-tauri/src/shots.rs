@@ -13,8 +13,7 @@
 //! themselves, so more pixels only cost upload) and encoded losslessly: JPEG blurs small text.
 //! A shot over the protocol's 500,000 base64 characters is shrunk further until it fits.
 
-// Capture is Windows only: elsewhere `grab` says so and the helpers serve the tests alone.
-#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+#![cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code, unused_imports))]
 
 use base64::Engine as _;
 use image::codecs::{jpeg::JpegEncoder, webp::WebPEncoder};
@@ -265,9 +264,39 @@ fn cursor() -> (i32, i32) {
     (p.x, p.y)
 }
 
-#[cfg(not(windows))]
+/// Capture only the selected window on macOS; never fall back to unrelated screen content.
+#[cfg(target_os = "macos")]
+pub fn grab(own_pid: u32, _keep_out: &dyn Fn(bool)) -> Result<Shot, String> {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    // SAFETY: these system functions take no pointers and query/request TCC permission.
+    if !unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() } {
+        return Err("Allow Copilot Desktop in System Settings > Privacy & Security > Screen Recording, then reopen the app and try again.".into());
+    }
+    let started = Instant::now();
+    let windows = xcap::Window::all().map_err(|e| format!("could not list the windows: {e}"))?;
+    let candidates: Vec<Candidate> = windows
+        .iter()
+        .map(|w| Candidate {
+            pid: w.pid().unwrap_or(0),
+            width: w.width().unwrap_or(0),
+            height: w.height().unwrap_or(0),
+            minimized: w.is_minimized().unwrap_or(true),
+            focused: w.is_focused().unwrap_or(false),
+        })
+        .collect();
+    let i = pick(&candidates, own_pid).ok_or("Open the problem window before taking a screenshot.")?;
+    let window = &windows[i];
+    let img = crate::native_screen::capture_window(window.id().map_err(|e| e.to_string())?)?;
+    finish(img, window.title().ok(), Source::Window, started)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn grab(_own_pid: u32, _keep_out: &dyn Fn(bool)) -> Result<Shot, String> {
-    Err("Screen capture is supported on Windows only for now.".into())
+    Err("Screen capture is supported on Windows and macOS.".into())
 }
 
 #[cfg(test)]

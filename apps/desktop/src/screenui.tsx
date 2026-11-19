@@ -76,7 +76,6 @@ export function HostScreenSection({ s }: { s: SessionView }) {
   const viewers = screenViewers(s);
   const controllers = screenControllersOf(s);
   const status = useScreenStatus(s.running);
-  const [monitor, setMonitor] = useState("");
   if (!s.sessionId || (viewers.length === 0 && status.host === "off")) return null;
   const sid = s.sessionId;
   const on = status.host === "on";
@@ -110,22 +109,6 @@ export function HostScreenSection({ s }: { s: SessionView }) {
               <span className="seat-hint seat-grow">{asking.name} asks to take over.</span>
               <Button size="sm" onClick={() => void allowControl(asking)}>
                 Let {asking.name} control
-              </Button>
-            </div>
-          )}
-          {status.choose && (
-            <div className="seat-invite" role="group" aria-label="Which screen you share">
-              <select className="ui-input" aria-label="Which screen you share" value={monitor} onChange={(e) => setMonitor(e.target.value)}>
-                <option value="">Which screen are you sharing?</option>
-                {status.choose.monitors.map((m, i) => (
-                  <option key={m.id} value={m.id}>
-                    Screen {i + 1} ({m.rect.w}×{m.rect.h}
-                    {m.primary ? ", main" : ""})
-                  </option>
-                ))}
-              </select>
-              <Button size="sm" disabled={!monitor} onClick={() => status.choose && void allowControl(status.choose.person, monitor)}>
-                OK
               </Button>
             </div>
           )}

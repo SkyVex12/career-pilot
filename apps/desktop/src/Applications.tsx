@@ -9,6 +9,7 @@ import { upcoming } from "./catalog";
 import { PullDialog, useCareerOs } from "./CareerOs";
 import { ACCEPT, PackBadge, relative, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
+import { Icon } from "./ui/Icon";
 import {
   Badge,
   Banner,
@@ -24,7 +25,6 @@ import {
   ListState,
   Menu,
   PageHeader,
-  SegmentedControl,
   Select,
   Tabs,
   Textarea,
@@ -46,6 +46,7 @@ export interface Catalog {
   interviews: InterviewItem[] | null;
   error: string | null;
   reload: () => Promise<void>;
+  includeApplication: (application: ApplicationItem) => void;
 }
 
 /// Applications and interviews from the API, polled while a pack is still being built.
@@ -53,15 +54,22 @@ export function useCatalog(enabled = true): Catalog {
   const [applications, setApplications] = useState<ApplicationItem[] | null>(null);
   const [interviews, setInterviews] = useState<InterviewItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const revision = useRef(0);
   const reload = useCallback(async () => {
+    const request = ++revision.current;
     try {
       const [a, i] = await Promise.all([rest.applications(), rest.interviews()]);
+      if (request !== revision.current) return;
       setApplications(a.applications);
       setInterviews(i.interviews);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      if (request === revision.current) setError(String(e));
     }
+  }, []);
+  const includeApplication = useCallback((application: ApplicationItem) => {
+    ++revision.current;
+    setApplications(items => [application, ...(items ?? []).filter(item => item.id !== application.id)]);
   }, []);
   useEffect(() => {
     if (enabled) reload();
@@ -69,7 +77,7 @@ export function useCatalog(enabled = true): Catalog {
   const building =
     (applications ?? []).some((a) => !a.pack || a.resume?.status === "extracting") || upcoming(interviews ?? []).some((i) => !i.pack);
   usePolling(reload, 4000, enabled && building);
-  return { applications, interviews, error, reload };
+  return { applications, interviews, error, reload, includeApplication };
 }
 
 /// `datetime-local` value one hour from now, rounded to 5 minutes.
@@ -80,13 +88,10 @@ function soon(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-type StageFilter = "all" | Stage;
-const STAGE_FILTERS: readonly (readonly [StageFilter, string])[] = [["all", "All"], ...STAGES];
-
-/** Filters by company or role, and by stage. */
-export function filterApplications(list: ApplicationItem[], q: string, stage: StageFilter): ApplicationItem[] {
+/** Search every application by company or role, regardless of stage. */
+export function filterApplications(list: ApplicationItem[], q: string): ApplicationItem[] {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return list.filter((a) => (stage === "all" || a.stage === stage) && words.every((w) => `${a.company} ${a.role}`.toLowerCase().includes(w)));
+  return list.filter((a) => words.every((w) => `${a.company} ${a.role}`.toLowerCase().includes(w)));
 }
 
 export function Applications({
@@ -106,7 +111,6 @@ export function Applications({
   const [adding, setAdding] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [q, setQ] = useState("");
-  const [stage, setStage] = useState<StageFilter>("all");
   const { conn } = useCareerOs(true);
 
   useEffect(() => {
@@ -117,7 +121,7 @@ export function Applications({
     if (!selected && applications?.length && window.innerWidth >= 900) setSelected(applications[0].id);
   }, [applications]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const shown = useMemo(() => (applications ? filterApplications(applications, q, stage) : null), [applications, q, stage]);
+  const shown = useMemo(() => (applications ? filterApplications(applications, q) : null), [applications, q]);
   const next = upcoming(interviews ?? []);
 
   return (
@@ -164,7 +168,6 @@ export function Applications({
         <section className="apps-list" aria-label="Applications">
           <div className="apps-filters">
             <Input type="search" aria-label="Search company or role" placeholder="Search company or role" value={q} onChange={(e) => setQ(e.target.value)} />
-            <SegmentedControl label="Stage" size="sm" value={stage} options={STAGE_FILTERS} onChange={setStage} />
           </div>
           <ListState
             items={shown}
@@ -173,10 +176,10 @@ export function Applications({
             loadingLabel="applications"
             empty={
               applications?.length ? (
-                <EmptyState title="No applications match">Try another word or stage.</EmptyState>
+                <EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications match">Try another company or role.</EmptyState>
               ) : (
                 <EmptyState
-                  icon="▤"
+                  icon={<Icon name="briefcase" size={28} />}
                   title="No applications yet"
                   action={
                     <>
@@ -226,7 +229,7 @@ export function Applications({
           ) : (
             applications &&
             applications.length > 0 && (
-              <EmptyState title="Pick an application">Its details, job description, resume and interviews show here.</EmptyState>
+              <EmptyState icon={<Icon name="briefcase" size={28} />} title="Pick an application">Its details, job description, resume and interviews show here.</EmptyState>
             )
           )}
         </section>
@@ -285,13 +288,11 @@ function useChecks(fields: ApplicationFields) {
   const touch = (k: keyof ApplicationFields) => () => setTouched((t) => new Set(t).add(k));
   const shown = (k: keyof ApplicationFields) => (touched.has(k) ? (errors[k] ?? null) : null);
   const all = () => setTouched(new Set(Object.keys(EMPTY)));
-  return { errors, touch, shown, all, ok: Object.keys(errors).length === 0 };
+  return { errors, touch, shown, all, reset: () => setTouched(new Set()), ok: Object.keys(errors).length === 0 };
 }
 
-function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpenChange: (o: boolean) => void; onAdded: (a: ApplicationDetail) => void }) {
+export function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpenChange: (o: boolean) => void; onAdded: (a: ApplicationDetail) => void }) {
   const [fields, setFields] = useState<ApplicationFields>(EMPTY);
-  const [resume, setResume] = useState("");
-  const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileNote, setFileNote] = useState<string | null>(null);
@@ -302,14 +303,14 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
   useEffect(() => {
     if (open) {
       setFields(EMPTY);
-      setResume("");
+      checks.reset();
       setError(null);
       setFileNote(null);
-      setMore(false);
     }
   }, [open]);
 
   const submit = async () => {
+    if (busy) return;
     checks.all();
     if (!checks.ok) {
       document.querySelector<HTMLElement>(".ui-dialog [aria-invalid=true]")?.focus();
@@ -323,7 +324,7 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
         url: fields.url || null,
         source_site: fields.source_site || null,
         note: fields.note || null,
-        resume_text: resume.trim() || null,
+        resume_text: null,
         resume_label: null,
       });
       toast({ tone: "success", text: `Added ${app.company}. Its interview pack is being built.` });
@@ -354,6 +355,7 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
       }
     >
       <form
+        className="application-create"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -367,8 +369,8 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
             <Input value={fields.role} onChange={(e) => set("role", e.target.value)} onBlur={checks.touch("role")} />
           </Field>
         </div>
-        <Field label="Job description" error={checks.shown("jd_text")} hint={fileNote ?? "Paste it, or load a .txt or .md file."}>
-          <Textarea rows={8} value={fields.jd_text} onChange={(e) => set("jd_text", e.target.value)} onBlur={checks.touch("jd_text")} />
+        <Field label="Job description" error={checks.shown("jd_text")} hint={fileNote ?? "Paste it, or load a .txt or .md file."} hintMode="tooltip">
+          <Textarea rows={4} value={fields.jd_text} onChange={(e) => set("jd_text", e.target.value)} onBlur={checks.touch("jd_text")} />
         </Field>
         <div className="ui-row-inline form-under">
           <input
@@ -390,36 +392,6 @@ function AddApplication({ open, onOpenChange, onAdded }: { open: boolean; onOpen
             Load from a file…
           </Button>
         </div>
-        <Field label="Stage">
-          <Select value={fields.stage} onChange={(e) => set("stage", e.target.value as Stage)}>
-            {STAGES.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Button variant="link" className="form-more" aria-expanded={more} onClick={() => setMore((m) => !m)}>
-          {more ? "▾ Fewer details" : "▸ More details (posting link, source, note, tailored resume)"}
-        </Button>
-        {more && (
-          <>
-            <Field label="Posting link" optional error={checks.shown("url")}>
-              <Input value={fields.url ?? ""} onChange={(e) => set("url", e.target.value)} onBlur={checks.touch("url")} placeholder="https://" />
-            </Field>
-            <div className="form-2">
-              <Field label="Source" optional>
-                <Input value={fields.source_site ?? ""} onChange={(e) => set("source_site", e.target.value)} placeholder="LinkedIn, the company site…" />
-              </Field>
-              <Field label="Note" optional>
-                <Input value={fields.note ?? ""} onChange={(e) => set("note", e.target.value)} />
-              </Field>
-            </div>
-            <Field label="Tailored resume" optional hint="Otherwise it uses your base resume. A file can be added once it is saved.">
-              <Textarea rows={4} value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste a resume tailored for this application" />
-            </Field>
-          </>
-        )}
         {error && <Banner tone="danger">{error}</Banner>}
         <button type="submit" hidden />
       </form>

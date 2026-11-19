@@ -121,6 +121,7 @@ def test_backend_docs_and_tests_only_skip(repo: Repo, files: dict[str, str]) -> 
         "Cargo.lock",
         "pnpm-lock.yaml",
         ".github/workflows/release-desktop.yml",
+        ".github/workflows/desktop-macos.yml",
     ],
 )
 def test_what_ships(path: str) -> None:

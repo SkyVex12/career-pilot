@@ -44,8 +44,8 @@ export function pullState(item: Pick<CareerOsItem, "pulled">): { label: string; 
 }
 
 /** The start screen's line for an application. */
-export function applicationOption(app: Pick<ApplicationItem, "company" | "role" | "stage" | "resume">): string {
-  return [app.company, app.role, stageLabel(app.stage), resumeLabel(app)].join(" · ");
+export function applicationOption(app: Pick<ApplicationItem, "company" | "role" | "resume">): string {
+  return [app.company, app.role, resumeLabel(app)].join(" · ");
 }
 
 /** Files read in the app as pasted text; a PDF goes up as a file instead. */

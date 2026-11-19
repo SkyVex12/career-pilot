@@ -7,7 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Numbered, UiEvent } from "../src/api";
 import Overlay from "../src/Overlay";
-import { GuestInvites, deviceProblem, openSeats, voiceIdentities, watchingText } from "../src/seats";
+import { GuestInvites, openSeats, savedInviteCaps, voiceIdentities, watchingText } from "../src/seats";
 import { badge, initial, postCallFor, reduce, type SessionView } from "../src/session";
 import { VOICE_OFF, type VoiceCmd, type VoiceStatus } from "../src/voice";
 import { SCREEN_OFF } from "../src/screen";
@@ -201,8 +201,9 @@ describe("the host's overlay", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
     const dialog = await screen.findByRole("dialog", { name: "Guests" });
     const chips = within(dialog).getByRole("group", { name: "What a new guest may do" });
-    // Notes only, the first time.
-    expect(within(chips).getByRole("button", { name: "Notes" })).toHaveAttribute("aria-pressed", "true");
+    // Notes and voice are included; only optional screen permissions need controls.
+    expect(within(dialog).queryByRole("button", { name: "Notes" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
     await waitFor(() => expect(within(chips).getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false"));
     // Control brings the screen with it.
     await userEvent.click(within(chips).getByRole("button", { name: "Control" }));
@@ -210,10 +211,10 @@ describe("the host's overlay", () => {
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
     await userEvent.click(within(dialog).getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")).toEqual([
-      { method: "POST", path: "/sessions/s1/seats", body: { email: "dana@example.com", capabilities: ["view", "note", "device.view", "device.control"] } },
+      { method: "POST", path: "/sessions/s1/seats", body: { email: "dana@example.com", capabilities: ["view", "note", "voice", "device.view", "device.control"] } },
     ]);
     expect(await screen.findByText(/they can join from their Call screen now/)).toBeInTheDocument();
-    expect(JSON.parse(window.localStorage.getItem("seats.invite-caps") ?? "[]")).toEqual(["note", "device.view", "device.control"]);
+    expect(JSON.parse(window.localStorage.getItem("seats.invite-caps") ?? "[]")).toEqual(["note", "voice", "device.view", "device.control"]);
     // Escape closes it.
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Guests" })).toBeNull();
@@ -254,7 +255,7 @@ describe("guests' voice", () => {
   afterEach(() => unlisten?.());
   const voiceStatus = (over: Partial<VoiceStatus>) => act(() => emit("voice:status", { ...VOICE_OFF, ...over }));
 
-  it("plays only admitted seats that hold voice, and warns about devices that aren't headphones", () => {
+  it("plays only admitted seats that hold voice", () => {
     expect(
       voiceIdentities([
         { seat_id: "a", name: "A", status: "admitted", capabilities: ["view", "voice"] },
@@ -262,10 +263,6 @@ describe("guests' voice", () => {
         { seat_id: "c", name: "C", status: "removed", capabilities: ["view", "voice"] },
       ]),
     ).toEqual(["seat:a"]);
-    const d = { id: "x", name: "X", form_factor: "headphones" as const, private: true, call: false };
-    expect(deviceProblem(d)).toBeNull();
-    expect(deviceProblem({ ...d, call: true })).toBeNull(); // the call's own device is allowed
-    expect(deviceProblem({ ...d, form_factor: "speakers", private: false })).toBe("not headphones");
   });
 
   it("a guest with voice connects, then holds Talk", async () => {
@@ -288,18 +285,18 @@ describe("guests' voice", () => {
     expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
   });
 
-  it("turns on by itself once a guest may talk, on Windows' default output the first time", async () => {
-    window.localStorage.removeItem("seats.voice-device");
+  it("turns on by itself using the call output, ignoring the old separate device choice", async () => {
+    window.localStorage.setItem("seats.voice-device", "old-speakers");
     n = 0;
     start([
       live(),
       srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Pavlo", status: "admitted", capabilities: ["view", "voice"], connected: true }] }),
     ]);
-    await waitFor(() => expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "", sessionId: "s1", allowed: [`seat:${SEAT}`] }));
+    await waitFor(() => expect(cmds).toContainEqual({ cmd: "host_on", sessionId: "s1", allowed: [`seat:${SEAT}`] }));
     expect(cmds.filter((c) => c.cmd === "host_on")).toHaveLength(1); // once a call
   });
 
-  it("the host may switch to any device while it plays, warned; an error says why, with Try again", async () => {
+  it("has no separate output picker and retries guest audio on the call output", async () => {
     n = 0;
     ipc.handle("voice_devices", () => [
       { id: "wasapi:spk", name: "Speakers (Realtek)", form_factor: "speakers", private: false, call: true },
@@ -316,20 +313,16 @@ describe("guests' voice", () => {
       { deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" }, // Chromium adds the USB id
     ];
     await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
-    await waitFor(() => expect(cmds).toContainEqual({ cmd: "outputs" }));
-    await voiceStatus({ host: "on", device: "", outputs });
-    const pick = await screen.findByRole("combobox", { name: "Headphones for guests' voice" });
-    // Any device can be picked, the call's own included; one that isn't headphones is warned about.
-    expect(await within(pick).findByRole("option", { name: "Speakers (Realtek) ⚠ not headphones" })).toBeEnabled();
-    expect(within(pick).getByRole("option", { name: "Speakers (Logi USB Headset) (046d:0a64) ⚠ not headphones" })).toBeEnabled();
-    expect(within(pick).getByRole("option", { name: "Windows default output" })).toBeEnabled();
-    await userEvent.selectOptions(pick, "d-hp");
-    expect(cmds).toContainEqual({ cmd: "host_device", deviceId: "d-hp" });
-    expect(window.localStorage.getItem("seats.voice-device")).toBe("d-hp"); // the next call starts there
+    await voiceStatus({ host: "on", device: "d-hp", outputs });
+    expect(screen.queryByRole("combobox", { name: "Headphones for guests' voice" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Guests' voice on")).not.toBeInTheDocument();
     await voiceStatus({ host: "off", error: "Voice was disconnected.", outputs });
     expect(await screen.findByText(/Voice was disconnected\./)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(cmds).toContainEqual({ cmd: "host_on", deviceId: "d-hp", sessionId: "s1", allowed: [`seat:${SEAT}`] });
+    expect(cmds.filter((c) => c.cmd === "host_on")).toEqual([
+      { cmd: "host_on", sessionId: "s1", allowed: [`seat:${SEAT}`] },
+      { cmd: "host_on", sessionId: "s1", allowed: [`seat:${SEAT}`] },
+    ]);
   });
 });
 
@@ -347,25 +340,53 @@ describe("the guest panel", () => {
     return screen.findByRole("dialog", { name: "Guests" });
   };
 
-  it("offers Voice only where the server can carry it", async () => {
+  it("includes notes without offering voice controls when the server has no voice", async () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: false }));
+    ipc.api("POST", /^\/sessions\/s1\/seats$/, () => ({ status: "sent" }));
     start(events());
     await open();
-    const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
-    expect(within(perms).getByRole("button", { name: "Notes" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(perms).queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Notes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Invite" }));
+    expect(ipc.apiCalls("POST")[0].body).toEqual({ email: "dana@example.com", capabilities: ["view", "note"] });
   });
 
-  it("with voice set up, each guest has a Voice chip, and an error shows by that guest", async () => {
-    ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true }));
+  it("retries guest options without closing the panel or losing the email", async () => {
+    let attempts = 0;
+    ipc.api("GET", /^\/sessions\/s1\/seats$/, () => {
+      if (++attempts === 1) throw "Temporarily unavailable";
+      return { seats: [], voice: true, screen: true };
+    });
+    ipc.api("POST", /^\/sessions\/s1\/seats$/, () => ({ status: "sent" }));
+    start(events());
+    await open();
+    await screen.findByText(/Guest options could not be loaded/);
+    await userEvent.type(screen.getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled());
+    expect(screen.queryByText(/Guest options could not be loaded/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Invite" }));
+    expect(ipc.apiCalls("POST")[0].body).toMatchObject({ email: "dana@example.com" });
+    expect(attempts).toBe(2);
+  });
+
+  it("keeps notes and voice included when old invitation preferences omitted them", () => {
+    window.localStorage.setItem("seats.invite-caps", JSON.stringify(["device.view"]));
+    expect(savedInviteCaps()).toEqual(["note", "voice", "device.view"]);
+  });
+
+  it("shows a screen permission error by the affected guest", async () => {
+    ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
     ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => {
-      throw "Voice is not set up on this server. (HTTP 422)";
+      throw "Screen access could not be updated. (HTTP 422)";
     });
     start(events());
     await open();
     const card = (await screen.findByRole("group", { name: "What Blue Angel may do" })).closest("li") as HTMLElement;
-    await userEvent.click(await within(card).findByRole("button", { name: "Voice" }));
-    expect(await within(card).findByRole("alert")).toHaveTextContent("Voice is not set up on this server.");
+    await userEvent.click(await within(card).findByRole("button", { name: "Screen" }));
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Screen access could not be updated.");
   });
 
   it("the host's Stop takes the guest's Control away, so it stays stopped until given again", async () => {

@@ -1,0 +1,32 @@
+.workspace-quick-settings-trigger { flex: none; }
+.workspace-quick-settings {
+  position: fixed;
+  z-index: var(--layer-popup);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-2);
+  font: var(--text-sm)/var(--lh-sm) var(--font);
+}
+.workspace-quick-settings-group { display: grid; gap: var(--space-4); }
+.workspace-quick-settings-group + .workspace-quick-settings-group { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.workspace-quick-settings h2 { margin: 0; font: inherit; font-size: var(--text-xs); color: var(--text-3); font-weight: 600; }
+.workspace-quick-settings p { margin: 0; color: var(--text-3); font-size: var(--text-xs); line-height: var(--lh-xs); overflow-wrap: anywhere; }
+.workspace-quick-settings .ui-switch-row { gap: var(--space-4); }
+.workspace-quick-settings .ui-switch { flex: none; }
+.workspace-quick-settings .ui-field-hint { font-size: var(--text-xs); line-height: var(--lh-xs); }
+.workspace-quick-settings-slider { display: grid; gap: var(--space-2); }
+.workspace-quick-settings-slider label { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.workspace-quick-settings-slider output { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.workspace-quick-settings-slider input { width: 100%; height: 22px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.workspace-quick-settings-slider input:disabled { cursor: default; opacity: .55; }
+.workspace-quick-settings p.workspace-quick-settings-error { color: var(--danger); }
+.workspace-quick-settings > .workspace-quick-settings-error { margin-top: var(--space-3); }
+.workspace-quick-settings-actions { display: grid; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.workspace-quick-settings-actions > .ui-btn { justify-content: flex-start; width: 100%; }

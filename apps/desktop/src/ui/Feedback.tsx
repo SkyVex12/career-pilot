@@ -1,7 +1,9 @@
 // Status and feedback pieces: badge, banner, empty state, skeleton, spinner, and the three states
 // every list has (loading, error, empty).
-import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cx } from "./Button";
+import { Icon } from "./Icon";
 
 export type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -44,7 +46,7 @@ export function Banner({
   );
 }
 
-export function EmptyState({ icon = "○", title, children, action }: { icon?: ReactNode; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
+export function EmptyState({ icon = <Icon name="document" size={28} />, title, children, action }: { icon?: ReactNode; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="ui-empty">
       <div className="ui-empty-icon" aria-hidden="true">
@@ -114,7 +116,9 @@ export function ListState<T>({
           )
         }
       >
-        {error}
+        {error.includes("server URL needs a host") ? <>
+          Set your server connection in Settings → Advanced. <HelpTip label="Connection error">{error}</HelpTip>
+        </> : error}
       </Banner>
     );
   }
@@ -130,12 +134,58 @@ export function Kbd({ children }: { children: ReactNode }) {
 /** A hint shown on hover and on keyboard focus of its trigger. */
 export function Tooltip({ content, children }: { content: ReactNode; children: ReactElement<{ "aria-describedby"?: string }> }) {
   const id = useId();
+  const trigger = useRef<HTMLSpanElement>(null);
+  const tip = useRef<HTMLSpanElement>(null);
+  const leave = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const open = (hovered || focused) && !dismissed;
+  const enter = () => { clearTimeout(leave.current); setDismissed(false); setHovered(true); };
+  const exit = () => { clearTimeout(leave.current); leave.current = setTimeout(() => setHovered(false), 100); };
+  useEffect(() => () => clearTimeout(leave.current), []);
+  useLayoutEffect(() => {
+    if (!open) { setPosition(null); return; }
+    const place = () => {
+      if (!trigger.current || !tip.current) return;
+      const anchor = trigger.current.getBoundingClientRect();
+      const rect = tip.current.getBoundingClientRect();
+      const margin = 8;
+      const left = Math.max(margin, Math.min(anchor.left + (anchor.width - rect.width) / 2, window.innerWidth - rect.width - margin));
+      const above = anchor.top - rect.height - margin;
+      const top = Math.max(margin, Math.min(above >= margin ? above : anchor.bottom + margin, window.innerHeight - rect.height - margin));
+      setPosition({ left, top });
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(true); }
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [open, content]);
+  const describedBy = [children.props["aria-describedby"], id].filter(Boolean).join(" ");
   return (
-    <span className="ui-tooltip-wrap">
-      {isValidElement(children) ? cloneElement(children, { "aria-describedby": id }) : children}
-      <span role="tooltip" id={id} className="ui-tooltip">
+    <span ref={trigger} className="ui-tooltip-wrap" onPointerEnter={enter} onPointerLeave={exit}
+      onFocus={() => { setDismissed(false); setFocused(true); }}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }}>
+      {isValidElement(children) ? cloneElement(children, { "aria-describedby": describedBy }) : children}
+      {createPortal(<span ref={tip} role="tooltip" id={id} className="ui-tooltip" hidden={!open} style={position ?? { visibility: "hidden" }} onPointerEnter={enter} onPointerLeave={exit}>
         {content}
-      </span>
+      </span>, document.body)}
     </span>
   );
+}
+
+/** A compact, keyboard-accessible explanation beside a control's title. */
+export function HelpTip({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return <Tooltip content={children}><button type="button" className="ui-help-tip">
+    <span aria-hidden="true">?</span><span className="ui-visually-hidden">About {label}</span>
+  </button></Tooltip>;
 }

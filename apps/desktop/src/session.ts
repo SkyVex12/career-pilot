@@ -158,6 +158,8 @@ export function reduce(s: SessionView, a: Action): SessionView {
   if (a.type === "note_asked") return { ...s, notes: s.notes.map((n) => (n.id === a.id ? { ...n, asked: true } : n)) };
   const e = a.event;
   switch (e.kind) {
+    case "context_reset":
+      return { ...initial };
     case "connection": {
       const next = { ...s, connection: e.state, running: e.state.state !== "stopped" };
       if (e.state.state === "live") {
@@ -386,7 +388,9 @@ export function useSession(): [SessionView, (a: Action) => void] {
       if (disposed) u();
       else unlisten = u;
     });
-    api.snapshot().then(([events, running, next]) => applier.snapshot(events, running, next));
+    api.snapshot().then(([events, running, next]) => {
+      if (!disposed) applier.snapshot(events, running, next);
+    });
     return () => {
       disposed = true;
       unlisten?.();

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type AskResult, type CompanyDocument, type DocumentDetail, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
 import { ACCEPT, TEXT_ACCEPT, plural, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
+import { Icon } from "./ui/Icon";
 import { KIND_LABELS, QUESTION_TYPE_LABELS, byKind, itemDetails, itemLine, localDay } from "./workday";
 import {
   Badge,
@@ -124,7 +125,7 @@ export function Work({ active = true }: { active?: boolean }) {
       />
       {employers.length === 0 ? (
         <EmptyState
-          icon="▦"
+          icon={<Icon name="work" size={28} />}
           title="Add the company you work at"
           action={
             <Button variant="primary" onClick={() => setForm("add")}>
@@ -608,7 +609,7 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
         <h2 className="ui-section-title" id="docs-title">
           Documents
         </h2>
-        <ListState items={docs} error={error} onRetry={load} loadingLabel="documents" empty={<EmptyState title="No documents yet">Upload or paste the company's engineering documents, so standups and meetings can answer how things work and why.</EmptyState>}>
+        <ListState items={docs} error={error} onRetry={load} loadingLabel="documents" empty={<EmptyState icon={<Icon name="document" size={28} />} title="No documents yet">Upload or paste the company's engineering documents, so standups and meetings can answer how things work and why.</EmptyState>}>
           {(list) => (
             <List label="Documents">
               {list.map((d) => (
@@ -933,7 +934,7 @@ function FactsTab({ employer }: { employer: Employer }) {
   return (
     <div className="ui-stack">
       <p className="ui-field-hint">What standups and meetings at {employer.name} can draw on. Work logs add to it; documents add what you approve.</p>
-      <ListState items={items} error={error} onRetry={load} loadingLabel="facts" empty={<EmptyState title="No facts yet">Write a work log or upload a document.</EmptyState>}>
+      <ListState items={items} error={error} onRetry={load} loadingLabel="facts" empty={<EmptyState icon={<Icon name="layers" size={28} />} title="No facts yet">Write a work log or upload a document.</EmptyState>}>
         {(list) => <Facts items={list} onChanged={load} />}
       </ListState>
     </div>

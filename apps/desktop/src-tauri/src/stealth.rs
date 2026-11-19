@@ -113,14 +113,23 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
     if APPLYING.swap(true, Ordering::AcqRel) {
         return;
     }
+    #[cfg(target_os = "macos")]
+    if let Err(e) = app.set_activation_policy(if on {
+        tauri::ActivationPolicy::Accessory
+    } else {
+        tauri::ActivationPolicy::Regular
+    }) {
+        tracing::warn!("stealth mode: could not change Dock/app-switcher visibility: {e}");
+    }
     let affinity = affinity(on);
     for (label, window) in app.webview_windows() {
         if label == "overlay" {
             // A hidden transparent overlay paints an opaque white rectangle if its title,
             // taskbar tab, or capture affinity changes. Leave it alone until it is shown.
+            // Mac can update hidden windows too, so turning stealth off also removes their masks.
             // Once it is on screen, its title has to match the main window or Task Manager
             // keeps a row under the old name.
-            if window.is_visible().unwrap_or(false) {
+            if window.is_visible().unwrap_or(false) || cfg!(target_os = "macos") {
                 let _ = window.set_title(display_name);
                 set_window(&label, &window, affinity);
                 restore_overlay_transparency(&window);
@@ -138,7 +147,7 @@ pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
 /// (ARCHITECTURE.md, "Guest seats"). Only while the overlay is on screen (see `apply`).
 pub fn exclude_overlay(app: &AppHandle, exclude: bool) {
     let Some(window) = app.webview_windows().remove("overlay") else { return };
-    if window.is_visible().unwrap_or(false) {
+    if window.is_visible().unwrap_or(false) || cfg!(target_os = "macos") {
         set_window("overlay", &window, affinity(exclude));
         restore_overlay_transparency(&window);
     }
@@ -530,7 +539,37 @@ unsafe extern "system" {
     fn GetCurrentProcessId() -> u32;
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
+    let enabled = affinity == WDA_EXCLUDEFROMCAPTURE;
+    // Retain the legacy flag for capture clients that honor it. The mask is a separate,
+    // experimental layer-based path; neither setting proves what a meeting receiver sees.
+    if let Err(e) = window.set_content_protected(enabled) {
+        tracing::warn!("stealth mode: content protection failed for {label}: {e}");
+    }
+    let mask_enabled = enabled && std::env::var("COPILOT_DISABLE_CAPTURE_MASK").as_deref() != Ok("1");
+    let label = label.to_string();
+    let queued = window.with_webview(move |webview| {
+        // The native controller belongs to NSWindow and is released with it. No raw handle
+        // escapes this main-thread callback, even when the caller is a settings worker.
+        let result = unsafe { copilot_capture_mask_set(webview.ns_window(), u8::from(mask_enabled)) };
+        if result != 0 {
+            tracing::warn!("stealth mode: experimental capture mask failed for {label} ({result}); meeting capture exclusion is unverified");
+        } else {
+            tracing::info!("stealth mode: experimental capture mask for {label}: {mask_enabled}; receiver-side verification required");
+        }
+    });
+    if let Err(e) = queued {
+        tracing::warn!("stealth mode: could not reach the Mac window thread: {e}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn copilot_capture_mask_set(window: *mut std::ffi::c_void, enabled: u8) -> i32;
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn set_window(label: &str, _window: &WebviewWindow, affinity: u32) {
     if affinity == WDA_EXCLUDEFROMCAPTURE {
         tracing::warn!(

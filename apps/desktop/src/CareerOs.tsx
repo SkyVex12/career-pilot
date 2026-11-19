@@ -1,11 +1,12 @@
 // The Career-OS link (ARCHITECTURE.md, "Career-OS link"): connecting with a one-time code made in
 // Career-OS (the Call screen's setup and Settings, Account), and the dialog that searches
 // Career-OS and pulls one application on demand. Nothing syncs by itself.
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { rest, type ApplicationDetail, type CareerOsConnection, type CareerOsItem, type Stage } from "./api";
 import { ProfileContext } from "./profiles";
 import { STAGES, pullState, stageLabel } from "./pairing";
 import { when } from "./shared";
+import { Icon } from "./ui/Icon";
 import { Badge, Banner, Button, ConfirmDialog, Dialog, EmptyState, Field, Input, List, ListRow, ListState, Select, Spinner, useToast } from "./ui";
 
 /** The connection, loaded per account (callers key it by account). */
@@ -153,25 +154,39 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
   // Results of more than one Career-OS user ("Me" on an admin link): say whose each one is.
   const several = new Set((items ?? []).map((i) => i.user?.id ?? "")).size > 1;
 
-  const search = async () => {
-    setBusy("search");
-    setError(null);
-    try {
-      setItems((await rest.searchCareerOs({ q: q.trim(), stage })).items);
-    } catch (e) {
-      setError(String(e));
-      setItems([]);
-    } finally {
-      setBusy(null);
-    }
-  };
+  const [searching, setSearching] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const previous = useRef({ open: false, stage, refresh });
+  const search = () => setRefresh(value => value + 1);
   useEffect(() => {
-    if (open) {
+    const wasOpen = previous.current.open;
+    const immediate = !wasOpen || previous.current.stage !== stage || previous.current.refresh !== refresh;
+    previous.current = { open, stage, refresh };
+    if (!open) {
+      setSearching(false);
+      return;
+    }
+    if (!wasOpen) {
       setItems(null);
       setMessage(null);
-      search();
     }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    let current = true;
+    setSearching(true);
+    setError(null);
+    const load = async () => {
+      try {
+        const result = await rest.searchCareerOs({ q: q.trim(), stage });
+        if (current) setItems(result.items);
+      } catch (e) {
+        if (current) { setError(String(e)); setItems([]); }
+      } finally {
+        if (current) setSearching(false);
+      }
+    };
+    // Changing the stage or retrying is deliberate; typing waits for a short pause.
+    const timer = immediate ? (void load(), undefined) : setTimeout(load, 300);
+    return () => { current = false; clearTimeout(timer); };
+  }, [open, q, stage, refresh]);
 
   const pull = async (item: CareerOsItem) => {
     setBusy(item.id);
@@ -186,7 +201,7 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
         // An application lives with its Career-OS user: switch to them to work on it.
         setMessage(`${verb} into ${item.user?.name || "their"} profile: ${app.company} · ${app.role}. Switch profile to work on it.`);
       }
-      await search();
+      search();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -203,14 +218,8 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
       description="Copies the application, its job description and its resume into its Career-OS user's profile. Nothing else is imported, and nothing syncs by itself."
       footer={<Button onClick={() => onOpenChange(false)}>Done</Button>}
     >
-      <form
-        className="pull-search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          search();
-        }}
-      >
-        <Input aria-label="Company or role" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Company or role" />
+      <div className="pull-search">
+        <Input type="search" aria-label="Company or role" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Company or role" />
         <Select aria-label="Stage" value={stage} onChange={(e) => setStage(e.target.value as Stage | "")}>
           <option value="">Any stage</option>
           {STAGES.map(([v, l]) => (
@@ -219,17 +228,16 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
             </option>
           ))}
         </Select>
-        <Button type="submit" loading={busy === "search"}>
-          Search
-        </Button>
-      </form>
+      </div>
       {message && <Banner tone="success">{message}</Banner>}
+      <div className="pull-results" aria-busy={searching}>
+      {searching && items && <span className="ui-visually-hidden" role="status">Updating search results</span>}
       <ListState
-        items={busy === "search" && !items ? null : items}
+        items={items}
         error={error}
         onRetry={search}
         loadingLabel="Career-OS applications"
-        empty={<EmptyState title="No applications match">Try another company or role, or any stage.</EmptyState>}
+        empty={<EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications match">Try another company or role, or any stage.</EmptyState>}
       >
         {(list) => (
           <List label="Career-OS applications">
@@ -248,7 +256,7 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
                     <>
                       {state.label && <Badge tone={i.pulled?.changed ? "warning" : "success"}>{i.pulled?.changed ? "Changed since the pull" : "Pulled"}</Badge>}
                       {state.action && (
-                        <Button size="sm" variant={state.action === "Pull" ? "primary" : "secondary"} disabled={busy !== null && busy !== i.id} loading={busy === i.id} onClick={() => pull(i)} aria-label={`${state.action}: ${title}`}>
+                        <Button size="sm" variant={state.action === "Pull" ? "primary" : "secondary"} disabled={searching || (busy !== null && busy !== i.id)} loading={busy === i.id} onClick={() => pull(i)} aria-label={`${state.action}: ${title}`}>
                           {state.action}
                         </Button>
                       )}
@@ -260,6 +268,7 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
           </List>
         )}
       </ListState>
+      </div>
     </Dialog>
   );
 }

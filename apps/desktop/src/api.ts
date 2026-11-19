@@ -31,8 +31,9 @@ export interface QuestionLatency {
   deep_gateway: LatencyMs | null;
 }
 
-// copilot_client::engine::UiEvent
+// copilot_client::engine::UiEvent, plus the desktop's profile boundary reset.
 export type UiEvent =
+  | { kind: "context_reset" }
   | { kind: "connection"; state: ConnectionState }
   | { kind: "server"; message: ServerMessage }
   | { kind: "vad"; channel: Channel; speaking: boolean; edge_ms: number }
@@ -409,6 +410,11 @@ export const api = {
   snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
   showOverlay: (show: boolean) => invoke<void>("show_overlay", { show }),
+  /** Preferences for the main workspace window. The live overlay remains independent. */
+  windowPrefs: () => invoke<OverlayPrefs>("window_prefs"),
+  setWindowOpacity: (value: number) => invoke<void>("set_window_opacity", { value }),
+  setWindowOnTop: (on: boolean) => invoke<void>("set_window_on_top", { on }),
+  setWindowClickThrough: (on: boolean) => invoke<void>("set_window_click_through", { on }),
   /** The overlay's starting opacity, view and click-through (the overlay asks on mount). */
   overlayPrefs: () => invoke<OverlayPrefs>("overlay_prefs"),
   /** Set the overlay's opacity for the monitor it is on (the settings slider). */
@@ -421,11 +427,18 @@ export const api = {
   setOverlayOnTop: (on: boolean) => invoke<void>("set_overlay_on_top", { on }),
   /** Bring the main window forward on its Settings screen ("All settings…"). */
   openMainSettings: () => invoke<void>("open_main_settings"),
+  /** Return from the overlay to the main Call screen. */
+  openMainCall: () => invoke<void>("open_main_call"),
   /** Minimize the overlay (it gets a taskbar button until it is restored). */
   minimizeOverlay: () => invoke<void>("minimize_overlay"),
   /** Quit the whole app. */
   quitApp: () => invoke<void>("quit_app"),
 };
+
+/** Main-window preferences changed through quick settings or a native hotkey. */
+export function onWorkspaceWindowPrefs(handler: (p: OverlayPrefs) => void): Promise<UnlistenFn> {
+  return listen<OverlayPrefs>("copilot://workspace-window", (e) => handler(e.payload));
+}
 
 /** The overlay's comfort prefs changed (a hotkey, or a move to another monitor). */
 export function onOverlayPrefs(handler: (p: OverlayPrefs) => void): Promise<UnlistenFn> {
@@ -435,6 +448,11 @@ export function onOverlayPrefs(handler: (p: OverlayPrefs) => void): Promise<Unli
 /** The overlay asked the main window to open its Settings screen ("All settings…"). */
 export function onOpenSettings(handler: () => void): Promise<UnlistenFn> {
   return listen("copilot://open-settings", () => handler());
+}
+
+/** A native call transition asks the workspace to show its Call screen. */
+export function onOpenCall(handler: () => void): Promise<UnlistenFn> {
+  return listen("copilot://open-call", () => handler());
 }
 
 /// `n` numbers events within a session, from 0.

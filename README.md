@@ -1,5 +1,7 @@
 # Copilot
 
+macOS: see [building, permissions, and releases](docs/macos.md) (Apple Silicon and Intel, macOS 15.4+).
+
 Desktop career copilot: listens to live interviews and meetings, detects questions aimed at
 the user, and shows answers grounded in their career memory. The design is in
 [ARCHITECTURE.md](ARCHITECTURE.md), which is the source of truth for everything here.
