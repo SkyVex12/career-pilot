@@ -35,7 +35,7 @@ The DMG appears in `target/universal-apple-darwin/release/bundle/dmg/` at the re
 Open it and drag Copilot Desktop into Applications, then launch from Applications. Preview
 bundles are ad-hoc signed, not notarized releases. If Gatekeeper rejects a downloaded
 preview, use a local build; do not disable system security. Previews embed the backend
-settings but do not enable automatic updates.
+settings but do not produce signed updater archives.
 
 Tauri automatically merges `src-tauri/tauri.macos.conf.json` on Mac. The bundle, Rust build,
 and Objective-C bridges all target macOS 13.0. Our bridges treat unguarded newer API use as
