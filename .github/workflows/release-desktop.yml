@@ -1,4 +1,4 @@
-# The desktop installer (README.md, "Releasing the desktop app"). Release and recovery entries:
+# The desktop installer (README.md, "Releasing the desktop app"). Release entries:
 #
 # - After every deploy of main (deploy.yml calls this workflow once the backend deploy passed):
 #   the plan job (scripts/desktop_release.py) releases the next patch version only if the merge
@@ -7,7 +7,6 @@
 #   no workflow, which is why deploy.yml calls this one instead of relying on the tag.)
 # - A tag desktop-v<version> pushed by hand on a commit on main (minor and major versions):
 #   always a release, with that version.
-# - One-time manual repair of the missing 0.3.1 and 0.3.2 tags; no build or upload.
 #
 # The Windows runner builds the NSIS installer with that version, pointed at the stage in
 # apps/desktop/release.json, with the updater signature (secrets TAURI_SIGNING_PRIVATE_KEY and
@@ -23,12 +22,6 @@ name: release-desktop
 on:
   push:
     tags: ["desktop-v*"]
-  workflow_dispatch:
-    inputs:
-      repair_published_tags:
-        description: "Repair only the missing tags for already-published 0.3.1 and 0.3.2 (no builds)"
-        type: boolean
-        default: false
   workflow_call:
     inputs:
       sha:
@@ -43,101 +36,8 @@ permissions:
 # (a group here would wait on itself). Publishes are one at a time (the publish job).
 
 jobs:
-  repair-published-tags:
-    name: repair the published 0.3.1 and 0.3.2 tags
-    if: github.event_name == 'workflow_dispatch' && inputs.repair_published_tags
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    concurrency:
-      group: release-desktop-publish
-      cancel-in-progress: false
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: main
-          fetch-depth: 0
-      - name: Verify the two known publications and restore their tags
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import subprocess
-          import urllib.request
-
-          # Deliberately fixed: this repair accepts no run, version, commit, or tag inputs.
-          releases = (
-              (44532286197, "0.3.1", "076c06314dd93301a058d7fa66ef7ddb3506232c"),
-              (44535284347, "0.3.2", "df6b4f08f403ab2cb259baa62dac78de68b283a4"),
-          )
-          repo = "SkyVex12/career-pilot"
-          bucket = "copilot-stage0-releases-career-pilot-512115"
-
-          def require(condition, message):
-              if not condition:
-                  raise SystemExit(message)
-
-          def git(*args):
-              return subprocess.check_output(["git", *args], text=True).strip()
-
-          def api(path, paged=False):
-              args = ["gh", "api"]
-              if paged:
-                  args += ["--paginate", "--slurp"]
-              return json.loads(subprocess.check_output([*args, path], text=True))
-
-          require(os.environ["REPOSITORY"] == repo, "Repair is restricted to the original repository")
-          missing = []
-          summary_lines = []
-          for run_id, version, sha in releases:
-              base = f"repos/{repo}/actions/runs/{run_id}"
-              run = api(base)
-              require(run.get("id") == run_id and run.get("repository", {}).get("full_name") == repo, f"Run {run_id}: wrong repository")
-              require(run.get("path") == ".github/workflows/deploy.yml", f"Run {run_id}: unexpected workflow")
-              require(run.get("event") == "push" and run.get("head_branch") == "main" and run.get("head_sha") == sha, f"Run {run_id}: unexpected source commit")
-              require(run.get("status") == "completed" and run.get("conclusion") == "success", f"Run {run_id}: not successfully completed")
-              git("merge-base", "--is-ancestor", sha, "origin/main")
-              jobs = [job for page in api(base + "/jobs?per_page=100", paged=True) for job in page["jobs"]]
-              require(any(job.get("name") == "desktop / publish to the releases bucket" and job.get("status") == "completed" and job.get("conclusion") == "success" for job in jobs), f"Run {run_id}: no successful publication job")
-              artifacts = [artifact for page in api(base + "/artifacts?per_page=100", paged=True) for artifact in page["artifacts"]]
-              installers = [artifact for artifact in artifacts if artifact.get("name") == f"desktop-{version}"]
-              require(len(installers) == 1, f"Run {run_id}: expected exactly one desktop-{version} artifact")
-              origin = installers[0].get("workflow_run") or {}
-              require(origin.get("id") == run_id and origin.get("head_sha") == sha and origin.get("repository_id") == run["repository"]["id"], f"Run {run_id}: artifact source does not match")
-              url = f"https://storage.googleapis.com/{bucket}/desktop/{version}/Copilot-Desktop_{version}_x64-setup.exe"
-              for public_url in (url, url + ".sig"):
-                  with urllib.request.urlopen(urllib.request.Request(public_url, method="HEAD"), timeout=20) as response:
-                      require(response.status == 200 and response.geturl() == public_url and int(response.headers.get("Content-Length", "0")) > 0, f"Run {run_id}: published installer or signature is missing")
-              tag = f"desktop-v{version}"
-              tag_ref = f"refs/tags/{tag}"
-              if git("ls-remote", "--tags", "origin", tag_ref):
-                  git("fetch", "--no-tags", "origin", tag_ref)
-                  existing = git("rev-parse", "--verify", "FETCH_HEAD^{commit}")
-                  require(existing == sha, f"{tag} already points at {existing}, not published commit {sha}")
-                  state = "already present"
-              else:
-                  missing.append(f"{sha}:{tag_ref}")
-                  state = "restored"
-              summary_lines.append(f"- `{tag}` {state} at `{sha}` from successful run {run_id}")
-
-          # Both publications and every existing tag must pass before any remote tag changes.
-          if missing:
-              git("push", "--atomic", "origin", *missing)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              for line in summary_lines:
-                  print(line)
-                  summary.write(line + "\n")
-          PY
-
   plan:
     name: plan (release or skip, version, notes)
-    # Reusable workflows retain their caller's event, including normal manual deploys.
-    if: ${{ !inputs.repair_published_tags }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
