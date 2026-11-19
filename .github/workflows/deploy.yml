@@ -252,6 +252,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write # the desktop-v* tag
+      actions: read # the Mac publisher can reuse an existing build artifact
       id-token: write # the releases bucket, through Workload Identity Federation
     uses: ./.github/workflows/release-desktop.yml
     with:

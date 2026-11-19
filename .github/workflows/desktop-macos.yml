@@ -2,6 +2,17 @@
 name: desktop-macos
 on:
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: Mac architecture to build (signed releases always build both)
+        type: choice
+        default: aarch64
+        options: [aarch64, x86_64, both]
+      source_run_id:
+        description: Reuse a successful preview artifact from this main run instead of rebuilding (optional)
+        type: string
+        default: ""
+        required: false
   workflow_call:
     inputs:
       sha:
@@ -18,17 +29,12 @@ defaults:
 jobs:
   build:
     name: macOS (${{ matrix.arch }})
+    if: inputs.source_run_id == ''
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            arch: aarch64
-            target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            arch: x86_64
-            target: x86_64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJSON((inputs.version != '' || inputs.architecture == 'both') && '["aarch64","x86_64"]' || inputs.architecture == 'x86_64' && '["x86_64"]' || '["aarch64"]') }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 90
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.4'
@@ -97,12 +103,12 @@ jobs:
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           fi
-          pnpm tauri build --target ${{ matrix.target }} --features release --config src-tauri/tauri.release.conf.json
+          pnpm tauri build --target ${{ matrix.arch }}-apple-darwin --features release --config src-tauri/tauri.release.conf.json
       - name: Package release files
         if: inputs.version != ''
         working-directory: apps/desktop
         run: |
-          node scripts/release.mjs manifest --version "$VERSION" --platform darwin-${{ matrix.arch }} --bundle-dir ../../target/${{ matrix.target }}/release/bundle/macos --out ../../dist-release
+          node scripts/release.mjs manifest --version "$VERSION" --platform darwin-${{ matrix.arch }} --bundle-dir ../../target/${{ matrix.arch }}-apple-darwin/release/bundle/macos --out ../../dist-release
           mv ../../dist-release/latest.json ../../dist-release/manifest-darwin-${{ matrix.arch }}.json
       - uses: actions/upload-artifact@v4
         if: inputs.version != ''
@@ -115,7 +121,7 @@ jobs:
         if: inputs.version == ''
         with:
           name: desktop-macos-preview-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          path: target/${{ matrix.arch }}-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
       - name: Preview download instructions
@@ -132,4 +138,150 @@ jobs:
             echo "Built from commit $GITHUB_SHA. Requires macOS 15.4 or newer."
             echo "This is an ad-hoc signed test build, not a notarized public release."
             echo "Stealth is experimental: test the received screen share from another meeting participant."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-preview:
+    name: publish Mac preview downloads
+    needs: build
+    # Only this repository's manually built main previews may reach the public bucket.
+    # The GCP identity provider also restricts the repository and main ref.
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && inputs.version == '' &&
+      github.ref == 'refs/heads/main' && github.event.repository.fork == false &&
+      (needs.build.result == 'success' ||
+       (inputs.source_run_id != '' && needs.build.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    concurrency:
+      group: desktop-macos-preview-publish
+      cancel-in-progress: false
+    env:
+      SHA: ${{ github.sha }}
+      ARCHITECTURE: ${{ inputs.architecture || 'aarch64' }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || github.run_id }}
+      BUCKET: ${{ vars.GCP_RELEASES_BUCKET }}
+      RELEASE_ACCOUNT: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
+      IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify main source and publication settings
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Preview publication requires main"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main ||
+            { echo "::error::Preview source is not on main"; exit 1; }
+          for key in BUCKET RELEASE_ACCOUNT IDENTITY_PROVIDER; do
+            [ -n "${!key}" ] || { echo "::error::Missing preview publication setting: $key"; exit 1; }
+          done
+      - name: Verify source run and selected architecture artifacts
+        id: source
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const rawRunId = process.env.SOURCE_RUN_ID;
+            if (!/^[1-9][0-9]*$/.test(rawRunId) || !Number.isSafeInteger(Number(rawRunId))) {
+              throw new Error('source_run_id must be a positive numeric Actions run ID');
+            }
+            const runId = Number(rawRunId);
+            const expectedRepo = context.repo.owner + '/' + context.repo.repo;
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+            if (run.repository.full_name !== expectedRepo || run.head_repository?.full_name !== expectedRepo ||
+                run.path !== '.github/workflows/desktop-macos.yml' || run.head_branch !== 'main' ||
+                !['push', 'workflow_dispatch'].includes(run.event) || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
+                !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1) {
+              throw new Error('Preview source must be the desktop-macos workflow on main in this repository');
+            }
+            const architectures = {
+              aarch64: ['aarch64'], x86_64: ['x86_64'], both: ['aarch64', 'x86_64'],
+            }[process.env.ARCHITECTURE];
+            if (!architectures) throw new Error('Unknown Mac architecture');
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: runId, filter: 'all', per_page: 100,
+            });
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: runId, per_page: 100,
+            });
+            for (const arch of architectures) {
+              // A publisher-only retry must still see the successful earlier build.
+              const matches = jobs.filter(job => job.name === 'macOS (' + arch + ')')
+                .sort((a, b) => b.id - a.id);
+              if (matches.length === 0 || matches[0].status !== 'completed' || matches[0].conclusion !== 'success') {
+                throw new Error('Source run has no successful ' + arch + ' build');
+              }
+              const matchingArtifacts = artifacts.filter(artifact =>
+                artifact.name === 'desktop-macos-preview-' + arch && !artifact.expired);
+              if (matchingArtifacts.length !== 1 || matchingArtifacts[0].size_in_bytes <= 0 ||
+                  matchingArtifacts[0].workflow_run?.id !== runId ||
+                  matchingArtifacts[0].workflow_run?.head_sha !== run.head_sha) {
+                throw new Error('Source run has no unexpired ' + arch + ' preview artifact for its commit');
+              }
+            }
+            core.setOutput('run_id', String(runId));
+            core.setOutput('sha', run.head_sha);
+            core.setOutput('attempt', String(run.run_attempt));
+      - name: Verify artifact source is on main
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main ||
+            { echo "::error::Artifact source commit is not on main"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-macos-preview-*
+          path: dist-preview
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate preview artifacts
+        run: |
+          case "$ARCHITECTURE" in
+            aarch64) arches=(aarch64) ;;
+            x86_64) arches=(x86_64) ;;
+            both) arches=(aarch64 x86_64) ;;
+            *) echo "::error::Unknown Mac architecture: $ARCHITECTURE"; exit 1 ;;
+          esac
+          mkdir -p publish-preview
+          shopt -s nullglob
+          for arch in "${arches[@]}"; do
+            dmgs=("dist-preview/desktop-macos-preview-$arch/"*.dmg)
+            [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ] ||
+              { echo "::error::Expected one $arch DMG from this run"; exit 1; }
+            cp "${dmgs[0]}" "publish-preview/Copilot-$arch.dmg"
+          done
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Publish preview downloads
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_ATTEMPT: ${{ steps.source.outputs.attempt }}
+        run: |
+          base="gs://$BUCKET/desktop/previews"
+          source="$SOURCE_SHA/$SOURCE_RUN_ID-$SOURCE_ATTEMPT"
+          for dmg in publish-preview/Copilot-*.dmg; do
+            gcloud storage cp --cache-control="public, max-age=31536000, immutable" \
+              "$dmg" "$base/$source/$(basename "$dmg")"
+          done
+          for dmg in publish-preview/Copilot-*.dmg; do
+            name=$(basename "$dmg")
+            gcloud storage cp --cache-control="no-cache, max-age=0" "$dmg" "$base/$name"
+            {
+              echo "- [Download $name](https://storage.googleapis.com/$BUCKET/desktop/previews/$name)"
+              echo "  ([this build](https://storage.googleapis.com/$BUCKET/desktop/previews/$source/$name))"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo
+            echo "Ad-hoc signed preview from commit $SOURCE_SHA; not a notarized public release."
+            echo "The signed updater manifest and release download links are unchanged."
           } >> "$GITHUB_STEP_SUMMARY"

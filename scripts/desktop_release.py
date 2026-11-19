@@ -8,9 +8,10 @@
 
 - After a merge (no --tag): a release only if something the app ships changed since the last
   desktop-v* tag (apps/desktop, the protocol's Rust and TypeScript, the lockfiles, the release
-  workflow), skipped when only the backend or docs changed. The version is the next patch
-  after the newest of every desktop-v* tag and the version in the published latest.json (so a
-  release whose tag push failed is not reused). A commit older than the newest tag is skipped.
+  build inputs), skipped when only the backend, docs, or CI workflows changed. The version
+  is the next patch after the newest of every desktop-v* tag and the version in the published
+  latest.json (so a release whose tag push failed is not reused). A commit older than the
+  newest tag is skipped.
 - For a tag pushed by hand (--tag): always a release, with the tag's version.
 
 The notes list the pull requests merged since the previous release that changed the app,
@@ -36,7 +37,7 @@ SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 
 # What the installer is built from. A path ships if it starts with one of these and is not
 # a test, a doc, or the protocol's Python side.
-# The Mac validation/preview workflow alone does not change shipped app inputs.
+# CI workflow edits alone do not change shipped app inputs; explicit tags can rebuild them.
 SHIPPED_PREFIXES = (
     "apps/desktop/",
     "packages/protocol/",
@@ -45,7 +46,6 @@ SHIPPED_PREFIXES = (
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     "rust-toolchain.toml",
-    ".github/workflows/release-desktop.yml",
 )
 NOT_SHIPPED_PREFIXES = (
     "packages/protocol/python/",
