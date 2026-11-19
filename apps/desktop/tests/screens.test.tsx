@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
+import type { LiveStatus } from "../src/api";
 import { Applications, checkApplication, filterApplications, listStamp } from "../src/Applications";
 import { CallScreen, type CallProps } from "../src/CallScreen";
 import { clashWith, duplicateHotkeys, prettyKey, recordKey } from "../src/hotkeys";
@@ -426,6 +427,7 @@ function callProps(over: Partial<CallProps> = {}): CallProps {
 
 function callRoutes() {
   appRoutes();
+  ipc.handle("live_status", (): LiveStatus => ({ running: false, session_id: null, levels: null, stats: null }));
   ipc.handle("plugin:window|inner_position", () => ({ x: 0, y: 0 }));
   ipc.handle("plugin:window|cursor_position", () => ({ x: 10000, y: 10000 }));
   ipc.api("GET", /^\/employers$/, () => ({ employers: [] }));
@@ -756,8 +758,15 @@ describe("Call", () => {
 
   it("live: End call asks how to save it, then ends with a summary", async () => {
     callRoutes();
+    ipc.handle("live_status", (): LiveStatus => ({
+      running: true, session_id: "s1", stats: null,
+      levels: { them_rms: 0.1, me_rms: 0.01, them_speech: 0, me_speech: 0, them_underruns: 0, me_underruns: 0 },
+    }));
     const live: SessionView = { ...initial, running: true, sessionId: "s1", connection: { state: "live", session_id: "s1", resumed: false } };
     wrap(<CallScreen {...callProps({ session: live })} />);
+    // Keep the call mounted through a real poll, including on a fast test runner.
+    await waitFor(() => expect(screen.getByRole("meter", { name: "Them level" })).toHaveAttribute("aria-valuenow", "67"));
+    expect(screen.getByRole("meter", { name: "You level" })).toHaveAttribute("aria-valuenow", "33");
     await userEvent.click(screen.getByRole("button", { name: "End call…" }));
     const dialog = screen.getByRole("alertdialog", { name: "End this call?" });
     expect(within(dialog).getByRole("button", { name: "End, transcript only" })).toBeInTheDocument();

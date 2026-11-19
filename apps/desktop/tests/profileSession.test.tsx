@@ -3,7 +3,7 @@ import { mockWindows } from "@tauri-apps/api/mocks";
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 import type { Numbered, Profile, SessionDetail } from "../src/api";
 import { useProfiles, type ProfileState } from "../src/profiles";
@@ -24,6 +24,12 @@ vi.mock("../src/Shell", () => ({
   WorkspaceProfileSwitch: () => null,
   useWorkspaceCompactWindow: () => {},
 }));
+
+// Load the real lazy screens before interaction deadlines; cold Vite transforms can
+// exceed Testing Library's default wait on a busy CI runner.
+beforeAll(async () => {
+  await Promise.all([import("../src/SessionDetail"), import("../src/SettingsScreen")]);
+});
 
 const me: Profile = { id: "account", name: "Dana", me: true, career_os_user_id: null };
 const other: Profile = { id: "other", name: "Alex", me: false, career_os_user_id: "alex" };

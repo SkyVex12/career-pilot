@@ -32,6 +32,15 @@ def test_the_desktop_shell_runs_the_windows_job_and_no_deploy() -> None:
     assert runs("apps/desktop/core/src/api.rs") == {"windows", "rust_linux"}
 
 
+def test_desktop_packaging_scripts_run_their_node_tests_without_deploying() -> None:
+    assert runs("apps/desktop/scripts/release-checks.mjs") == {"typescript"}
+    assert runs("apps/desktop/scripts/release.mjs") == {"windows", "typescript"}
+
+
+def test_native_mac_workflow_handles_its_own_builds_without_a_backend_deploy() -> None:
+    assert runs(".github/workflows/desktop-macos.yml") == set()
+
+
 def test_the_gateway_runs_python_the_linux_client_tests_and_a_deploy() -> None:
     # The client core's integration tests start the real gateway.
     assert runs("apps/gateway/src/copilot_gateway/session.py") == {"python", "rust_linux", "server"}
