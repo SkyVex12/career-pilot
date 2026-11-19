@@ -4,6 +4,15 @@ Eval sets, the recorded call corpus and their runners (ARCHITECTURE.md, "Testing
 Recorded calls hold people's voices: only add recordings that every participant agreed to,
 and keep raw audio out of git.
 
+The public detector and session fixtures use the answer-all policy approved on 2026-11-19:
+greetings, farewells, audio checks, short personal checks and invitations directed at the user
+expect a brief answer. Exposition, acknowledgements and questions for other people remain quiet.
+An identifiable question may answer before an unfinished tail; its completion must not demand a
+second card. In session fixtures, `unfinished = true` means the intended ask is not identifiable
+yet. Historical result files retain their original labels, so compare runs using the same fixture
+revision. The private Sensei before/after benchmark keeps its original frozen annotation scope;
+newly supported exchanges outside that scope need separate coverage reporting.
+
 ## copilot-replay
 
 Streams a WAV file through the gateway in real time as the "them" channel, the way the
@@ -41,7 +50,7 @@ fictional, so no recording consent is involved.
 
 | File | What it is |
 | --- | --- |
-| `bench/mock_interview.toml` | The script and its labels: each utterance's text, the silence before it, the TTS voice and delivery (a flat, falling delivery for the "no rising intonation" questions), and what should happen (`answer`, `none`, or `either`), the question type and the prepared answer it paraphrases. It covers small talk, behavioral and technical questions, a question with a mid-sentence pause, a quick follow-up, flat questions, and the non-questions that fired in the 2026-10-07 live test (a request to share the screen, "what is that?") |
+| `bench/mock_interview.toml` | The script and its labels: each utterance's text, the silence before it, the TTS voice and delivery (a flat, falling delivery for the "no rising intonation" questions), and what should happen (`answer`, `none`, or `either`), the question type and the prepared answer it paraphrases. It covers small talk, behavioral and technical questions, a question with a mid-sentence pause, a quick follow-up, flat questions, brief screen-share and clarification requests, and exposition that should remain quiet |
 | `bench/profile.toml` | The fictional candidate: hot digest, ranked stories and 12 prepared answers |
 | `bench/audio/` | Generated audio and timeline (gitignored; `copilot-bench-audio` rebuilds it) |
 | `bench/results/<label>/summary.json` | Each benchmark's summary (raw runs and gateway logs stay local) |

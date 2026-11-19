@@ -336,7 +336,7 @@ def test_parse_detection() -> None:
     assert not parse_detection('{"answer": "none"}').fires()
     weird = parse_detection('{"answer": "nonsense"}')
     assert (weird.decision, weird.qtype) == ("none", "other")
-    assert not parse_detection('{"answer": "small_talk"}').fires()
+    assert parse_detection('{"answer": "small_talk"}').fires()
     with pytest.raises(ValueError, match="no JSON"):
         parse_detection("no json here")
 
@@ -614,7 +614,7 @@ def test_a_standup_gets_a_short_detailed_answer() -> None:
     ctx = prompts.PromptContext("Alex", "standup", "# digest", "Mode: standup")
     for style in ("paragraph", "bullets"):
         content = str(prompts.deep_pass(ctx, "", "q?", "respond", 800, style=style).content)
-        assert "for a standup" in content, style
+        assert "at most 25 words in all" in content, style
         assert "120 to 180 words" not in content
         assert "6 to 10 lines" not in content
     assert "35 to 60 words" in str(
@@ -741,8 +741,8 @@ def test_detector_types_motivation_and_logistics_as_other() -> None:
 
 def test_recruiter_screen_script_scores_the_10_28_turns() -> None:
     """The 2026-10-28 interview, paraphrased with a fictional candidate, for
-    copilot-detector-eval: the types it got wrong (motivation) and the turns it must not fire
-    on (an offer to describe the role, explanations, the process)."""
+    copilot-detector-eval: all reply-seeking turns now get answers, including greetings,
+    offers and short checks. Explanations and the unasked process still get none."""
     import tomllib
     from pathlib import Path
 
@@ -751,14 +751,14 @@ def test_recruiter_screen_script_scores_the_10_28_turns() -> None:
     them = [u for u in script if u.get("speaker", "them") == "them"]
     fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
     assert fire == {
+        "hello": "small_talk", "offer_overview": "respond",
         "latest_role": "behavioral", "named_platform": "technical", "client_work": "behavioral",
         "why_looking": "other", "pay_band": "other", "location": "other",
-        "your_questions": "other",
+        "your_questions": "other", "all_clear": "respond", "bye": "small_talk",
     }  # fmt: skip
     assert {u["id"] for u in them if u["expect"] == "none"} == {
-        "hello", "offer_overview", "overview", "team_answer", "next_steps", "bye",
+        "overview", "team_answer", "next_steps",
     }  # fmt: skip
-    assert next(u for u in them if u["id"] == "all_clear")["expect"] == "either"
 
 
 def test_a_follow_continues_what_the_user_is_saying() -> None:
@@ -813,23 +813,20 @@ def test_turn_taking_says_when_the_user_last_spoke() -> None:
     assert "0 times" in late  # nothing in the last two minutes
 
 
-def test_a_yes_or_no_screening_check_needs_no_card() -> None:
-    """2026-10-29: 8 yes-or-no checks of the user's own situation (authorized to work,
-    sponsorship, worked here before, relatives here, a certification, "you went to that school,
-    right?") fired; the user answered each in about a second, the fast pass answered four of
-    them for the user with facts no data held, and the deep pass came back with a question."""
+def test_a_yes_or_no_screening_check_gets_a_card_without_inventing_personal_facts() -> None:
+    """Short personal checks get a brief cue, while the generation rule still forbids a
+    guessed yes or no when the user's sources do not answer the question."""
     text = prompts.detector("Alex", "", "Are you authorized?", 80, "interview").system[0].text
-    assert "a yes-or-no check of Alex's own situation, answered in a word" in text
+    assert "Short factual and yes-or-no questions need an answer too" in text
     assert "will you need sponsorship" in text
-    assert "from their resume or a pay figure they gave before" in text
-    assert "Alex knows the answer." in text
-    assert "work authorization" not in text.split("- respond:")[0]  # no longer an "other"
+    assert "situation is other" in text
+    assert "unsupported personal facts unknown" in text
     ctx = prompts.PromptContext("Alex", "interview", "# digest", "Mode: interview")
     for system in (
         prompts.fast_pass(ctx, "", "q?", None, 250).system[0].text,
         prompts.deep_pass(ctx, "", "q?", "other", 800).system[0].text,
     ):
-        assert "never answer it for them, in either direction" in system
+        assert "never a guessed yes or no in either direction" in system
 
 
 def test_fast_cues_are_specific_and_answer_every_part() -> None:
@@ -862,24 +859,28 @@ def test_a_goodbye_is_told_from_an_opening() -> None:
 
 def test_mock_interview_script_scores_the_10_29_turns() -> None:
     """The 2026-10-29 mock interviews, paraphrased with the fictional candidate, for
-    copilot-detector-eval: the screening checks that must not fire, the question asked in two
-    pieces, and the turns that were missed."""
+    copilot-detector-eval: screening checks and courtesies need brief grounded answers;
+    exposition remains quiet, and question continuations retain their context."""
     import tomllib
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[3] / "evals" / "bench" / "mock_interviews.toml"
     script = tomllib.loads(path.read_text("utf-8"))["utterance"]
     them = [u for u in script if u.get("speaker", "them") == "them"]
-    assert {u["id"] for u in them if u["expect"] == "none"} >= {
-        "work_authorized", "sponsorship", "worked_here", "relatives", "certification",
-        "school_check", "bye",
-    }  # fmt: skip
+    assert {u["id"] for u in them if u["expect"] == "none"} == {"process"}
     fire = {u["id"]: u["type"] for u in them if u["expect"] == "answer"}
+    for screening in (
+        "work_authorized", "sponsorship", "worked_here", "relatives", "certification",
+        "school_check", "before_we_start",
+    ):  # fmt: skip
+        assert fire[screening] == "other"
+    assert fire["hello"] == "respond"
+    assert fire["bye"] == "small_talk"
     assert fire["deploy_part1"] == "technical"
     assert fire["deploy_part2"] == "technical"
     assert fire["integration_interrupted"] == "technical"
     assert fire["search_status"] == "other"
-    assert {u["id"] for u in them if u["expect"] == "either"} == {"before_we_start", "rhetorical"}
+    assert {u["id"] for u in them if u["expect"] == "either"} == {"rhetorical"}
     for u in them:
         assert u["expect"] in ("answer", "none", "either"), u["id"]
         assert (u["expect"] == "answer") == ("type" in u), u["id"]

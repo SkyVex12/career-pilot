@@ -20,7 +20,8 @@ pause_s = 0.0
 id = "hello"
 parts = ["Hi Alex, how are you doing today?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
+type = "small_talk"
 case = "small talk"
 
 [[utterance]]
@@ -34,8 +35,9 @@ expect = "none"
 id = "offer_overview"
 parts = ["Good, thanks. Shall I start by giving you an overview of the role?"]
 gap_s = 1.0
-expect = "none"
-case = "an offer to describe the role, not a question needing talking points"
+expect = "answer"
+type = "respond"
+case = "an offer asking for the candidate's go-ahead"
 
 [[utterance]]
 id = "overview"
@@ -133,8 +135,9 @@ case = "the recruiter explaining, at length"
 id = "all_clear"
 parts = ["Okay?"]
 gap_s = 1.0
-expect = "either"
-case = "a one-word check after explaining (10-28: fired as respond; replay none 2 of 3)"
+expect = "answer"
+type = "respond"
+case = "a one-word check seeking confirmation after explaining"
 
 [[utterance]]
 id = "next_steps"
@@ -147,5 +150,6 @@ case = "the process, unasked"
 id = "bye"
 parts = ["Well, it was great talking with you, Alex. Have a good day."]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
+type = "small_talk"
 case = "goodbye"

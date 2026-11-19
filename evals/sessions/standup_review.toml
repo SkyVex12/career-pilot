@@ -55,9 +55,10 @@ day = 1
 t = 3
 speaker = "them"
 text = "Morning Alex. How are you?"
-expect = "none"
+expect = "answer"
 addressee = "me"
 case = "small talk"
+type = "small_talk"
 
 [[line]]
 t = 6
@@ -191,15 +192,17 @@ text = "By Friday."
 t = 120
 speaker = "them"
 text = "Okay. Have a great one."
-expect = "none"
+expect = "answer"
 addressee = "me"
+type = "small_talk"
 
 [[line]]
 t = 122
 speaker = "them"
 text = "Oh, sorry, go ahead."
-expect = "none"
+expect = "answer"
 addressee = "me"
+type = "respond"
 
 [[line]]
 t = 124
@@ -219,8 +222,9 @@ addressee = "me"
 t = 136
 speaker = "them"
 text = "Anything else from your side?"
-expect = "either"
+expect = "answer"
 addressee = "me"
+type = "standup_status"
 
 [[line]]
 t = 139

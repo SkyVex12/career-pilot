@@ -12,7 +12,7 @@
 # "either": not scored for detection.
 #
 # What the batch got wrong, and these turns check: yes-or-no checks of the candidate's own
-# situation fired and got invented answers (now none); a question asked in two pieces fired
+# situation fired and got invented answers (now brief grounded replies); a two-piece question fired
 # twice (each piece is scored on its own here; the gateway joins them); a rhetorical worry
 # fired; a question interrupted by "go ahead" was missed.
 
@@ -25,8 +25,9 @@ pause_s = 0.0
 id = "hello"
 parts = ["Hi Alex, can you hear me all right?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "an audio check"
+type = "respond"
 
 [[utterance]]
 id = "alex_hello"
@@ -39,8 +40,9 @@ expect = "none"
 id = "before_we_start"
 parts = ["My connection has been a bit shaky today, so we may turn cameras off. Anything you want to ask before we get going?"]
 gap_s = 1.0
-expect = "either"
-case = "a courtesy question the candidate answered with a no before it ended (fired late on 10-29)"
+expect = "answer"
+case = "an opening invitation for questions, even when a no is enough"
+type = "other"
 
 [[utterance]]
 id = "why_role"
@@ -152,43 +154,49 @@ expect = "none"
 id = "work_authorized"
 parts = ["A few formalities I ask everyone. Are you legally authorized to work in the United States?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "a yes-or-no check of the candidate's own situation (10-29: fired, and the fast pass answered for the user)"
+type = "other"
 
 [[utterance]]
 id = "sponsorship"
 parts = ["And will you now or in the future need visa sponsorship?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "a yes-or-no check"
+type = "other"
 
 [[utterance]]
 id = "worked_here"
 parts = ["Have you ever worked for Northwind before?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "a yes-or-no check (10-29: the fast pass said no for the user)"
+type = "other"
 
 [[utterance]]
 id = "relatives"
 parts = ["Any close family or friends who work here?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "a yes-or-no check"
+type = "other"
 
 [[utterance]]
 id = "certification"
 parts = ["Do you hold or are you studying for any of our certifications?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "a yes-or-no check"
+type = "other"
 
 [[utterance]]
 id = "school_check"
 parts = ["I see you went to State University, is that right?"]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "'is that right?' about a resume fact"
+type = "other"
 
 [[utterance]]
 id = "your_questions"
@@ -209,5 +217,6 @@ case = "the process, explained"
 id = "bye"
 parts = ["Great talking with you, Alex. Have a great afternoon, bye."]
 gap_s = 1.0
-expect = "none"
+expect = "answer"
 case = "the goodbye (the gateway now ends an interview 90 s after it goes quiet)"
+type = "small_talk"

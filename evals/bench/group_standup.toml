@@ -111,5 +111,6 @@ case = "a request right after the exchange with the user"
 id = "dana_audio"
 parts = ["Can you hear me okay now?"]
 gap_s = 2.0
-expect = "none"
+expect = "answer"
 case = "an audio check"
+type = "respond"

@@ -32,7 +32,7 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -60,6 +60,12 @@ DEEP_BY_TYPE = frozenset({"technical", "system_design", "coding", "other"})
 # Shorter questions ("why?", "and then?") mean something different each time they are asked,
 # so the exact-repeat cache never serves or keeps them.
 CACHE_MIN_WORDS = 4
+# Recent displayed cues help a follow-up add detail without retelling its opening. They
+# remain suggestions, separate from the user's spoken answers and the factual sources.
+PRIOR_CUES_COUNT = 3
+PRIOR_CUE_QUESTION_CHARS = 160
+PRIOR_CUE_TEXT_CHARS = 600
+REPEATED_CUE_MIN_WORDS = 20
 
 # Words of a typed instruction to answer what was just said ("answer", "answer every question
 # now"), as opposed to a question. The 2026-10-26 standup typed these into the Ask box.
@@ -669,7 +675,7 @@ class AnswerEngine:
             style = host.answer_style()
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
             cached = await self._cached(qhash, slot) if reuse else None
-            if cached is not None:
+            if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
                 refs = [NodeRef.model_validate(r) for r in cached.get("refs", [])]
@@ -846,6 +852,8 @@ class AnswerEngine:
         s = self.host.settings
         ctx = self.host.prompt_context()
         transcript = self.host.call_context()
+        if q.screen is None and self.open_problem() is None:
+            transcript = replace(transcript, suggestions=self._earlier_suggestions(q))
         memory = memory or []
         if q.screen is not None:
             ask = q.screen
@@ -876,6 +884,39 @@ class AnswerEngine:
             problem=screen.follow_up(problem, ctx.user_name, deep=True) if problem else None,
             images=screen.shot_blocks(problem.shots) if problem else (),
         )  # fmt: skip
+
+    def _prior_cues(self, q: Question) -> list[Question]:
+        """Only completed cues that were visible before this question started. A newer
+        question can supersede an old deep pass while its useful fast cues remain shown."""
+        prior = [
+            old
+            for old in self.questions.values()
+            if old.qid != q.qid
+            and old.t0 < q.t0
+            and old.confirmed
+            and old.fast_ended
+            and old.fast_text.strip()
+            and old.screen is None
+            and not (old.held or old.discarded or old.cancelled)
+        ]
+        return prior[-PRIOR_CUES_COUNT:]
+
+    def _earlier_suggestions(self, q: Question) -> str:
+        return "\n\n".join(
+            f"Question: {old.text[:PRIOR_CUE_QUESTION_CHARS]}\n"
+            f"Suggested cues: {old.fast_text[:PRIOR_CUE_TEXT_CHARS]}"
+            for old in self._prior_cues(q)
+        )
+
+    def _repeats_cues(self, q: Question, text: str) -> bool:
+        """Do not replay a whole prior answer for a distinct automatic follow-up. Brief
+        acknowledgements can legitimately be identical, and a forced repeat is explicit."""
+        if q.forced or q.screen is not None or self.open_problem() is not None:
+            return False
+        normalized = " ".join(text.split())
+        return len(normalized.split()) >= REPEATED_CUE_MIN_WORDS and any(
+            " ".join(old.fast_text.split()) == normalized for old in self._prior_cues(q)
+        )
 
     def open_problem(self) -> "screen.Problem | None":
         """The last screen's problem while follow-ups may be about it (`screen_followup_s`)."""
@@ -925,7 +966,12 @@ class AnswerEngine:
         if q.qtype in ("respond", "follow", *prompts.WORK_TYPES):
             return None  # nor is a question about a decision, a mechanism or an estimate
         result = self._match_result(q)
-        return result.answer if result is not None else None
+        answer = result.answer if result is not None else None
+        if answer is not None:
+            text = "\n".join(f"- {p}" for p in answer.talking_points)
+            if self._repeats_cues(q, text):
+                return None
+        return answer
 
     @staticmethod
     def _match_result(q: Question) -> MatchResult | None:

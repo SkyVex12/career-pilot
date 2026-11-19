@@ -7,8 +7,9 @@
 #
 # On the other side's lines: expect "answer" (a card for Alex), "none" (no card) or "either"
 # (not scored); addressee "me", "other" or "nobody"; type, when a card is expected.
-# unfinished = true: the speaker stops mid-sentence and goes on in the next line (the detector
-# should say "wait"). whole: words the card's question must hold (the first half too).
+# unfinished = true: the intended ask is not identifiable yet (the detector should wait).
+# An identifiable ask can answer despite a trailing unfinished clause. whole: words the
+# card's question must hold, including an earlier fragment when it was needed.
 # On Alex's lines: follow = "card" (a card should follow them: nothing answered the turn) or
 # "none" (no card: the turn was answered, or Alex is the one asking).
 # [line.check]: patterns the short answer must or must not match, when one is written.
@@ -22,9 +23,10 @@ source = "2026-10-22, 2026-10-28 and 2026-11-10 recruiter screens"
 t = 5
 speaker = "them"
 text = "Hi, is this Alex? I had us down for one o'clock. Are you free to talk now, or should I call back in half an hour?"
-expect = "either"
+expect = "answer"
 addressee = "me"
-case = "scheduling; a yes is enough (2026-11-10: a card 3.7 s later, after the answer)"
+case = "scheduling: a brief answer is still expected"
+type = "other"
 
 [[line]]
 t = 14
@@ -35,9 +37,10 @@ text = "Yes, now works."
 t = 18
 speaker = "them"
 text = "Great. How's your day going so far?"
-expect = "none"
+expect = "answer"
 addressee = "me"
 case = "small talk"
+type = "small_talk"
 
 [[line]]
 t = 22
@@ -98,9 +101,10 @@ text = "I think the staff role is closer to what I want."
 t = 78
 speaker = "them"
 text = "And what is your eligibility to work in the US?"
-expect = "none"
+expect = "answer"
 addressee = "me"
-case = "a screening check: quiet since 2026-10-29"
+case = "work eligibility: answer from evidence, never guess personal facts"
+type = "other"
 
 [[line]]
 t = 82
@@ -111,9 +115,10 @@ text = "I'm a citizen."
 t = 86
 speaker = "them"
 text = "Are you currently working right now?"
-expect = "none"
+expect = "answer"
 addressee = "me"
 case = "a yes or no about their own situation (fired on 2026-11-10)"
+type = "other"
 
 [[line]]
 t = 89
@@ -148,9 +153,10 @@ type = "behavioral"
 t = 114
 speaker = "them"
 text = "Can you hear me okay?"
-expect = "none"
+expect = "answer"
 addressee = "me"
 case = "an audio check right after a question"
+type = "respond"
 
 [[line]]
 t = 116
@@ -163,19 +169,19 @@ case = "2026-11-10: the audio check made the turn look unanswered"
 t = 140
 speaker = "them"
 text = "And then what about databases, do you have any SQL or anything like that that you're"
-expect = "none"
+expect = "answer"
 addressee = "me"
-unfinished = true
+type = "technical"
+whole = ["databases", "sql"]
+case = "the SQL-experience ask is already identifiable despite an unfinished tail"
 
 [[line]]
 t = 147
 speaker = "them"
 text = "that you're experienced with?"
-expect = "answer"
+expect = "none"
 addressee = "me"
-type = "technical"
-whole = ["databases", "sql"]
-case = "2026-11-10: the card's question was these four words"
+case = "completion of the already answered SQL-experience ask; do not create a second card"
 
 [[line]]
 t = 152
@@ -186,17 +192,17 @@ text = "Yes, mostly PostgreSQL and some MySQL."
 t = 160
 speaker = "them"
 text = "And which languages do you use most on the back end, like the one you reach for most often is"
-expect = "either"
+expect = "answer"
 addressee = "me"
-unfinished = true
-case = "a question that trails off and is never finished (missed on 2026-11-10)"
+case = "the backend-language ask is identifiable before the trailing clause ends"
+type = "technical"
 
 [[line]]
 t = 168
 speaker = "me"
 text = "On the back end it's mostly Go and Python these days, and some Java earlier on"
-follow = "card"
-case = "nothing answered the turn: this follow card is the right one"
+follow = "none"
+case = "the identifiable language question already has a card; do not repeat its opening"
 
 [[line]]
 t = 182
@@ -218,9 +224,10 @@ text = "Around sixty forty."
 t = 196
 speaker = "them"
 text = "And for salary, it looks like you're looking in the $1.50 range. Is that correct?"
-expect = "none"
+expect = "answer"
 addressee = "me"
 case = "a figure on file, misheard by speech recognition (2026-11-10: the card asked what it meant)"
+type = "other"
 [line.check]
 must_not = ["(?i)what (?:do )?you mean", "(?i)clarify", "\\$1\\.50"]
 
@@ -235,8 +242,10 @@ case = "the user is asking, not answering (2026-11-10)"
 t = 210
 speaker = "them"
 text = "Sure. One fifty to one sixty with a possible annual bonus. So the next step is that I send my notes to the hiring manager, okay?"
-expect = "none"
+expect = "answer"
 addressee = "me"
+type = "respond"
+case = "the next-step explanation ends by asking for confirmation"
 
 [[line]]
 t = 222
@@ -260,5 +269,6 @@ text = "Yes. How is the team split between platform and product work?"
 t = 240
 speaker = "them"
 text = "Thanks so much for your time. Have a great day."
-expect = "none"
+expect = "answer"
 addressee = "me"
+type = "small_talk"

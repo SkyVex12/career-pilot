@@ -87,7 +87,7 @@ class Detection:
     depth: str | None = None
 
     def fires(self) -> bool:
-        return self.decision == "answer" and self.qtype != "small_talk"
+        return self.decision == "answer"
 
 
 QUESTION_WORDS = frozenset(
@@ -168,6 +168,91 @@ def plain_question(text: str, min_words: int = 8) -> bool:
     if head[0] in ("can", "could", "would") and len(head) > 2 and head[1] == "you":
         return bool(ASK_VERBS.intersection(head[2:]))
     return False
+
+
+def recoverable_question(text: str) -> str | None:
+    """Conservative fallback for an unavailable or overly hesitant detector.
+
+    Unlike the speculative-start heuristic, this requires a direct ask at a sentence
+    boundary. A question word inside an explanation is not enough. An unfinished object
+    ("could you explain the") still needs its continuation. This is only used one-on-one;
+    the model remains responsible for addressees in group calls.
+    """
+    greeting = False
+    for sentence in re.split(r"[.!?;]\s*", text.lower()):
+        words = _words(sentence)
+        if not words:
+            continue
+        if " ".join(words) in {"hi", "hello", "hey", "good morning", "good afternoon"}:
+            greeting = True
+            continue
+        while words and words[0] in LEAD_INS:
+            words = words[1:]
+        if not words:
+            continue
+        head = " ".join(words)
+        if head in {
+            "how are you",
+            "how are you doing",
+            "how are you today",
+            "how are you doing today",
+            "how is it going",
+            "how's it going",
+            "how is your day",
+            "how was your weekend",
+        }:
+            greeting = True
+            continue
+        if words[-1] in {
+            "a",
+            "an",
+            "the",
+            "your",
+            "our",
+            "my",
+            "their",
+            "and",
+            "or",
+            "because",
+            "if",
+            "whether",
+            "we",
+            "i",
+            "you're",
+            "we're",
+            "they're",
+            "i'm",
+        }:
+            continue
+        if len(words) <= 4 and words[-1] in {"of", "with", "from", "to", "about", "for"}:
+            continue
+        if (
+            len(words) >= 2
+            and words[-1] == "you"
+            and words[-2]
+            in {
+                "would",
+                "could",
+                "will",
+                "can",
+                "did",
+                "do",
+            }
+        ):
+            continue
+        if head in {"why", "why not", "how so"}:
+            return "other"
+        if len(words) < 3:
+            continue
+        direct = words[0].replace("'", "") in QUESTION_WORDS or words[0] in ASK_VERBS
+        direct = direct or any(
+            head.startswith(cue + " ")
+            for cue in REQUEST_CUES
+            if cue not in {"curious", "wondering"}
+        )
+        if direct:
+            return "other"
+    return "small_talk" if greeting else None
 
 
 # How the user opens their own update in a standup, in its first words.
@@ -460,6 +545,7 @@ class TurnDetector:
         self.first_shown = 0
         self.first_withdrawn = 0
         self.held_kept = 0
+        self.recovered = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -499,9 +585,10 @@ class TurnDetector:
         self.early_at = now
         self.early_starts += 1
         detection = asyncio.ensure_future(self.host.detect(text))
-        match = self.host.start_match(text)
+        duplicate = detection.done() and detection.result().decision == "duplicate"
+        match = None if duplicate else self.host.start_match(text)
         held = None
-        if self._should_hold(text):
+        if not duplicate and self._should_hold(text):
             self.held_starts += 1
             held = self.host.start_held(text, now, match)
         self.early = _Early(_Candidate(text, detection, match), held, now)
@@ -644,6 +731,25 @@ class TurnDetector:
             model.cancel()
         await self._wait_final(turn, turn.t0 + self.silence_s + self.final_wait_s)
 
+    async def _recover(self, turn: _Turn, detection: Detection) -> Detection:
+        """A settled, identifiable ask must not vanish on wait or provider failure.
+
+        Give a hesitant turn one second to resume. If it does, normal continuation owns
+        its text; never recover that detached fragment as a second card. Explicit none
+        and duplicate decisions remain authoritative.
+        """
+        if self.group_call() or (detection.decision != "wait" and not detection.error):
+            return detection
+        if turn.text is not None or recoverable_question(self._text(turn)) is None:
+            return detection
+        await self._turn_end(turn)
+        if detection.decision == "wait":
+            await self._sleep_until(turn.t0 + max(self.silence_s, 1.0))
+        qtype = recoverable_question(self._text(turn))
+        if turn.text is not None or qtype is None:
+            return detection
+        return replace(detection, decision="answer", qtype=qtype)
+
     @staticmethod
     def _final_ms(turn: _Turn) -> int | None:
         """t0 to the STT final, for latency_ms; None if it has not arrived."""
@@ -721,8 +827,10 @@ class TurnDetector:
     def _start(self, turn: _Turn, text: str) -> _Candidate:
         """Step 1 on this text: the detector, the prepared match and a held fast pass."""
         detection = asyncio.ensure_future(self.host.detect(text))
-        match = self.host.start_match(text)
-        self._hold(turn, text, match)
+        duplicate = detection.done() and detection.result().decision == "duplicate"
+        match = None if duplicate else self.host.start_match(text)
+        if not duplicate:
+            self._hold(turn, text, match)
         turn.cand = _Candidate(text, detection, match)
         return turn.cand
 
@@ -826,6 +934,17 @@ class TurnDetector:
                 cand, detection = await self._decide(turn, cand)
             finally:
                 first.cancel()
+            while True:
+                recovered = await self._recover(turn, detection)
+                # Recovery waits longer than the normal final deadline. A final arriving
+                # in that interval must replace the stale held answer, not just its label.
+                if self._changed(turn, cand):
+                    cand, detection = await self._decide(turn, cand)
+                    continue
+                if recovered is not detection:
+                    self.recovered += 1
+                detection = recovered
+                break
             detection = replace(detection, decided_ms=max(0, int((time.monotonic() - t0) * 1000)))
             if not detection.fires():
                 self._discard_held(turn)

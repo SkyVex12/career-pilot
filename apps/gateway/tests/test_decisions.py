@@ -55,7 +55,9 @@ def test_the_decisions_request_carries_the_detector_rules_and_two_questions() ->
     assert [c["value"] for c in depth["choices"]] == ["deep", "light"]
     assert [c["value"] for c in turn["choices"]] == ["answer", "wait", "none"]
     interview = {c["value"] for c in kind["choices"]}
-    assert interview == {"behavioral", "technical", "system_design", "coding", "other", "respond"}
+    assert interview == {
+        "behavioral", "technical", "system_design", "coding", "small_talk", "other", "respond",
+    }  # fmt: skip
     # A standup offers the status and work types, and tells the turn question about checks
     # and problems said as statements.
     standup = prompts.detector_decision("Alex Rivera", "", "Is that merged?", "standup", "t")

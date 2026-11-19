@@ -375,7 +375,7 @@ def test_the_prompts_leave_the_users_choices_to_them_and_read_amounts_sensibly()
     assert "never ask what it means" in system
     detector = prompts.detector("Sam Lee", "", "u", 80).system[0].text
     assert "are you working at the" in detector
-    assert "a pay figure they gave before" in detector
+    assert "fact from their resume or pay" in detector
 
 
 def test_a_standup_is_told_about_the_hand_off_and_to_leave_out_tool_bookkeeping() -> None:

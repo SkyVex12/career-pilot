@@ -66,7 +66,7 @@ def detection_from(answers: Sequence[Mapping[str, Any]], mode: str) -> tuple[Det
     if got["decision"] != "answer":
         return NO_QUESTION, got["confidence"]
     qtype = got["qtype"]
-    allowed = set(prompts.QUESTION_TYPES) - {"small_talk"}
+    allowed = set(prompts.QUESTION_TYPES)
     if mode in prompts.GROUP_MODES:
         allowed |= set(prompts.WORK_TYPES)
     return (

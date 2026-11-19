@@ -432,7 +432,8 @@ def test_a_backchannel_is_not_a_turn() -> None:
 
 async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
     def reply(job: str, req: LLMRequest) -> Reply:
-        if job == "detector" and "how are you" in str(req.content).lower():
+        utterance = str(req.content).split("<utterance>")[-1].split("</utterance>")[0]
+        if job == "detector" and "how are you" in utterance.lower():
             return Reply([json.dumps({"answer": "small_talk"})])
         return default_reply(job, req)
 
@@ -456,7 +457,10 @@ async def test_no_follow_for_small_talk_or_a_goodbye(env) -> None:
             capture_ms=11000, end_ms=13000,
         )  # fmt: skip
         await asyncio.sleep(1.0)
-        assert c.of_type("question.detected") == []
+        detected = c.of_type("question.detected")
+        assert len({message["question_id"] for message in detected}) == 1
+        assert all(message["question_type"] == "small_talk" for message in detected)
+        assert all(message["pass"] == "fast" for message in c.of_type("answer.done"))
 
 
 async def test_no_follow_card_on_a_turn_that_was_answered(env) -> None:
@@ -530,10 +534,9 @@ async def test_a_reply_gets_its_detailed_answer_without_a_tap(env) -> None:
         await c.wait_type("answer.done", question_id=q["question_id"], pass_="deep")
 
 
-async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> None:
-    # 2026-10-29: an interviewer who paused mid-question got 15 answers for 6 questions, each
-    # on its own fragment, and one fast answer took up the topic before. A question that goes
-    # on before the user speaks is now the same question: its passes get both parts.
+async def test_distinct_questions_after_a_pause_are_answered_separately(env) -> None:
+    # A close follow-up is a new question even if the user has not started answering yet.
+    # The earlier question remains in conversation context instead of being asked again.
     provider = ScriptedProvider("anthropic")
     env.providers = [provider]
     async with GatewayServer(env.services()) as gw:
@@ -550,10 +553,7 @@ async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> N
                 and m["question_id"] != q1["question_id"]
             )
         )
-        assert q2["text"] == (
-            "What would you use to deploy fifty services on AWS? "
-            "And how would you watch them, which tool is your favorite?"
-        )
+        assert q2["text"] == "And how would you watch them, which tool is your favorite?"
         await c.wait_type("answer.done", question_id=q2["question_id"], pass_="deep")
         # Once the user answers, the next question stands on its own again.
         await c.say_me("I'd use ECS with one pipeline per service", capture_ms=4000, end_ms=6000)
@@ -577,7 +577,7 @@ async def test_a_question_that_goes_on_after_a_pause_is_answered_whole(env) -> N
         )
         assert q3["question_id"] != q2["question_id"]
     deep = [str(r.content) for r in requests_for(provider, "deep")]
-    assert any("deploy fifty services on AWS? And how would you watch them" in d for d in deep)
+    assert any("Question (technical): And how would you watch them" in d for d in deep)
 
 
 # 2026-10-29: a session outlived its interview by an hour (the next call started 7.2 minutes

@@ -253,9 +253,16 @@ def test_a_question_continued_after_a_pause_joins_the_one_before() -> None:
     conv = Conversation("Alex", Budget())
     conv.add(Line("them", 0, 3000, "Which AWS tools would you use for fifty services?"))
     conv.question("q1", "Which AWS tools would you use for fifty services?", 3000)
-    joined = "Which AWS tools would you use for fifty services? And which is your favorite?"
+    joined = "Which AWS tools would you use for fifty services? for our next launch?"
     # Speech started again 1.5 s later (the speech flag), before its STT final is in.
-    assert conv.continued("And which is your favorite?", 5000, [0, 4500]) == joined
+    assert conv.continued("for our next launch?", 5000, [0, 4500]) == joined
+    # A new question stands on its own even without STT punctuation.
+    assert (
+        conv.continued("And which is your favorite?", 5000, [0, 4500])
+        == "And which is your favorite?"
+    )
+    assert conv.continued("How do you monitor them", 5000, [0, 4500]) == "How do you monitor them"
+    assert conv.continued("Hello!", 5000, [0, 4500]) == "Hello!"
     # Not with the gap past the limit, nor with the setting off, nor with no new speech.
     assert conv.continued("Next topic?", 5000, [0, 9000]) == "Next topic?"
     assert conv.continued("And which?", 0, [4500]) == "And which?"
