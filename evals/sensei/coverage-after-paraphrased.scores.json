@@ -1,0 +1,2317 @@
+{
+  "rubric": [
+    "relevance",
+    "grounding",
+    "specificity",
+    "structure",
+    "speakability",
+    "first_two_lines"
+  ],
+  "seed": 20261119,
+  "judge_model": "gpt-6-astra",
+  "calibration": {
+    "status": "ai_agreement_only",
+    "reviewer_kind": "ai",
+    "model": "gpt-6.2-astra",
+    "meets_agreement_threshold": true,
+    "completed": 15,
+    "required": 15,
+    "preference_agreement": 1,
+    "criterion_mae": {
+      "relevance": 0.4166666666666667,
+      "grounding": 0.23333333333333334,
+      "specificity": 0.3333333333333333,
+      "structure": 0.16666666666666666,
+      "speakability": 0.18333333333333332,
+      "first_two_lines": 0.48333333333333334
+    },
+    "threshold": "15 complete; preference agreement >=80%; each criterion MAE <=0.75",
+    "human_completed": 0
+  },
+  "questions": [
+    {
+      "id": 0,
+      "type": "small_talk",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          4,
+          5,
+          4
+        ],
+        "expanded": [
+          4,
+          5,
+          4,
+          4,
+          5,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          5,
+          5,
+          4,
+          4,
+          4,
+          4.5
+        ],
+        "expanded": [
+          5,
+          5,
+          4,
+          4,
+          4,
+          4.5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "sensei",
+      "expanded_preference": "sensei",
+      "score_disagreement": false
+    },
+    {
+      "id": 3,
+      "type": "other",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "expanded": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          2,
+          1,
+          1,
+          2,
+          2,
+          1.5
+        ],
+        "expanded": [
+          2,
+          1,
+          1,
+          2,
+          2,
+          1.5
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 8,
+      "type": "respond",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "expanded": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          5,
+          3,
+          3,
+          3,
+          2
+        ],
+        "expanded": [
+          4,
+          5,
+          3,
+          3,
+          3,
+          2
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "sensei",
+      "expanded_preference": "sensei",
+      "score_disagreement": false
+    },
+    {
+      "id": 18,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4.5,
+          5,
+          4,
+          4.5,
+          5,
+          5
+        ],
+        "expanded": [
+          4.5,
+          5,
+          5,
+          5,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          3,
+          2,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3,
+          3,
+          2,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 19,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          4,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          4.5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1.5,
+          2,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3,
+          1.5,
+          2,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          8,
+          8
+        ],
+        "invented_expanded": [
+          8,
+          8
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 20,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          4,
+          4,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          2,
+          5,
+          2,
+          2,
+          2,
+          1
+        ],
+        "expanded": [
+          2,
+          5,
+          2,
+          2,
+          2,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 21,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          4.5,
+          4,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          5,
+          3,
+          2,
+          1.5,
+          2
+        ],
+        "expanded": [
+          3.5,
+          5,
+          3,
+          2,
+          1.5,
+          2
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 22,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          4.5,
+          4,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          2,
+          5,
+          2,
+          2,
+          1.5,
+          1
+        ],
+        "expanded": [
+          2,
+          5,
+          2,
+          2,
+          1.5,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 24,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          4,
+          5,
+          4.5
+        ],
+        "expanded": [
+          4,
+          5,
+          4,
+          4,
+          4.5,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          2,
+          2,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3,
+          2,
+          2,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          5,
+          5
+        ],
+        "invented_expanded": [
+          5,
+          5
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 26,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          3.5,
+          3,
+          4,
+          3.5,
+          4.5,
+          4
+        ],
+        "expanded": [
+          3.5,
+          3,
+          4,
+          4,
+          4.5,
+          4
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1.5,
+          2,
+          2,
+          1,
+          2
+        ],
+        "expanded": [
+          3,
+          1.5,
+          2,
+          2,
+          1,
+          2
+        ],
+        "invented_initial": [
+          6,
+          7
+        ],
+        "invented_expanded": [
+          6,
+          7
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 27,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          3,
+          4,
+          5,
+          5
+        ],
+        "expanded": [
+          4,
+          3,
+          3,
+          4,
+          4,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          2,
+          3
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          2.5,
+          1,
+          2
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          2.5,
+          1,
+          2
+        ],
+        "invented_initial": [
+          9,
+          9
+        ],
+        "invented_expanded": [
+          9,
+          9
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 30,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          3,
+          3,
+          4,
+          4.5,
+          4.5
+        ],
+        "expanded": [
+          4,
+          5,
+          4,
+          4,
+          4,
+          5
+        ],
+        "invented_initial": [
+          3,
+          3
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          2,
+          2,
+          2.5,
+          1,
+          1
+        ],
+        "expanded": [
+          3.5,
+          2,
+          2,
+          2.5,
+          1,
+          1
+        ],
+        "invented_initial": [
+          7,
+          7
+        ],
+        "invented_expanded": [
+          7,
+          7
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 31,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          4.5,
+          4.5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          4,
+          4,
+          4,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          2,
+          2,
+          3,
+          1,
+          1
+        ],
+        "expanded": [
+          4,
+          2,
+          2,
+          3,
+          1,
+          1
+        ],
+        "invented_initial": [
+          7,
+          7
+        ],
+        "invented_expanded": [
+          7,
+          7
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 32,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          4.5,
+          4.5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          2
+        ],
+        "expanded": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          2
+        ],
+        "invented_initial": [
+          8,
+          8
+        ],
+        "invented_expanded": [
+          8,
+          8
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 33,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          3,
+          4.5,
+          3,
+          3,
+          4,
+          3
+        ],
+        "expanded": [
+          4,
+          3,
+          4,
+          4,
+          4,
+          3
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          2
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          2
+        ],
+        "expanded": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          2
+        ],
+        "invented_initial": [
+          8,
+          8
+        ],
+        "invented_expanded": [
+          8,
+          8
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 35,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "expanded": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          2,
+          2,
+          2,
+          2,
+          1.5
+        ],
+        "expanded": [
+          3.5,
+          2,
+          2,
+          2,
+          2,
+          1.5
+        ],
+        "invented_initial": [
+          3,
+          3
+        ],
+        "invented_expanded": [
+          3,
+          3
+        ]
+      },
+      "preference": "sensei",
+      "expanded_preference": "sensei",
+      "score_disagreement": false
+    },
+    {
+      "id": 36,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          3,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          4,
+          5,
+          3,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3,
+          1,
+          2,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          11,
+          12
+        ],
+        "invented_expanded": [
+          11,
+          12
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 37,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          3,
+          4.5,
+          5,
+          4.5
+        ],
+        "expanded": [
+          4,
+          5,
+          3,
+          4,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1,
+          1.5,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3,
+          1,
+          1.5,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          8,
+          10
+        ],
+        "invented_expanded": [
+          8,
+          10
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 39,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          4.5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          3,
+          3,
+          2,
+          1.5,
+          1
+        ],
+        "expanded": [
+          3.5,
+          3,
+          3,
+          2,
+          1.5,
+          1
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 40,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4.5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          4.5,
+          5,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          1,
+          2,
+          2,
+          1,
+          1
+        ],
+        "expanded": [
+          3.5,
+          1,
+          2,
+          2,
+          1,
+          1
+        ],
+        "invented_initial": [
+          8,
+          8
+        ],
+        "invented_expanded": [
+          8,
+          8
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 41,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          4.5,
+          3,
+          3,
+          2,
+          1.5
+        ],
+        "expanded": [
+          4,
+          4.5,
+          3,
+          3,
+          2,
+          1.5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 48,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          2.5,
+          4.5,
+          2.5,
+          3,
+          4,
+          2.5
+        ],
+        "expanded": [
+          2.5,
+          4.5,
+          3.5,
+          3,
+          4,
+          2.5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          1,
+          3,
+          2,
+          2
+        ],
+        "expanded": [
+          4,
+          1,
+          1,
+          3,
+          2,
+          2
+        ],
+        "invented_initial": [
+          6,
+          6
+        ],
+        "invented_expanded": [
+          6,
+          6
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 52,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          5,
+          5,
+          4.5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          4.5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          2.5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "expanded": [
+          4,
+          2.5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "invented_initial": [
+          2,
+          3
+        ],
+        "invented_expanded": [
+          2,
+          3
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 53,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          2,
+          2,
+          3,
+          2,
+          2
+        ],
+        "expanded": [
+          4,
+          2,
+          2,
+          3,
+          2,
+          2
+        ],
+        "invented_initial": [
+          4,
+          4
+        ],
+        "invented_expanded": [
+          4,
+          4
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 54,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          4.5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          1,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          3,
+          3,
+          3,
+          2,
+          2
+        ],
+        "expanded": [
+          4,
+          3,
+          3,
+          3,
+          2,
+          2
+        ],
+        "invented_initial": [
+          3,
+          2
+        ],
+        "invented_expanded": [
+          3,
+          2
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 55,
+      "type": "small_talk",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          4,
+          4,
+          5,
+          5,
+          4
+        ],
+        "expanded": [
+          5,
+          4,
+          4,
+          5,
+          5,
+          4
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3.5,
+          4.5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "expanded": [
+          3.5,
+          4.5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 66,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          4.5,
+          4,
+          4,
+          5,
+          5
+        ],
+        "expanded": [
+          4,
+          4.5,
+          4,
+          4,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          2,
+          3,
+          3,
+          2,
+          3
+        ],
+        "expanded": [
+          4,
+          2,
+          3,
+          3,
+          2,
+          3
+        ],
+        "invented_initial": [
+          4,
+          4
+        ],
+        "invented_expanded": [
+          4,
+          4
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 68,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          3,
+          5,
+          4,
+          4,
+          4,
+          3.5
+        ],
+        "expanded": [
+          4,
+          4.5,
+          4,
+          3,
+          3.5,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          2.5,
+          2,
+          3.5
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          2.5,
+          2,
+          3.5
+        ],
+        "invented_initial": [
+          5,
+          5
+        ],
+        "invented_expanded": [
+          5,
+          5
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 70,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          4.5,
+          3,
+          4,
+          4,
+          4
+        ],
+        "expanded": [
+          4,
+          4.5,
+          3.5,
+          4,
+          4,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          1,
+          2,
+          2,
+          1.5,
+          2
+        ],
+        "expanded": [
+          3,
+          1,
+          2,
+          2,
+          1.5,
+          2
+        ],
+        "invented_initial": [
+          7,
+          6
+        ],
+        "invented_expanded": [
+          7,
+          6
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 86,
+      "type": "technical",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          3,
+          4,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          3,
+          4,
+          4.5,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          3.5,
+          2,
+          1.5
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          3.5,
+          2,
+          1.5
+        ],
+        "invented_initial": [
+          6,
+          5
+        ],
+        "invented_expanded": [
+          6,
+          5
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 89,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4.5,
+          5,
+          3,
+          4,
+          4.5,
+          5
+        ],
+        "expanded": [
+          5,
+          4,
+          4,
+          4,
+          4,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          3,
+          2,
+          1.5
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          3,
+          2,
+          1.5
+        ],
+        "invented_initial": [
+          11,
+          11
+        ],
+        "invented_expanded": [
+          11,
+          11
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 91,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          4,
+          4,
+          5,
+          5
+        ],
+        "expanded": [
+          4,
+          3,
+          4,
+          4,
+          4,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          3,
+          2.5,
+          3,
+          2,
+          1
+        ],
+        "expanded": [
+          4,
+          3,
+          2.5,
+          3,
+          2,
+          1
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 92,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          3,
+          4,
+          3,
+          3,
+          4,
+          4
+        ],
+        "expanded": [
+          3,
+          5,
+          3,
+          3,
+          4,
+          4
+        ],
+        "invented_initial": [
+          1,
+          1
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          4,
+          2,
+          2
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          4,
+          2,
+          2
+        ],
+        "invented_initial": [
+          10,
+          11
+        ],
+        "invented_expanded": [
+          10,
+          11
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 93,
+      "type": "behavioral",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          4,
+          5,
+          3,
+          4,
+          4.5,
+          4
+        ],
+        "expanded": [
+          4,
+          3,
+          3,
+          4,
+          4.5,
+          4
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          1,
+          1
+        ]
+      },
+      "sensei": {
+        "initial": [
+          4,
+          1,
+          2,
+          3,
+          1.5,
+          2
+        ],
+        "expanded": [
+          4,
+          1,
+          2,
+          3,
+          1.5,
+          2
+        ],
+        "invented_initial": [
+          6,
+          7
+        ],
+        "invented_expanded": [
+          6,
+          7
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    },
+    {
+      "id": 95,
+      "type": "respond",
+      "needs_answer": true,
+      "ours": {
+        "initial": [
+          5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "expanded": [
+          5,
+          5,
+          4,
+          5,
+          5,
+          5
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "sensei": {
+        "initial": [
+          3,
+          5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "expanded": [
+          3,
+          5,
+          3,
+          3,
+          2,
+          1
+        ],
+        "invented_initial": [
+          0,
+          0
+        ],
+        "invented_expanded": [
+          0,
+          0
+        ]
+      },
+      "preference": "ours",
+      "expanded_preference": "ours",
+      "score_disagreement": false
+    }
+  ],
+  "eligibility": {
+    "model": "gpt-6.2-astra",
+    "items": [
+      {
+        "id": 0,
+        "addressee": "unclear"
+      },
+      {
+        "id": 3,
+        "addressee": "other"
+      },
+      {
+        "id": 8,
+        "addressee": "other"
+      },
+      {
+        "id": 18,
+        "addressee": "candidate"
+      },
+      {
+        "id": 19,
+        "addressee": "candidate"
+      },
+      {
+        "id": 20,
+        "addressee": "candidate"
+      },
+      {
+        "id": 21,
+        "addressee": "candidate"
+      },
+      {
+        "id": 22,
+        "addressee": "candidate"
+      },
+      {
+        "id": 24,
+        "addressee": "candidate"
+      },
+      {
+        "id": 26,
+        "addressee": "candidate"
+      },
+      {
+        "id": 27,
+        "addressee": "candidate"
+      },
+      {
+        "id": 30,
+        "addressee": "candidate"
+      },
+      {
+        "id": 31,
+        "addressee": "candidate"
+      },
+      {
+        "id": 32,
+        "addressee": "candidate"
+      },
+      {
+        "id": 33,
+        "addressee": "candidate"
+      },
+      {
+        "id": 35,
+        "addressee": "candidate"
+      },
+      {
+        "id": 36,
+        "addressee": "candidate"
+      },
+      {
+        "id": 37,
+        "addressee": "candidate"
+      },
+      {
+        "id": 39,
+        "addressee": "candidate"
+      },
+      {
+        "id": 40,
+        "addressee": "candidate"
+      },
+      {
+        "id": 41,
+        "addressee": "candidate"
+      },
+      {
+        "id": 48,
+        "addressee": "candidate"
+      },
+      {
+        "id": 52,
+        "addressee": "candidate"
+      },
+      {
+        "id": 53,
+        "addressee": "candidate"
+      },
+      {
+        "id": 54,
+        "addressee": "candidate"
+      },
+      {
+        "id": 55,
+        "addressee": "candidate"
+      },
+      {
+        "id": 66,
+        "addressee": "candidate"
+      },
+      {
+        "id": 68,
+        "addressee": "candidate"
+      },
+      {
+        "id": 70,
+        "addressee": "candidate"
+      },
+      {
+        "id": 86,
+        "addressee": "candidate"
+      },
+      {
+        "id": 89,
+        "addressee": "candidate"
+      },
+      {
+        "id": 91,
+        "addressee": "candidate"
+      },
+      {
+        "id": 92,
+        "addressee": "candidate"
+      },
+      {
+        "id": 93,
+        "addressee": "candidate"
+      },
+      {
+        "id": 95,
+        "addressee": "candidate"
+      }
+    ]
+  },
+  "primary_question_ids": [
+    0,
+    18,
+    19,
+    20,
+    21,
+    22,
+    24,
+    26,
+    27,
+    30,
+    31,
+    32,
+    33,
+    35,
+    36,
+    37,
+    39,
+    40,
+    41,
+    48,
+    52,
+    53,
+    54,
+    55,
+    66,
+    68,
+    70,
+    86,
+    89,
+    91,
+    92,
+    93,
+    95
+  ],
+  "excluded_question_ids": [
+    3,
+    8
+  ]
+}
