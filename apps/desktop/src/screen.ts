@@ -330,7 +330,7 @@ export class HostScreen {
       this.allowed.some((a) => a.identity === person.identity);
     try {
       if (!this.room || this.status.host !== "on") throw new Error("Share your screen first.");
-      if (this.status.surface !== "monitor") throw new Error("Share a whole screen to let a guest control it.");
+      if (this.status.surface !== "monitor") throw new Error("Share a whole screen to let an assistant control it.");
       if (!this.allowed.some((a) => a.identity === person.identity)) throw new Error(`${person.name} may not control your screen.`);
       const all = await this.deps.monitors();
       if (!stillAllowed()) return;

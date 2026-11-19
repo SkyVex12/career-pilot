@@ -1131,7 +1131,7 @@ async fn launch(
 ) -> Res<()> {
     let _starting = state.begin_start()?;
     if state.seat.lock().unwrap().is_some() {
-        return Err("Leave the call you are watching before you start your own.".into());
+        return Err("Stop assisting before you start your own call.".into());
     }
     let tokens = state.tokens()?;
     tokens.current().await.map_err(|e| e.to_string())?;

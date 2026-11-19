@@ -17,8 +17,8 @@ function optionsFrom(children: ReactNode, group?: string, disabled = false): Opt
 
 /** A themed, select-only combobox. A hidden native select preserves form values and
  * the existing change-event API; the popup never uses the OS transparent picker. */
-export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select(props, forwardedRef) {
-  const { children, className, value, defaultValue, disabled, id, onChange, ...rest } = props;
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement> & { displayValue?: ReactNode }>(function Select(props, forwardedRef) {
+  const { children, className, value, defaultValue, disabled, id, onChange, displayValue, ...rest } = props;
   const generated = useId();
   const listId = `${generated}-options`;
   const native = useRef<HTMLSelectElement | null>(null);
@@ -103,9 +103,12 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
       title={props.title ?? options[selected]?.label} onClick={() => open ? close() : show()}
       onBlur={close} onKeyDown={event => {
         const { key } = event;
-        if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " ", "Escape"].includes(key)) {
+        if (key === "Escape") {
+          if (open) { event.preventDefault(); event.stopPropagation(); close(); }
+          return;
+        }
+        if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(key)) {
           event.preventDefault();
-          if (key === "Escape") { event.stopPropagation(); close(); return; }
           if (key === "Enter" || key === " ") { if (open) choose(active); else show(); return; }
           if (!open) { show(key === "End"); return; }
           const at = enabled.indexOf(active);
@@ -119,7 +122,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
           const index = enabled.find(i => options[i].label.toLocaleLowerCase().startsWith(query));
           if (index != null) { if (open) setActive(index); else choose(index); }
         }
-      }}><span>{options[selected]?.label ?? "Choose…"}</span></button>
+      }}><span>{displayValue ?? options[selected]?.label ?? "Choose…"}</span></button>
     {open && createPortal(<div ref={popup} id={listId} role="listbox" aria-label={props["aria-label"]}
       aria-labelledby={props["aria-label"] ? undefined : id} className="ui-select-menu" style={position}
       onPointerDown={e => { if ((e.target as Element).closest('[role="option"]')) e.preventDefault(); }}>

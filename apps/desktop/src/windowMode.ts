@@ -47,7 +47,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
               await clearCompactShape();
               const decorated = saved.current?.decorated ?? !overlay;
               if (await win.isDecorated() !== decorated) await win.setDecorations(decorated);
-              await win.setMinSize(new LogicalSize(48, 48));
+              await win.setMinSize(new LogicalSize(44, 44));
               if (saved.current) await resizeWindowBounds(saved.current.size, () => flushSync(() => setMode(next)));
               await win.setMinSize(new LogicalSize(overlay ? 320 : 400, 240));
               if (saved.current && await win.isResizable() !== saved.current.resizable) await win.setResizable(saved.current.resizable);
@@ -62,7 +62,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
                   await win.setResizable(false);
                   resizeLocked = true;
                 }
-                await win.setMinSize(new LogicalSize(48, 48));
+                await win.setMinSize(new LogicalSize(44, 44));
                 constraintsChanged = true;
                 if (await win.isDecorated()) { await win.setDecorations(false); decorationsChanged = true; }
               }
@@ -70,7 +70,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
                 motion.current = animateCompactMorph(compactRef.current, true);
                 if (!await motion.current.finished || disposed.current) throw new Error("Window transition interrupted.");
                 if (await win.isMinimized()) throw new Error("Restore the window before changing its size.");
-                await resizeCompactBounds(48, 48, () => {
+                await resizeCompactBounds(64, 44, () => {
                   flushSync(() => setMode(next));
                   motion.current?.cancel();
                 });
@@ -85,7 +85,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
                   flushSync(() => setMode("toolbar"));
                   compactRendered = true;
                 });
-                if (next === "dot") await resizeCompactBounds(48, 48, () => flushSync(() => setMode(next)));
+                if (next === "dot") await resizeCompactBounds(64, 44, () => flushSync(() => setMode(next)));
               }
             }
           } catch (error) {

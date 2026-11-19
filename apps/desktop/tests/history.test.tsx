@@ -101,7 +101,7 @@ describe("History list", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Northwind technical/ }));
     expect(await screen.findByRole("heading", { name: "Interview · Northwind technical" })).toBeInTheDocument();
     expect(await screen.findByText("It went well.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "← History" }));
+    await userEvent.click(screen.getByRole("button", { name: "← Past calls" }));
     expect(await screen.findByRole("list", { name: "Past calls" })).toBeInTheDocument();
   });
 });
@@ -110,6 +110,7 @@ describe("A call's detail", () => {
   const ready = (over: Partial<Detail> = {}): Detail => ({
     ...call("s1", "interview", "Northwind technical"),
     questions: 6,
+    notes: "",
     outputs: { summary: "Summary text.", follow_up_email: "Hi Jordan," },
     ...over,
   });
@@ -136,15 +137,105 @@ describe("A call's detail", () => {
     );
     expect(await screen.findByText("Summary text.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.queryByText("Hi Jordan,")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Follow-up" }));
+    expect(screen.getByText("Hi Jordan,")).toBeInTheDocument();
+    expect(screen.queryByText("Summary text.")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
     expect(await screen.findByText("Tell me about an outage.")).toBeInTheDocument();
   });
 
-  it("no transcript stored: no tabs, and it says so", async () => {
+  it("no transcript stored: outputs stay available without replay requests", async () => {
     ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false }));
     render(<SessionDetail sessionId="s1" />);
     expect(await screen.findByText(/transcript was not stored/)).toBeInTheDocument();
-    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Call review" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Transcript" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Replay" })).not.toBeInTheDocument();
+    expect(ipc.apiCalls().some((c) => c.path.endsWith("/replay"))).toBe(false);
+  });
+
+  it("notes survive tab changes, save, reload, and discard without storing a transcript", async () => {
+    let saved = "Original note";
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false, notes: saved }));
+    ipc.api("PUT", /^\/sessions\/s1\/notes$/, (_path, body) => ({ notes: saved = (body as { text: string }).text }));
+    const view = render(<SessionDetail sessionId="s1" />);
+    await screen.findByText("Summary text.");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue("Original note");
+    await userEvent.type(screen.getByLabelText("Call notes"), " + follow up");
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue("Original note + follow up");
+    await userEvent.click(screen.getByRole("button", { name: "Save notes" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save notes" })).toBeDisabled());
+    expect(ipc.apiCalls("PUT")[0]).toMatchObject({ path: "/sessions/s1/notes", body: { text: "Original note + follow up" } });
+    await userEvent.type(screen.getByLabelText("Call notes"), " discard this");
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue(saved);
+    view.unmount();
+    render(<SessionDetail sessionId="s1" />);
+    await screen.findByText("Summary text.");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue(saved);
+  });
+
+  it("failed note saves preserve the draft and Retry saves it", async () => {
+    let fail = true;
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false, notes: "" }));
+    ipc.api("PUT", /^\/sessions\/s1\/notes$/, (_path, body) => {
+      if (fail) throw "Connection lost";
+      return { notes: (body as { text: string }).text };
+    });
+    render(<SessionDetail sessionId="s1" />);
+    await screen.findByText("Summary text.");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    await userEvent.type(screen.getByLabelText("Call notes"), "Keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Save notes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    expect(screen.getByLabelText("Call notes")).toHaveValue("Keep this draft");
+    fail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Save notes" })).toBeDisabled();
+  });
+
+  it("standup report opens first and feedback has its own tab", async () => {
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready({ mode: "standup", store_transcript: false, outputs: { summary: "Call summary", standup_report: "Yesterday: finished migration.", feedback: "Keep the update short." } }));
+    render(<SessionDetail sessionId="s1" />);
+    expect(await screen.findByText("Yesterday: finished migration.")).toBeInTheDocument();
+    expect(screen.queryByText("Keep the update short.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Feedback" }));
+    expect(screen.getByText("Keep the update short.")).toBeInTheDocument();
+  });
+
+  it("returning to past calls confirms before discarding unsaved notes", async () => {
+    let closed = false;
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false, notes: "" }));
+    render(<SessionDetail sessionId="s1" onClose={() => { closed = true; }} />);
+    await screen.findByText("Summary text.");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    await userEvent.type(screen.getByLabelText("Call notes"), "Unsaved follow-up");
+    await userEvent.click(screen.getByRole("button", { name: "← Past calls" }));
+    expect(closed).toBe(false);
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue("Unsaved follow-up");
+    await userEvent.click(screen.getByRole("button", { name: "← Past calls" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard notes" }));
+    await waitFor(() => expect(closed).toBe(true));
+  });
+
+  it("switching sessions resets the Notes draft to that call's saved notes", async () => {
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false, notes: "First call" }));
+    ipc.api("GET", /^\/sessions\/s2$/, () => ready({ id: "s2", store_transcript: false, notes: "Second call", outputs: { summary: "Second summary" } }));
+    const view = render(<SessionDetail sessionId="s1" />);
+    await screen.findByText("Summary text.");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    await userEvent.type(screen.getByLabelText("Call notes"), " extra");
+    view.rerender(<SessionDetail sessionId="s2" />);
+    await screen.findByText("Second summary");
+    await userEvent.click(screen.getByRole("tab", { name: "Notes" }));
+    expect(screen.getByLabelText("Call notes")).toHaveValue("Second call");
   });
 
   it("delete asks first, then deletes", async () => {

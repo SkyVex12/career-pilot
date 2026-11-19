@@ -676,6 +676,8 @@ export interface SessionDetail extends Partial<SessionItem> {
   status: SessionStatus;
   outputs: Partial<Record<OutputKind, string>>;
   questions: number;
+  /** Explicitly saved personal notes; omitted by older API deployments. */
+  notes?: string;
 }
 
 /** A native output device, including the call route and current system default. */
@@ -955,6 +957,7 @@ export const rest = {
     ),
   liveSessions: () => call<{ sessions: LiveSession[] }>("GET", "/sessions/live"),
   session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
+  saveSessionNotes: (id: string, text: string) => call<{ notes: string }>("PUT", `/sessions/${id}/notes`, { text }),
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
   replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),

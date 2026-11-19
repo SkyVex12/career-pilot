@@ -214,3 +214,26 @@ async def test_live_sessions_are_the_profiles_own(api: Api, fake: FakeCareerOs) 
     assert (theirs["id"], theirs["connected"]) == (sids[uuid.UUID(blair["id"])], False)
     assert theirs["next_frame"] == {"them": 0, "me": 0}
     assert await live(as_profile(h, alex)) == []
+
+
+async def test_call_notes_stay_in_the_selected_profile(api: Api, fake: FakeCareerOs) -> None:
+    _, headers = await admin_account(api, fake)
+    _, alex, blair = await listed(api, headers)
+    sid = uuid.uuid4()
+    await api.admin.execute(
+        "insert into app.sessions (id, user_id, mode, store_transcript, started_at, ended_at,"
+        " outputs_ready_at) values ($1, $2, 'interview', false, now(), now(), now())",
+        sid,
+        uuid.UUID(alex["id"]),
+    )
+    path = f"/v1/sessions/{sid}"
+    selected = as_profile(headers, alex)
+    saved = await api.client.put(f"{path}/notes", headers=selected, json={"text": "Alex's notes"})
+    assert saved.status_code == 200
+    assert (await api.client.get(path, headers=selected)).json()["notes"] == "Alex's notes"
+    for other_scope in (headers, as_profile(headers, blair)):
+        assert (await api.client.get(path, headers=other_scope)).status_code == 404
+        denied = await api.client.put(
+            f"{path}/notes", headers=other_scope, json={"text": "Wrong profile"}
+        )
+        assert denied.status_code == 404

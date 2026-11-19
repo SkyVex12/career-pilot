@@ -153,7 +153,7 @@ describe("the coding bar", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: "Test" })).toBeChecked());
     expect(screen.getByRole("combobox", { name: "Code language" })).toHaveValue("Java");
 
-    await userEvent.click(screen.getByRole("button", { name: "+ Shot" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add shot" }));
     expect(ipc.calls.some((c) => c.cmd === "coding_add_shot")).toBe(true);
     await act(() => emit("copilot://coding-shots", [shot(1, "Problem - Chrome"), shot(2, "solution.py")]));
     expect(await screen.findByRole("button", { name: "Solve 2" })).toBeEnabled();

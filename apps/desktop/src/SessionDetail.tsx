@@ -2,13 +2,13 @@
 // History. Polls GET /sessions/{id} for up to 5 minutes until the outputs are ready, then shows
 // them; when the transcript was stored, also the call as the overlay showed it (Replay) and the
 // plain transcript (Transcript).
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { rest, type Replay, type SessionDetail as Detail } from "./api";
 import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
-import { Banner, Button, Card, ConfirmDialog, EmptyState, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, useToast } from "./ui";
+import { Banner, Button, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
 import { MODE_LABEL } from "./calls";
 import { Icon } from "./ui/Icon";
 
@@ -33,11 +33,28 @@ export function SessionDetail({
   const [transcript, setTranscript] = useState<TranscriptRow[] | null>(null);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
-  const [tab, setTab] = useState("summary");
+  const [tab, setTab] = useState("primary");
   const [deleting, setDeleting] = useState(false);
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const [notes, setNotes] = useState({ id: sessionId, loaded: false, saved: "", draft: "" });
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const currentId = useRef(sessionId);
+  currentId.current = sessionId;
+
+  useEffect(() => {
+    setTab("primary");
+    setLeaving(null);
+    setNotes({ id: sessionId, loaded: false, saved: "", draft: "" });
+    setNotesError(null);
+    setNotesSaved(false);
+    setSavingNotes(false);
+  }, [sessionId]);
 
   useEffect(() => {
     let cancelled = false;
+    setState({ phase: "waiting", session: null, elapsedMs: 0, error: null });
     setTranscript(null);
     setReplay(null);
     setReplayError(null);
@@ -62,44 +79,80 @@ export function SessionDetail({
   const stored = Boolean(session?.store_transcript);
   const outputs = state.phase === "ready" ? outputsInOrder(state.session) : [];
 
-  const summary = (
-    <div className="ui-stack">
-      {state.phase === "ready" &&
-        outputs.map(([kind, text]) => (
-          <Card key={kind} title={OUTPUT_TITLES[kind]} actions={(kind === "follow_up_email" || kind === "standup_report") && <CopyButton text={text} />}>
-            <div className="ui-prewrap sd-output">{text}</div>
-            {kind === "standup_report" && state.session.employer_id && (
-              <p className="ui-field-hint sd-output-note">The commitments were added to this company's open commitments for the next standup; remove any under Work, Facts.</p>
-            )}
-          </Card>
-        ))}
+  useEffect(() => {
+    if (session?.id !== sessionId || typeof session.notes !== "string") return;
+    const saved = session.notes;
+    setNotes((current) => current.id === sessionId && current.loaded ? current : { id: sessionId, loaded: true, saved, draft: saved });
+  }, [sessionId, session?.id, session?.notes]);
+
+  const leave = (action: () => void) => {
+    if (notes.draft !== notes.saved) setLeaving(() => action);
+    else action();
+  };
+
+  const saveNotes = async () => {
+    const draft = notes.draft;
+    setSavingNotes(true);
+    setNotesError(null);
+    setNotesSaved(false);
+    try {
+      const saved = await rest.saveSessionNotes(sessionId, draft);
+      if (currentId.current !== sessionId) return;
+      setNotes((current) => ({ ...current, saved: saved.notes }));
+      setNotesSaved(true);
+    } catch (e) {
+      if (currentId.current === sessionId) setNotesError(String(e));
+    } finally {
+      if (currentId.current === sessionId) setSavingNotes(false);
+    }
+  };
+
+  const pendingOutput = (
+    <div className="sd-reading">
       {state.phase === "ready" && outputs.length === 0 && (
         <EmptyState icon={<Icon name="document" size={28} />} title="No summary">
-          This call was saved with its transcript only.
+          {stored ? "The transcript and replay are available in their tabs." : "No summary or transcript was stored for this call."}
         </EmptyState>
       )}
       {state.phase === "waiting" && (
-        <Card>
-          <div className="ui-row-inline waiting-line" role="status">
-            <Spinner size="sm" label={null} />
-            <span>{waitingText(state, stored)}</span>
-          </div>
-          <div className="ui-stack waiting-skeleton" aria-hidden="true">
-            <Skeleton width="92%" height={12} />
-            <Skeleton width="80%" height={12} />
-            <Skeleton width="64%" height={12} />
-          </div>
+        <div>
+          <div className="ui-row-inline waiting-line" role="status"><Spinner size="sm" label={null} /><span>{waitingText(state, stored)}</span></div>
+          <div className="ui-stack waiting-skeleton" aria-hidden="true"><Skeleton width="92%" height={12} /><Skeleton width="80%" height={12} /><Skeleton width="64%" height={12} /></div>
           {state.error && <p className="ui-field-hint">Still trying: {state.error}</p>}
-        </Card>
+        </div>
       )}
-      {state.phase === "timeout" && (
-        <Banner tone="warning" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Look again</Button>}>
-          {waitingText(state, stored)}
-        </Banner>
-      )}
+      {state.phase === "timeout" && <Banner tone="warning" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Look again</Button>}>{waitingText(state, stored)}</Banner>}
       {state.phase === "gone" && <Banner tone="neutral">{waitingText(state, stored)}</Banner>}
     </div>
   );
+
+  const notesPanel = (
+    <div className="sd-reading sd-notes">
+      {notes.loaded ? <>
+        <div className="sd-output-toolbar">
+          <h2>Your notes</h2><span className="ui-spacer" />
+          <span className="ui-field-hint" role="status">{savingNotes ? "Saving…" : notes.draft !== notes.saved ? "Unsaved changes" : notesSaved ? "Saved" : ""}</span>
+          <Button size="sm" disabled={savingNotes || notes.draft === notes.saved} onClick={() => { setNotes((n) => ({ ...n, draft: n.saved })); setNotesError(null); setNotesSaved(false); }}>Discard</Button>
+          <Button size="sm" variant="primary" loading={savingNotes} disabled={notes.draft === notes.saved} onClick={saveNotes}>Save notes</Button>
+        </div>
+        <Field label="Call notes" hint="Private notes saved with this call. The transcript setting does not affect these notes." hintMode="tooltip">
+          <Textarea rows={12} maxLength={20000} value={notes.draft} disabled={savingNotes} placeholder="Add reminders, questions or next steps…" onChange={(e) => { setNotes((n) => ({ ...n, draft: e.target.value })); setNotesSaved(false); }} />
+        </Field>
+        {notesError && <Banner tone="danger" title="Could not save notes" action={<Button size="sm" onClick={saveNotes} loading={savingNotes}>Retry</Button>}>{notesError}</Banner>}
+      </> : <Banner tone="neutral">Notes are unavailable with this server version.</Banner>}
+    </div>
+  );
+
+  const outputTabs = outputs.map(([kind, text], index) => ({
+    value: index === 0 ? "primary" : kind,
+    label: kind === "follow_up_email" ? "Follow-up" : OUTPUT_TITLES[kind],
+    content: <section className="sd-reading">
+      <div className="sd-output-toolbar"><h2>{OUTPUT_TITLES[kind]}</h2><CopyButton text={text} /></div>
+      <ReviewText text={text} />
+      {kind === "standup_report" && session?.employer_id && <p className="ui-field-hint sd-output-note">Commitments are saved under Work context → Saved facts.</p>}
+      {!stored && index === 0 && <p className="ui-field-hint detail-note">The transcript was not stored, so transcript and replay are unavailable.</p>}
+    </section>,
+  }));
 
   const replayPanel = replayError ? (
     <Banner tone="danger" title="Could not load the replay" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Retry</Button>}>
@@ -132,17 +185,17 @@ export function SessionDetail({
       <PageHeader
         back={
           onClose && !justEnded ? (
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              ← History
+            <Button variant="ghost" size="sm" onClick={() => leave(onClose)}>
+              ← Past calls
             </Button>
           ) : undefined
         }
         title={justEnded ? `Call ended${session ? ` · ${title}` : ""}` : title}
-        meta={session ? facts(session, stored) : <Skeleton width={260} height={12} />}
+        meta={session ? facts(session) : <Skeleton width={260} height={12} />}
         actions={
           <>
             {justEnded && onNewCall && (
-              <Button variant="primary" onClick={onNewCall}>
+              <Button variant="primary" onClick={() => leave(onNewCall)}>
                 New call
               </Button>
             )}
@@ -150,21 +203,14 @@ export function SessionDetail({
           </>
         }
       />
-      {state.phase === "ready" && stored ? (
-        <Tabs
-          label="Call"
-          value={tab}
-          onChange={setTab}
-          items={[
-            { value: "summary", label: "Summary", content: summary },
-            { value: "replay", label: "Replay", content: replayPanel },
-            { value: "transcript", label: "Transcript", content: transcriptPanel },
-          ]}
-        />
-      ) : (
-        summary
-      )}
-      {state.phase === "ready" && session && !stored && <p className="ui-field-hint detail-note">No transcript or replay: the transcript was not stored for this call.</p>}
+      {state.phase === "ready" ? (
+        <Tabs label="Call review" value={tab} onChange={setTab} items={[
+          ...(outputTabs.length ? outputTabs : [{ value: "primary", label: "Summary", content: pendingOutput }]),
+          ...(stored ? [{ value: "transcript", label: "Transcript", content: transcriptPanel }, { value: "replay", label: "Replay", content: replayPanel }] : []),
+          { value: "notes", label: "Notes", content: notesPanel },
+        ]} />
+      ) : pendingOutput}
+      <ConfirmDialog open={leaving !== null} onOpenChange={(open) => !open && setLeaving(null)} title="Discard unsaved notes?" confirmLabel="Discard notes" onConfirm={async () => { leaving?.(); setLeaving(null); }}>Your changes have not been saved.</ConfirmDialog>
       {onDeleted && (
         <ConfirmDialog
           open={deleting}
@@ -176,7 +222,7 @@ export function SessionDetail({
             onDeleted();
           }}
         >
-          Its transcript and outputs are deleted. Facts already approved into your memory stay.
+          Its notes, transcript and outputs are deleted. Facts already approved into your memory stay.
         </ConfirmDialog>
       )}
     </article>
@@ -226,22 +272,23 @@ function heading(s: Detail, companies: Record<string, string>): string {
   return [mode, company, s.title].filter(Boolean).join(" · ");
 }
 
-function facts(s: Detail, stored: boolean): string {
+function facts(s: Detail): string {
   const parts: string[] = [];
   if (s.started_at) parts.push(when(s.started_at));
   if (s.billed_seconds != null && s.ended_at) parts.push(`${Math.max(1, Math.round(s.billed_seconds / 60))} min`);
-  parts.push(`${s.questions} question${s.questions === 1 ? "" : "s"}`);
-  if (s.platform) parts.push(PLATFORM[s.platform] ?? s.platform);
-  if (stored) parts.push(audioStatus(s));
   return parts.join(" · ");
 }
 
-const PLATFORM: Record<string, string> = { zoom: "Zoom", meet: "Google Meet", teams: "Microsoft Teams", other: "Other app" };
-
-function audioStatus(s: Detail): string {
-  if (s.me_audio_status === "live") return "your side transcribed live";
-  if (s.me_audio_status === "transcribed") return "your side transcribed, audio deleted";
-  return "your side not transcribed";
+/** Format the stored output without interpreting HTML or inventing section content. */
+function ReviewText({ text }: { text: string }) {
+  return <div className="sd-output">{text.split(/\n\s*\n/).filter(Boolean).map((block, index) => {
+    const lines = block.trim().split("\n");
+    const heading = lines[0].match(/^(?:#{1,3}\s+(.+)|\*\*(.+?)\*\*:?)$/);
+    return <section key={index}>
+      {heading && <h3>{heading[1] ?? heading[2]}</h3>}
+      {lines.slice(heading ? 1 : 0).map((line, at) => <p className="sd-output-line" key={at}>{line}</p>)}
+    </section>;
+  })}</div>;
 }
 
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {

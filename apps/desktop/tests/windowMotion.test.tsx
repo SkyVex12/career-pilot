@@ -39,9 +39,9 @@ it("does not commit the target view when the native operation fails", async () =
 });
 
 it.each([
-  [48, 48, "dot"],
+  [64, 44, "dot"],
   [280, 56, "toolbar"],
-] as const)("keeps the native canvas unchanged when applying the %s×%s compact region", async (width, height, shape) => {
+] as const)("keeps the native canvas unchanged when applying the %sÃ—%s compact region", async (width, height, shape) => {
   mockWindows("main");
   ipc.handle("set_compact_window_shape", () => true);
   const renderTarget = vi.fn();
@@ -54,10 +54,10 @@ it("uses centered native resizing only when shaped compact windows are unsupport
   mockWindows("main");
   ipc.handle("set_compact_window_shape", () => false);
   const renderTarget = vi.fn();
-  await resizeCompactBounds(48, 48, renderTarget);
+  await resizeCompactBounds(64, 44, renderTarget);
   expect(ipc.calls).toEqual([
     { cmd: "set_compact_window_shape", args: { shape: "dot" } },
-    { cmd: "resize_compact_window", args: { width: 48, height: 48 } },
+    { cmd: "resize_compact_window", args: { width: 64, height: 44 } },
   ]);
   expect(renderTarget).toHaveBeenCalledOnce();
 });
@@ -66,7 +66,7 @@ it("keeps the existing view when the compact region operation fails", async () =
   mockWindows("main");
   ipc.handle("set_compact_window_shape", () => { throw new Error("Region unavailable"); });
   const renderTarget = vi.fn();
-  await expect(resizeCompactBounds(48, 48, renderTarget)).rejects.toThrow("Region unavailable");
+  await expect(resizeCompactBounds(64, 44, renderTarget)).rejects.toThrow("Region unavailable");
   expect(renderTarget).not.toHaveBeenCalled();
   expect(ipc.calls.some(call => call.cmd === "resize_compact_window")).toBe(false);
 });
@@ -88,7 +88,7 @@ it.each([
   mockWindows("main");
   ipc.handle("plugin:window|cursor_position", () => pointer);
   ipc.handle("plugin:window|inner_position", () => ({ x: -1450, y: -90 }));
-  // A 280×56 toolbar at 150% scale. No extra scale conversion is needed.
+  // A 280Ã—56 toolbar at 150% scale. No extra scale conversion is needed.
   ipc.handle("plugin:window|inner_size", () => ({ width: 420, height: 84 }));
   await expect(isPointerInsideWindow()).resolves.toBe(inside);
 });
@@ -114,8 +114,8 @@ it.each([1.25, 1.5])("keeps the dot's two-pixel native safety margin within its 
     [23, 0, true],
     [0, -23, true],
     [25, 0, true],
-    [27, 0, false],
-    [20, 20, false],
+    [35, 0, false],
+    [33, 23, false],
     [-100, 0, false],
   ] as const) {
     ipc.handle("plugin:window|cursor_position", () => ({ x: center.x + offsetX * scale, y: center.y + offsetY * scale }));
@@ -126,12 +126,12 @@ it.each([1.25, 1.5])("keeps the dot's two-pixel native safety margin within its 
 it.each([1.25, 1.5])("limits dot hover to a resized fallback window at %s scale", async scale => {
   mockWindows("main");
   const position = { x: -1450, y: -90 };
-  const diameter = 48 * scale;
+  const width = 64 * scale, height = 44 * scale;
   ipc.handle("plugin:window|inner_position", () => position);
-  ipc.handle("plugin:window|inner_size", () => ({ width: diameter, height: diameter }));
+  ipc.handle("plugin:window|inner_size", () => ({ width, height }));
   ipc.handle("plugin:window|scale_factor", () => scale);
-  for (const [offsetX, inside] of [[23, true], [25, false]] as const) {
-    ipc.handle("plugin:window|cursor_position", () => ({ x: position.x + diameter / 2 + offsetX * scale, y: position.y + diameter / 2 }));
+  for (const [offsetX, inside] of [[31, true], [33, false]] as const) {
+    ipc.handle("plugin:window|cursor_position", () => ({ x: position.x + width / 2 + offsetX * scale, y: position.y + height / 2 }));
     await expect(isPointerInsideWindow("dot")).resolves.toBe(inside);
   }
 });

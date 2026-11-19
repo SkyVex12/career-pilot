@@ -52,7 +52,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
 
   return (
     <>
-      <PageHeader title="Resumes" meta="Applications without a tailored resume use the base resume." />
+      <PageHeader title="Resumes" meta="Used when a role has no tailored resume." />
       <section className="ui-section" aria-labelledby="base-title">
         <h2 className="ui-section-title" id="base-title">
           Base resume
@@ -82,7 +82,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
               </>
             }
           >
-            <p className="ui-text-2 resume-facts">{versionFacts(base)}</p>
+            <details className="context-details"><summary>Resume details</summary><p className="ui-text-2 resume-facts">{versionFacts(base)}</p></details>
           </Card>
         ) : (
           <EmptyState
@@ -108,7 +108,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
           items={tailored}
           error={null}
           loadingLabel="tailored resumes"
-          empty={<EmptyState icon={<Icon name="document" size={28} />} title="No tailored resumes">Add one to an application, on its Resume tab.</EmptyState>}
+          empty={<EmptyState icon={<Icon name="document" size={28} />} title="No tailored resumes">Add one inside its application.</EmptyState>}
         >
           {(list) => (
             <List label="Tailored resumes">
@@ -117,7 +117,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
                   key={v.id}
                   title={v.label}
                   fullTitle={v.label}
-                  meta={`${v.application ? `${v.application.company} · ${v.application.role} · ` : ""}${versionFacts(v)}`}
+                  meta={v.application ? `${v.application.company} · ${v.application.role}` : "Available for any role"}
                   trailing={<Badge tone={statusTone(v.status)}>{resumeStatusLabel(v.status)}</Badge>}
                   actions={
                     <Menu
@@ -140,7 +140,7 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
       </section>
 
       <ReplaceBase open={replacing} onOpenChange={setReplacing} hasBase={Boolean(base)} onDone={load} />
-      <Rename version={renaming} onClose={() => setRenaming(null)} onDone={load} />
+      <RenameResume version={renaming} onClose={() => setRenaming(null)} onDone={load} />
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
@@ -221,8 +221,10 @@ function ReplaceBase({ open, onOpenChange, hasBase, onDone }: { open: boolean; o
             const f = e.target.files?.[0];
             e.target.value = "";
             if (!f) return;
-            if (isTextFile(f.name)) setText(await f.text());
-            else run(() => api.uploadDocument("resume", f, { label: label.trim() || null }), "Uploaded. Its facts are rebuilt once it is read.");
+            if (isTextFile(f.name)) {
+              try { setText(await f.text()); setError(null); }
+              catch (e) { setError(`Could not read ${f.name}: ${e}`); }
+            } else run(() => api.uploadDocument("resume", f, { label: label.trim() || null }), "Uploaded. Its facts are rebuilt once it is read.");
           }}
         />
         <Button onClick={() => file.current?.click()} disabled={busy}>
@@ -240,7 +242,7 @@ function ReplaceBase({ open, onOpenChange, hasBase, onDone }: { open: boolean; o
   );
 }
 
-function Rename({ version, onClose, onDone }: { version: ResumeVersion | null; onClose: () => void; onDone: () => void }) {
+export function RenameResume({ version, onClose, onDone }: { version: Pick<ResumeVersion, "id" | "label"> | null; onClose: () => void; onDone: () => void }) {
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -294,4 +296,54 @@ function Rename({ version, onClose, onDone }: { version: ResumeVersion | null; o
       </form>
     </Dialog>
   );
+}
+
+
+/** Shared default, kept in Interview prep beside the applications that may use it. */
+export function BaseResumeUtility({ active, request = 0, revision = "", onChanged }: {
+  active: boolean;
+  request?: number;
+  revision?: string;
+  onChanged: () => void;
+}) {
+  const [base, setBase] = useState<ResumeVersion | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [renaming, setRenaming] = useState<ResumeVersion | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const result = await rest.resumes();
+      setBase(result.base);
+      setLoaded(true);
+      setError(null);
+    } catch (e) { setError(String(e)); }
+  }, []);
+  useEffect(() => { void load(); }, [load, revision]);
+  useOnShow(active, load);
+  usePolling(load, 3000, active && base?.status === "extracting");
+  useEffect(() => {
+    if (request) { setExpanded(true); setReplacing(true); }
+  }, [request]);
+  const changed = () => { void load(); onChanged(); };
+  return <section className="prep-base" aria-label="Default resume">
+    <div className="prep-base-heading">
+      <h2>Default resume</h2>
+      <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>Manage</Button>
+    </div>
+    <div className="prep-base-name" title={base?.label}>{base?.label ?? (loaded ? "No default resume" : "Loading…")}</div>
+    {expanded && <div className="prep-base-editor">
+      {base && <Badge tone={statusTone(base.status)}>{resumeStatusLabel(base.status)}</Badge>}
+      <p>Used by applications without a tailored resume.</p>
+      {error && <Banner tone="danger" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
+      <div className="prep-inline-actions">
+        {base && <Button size="sm" onClick={() => setRenaming(base)}>Rename</Button>}
+        <Button size="sm" onClick={() => setReplacing(true)}>{base ? "Replace resume" : "Add resume"}</Button>
+      </div>
+    </div>}
+    {error && !expanded && <Button size="sm" onClick={() => { setExpanded(true); void load(); }}>Could not load · Retry</Button>}
+    <ReplaceBase open={replacing} onOpenChange={setReplacing} hasBase={Boolean(base)} onDone={changed} />
+    <RenameResume version={renaming} onClose={() => setRenaming(null)} onDone={changed} />
+  </section>;
 }

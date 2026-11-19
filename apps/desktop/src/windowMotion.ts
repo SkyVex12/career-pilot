@@ -19,8 +19,8 @@ export async function resizeWindowBounds(target: LogicalSize | PhysicalSize, ren
 }
 
 /** Windows keeps the compact WebView surface fixed and changes only its visible/input region. */
-export async function resizeCompactBounds(width: 48 | 280, height: 48 | 56, renderTarget: () => void) {
-  const shaped = await invoke<boolean>("set_compact_window_shape", { shape: width === 48 ? "dot" : "toolbar" });
+export async function resizeCompactBounds(width: 64 | 280, height: 44 | 56, renderTarget: () => void) {
+  const shaped = await invoke<boolean>("set_compact_window_shape", { shape: width === 64 ? "dot" : "toolbar" });
   if (shaped !== true) await invoke("resize_compact_window", { width, height });
   renderTarget();
 }
@@ -47,18 +47,20 @@ export async function isPointerInsideWindow(mode: "toolbar" | "dot" = "toolbar")
   }
   if (mode === "dot") {
     const scale = await win.scaleFactor();
-    const visualDiameter = Math.round(48 * scale);
-    if (!Number.isFinite(scale) || scale <= 0 || visualDiameter <= 0 || visualDiameter > Math.min(size.width, size.height)) {
+    const visualWidth = Math.round(64 * scale), visualHeight = Math.round(44 * scale);
+    if (!Number.isFinite(scale) || scale <= 0 || visualWidth <= 0 || visualHeight <= 0 || visualWidth > size.width || visualHeight > size.height) {
       throw new Error("Window pointer bounds are unavailable.");
     }
-    // Windows leaves 2px around the CSS circle so its antialiased edge is not
-    // cut by the native region. Include that small hit margin in hover checks;
-    // platforms with a 48px native window still use their actual bounds.
-    const diameter = Math.min(Math.round(52 * scale), size.width, size.height);
-    const radius = diameter / 2;
-    const centerX = position.x + Math.round((size.width - diameter) / 2) + radius;
-    const centerY = position.y + Math.round((size.height - diameter) / 2) + radius;
-    return Math.hypot(pointer.x - centerX, pointer.y - centerY) < radius;
+    const width = Math.min(Math.round(68 * scale), size.width);
+    const height = Math.min(Math.round(48 * scale), size.height);
+    const left = position.x + Math.round((size.width - width) / 2);
+    const top = position.y + Math.round((size.height - height) / 2);
+    const x = pointer.x - left, y = pointer.y - top;
+    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+    const radius = Math.min(10 * scale, width / 2, height / 2);
+    const dx = Math.max(radius - x, x - (width - radius), 0);
+    const dy = Math.max(radius - y, y - (height - radius), 0);
+    return dx * dx + dy * dy < radius * radius;
   }
   // All three APIs use physical pixels, including monitors with negative origins and different DPI.
   return pointer.x >= position.x && pointer.x < right && pointer.y >= position.y && pointer.y < bottom;

@@ -20,13 +20,16 @@ import { CodeAnswer } from "./CodeAnswer";
 import { CodingBar, shotTitle } from "./CodingBar";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
-import { GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane, VoiceMute } from "./seats";
+import { GuestLeaveButton, GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane } from "./seats";
 import { startScreenHost } from "./screen";
-import { ScreenChip } from "./screenui";
+import { GuestScreenView, ScreenChip } from "./screenui";
 import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
-import { Button, ConfirmDialog, IconButton, Kbd, Switch, cx } from "./ui";
+import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
+import { RubyMark } from "./ui/RubyMark";
+import { OverlayAudio } from "./OverlayAudio";
+import { OverlayQuickSettings } from "./OverlayQuickSettings";
 
 const COMPACT_KEY = "overlay.compact";
 
@@ -163,6 +166,7 @@ export default function Overlay() {
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
   const stepText = view.stepText;
+  const [tab, setTab] = useState<"conversation" | "screen">("conversation");
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
 
@@ -182,19 +186,18 @@ export default function Overlay() {
   // Watching someone else's call (a guest seat): read only, nothing acts on the call.
   const guest = s.seat !== null;
   const host = s.seat?.hostName ?? "";
+  const canViewScreen = !guest || s.seat?.capabilities.includes("device.view");
+  useEffect(() => { setTab("conversation"); }, [s.sessionId, guest]);
+  useEffect(() => { if (!canViewScreen) setTab("conversation"); }, [canViewScreen]);
+  const screenOpen = tab === "screen" && canViewScreen && !compact;
   return (
-    <div className={cx("ov", compact && "is-compact")} style={{ "--ov-alpha": opacity } as CSSProperties}>
+    <div className={cx("ov", compact && "is-compact", guest && "is-guest")} style={{ "--ov-alpha": opacity } as CSSProperties}>
       <header className="ov-head" data-native-drag-region>
-        <StatusBadge s={s} />
-        {!guest && <GuestsButton s={s} />}
-        {!guest && <VoiceMute s={s} />}
-        {!guest && <ScreenChip s={s} />}
-        <span className="ov-speaking" data-native-drag-region>
-          {s.speaking.them && <span className="ov-pill">them</span>}
-          {s.speaking.me && <span className="ov-pill ov-pill-me">you</span>}
-        </span>
+        <span className="ov-brand" data-native-drag-region><RubyMark /></span>
+        {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
         <span className="ov-spacer" data-native-drag-region />
-        <OverlayMenu
+        <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
+        <OverlayQuickSettings
           opacity={opacity}
           onOpacity={setOpacityLive}
           onTop={onTop}
@@ -202,12 +205,15 @@ export default function Overlay() {
           clickThrough={clickThrough}
           hotkeys={hotkeys}
           running={s.running}
-          controls={<ViewControls view={view} compact={compact} onCompact={() => setCompact(!compact)} />}
+          guest={guest}
+          sessionId={s.sessionId}
+          view={view}
+          compact={compact}
+          onCompact={setCompact}
         />
-        <IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} />
         {guest
-          ? <IconButton label="Hide overlay" icon={<Icon name="close" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} />
-          : <OverlayPower running={s.running} sessionId={s.sessionId} />}
+          ? <><IconButton label="Hide overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} /><GuestLeaveButton s={s} /></>
+          : <><IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} /><OverlayPower running={s.running} sessionId={s.sessionId} /></>}
       </header>
       {clickThrough && (
         <div className="ov-clickthrough" role="status">
@@ -215,7 +221,21 @@ export default function Overlay() {
         </div>
       )}
       <GuestNotice s={s} />
-
+      {!guest && <div className="ov-sharing-status"><ScreenChip s={s} /></div>}
+      {!compact && <div className="ov-toolbar">
+        <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
+          <button type="button" role="tab" id="ov-conversation-tab" aria-controls="ov-conversation-panel" aria-selected={!screenOpen} onClick={() => setTab("conversation")}>Conversation</button>
+          {canViewScreen && <button type="button" role="tab" id="ov-screen-tab" aria-controls="ov-screen-panel" aria-selected={screenOpen} onClick={() => setTab("screen")}><Icon name="monitor" size={14} />{guest ? "Shared screen" : "Screen tools"}</button>}
+        </div>
+        {!guest && <div className="ov-toolbar-actions"><GuestsButton s={s} /><OverlayAudio s={s} /></div>}
+      </div>}
+      {!guest && compact && <div className="ov-compact-tools"><GuestsButton s={s} /><OverlayAudio s={s} /></div>}
+      {/* Keep capture subscriptions and the conversation mounted when switching tools. */}
+      {!guest && <div id="ov-screen-panel" className="ov-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}>
+        <CodingBar running={s.running} onActivity={() => setTab("screen")} />
+      </div>}
+      {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} /></div>}
+      <div id="ov-conversation-panel" className="ov-conversation-workarea" role="tabpanel" aria-labelledby={compact ? undefined : "ov-conversation-tab"} hidden={guest && screenOpen}>
       <ConversationView
         s={s}
         compact={compact}
@@ -229,22 +249,21 @@ export default function Overlay() {
           guest
             ? `Watching ${host}'s call. Answers appear here as ${host} gets them.`
             : s.running
-              ? "Listening. Press the hotkey to answer the last thing said."
-              : "No call running. Start one in the Copilot window."
+              ? "Listening"
+              : "No call running. Start one in the main window."
         }
         emptyTranscript={s.running ? "Nothing heard yet." : "No call."}
         showMe={guest}
       />
-
+      </div>
       {guest ? (
-        <>
+        <footer className="ov-guest-footer">
           <GuestTalk s={s} />
           <GuestNoteBox s={s} dispatch={dispatch} />
-        </>
+        </footer>
       ) : (
         <>
           <NotesLane s={s} dispatch={dispatch} />
-          <CodingBar running={s.running} collapsible />
           <AskBox disabled={!s.running} />
         </>
       )}
@@ -255,6 +274,8 @@ export default function Overlay() {
 
 function OverlayPower({ running, sessionId }: { running: boolean; sessionId: string | null }) {
   const [ending, setEnding] = useState(false);
+  const [summary, setSummary] = useState(true);
+  const [finishing, setFinishing] = useState(false);
   const [context, setContext] = useState<Pick<SessionDetail, "mode" | "store_transcript"> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -277,6 +298,7 @@ function OverlayPower({ running, sessionId }: { running: boolean; sessionId: str
   const activate = async () => {
     setError(null);
     if (running) {
+      setSummary(true);
       setEnding(true);
       return;
     }
@@ -303,20 +325,13 @@ function OverlayPower({ running, sessionId }: { running: boolean; sessionId: str
         onOpenChange={setEnding}
         title="End this call?"
         danger={false}
-        cancelLabel="Keep going"
-        confirmLabel="Summarize and end"
-        onConfirm={() => api.endSession(true)}
-        secondaryAction={{
-          label: context?.store_transcript ? "End, transcript only" : "End without a summary",
-          onConfirm: () => api.endSession(false),
-        }}
+        cancelLabel="Keep talking"
+        confirmLabel="End call"
+        onConfirm={async () => { setFinishing(true); try { await api.endSession(summary); } finally { setFinishing(false); } }}
       >
-        {context?.mode === "standup"
-          ? "Summarize if you will need this later: the standup report and your commitments feed the next standup."
-          : context?.store_transcript
-            ? "Summarize if you will need this context later, as with standups and recurring meetings. Otherwise keep the transcript only."
-            : "Summarize if you will need this context later, as with standups and recurring meetings. Otherwise end without a summary."}
-        {context?.store_transcript === false && " The transcript is not being stored for this call, so without a summary only its length is kept."}
+        <label className="ov-summary-choice"><input type="checkbox" checked={summary} disabled={finishing} onChange={e => setSummary(e.target.checked)} />Create a summary</label>
+        {context?.mode === "standup" && <p>The summary keeps your standup report and commitments.</p>}
+        {context?.store_transcript === false && <p>The transcript is not stored. Without a summary, only the call duration is kept.</p>}
       </ConfirmDialog>
     </>
   );
@@ -567,122 +582,6 @@ function Flow({ items, card, meLabel }: { items: ConversationItem[]; card: (q: Q
         );
       })}
     </ol>
-  );
-}
-
-/** The overlay's settings (the gear): opacity, keep on top, click-through, all settings, quit.
- * Esc or a click outside closes it and gives focus back to the gear. */
-function OverlayMenu({
-  opacity,
-  onOpacity,
-  onTop,
-  onToggleOnTop,
-  clickThrough,
-  hotkeys,
-  running,
-  controls,
-}: {
-  controls?: ReactNode;
-  opacity: number;
-  onOpacity: (v: number) => void;
-  onTop: boolean;
-  onToggleOnTop: (on: boolean) => void;
-  clickThrough: boolean;
-  hotkeys: OverlayPrefs["hotkeys"];
-  running: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [quitting, setQuitting] = useState(false);
-  const gear = useRef<HTMLButtonElement>(null);
-  const panel = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => {
-    setOpen(false);
-    gear.current?.focus();
-  }, []);
-  useEffect(() => {
-    if (!open) return;
-    panel.current?.querySelector<HTMLElement>("input")?.focus();
-    const onDown = (e: MouseEvent) => {
-      if (!panel.current?.contains(e.target as Node) && !gear.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-  const quit = () => {
-    if (inTauri) api.quitApp().catch(() => undefined);
-  };
-  return (
-    <span className="ov-menu-wrap">
-      <IconButton ref={gear} label="Overlay settings" icon={<Icon name="settings" size={16} />} size="sm" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)} />
-      {open && (
-        <div
-          ref={panel}
-          className="ov-menu"
-          role="dialog"
-          aria-label="Overlay settings"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              close();
-            }
-          }}
-        >
-          {controls && <div className="ov-menu-row"><span className="ov-menu-label">Display</span>{controls}</div>}
-          <div className="ov-menu-row">
-            <label className="ov-menu-label" htmlFor="ov-opacity">
-              Opacity <span className="ov-menu-value">{Math.round(opacity * 100)}%</span>
-            </label>
-            <input
-              id="ov-opacity"
-              type="range"
-              min={0.3}
-              max={1}
-              step={0.05}
-              value={opacity}
-              aria-valuetext={`${Math.round(opacity * 100)}%`}
-              onChange={(e) => onOpacity(Number(e.target.value))}
-            />
-            <span className="ov-menu-hint">
-              The background fades; text stays solid. Step it anytime: {hotkeys.opacity_up && <Kbd>{prettyKey(hotkeys.opacity_up)}</Kbd>}{" "}
-              {hotkeys.opacity_down && <Kbd>{prettyKey(hotkeys.opacity_down)}</Kbd>}
-            </span>
-          </div>
-          <div className="ov-menu-row">
-            <Switch label="Keep on top" hint="Above other apps" checked={onTop} onChange={onToggleOnTop} />
-          </div>
-          <div className="ov-menu-row">
-            <Switch
-              label="Click-through"
-              hint={clickThrough ? `On: ${prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G")} turns it off` : `Clicks pass through; the top bar stays usable.${hotkeys.click_through ? ` Hotkey ${prettyKey(hotkeys.click_through)}` : ""}`}
-              checked={clickThrough}
-              onChange={(on) => {
-                // Turned off by its hotkey only: the mouse cannot reach the overlay while it is on.
-                if (on && inTauri) api.setClickThrough(true).catch(() => undefined);
-              }}
-            />
-          </div>
-          <div className="ov-menu-sep" />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ov-menu-item"
-            onClick={() => {
-              close();
-              if (inTauri) api.openMainSettings().catch(() => undefined);
-            }}
-          >
-            All settings…
-          </Button>
-          <div className="ov-menu-sep" />
-          <Button variant="danger-ghost" size="sm" className="ov-menu-item" onClick={() => (running ? setQuitting(true) : quit())}>
-            Quit Copilot{running ? "…" : ""}
-          </Button>
-        </div>
-      )}
-      <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit Copilot" onConfirm={quit}>
-        The call stops here. It can be opened again from History while it is still running.
-      </ConfirmDialog>
-    </span>
   );
 }
 

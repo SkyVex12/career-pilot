@@ -1,7 +1,7 @@
 import { mockWindows } from "@tauri-apps/api/mocks";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Shell } from "../src/Shell";
+import { Shell, useWorkspaceOpenQuickSettings } from "../src/Shell";
 import { initial } from "../src/session";
 import type { OverlayPrefs } from "../src/api";
 import { settingsView } from "./fixtures";
@@ -22,74 +22,49 @@ afterEach(() => vi.useRealTimers());
 async function advance(time: number) {
   await act(async () => { await vi.advanceTimersByTimeAsync(time); });
 }
-
+const profiles = { profiles: [{ id: "me", name: "Alex Rivera", me: true, career_os_user_id: null }, { id: "work", name: "Jordan Lee", me: false, career_os_user_id: "u2" }], current: null, here: "me" };
+function QuickSettingsShortcut() {
+  const open = useWorkspaceOpenQuickSettings();
+  return <button onClick={() => open?.()}>Open settings from compact</button>;
+}
 function workspace() {
-  render(<Shell tab="applications" onTab={() => {}} session={initial} profiles={{ profiles: [], current: null, here: null }}
-    onSwitchProfile={() => {}} profileError={null} version={null} showDebug={false}>
-    <input aria-label="Draft note" />
+  const onTab = vi.fn(), onSwitch = vi.fn();
+  render(<Shell tab="applications" onTab={onTab} session={initial} profiles={profiles}
+    onSwitchProfile={onSwitch} profileError={null} version={null} showDebug={false}>
+    <input aria-label="Draft note" /><QuickSettingsShortcut />
   </Shell>);
-  const app = screen.getByLabelText("App menu");
-  const details = app.closest("details")!;
   const gear = screen.getByRole("button", { name: "Quick settings" });
   const note = screen.getByRole("textbox", { name: "Draft note" });
+  const profile = screen.getByRole("combobox", { name: "Profile" });
   act(() => note.focus());
-  return { app, details, gear, note };
+  return { gear, note, profile, onTab, onSwitch };
 }
 
-it("opens each menu on hover without stealing focus, including after settings load", async () => {
-  const { app, details, gear, note } = workspace();
-  fireEvent.pointerEnter(app);
-  await advance(119);
-  expect(details).not.toHaveAttribute("open");
-  await advance(1);
-  expect(details).toHaveAttribute("open");
+it("keeps the four primary destinations visible without a second navigation inside Interview prep", () => {
+  const { onTab, note } = workspace();
+  const navigation = screen.getByRole("navigation", { name: "Main" });
+  expect(within(navigation).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Call", "Interview prep", "Work context", "Past calls"]);
+  expect(within(navigation).getByRole("button", { name: "Interview prep" })).toHaveAttribute("aria-current", "page");
+  expect(screen.queryByLabelText("App menu")).not.toBeInTheDocument();
   expect(note).toHaveFocus();
+  fireEvent.click(within(navigation).getByRole("button", { name: "Work context" }));
+  expect(onTab).toHaveBeenLastCalledWith("work");
+  expect(screen.queryByRole("navigation", { name: "Interview preparation" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Resumes" })).not.toBeInTheDocument();
+});
 
+it("opens Quick settings on hover without stealing the draft focus, including after settings load", async () => {
+  const { gear, note } = workspace();
   fireEvent.pointerEnter(gear);
-  await advance(120);
+  await advance(119);
+  expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
+  await advance(1);
   expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
   expect(screen.getByRole("slider", { name: "Transparency" })).toHaveValue("20");
   expect(note).toHaveFocus();
 });
 
-it("keeps only one workspace menu open when moving between its triggers", async () => {
-  const { app, details, gear } = workspace();
-  fireEvent.pointerEnter(app);
-  await advance(120);
-  expect(details).toHaveAttribute("open");
-  fireEvent.pointerLeave(app);
-  fireEvent.pointerEnter(gear);
-  await advance(120);
-  expect(details).not.toHaveAttribute("open");
-  expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
-
-  fireEvent.pointerLeave(gear);
-  fireEvent.pointerEnter(app);
-  await advance(120);
-  expect(details).toHaveAttribute("open");
-  expect(screen.queryByRole("dialog", { name: "Quick settings" })).toBeNull();
-});
-
-it("lets the pointer cross the app-menu gap and closes after leaving the panel", async () => {
-  const { app, details, note } = workspace();
-  fireEvent.pointerEnter(app);
-  await advance(120);
-  fireEvent.pointerLeave(app);
-  await advance(180);
-  const panel = details.querySelector<HTMLElement>(".workspace-menu-panel")!;
-  fireEvent.pointerEnter(panel);
-  await advance(240);
-  expect(details).toHaveAttribute("open");
-  expect(note).toHaveFocus();
-
-  fireEvent.pointerLeave(panel);
-  await advance(239);
-  expect(details).toHaveAttribute("open");
-  await advance(1);
-  expect(details).not.toHaveAttribute("open");
-});
-
-it("lets the pointer reach the quick-settings portal and closes after leaving it", async () => {
+it("lets the pointer reach the Quick settings portal and closes after leaving it", async () => {
   const { gear, note } = workspace();
   fireEvent.pointerEnter(gear);
   await advance(120);
@@ -101,47 +76,67 @@ it("lets the pointer reach the quick-settings portal and closes after leaving it
   await advance(240);
   expect(panel).toBeInTheDocument();
   expect(note).toHaveFocus();
-
   fireEvent.pointerLeave(panel);
   await advance(239);
   expect(panel).toBeInTheDocument();
   await advance(1);
-  expect(screen.queryByRole("dialog", { name: "Quick settings" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
 });
 
-it.each(["app", "settings"] as const)("pins the %s menu on click after hover, until another click or Escape", async menu => {
-  const { app, details, gear } = workspace();
-  const trigger = menu === "app" ? app : gear;
-  const isOpen = () => menu === "app" ? details.open : !!screen.queryByRole("dialog", { name: "Quick settings" });
-  fireEvent.pointerEnter(trigger);
+it("pins Quick settings after a hover click, and Escape closes it with focus on its persistent gear", async () => {
+  const { gear } = workspace();
+  fireEvent.pointerEnter(gear);
   await advance(120);
-  expect(isOpen()).toBe(true);
-  act(() => trigger.focus());
-  fireEvent.click(trigger);
-  fireEvent.pointerLeave(trigger);
+  act(() => gear.focus());
+  fireEvent.click(gear);
+  fireEvent.pointerLeave(gear);
   await advance(500);
-  expect(isOpen()).toBe(true);
-  fireEvent.click(trigger);
-  expect(isOpen()).toBe(false);
-
-  fireEvent.pointerEnter(trigger);
+  expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
+  fireEvent.click(gear);
+  expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
+  fireEvent.pointerEnter(gear);
   await advance(120);
-  fireEvent.click(trigger);
-  fireEvent.pointerLeave(trigger);
+  fireEvent.click(gear);
+  fireEvent.pointerLeave(gear);
   await advance(500);
-  expect(isOpen()).toBe(true);
-  fireEvent.keyDown(trigger, { key: "Escape" });
-  expect(isOpen()).toBe(false);
-  expect(trigger).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Quick settings" }), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
+  expect(gear).toHaveFocus();
 });
 
+it("dismisses Quick settings when opening Profile, and dismisses Profile on an outside click", async () => {
+  const { gear, profile, note, onSwitch } = workspace();
+  fireEvent.click(gear);
+  await advance(1);
+  expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
+  fireEvent.pointerDown(profile);
+  act(() => profile.focus());
+  fireEvent.click(profile);
+  expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  fireEvent.pointerDown(note);
+  act(() => note.focus());
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(onSwitch).not.toHaveBeenCalled();
+  fireEvent.click(profile);
+  fireEvent.click(screen.getByRole("option", { name: "Jordan Lee" }));
+  expect(onSwitch).toHaveBeenCalledWith("work");
+});
 
-it.each(["applications", "resumes", "work", "history", "settings", "debug"] as const)("returns from %s to call setup", async tab => {
+it("opens the same persistent gear from compact setup without adding a second trigger", async () => {
+  workspace();
+  fireEvent.click(screen.getByRole("button", { name: "Open settings from compact" }));
+  await advance(1);
+  expect(screen.getAllByRole("button", { name: "Quick settings" })).toHaveLength(1);
+  expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
+});
+
+it.each(["applications", "work", "history", "settings", "debug"] as const)("returns from %s through the persistent Call tab", async tab => {
   const onTab = vi.fn();
-  render(<Shell tab={tab} onTab={onTab} session={initial} profiles={{ profiles: [], current: null, here: null }}
+  render(<Shell tab={tab} onTab={onTab} session={initial} profiles={profiles}
     onSwitchProfile={() => {}} profileError={null} version={null} showDebug>
     <p>Page content</p>
   </Shell>);
-  fireEvent.click(screen.getByRole("button", { name: "Go to call" }));
+  fireEvent.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("button", { name: "Call" }));
   expect(onTab).toHaveBeenCalledWith("start");
 });

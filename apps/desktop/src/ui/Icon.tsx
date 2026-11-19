@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 
 const paths = {
+  square: <rect x="4" y="4" width="16" height="16" rx="1" />,
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87" /><circle cx="9" cy="7" r="4" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
+  monitor: <><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></>,
+  mouse: <><rect x="5" y="2" width="14" height="20" rx="7" /><path d="M12 2v6" /></>,
   menu: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
   compass: <><circle cx="12" cy="12" r="9" /><path d="m16 8-2.5 5.5L8 16l2.5-5.5L16 8Z" /></>,
   call: <><rect x="3" y="4" width="18" height="13" rx="3" /><path d="m8 21 4-4 4 4M8 10h2l2-3 2 6 2-3" /></>,

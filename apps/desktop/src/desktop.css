@@ -1,0 +1,94 @@
+/* Approved Ruby desktop shell. Window geometry is independent of page content. */
+#root .shell { width:100%;height:100%;min-height:0;background:transparent; }
+#root .shell-main { display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0;overflow:hidden; }
+#root .desktop-workspace { width:100%;max-width:920px;height:100%;max-height:720px;min-height:0;display:flex;flex-direction:column;margin:auto;border:1px solid var(--border);border-radius:6px;background:rgb(var(--surface-rgb) / var(--workspace-opacity,1));box-shadow:none;overflow:visible; }
+#root .desktop-workspace > .workspace-card-header { display:block;flex:none;padding:0;border-radius:5px 5px 0 0;background:rgb(var(--surface-2-rgb) / var(--workspace-opacity,1)); }
+#root .desktop-workspace > .workspace-card-body { flex:1;min-height:0;overflow:auto;border-radius:0 0 5px 5px; }
+#root .desktop-workspace .shell-content { width:100%;max-width:none;margin:0;padding:20px 24px; }
+#root .desktop-workspace .shell-content:has(.session-window) { height:100%;padding:0; }
+#root .desktop-workspace .session-window[data-mini="full"] { height:100%;min-height:0;width:100%;margin:0;max-width:none;display:flex;flex-direction:column;border:0;border-radius:0;background:transparent; }
+#root .desktop-workspace .next-call { flex:1;min-height:0;width:100%;max-width:none;border:0;border-radius:0;box-shadow:none;background:transparent; }
+#root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) { border:0;background:transparent;max-width:none;max-height:none; }
+#root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-header { display:none; }
+#root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-body { overflow:visible; }
+.desktop-titlebar { height:36px;display:flex;align-items:center;justify-content:space-between;padding-left:12px;user-select:none; }
+.desktop-brand { display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);pointer-events:none; }
+.desktop-brand img,.desktop-brand svg { width:16px;height:16px; }
+.desktop-title-actions { display:flex;align-items:center;gap:12px;height:100%; }
+.desktop-window-actions { display:flex;align-self:stretch; }
+.desktop-window-actions button { display:grid;place-items:center;width:44px;padding:0;border:0;background:transparent;color:var(--text-3); }
+.desktop-window-actions button:hover { background:var(--surface-sunken);color:var(--text); }
+.desktop-window-actions .desktop-close:hover { background:var(--danger);color:var(--on-danger); }
+.desktop-commandbar { display:flex;align-items:end;gap:8px;min-height:38px;padding:0 10px;border-bottom:1px solid var(--border); }
+#root .desktop-commandbar .shell-side { display:flex;flex:none;align-items:end;flex-direction:row;gap:3px;min-height:0;height:auto;max-width:100%;padding:0;border:0;background:transparent;overflow:visible; }
+#root .desktop-commandbar .shell-side > div,#root .desktop-commandbar .shell-nav { display:contents; }
+#root .desktop-commandbar .shell-nav > li { list-style:none;min-width:0; }
+#root .desktop-commandbar .shell-link { display:flex;align-items:center;gap:7px;padding:0 12px;min-height:34px;width:auto;font-size:12px;font-weight:500;border:1px solid var(--border);border-bottom:0;border-radius:4px 4px 0 0;background:var(--surface-2);color:var(--text-2);box-shadow:none;white-space:nowrap; }
+#root .desktop-commandbar .shell-link:hover { background:var(--surface);color:var(--text); }
+#root .desktop-commandbar .shell-link[aria-current="page"] { background:var(--surface);color:var(--text);border-color:var(--border);font-weight:600;position:relative; }
+#root .desktop-commandbar .shell-link[aria-current="page"]::before { content:"";position:absolute;height:2px;top:-1px;left:5px;right:5px;background:var(--action);border-radius:2px; }
+#root .desktop-commandbar .shell-link[aria-current="page"]::after { content:"";position:absolute;height:1px;bottom:-1px;left:0;right:0;background:var(--surface); }
+#root .desktop-commandbar .shell-link-icon,#root .desktop-commandbar .shell-link-text { display:flex;flex:none; }
+.desktop-commandbar .shell-link-icon svg { width:16px;height:16px; }
+.desktop-command-tools { display:flex;align-items:center;gap:5px;flex:none;padding:0; }
+.desktop-command-tools > .ui-menu-wrap > button { width:auto;min-width:32px;padding:0 7px;font-size:11px; }
+.desktop-profile { position:relative;width:30px;flex:none; }
+.desktop-profile .ui-select-wrap { width:30px; }
+.desktop-profile .ui-select { display:flex;align-items:center;justify-content:center;min-width:30px;width:30px;height:30px;min-height:30px;padding:2px;border:0;background:transparent;background-image:none; }
+.desktop-profile .ui-select-wrap::after { display:none; }
+.desktop-profile-initials { display:grid;place-items:center;width:24px;height:24px;border:1px solid var(--border);border-radius:50%;background:var(--surface-sunken);font-size:10px;font-weight:600;letter-spacing:.2px; }
+.desktop-profile .ui-field-error { position:absolute;right:0;top:100%;z-index:80;width:230px;padding:8px;background:var(--surface);border:1px solid var(--danger);border-radius:4px; }
+#root .desktop-workspace .ui-page-head { margin:0 0 16px; }
+#root .desktop-workspace .ui-page-title { font-size:16px;line-height:24px;letter-spacing:0; }
+#root .desktop-workspace .ui-page-meta { margin-top:4px;font-size:12px;line-height:18px; }
+#root .desktop-workspace .ui-card { border-radius:5px;box-shadow:none; }
+#root .desktop-workspace .ui-card-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+#root .desktop-workspace .ui-card-body { padding:16px; }
+#root .desktop-workspace .ui-empty { border:0;border-radius:0;background:transparent; }
+#root .desktop-workspace .ui-list { border-radius:4px; }
+#root .desktop-workspace .ui-row-hit { min-height:48px;padding:10px 12px; }
+#root .desktop-workspace .form-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.ui-btn,.ui-input,.ui-select,.ui-textarea { border-radius:4px; }
+.ui-btn { font-size:13px;font-weight:500;box-shadow:none; }
+.ui-btn-secondary { border-color:var(--border);background:var(--surface-2); }
+.ui-btn-primary { background:var(--action);border-color:var(--action);color:var(--on-action);box-shadow:none; }
+.ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
+.ui-segmented { border:1px solid var(--border);border-radius:4px;padding:0;gap:0;background:transparent; }
+.ui-segmented .ui-segment { border-radius:0;min-height:30px;padding:4px 12px; }
+.ui-segmented .ui-segment + .ui-segment { border-left:1px solid var(--border); }
+.ui-segmented .ui-segment.is-on { background:var(--surface-sunken);color:var(--text);box-shadow:none; }
+.ui-select-menu { padding:4px;border:1px solid var(--border);border-radius:5px;box-shadow:var(--shadow-2); }
+.ui-select-option { min-height:30px;border-radius:3px; }
+.ui-select-option.is-active { background:var(--surface-sunken);color:var(--text); }
+.ui-dialog { border-radius:6px;box-shadow:var(--shadow-2); }
+.ui-dialog-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+.ui-dialog-title { font-size:14px;line-height:20px;font-weight:600; }
+.ui-dialog-body { padding:16px; }
+.ui-dialog-foot { padding:12px 16px;border-top:1px solid var(--border);background:var(--surface-2); }
+.workspace-quick-settings { border-color:var(--border);border-radius:5px; }
+#root .session-window:not([data-mini="full"]) .session-commandbar { border-radius:8px; }
+#root .session-window[data-mini="dot"] .session-commandbar { width:64px;height:44px;padding:0;justify-content:center;border-radius:8px; }
+#root .session-window[data-mini="dot"] .session-compact-ruby { width:62px;height:42px;border-radius:7px; }
+#root .session-window[data-mini="dot"] .session-compact-ruby img { width:28px;height:28px; }
+@media(max-width:700px) {
+  #root .desktop-commandbar .shell-link { padding:0 8px;font-size:11px;gap:5px; }
+  #root .desktop-commandbar .shell-link-icon { display:none; }
+  #root .desktop-workspace .shell-content { padding:16px; }
+}
+@media(max-width:520px) {
+  .desktop-titlebar { padding-left:8px; }
+  .desktop-title-actions { gap:6px; }
+  .desktop-window-actions button { width:32px; }
+  .desktop-command-tools { gap:2px; }
+  .desktop-commandbar { padding:0 6px; }
+  #root .desktop-commandbar .shell-side { flex:1;gap:3px;width:100%; }
+  #root .desktop-commandbar .shell-nav > li { flex:1 1 auto; }
+  #root .desktop-commandbar .shell-link { width:100%;padding:0 6px;justify-content:center; }
+  #root .desktop-workspace .form-2 { grid-template-columns:1fr; }
+}
+
+.desktop-profile .ui-select > span { overflow:visible;flex:none; }
+
+#root .desktop-workspace .call-design-heading h1 { font-size:16px;line-height:24px; }
+#root .desktop-workspace .session-start.ui-btn-primary { border-radius:4px;background:var(--action);border-color:var(--action);color:var(--on-action); }
+#root .desktop-workspace .session-start.ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }

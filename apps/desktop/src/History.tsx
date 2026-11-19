@@ -85,7 +85,7 @@ export function History({
   if (!ready) {
     return (
       <>
-        <PageHeader title="History" />
+        <PageHeader title="Past calls" />
         <EmptyState icon={<Icon name="history" size={28} />} title="Sign in to see your calls" action={onSignIn && <Button variant="primary" onClick={onSignIn}>Open settings</Button>}>
           Past calls, their summaries and replays appear here once you are signed in.
         </EmptyState>
@@ -110,7 +110,7 @@ export function History({
   return (
     <>
       <PageHeader
-        title="History"
+        title="Past calls"
         meta={
           usage ? (
             <span className="ui-num">
@@ -132,7 +132,7 @@ export function History({
         loadingLabel="calls"
         empty={
           <EmptyState icon={<Icon name="history" size={28} />} title={filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`}>
-            {filter === "all" ? "Each call you start appears here with its summary, replay and transcript." : "Calls of other kinds are under All."}
+            {filter === "all" ? "Saved calls and their available summaries, transcripts and replays appear here." : "Calls of other kinds are under All."}
           </EmptyState>
         }
       >

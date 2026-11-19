@@ -26,7 +26,7 @@ const SECTIONS: [Section, string][] = [
   ["general", "General"],
   ["account", "Account"],
   ["audio", "Audio"],
-  ["overlay", "Overlay & hotkeys"],
+  ["overlay", "Shortcuts"],
   ["advanced", "Advanced"],
 ];
 
@@ -278,7 +278,7 @@ function Hotkeys({ view, save }: { view: SettingsView; save: Save }) {
   const settings = view.settings;
   return (
     <Card title="Hotkeys">
-      <p className="ui-field-hint hotkeys-intro">They work everywhere, also while the overlay is hidden or clicks pass through it. Press Change, then the keys.</p>
+      <p className="ui-field-hint hotkeys-intro">Press Change, then the shortcut keys. Shortcuts work while the overlay is hidden.</p>
       <div className="hotkey-list">
         {HOTKEYS.map(({ key, action, label, hint, fallback }) => {
           const invalid = view.hotkey_review.invalid.find((i) => i.action === action);

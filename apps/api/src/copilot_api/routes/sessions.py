@@ -21,6 +21,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import Services, SvcDep, UserDep
 from copilot_core import keys
@@ -136,7 +137,9 @@ async def _live_owner(svc: Services, user: Principal, sid: UUID) -> dict[str, st
 async def get_session(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         row = await conn.fetchrow(
-            f"select {SESSION_COLUMNS} from app.sessions where id = $1", session_id
+            f"select {SESSION_COLUMNS}, notes_enc, notes_key_version"
+            " from app.sessions where id = $1",
+            session_id,
         )
         if row is None:
             state = await _live_owner(svc, user, session_id)
@@ -164,7 +167,49 @@ async def get_session(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str,
             "select count(*) from app.questions where session_id = $1 and speculative_kept",
             session_id,
         )
-    return {**_session(row), "outputs": outputs, "questions": questions}
+        notes = ""
+        if row["notes_enc"] is not None:
+            notes = await svc.crypto.decrypt(
+                conn,
+                user.user_id,
+                "sessions",
+                str(session_id),
+                row["notes_enc"],
+                row["notes_key_version"],
+            )
+    return {**_session(row), "outputs": outputs, "questions": questions, "notes": notes}
+
+
+class SessionNotesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=20_000)
+
+
+@router.put("/sessions/{session_id}/notes")
+async def put_session_notes(
+    session_id: UUID, body: SessionNotesIn, svc: SvcDep, user: UserDep
+) -> dict[str, str]:
+    """Explicitly saved personal notes, encrypted under the active profile's data key."""
+    async with svc.tx(user) as conn:
+        row = await conn.fetchrow(
+            "select ended_at from app.sessions where id = $1 for update", session_id
+        )
+        if row is None:
+            raise HTTPException(404, "no such session")
+        if row["ended_at"] is None:
+            raise HTTPException(409, "the session is still live; end it first")
+        sealed, version = None, None
+        if body.text:
+            sealed, version = await svc.crypto.encrypt(
+                conn, user.user_id, "sessions", str(session_id), body.text
+            )
+        await conn.execute(
+            "update app.sessions set notes_enc = $2, notes_key_version = $3 where id = $1",
+            session_id,
+            sealed,
+            version,
+        )
+    return {"notes": body.text}
 
 
 @router.get("/sessions/{session_id}/transcript")

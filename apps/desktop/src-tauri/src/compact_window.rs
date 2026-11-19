@@ -224,38 +224,33 @@ struct Bounds {
     height: i32,
 }
 
-/// Window regions use window coordinates, so `client` includes the client origin's
-/// offset from the outer window. The CSS circle remains 48 logical pixels; the
-/// native circle is 52, leaving two transparent pixels around its antialiased edge.
-/// Rounding the centered delta keeps the centers within half a physical pixel.
+/// The visible Small launcher is 64 by 44 logical pixels. Its native rounded
+/// rectangle includes a two-pixel antialias margin and stays centered in the toolbar.
 #[cfg(any(windows, test))]
 fn dot_region(client: Bounds, scale: f64) -> Res<Bounds> {
     if !scale.is_finite() || scale <= 0.0 || scale > 16.0 {
         return Err("Invalid window display scale.".into());
     }
-    let diameter = (52.0 * scale).round() as i32;
-    if diameter <= 0
-        || client.width < diameter
-        || client.height < diameter
-        || client.width > 65_536
-        || client.height > 65_536
-    {
+    let width = (68.0 * scale).round() as i32;
+    let height = (48.0 * scale).round() as i32;
+    if width <= 0 || height <= 0 || client.width < width || client.height < height
+        || client.width > 65_536 || client.height > 65_536 {
         return Err("Invalid compact surface dimensions.".into());
     }
-    let dx = (f64::from(client.width - diameter) / 2.0).round() as i32;
-    let dy = (f64::from(client.height - diameter) / 2.0).round() as i32;
+    let dx = (f64::from(client.width - width) / 2.0).round() as i32;
+    let dy = (f64::from(client.height - height) / 2.0).round() as i32;
     let x = client.x.checked_add(dx).ok_or("Window region is out of range.")?;
     let y = client.y.checked_add(dy).ok_or("Window region is out of range.")?;
-    x.checked_add(diameter).ok_or("Window region is out of range.")?;
-    y.checked_add(diameter).ok_or("Window region is out of range.")?;
-    Ok(Bounds { x, y, width: diameter, height: diameter })
+    x.checked_add(width).ok_or("Window region is out of range.")?;
+    y.checked_add(height).ok_or("Window region is out of range.")?;
+    Ok(Bounds { x, y, width, height })
 }
 
 #[cfg(windows)]
 fn apply_shape(hwnd: windows::Win32::Foundation::HWND, shape: CompactShape, refresh: bool) -> Res<()> {
     use std::sync::atomic::Ordering;
     use windows::Win32::Foundation::{POINT, RECT};
-    use windows::Win32::Graphics::Gdi::{ClientToScreen, CreateEllipticRgn, DeleteObject, SetWindowRgn};
+    use windows::Win32::Graphics::Gdi::{ClientToScreen, CreateRoundRectRgn, DeleteObject, SetWindowRgn};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, IsIconic};
 
@@ -292,7 +287,9 @@ fn apply_shape(hwnd: windows::Win32::Foundation::HWND, shape: CompactShape, refr
                 f64::from(GetDpiForWindow(hwnd)) / 96.0,
             )?;
             let handle =
-                CreateEllipticRgn(region.x, region.y, region.x + region.width, region.y + region.height);
+                CreateRoundRectRgn(region.x, region.y, region.x + region.width, region.y + region.height,
+                    (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32,
+                    (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32);
             if handle.is_invalid() {
                 return Err("Could not create the compact window region.".into());
             }
@@ -327,7 +324,7 @@ fn apply_shape(hwnd: windows::Win32::Foundation::HWND, shape: CompactShape, refr
 }
 
 /// Windows keeps the toolbar-sized HWND and WebView throughout the CSS morph.
-/// The padded native region preserves the visual circle's antialiased edge while
+/// The padded native region preserves the rounded launcher's antialiased edge while
 /// letting the rest of the transparent toolbar pass through to other apps, without
 /// a compositor surface resize at the animation's endpoint.
 #[tauri::command]
@@ -391,7 +388,7 @@ pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent
 }
 
 fn validate_target(width: f64, height: f64) -> Res<()> {
-    if !width.is_finite() || !height.is_finite() || !matches!((width, height), (280.0, 56.0) | (48.0, 48.0)) {
+    if !width.is_finite() || !height.is_finite() || !matches!((width, height), (280.0, 56.0) | (64.0, 44.0)) {
         return Err("Unsupported compact window size.".into());
     }
     Ok(())
@@ -644,21 +641,17 @@ mod tests {
     }
 
     #[test]
-    fn circular_region_uses_client_origin_and_padded_scaled_diameter() {
-        for (scale, width, height, diameter) in
-            [(1.0, 280, 56, 52), (1.25, 350, 70, 65), (1.5, 420, 84, 78), (2.0, 560, 112, 104)]
-        {
+    fn rounded_region_uses_client_origin_and_scaled_safety_margin() {
+        for (scale, width, height) in [(1.0, 280, 56), (1.25, 350, 70), (1.5, 420, 84), (2.0, 560, 112)] {
             let client = Bounds { x: 8, y: 31, width, height };
             let region = dot_region(client, scale).unwrap();
-            assert_eq!(region.width, diameter);
-            assert_eq!(region.height, diameter);
-            assert!((region.x * 2 + diameter - (client.x * 2 + width)).abs() <= 1);
-            assert!((region.y * 2 + diameter - (client.y * 2 + height)).abs() <= 1);
-            assert_eq!(diameter - (48.0 * scale).round() as i32, (4.0 * scale).round() as i32);
-            assert!(region.x >= client.x);
-            assert!(region.y >= client.y);
-            assert!(region.x + diameter <= client.x + width);
-            assert!(region.y + diameter <= client.y + height);
+            assert_eq!(region.width, (68.0 * scale).round() as i32);
+            assert_eq!(region.height, (48.0 * scale).round() as i32);
+            assert!((region.x * 2 + region.width - (client.x * 2 + width)).abs() <= 1);
+            assert!((region.y * 2 + region.height - (client.y * 2 + height)).abs() <= 1);
+            assert!(region.x >= client.x && region.y >= client.y);
+            assert!(region.x + region.width <= client.x + width);
+            assert!(region.y + region.height <= client.y + height);
         }
     }
 
@@ -685,8 +678,8 @@ mod tests {
         for scale in [0.0, -1.0, f64::NAN, f64::INFINITY, 17.0, 0.0001] {
             assert!(dot_region(client, scale).is_err());
         }
-        assert!(dot_region(Bounds { height: 51, ..client }, 1.0).is_err());
-        assert!(dot_region(Bounds { width: 51, ..client }, 1.0).is_err());
+        assert!(dot_region(Bounds { height: 47, ..client }, 1.0).is_err());
+        assert!(dot_region(Bounds { width: 67, ..client }, 1.0).is_err());
         assert!(dot_region(Bounds { width: 65_537, ..client }, 1.0).is_err());
         assert!(dot_region(Bounds { x: i32::MAX, ..client }, 1.0).is_err());
         assert!(dot_region(Bounds { y: i32::MAX, ..client }, 1.0).is_err());
@@ -694,13 +687,13 @@ mod tests {
 
     #[test]
     fn collapse_keeps_center_at_common_windows_scaling_on_negative_monitors() {
-        for (scale, width, height, dot) in [(1.25, 350, 70, 60), (1.5, 420, 84, 72), (2.0, 560, 112, 96)] {
+        for (scale, width, height) in [(1.25, 350, 70), (1.5, 420, 84), (2.0, 560, 112)] {
             let current = Bounds { x: -1920, y: -1080, width, height };
-            let next = centered_bounds(current, 48.0, 48.0, scale).unwrap();
-            assert_eq!(next.width, dot);
-            assert_eq!(next.height, dot);
-            assert_eq!(current.x * 2 + current.width, next.x * 2 + next.width);
-            assert_eq!(current.y * 2 + current.height, next.y * 2 + next.height);
+            let next = centered_bounds(current, 64.0, 44.0, scale).unwrap();
+            assert_eq!(next.width, (64.0 * scale).round() as i32);
+            assert_eq!(next.height, (44.0 * scale).round() as i32);
+            assert!((current.x * 2 + current.width - next.x * 2 - next.width).abs() <= 1);
+            assert!((current.y * 2 + current.height - next.y * 2 - next.height).abs() <= 1);
             assert_eq!(centered_bounds(next, 280.0, 56.0, scale).unwrap(), current);
         }
     }
@@ -717,7 +710,7 @@ mod tests {
                 };
                 let mut current = original;
                 for _ in 0..100 {
-                    current = centered_bounds(current, 48.0, 48.0, scale).unwrap();
+                    current = centered_bounds(current, 64.0, 44.0, scale).unwrap();
                     current = centered_bounds(current, 280.0, 56.0, scale).unwrap();
                     assert_eq!(current, original);
                 }
@@ -727,8 +720,8 @@ mod tests {
 
     #[test]
     fn matching_native_size_is_a_no_op() {
-        let current = Bounds { x: -120, y: 900, width: 72, height: 72 };
-        assert_eq!(centered_bounds(current, 48.0, 48.0, 1.5).unwrap(), current);
+        let current = Bounds { x: -120, y: 900, width: 96, height: 66 };
+        assert_eq!(centered_bounds(current, 64.0, 44.0, 1.5).unwrap(), current);
     }
 
     #[test]
@@ -740,10 +733,10 @@ mod tests {
             assert!(centered_bounds(current, width, height, 1.0).is_err());
         }
         for scale in [0.0, -1.0, f64::NAN, f64::INFINITY, 17.0, 0.0001] {
-            assert!(centered_bounds(current, 48.0, 48.0, scale).is_err());
+            assert!(centered_bounds(current, 64.0, 44.0, scale).is_err());
         }
-        assert!(centered_bounds(Bounds { width: 0, ..current }, 48.0, 48.0, 1.0).is_err());
-        assert!(centered_bounds(Bounds { x: i32::MAX, ..current }, 48.0, 48.0, 1.0).is_err());
+        assert!(centered_bounds(Bounds { width: 0, ..current }, 64.0, 44.0, 1.0).is_err());
+        assert!(centered_bounds(Bounds { x: i32::MAX, ..current }, 64.0, 44.0, 1.0).is_err());
         assert!(
             centered_bounds(Bounds { x: i32::MIN, width: 48, height: 48, ..current }, 280.0, 56.0, 1.0)
                 .is_err()

@@ -17,7 +17,7 @@ function choose(sources: Source[]): Promise<Source> {
       if (source) resolve(source); else reject(new DOMException("Share cancelled", "AbortError"));
     };
     root.render(<Dialog open onOpenChange={(open) => { if (!open) finish(); }} title="Share your screen"
-      description="Choose a display for guest control, or a window for viewing. Copilot windows are excluded from this share."
+      description="Choose a display for assistant control, or a window for viewing. Copilot windows are excluded from this share."
       footer={<Button onClick={() => finish()}>Cancel</Button>}>
       <div className="ui-stack">
         {sources.map((source) => <Button key={`${source.kind}-${source.id}`} onClick={() => finish(source)}>
