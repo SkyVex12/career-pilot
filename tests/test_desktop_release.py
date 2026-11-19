@@ -98,8 +98,9 @@ def test_a_merge_that_changes_the_app_releases_the_next_patch(repo: Repo) -> Non
         {"apps/desktop/tests/session.test.ts": "t", "apps/desktop/core/tests/gateway.rs": "t"},
         {"packages/protocol/python/copilot_protocol/models.py": "py"},
         {"infra/gcp/envs/stage0/main.tf": "tf", ".github/workflows/deploy.yml": "ci"},
+        {".github/workflows/desktop-macos.yml": "ci", "scripts/ci_changes.py": "ci"},
     ],
-    ids=["backend", "docs", "tests", "protocol-python", "infra"],
+    ids=["backend", "docs", "tests", "protocol-python", "infra", "ci"],
 )
 def test_backend_docs_and_tests_only_skip(repo: Repo, files: dict[str, str]) -> None:
     repo.merge_pr("Backend only", files)
@@ -121,7 +122,6 @@ def test_backend_docs_and_tests_only_skip(repo: Repo, files: dict[str, str]) -> 
         "Cargo.lock",
         "pnpm-lock.yaml",
         ".github/workflows/release-desktop.yml",
-        ".github/workflows/desktop-macos.yml",
     ],
 )
 def test_what_ships(path: str) -> None:

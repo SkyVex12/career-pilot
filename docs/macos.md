@@ -153,14 +153,17 @@ shared planner, key mappings, UI stream lifecycle, and release packaging, not Ap
 
 ## CI and public releases
 
-`desktop-macos.yml` runs frontend, packaging, and Rust library tests, then builds preview
-DMGs on native Apple Silicon and Intel runners. It runs for desktop pull requests and
-relevant pushes to `main`, and can also be started manually.
+`desktop-macos.yml` runs manually or through the signed-release workflow. It has no automatic
+pull-request or `main` push trigger, conserving Actions minutes. Both Apple Silicon and Intel
+builds retain native Rust library tests, frontend and packaging tests, and DMG creation with
+the release feature. Shared CI still checks affected Windows, Linux, and TypeScript code.
+Mac-specific changes need a manual native run before merging when validation is required.
+Builds of `main` update the shared Rust dependency cache; other refs only restore it.
 
-After these changes are committed and pushed to GitHub:
+To create a preview:
 
 1. Open **Actions > desktop-macos > Run workflow**, choose the branch, and run it.
-   GitHub must have the workflow on the default branch before showing the manual-run button.
+   Or run `gh workflow run desktop-macos.yml --ref main` (replace `main` to test another branch).
 2. Wait for both architecture jobs to finish. Each compiles the Objective-C bridges and
    bundles the app using Xcode on its native architecture.
 3. Open the run's **Artifacts** section (or the download link in the job summary):
@@ -170,8 +173,8 @@ After these changes are committed and pushed to GitHub:
    ad-hoc signing and do not need Apple certificates or updater signing secrets. Gatekeeper
    may reject downloaded previews; the local-build instructions above remain available.
 
-This workflow creates downloadable test artifacts; it does not publish preview builds to
-installed users. The Windows release workflow calls the same Mac build workflow for signed
+Manual runs create downloadable test artifacts; they do not publish preview builds
+to installed users. The Windows release workflow calls the same Mac build workflow for signed
 public releases when `MACOS_RELEASE_ENABLED=true`.
 
 After native acceptance, configure these repository secrets for public distribution:

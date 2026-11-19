@@ -4,7 +4,8 @@
     python scripts/ci_changes.py --all [--github-output]        # everything (manual runs)
 
 Each area lists what can affect it; a change outside every area runs everything (an unknown
-file is never a reason to skip). Changes to CI itself, or to this script, run everything too.
+file is never a reason to skip). Workflows and the standalone CI/release planners have
+lightweight checks; changing them alone does not rebuild the app or deploy the services.
 
 - windows:    the desktop shell's Windows job (clippy and tests of src-tauri): the shell, the
               client core it links, the protocol's Rust, the Cargo files
@@ -12,6 +13,9 @@ file is never a reason to skip). Changes to CI itself, or to this script, run ev
               start the real gateway, so the gateway and the Python it imports count too
 - python:     lint, types and tests of every Python package (the services, evals, scripts)
 - typescript: the desktop UI and the protocol's TypeScript and codegen
+- codegen:    protocol/generator and dependency changes; gates Python setup in TypeScript CI
+- tooling:    standalone CI/release planners (no services needed)
+- workflows:  lint GitHub Actions definitions without recompiling unchanged app code
 - terraform:  infra/
 - server:     what deploy.yml builds into images and deploys to the VM; a merge without it
               (desktop, docs, Terraform only) builds no image and deploys nothing
@@ -27,7 +31,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-EVERYTHING = (".github/workflows/ci.yml", ".github/workflows/deploy.yml", "scripts/ci_changes.py")
+TOOLING_FILES = (
+    "scripts/ci_changes.py",
+    "scripts/desktop_release.py",
+    "tests/test_ci_changes.py",
+    "tests/test_desktop_release.py",
+)
 
 CARGO = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml")
 PYTHON_PROJECT = ("pyproject.toml", "uv.lock", ".python-version")
@@ -82,6 +91,14 @@ AREAS: dict[str, tuple[str, ...]] = {
         *NODE_PROJECT,
         *PYTHON_PROJECT,
     ),
+    "codegen": (
+        "packages/protocol/",
+        "scripts/codegen.py",
+        *PYTHON_PROJECT,
+        *NODE_PROJECT,
+    ),
+    "tooling": (*TOOLING_FILES, ".github/workflows/"),
+    "workflows": (".github/workflows/",),
     "terraform": ("infra/",),
     "server": (
         "apps/api/",
@@ -103,8 +120,6 @@ AREAS: dict[str, tuple[str, ...]] = {
 NOTHING = (".md", ".gitignore")
 NOTHING_PREFIXES = (
     "docs/",
-    ".github/workflows/release-desktop.yml",
-    ".github/workflows/desktop-macos.yml",  # its own PR/main workflow tests native Mac builds
     ".gitattributes",
     ".editorconfig",
     "LICENSE",
@@ -114,8 +129,10 @@ NOTHING_PREFIXES = (
 def needs(paths: list[str]) -> dict[str, bool]:
     out = dict.fromkeys(AREAS, False)
     for path in paths:
-        if path.startswith(EVERYTHING):
-            return dict.fromkeys(AREAS, True)
+        if path in TOOLING_FILES:
+            # These stdlib-only helpers and their tests do not need the backend stack.
+            out["tooling"] = True
+            continue
         if path.endswith(NOTHING) or path.startswith(NOTHING_PREFIXES):
             continue
         hit = [area for area, prefixes in AREAS.items() if path.startswith(prefixes)]
