@@ -247,3 +247,65 @@ extraction with every proposal approved, and there are no sections and no digest
 One run each (2026-11-14, gpt-6-luna and gpt-6.1-sol); answers vary run to run by a question
 or two. The sections' vector search is not part of this eval (its sections are not in the
 database); keyword search and the digest are.
+
+## Sensei answer-quality comparison
+
+Run from the workspace after `uv sync`. This uses real model APIs and costs money; no
+new infrastructure is provisioned. `fakeredis` and the gateway text-STT transport replace
+storage and audio, while the worker pack builder and gateway answer pipeline are unchanged.
+Keep the export and **all private artifacts outside the repository**. Documents are data,
+never instructions. Neither candidate speech nor Sensei answers enter our gateway.
+
+Prepare a private directory containing UTF-8 `resume.txt` (extracted from the supplied PDF)
+and `jd.txt`. The observed export consists of four-line records: `#id`, timestamp,
+interviewer text, suggested answer. The parser rejects malformed records without echoing
+content. Confirm these field roles before using a different export. Dates need an explicit
+year; timestamp semantics are not inferred.
+
+```powershell
+uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-baseline' --year 2026 --max-cost 20
+```
+
+This is one sequential command: parse, prepare/cache the profile, replay all interviewer
+turns at their original spacing, judge response-seeking turns in randomized/swapped A/B
+order, diagnose losses separately, and write the paraphrased report/fixtures. The default
+spend guard is $2.95 unless explicitly changed; `--max-cost` persists the chosen guard in
+that private directory. Unknown or cancelled usage retains conservative reservations.
+Do not run concurrent phases against one private directory. A 45-minute interview takes
+45 minutes to replay. `--speed` changes timing and therefore makes a different experiment.
+The live run uses the configured gateway routes; preparation currently uses the priced
+`gpt-6.1-sol` extraction route. The independent judge is `gpt-6-astra`.
+
+Phases can be resumed with `--phase prepare|replay|judge|report`. An incomplete replay
+restarts from the beginning to rebuild conversation state; partial judgments are resumed.
+Input hashes prevent reuse after the export, resume or JD changes. A fixed pack and
+question labels can be reused for a later code change:
+
+```powershell
+uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-after' --reuse-profile 'C:\private\sensei-baseline' --baseline 'C:\private\sensei-baseline' --year 2026 --max-cost 20 --report 'docs/analysis/sensei-after.md' --fixtures 'evals/sensei/after-paraphrased.json'
+```
+
+The comparison requires identical sources, pack, labels and judge. Report and comparison
+files contain only paraphrases, IDs and measurements; the `.scores.json` fixture is the
+numeric baseline. Exact reproduction requires the original private export, because
+rewriting an interview question changes the experiment. The committed paraphrased
+question fixture documents the eval cases without publishing the interview.
+
+Private outputs include `turns.json`, `profile.json`, `replay.json` (timestamped gateway
+messages), `answers.json` (fast/deep text, types, citations and stage latency), `grades.json`,
+`summary.json`, `diagnosis.json`, and `cost.json`. Do not commit these. Console output is
+metadata only; provider failures may contain source text and are not echoed.
+
+Open private `human-review.html`, score the seeded 15-question A/B sample, and download
+scores as `human-review.json` beside it. The HTML includes resume/JD evidence and no model
+grades or assistant identity labels. Then run the same command with `--phase report` to
+calculate human/judge preference agreement and per-criterion mean absolute error. Grades
+remain provisional until all 15 are scored, preference agreement is at least 80%, and each
+criterion's MAE is at most 0.75. Calibration covers initial answers; expanded-answer grades
+remain model-only. Order disagreements are reported separately, never converted to ties.
+
+The report includes coverage-inclusive scores (missing answer = 1), conditional scores,
+per-type scores, unsupported personal-claim counts, timing from text injection, and ten
+largest losses. Export timestamps do not establish question-end time; no STT or Sensei
+latency claim is made. Only suggested responses present in the export are observed, so
+Sensei's coverage is 100% by construction, not measured recall over an entire call.
