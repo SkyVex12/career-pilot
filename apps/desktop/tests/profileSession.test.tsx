@@ -23,6 +23,8 @@ vi.mock("../src/Shell", () => ({
   WorkspaceMenu: () => null,
   WorkspaceProfileSwitch: () => null,
   useWorkspaceCompactWindow: () => {},
+  useWorkspaceCallBusy: () => {},
+  useWorkspaceOpenQuickSettings: () => null,
 }));
 
 // Load the real lazy screens before interaction deadlines; cold Vite transforms can
@@ -81,13 +83,13 @@ describe("profile session boundaries", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Use Alex" }));
     await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("other"));
     expect(await screen.findByRole("button", { name: /^Start call/ })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /^Call ended/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(detail.outputs.summary!)).not.toBeInTheDocument();
     expect(screen.queryByText(/This session no longer exists/)).not.toBeInTheDocument();
     expect(requestedFor).not.toContain("other");
     const requestsAfterSwitch = requestedFor.length;
     await userEvent.click(screen.getByRole("button", { name: "Use Dana" }));
     await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("account"));
-    expect(screen.queryByRole("heading", { name: /^Call ended/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(detail.outputs.summary!)).not.toBeInTheDocument();
     expect(requestedFor).toHaveLength(requestsAfterSwitch);
   });
 
@@ -98,7 +100,7 @@ describe("profile session boundaries", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Use Alex" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("end the session first");
     expect(screen.getByLabelText("Current profile")).toHaveTextContent("account");
-    expect(screen.getByRole("heading", { name: /^Call ended/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(detail.outputs.summary!)).toBeInTheDocument();
   });
 

@@ -81,7 +81,7 @@ export function Work({ active = true }: { active?: boolean }) {
   if (error && !employers) {
     return (
       <>
-        <PageHeader title="Work" />
+        <PageHeader title="Work context" />
         <Banner tone="danger" title="Could not load your companies" action={<Button size="sm" onClick={load}>Retry</Button>}>
           {error}
         </Banner>
@@ -91,7 +91,7 @@ export function Work({ active = true }: { active?: boolean }) {
   if (!employers) {
     return (
       <>
-        <PageHeader title="Work" />
+        <PageHeader title="Work context" />
         <SkeletonList rows={3} label="Loading companies" />
       </>
     );
@@ -99,7 +99,7 @@ export function Work({ active = true }: { active?: boolean }) {
   return (
     <>
       <PageHeader
-        title="Work"
+        title="Work context"
         actions={
           <>
             {employers.length > 0 && (
@@ -121,7 +121,6 @@ export function Work({ active = true }: { active?: boolean }) {
             )}
           </>
         }
-        meta={employers.length ? "Companies you work at, apart from the jobs you apply to. Standups and meetings answer from the one picked on the Call screen." : undefined}
       />
       {employers.length === 0 ? (
         <EmptyState
@@ -158,9 +157,9 @@ export function Work({ active = true }: { active?: boolean }) {
               value={tab}
               onChange={setTab}
               items={[
-                { value: "log", label: "Log", content: <LogTab employer={employer} /> },
-                { value: "material", label: "Engineering context", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
-                { value: "facts", label: "Facts", content: <FactsTab employer={employer} /> },
+                { value: "log", label: "Work log", content: <LogTab employer={employer} /> },
+                { value: "material", label: "Documents", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
+                { value: "facts", label: "Saved facts", content: <FactsTab employer={employer} /> },
               ]}
             />
           )}
@@ -372,27 +371,7 @@ function LogTab({ employer }: { employer: Employer }) {
           <span className="ui-spacer" />
           {entry && <LogStatus log={entry} />}
         </div>
-        <Field label="What you worked on" hint="Tasks, tickets and PRs, decisions, blockers, plans for tomorrow. Paste from your notes, Jira or Slack as it is.">
-          <Textarea
-            rows={10}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setDirty(true);
-            }}
-          />
-        </Field>
-        {entry && entry.attachments.length > 0 && (
-          <ul className="work-files" aria-label="Attachments">
-            {entry.attachments.map((a) => (
-              <li key={a.id}>
-                <span aria-hidden="true">📎</span> <span className="ui-truncate">{a.name}</span> <span className="ui-muted">{Math.ceil(a.size_bytes / 1024)} KB</span>
-                <RemoveAttachment name={a.name} onRemove={() => rest.deleteCompanyDocument(employer.id, a.id).then(load)} />
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="form-actions">
+        <div className="form-actions work-log-toolbar">
           <input
             ref={file}
             type="file"
@@ -413,10 +392,30 @@ function LogTab({ employer }: { employer: Employer }) {
             </Button>
           )}
           <span className="ui-spacer" />
-          <Button variant="primary" disabled={!text.trim() || !dirty} loading={busy} onClick={save}>
+          <Button variant="primary" disabled={!text.trim() || (!dirty && entry?.status !== "failed")} loading={busy} onClick={save}>
             Save
           </Button>
         </div>
+        <Field label="What you worked on" hint="Tasks, decisions, blockers and next steps." hintMode="tooltip">
+          <Textarea
+            rows={10}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setDirty(true);
+            }}
+          />
+        </Field>
+        {entry && entry.attachments.length > 0 && (
+          <ul className="work-files" aria-label="Attachments">
+            {entry.attachments.map((a) => (
+              <li key={a.id}>
+                <span aria-hidden="true">📎</span> <span className="ui-truncate">{a.name}</span> <span className="ui-muted">{Math.ceil(a.size_bytes / 1024)} KB</span>
+                <RemoveAttachment name={a.name} onRemove={() => rest.deleteCompanyDocument(employer.id, a.id).then(load)} />
+              </li>
+            ))}
+          </ul>
+        )}
         {entry?.items && entry.items.length > 0 && (
           <Card title="From this day's log" inset>
             <p className="ui-field-hint">Your log is kept as it is; fix anything that came out wrong.</p>

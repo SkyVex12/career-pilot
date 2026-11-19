@@ -498,3 +498,55 @@ async def test_auth_config_tells_the_app_how_to_sign_in(api: Api) -> None:
         assert (await api.client.get("/v1/auth/config")).json() == {"provider": "dev"}
     finally:
         api.svc.settings, api.svc.email = saved, saved_email
+
+
+async def test_session_notes_are_encrypted_owned_and_independent_of_transcript(api: Api) -> None:
+    uid, headers = api.user()
+    await api.client.get("/v1/me", headers=headers)
+    sid = await seed_session(api, uid, store_transcript=False)
+    path = f"/v1/sessions/{sid}"
+    assert (await api.client.get(path, headers=headers)).json()["notes"] == ""
+    notes = "Ask about the team.\nFollow up on Monday."
+    saved = await api.client.put(f"{path}/notes", headers=headers, json={"text": notes})
+    assert saved.status_code == 200
+    assert saved.json() == {"notes": notes}
+    row = await api.admin.fetchrow(
+        "select notes_enc, notes_key_version from app.sessions where id = $1", sid
+    )
+    assert row is not None
+    assert row["notes_key_version"] is not None
+    assert notes.encode() not in bytes(row["notes_enc"])
+    assert (await api.client.get(path, headers=headers)).json()["notes"] == notes
+    _, other = api.user()
+    assert (await api.client.get(path, headers=other)).status_code == 404
+    denied = await api.client.put(f"{path}/notes", headers=other, json={"text": "overwrite"})
+    assert denied.status_code == 404
+    assert (await api.client.put(f"{path}/notes", json={"text": "anonymous"})).status_code == 401
+    assert (await api.client.get(path, headers=headers)).json()["notes"] == notes
+    cleared = await api.client.put(f"{path}/notes", headers=headers, json={"text": ""})
+    assert cleared.status_code == 200
+    assert (await api.client.get(path, headers=headers)).json()["notes"] == ""
+    assert await api.admin.fetchval("select notes_enc from app.sessions where id = $1", sid) is None
+    await api.client.put(f"{path}/notes", headers=headers, json={"text": notes})
+    assert (await api.client.delete(path, headers=headers)).status_code == 204
+    assert (await api.client.get(path, headers=headers)).status_code == 404
+
+
+async def test_session_notes_reject_long_invalid_and_live_requests(api: Api) -> None:
+    uid, headers = api.user()
+    await api.client.get("/v1/me", headers=headers)
+    sid = await seed_session(api, uid)
+    path = f"/v1/sessions/{sid}/notes"
+    for body in ({"text": "x" * 20_001}, {"text": None}, {"text": "ok", "owner": "other"}):
+        assert (await api.client.put(path, headers=headers, json=body)).status_code == 422
+    live = await seed_session(api, uid, ended=False, outputs=False)
+    assert (
+        await api.client.put(
+            f"/v1/sessions/{live}/notes", headers=headers, json={"text": "still talking"}
+        )
+    ).status_code == 409
+    assert (
+        await api.client.put(
+            f"/v1/sessions/{uuid.uuid4()}/notes", headers=headers, json={"text": "missing"}
+        )
+    ).status_code == 404

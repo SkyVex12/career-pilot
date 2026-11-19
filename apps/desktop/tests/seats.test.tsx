@@ -120,9 +120,9 @@ describe("when a guest stops watching", () => {
   it("the overlay drops the guest's notice and note box", async () => {
     n = 0;
     start([live(), ready(), snapshot()]);
-    await screen.findByText(/You are viewing Alex's private call/);
+    await screen.findByText(/You are assisting Alex with their call/);
     await act(() => emit("copilot://event", stop("left")));
-    expect(screen.queryByText(/You are viewing Alex's private call/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/You are assisting Alex with their call/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Note to Alex" })).not.toBeInTheDocument();
   });
 });
@@ -131,7 +131,7 @@ describe("a guest's overlay", () => {
   it("says whose private call it is and acts on nothing", async () => {
     n = 0;
     start([live(), ready(), snapshot()]);
-    expect(await screen.findByText(/You are viewing Alex's private call/)).toBeInTheDocument();
+    expect(await screen.findByText(/You are assisting Alex with their call/)).toBeInTheDocument();
     const card = (await screen.findAllByRole("article"))[0];
     expect(within(card).getByText("Froze deploys")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Get the detailed answer/ })).not.toBeInTheDocument();
@@ -158,9 +158,9 @@ describe("a guest's overlay", () => {
   it("has no note box without the grant, and Leave leaves", async () => {
     n = 0;
     start([live(), ready(["view"]), snapshot()]);
-    await screen.findByText(/You are viewing Alex's private call/);
+    await screen.findByText(/You are assisting Alex with their call/);
     expect(screen.queryByRole("textbox", { name: "Note to Alex" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Leave" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stop assisting" }));
     expect(ipc.calls.some((c) => c.cmd === "seat_leave")).toBe(true);
   });
 });
@@ -178,9 +178,9 @@ describe("the host's overlay", () => {
 
   it("shows who is watching, and notes as a chat apart from the answers, with Ask AI", async () => {
     start(hostEvents());
-    expect(await screen.findByRole("button", { name: "Pavlo" })).toHaveAttribute("aria-haspopup", "dialog"); // the Guests button
-    const lane = await screen.findByRole("region", { name: "Notes from guests" });
-    expect(within(lane).getByRole("heading", { name: "Notes from guests · only you see them" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Assistants 1" })).toHaveAttribute("aria-haspopup", "dialog"); // the Guests button
+    const lane = await screen.findByRole("region", { name: "Notes from assistants" });
+    expect(within(lane).getByRole("heading", { name: "Notes from assistants · only you see them" })).toBeInTheDocument();
     expect(within(lane).getByText("Ask about on-call")).toBeInTheDocument();
     expect(lane.querySelector(".ov-notes-body")).not.toBeNull(); // the part that scrolls
     const card = (await screen.findAllByRole("article")).find((a) => a.classList.contains("card"));
@@ -197,27 +197,27 @@ describe("the host's overlay", () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
     ipc.api("POST", /^\/sessions\/s1\/seats$/, () => ({ status: "sent" }));
     start(hostEvents());
-    expect(screen.queryByText("Guests", { selector: ".ov-menu-label" })).toBeNull(); // not in the gear any more
-    await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
-    const dialog = await screen.findByRole("dialog", { name: "Guests" });
-    const chips = within(dialog).getByRole("group", { name: "What a new guest may do" });
+    expect(screen.queryByText("Assistants", { selector: ".ov-menu-label" })).toBeNull(); // not in the gear any more
+    await userEvent.click(await screen.findByRole("button", { name: "Assistants 1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Assistants" });
+    const chips = within(dialog).getByRole("group", { name: "What a new assistant may do" });
     // Notes and voice are included; only optional screen permissions need controls.
     expect(within(dialog).queryByRole("button", { name: "Notes" })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
-    await waitFor(() => expect(within(chips).getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false"));
+    await waitFor(() => expect(within(chips).getByRole("checkbox", { name: "Control my mouse and keyboard" })).not.toBeChecked());
     // Control brings the screen with it.
-    await userEvent.click(within(chips).getByRole("button", { name: "Control" }));
-    expect(within(chips).getByRole("button", { name: "Screen" })).toHaveAttribute("aria-pressed", "true");
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    await userEvent.click(within(chips).getByRole("checkbox", { name: "Control my mouse and keyboard" }));
+    expect(within(chips).getByRole("checkbox", { name: "View my shared screen" })).toBeChecked();
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Assistant email" }), "dana@example.com");
     await userEvent.click(within(dialog).getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")).toEqual([
       { method: "POST", path: "/sessions/s1/seats", body: { email: "dana@example.com", capabilities: ["view", "note", "voice", "device.view", "device.control"] } },
     ]);
-    expect(await screen.findByText(/they can join from their Call screen now/)).toBeInTheDocument();
+    expect(await screen.findByText(/They can assist from their Call screen/)).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("seats.invite-caps") ?? "[]")).toEqual(["note", "voice", "device.view", "device.control"]);
     // Escape closes it.
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Guests" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Assistants" })).toBeNull();
   });
 });
 
@@ -227,20 +227,22 @@ describe("a guest's invites", () => {
       seats: [{ seat_id: SEAT, session_id: "s1", host_name: "Alex", mode: "interview", title: null, status: "admitted", capabilities: ["view"], expires_at: null }],
     }));
 
-  it("shows Join at once: nothing to accept, no one to wait for", async () => {
+  it("shows Assist for an available invitation without a separate acceptance step", async () => {
     invited();
     render(<GuestInvites running={false} />);
-    expect(await screen.findByText("Alex invited you to watch a call")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Assist a call 1" }));
+    expect(await screen.findByText("Alex")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Join" }));
+    await userEvent.click(screen.getByRole("button", { name: "Assist" }));
     expect(ipc.calls.find((c) => c.cmd === "seat_join")?.args).toEqual({ request: { session_id: "s1", seat_id: SEAT } });
   });
 
   it("Not now hides the invite here", async () => {
     invited();
     render(<GuestInvites running={false} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Assist a call 1" }));
     await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    expect(screen.queryByText("Alex invited you to watch a call")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Assist a call/ })).not.toBeInTheDocument();
     expect(ipc.calls.some((c) => c.cmd === "seat_join")).toBe(false);
   });
 });
@@ -281,7 +283,7 @@ describe("guests' voice", () => {
   it("no voice granted: no Talk", async () => {
     n = 0;
     start([live(), ready(["view", "note"]), snapshot()]);
-    await screen.findByText(/You are viewing Alex's private call/);
+    await screen.findByText(/You are assisting Alex with their call/);
     expect(screen.queryByRole("button", { name: /Hold to talk/ })).not.toBeInTheDocument();
   });
 
@@ -312,10 +314,10 @@ describe("guests' voice", () => {
       { deviceId: "d-hp", label: "Headphones (USB)" },
       { deviceId: "d-logi", label: "Speakers (Logi USB Headset) (046d:0a64)" }, // Chromium adds the USB id
     ];
-    await userEvent.click(await screen.findByRole("button", { name: "Pavlo" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Assistants 1" }));
     await voiceStatus({ host: "on", device: "d-hp", outputs });
-    expect(screen.queryByRole("combobox", { name: "Headphones for guests' voice" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Guests' voice on")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Headphones for assistants' voice" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Assistants' voice on")).not.toBeInTheDocument();
     await voiceStatus({ host: "off", error: "Voice was disconnected.", outputs });
     expect(await screen.findByText(/Voice was disconnected\./)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -335,9 +337,9 @@ describe("the guest panel", () => {
     ];
   };
 
-  const open = async (name = "Blue Angel") => {
-    await userEvent.click(await screen.findByRole("button", { name }));
-    return screen.findByRole("dialog", { name: "Guests" });
+  const open = async (_name = "Blue Angel") => {
+    await userEvent.click(await screen.findByRole("button", { name: /^Assistants/ }));
+    return screen.findByRole("dialog", { name: "Assistants" });
   };
 
   it("includes notes without offering voice controls when the server has no voice", async () => {
@@ -347,7 +349,7 @@ describe("the guest panel", () => {
     await open();
     expect(screen.queryByRole("button", { name: "Notes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
-    await userEvent.type(screen.getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    await userEvent.type(screen.getByRole("textbox", { name: "Assistant email" }), "dana@example.com");
     await userEvent.click(screen.getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")[0].body).toEqual({ email: "dana@example.com", capabilities: ["view", "note"] });
   });
@@ -361,12 +363,12 @@ describe("the guest panel", () => {
     ipc.api("POST", /^\/sessions\/s1\/seats$/, () => ({ status: "sent" }));
     start(events());
     await open();
-    await screen.findByText(/Guest options could not be loaded/);
-    await userEvent.type(screen.getByRole("textbox", { name: "Guest's Copilot email" }), "dana@example.com");
+    await screen.findByText(/Assistant options could not be loaded/);
+    await userEvent.type(screen.getByRole("textbox", { name: "Assistant email" }), "dana@example.com");
     expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled());
-    expect(screen.queryByText(/Guest options could not be loaded/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Assistant options could not be loaded/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")[0].body).toMatchObject({ email: "dana@example.com" });
     expect(attempts).toBe(2);
@@ -385,7 +387,7 @@ describe("the guest panel", () => {
     start(events());
     await open();
     const card = (await screen.findByRole("group", { name: "What Blue Angel may do" })).closest("li") as HTMLElement;
-    await userEvent.click(await within(card).findByRole("button", { name: "Screen" }));
+    await userEvent.click(await within(card).findByRole("checkbox", { name: "View my shared screen" }));
     expect(await within(card).findByRole("alert")).toHaveTextContent("Screen access could not be updated.");
   });
 
@@ -396,7 +398,7 @@ describe("the guest panel", () => {
       live(),
       srv({ type: "seats.update", seats: [{ seat_id: SEAT, name: "Blue Angel", status: "admitted", capabilities: ["view", "device.view", "device.control"], connected: true }] }),
     ]);
-    await screen.findByRole("button", { name: "Blue Angel" });
+    await screen.findByRole("button", { name: "Assistants 1" });
     await act(() => emit("screen:status", { ...SCREEN_OFF, host: "on", surface: "monitor", stopped: [{ identity: `seat:${SEAT}`, name: "Blue Angel" }] }));
     await waitFor(() =>
       expect(ipc.apiCalls("PATCH")).toEqual([{ method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "device.view"] } }]),
@@ -413,14 +415,14 @@ describe("the guest panel", () => {
     ]);
     await open();
     const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
-    const chip = await within(perms).findByRole("button", { name: "Screen" });
-    expect(chip).toHaveAttribute("aria-pressed", "true");
+    const chip = await within(perms).findByRole("checkbox", { name: "View my shared screen" });
+    expect(chip).toBeChecked();
     await userEvent.click(chip);
     expect(ipc.apiCalls("PATCH")).toEqual([
       { method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "note"] } },
     ]);
-    const control = within(perms).getByRole("button", { name: "Control" });
-    expect(control).toHaveAttribute("aria-pressed", "false");
+    const control = within(perms).getByRole("checkbox", { name: "Control my mouse and keyboard" });
+    expect(control).not.toBeChecked();
     await userEvent.click(control);
     expect(ipc.apiCalls("PATCH")[1]).toEqual({
       method: "PATCH",

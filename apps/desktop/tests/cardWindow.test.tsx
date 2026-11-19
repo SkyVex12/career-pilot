@@ -56,7 +56,7 @@ it("changes compact bounds once in each direction without resetting native windo
   await act(async () => { expect(await result.current.change("toolbar")).toBe(true); });
   const compactCalls = ipc.calls.slice(enteringCompact);
   expect(compactCalls.filter(call => call.cmd === "resize_compact_window").map(call => call.args)).toEqual([
-    { width: 48, height: 48 },
+    { width: 64, height: 44 },
     { width: 280, height: 56 },
   ]);
   expect(compactCalls.filter(call => /set_size|set_min_size|decorat|is_maximized|unmaximize/.test(call.cmd))).toEqual([]);
@@ -270,7 +270,7 @@ it.each([true, false])("checks the actual cursor after an expansion sends a poin
   await act(async () => { release(); await expanded; });
   await act(() => new Promise(resolve => setTimeout(resolve, 320)));
   expect(result.current.mode).toBe(inside ? "toolbar" : "dot");
-  expect(ipc.calls.slice(beforeExpansion).filter(call => call.cmd === "resize_compact_window").map(call => call.args.width)).toEqual(inside ? [280] : [280, 48]);
+  expect(ipc.calls.slice(beforeExpansion).filter(call => call.cmd === "resize_compact_window").map(call => call.args.width)).toEqual(inside ? [280] : [280, 64]);
 });
 
 it("ignores a stale pointer check when the user returns before it resolves", async () => {

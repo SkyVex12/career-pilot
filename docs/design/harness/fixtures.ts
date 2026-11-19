@@ -151,6 +151,7 @@ export function sessionDetail(id: string): SessionDetail {
     id,
     status: "ready",
     questions: 6,
+    notes: "",
     outputs: {
       summary:
         "A 52-minute technical round with the Northwind platform team. They asked about the routing outage, Postgres partitioning and alert design. You covered the rollback order well; the alerting answer ran long.",

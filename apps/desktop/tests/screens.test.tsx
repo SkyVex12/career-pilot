@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LiveStatus } from "../src/api";
 import { Applications, checkApplication, filterApplications, listStamp } from "../src/Applications";
 import { CallScreen, type CallProps } from "../src/CallScreen";
+import { Shell } from "../src/Shell";
 import { clashWith, duplicateHotkeys, prettyKey, recordKey } from "../src/hotkeys";
 import { Resumes } from "../src/Resumes";
 import { initial, type SessionView } from "../src/session";
@@ -66,6 +67,7 @@ describe("Applications", () => {
     expect(listStamp(building)).not.toBe(listStamp(a));
     expect(listStamp({ ...a, career_os: { application_id: "c1", pulled_at: "2026-11-17T10:00:00Z", content_hash: null } })).not.toBe(listStamp(a));
     expect(listStamp({ ...a, resume: { ...a.resume!, status: "extracting" } })).not.toBe(listStamp(a));
+    expect(listStamp({ ...a, resume: { ...a.resume!, label: "Renamed default resume" } })).not.toBe(listStamp(a));
     expect(listStamp({ ...a, note: "only in the view's form" })).toBe(listStamp(a));
   });
 
@@ -107,6 +109,8 @@ describe("Applications", () => {
     expect(screen.queryByRole("radio", { name: "Interviewing" })).not.toBeInTheDocument();
     expect(within(list).getAllByRole("button")).toHaveLength(2);
     expect(within(screen.getByRole("list", { name: "All applications" })).getByText("Northwind")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Upcoming interviews" })).not.toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: /^Northwind/ }));
     await userEvent.click(screen.getByRole("button", { name: /Start a call for Northwind/ }));
     expect(started).toBe("i1");
   });
@@ -218,7 +222,7 @@ describe("Work", () => {
     expect(await screen.findByText("HTTP 503")).toBeInTheDocument();
     fail = false;
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("tab", { name: "Log" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Work log" })).toBeInTheDocument();
   });
 
   it("empty: Add company opens a form that checks the name", async () => {
@@ -304,7 +308,7 @@ describe("Work", () => {
       };
     });
     wrap(<Work />);
-    await userEvent.click(await screen.findByRole("tab", { name: /Engineering context/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: /Documents/ }));
     expect(await screen.findByText("6 sections, 9 facts")).toBeInTheDocument();
     expect(screen.getByText("Could not read it")).toBeInTheDocument();
     expect(screen.getByText(/The file has no text\./)).toBeInTheDocument();
@@ -380,7 +384,7 @@ describe("Settings", () => {
       ipc.handle("list_devices", () => ({ inputs: [], outputs: [{ id: "headset", name: "USB headset", is_default: true }] }));
       wrap(<SettingsScreen {...props()} />);
       await userEvent.click(screen.getByRole("button", { name: "Audio" }));
-      expect(screen.getByText("Guest audio and test tone. Transcription captures system audio from all apps.")).toBeVisible();
+      expect(screen.getByText("Assistant audio and test tone. Transcription captures system audio from all apps.")).toBeVisible();
       expect(screen.queryByRole("combobox", { name: "Call audio from" })).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole("combobox", { name: "Playback output" }));
       await userEvent.click(await screen.findByRole("option", { name: "USB headset (default)" }));
@@ -398,7 +402,7 @@ describe("Settings", () => {
 
   it("a hotkey is recorded by pressing it, and a key in use is refused", async () => {
     wrap(<SettingsScreen {...props()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Overlay & hotkeys" }));
+    await userEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
     const row = screen.getByText("Answer the last thing said").closest(".ui-hotkey") as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: "Change" }));
     const box = within(row).getByRole("textbox");
@@ -413,7 +417,7 @@ describe("Settings", () => {
 
   it("the fallback hotkey cannot be cleared", async () => {
     wrap(<SettingsScreen {...props()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Overlay & hotkeys" }));
+    await userEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
     expect(screen.queryByRole("button", { name: "Clear Turn click-through off" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear Answer the last thing said" })).toBeInTheDocument();
   });
@@ -440,6 +444,13 @@ function callProps(over: Partial<CallProps> = {}): CallProps {
   };
 }
 
+function wrapCallWindow(ui: ReactNode) {
+  return wrap(<Shell tab="start" onTab={() => {}} session={initial} profiles={{ profiles: [], here: null, current: null }} onSwitchProfile={() => {}} profileError={null} version={null} showDebug={false}>{ui}</Shell>);
+}
+async function collapseToMedium() {
+  await userEvent.click(screen.getByRole("button", { name: "Window size" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: "Medium" }));
+}
 function callRoutes() {
   appRoutes();
   ipc.handle("live_status", (): LiveStatus => ({ running: false, session_id: null, levels: null, stats: null }));
@@ -460,16 +471,16 @@ describe("Call", () => {
     ipc.api("GET", /^\/interviews$/, () => ({ interviews: [] }));
     ipc.api("POST", /^\/applications$/, () => { saved = true; return detail(added); });
     wrap(<CallScreen {...callProps()} />);
-    const transcript = await screen.findByRole("checkbox", { name: "Save transcript (everyone has agreed)" });
+    const transcript = await screen.findByRole("checkbox", { name: "Save transcript" });
     await userEvent.click(transcript);
-    await userEvent.click(screen.getByRole("button", { name: "Add application" }));
+    await userEvent.click(within(screen.getByRole("combobox", { name: "Application" }).closest(".call-row")!).getByRole("button", { name: "Add" }));
     const dialog = screen.getByRole("dialog", { name: "Add application" });
     await userEvent.type(within(dialog).getByLabelText("Company"), "Cedar");
     await userEvent.type(within(dialog).getByLabelText("Role"), "Platform engineer");
     await userEvent.type(within(dialog).getByLabelText("Job description"), "Build reliable services.");
     await userEvent.click(within(dialog).getByRole("button", { name: "Add application" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add application" })).not.toBeInTheDocument());
-    expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("job:new-job");
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("new-job");
     expect(transcript).not.toBeChecked();
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
     await waitFor(() => expect(ipc.calls.some(call => call.cmd === "start_session")).toBe(true));
@@ -592,9 +603,9 @@ describe("Call", () => {
     ipc.handle("plugin:window|inner_size", () => ({ width: 1080, height: 780 }));
     ipc.handle("plugin:window|is_decorated", () => true);
     ipc.handle("plugin:window|is_maximized", () => false);
-    wrap(<CallScreen {...callProps()} />);
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1"));
-    await userEvent.click(screen.getByRole("button", { name: "Collapse to toolbar" }));
+    wrapCallWindow(<CallScreen {...callProps()} />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1"));
+    await collapseToMedium();
     const compactRuby = await screen.findByRole("button", { name: "Expand full window" });
     const outline = compactRuby.parentElement!.querySelector(".session-compact-outline");
     fireEvent.pointerLeave(compactRuby.closest(".session-window")!);
@@ -603,14 +614,14 @@ describe("Call", () => {
     expect(dotRuby.parentElement!.querySelector(".session-compact-outline")).toBe(outline);
     await userEvent.click(dotRuby);
     await userEvent.click(await screen.findByRole("button", { name: "Expand full window" }));
-    await screen.findByRole("button", { name: "Collapse to toolbar" });
-    expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1");
+    await screen.findByRole("button", { name: "Window size" });
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
     expect(ipc.calls.filter((c) => c.cmd === "plugin:window|set_size").map((c) => JSON.parse(JSON.stringify(c.args.value)))).toEqual([
       { Logical: { width: 280, height: 56 } },
       { Physical: { width: 1080, height: 780 } },
     ]);
     expect(ipc.calls.filter((c) => c.cmd === "resize_compact_window").map((c) => c.args)).toEqual([
-      { width: 48, height: 48 },
+      { width: 64, height: 44 },
       { width: 280, height: 56 },
     ]);
   });
@@ -623,25 +634,25 @@ describe("Call", () => {
     ipc.handle("plugin:window|is_maximized", () => false);
     ipc.handle("plugin:window|is_focused", () => false);
     ipc.handle("plugin:window|is_minimized", () => false);
-    wrap(<CallScreen {...callProps()} />);
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1"));
+    wrapCallWindow(<CallScreen {...callProps()} />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1"));
     await act(() => emit("tauri://blur"));
-    const surface = screen.getByRole("button", { name: "Collapse to toolbar" }).closest(".session-window")!;
+    const surface = screen.getByRole("combobox", { name: "Application" }).closest(".session-window")!;
     fireEvent.pointerLeave(surface);
     await act(() => new Promise(resolve => setTimeout(resolve, 300)));
     expect(surface).toHaveAttribute("data-mini", "full");
-    await userEvent.click(screen.getByRole("button", { name: "Collapse to toolbar" }));
+    await collapseToMedium();
     fireEvent.pointerLeave(surface);
     const ruby = await screen.findByRole("button", { name: "Expand compact toolbar" });
-    ipc.handle("plugin:window|inner_size", () => ({ width: 48, height: 48 }));
+    ipc.handle("plugin:window|inner_size", () => ({ width: 64, height: 44 }));
     ipc.handle("plugin:window|scale_factor", () => 1);
-    ipc.handle("plugin:window|cursor_position", () => ({ x: 24, y: 24 }));
+    ipc.handle("plugin:window|cursor_position", () => ({ x: 32, y: 22 }));
     fireEvent.pointerEnter(ruby);
     await screen.findByRole("button", { name: "Expand full window" });
     const expand = screen.getByRole("button", { name: "Expand setup" });
     await waitFor(() => expect(expand.closest("header")).not.toHaveAttribute("inert"));
     await userEvent.click(expand);
-    expect(await screen.findByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1");
+    expect(await screen.findByRole("combobox", { name: "Application" })).toHaveValue("a1");
   });
 
   it("keeps full-page notices inside the card and hidden throughout compact transitions without remounting data", async () => {
@@ -655,18 +666,18 @@ describe("Call", () => {
     let resize = new Promise<void>(resolve => { completeResize = resolve; });
     ipc.handle("plugin:window|set_size", () => resize);
     let settingsOpened = false;
-    wrap(<CallScreen {...callProps({ session: { ...initial, stopped: "unauthorized" }, onSettings: () => { settingsOpened = true; } })} />);
-    const resumeNotice = await screen.findByText("No resume yet");
-    const authNotice = screen.getByText("Sign in again under Settings, Account.");
+    wrapCallWindow(<CallScreen {...callProps({ session: { ...initial, stopped: "unauthorized" }, onSettings: () => { settingsOpened = true; } })} />);
+    const resumeNotice = await screen.findByText("Sign-in rejected");
+    const authNotice = screen.getByText("Sign-in rejected");
     const surface = resumeNotice.closest(".session-window")!;
-    const card = resumeNotice.closest(".session-console")!;
+    const card = resumeNotice.closest(".call-design")!;
     const notices = resumeNotice.closest(".call-notices")!;
     expect(card).not.toBeNull();
-    expect(card.firstElementChild).toHaveClass("call-kind");
+    expect(card.firstElementChild).toHaveClass("call-design-heading");
     expect(resumeNotice).toBeVisible();
     const liveLoads = ipc.apiCalls("GET").filter(call => call.path === "/sessions/live").length;
 
-    await userEvent.click(screen.getByRole("button", { name: "Collapse to toolbar" }));
+    await collapseToMedium();
     await waitFor(() => expect(ipc.calls.some(call => call.cmd === "plugin:window|set_size")).toBe(true));
     try {
       expect(surface).toHaveAttribute("data-mini", "full");
@@ -694,10 +705,10 @@ describe("Call", () => {
     } finally {
       await act(async () => { completeResize(); await resize; });
     }
-    await screen.findByRole("button", { name: "Collapse to toolbar" });
+    await screen.findByRole("button", { name: "Window size" });
     expect(resumeNotice).toBeVisible();
     expect(authNotice).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1");
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
     expect(ipc.apiCalls("GET").filter(call => call.path === "/sessions/live")).toHaveLength(liveLoads);
     await userEvent.click(screen.getByRole("button", { name: "Open settings" }));
     expect(settingsOpened).toBe(true);
@@ -712,8 +723,8 @@ describe("Call", () => {
     let finishResize!: () => void;
     const resized = new Promise<void>(resolve => { finishResize = resolve; });
     ipc.handle("resize_compact_window", () => resized);
-    wrap(<CallScreen {...callProps()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Collapse to toolbar" }));
+    wrapCallWindow(<CallScreen {...callProps()} />);
+    await collapseToMedium();
     const ruby = await screen.findByRole("button", { name: "Expand full window" });
     const header = ruby.parentElement!;
     const start = within(header).getByRole("button", { name: "Start call" });
@@ -734,23 +745,22 @@ describe("Call", () => {
     await waitFor(() => expect(header).not.toHaveAttribute("inert"));
   });
 
-  it("ready: the next interview is chosen, and Start call starts it", async () => {
+  it("ready: the next application is chosen without silently selecting a scheduled round", async () => {
     callRoutes();
     wrap(<CallScreen {...callProps()} />);
-    expect(await screen.findByRole("option", { name: /Northwind · Engineer/, hidden: true })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application or interview" })).toHaveValue("interview:i1"));
+    expect(await screen.findByRole("option", { name: /Northwind · Backend/, hidden: true })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1"));
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
     const start = ipc.calls.find((c) => c.cmd === "start_session");
-    expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: "i1", job_id: "a1", store_transcript: true });
+    expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: null, job_id: "a1", store_transcript: true });
   });
 
   it("an online test starts with no call, and switches coding answers to Test", async () => {
     callRoutes();
     ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_language: "C" } }));
     wrap(<CallScreen {...callProps()} />);
-    await screen.findByRole("option", { name: /Northwind · Engineer/, hidden: true });
-    await userEvent.click(screen.getByRole("combobox", { name: "Session type" }));
-    await userEvent.click(screen.getByRole("option", { name: "Online test" }));
+    await screen.findByRole("option", { name: /Northwind · Backend/, hidden: true });
+    await userEvent.click(screen.getByRole("radio", { name: "Online test" }));
     await userEvent.click(screen.getByRole("button", { name: "Start test" }));
     const start = ipc.calls.find((c) => c.cmd === "start_session");
     expect(start?.args.request).toMatchObject({ mode: "interview", no_call: true, platform: "test", job_id: "a1" });
@@ -762,7 +772,7 @@ describe("Call", () => {
     const apps = [app("a1", "Northwind", "Backend", "interview")];
     ipc.api("GET", /^\/applications$/, () => ({ applications: apps }));
     const { rerender } = wrap(<CallScreen {...callProps({ active: true })} />);
-    await screen.findByRole("option", { name: /Northwind · Engineer/, hidden: true });
+    await screen.findByRole("option", { name: /Northwind · Backend/, hidden: true });
     expect(screen.queryByRole("option", { name: /Lumen/, hidden: true })).toBeNull();
     // Hidden on another tab while a Career-OS pull adds an application, then shown again.
     rerender(<ToastProvider><CallScreen {...callProps({ active: false })} /></ToastProvider>);
@@ -812,11 +822,11 @@ describe("accessibility", () => {
     workRoutes();
     ipc.api("GET", /^\/resumes$/, () => ({ base: resume("rb", "base", "Alex 2026"), versions: [resume("rt", "tailored", "Northwind v2", { id: "a1", company: "Northwind", role: "Backend" })] }));
     const screensToCheck: [string, ReactNode, () => Promise<unknown>][] = [
-      ["Call", <CallScreen {...callProps()} />, () => screen.findByRole("combobox", { name: "Application or interview" })],
+      ["Call", <CallScreen {...callProps()} />, () => screen.findByRole("combobox", { name: "Application" })],
       ["Call setup", <CallScreen {...callProps({ tokenSet: false, careerOs: null })} />, () => screen.findByRole("heading", { name: "Get ready for your first call" })],
-      ["Applications", <Applications />, () => screen.findByRole("tab", { name: "Details" })],
+      ["Applications", <Applications />, () => screen.findByRole("heading", { name: "Resume" })],
       ["Resumes", <Resumes />, () => screen.findByText("Northwind v2")],
-      ["Work", <Work />, () => screen.findByRole("tab", { name: "Log" })],
+      ["Work", <Work />, () => screen.findByRole("tab", { name: "Work log" })],
       ["Settings", <SettingsScreen view={settingsView()} running={false} onSaved={() => {}} update={{ state: "none" }} check={{ busy: false, error: null, start: () => {} }} />, () => screen.findByRole("heading", { name: "Settings" })],
     ];
     for (const [name, ui, ready] of screensToCheck) {

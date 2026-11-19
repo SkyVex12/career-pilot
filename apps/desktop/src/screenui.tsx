@@ -34,6 +34,7 @@ import {
 } from "./screen";
 import type { SessionView } from "./session";
 import { Button, cx } from "./ui";
+import { Icon } from "./ui/Icon";
 
 /** The key that ends a guest's control anywhere (src-tauri hotkeys.rs, STOP_CONTROL). */
 export const STOP_CONTROL_KEY = "Ctrl+Alt+End";
@@ -167,22 +168,21 @@ export function ScreenChip({ s }: { s: SessionView }) {
     // Once per stop: `stoppedKey` changes when it does.
   }, [stoppedKey]);
   if (status.host !== "on") return null;
-  const asking = status.asking[0];
+  const asking = status.asking.find((person) => person.identity !== status.controller?.identity);
   return (
     <>
       {status.controller ? (
         <button type="button" className="ov-screen-chip is-control" title={`${status.controller.name} controls your screen: click or ${STOP_CONTROL_KEY} to stop`} onClick={() => void endControl()}>
-          🖱 {status.controller.name} controls · Stop
+          <Icon name="mouse" size={14} /> {status.controller.name} controls · Stop
         </button>
-      ) : (
-        asking && (
+      ) : null}
+      {asking && (
           <button type="button" className="ov-screen-chip is-ask" title={`${asking.name} asks to control your screen: click to let them`} onClick={() => void allowControl(asking)}>
-            ✋ Let {asking.name} control
+            <Icon name="users" size={14} /> Let {asking.name} control
           </button>
-        )
       )}
-      <button type="button" className="ov-screen-chip" title="Your screen is shared with guests: click to stop" onClick={() => void stopScreen()}>
-        🖥 Sharing · Stop
+      <button type="button" className="ov-screen-chip" title="Your screen is shared with assistants: click to stop" onClick={() => void stopScreen()}>
+        <Icon name="monitor" size={14} /> Sharing · Stop
       </button>
     </>
   );
@@ -299,9 +299,9 @@ export function statsLine(s: ViewStats & { inputMs: number | null }): string {
 }
 
 /** The host's screen, for a guest who may see it (main window, while watching). */
-export function GuestScreenView({ s }: { s: SessionView }) {
+export function GuestScreenView({ s, active = true }: { s: SessionView; active?: boolean }) {
   const seat = s.seat;
-  const seatId = seat && s.running && seat.capabilities.includes("device.view") ? seat.seatId : null;
+  const seatId = active && seat && s.running && seat.capabilities.includes("device.view") ? seat.seatId : null;
   // The grants it was opened with: a change reopens it (the API took it out of the room).
   const control = seat?.capabilities.includes("device.control") ?? false;
   const [state, setState] = useState<GuestScreenState>(GUEST_OFF);

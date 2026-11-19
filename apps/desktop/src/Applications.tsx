@@ -1,20 +1,20 @@
 // Applications: what the user applied to (company, role, stage, JD), each paired with a resume
 // version (ARCHITECTURE.md, "Resume versions"); added by hand or pulled from Career-OS. The
-// upcoming interviews on top, the list beside the one chosen, and per application its details,
-// job description, resume and interviews (docs/design/ui-proposal.md, "Applications").
+// application workspace keeps each role, resume and interview context together.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, rest, type ApplicationDetail, type ApplicationFields, type ApplicationItem, type InterviewItem, type Round, type Stage } from "./api";
-import { STAGES, isTextFile, pairingChoices, pairingValue, resumeLabel, stageLabel } from "./pairing";
+import { STAGES, isTextFile, pairingChoices, pairingValue, resumeStatusLabel } from "./pairing";
 import { upcoming } from "./catalog";
+import { BaseResumeUtility, RenameResume, statusTone } from "./Resumes";
+import "./prep.css";
 import { PullDialog, useCareerOs } from "./CareerOs";
-import { ACCEPT, PackBadge, relative, useOnShow, when } from "./shared";
+import { ACCEPT, PackBadge, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
 import { Icon } from "./ui/Icon";
 import {
   Badge,
   Banner,
   Button,
-  Card,
   ConfirmDialog,
   Dialog,
   EmptyState,
@@ -26,7 +26,6 @@ import {
   Menu,
   PageHeader,
   Select,
-  Tabs,
   Textarea,
   required,
   url,
@@ -97,12 +96,15 @@ export function filterApplications(list: ApplicationItem[], q: string): Applicat
 export function Applications({
   active = true,
   focus,
+  baseResumeRequest = 0,
   onStartInterview,
 }: {
   active?: boolean;
-  /** An application to show (Resumes' "Open application"). */
+  /** An application to show, selected from call setup. */
   focus?: { id: string; n: number } | null;
-  /** Start a call for this interview (the Call screen, with it chosen). */
+  /** Open the shared resume editor from call setup or onboarding. */
+  baseResumeRequest?: number;
+  /** Start a call for an explicitly selected interview. */
   onStartInterview?: (interviewId: string) => void;
 }) {
   const { applications, interviews, error, reload } = useCatalog();
@@ -113,144 +115,46 @@ export function Applications({
   const [q, setQ] = useState("");
   const { conn } = useCareerOs(true);
 
+  useEffect(() => { if (focus) setSelected(focus.id); }, [focus]);
   useEffect(() => {
-    if (focus) setSelected(focus.id);
-  }, [focus]);
-  // Nothing chosen yet: the first one, on a wide window.
-  useEffect(() => {
-    if (!selected && applications?.length && window.innerWidth >= 900) setSelected(applications[0].id);
+    if (!selected && applications?.length && window.innerWidth >= 720) setSelected(applications[0].id);
   }, [applications]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const shown = useMemo(() => (applications ? filterApplications(applications, q) : null), [applications, q]);
-  const next = upcoming(interviews ?? []);
 
   return (
-    <div className="apps">
-      <PageHeader
-        title="Applications"
-        actions={
-          <>
-            {conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              + Add application
-            </Button>
-          </>
-        }
-        meta={conn && !conn.connected && conn.available ? "Connect Career-OS under Settings, Account, to pull applications from it." : undefined}
-      />
-
-      {next.length > 0 && (
-        <Card title="Upcoming interviews" className="apps-upcoming">
-          <List label="Upcoming interviews">
-            {next.slice(0, 4).map((i) => (
-              <ListRow
-                key={i.id}
-                leading={<span className="apps-when">{relative(i.starts_at)}</span>}
-                title={`${i.company ?? "?"} · ${roundLabel(i.round)}`}
-                meta={i.title ?? undefined}
-                trailing={
-                  <>
-                    <PackBadge pack={i.pack} />
-                    {onStartInterview && (
-                      <Button size="sm" onClick={() => onStartInterview(i.id)} aria-label={`Start a call for ${i.company ?? ""} ${roundLabel(i.round)}`}>
-                        Start
-                      </Button>
-                    )}
-                  </>
-                }
-              />
-            ))}
-          </List>
-        </Card>
-      )}
-
-      <div className={selected ? "apps-split has-selection" : "apps-split"}>
-        <section className="apps-list" aria-label="Applications">
-          <div className="apps-filters">
-            <Input type="search" aria-label="Search company or role" placeholder="Search company or role" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <ListState
-            items={shown}
-            error={error}
-            onRetry={reload}
-            loadingLabel="applications"
-            empty={
-              applications?.length ? (
-                <EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications match">Try another company or role.</EmptyState>
-              ) : (
-                <EmptyState
-                  icon={<Icon name="briefcase" size={28} />}
-                  title="No applications yet"
-                  action={
-                    <>
-                      <Button variant="primary" onClick={() => setAdding(true)}>
-                        Add application
-                      </Button>
-                      {conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
-                    </>
-                  }
-                >
-                  Add one with its job description, so answers in its interviews use that JD and its resume.
-                </EmptyState>
-              )
-            }
-          >
-            {(list) => (
-              <List label="All applications">
-                {list.map((a) => (
-                  <ListRow
-                    key={a.id}
-                    selected={a.id === selected}
-                    onClick={() => setSelected(a.id)}
-                    title={a.company}
-                    fullTitle={`${a.company} · ${a.role}`}
-                    meta={`${a.role} · ${stageLabel(a.stage)}`}
-                    trailing={<PackDot pack={a.pack} />}
-                  />
-                ))}
-              </List>
-            )}
+    <div className="apps prep-workspace">
+      <PageHeader title="Interview prep" actions={<>
+        {conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
+        <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>
+      </>} />
+      <div className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
+        <section className="apps-list prep-sidebar" aria-label="Applications">
+          <h2 className="prep-sidebar-heading">Applications <span>{applications?.length ?? ""}</span></h2>
+          <Input type="search" aria-label="Search company or role" placeholder="Search applications" value={q} onChange={(e) => setQ(e.target.value)} />
+          <ListState items={shown} error={error} onRetry={reload} loadingLabel="applications" empty={applications?.length ?
+            <EmptyState title="No applications match">Try another company or role.</EmptyState> :
+            <EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications yet" action={<Button onClick={() => setAdding(true)}>Add application</Button>} />
+          }>
+            {(list) => <List label="All applications">{list.map((a) => <ListRow
+              key={a.id} selected={a.id === selected} onClick={() => setSelected(a.id)} title={a.company}
+              fullTitle={`${a.company} · ${a.role}`}
+              meta={<><span className="prep-application-role">{a.role}</span><span className="prep-application-resume"><Icon name="document" size={12} /><span>{a.resume?.label ?? "No resume attached"}</span></span></>}
+              trailing={<PackDot pack={a.pack} />}
+            />)}</List>}
           </ListState>
+          <BaseResumeUtility active={active} request={baseResumeRequest} revision={applications?.map(a => a.resume?.label).join("|")} onChanged={reload} />
         </section>
-        <section className="apps-detail" aria-label="Application">
-          {selected ? (
-            <ApplicationView
-              key={selected}
-              id={selected}
-              stamp={listStamp(applications?.find((a) => a.id === selected))}
-              interviews={(interviews ?? []).filter((i) => i.job_id === selected)}
-              onBack={() => setSelected(null)}
-              onChanged={reload}
-              onDeleted={() => {
-                setSelected(null);
-                reload();
-              }}
-            />
-          ) : (
-            applications &&
-            applications.length > 0 && (
-              <EmptyState icon={<Icon name="briefcase" size={28} />} title="Pick an application">Its details, job description, resume and interviews show here.</EmptyState>
-            )
-          )}
+        <section className="apps-detail prep-detail" aria-label="Application">
+          {selected ? <ApplicationView key={selected} id={selected}
+            stamp={listStamp(applications?.find((a) => a.id === selected))}
+            interviews={(interviews ?? []).filter((i) => i.job_id === selected)}
+            onStartInterview={onStartInterview} onBack={() => setSelected(null)} onChanged={reload}
+            onDeleted={() => { setSelected(null); void reload(); }}
+          /> : applications && applications.length > 0 ? <EmptyState icon={<Icon name="briefcase" size={28} />} title="Choose an application">Its resume and job description stay together here.</EmptyState> : null}
         </section>
       </div>
-
-      <AddApplication
-        open={adding}
-        onOpenChange={setAdding}
-        onAdded={(app) => {
-          reload();
-          setSelected(app.id);
-        }}
-      />
-      <PullDialog
-        open={pulling}
-        onOpenChange={setPulling}
-        onPulled={(app) => {
-          reload();
-          setSelected(app.id);
-        }}
-      />
+      <AddApplication open={adding} onOpenChange={setAdding} onAdded={(app) => { void reload(); setSelected(app.id); }} />
+      <PullDialog open={pulling} onOpenChange={setPulling} onPulled={(app) => { void reload(); setSelected(app.id); }} />
     </div>
   );
 }
@@ -383,9 +287,12 @@ export function AddApplication({ open, onOpenChange, onAdded }: { open: boolean;
               e.target.value = "";
               if (!f) return;
               if (isTextFile(f.name)) {
-                set("jd_text", await f.text());
-                setFileNote(`Loaded ${f.name}.`);
-              } else setFileNote("A PDF can be uploaded once the application is added (its Job description tab). Paste the text for now.");
+                try {
+                  set("jd_text", await f.text());
+                  setFileNote(`Loaded ${f.name}.`);
+                  setError(null);
+                } catch (e) { setError(`Could not read ${f.name}: ${e}`); }
+              } else setFileNote("A PDF can be uploaded once the application is added (in Job description). Paste the text for now.");
             }}
           />
           <Button size="sm" onClick={() => file.current?.click()}>
@@ -403,136 +310,58 @@ export function AddApplication({ open, onOpenChange, onAdded }: { open: boolean;
  * (shown again, polled while a pack builds, after a pull) and this changes, the view reloads. */
 export function listStamp(a: ApplicationItem | undefined): string {
   if (!a) return "";
-  return JSON.stringify([a.updated_at, a.pack?.pack_id ?? null, a.pack?.available ?? null, a.resume?.version_id ?? null, a.resume?.status ?? null, a.career_os?.pulled_at ?? null]);
+  return JSON.stringify([a.updated_at, a.pack?.pack_id ?? null, a.pack?.available ?? null, a.resume?.version_id ?? null, a.resume?.label ?? null, a.resume?.status ?? null, a.career_os?.pulled_at ?? null]);
 }
 
-function ApplicationView({
-  id,
-  stamp,
-  interviews,
-  onBack,
-  onChanged,
-  onDeleted,
-}: {
+function ApplicationView({ id, stamp, interviews, onStartInterview, onBack, onChanged, onDeleted }: {
   id: string;
-  /** listStamp of its row in the list; the view reloads when it changes. */
   stamp: string;
   interviews: InterviewItem[];
+  onStartInterview?: (interviewId: string) => void;
   onBack: () => void;
   onChanged: () => void;
   onDeleted: () => void;
 }) {
   const [app, setApp] = useState<ApplicationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("details");
+  const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [scheduling, setScheduling] = useState(false);
-
   const load = useCallback(async () => {
-    try {
-      setApp(await rest.application(id));
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
+    try { setApp(await rest.application(id)); setError(null); }
+    catch (e) { setError(String(e)); }
   }, [id]);
-  useEffect(() => {
-    load();
-  }, [load, stamp]);
+  useEffect(() => { void load(); }, [load, stamp]);
   usePolling(load, 3000, !!app && app.versions.some((v) => v.status === "extracting"));
+  const saved = (a: ApplicationDetail | null) => { if (a) setApp(a); onChanged(); };
 
-  const saved = (a: ApplicationDetail | null) => {
-    if (a) setApp(a);
-    onChanged();
-  };
-
-  if (error && !app) {
-    return (
-      <Banner tone="danger" title="Could not load the application" action={<Button size="sm" onClick={load}>Retry</Button>}>
-        {error}
-      </Banner>
-    );
-  }
-  return (
-    <div className="app-view">
-      <Button variant="ghost" size="sm" className="apps-back" onClick={onBack}>
-        ← Applications
-      </Button>
-      <div className="app-view-head">
-        <div className="app-view-title">
-          <h2 className="ui-card-title" title={app ? `${app.company} · ${app.role}` : undefined}>
-            {app ? app.company : "…"}
-          </h2>
-          <div className="ui-text-2 ui-truncate">{app ? `${app.role} · ${stageLabel(app.stage)}` : ""}</div>
-        </div>
-        <Menu
-          label="Application actions"
-          trigger="⋯"
-          items={[
-            { label: "Schedule interview…", onSelect: () => setScheduling(true) },
-            "separator",
-            { label: "Delete application…", danger: true, onSelect: () => setDeleting(true) },
-          ]}
-        />
-      </div>
-      {app && (
-        <div className="ui-row-inline app-view-badges">
-          <PackBadge pack={app.pack} />
-          {app.career_os && <Badge tone="info">From Career-OS, {when(app.career_os.pulled_at)}</Badge>}
-        </div>
-      )}
-      {app ? (
-        <Tabs
-          label="Application"
-          value={tab}
-          onChange={setTab}
-          items={[
-            { value: "details", label: "Details", content: <DetailsTab app={app} onSaved={saved} /> },
-            { value: "jd", label: "Job description", content: <JdTab app={app} onSaved={saved} /> },
-            { value: "resume", label: "Resume", content: <ResumeTab app={app} onSaved={saved} /> },
-            {
-              value: "interviews",
-              label: "Interviews",
-              count: interviews.length,
-              content: <InterviewsTab interviews={interviews} onSchedule={() => setScheduling(true)} />,
-            },
-          ]}
-        />
-      ) : (
-        <div className="ui-skeleton-list" aria-busy="true">
-          <span className="ui-visually-hidden" role="status">
-            Loading the application…
-          </span>
-        </div>
-      )}
-      {app && (
-        <ScheduleInterview
-          open={scheduling}
-          onOpenChange={setScheduling}
-          app={app}
-          onScheduled={() => {
-            onChanged();
-            setTab("interviews");
-          }}
-        />
-      )}
-      <ConfirmDialog
-        open={deleting}
-        onOpenChange={setDeleting}
-        title={`Delete ${app?.company ?? "this application"}?`}
-        confirmLabel="Delete application"
-        onConfirm={async () => {
-          await rest.deleteApplication(id);
-          onDeleted();
-        }}
-      >
-        Its tailored resumes and its interviews are deleted too.
-      </ConfirmDialog>
-    </div>
-  );
+  return <div className="app-view prep-document">
+    <Button variant="ghost" size="sm" className="apps-back" onClick={onBack}>← Applications</Button>
+    {error && <Banner tone="danger" title="Could not refresh the application" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
+    {app ? <>
+      <header className="app-view-head prep-document-head">
+        <div className="app-view-title"><h2>{app.company}</h2><p>{app.role}</p></div>
+        <Button size="sm" onClick={() => setEditing(!editing)} aria-expanded={editing} aria-label="Edit application">Edit</Button>
+        <Menu label="Application actions" trigger="⋯" items={[
+          { label: "Schedule interview…", onSelect: () => setScheduling(true) }, "separator",
+          { label: "Delete application…", danger: true, onSelect: () => setDeleting(true) },
+        ]} />
+      </header>
+      <div className="prep-document-status"><PackBadge pack={app.pack} /></div>
+      {editing && <DetailsEditor app={app} onCancel={() => setEditing(false)} onSaved={a => { saved(a); setEditing(false); }} />}
+      <ResumeSection app={app} onSaved={saved} />
+      <JobDescription app={app} onSaved={saved} />
+      <ApplicationNotes app={app} onSaved={saved} />
+      <InterviewSection interviews={interviews} onStartInterview={onStartInterview} onSchedule={() => setScheduling(true)} />
+      <ScheduleInterview open={scheduling} onOpenChange={setScheduling} app={app} onScheduled={onChanged} />
+    </> : !error && <div className="ui-skeleton-list" aria-busy="true"><span className="ui-visually-hidden" role="status">Loading the application…</span></div>}
+    <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${app?.company ?? "this application"}?`} confirmLabel="Delete application" onConfirm={async () => { await rest.deleteApplication(id); onDeleted(); }}>
+      Its tailored resumes and its interviews are deleted too.
+    </ConfirmDialog>
+  </div>;
 }
 
-function DetailsTab({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+function DetailsEditor({ app, onSaved, onCancel }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void; onCancel: () => void }) {
   const initial: ApplicationFields = { company: app.company, role: app.role, url: app.url, source_site: app.source_site, stage: app.stage, note: app.note, jd_text: app.jd_text };
   const [fields, setFields] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -540,251 +369,146 @@ function DetailsTab({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: App
   const checks = useChecks(fields);
   const toast = useToast();
   const set = <K extends keyof ApplicationFields>(k: K, v: ApplicationFields[K]) => setFields((f) => ({ ...f, [k]: v }));
-  const dirty = JSON.stringify({ ...fields, jd_text: "" }) !== JSON.stringify({ ...initial, jd_text: "" });
+  const dirty = JSON.stringify(fields) !== JSON.stringify(initial);
   const save = async () => {
-    checks.all();
-    if (!checks.ok) return;
-    setBusy(true);
-    setError(null);
+    checks.all(); if (!checks.ok || busy) return;
+    setBusy(true); setError(null);
     try {
-      const { jd_text: _jd, ...rest_ } = fields;
-      void _jd;
-      const out = await rest.updateApplication(app.id, { ...rest_, url: fields.url || null, source_site: fields.source_site || null, note: fields.note || null });
-      toast({ tone: "success", text: "Saved." });
-      onSaved(out);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+      const out = await rest.updateApplication(app.id, { company: fields.company, role: fields.role, stage: fields.stage, url: fields.url || null, source_site: fields.source_site || null });
+      toast({ tone: "success", text: "Application saved." }); onSaved(out);
+    } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        save();
-      }}
-    >
+  return <form className="prep-editor" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+    <div className="form-2">
+      <Field label="Company" error={checks.shown("company")}><Input autoFocus value={fields.company} onChange={e => set("company", e.target.value)} onBlur={checks.touch("company")} /></Field>
+      <Field label="Role" error={checks.shown("role")}><Input value={fields.role} onChange={e => set("role", e.target.value)} onBlur={checks.touch("role")} /></Field>
+    </div>
+    <details className="context-details" open={checks.shown("url") ? true : undefined}>
+      <summary>Application details</summary>
       <div className="form-2">
-        <Field label="Company" error={checks.shown("company")}>
-          <Input value={fields.company} onChange={(e) => set("company", e.target.value)} onBlur={checks.touch("company")} />
-        </Field>
-        <Field label="Role" error={checks.shown("role")}>
-          <Input value={fields.role} onChange={(e) => set("role", e.target.value)} onBlur={checks.touch("role")} />
-        </Field>
+        <Field label="Stage"><Select value={fields.stage} onChange={e => set("stage", e.target.value as Stage)}>{STAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></Field>
+        <Field label="Source" optional><Input value={fields.source_site ?? ""} onChange={e => set("source_site", e.target.value)} /></Field>
       </div>
-      <div className="form-2">
-        <Field label="Stage">
-          <Select value={fields.stage} onChange={(e) => set("stage", e.target.value as Stage)}>
-            {STAGES.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Source" optional>
-          <Input value={fields.source_site ?? ""} onChange={(e) => set("source_site", e.target.value)} />
-        </Field>
-      </div>
-      <Field label="Posting link" optional error={checks.shown("url")}>
-        <Input value={fields.url ?? ""} onChange={(e) => set("url", e.target.value)} onBlur={checks.touch("url")} placeholder="https://" />
-      </Field>
-      <Field label="Note" optional>
-        <Input value={fields.note ?? ""} onChange={(e) => set("note", e.target.value)} />
-      </Field>
-      {error && <Banner tone="danger">{error}</Banner>}
-      <div className="form-actions">
-        <Button variant="ghost" disabled={!dirty || busy} onClick={() => setFields(initial)}>
-          Discard
-        </Button>
-        <Button type="submit" variant="primary" disabled={!dirty} loading={busy}>
-          Save
-        </Button>
-      </div>
-      {app.career_os && <p className="ui-field-hint">Pulled from Career-OS. Pull it again from "Pull from Career-OS…" to take its changes; nothing updates by itself.</p>}
-    </form>
-  );
+      <Field label="Posting link" optional error={checks.shown("url")}><Input value={fields.url ?? ""} onChange={e => set("url", e.target.value)} onBlur={checks.touch("url")} placeholder="https://" /></Field>
+    </details>
+    {error && <Banner tone="danger">{error}</Banner>}
+    <div className="prep-inline-actions prep-editor-actions"><Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button><Button type="submit" variant="primary" disabled={!dirty} loading={busy}>Save application</Button></div>
+  </form>;
 }
 
-function JdTab({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+function JobDescription({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState(app.jd_text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const toast = useToast();
-  const dirty = text !== app.jd_text;
   const save = async () => {
-    if (!text.trim()) {
-      setError("The job description can't be empty.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      onSaved(await rest.updateApplication(app.id, { jd_text: text }));
-      toast({ tone: "success", text: "Saved. Its pack is rebuilt with this JD." });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    if (!text.trim()) { setError("The job description can't be empty."); return; }
+    if (busy) return;
+    setBusy(true); setError(null);
+    try { onSaved(await rest.updateApplication(app.id, { jd_text: text })); setEditing(false); toast({ tone: "success", text: "Job description saved." }); }
+    catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
   const pick = async (f: File) => {
-    if (isTextFile(f.name)) {
-      setText(await f.text());
-      return;
-    }
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
+      if (isTextFile(f.name)) { setText(await f.text()); return; }
       await api.uploadDocument("job_description", f, { application_id: app.id });
-      onSaved(await rest.application(app.id));
-      toast({ tone: "success", text: "Uploaded. The JD is read from the PDF and fills this application." });
-    } catch (e) {
-      setError(`${f.name}: ${e}`);
-    } finally {
-      setBusy(false);
-    }
+      const updated = await rest.application(app.id); onSaved(updated); setText(updated.jd_text);
+      setEditing(false); toast({ tone: "success", text: "Uploaded. The job description is being read." });
+    } catch (e) { setError(`${f.name}: ${e}`); } finally { setBusy(false); }
   };
-  return (
-    <div>
-      <Field label="Job description" error={error}>
-        <Textarea rows={14} value={text} onChange={(e) => setText(e.target.value)} />
-      </Field>
-      <div className="form-actions">
-        <input
-          ref={file}
-          type="file"
-          accept={ACCEPT}
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = "";
-            if (f) pick(f);
-          }}
-        />
-        <Button onClick={() => file.current?.click()} disabled={busy}>
-          Upload a file (PDF, text)…
-        </Button>
-        <span className="ui-spacer" />
-        <Button variant="ghost" disabled={!dirty || busy} onClick={() => setText(app.jd_text)}>
-          Discard
-        </Button>
-        <Button variant="primary" disabled={!dirty} loading={busy} onClick={save}>
-          Save
-        </Button>
+  return <section className="prep-section" aria-labelledby={`jd-${app.id}`}>
+    <div className="prep-section-head"><h3 id={`jd-${app.id}`}>Job description</h3><Button size="sm" onClick={() => { setText(app.jd_text); setError(null); setEditing(!editing); }} disabled={busy} aria-expanded={editing}>Edit job description</Button></div>
+    {editing ? <div className="prep-editor">
+      <Field label="Job description" error={error}><Textarea autoFocus rows={7} value={text} onChange={e => setText(e.target.value)} /></Field>
+      <div className="prep-inline-actions prep-editor-actions">
+        <input ref={file} type="file" accept={ACCEPT} hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void pick(f); }} />
+        <Button onClick={() => file.current?.click()} disabled={busy}>Upload file…</Button><span className="ui-spacer" />
+        <Button variant="ghost" disabled={busy} onClick={() => setEditing(false)}>Cancel</Button>
+        <Button variant="primary" disabled={text === app.jd_text} loading={busy} onClick={save}>Save description</Button>
       </div>
-    </div>
-  );
+    </div> : <>
+      <p className={expanded ? "prep-description" : "prep-description is-collapsed"}>{app.jd_text || "No job description added."}</p>
+      {(app.jd_text.length > 340 || app.jd_text.split(/\r?\n/).length > 5) && <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>{expanded ? "Show less" : "Show full description"}</Button>}
+    </>}
+  </section>;
 }
 
-function ResumeTab({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+function ApplicationNotes({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(app.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    if (busy) return; setBusy(true); setError(null);
+    try { onSaved(await rest.updateApplication(app.id, { note: text.trim() || null })); setEditing(false); }
+    catch (e) { setError(String(e)); } finally { setBusy(false); }
+  };
+  return <section className="prep-section" aria-labelledby={`notes-${app.id}`}>
+    <div className="prep-section-head"><h3 id={`notes-${app.id}`}>Call notes</h3><Button size="sm" onClick={() => { setText(app.note ?? ""); setError(null); setEditing(!editing); }} disabled={busy} aria-expanded={editing}>{app.note ? "Edit notes" : "Add notes"}</Button></div>
+    {editing ? <div className="prep-editor">
+      <Field label="Call notes" error={error}><Textarea rows={3} autoFocus value={text} onChange={e => setText(e.target.value)} /></Field>
+      <div className="prep-inline-actions prep-editor-actions"><Button variant="ghost" onClick={() => setEditing(false)} disabled={busy}>Cancel</Button><Button variant="primary" onClick={save} disabled={text === (app.note ?? "")} loading={busy}>Save notes</Button></div>
+    </div> : app.note ? <p className="prep-description">{app.note}</p> : null}
+  </section>;
+}
+
+function ResumeSection({ app, onSaved }: { app: ApplicationDetail; onSaved: (a: ApplicationDetail | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<ApplicationDetail["versions"][number] | null>(null);
+  const [deleting, setDeleting] = useState<ApplicationDetail["versions"][number] | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const run = async (what: () => Promise<unknown>, done: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await what();
-      onSaved(await rest.application(app.id));
-      toast({ tone: "success", text: done });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+    if (busy) return; setBusy(true); setError(null);
+    try { await what(); onSaved(await rest.application(app.id)); toast({ tone: "success", text: done }); }
+    catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
-  return (
-    <div className="ui-stack">
-      <Field label="Resume for this application" hint="Interview packs for this application use this resume only, with its JD.">
-        <Select
-          value={pairingValue(app)}
-          disabled={busy}
-          onChange={(e) => run(() => rest.updateApplication(app.id, { resume_version_id: e.target.value }), "Saved. Its packs are rebuilt with this resume.")}
-        >
-          {pairingChoices(app).map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </Select>
-      </Field>
-      <p className="ui-text-2">Now: {resumeLabel(app)}</p>
-      <Card title="Add a tailored resume" inset>
-        <Field label="Label" optional>
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Northwind backend v3" />
-        </Field>
-        <Field label="Resume text" error={error}>
-          <Textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste a resume tailored for this application" />
-        </Field>
-        <div className="form-actions">
-          <input
-            ref={file}
-            type="file"
-            accept={ACCEPT}
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) run(() => api.uploadDocument("resume", f, { application_id: app.id, label: label.trim() || f.name }), "Uploaded. It becomes this application's resume once read.");
-            }}
-          />
-          <Button onClick={() => file.current?.click()} disabled={busy}>
-            Upload a file…
-          </Button>
-          <span className="ui-spacer" />
-          <Button
-            variant="primary"
-            disabled={!text.trim()}
-            loading={busy}
-            onClick={() =>
-              run(async () => {
-                await rest.createResume({ kind: "tailored", application_id: app.id, label: label.trim() || null, text });
-                setText("");
-                setLabel("");
-              }, "Added. This application now uses it, unless you picked another resume.")
-            }
-          >
-            Add pasted resume
-          </Button>
+  const tailored = app.versions.filter(v => v.kind === "tailored");
+  return <section className="prep-section prep-resume" aria-labelledby={`resume-${app.id}`}>
+    <div className="prep-section-head"><h3 id={`resume-${app.id}`}>Resume</h3><Button size="sm" onClick={() => setEditing(!editing)} aria-expanded={editing} disabled={busy}>Change resume</Button></div>
+    <div className="prep-attached-resume"><Icon name="document" size={21} /><div><strong title={app.resume?.label}>{app.resume?.label ?? "No resume attached"}</strong><span>{app.resume?.kind === "tailored" ? "Tailored for this application" : app.resume ? "Default resume" : "Add a resume for this application"}</span></div>{app.resume && <Badge tone={statusTone(app.resume.status)}>{resumeStatusLabel(app.resume.status)}</Badge>}</div>
+    {editing && <div className="prep-editor">
+      <Field label="Resume for this application"><Select value={pairingValue(app)} disabled={busy} onChange={e => run(() => rest.updateApplication(app.id, { resume_version_id: e.target.value }), "Application resume changed.")}>
+        {pairingChoices(app).map(c => <option key={c.value} value={c.value}>{c.value === "auto" ? "Automatic · latest tailored resume or default" : c.label.replace("Base resume:", "Default:")}</option>)}
+      </Select></Field>
+      {tailored.length > 0 && <List label="Saved resumes for this application" className="prep-version-list">{tailored.map(v => <ListRow key={v.id} title={v.label} fullTitle={v.label} meta={v.id === app.resume?.version_id ? "In use" : resumeStatusLabel(v.status)} actions={<Menu label={`Actions for ${v.label}`} trigger="⋯" items={[
+        { label: "Rename…", onSelect: () => setRenaming(v) }, "separator", { label: "Delete…", danger: true, onSelect: () => setDeleting(v) },
+      ]} />}/>)}</List>}
+      <Button size="sm" onClick={() => setAdding(!adding)} aria-expanded={adding}>Add tailored resume</Button>
+      {adding && <div className="prep-add-resume">
+        <Field label="Resume name" optional><Input value={label} onChange={e => setLabel(e.target.value)} placeholder={`${app.company} resume`} /></Field>
+        <Field label="Resume text"><Textarea rows={5} value={text} onChange={e => setText(e.target.value)} placeholder="Paste your tailored resume" /></Field>
+        <div className="prep-inline-actions prep-editor-actions">
+          <input ref={file} type="file" accept={ACCEPT} hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void run(() => api.uploadDocument("resume", f, { application_id: app.id, label: label.trim() || f.name }), "Resume uploaded."); }} />
+          <Button onClick={() => file.current?.click()} disabled={busy}>Upload file…</Button><span className="ui-spacer" />
+          <Button variant="primary" disabled={!text.trim()} loading={busy} onClick={() => run(async () => { await rest.createResume({ kind: "tailored", application_id: app.id, label: label.trim() || null, text }); setText(""); setLabel(""); setAdding(false); }, "Tailored resume added.")}>Add pasted resume</Button>
         </div>
-      </Card>
-    </div>
-  );
+      </div>}
+      {error && <Banner tone="danger">{error}</Banner>}
+    </div>}
+    <RenameResume version={renaming} onClose={() => setRenaming(null)} onDone={() => { void rest.application(app.id).then(onSaved).catch(e => setError(String(e))); }} />
+    <ConfirmDialog open={deleting !== null} onOpenChange={open => { if (!open) setDeleting(null); }} title={`Delete "${deleting?.label ?? ""}"?`} confirmLabel="Delete resume" onConfirm={async () => {
+      if (!deleting) return; await rest.deleteResume(deleting.id); onSaved(await rest.application(app.id)); toast({ tone: "success", text: "Resume deleted." });
+    }}>This application will use its next available resume.</ConfirmDialog>
+  </section>;
 }
 
-function InterviewsTab({ interviews, onSchedule }: { interviews: InterviewItem[]; onSchedule: () => void }) {
+function InterviewSection({ interviews, onSchedule, onStartInterview }: { interviews: InterviewItem[]; onSchedule: () => void; onStartInterview?: (id: string) => void }) {
   const sorted = [...interviews].sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at));
-  const upcomingIds = new Set(upcoming(interviews).map((i) => i.id));
-  return (
-    <div className="ui-stack">
-      <div>
-        <Button variant="primary" onClick={onSchedule}>
-          Schedule interview…
-        </Button>
-      </div>
-      {sorted.length === 0 ? (
-        <EmptyState title="No interviews yet">Schedule one, and its pack is built for the round from this application's resume.</EmptyState>
-      ) : (
-        <List label="Interviews">
-          {sorted.map((i) => (
-            <ListRow
-              key={i.id}
-              className={upcomingIds.has(i.id) ? undefined : "is-past"}
-              leading={<span className="apps-when">{when(i.starts_at)}</span>}
-              title={roundLabel(i.round)}
-              trailing={upcomingIds.has(i.id) ? <PackBadge pack={i.pack} /> : <Badge tone="neutral">Past</Badge>}
-            />
-          ))}
-        </List>
-      )}
-    </div>
-  );
+  const upcomingIds = new Set(upcoming(interviews).map(i => i.id));
+  return <section className="prep-section" aria-label="Interviews">
+    <div className="prep-section-head"><h3>Interviews</h3><Button size="sm" onClick={onSchedule}>Schedule interview…</Button></div>
+    {sorted.length === 0 ? <p className="prep-muted">No interviews scheduled.</p> : <List label="Interviews" className="prep-interviews">{sorted.map(i => <ListRow key={i.id} className={upcomingIds.has(i.id) ? undefined : "is-past"} title={roundLabel(i.round)} meta={when(i.starts_at)} trailing={<>{!upcomingIds.has(i.id) && <Badge tone="neutral">Past</Badge>}{onStartInterview && <Button size="sm" onClick={() => onStartInterview(i.id)} aria-label={`Start a call for ${i.company ?? ""} ${roundLabel(i.round)}`}>Start call</Button>}</>} />)}</List>}
+  </section>;
 }
 
 function ScheduleInterview({ open, onOpenChange, app, onScheduled }: { open: boolean; onOpenChange: (o: boolean) => void; app: ApplicationDetail; onScheduled: () => void }) {

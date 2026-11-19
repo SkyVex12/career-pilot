@@ -5,19 +5,19 @@
 // - live: the call running, its last question and levels, mode and answer style, End call;
 // - just ended: the call's summary as it is written (SessionDetail).
 import { SignIn, signInWays } from "./SignIn";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
-import { api, rest, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type Settings } from "./api";
+import { api, rest, type ApplicationDetail, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type ResumeVersion, type Settings } from "./api";
 import { parseTarget, upcoming } from "./catalog";
-import { AddApplication, roundLabel, useCatalog } from "./Applications";
-import { applicationOption, resumeLabel } from "./pairing";
+import { AddApplication, useCatalog } from "./Applications";
+import { isTextFile, resumeStatusLabel } from "./pairing";
 import { DeviceTest } from "./AudioCheck";
 import { useWindowMode } from "./windowMode";
 import { Icon } from "./ui/Icon";
 import { useHoverMenu } from "./ui/useHoverMenu";
 import { WorkspaceQuickSettings } from "./WorkspaceQuickSettings";
 import { RubyLauncher } from "./RubyLauncher";
-import { WorkspaceMenu, WorkspaceProfileSwitch, useWorkspaceCompactWindow } from "./Shell";
+import { useWorkspaceCallBusy, useWorkspaceCompactWindow, useWorkspaceOpenQuickSettings } from "./Shell";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
@@ -25,8 +25,12 @@ import { STOPPED, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
-import { plural, relative, useShowCount } from "./shared";
+import { plural, useShowCount } from "./shared";
 import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
+
+import { GuestPicker } from "./GuestPicker";
+import { guestScope, invitePlannedGuests, type PlannedGuest } from "./guestStorage";
+import "./callDesign.css";
 
 // The post-call view (with the call's replay) loads when a call ends.
 const SessionDetail = lazy(() => import("./SessionDetail").then((m) => ({ default: m.SessionDetail })));
@@ -81,6 +85,9 @@ export interface CallProps {
   onSettingsSaved: () => void;
   onSettings: () => void;
   onResumes: () => void;
+  onApplications?: (applicationId?: string) => void;
+  onWork?: () => void;
+  onHistory?: () => void;
   onOpenLive: (live: LiveSession) => Promise<void>;
   /** An interview to start a call for, chosen elsewhere (Applications' "Start"). */
   preset?: { target: string; n: number } | null;
@@ -206,35 +213,51 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 
 // --- Ready and live -----------------------------------------------------------------------------
 
-function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset, active = true }: CallProps) {
+function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onApplications, onWork, onHistory, onOpenLive, preset, active = true }: CallProps) {
   const mini = useWindowMode(false, active && !session.running);
-  useWorkspaceCompactWindow(() => { void mini.change("toolbar"); }, () => mini.change("full"));
+  const openWorkspaceQuickSettings = useWorkspaceOpenQuickSettings();
+  useWorkspaceCompactWindow((mode) => { void mini.change(mode ?? "toolbar"); }, () => mini.change("full"));
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
-  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => (read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets"));
+  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets");
+  useEffect(() => {
+    const changed = (event: StorageEvent) => { if (event.key === LAST_ANSWER_STYLE) setAnswerStyle(event.newValue === "paragraph" ? "paragraph" : "bullets"); };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
   const shown = useShowCount(active);
   const catalog = useCatalog(tokenSet);
   const reloadCatalog = catalog.reload;
-  useEffect(() => {
-    if (tokenSet && shown > 0) reloadCatalog();
-  }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tokenSet && shown > 0) reloadCatalog(); }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   const [target, setTarget] = useState("");
+  const targetInitialized = useRef(false);
   const [addingApplication, setAddingApplication] = useState(false);
   const [consent, setConsent] = useState(true);
-  // An online test (coding mode): no call, so nothing is listened to.
   const [noCall, setNoCall] = useState(false);
   const testing = noCall && mode === "interview";
   const [busy, setBusy] = useState(false);
+  const [joining, setJoining] = useState(false);
+  useWorkspaceCallBusy(busy || joining);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [inviteCount, setInviteCount] = useState(0);
   const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
   const [quickSettingsHover, setQuickSettingsHover] = useState(false);
   const changeQuickSettings = useCallback((open: boolean) => { setQuickSettingsHover(false); setQuickSettingsOpen(open); }, []);
   const compactSettingsHover = useHoverMenu({
-    onOpen: () => {
-      if (mini.mode === "toolbar") void mini.change("full").then(changed => { if (changed) { setQuickSettingsHover(true); setQuickSettingsOpen(true); } });
-    },
+    onOpen: () => { if (mini.mode === "toolbar") void mini.change("full").then(changed => { if (changed) { if (openWorkspaceQuickSettings) openWorkspaceQuickSettings(); else { setQuickSettingsHover(true); setQuickSettingsOpen(true); } } }); },
     onClose: () => {},
   });
   const [message, setMessage] = useState<string | null>(null);
+  const scope = guestScope(settings, signedInAs, environment);
+  const [guests, setGuests] = useState<PlannedGuest[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<{ beforeId: string | null; scope: string; guests: PlannedGuest[] } | null>(null);
+  useEffect(() => { setGuests([]); setPendingInvites(null); }, [scope]);
+  useEffect(() => {
+    if (!pendingInvites || !running || session.seat || !session.sessionId || session.sessionId === pendingInvites.beforeId || pendingInvites.scope !== scope) return;
+    const pending = pendingInvites;
+    setPendingInvites(null);
+    void invitePlannedGuests(session.sessionId, pending.scope, pending.guests);
+  }, [pendingInvites, running, session.sessionId, session.seat, scope]);
 
   const work = useCompanies(tokenSet, shown);
   const [employerId, setEmployerId] = useState("");
@@ -242,264 +265,150 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
   const atWork = atWorkMode(mode);
   const materials = useMaterials(atWork && tokenSet ? employerId : "", shown);
   const [materialIds, setMaterialIds] = useState<string[]>([]);
-  const hasResume = useHasResume(tokenSet, shown);
+  const baseResume = useBaseResume(tokenSet, shown);
   useEffect(() => setMaterialIds([]), [employerId]);
   useEffect(() => {
-    if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, read(LAST_COMPANY)));
-  }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (materials.documents) setMaterialIds(ids => ids.filter(id => materials.documents!.some(d => d.id === id)));
+  }, [materials.documents]);
+  useEffect(() => { if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, read(LAST_COMPANY))); }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
   const pack = usePackFor(atWork && !running ? employerId : "", mode);
-
   const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
-    // Default to the next interview, else the newest application.
+    if (!target || !catalog.applications || !catalog.interviews) return;
+    if (target.startsWith("job:") && !catalog.applications.some(app => `job:${app.id}` === target)) setTarget("");
+    if (target.startsWith("interview:") && !catalog.interviews.some(item => `interview:${item.id}` === target)) setTarget("");
+  }, [catalog.applications, catalog.interviews]); // Validate only when the catalog refreshes, not before a new preset has loaded.
+  useEffect(() => {
+    if (targetInitialized.current || !catalog.applications || !catalog.interviews) return;
+    targetInitialized.current = true;
     if (target) return;
-    if (interviews.length) setTarget(`interview:${interviews[0].id}`);
+    if (interviews.length) setTarget(`job:${interviews[0].job_id}`);
     else if (catalog.applications?.length) setTarget(`job:${catalog.applications[0].id}`);
   }, [catalog.applications, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (preset) { setMode("interview"); setNoCall(false); setTarget(preset.target); } }, [preset]);
+  const interview = target.startsWith("interview:") ? catalog.interviews?.find(i => `interview:${i.id}` === target) : undefined;
+  const application = target.startsWith("job:") ? catalog.applications?.find(a => `job:${a.id}` === target) : interview ? catalog.applications?.find(a => a.id === interview.job_id) : undefined;
+  const [detail, setDetail] = useState<ApplicationDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [editingJd, setEditingJd] = useState(false);
   useEffect(() => {
-    if (preset) {
-      setMode("interview");
-      setTarget(preset.target);
-    }
-  }, [preset]);
-
-  const changeMode = (m: Mode) => {
-    setMode(m);
-    if (running) api.setMode(m).catch(() => undefined);
-  };
-  const changeStyle = (s: AnswerStyle) => {
-    setAnswerStyle(s);
-    write(LAST_ANSWER_STYLE, s);
-    if (running) api.setAnswerStyle(s).catch(() => undefined);
-  };
-
+    let cancelled = false;
+    setDetail(null); setDetailError(null); setEditingJd(false);
+    if (application) rest.application(application.id).then(value => { if (!cancelled) setDetail(value); }, error => { if (!cancelled) setDetailError(String(error)); });
+    return () => { cancelled = true; };
+  }, [application?.id, shown]);
+  const savedDetail = (value: ApplicationDetail) => { setDetail(value); catalog.includeApplication(value); };
+  const changeMode = (value: Mode) => { setMode(value); if (running) api.setMode(value).catch(() => undefined); };
+  const changeStyle = (value: AnswerStyle) => { setAnswerStyle(value); write(LAST_ANSWER_STYLE, value); if (running) api.setAnswerStyle(value).catch(() => undefined); };
   const start = async () => {
-    setBusy(true);
-    setMessage(null);
+    if (busy || joining) return;
+    setBusy(true); setMessage(null); setPendingInvites(null);
+    const planned = guests.map(g => ({ ...g }));
+    const beforeId = session.sessionId;
     try {
       const picked = mode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
       const company = atWork && employerId ? employerId : null;
       if (company) write(LAST_COMPANY, company);
       if (mini.mode !== "full" && !await mini.change("full")) return;
-      await api.startSession({
-        mode,
-        ...picked,
-        meeting_title: null,
-        employer_id: company,
-        agenda: mode === "meeting" ? agenda.trim() || null : null,
-        material_ids: company ? materialIds : [],
-        platform: testing ? "test" : "other",
-        store_transcript: consent,
-        answer_style: answerStyle,
-        no_call: testing,
-      });
-      if (testing) {
-        // A test is answered for pasting: the coding bar switches to Test.
-        const v = await api.getSettings();
-        await api.setCodingPrefs("assessment", v.settings.coding_language ?? "");
-      }
-    } catch (e) {
-      setMessage(String(e));
-    } finally {
-      setBusy(false);
-    }
+      await api.startSession({ mode, ...picked, meeting_title: null, employer_id: company, agenda: mode === "meeting" ? agenda.trim() || null : null,
+        material_ids: company ? materialIds : [], platform: testing ? "test" : "other", store_transcript: consent, answer_style: answerStyle, no_call: testing });
+      if (planned.length) setPendingInvites({ beforeId, scope, guests: planned });
+      if (testing) { const value = await api.getSettings(); await api.setCodingPrefs("assessment", value.settings.coding_language ?? ""); }
+    } catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
   };
-  const endOther = async () => {
-    setMessage(null);
-    try {
-      setMessage(`${await api.endOtherSession()}. You can start now.`);
-    } catch (e) {
-      setMessage(String(e));
-    }
-  };
-
-  // What the call is for, in words (the Next up card and the live panel).
-  const interview = target.startsWith("interview:") ? (catalog.interviews ?? []).find((i) => `interview:${i.id}` === target) : undefined;
-  const application = target.startsWith("job:") ? catalog.applications?.find((a) => `job:${a.id}` === target) : interview ? catalog.applications?.find((a) => a.id === interview.job_id) : undefined;
-  const employer = work.employers?.find((e) => e.id === employerId);
-  const forWhat = atWork
-    ? employer
-      ? `${employer.name}${employer.title ? ` · ${employer.title}` : ""}`
-      : "No company's notes"
-    : interview
-      ? `${interview.company ?? "?"} · ${roundLabel(interview.round)}`
-      : application
-        ? `${application.company} · ${application.role}`
-        : "No application (your base resume only)";
-
-  // Leaving someone's call needs no word; the end of it does, as a note, not a warning.
+  const endOther = async () => { setMessage(null); try { setMessage(`${await api.endOtherSession()}. You can start now.`); } catch (error) { setMessage(String(error)); } };
+  const employer = work.employers?.find(e => e.id === employerId);
+  const forWhat = atWork ? employer?.name ?? "No company" : application ? `${application.company} · ${application.role}` : "Base resume";
   const stopped = session.stopped && session.stopped !== "ended" && session.stopped !== "left" && !running ? session.stopped : null;
   const watchedEnded = session.seat && !running && session.stopped === "ended" ? session.seat.hostName : null;
-
-  if (session.seat && running) {
-    // Watching someone else's call: none of this app's own call controls apply.
-    return (
-      <>
-        <PageHeader title="Call" />
-        <Watching s={session} dispatch={dispatch ?? (() => undefined)} />
-      </>
-    );
-  }
-
-  if (running) {
-    return (
-      <Live
-        session={session}
-        mode={mode}
-        onMode={changeMode}
-        answerStyle={answerStyle}
-        onAnswerStyle={changeStyle}
-        forWhat={forWhat}
-        consent={consent}
-        message={message}
-        onMessage={setMessage}
-      />
-    );
-  }
-
-  return (
-    <div className="session-window" data-mini={mini.mode} onPointerEnter={mini.onPointerEnter} onPointerLeave={mini.onPointerLeave} onPointerDownCapture={mini.cancelHover}>
-      <header ref={mini.compactRef} className="session-commandbar" data-shape={mini.mode === "dot" ? "dot" : "toolbar"} data-morphing={mini.busy || undefined} inert={mini.busy || undefined} hidden={mini.mode === "full"} data-native-drag-region="header">
-        <span className="session-compact-outline" aria-hidden="true" />
-        <Button className="window-mode-toggle" variant="ghost" disabled={mini.mode === "dot"} aria-label="Expand setup" title="Expand window" onClick={() => void mini.change("full")} icon={<Icon name="chevronDown" size={16} />} />
-        <RubyLauncher className="session-compact-ruby" label={mini.mode === "dot" ? "Expand compact toolbar" : "Expand full window"} title={mini.mode === "dot" ? "Hover to open · Drag to move" : "Click to expand · Drag to move"} onOpen={() => void mini.change(mini.mode === "dot" ? "toolbar" : "full")} onDrag={mini.drag} />
-        {mini.mode === "toolbar" && <Button className="session-start" variant="primary" loading={busy} disabled={!tokenSet} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>}
-        {mini.mode === "toolbar" && <Button variant="ghost" aria-label="Quick settings" onPointerEnter={compactSettingsHover.onPointerEnter} onPointerLeave={compactSettingsHover.onPointerLeave} onClick={async () => { compactSettingsHover.cancel(); if (await mini.change("full")) changeQuickSettings(true); }} icon={<Icon name="settings" size={16} />} />}
-      </header>
-      <div className="session-console next-call" hidden={mini.mode !== "full"} data-native-drag-region>
-      <div className="call-kind" data-native-drag-region="header">
-        <Button className="window-mode-toggle" variant="ghost" disabled={mini.busy} aria-label="Compact window" title="Compact toolbar" onClick={() => void mini.change("toolbar")} icon={<Icon name="chevronUp" size={16} />} />
-        <RubyLauncher className="call-ruby-button" label="Collapse to toolbar" title="Click to compact · Drag to move" disabled={mini.busy} onOpen={() => void mini.change("toolbar")} onDrag={mini.drag} />
-        <Button className="session-start" variant="primary" loading={busy} disabled={!tokenSet} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>
-        <Field className="call-mode-field" label="Session type" hideLabel>
-          <Select value={testing ? "test" : mode} onChange={(e) => { const v = e.target.value; setNoCall(v === "test"); changeMode(v === "test" ? "interview" : v as Mode); }}>
-            <option value="interview">Interview</option><option value="standup">Standup</option><option value="meeting">Meeting</option><option value="test">Online test</option>
-          </Select>
-        </Field>
-        <WorkspaceProfileSwitch busy={busy} />
-        <WorkspaceMenu />
-        <WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} />
-      </div>
-      {/* Notices stay mounted and refresh while compact, but never paint over the ruby.
-          Keep them below the controls so arriving notices cannot move the header. */}
-      <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
-        {mini.error && <Banner tone="danger">{mini.error}</Banner>}
-        {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
-        {tokenSet && <GuestInvites running={running} />}
-        {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
-        {stopped && (
-          <Banner
-            tone={stopped === "outdated" ? "info" : "warning"}
-            title={STOPPED[stopped]}
-            action={
-              stopped === "session_active" ? (
-                <Button size="sm" onClick={endOther}>
-                  End the other call
-                </Button>
-              ) : stopped === "unauthorized" ? (
-                <Button size="sm" onClick={onSettings}>
-                  Open settings
-                </Button>
-              ) : undefined
-            }
-          >
-            {stopped === "session_active" && "Another call is running for this profile."}
-            {stopped === "no_minutes" && "No minutes left on the plan."}
-            {stopped === "outdated" && "This version is older than the server supports. The app is updating and restarts by itself."}
-            {stopped === "unauthorized" && (environment === "cloud" ? "Sign in again under Settings, Account." : "Check the dev token in Settings, Advanced.")}
-            {stopped === "replaced" && "The call continued in another app."}
-          </Banner>
-        )}
-        {hasResume === false && (
-          <Banner tone="info" title="No resume yet" action={<Button size="sm" onClick={onResumes}>Add resume</Button>}>
-            Answers stay general until you add one.
-          </Banner>
-        )}
-        {message && <Banner tone="danger">{message}</Banner>}
-      </div>
-      <div className="call-context">
-
-        {atWork ? (
-          <div className="ui-stack">
-            <Field
-              label="Company"
-              hint={work.employers?.length === 0 ? "No company yet: add the one you work at under Work." : undefined}
-              error={work.error && !message?.includes(work.error) ? work.error : undefined}
-            >
-              <div className="ui-row-inline">
-                <Select aria-label="Company" value={employerId} onChange={(e) => setEmployerId(e.target.value)}>
-                  <option value="">None (no company's notes)</option>
-                  {work.employers
-                    ?.filter((e) => e.status === "active")
-                    .map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                        {e.current ? "" : " (past)"}
-                      </option>
-                    ))}
-                </Select>
-                {employerId && <PackStateBadge state={pack} />}
+  if (session.seat && running) return <><PageHeader title="Call" /><Watching s={session} dispatch={dispatch ?? (() => undefined)} /></>;
+  if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
+  const disabled = busy || joining;
+  const manageApplication = () => onApplications ? onApplications(application?.id) : setAddingApplication(true);
+  const selectedResume = application ? (detail?.id === application.id ? detail : application).resume : baseResume.resume;
+  const resumeSummary = selectedResume ? `Resume · ${selectedResume.label} · ${resumeStatusLabel(selectedResume.status)}`
+    : application || baseResume.resume === null ? "No resume attached" : baseResume.error ? "Resume unavailable" : "Loading resume…";
+  return <div className="session-window" data-mini={mini.mode} onPointerEnter={mini.onPointerEnter} onPointerLeave={mini.onPointerLeave} onPointerDownCapture={mini.cancelHover}>
+    <header ref={mini.compactRef} className="session-commandbar" data-shape={mini.mode === "dot" ? "dot" : "toolbar"} data-morphing={mini.busy || undefined} inert={mini.busy || undefined} hidden={mini.mode === "full"} data-native-drag-region="header">
+      <span className="session-compact-outline" aria-hidden="true" />
+            {mini.mode === "toolbar" && inviteCount > 0 ? <Button className="window-mode-toggle" variant="ghost" aria-label={`Assist a call · ${inviteCount} invitation${inviteCount === 1 ? "" : "s"}`} title="Invitations to assist" onClick={async () => { if (await mini.change("full")) setJoinOpen(true); }} icon={<Icon name="users" size={16} />} /> : <Button className="window-mode-toggle" variant="ghost" disabled={mini.mode === "dot"} aria-label="Expand setup" title="Expand window" onClick={() => void mini.change("full")} icon={<Icon name="chevronDown" size={16} />} />}
+      <RubyLauncher className="session-compact-ruby" label={mini.mode === "dot" ? "Expand compact toolbar" : "Expand full window"} title={mini.mode === "dot" ? "Hover to open · Drag to move" : "Click to expand · Drag to move"} onOpen={() => void mini.change(mini.mode === "dot" ? "toolbar" : "full")} onDrag={mini.drag} />
+      {inviteCount > 0 && <span className="call-compact-invites" aria-label={`${inviteCount} invitations`}>{inviteCount}</span>}
+      {mini.mode === "toolbar" && <><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>
+        <Button variant="ghost" aria-label="Quick settings" onPointerEnter={compactSettingsHover.onPointerEnter} onPointerLeave={compactSettingsHover.onPointerLeave} onClick={async () => { compactSettingsHover.cancel(); if (await mini.change("full")) { if (openWorkspaceQuickSettings) openWorkspaceQuickSettings(); else changeQuickSettings(true); } }} icon={<Icon name="settings" size={16} />} /></>}
+    </header>
+    <section className="call-design" hidden={mini.mode !== "full"}>
+      {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
+        <header className="call-design-heading"><h1>Start a call</h1><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></header>
+        <div className="call-design-body">
+          <SegmentedControl label="Session type" value={testing ? "test" : mode} options={[["interview", "Interview"], ["standup", "Standup"], ["meeting", "Meeting"], ["test", "Online test"]] as const} disabled={disabled} onChange={value => { setNoCall(value === "test"); changeMode(value === "test" ? "interview" : value); }} />
+          <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
+            {mini.error && <Banner tone="danger">{mini.error}</Banner>}
+            {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
+            {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
+            {stopped && <Banner tone={stopped === "outdated" ? "info" : "warning"} title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
+            {message && <Banner tone="danger">{message}</Banner>}
+          </div>
+          <div className="call-setup-fields">
+            {atWork ? <>
+              <div className="call-row"><label className="call-row-label" htmlFor="call-company">Company</label><Select id="call-company" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
+              {work.error && <p className="ui-field-error" role="alert">{work.error}</p>}
+              <div className="call-row"><span className="call-row-label">Work log</span><span className="call-row-value">{employerId ? "Recent work and decisions" : "Choose a company"}</span><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Update</Button></div>
+              <div className="call-row"><span className="call-row-label">Documents</span><span className="call-row-value">{materials.documents?.length ? plural(materials.documents.length, "document") : "Company context"}</span><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Open</Button></div>
+              {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
+              {mode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
+              {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
+            </> : <>
+              <div className="call-row call-application-row">
+                <label className="call-row-label" htmlFor="call-application">Application</label>
+                <div className="call-application-field">
+                  <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
+                  <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
+                </div>
+                <Button className="call-row-action" size="sm" disabled={disabled} onClick={manageApplication}>{catalog.applications?.length ? "Manage" : "Add"}</Button>
               </div>
-            </Field>
-            {mode === "meeting" && (
-              <Field label="Agenda" optional hint="The topic, so answers start from the right systems and decisions.">
-                <Textarea rows={3} value={agenda} onChange={(e) => setAgenda(e.target.value)} />
-              </Field>
-            )}
+              {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
+              <div className="call-row call-jd-row"><span className="call-row-label">Job description</span><p className="call-jd-preview">{detail?.jd_text.trim() ? detail.jd_text.replace(/\s+/g, " ").trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</p><Button className="call-row-action" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div>
+              {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
+            </>}
           </div>
-        ) : (
-          <div className="call-application-picker">
-            <Field label="Application or interview" hideLabel error={catalog.error && !message?.includes(catalog.error) ? catalog.error : undefined}>
-              <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-                <option value="">No application (your base resume only)</option>
-                {interviews.length > 0 && (
-                  <optgroup label="Interviews">
-                    {interviews.map((i) => (
-                      <option key={i.id} value={`interview:${i.id}`}>
-                        {[i.company, i.title, roundLabel(i.round), relative(i.starts_at)].filter(Boolean).join(" · ")}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {(catalog.applications?.length ?? 0) > 0 && (
-                  <optgroup label="Applications">
-                    {catalog.applications?.map((a) => (
-                      <option key={a.id} value={`job:${a.id}`}>
-                        {applicationOption(a)}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </Select>
-            </Field>
-            <Button size="sm" disabled={busy} onClick={() => setAddingApplication(true)}>Add application</Button>
-          </div>
-        )}
-      </div>
-      {settings && !testing && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
-      <details className="call-options">
-        <summary>Customize <span className="call-options-toggle" aria-hidden="true"><Icon name="chevronDown" size={16} /></span></summary>
-        <div className="call-options-body">
-        <Field label="Answer format">
-          <Select value={answerStyle} onChange={(e) => changeStyle(e.target.value as AnswerStyle)}><option value="bullets">Bullet points</option><option value="paragraph">Paragraphs</option></Select>
-        </Field>
-          {atWork ? employerId ? <MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /> : <p className="ui-muted">Choose a company in setup.</p> : <div className="session-document"><Icon name="document" /><span>{application ? resumeLabel(application) : "Base resume"}</span><Button size="sm" onClick={onResumes}>Manage resumes</Button></div>}
-
-
+          <div className="call-row call-answer-row"><span className="call-row-label">Answers</span><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div>
+          <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
+          <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
+          {testing ? <p className="ui-field-hint">Audio off. Type a question or capture your screen.</p> : settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
         </div>
-      </details>
-      <div className="session-privacy"><Checkbox checked={consent} onChange={setConsent} label="Save transcript (everyone has agreed)" /></div>
-      {testing && <p className="session-note">Audio off · Type a question or capture your screen.</p>}
-      <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => {
-        catalog.includeApplication(app);
-        setTarget(`job:${app.id}`);
-        void reloadCatalog();
-      }} />
-      </div>
-    </div>
-  );
+        <footer className="call-design-footer">{onHistory && <Button variant="ghost" size="sm" onClick={onHistory} disabled={disabled}>Past calls</Button>}<span className="ui-spacer" /><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button></footer>
+      </>}
+      {quickSettingsOpen && !openWorkspaceQuickSettings && <div className="call-compact-settings"><WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} /></div>}
+      <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
+    </section>
+  </div>;
 }
 
+function CallJdEditor({ app, onBack, onSaved }: { app: ApplicationDetail; onBack: () => void; onSaved: (app: ApplicationDetail) => void }) {
+  const [text, setText] = useState(app.jd_text);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  useWorkspaceCallBusy(busy);
+  const save = async () => {
+    if (!text.trim()) { setError("Add a job description first."); return; }
+    setBusy(true); setError(null);
+    try { onSaved(await rest.updateApplication(app.id, { jd_text: text })); onBack(); }
+    catch (err) { setError(String(err)); }
+    finally { setBusy(false); }
+  };
+  const upload = async (selected: File) => {
+    setBusy(true); setError(null);
+    try {
+      if (isTextFile(selected.name)) setText(await selected.text());
+      else { await api.uploadDocument("job_description", selected, { application_id: app.id }); const value = await rest.application(app.id); onSaved(value); setText(value.jd_text); }
+    } catch (err) { setError(String(err)); }
+    finally { setBusy(false); }
+  };
+  return <><header className="call-design-heading"><Button size="sm" disabled={busy} onClick={onBack}>Back</Button><h1>Job description</h1></header><div className="call-design-body call-jd-editor"><p className="ui-muted">{app.company} · {app.role}</p><Field label="Job description" hideLabel error={error}><Textarea rows={14} value={text} disabled={busy} onChange={e => setText(e.target.value)} /></Field></div><footer className="call-design-footer"><input ref={file} type="file" hidden accept=".pdf,.txt,.md,.markdown" onChange={e => { const value = e.target.files?.[0]; e.target.value = ""; if (value) void upload(value); }} /><Button disabled={busy} onClick={() => file.current?.click()}>Upload file</Button><span className="ui-spacer" /><Button variant="primary" loading={busy} onClick={save}>Save</Button></footer></>;
+}
 function Live({
   session,
   mode,
@@ -587,7 +496,7 @@ function Live({
           </Field>
         </div>
       </Card>
-      <Card title="Guests">
+      <Card title="Assistants">
         <GuestPanel s={session} />
       </Card>
       {message && <Banner tone="danger">{message}</Banner>}
@@ -747,7 +656,7 @@ export function DevicePickers({ settings, disabled, onSaved }: { settings: Setti
         <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled}>
           {select(devices?.outputs, output, "output_device", outputLabel)}
         </DeviceTest>
-        <p className="ui-field-hint">{isMac() ? "Guest audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>
+        <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>
       </div>
       {error && <p className="ui-field-error">{error}</p>}
     </div>
@@ -771,6 +680,21 @@ function useHasResume(ready: boolean, shown: number): boolean | null {
     };
   }, [ready, shown]);
   return hasResume;
+}
+
+/** The general interview uses the base resume, never another application's tailored version. */
+function useBaseResume(ready: boolean, shown: number) {
+  const [state, setState] = useState<{ resume: ResumeVersion | null | undefined; error: boolean }>({ resume: undefined, error: false });
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    rest.resumes().then(
+      ({ base }) => { if (!cancelled) setState({ resume: base, error: false }); },
+      () => { if (!cancelled) setState({ resume: undefined, error: true }); },
+    );
+    return () => { cancelled = true; };
+  }, [ready, shown]);
+  return state;
 }
 
 /** The user's companies; asked again each time `shown` changes (one added under Work). */

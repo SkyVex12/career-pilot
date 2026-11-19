@@ -309,7 +309,7 @@ describe("control of the host's screen", () => {
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
     await t.h.allow(PAVLO);
-    expect(t.h.status.error).toBe("Share a whole screen to let a guest control it.");
+    expect(t.h.status.error).toBe("Share a whole screen to let an assistant control it.");
     const u = host();
     await u.h.share("s1");
     await u.h.allow(PAVLO);

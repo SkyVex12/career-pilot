@@ -4,25 +4,25 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f1efe8;
-  --surface: #fbfaf5;
-  --surface-rgb: 251 250 245;
-  --surface-2: #f1efe8;
-  --surface-2-rgb: 241 239 232;
-  --surface-sunken: #e8e5dc;
-  --border: #cbc8bd;
-  --border-strong: #8c887e;
-  --text: #11110f;
-  --text-2: #4d4c48;
-  --text-3: #6a6155;
+  --bg: #f3f3f3;
+  --surface: #fafafa;
+  --surface-rgb: 250 250 250;
+  --surface-2: #f3f3f3;
+  --surface-2-rgb: 243 243 243;
+  --surface-sunken: #ededed;
+  --border: #d4d4d4;
+  --border-strong: #ababab;
+  --text: #191a1b;
+  --text-2: #454545;
+  --text-3: #666666;
   --brand: #f05a3c;
-  --action: #11110f;
-  --action-hover: #30302a;
-  --on-action: #fbfaf5;
+  --action: #be503a;
+  --action-hover: #a74431;
+  --on-action: #fafafa;
   --accent: #b53d29;
   --accent-hover: #96301f;
   --accent-soft: #f9e4dc;
-  --on-accent: #fbfaf5;
+  --on-accent: #fafafa;
   --success: #14753a;
   --success-soft: #e8f5ec;
   --warning: #8a5300;
@@ -30,30 +30,30 @@
   --danger: #b42318;
   --danger-hover: #93190f;
   --danger-soft: #fdecea;
-  --on-danger: #fbfaf5;
+  --on-danger: #fafafa;
   --focus: #b53d29;
-  --scrim: rgb(17 17 15 / 0.45);
+  --scrim: rgb(34 35 36 / 0.45);
   --shadow-1: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
   --shadow-2: 0 8px 24px rgb(16 24 40 / 0.16);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #11110f;
-  --surface: #1c1c19;
-  --surface-rgb: 28 28 25;
-  --surface-2: #282823;
-  --surface-2-rgb: 40 40 35;
-  --surface-sunken: #151512;
-  --border: #414138;
-  --border-strong: #818176;
-  --text: #fbfaf5;
-  --text-2: #d4d0c5;
-  --text-3: #b0aa9b;
+  --bg: #191a1b;
+  --surface: #222324;
+  --surface-rgb: 34 35 36;
+  --surface-2: #2a2b2c;
+  --surface-2-rgb: 42 43 44;
+  --surface-sunken: #1b1c1d;
+  --border: #393a3b;
+  --border-strong: #696b6d;
+  --text: #fafafa;
+  --text-2: #d4d5d6;
+  --text-3: #adafb1;
   --brand: #f05a3c;
-  --action: #fbfaf5;
-  --action-hover: #e8e5dc;
-  --on-action: #11110f;
+  --action: #e9826c;
+  --action-hover: #f19480;
+  --on-action: #191a1b;
   --accent: #ff9b82;
   --accent-hover: #ffb5a2;
   --accent-soft: rgb(240 90 60 / 0.14);
@@ -109,7 +109,7 @@
   --option-h: 32px;
   --icon-sm: 16px;
   --layer-popup: 70;
-  --control-h-md: 36px;
+  --control-h-md: 32px;
   --control-h-lg: 44px;
 
   --dur-fast: 120ms;
@@ -117,21 +117,21 @@
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   --sidebar-w: 196px;
-  --content-max: 1180px;
+  --content-max: 920px;
 }
 
 /* The overlay is always dark: it floats over whatever is on screen. */
 :root[data-window="overlay"],
 .ov {
   color-scheme: dark;
-  --ov-panel: 17 17 15;
-  --ov-text: #fbfaf5;
-  --ov-text-2: #d4d0c5;
-  --ov-text-3: #b0aa9b;
+  --ov-panel: 34 35 36;
+  --ov-text: #fafafa;
+  --ov-text-2: #d4d5d6;
+  --ov-text-3: #adafb1;
   --ov-line: rgb(255 255 255 / 0.1);
   --ov-raise: rgb(255 255 255 / 0.05);
   --ov-fast: #ff9b82;
-  --ov-deep: #d4d0c5;
+  --ov-deep: #d4d5d6;
   --ov-live: #5bd08a;
   --ov-warn: #f2b84b;
   --ov-bad: #ff8a80;

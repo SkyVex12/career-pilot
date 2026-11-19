@@ -56,7 +56,7 @@ describe("the overlay's answers", () => {
     await act(() => emit("copilot://event", delta("q2", "fast", " Track latency")));
     expect(within(transcript).getByText("What would you monitor first?")).toBeVisible();
     expect(within(answers).getByText("Track latency")).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Screen tools" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Screen tools" }));
     expect(screen.getByRole("button", { name: "Solve" })).toBeVisible();
   });
 
@@ -80,8 +80,9 @@ describe("the overlay's answers", () => {
   it("remembers a combined one-column layout and can return to simultaneous split panes", async () => {
     const first = start(twoQuestions());
     await screen.findAllByRole("article");
-    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "One column: transcript and answers together" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Layout" }));
+    await userEvent.click(screen.getByRole("option", { name: "Stacked" }));
     expect(localStorage.getItem("overlay.layout")).toBe("stacked");
     expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Current suggestion" })).toBeVisible();
@@ -89,8 +90,9 @@ describe("the overlay's answers", () => {
     start(twoQuestions());
     await screen.findByRole("region", { name: "Current suggestion" });
     expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "Split: transcript left, answers right" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Layout" }));
+    await userEvent.click(screen.getByRole("option", { name: "Split" }));
     expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Suggestions" })).toBeVisible();
     expect(screen.getAllByRole("article")).toHaveLength(2);
@@ -162,7 +164,7 @@ describe("the overlay's frame", () => {
     await userEvent.click(screen.getByRole("button", { name: "End call" }));
     const dialog = screen.getByRole("alertdialog", { name: "End this call?" });
     expect(ipc.calls.some((c) => c.cmd === "end_session")).toBe(false);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Keep going" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Keep talking" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(ipc.calls.some((c) => c.cmd === "end_session" || c.cmd === "plugin:window|hide")).toBe(false);
@@ -176,8 +178,10 @@ describe("the overlay's frame", () => {
     await screen.findAllByRole("article");
     await userEvent.click(screen.getByRole("button", { name: "End call" }));
     const dialog = screen.getByRole("alertdialog");
-    await within(dialog).findByRole("button", { name: "End, transcript only" });
-    await userEvent.click(within(dialog).getByRole("button", { name: summarize ? "Summarize and end" : "End, transcript only" }));
+    const summary = within(dialog).getByRole("checkbox", { name: "Create a summary" });
+    expect(summary).toBeChecked();
+    if (!summarize) await userEvent.click(summary);
+    await userEvent.click(within(dialog).getByRole("button", { name: "End call" }));
     expect(ipc.calls.filter((c) => c.cmd === "end_session")).toEqual([{ cmd: "end_session", args: { summarize } }]);
     for (const button of within(dialog).getAllByRole("button")) expect(button).toBeDisabled();
     expect(dialog).toBeVisible();
@@ -192,12 +196,13 @@ describe("the overlay's frame", () => {
     await screen.findAllByRole("article");
     await userEvent.click(screen.getByRole("button", { name: "End call" }));
     const dialog = screen.getByRole("alertdialog");
-    const action = within(dialog).getByRole("button", { name: summarize ? "Summarize and end" : "End without a summary" });
+    if (!summarize) await userEvent.click(within(dialog).getByRole("checkbox", { name: "Create a summary" }));
+    const action = within(dialog).getByRole("button", { name: "End call" });
     await userEvent.click(action);
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not end the call. Try again.");
     expect(action).toBeEnabled();
     expect(ipc.calls.some((c) => c.cmd === "plugin:window|hide" || c.cmd === "open_main_call")).toBe(false);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Keep going" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Keep talking" }));
     expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Answer" })).toBeEnabled();
   });
@@ -208,9 +213,9 @@ describe("the overlay's frame", () => {
     await screen.findAllByRole("article");
     await userEvent.click(screen.getByRole("button", { name: "End call" }));
     const dialog = screen.getByRole("alertdialog");
-    await within(dialog).findByText(/the standup report and your commitments feed the next standup/);
-    expect(dialog).toHaveTextContent("The transcript is not being stored for this call");
-    expect(within(dialog).getByRole("button", { name: "End without a summary" })).toBeEnabled();
+    await within(dialog).findByText(/The summary keeps your standup report and commitments/);
+    expect(dialog).toHaveTextContent("The transcript is not stored");
+    expect(within(dialog).getByRole("button", { name: "End call" })).toBeEnabled();
   });
 
   it("returns to setup from an inactive overlay without ending a call", async () => {
@@ -261,32 +266,32 @@ describe("the overlay's frame", () => {
   it("the menu closes with Escape, back on the gear; quitting mid-call asks first", async () => {
     start(twoQuestions());
     await screen.findAllByRole("article");
-    const gear = screen.getByRole("button", { name: "Overlay settings" });
+    const gear = screen.getByRole("button", { name: "Quick settings" });
     await userEvent.click(gear);
-    const menu = screen.getByRole("dialog", { name: "Overlay settings" });
-    expect(within(menu).getByRole("slider", { name: /Opacity/ })).toHaveFocus();
+    const menu = screen.getByRole("dialog", { name: "Quick settings" });
+    expect(within(menu).getByRole("slider", { name: /Transparency/ })).toHaveFocus();
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Overlay settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
     expect(gear).toHaveFocus();
     await userEvent.click(gear);
-    await userEvent.click(screen.getByRole("button", { name: "Quit Copilot…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quit Ruby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(false);
-    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit Copilot" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit Ruby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(true);
   });
 
   it("not in a call, Quit quits at once", async () => {
     n = 0;
     start([], false);
-    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "Quit Copilot" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quit Ruby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(true);
-    expect(screen.getByText("No call running. Start one in the Copilot window.")).toBeInTheDocument();
+    expect(screen.getByText("No call running. Start one in the main window.")).toBeInTheDocument();
   });
 
   it("keep on top and click-through are switches; click-through turns on only", async () => {
     start(twoQuestions());
-    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
     await userEvent.click(screen.getByRole("switch", { name: "Keep on top" }));
     expect(ipc.calls.find((c) => c.cmd === "set_overlay_on_top")?.args).toEqual({ on: false });
     await userEvent.click(screen.getByRole("switch", { name: "Click-through" }));
@@ -298,7 +303,7 @@ describe("the overlay's frame", () => {
     await screen.findAllByRole("article");
     await userEvent.keyboard("{Control>}={/Control}");
     expect(localStorage.getItem("overlay.textScale")).toBe("1.1");
-    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
     await userEvent.click(screen.getByRole("button", { name: /Larger text/ }));
     expect(localStorage.getItem("overlay.textScale")).toBe("1.25");
     await userEvent.click(screen.getByRole("button", { name: "Compact: answers only" }));

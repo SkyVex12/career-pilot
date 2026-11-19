@@ -192,10 +192,10 @@ export class VoiceController {
     if (canRoute) {
       await this.outputs();
       const matches = call ? this.status.outputs.filter((output) => windowsName(output.label).toLowerCase() === windowsName(call.name).toLowerCase()) : [];
-      if (matches.length !== 1) throw new Error("Guest audio could not find the call's output. Check Call audio and try again.");
+      if (matches.length !== 1) throw new Error("Assistant audio could not find the call's output. Check Call audio and try again.");
       deviceId = matches[0].deviceId;
     } else if (!call?.system_default) {
-      throw new Error("Set the system sound output to the selected playback device, then try guest audio again.");
+      throw new Error("Set the system sound output to the selected playback device, then try assistant audio again.");
     }
     await routed(probe, deviceId);
 
@@ -221,7 +221,7 @@ export class VoiceController {
     const outputReady = await this.hasDefaultOutput();
     if (this.room !== room) return;
     if (!outputReady) {
-      await this.stop("The call's sound output changed. Check Call audio and try guest audio again.");
+      await this.stop("The call's sound output changed. Check Call audio and try assistant audio again.");
       return;
     }
     this.set({ host: "on", hostMuted: false, device: deviceId, error: null });
@@ -248,7 +248,7 @@ export class VoiceController {
       await el.play();
     } catch {
       track.detach();
-      if (this.room === room) await this.stop("Guest audio could not use the call's output. Check Call audio and try again.");
+      if (this.room === room) await this.stop("Assistant audio could not use the call's output. Check Call audio and try again.");
     }
   }
 
@@ -263,9 +263,9 @@ export class VoiceController {
     try {
       const present = this.defaultOutputId !== null ? await this.hasDefaultOutput() :
         (await this.deps.devices()).some((d) => d.kind === "audiooutput" && d.deviceId === this.deviceId);
-      if (!present && this.room === room) await this.stop("The call's audio output changed or disconnected, so guest audio stopped.");
+      if (!present && this.room === room) await this.stop("The call's audio output changed or disconnected, so assistant audio stopped.");
     } catch {
-      if (this.room === room) await this.stop("Guest audio could not check the call's output, so it stopped. Try again.");
+      if (this.room === room) await this.stop("Assistant audio could not check the call's output, so it stopped. Try again.");
     } finally { this.checkingDevice = false; }
   }
 

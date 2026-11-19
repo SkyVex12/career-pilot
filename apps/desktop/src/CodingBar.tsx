@@ -4,10 +4,11 @@
 // Both have hotkeys, so the problem's window keeps the focus. The answer mode (Interview: say
 // it, then type it; Assessment: paste it) and the language (Auto lets the screen decide) are
 // kept across calls. The shots are taken and sent by the app (src-tauri/src/shots.rs).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, inTauri, onShotError, onShots, type CodingMode, type ShotView } from "./api";
 import { prettyKey } from "./hotkeys";
 import { Select, cx } from "./ui";
+import { Icon } from "./ui/Icon";
 
 export const LANGUAGES = ["", "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", "Go", "Kotlin", "Swift", "Ruby", "Rust", "SQL"];
 const MAX_SHOTS = 6;
@@ -18,7 +19,7 @@ export function shotTitle(s: ShotView): string {
   return `${from} · ${s.width}×${s.height} · ${kb} KB · ${s.capture_ms + s.encode_ms} ms`;
 }
 
-export function CodingBar({ running, collapsible = false }: { running: boolean; collapsible?: boolean }) {
+export function CodingBar({ running, collapsible = false, onActivity }: { running: boolean; collapsible?: boolean; onActivity?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [shots, setShots] = useState<ShotView[]>([]);
   const [mode, setMode] = useState<CodingMode>("interview");
@@ -26,6 +27,8 @@ export function CodingBar({ running, collapsible = false }: { running: boolean; 
   const [keys, setKeys] = useState({ add: "", solve: "" });
   const [busy, setBusy] = useState<"add" | "solve" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activity = useRef(onActivity);
+  activity.current = onActivity;
 
   useEffect(() => {
     if (!inTauri) return;
@@ -70,16 +73,17 @@ export function CodingBar({ running, collapsible = false }: { running: boolean; 
   };
   const full = shots.length >= MAX_SHOTS;
   const n = shots.length;
-  useEffect(() => { if (n > 0 || error) setExpanded(true); }, [n, error]);
+  useEffect(() => { if (n > 0 || error) { setExpanded(true); activity.current?.(); } }, [n, error]);
   const toolsOpen = expanded;
 
   return (
     <section className="ov-coding" aria-label="Coding">
+      {!collapsible && <div className="ov-coding-heading"><strong>Screen tools</strong><span>{n}/6</span></div>}
       {collapsible && <button className="ov-coding-toggle" type="button" aria-expanded={toolsOpen} onClick={() => setExpanded(!expanded)}>Screen tools <span aria-hidden="true">{toolsOpen ? "−" : "+"}</span></button>}
       <div hidden={collapsible && !toolsOpen}>
       <div className="ov-coding-row">
         <button type="button" className="ov-ask-btn" disabled={busy !== null || full} onClick={() => run("add")} title={full ? "6 shots at most" : `A shot of the window in front${keys.add ? ` (${prettyKey(keys.add)})` : ""}`}>
-          {busy === "add" ? "Adding…" : "+ Shot"}
+          <Icon name="monitor" size={14} />{busy === "add" ? "Adding…" : "Add shot"}
         </button>
         <button
           type="button"
@@ -104,6 +108,9 @@ export function CodingBar({ running, collapsible = false }: { running: boolean; 
             </option>
           ))}
         </Select>
+        {n > 0 && <button type="button" className="ov-ask-btn ov-coding-clear" disabled={busy !== null} onClick={() => {
+          setError(null); void Promise.all(shots.map(shot => api.codingRemoveShot(shot.id))).catch(e => setError(String(e)));
+        }}>Clear</button>}
       </div>
       {n > 0 && (
         <ol className="ov-shots" aria-label="Shots to solve">

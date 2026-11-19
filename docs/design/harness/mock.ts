@@ -158,7 +158,9 @@ function settingsView(): SettingsView {
 
 const never = () => new Promise<never>(() => {});
 
-function rest(method: string, path: string): unknown {
+const savedNotes = new Map<string, string>();
+
+function rest(method: string, path: string, body?: unknown): unknown {
   if (data === "loading") return never();
   if (data === "error" && method === "GET" && !path.startsWith("/career-os/connection") && !path.startsWith("/profiles")) {
     throw "The API did not answer: connection refused (HTTP 502)";
@@ -166,6 +168,12 @@ function rest(method: string, path: string): unknown {
   const [p] = path.split("?");
   const m = (re: RegExp) => re.exec(p);
   if (p === "/seats" || m(/^\/sessions\/[^/]+\/seats$/)) return { seats: [], voice: false, screen: false };
+  if (method === "PUT" && m(/^\/sessions\/([^/]+)\/notes$/)) {
+    const id = m(/^\/sessions\/([^/]+)\/notes$/)![1];
+    const notes = String((body as { text: string }).text);
+    savedNotes.set(id, notes);
+    return { notes };
+  }
   if (method !== "GET") {
     if (m(/^\/employers\/[^/]+\/packs\/\w+$/)) return { mode: "standup", status: "ready", built_at: new Date().toISOString() };
     return {};
@@ -191,7 +199,7 @@ function rest(method: string, path: string): unknown {
   if (p === "/sessions/live") return { sessions: [] };
   if (m(/^\/sessions\/([^/]+)\/replay$/)) return fx.replay(m(/^\/sessions\/([^/]+)\/replay$/)![1]);
   if (m(/^\/sessions\/([^/]+)\/transcript$/)) return { stored: true, segments: fx.replay("x").segments };
-  if (m(/^\/sessions\/([^/]+)$/)) return fx.sessionDetail(m(/^\/sessions\/([^/]+)$/)![1]);
+  if (m(/^\/sessions\/([^/]+)$/)) return { ...fx.sessionDetail(m(/^\/sessions\/([^/]+)$/)![1]), notes: savedNotes.get(m(/^\/sessions\/([^/]+)$/)![1]) ?? "" };
   if (p === "/employers") return { employers: empty ? [] : fx.employers(long) };
   if (m(/^\/employers\/[^/]+\/logs$/)) return { logs: fx.logs(long), next_before: null };
   if (m(/^\/employers\/[^/]+\/documents$/)) return { documents: fx.companyDocuments() };
@@ -214,6 +222,8 @@ mockIPC(
       case "plugin:window|set_size":
       case "plugin:window|set_min_size":
       case "plugin:window|set_decorations": return null;
+      case "open_main_settings":
+        return emit("copilot://open-settings");
       case "get_settings":
         return settingsView();
       case "update_status":
@@ -238,7 +248,7 @@ mockIPC(
           hotkeys: { toggle_overlay: "CommandOrControl+Shift+O", click_through: "CommandOrControl+Shift+T", click_through_off: "CommandOrControl+Shift+G", opacity_up: "CommandOrControl+Shift+Up", opacity_down: "CommandOrControl+Shift+Down" },
         };
       case "api_call":
-        return rest(String(a.method), String(a.path));
+        return rest(String(a.method), String(a.path), a.body);
       default:
         // Every other command (start, end, hotkeys, feedback…) succeeds and does nothing.
         return null;

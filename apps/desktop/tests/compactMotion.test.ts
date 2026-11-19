@@ -52,7 +52,7 @@ it.each([true, false])("synchronizes the existing outline and ruby when collapse
   const rubyMotion = playing.find(item => item.element === ruby)!;
   const contracted = collapse ? 1 : 0;
   const expanded = collapse ? 0 : 1;
-  expect(frameMotion.frames[contracted]).toMatchObject({ left: "116px", top: "4px", width: "48px", height: "48px" });
+  expect(frameMotion.frames[contracted]).toMatchObject({ left: "108px", top: "6px", width: "64px", height: "44px", borderRadius: "8px" });
   expect(frameMotion.frames[expanded]).toMatchObject({ left: "0px", top: "0px", width: "280px", height: "56px" });
   expect(rubyMotion.frames[contracted]).toEqual({ transform: "translate(76px, 0px)" });
   expect(rubyMotion.frames[expanded]).toEqual({ transform: "translate(0px, 0px)" });

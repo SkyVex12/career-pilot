@@ -1,4 +1,4 @@
-// The main window: the app shell (Shell.tsx) around the Call screen, Applications, Resumes, Work,
+// The main window: the app shell (Shell.tsx) around the Call screen, Interview prep, Work,
 // History, Settings, and the debug panel (hidden unless turned on in the settings, or with
 // Ctrl+Shift+D). Signing in and the Career-OS link, when the stage requires one, come first:
 // the Call screen walks through them, and the other screens wait.
@@ -7,7 +7,6 @@ import { api, inTauri, onOpenCall, onOpenSettings, onServer, onSettingsChanged, 
 import { bar } from "./updates";
 import { Applications } from "./Applications";
 import { CallScreen } from "./CallScreen";
-import { Resumes } from "./Resumes";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
 import { startScreenHost } from "./screen";
@@ -57,6 +56,8 @@ export default function App() {
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
   const [tab, setTab] = useState<Tab>("start");
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const windowActions = useRef<WorkspaceWindowActions | null>(null);
   const registerWindowActions = useCallback((actions: WorkspaceWindowActions | null) => { windowActions.current = actions; }, []);
   // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
@@ -69,8 +70,9 @@ export default function App() {
   const [view, setView] = useState<SettingsView | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
-  // An interview to start a call for (Applications' Start), an application to open (Resumes).
+  // Interview context and the application or shared resume to open in Interview prep.
   const [preset, setPreset] = useState<{ target: string; n: number } | null>(null);
+  const [baseResumeRequest, setBaseResumeRequest] = useState(0);
   const [focusApp, setFocusApp] = useState<{ id: string; n: number } | null>(null);
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
   const tokenSet = view?.ready ?? false;
@@ -81,6 +83,7 @@ export default function App() {
     if (!session.running) dispatch({ type: "reset", running: false });
     setPreset(null);
     setFocusApp(null);
+    setBaseResumeRequest(0);
   }, [session.running, dispatch]);
   const profiles = useProfiles(tokenSet, view?.settings.profile ?? null, account, clearProfileContext);
   const link = useLinkRequired(tokenSet, account);
@@ -109,8 +112,8 @@ export default function App() {
     let disposed = false;
     let navigating = false;
     let destination: Tab = "start";
-    const navigate = async (next: Tab) => {
-      destination = next;
+    const navigate = async (next: Tab | ((current: Tab) => Tab)) => {
+      destination = typeof next === "function" ? next(navigating ? destination : tabRef.current) : next;
       if (navigating) return;
       navigating = true;
       try {
@@ -124,22 +127,21 @@ export default function App() {
     // The overlay's "All settings…" opens this window on the Settings screen.
     const offOpen = onOpenSettings(() => { void navigate("settings"); });
     const offCall = onOpenCall(() => { void navigate("start"); });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        setShowDebug((v) => !v);
+        void navigate((current) => current === "debug" ? "start" : "debug");
+      }
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       disposed = true;
+      window.removeEventListener("keydown", onKey);
       off.then((f) => f());
       offOpen.then((f) => f());
       offCall.then((f) => f());
     };
-  }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "d") {
-        setShowDebug((v) => !v);
-        setTab((t) => (t === "debug" ? "start" : "debug"));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   if (!inTauri) {
@@ -226,7 +228,10 @@ export default function App() {
               }}
               onSettingsSaved={reload}
               onSettings={() => setTab("settings")}
-              onResumes={() => setTab("resumes")}
+              onResumes={() => { setBaseResumeRequest(n => n + 1); setTab("applications"); }}
+              onApplications={(id) => { if (id) setFocusApp({ id, n: Date.now() }); setTab("applications"); }}
+              onWork={() => setTab("work")}
+              onHistory={() => setTab("history")}
               onOpenLive={openLive}
               preset={preset}
               active={tab === "start"}
@@ -238,6 +243,7 @@ export default function App() {
               <Applications
                 active={tab === "applications"}
                 focus={focusApp}
+                baseResumeRequest={baseResumeRequest}
                 onStartInterview={(id) => {
                   setPreset({ target: `interview:${id}`, n: Date.now() });
                   setTab("start");
@@ -245,18 +251,6 @@ export default function App() {
               />,
             ),
             true,
-          )}
-          {page(
-            "resumes",
-            gate(
-              <Resumes
-                active={tab === "resumes"}
-                onOpenApplication={(id) => {
-                  setFocusApp({ id, n: Date.now() });
-                  setTab("applications");
-                }}
-              />,
-            ),
           )}
           {page("work", gate(<Work active={tab === "work"} />), true)}
           {page(

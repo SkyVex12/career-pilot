@@ -13,17 +13,18 @@
     "windows": [
       {
         "label": "main",
-        "title": "Copilot",
+        "title": "Ruby",
         "transparent": true,
-        "width": 648,
-        "height": 520,
+        "width": 920,
+        "height": 720,
         "minWidth": 400,
         "minHeight": 240,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
         "backgroundThrottling": "disabled",
         "alwaysOnTop": true,
         "decorations": false,
-        "shadow": false
+        "shadow": false,
+        "center": true
       }
     ],
     "security": {
