@@ -195,6 +195,13 @@ class CoreSettings(BaseSettings):
     # Deepgram: streaming STT in the gateway, one stream per channel.
     deepgram_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
     deepgram_model: str = "nova-3"
+    # Only enable additional languages after speech, grounding and device validation.
+    verified_call_languages: Annotated[tuple[str, ...], NoDecode] = ("en",)
+
+    @field_validator("verified_call_languages", mode="before")
+    @classmethod
+    def _call_languages(cls, value: object) -> object:
+        return split_list(value)
 
     # Valkey and the jobs queue.
     valkey_url: str = "redis://localhost:6379/0"

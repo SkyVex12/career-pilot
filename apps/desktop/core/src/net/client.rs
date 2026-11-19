@@ -61,6 +61,7 @@ const END_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct StartParams {
+    pub spoken_language: Option<String>,
     pub mode: Mode,
     pub job_id: Option<Uuid>,
     /// A scheduled interview: the gateway loads its pack first (send its job_id too).
@@ -84,6 +85,7 @@ pub struct StartParams {
 impl StartParams {
     fn message(&self) -> ClientMessage {
         ClientMessage::SessionStart(SessionStart {
+            spoken_language: self.spoken_language.clone(),
             mode: self.mode,
             job_id: self.job_id,
             interview_id: self.interview_id,

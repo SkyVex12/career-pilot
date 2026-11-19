@@ -28,6 +28,24 @@ if (inTauri) {
   }
 }
 
+// A login-only launch must not mount App hooks that fetch private data or wake the VM.
+// Subscribe before reading state so an Open action cannot be lost during startup.
+if (inTauri && !isOverlay) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  await new Promise<void>((resolve) => {
+    let done = false;
+    let unlisten: (() => void) | undefined;
+    const check = async () => {
+      try {
+        const state = await invoke<{ background_start: boolean }>("background_status");
+        if (!state.background_start && !done) { done = true; unlisten?.(); resolve(); }
+      } catch { if (!done) { done = true; unlisten?.(); resolve(); } }
+    };
+    void listen("copilot://background", () => void check()).then(stop => { unlisten = stop; if (done) stop(); else void check(); }).catch(() => void check());
+  });
+}
+
 // Each window loads only its own screens: the overlay starts without the main window's code.
 const Root = isOverlay ? (await import("./Overlay")).default : (await import("./App")).default;
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

@@ -39,6 +39,7 @@ from uuid import UUID
 
 from copilot_core import prompts, screen
 from copilot_core.embed import Embedder
+from copilot_core.languages import language_instruction
 from copilot_core.llm import (
     AllRoutesFailedError,
     LLMDone,
@@ -46,6 +47,7 @@ from copilot_core.llm import (
     LLMUsage,
     ModelRouter,
     Route,
+    SystemBlock,
 )
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
 from copilot_core.pricing import cost_usd
@@ -864,11 +866,19 @@ class AnswerEngine:
                 "default_language": ask.default_language,
             }
             if pass_ == "fast":
-                return screen.fast_pass(
+                req = screen.fast_pass(
                     ctx.user_name, ask.shots, max_tokens=s.screen_fast_max_tokens, **common
                 )
-            return screen.code_pass(
-                ctx.user_name, ask.shots, q.reading, max_tokens=s.screen_code_max_tokens, **common
+            else:
+                req = screen.code_pass(
+                    ctx.user_name,
+                    ask.shots,
+                    q.reading,
+                    max_tokens=s.screen_code_max_tokens,
+                    **common,
+                )
+            return replace(
+                req, system=[*req.system, SystemBlock(language_instruction(ctx.spoken_language))]
             )
         problem = self.open_problem()
         if pass_ == "fast":

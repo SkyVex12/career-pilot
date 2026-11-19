@@ -135,8 +135,9 @@ async def ensure_session(
     )
     await conn.execute(
         "insert into app.sessions (id, user_id, mode, job_id, interview_id, platform, title,"
-        " store_transcript, started_at, employer_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9,"
-        " $10) on conflict (id) do nothing",
+        " store_transcript, started_at, employer_id, spoken_language)"
+        " values ($1, $2, $3, $4, $5, $6, $7, $8, $9,"
+        " $10, $11) on conflict (id) do nothing",
         sid,
         uid,
         mode,
@@ -147,6 +148,7 @@ async def ensure_session(
         str(meta.get("store_transcript")) in ("1", "True", "true"),
         started_at,
         employer_id,
+        meta.get("spoken_language") or None,
     )
     agenda = str(meta.get("agenda") or "")
     if agenda and crypto is not None:
@@ -494,8 +496,20 @@ def questions_text(t: Transcript) -> str:
     return "\n".join(lines)
 
 
-def metadata_summary(mode: str, minutes: int, types: Sequence[str]) -> str:
+def metadata_summary(
+    mode: str, minutes: int, types: Sequence[str], spoken_language: str | None = None
+) -> str:
     """The only output without transcript consent: counts, never words."""
+    if spoken_language == "es":
+        return (
+            f"Llamada de unos {minutes} minutos. {len(types)} preguntas detectadas.\n\n"
+            "No se guardó la transcripción de esta sesión; no hay resumen escrito."
+        )
+    if spoken_language == "vi":
+        return (
+            f"Cuộc gọi khoảng {minutes} phút. Phát hiện {len(types)} câu hỏi.\n\n"
+            "Bản chép lời không được lưu cho phiên này nên không có bản tóm tắt."
+        )
     counts: dict[str, int] = {}
     for t in types:
         counts[t] = counts.get(t, 0) + 1
@@ -511,42 +525,92 @@ def _bullets(items: object) -> str:
     return "\n".join(f"- {i}" for i in as_list(items)) or "- (none)"
 
 
-def render_outputs(mode: str, data: dict[str, Any]) -> dict[str, str]:
+def render_outputs(
+    mode: str, data: dict[str, Any], spoken_language: str | None = None
+) -> dict[str, str]:
     """Model output (already schema-checked) to the session_outputs kinds, as Markdown."""
+    labels = {
+        "es": (
+            "Fortalezas",
+            "Para mejorar",
+            "Cómo fue",
+            "Mejor respuesta",
+            "Asunto",
+            "Ayer",
+            "Hoy",
+            "Bloqueos",
+            "Compromisos",
+            "Decisiones",
+            "Acciones",
+            "vence",
+        ),
+        "vi": (
+            "Điểm mạnh",
+            "Cần cải thiện",
+            "Kết quả",
+            "Câu trả lời tốt hơn",
+            "Chủ đề",
+            "Hôm qua",
+            "Hôm nay",
+            "Trở ngại",
+            "Cam kết",
+            "Quyết định",
+            "Việc cần làm",
+            "hạn",
+        ),
+    }
+    english = (
+        "Strengths",
+        "To improve",
+        "How it went",
+        "Better",
+        "Subject",
+        "Yesterday",
+        "Today",
+        "Blockers",
+        "Commitments",
+        "Decisions",
+        "Action items",
+        "due",
+    )
+    names = dict(zip(english, labels.get(spoken_language or "en", english), strict=True))
     out: dict[str, str] = {"summary": str(data.get("summary", "")).strip()}
     if mode == "interview":
         parts: list[str] = [str(data.get("feedback", "")).strip()]
         if data.get("strengths"):
-            parts.append("**Strengths**\n" + _bullets(data["strengths"]))
+            parts.append(f"**{names['Strengths']}**\n" + _bullets(data["strengths"]))
         if data.get("improvements"):
-            parts.append("**To improve**\n" + _bullets(data["improvements"]))
+            parts.append(f"**{names['To improve']}**\n" + _bullets(data["improvements"]))
         for i, q in enumerate(map(as_dict, as_list(data.get("questions"))), 1):
             parts.append(
                 f"**Q{i} ({q.get('type', '')}): {q.get('question', '')}**\n"
-                f"How it went: {q.get('how_it_went', '')}\n"
-                f"Better: {q.get('better_answer', '')}"
+                f"{names['How it went']}: {q.get('how_it_went', '')}\n"
+                f"{names['Better']}: {q.get('better_answer', '')}"
             )
         out["feedback"] = "\n\n".join(p for p in parts if p)
         email = as_dict(data.get("follow_up_email"))
-        out["follow_up_email"] = f"Subject: {email.get('subject', '')}\n\n{email.get('body', '')}"
+        out["follow_up_email"] = (
+            f"{names['Subject']}: {email.get('subject', '')}\n\n{email.get('body', '')}"
+        )
     elif mode == "standup":
         commitments = [
-            f"{c.get('text', '')}" + (f" (due {c['due_date']})" if c.get("due_date") else "")
+            f"{c.get('text', '')}"
+            + (f" ({names['due']} {c['due_date']})" if c.get("due_date") else "")
             for c in map(as_dict, as_list(data.get("commitments"))[:MAX_STANDUP_COMMITMENTS])
         ]
         out["standup_report"] = "\n\n".join(
             [
-                "**Yesterday**\n" + _bullets(data.get("yesterday")),
-                "**Today**\n" + _bullets(data.get("today")),
-                "**Blockers**\n" + _bullets(data.get("blockers")),
-                "**Commitments**\n" + _bullets(commitments),
+                f"**{names['Yesterday']}**\n" + _bullets(data.get("yesterday")),
+                f"**{names['Today']}**\n" + _bullets(data.get("today")),
+                f"**{names['Blockers']}**\n" + _bullets(data.get("blockers")),
+                f"**{names['Commitments']}**\n" + _bullets(commitments),
             ]
         )
     else:
         if data.get("decisions"):
-            out["summary"] += "\n\n**Decisions**\n" + _bullets(data["decisions"])
+            out["summary"] += f"\n\n**{names['Decisions']}**\n" + _bullets(data["decisions"])
         if data.get("action_items"):
-            out["summary"] += "\n\n**Action items**\n" + _bullets(data["action_items"])
+            out["summary"] += f"\n\n**{names['Action items']}**\n" + _bullets(data["action_items"])
     return out
 
 
@@ -557,7 +621,7 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     async with ctx.user(uid) as conn:
         session = await conn.fetchrow(
             "select s.mode, s.store_transcript, s.started_at, s.ended_at, s.billed_seconds,"
-            " s.employer_id, e.name as employer_name,"
+            " s.employer_id, s.spoken_language, e.name as employer_name,"
             " j.company, j.title as job_title, i.round, u.display_name, u.settings"
             " from app.sessions s join app.users u on u.id = s.user_id"
             " left join app.jobs j on j.id = s.job_id"
@@ -574,7 +638,7 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     data: dict[str, Any] = {}
     closable: dict[str, UUID] = {}
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
-        outputs = {"summary": metadata_summary(mode, minutes, types)}
+        outputs = {"summary": metadata_summary(mode, minutes, types, session["spoken_language"])}
     else:
         # The call's day in the user's time zone, so "tomorrow" or "by Friday" becomes a date.
         day = local_today(as_dict(session["settings"]), session["started_at"])
@@ -599,10 +663,15 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
                     conn, uid, session["employer_id"], str(sid)
                 )
         req = prompts.postcall_request(
-            mode, context, transcript_text(transcript), questions_text(transcript), open_block
+            mode,
+            context,
+            transcript_text(transcript),
+            questions_text(transcript),
+            open_block,
+            spoken_language=session["spoken_language"],
         )
         data = await complete_json(ctx.router, "postcall", req)
-        outputs = render_outputs(mode, data)
+        outputs = render_outputs(mode, data, session["spoken_language"])
     async with ctx.user(uid) as conn:
         await conn.execute("delete from app.session_outputs where session_id = $1", sid)
         for kind, content in outputs.items():

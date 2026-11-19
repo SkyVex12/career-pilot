@@ -23,7 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # macos-private-api: a transparent overlay window needs it on macOS (a no-op elsewhere), so the
 # opacity setting can make the overlay see-through.
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 # Native message dialog for the "update available" prompt at launch (release.rs).
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
@@ -49,6 +49,9 @@ windows-core = "0.62"
 # version webview2-com itself uses.
 windows = { version = "0.62", features = [
   "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
   "Win32_Graphics_Gdi",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_HiDpi",

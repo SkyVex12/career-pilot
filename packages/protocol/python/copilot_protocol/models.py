@@ -105,6 +105,10 @@ class SessionStart(BaseModel):
     """
     Session mode; picks the session pack and prompt template.
     """
+    spoken_language: Annotated[str | None, Field(max_length=16, min_length=2)] = None
+    """
+    Spoken call language, fixed for the session. Omitted by older clients means English. Validated against the server's enabled catalog.
+    """
     job_id: UUID | None = None
     """
     UUID (v7 for ids we generate), lowercase hex with dashes.

@@ -6,6 +6,7 @@
 //! current session so a window opened or reloaded mid-call (the overlay) rebuilds the whole
 //! conversation with `snapshot` (see `history`).
 
+mod background;
 mod call_window;
 mod compact_window;
 mod history;
@@ -1007,6 +1008,8 @@ async fn delete_account(app: AppHandle, state: State<'_, AppState>) -> Res<Value
 
 #[derive(Debug, Deserialize)]
 struct StartRequest {
+    #[serde(default)]
+    spoken_language: Option<String>,
     mode: Mode,
     job_id: Option<Uuid>,
     interview_id: Option<Uuid>,
@@ -1072,6 +1075,7 @@ async fn open_session(app: AppHandle, state: State<'_, AppState>, request: OpenR
     // The start parameters are what the gateway already has; they are only sent if the call
     // is gone, and then the client stops instead (Adopt).
     let start = StartRequest {
+        spoken_language: None,
         mode: request.mode,
         job_id: None,
         interview_id: None,
@@ -1164,6 +1168,7 @@ async fn launch(
     let mut config = ClientConfig::new(
         session_url,
         StartParams {
+            spoken_language: request.spoken_language,
             mode: request.mode,
             job_id: request.job_id,
             interview_id: request.interview_id,
@@ -2044,12 +2049,8 @@ pub fn run() {
     // One app per computer (2026-10-29: two copies on one computer ran two sessions on the
     // same microphone and speakers, under two profiles). A second launch brings the running
     // app's window forward instead.
-    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.show();
-            let _ = w.unminimize();
-            let _ = w.set_focus();
-        }
+    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        background::second_instance(app, &args);
     }));
     #[cfg(feature = "release")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -2057,6 +2058,9 @@ pub fn run() {
         // Closing the main window quits the app. Otherwise the hidden overlay window kept the
         // process alive with no window to show, and a second launch had nothing to bring forward.
         .on_window_event(|window, event| {
+            if background::on_window_event(window, event) {
+                return;
+            }
             compact_window::on_window_event(window, event);
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
                 // A guest's control ends with the app: nothing they held stays pressed.
@@ -2177,35 +2181,38 @@ pub fn run() {
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
+            background::setup(app.handle(), remote::end)?;
             register_hotkeys(app.handle());
             // Opening the app starts the stage's VM (it stops itself when idle; wake.rs), then
             // GET /me checks the sign-in.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // A release build learns its stage's sign-in settings at once, so a sign-in kept
-                // in the Credential Manager (from an earlier install) works without a new one.
-                if needs_auth_config {
-                    let state = handle.state::<AppState>();
-                    let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
-                    let fetched = match state.fill_url(&handle, &api_url, true).await {
-                        Ok(api_url) => oauth::fetch_auth_config(&api_url).await,
-                        Err(e) => Err(copilot_client::auth::AuthError::NotSignedIn(e)),
-                    };
-                    match fetched {
-                        Ok(cfg) => {
-                            state.keep_auth_config(&cfg);
-                            // The settings screen may have loaded before this answered.
-                            let _ = handle.emit(SETTINGS_EVENT, ());
+            if !background::background_start_requested() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // A release build learns its stage's sign-in settings at once, so a sign-in kept
+                    // in the Credential Manager (from an earlier install) works without a new one.
+                    if needs_auth_config {
+                        let state = handle.state::<AppState>();
+                        let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
+                        let fetched = match state.fill_url(&handle, &api_url, true).await {
+                            Ok(api_url) => oauth::fetch_auth_config(&api_url).await,
+                            Err(e) => Err(copilot_client::auth::AuthError::NotSignedIn(e)),
+                        };
+                        match fetched {
+                            Ok(cfg) => {
+                                state.keep_auth_config(&cfg);
+                                // The settings screen may have loaded before this answered.
+                                let _ = handle.emit(SETTINGS_EVENT, ());
+                            }
+                            Err(e) => tracing::info!("sign-in settings not fetched at startup: {e}"),
                         }
-                        Err(e) => tracing::info!("sign-in settings not fetched at startup: {e}"),
                     }
-                }
-                if let Ok(api) = handle.state::<AppState>().api(&handle, true).await
-                    && let Err(e) = api.get("/me").await
-                {
-                    tracing::info!("GET /me at startup: {}", api_error(&handle, e));
-                }
-            });
+                    if let Ok(api) = handle.state::<AppState>().api(&handle, true).await
+                        && let Err(e) = api.get("/me").await
+                    {
+                        tracing::info!("GET /me at startup: {}", api_error(&handle, e));
+                    }
+                });
+            }
             // Transparent so the opacity setting can make the overlay see-through to the window
             // underneath (the panel paints its own translucent background in styles.css).
             let overlay =
@@ -2273,6 +2280,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            background::background_status,
+            background::background_native_activity,
+            background::background_set_preferences,
             compact_window::set_compact_window_shape,
             compact_window::resize_compact_window,
             window_drag::start_window_drag,

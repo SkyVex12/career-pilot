@@ -34,7 +34,7 @@ router = APIRouter()
 
 SESSION_COLUMNS = (
     "id, mode, title, platform, job_id, interview_id, store_transcript, started_at, ended_at,"
-    " billed_seconds, me_audio_status, outputs_ready_at, employer_id"
+    " billed_seconds, me_audio_status, outputs_ready_at, employer_id, spoken_language"
 )
 
 
@@ -54,6 +54,7 @@ def _session(row: Any) -> dict[str, Any]:
         "mode": row["mode"],
         "title": row["title"],
         "platform": row["platform"],
+        "spoken_language": row["spoken_language"],
         "job_id": str(row["job_id"]) if row["job_id"] else None,
         "interview_id": str(row["interview_id"]) if row["interview_id"] else None,
         "employer_id": str(row["employer_id"]) if row["employer_id"] else None,
@@ -112,6 +113,7 @@ async def live_sessions(svc: SvcDep, user: UserDep) -> dict[str, Any]:
             items.append({
                 "id": sid,
                 "mode": state.get("mode"),
+                "spoken_language": state.get("spoken_language"),
                 "title": state.get("title") or None,
                 "platform": state.get("platform") or None,
                 "started_at": state.get("started_at"),
@@ -148,6 +150,7 @@ async def get_session(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str,
             return {
                 "id": str(session_id),
                 "mode": state.get("mode"),
+                "spoken_language": state.get("spoken_language"),
                 "status": "live",
                 "started_at": state.get("started_at"),
                 "outputs": {},

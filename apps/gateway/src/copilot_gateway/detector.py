@@ -114,9 +114,11 @@ class Detector:
         on_decision: DecisionHook | None = None,
         cost: CostFn | None = None,
         decisions: DecisionsRoute | None = None,
+        spoken_language: str = "en",
     ) -> None:
         self.router = router
         self.user_name = user_name
+        self.spoken_language = spoken_language
         self.max_tokens = max_tokens
         self.on_decision = on_decision
         self.cost = cost
@@ -200,7 +202,15 @@ class Detector:
         self.calls += 1
         if self.decisions is not None:
             return await self._decide(utterance, key, cache_key, transcript, mode, turns, started)
-        req = prompts.detector(self.user_name, transcript, utterance, self.max_tokens, mode, turns)
+        req = prompts.detector(
+            self.user_name,
+            transcript,
+            utterance,
+            self.max_tokens,
+            mode,
+            turns,
+            self.spoken_language,
+        )
         try:
             text, done = await self.router.complete("detector", req)
             detection = parse_detection(text)
@@ -248,7 +258,9 @@ class Detector:
         `hedge_s`, or at once when the first fails; the first answer wins."""
         route = self.decisions
         assert route is not None
-        req = prompts.detector_decision(self.user_name, transcript, utterance, mode, turns)
+        req = prompts.detector_decision(
+            self.user_name, transcript, utterance, mode, turns, self.spoken_language
+        )
 
         async def one() -> Decided:
             return await asyncio.wait_for(

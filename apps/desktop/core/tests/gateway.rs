@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 fn start_params() -> StartParams {
     StartParams {
+        spoken_language: None,
         mode: Mode::Interview,
         job_id: None,
         interview_id: None,
@@ -392,8 +393,10 @@ async fn a_running_call_is_taken_over_and_keeps_its_audio() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_app_older_than_the_minimum_stops_with_4426_and_does_not_reconnect() {
     let gw = Gateway::start_with(0, &[TOKEN], None, &["--min-client-version", "0.2.0"]);
-    let mut config =
-        ClientConfig::new(gw.url(), StartParams { client_version: "desktop-0.1.5".into(), ..start_params() });
+    let mut config = ClientConfig::new(
+        gw.url(),
+        StartParams { spoken_language: None, client_version: "desktop-0.1.5".into(), ..start_params() },
+    );
     config.ping_interval = Duration::from_secs(30);
     let (tx, events) = tokio::sync::mpsc::unbounded_channel();
     let (handle, task) = client::spawn(config, tokens(TOKEN), tx);

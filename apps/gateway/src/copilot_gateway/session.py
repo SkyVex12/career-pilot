@@ -30,6 +30,7 @@ from copilot_core import (
     careeros,
     jobs,
     knowledge,
+    languages,
     logs,
     profiles,
     prompts,
@@ -75,6 +76,7 @@ from copilot_gateway.router import decisions_route
 from copilot_gateway.seathost import SeatDesk
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
+from copilot_gateway.stt.deepgram import DeepgramSTT
 from copilot_gateway.turn import (
     Detection,
     TurnDetector,
@@ -152,6 +154,7 @@ class SessionInfo:
     answer_style: str = "bullets"
     # An online test with no call (coding mode): no audio, nothing transcribed.
     no_call: bool = False
+    spoken_language: str = "en"
 
 
 @dataclass
@@ -236,6 +239,7 @@ class Session:
         self.sid = sid
         self.principal = principal
         self.info = info
+        self.spoken_language = info.spoken_language
         self.digest = digest
         self.pack = pack
         restored = restored or {}
@@ -267,6 +271,7 @@ class Session:
             on_decision=self._log_detection,
             cost=self._cost,
             decisions=decisions_route(self.settings, svc.router),
+            spoken_language=self.spoken_language,
         )
         self.matcher = PreparedMatcher(
             svc.embedder,
@@ -281,6 +286,7 @@ class Session:
             final_wait_max_ms=self.settings.final_wait_max_ms,
             turn_model=svc.turn_model,
             hold=self.settings.speculative_hold,
+            spoken_language=self.spoken_language,
             hold_min_words=self.settings.speculative_min_words,
             group_call=lambda: self.info.mode in prompts.GROUP_MODES,
             hold_any_min_words=self.settings.group_hold_min_words,
@@ -425,8 +431,23 @@ class Session:
         label: str = "",
     ) -> ResilientSTT:
         s = self.settings
+
+        def configured(factory: STTFactory) -> STTFactory:
+            def create(keyterms: Sequence[str]):
+                stream = factory(keyterms)
+                if isinstance(stream, DeepgramSTT):
+                    stream.set_language(self.spoken_language)
+                elif self.spoken_language != "en":
+                    raise ValueError("Recognition provider does not support this call language")
+                return stream
+
+            return create
+
         return ResilientSTT(
-            providers or self.svc.stt_providers,
+            [
+                (name, configured(factory))
+                for name, factory in (providers or self.svc.stt_providers)
+            ],
             on_result=on_result,
             on_status=self._on_stt_status,
             stall_s=s.stt_stall_s,
@@ -465,7 +486,7 @@ class Session:
         s = self.settings
         req = prompts.summary(
             self.principal.display_name, self.info.mode, previous, new_lines,
-            s.conversation_summary_tokens,
+            s.conversation_summary_tokens, self.spoken_language,
         )  # fmt: skip
         started = time.monotonic()
         text, done = await self.router.complete("summary", req)
@@ -506,6 +527,7 @@ class Session:
         at_work = employer is not None and employer.id == self.info.employer_id
         return prompts.PromptContext(
             user_name=self.principal.display_name,
+            spoken_language=self.spoken_language,
             mode=self.info.mode,
             digest_text=self.digest.text if self.digest else None,
             pack_text=render_pack(self.pack) if self.pack else None,
@@ -827,7 +849,9 @@ class Session:
         if self._memory_on() and self.company_memory is not None:
             # Memory search starts with the detector, on the same text.
             self.company_memory.lookup(utterance, self._vector(utterance))
-        if not self.matcher.enabled:
+        # Prepared answers have no language metadata; keep their evidence in the prompt,
+        # but generate localized output instead of displaying unverified verbatim text.
+        if self.spoken_language != "en" or not self.matcher.enabled:
             return None
         match = self.matcher.match(utterance, self.embedding(utterance))
         return asyncio.create_task(match)  # pyright: ignore[reportReturnType]
@@ -1372,6 +1396,7 @@ class Session:
             # takes the call over later (GET /sessions/live) needs to know.
             "me_audio": "1" if self.me_audio else "0",
             "no_call": "1" if self.info.no_call else "0",
+            "spoken_language": self.spoken_language,
             "task_id": self.svc.task_id,
         }
 
@@ -2441,9 +2466,32 @@ class SessionManager:
         with contextlib.suppress(Exception):
             await self.svc.jobs.send(message)
 
+    def _validate_recognition_language(self, language: str) -> None:
+        if language == "en":
+            return
+        paths = list(self.svc.stt_providers) + list(self.svc.stt_me_providers or [])
+        if (
+            not paths
+            or self.svc.settings.deepgram_model != "nova-3"
+            or any(name != "deepgram" for name, _ in paths)
+            or any(name != "deepgram" for name in self.svc.settings.stt_providers)
+        ):
+            raise ValueError(
+                "Selected language is unavailable on the configured recognition paths."
+            )
+
     async def start(self, ws: WebSocket, principal: Principal, msg: models.SessionStart) -> None:
         store = self.svc.store
         uid = principal.user_id
+        try:
+            spoken_language = languages.validate_language(
+                msg.spoken_language if msg.spoken_language is not None else "en",
+                self.svc.settings.verified_call_languages,
+            )
+            self._validate_recognition_language(spoken_language)
+        except ValueError as exc:
+            await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
+            return
         if self.live_for_user(uid) is not None:
             await self.reject(
                 ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
@@ -2526,6 +2574,7 @@ class SessionManager:
             resume_is_base=resume_is_base,
             answer_style=msg.answer_style or "bullets",
             no_call=bool(msg.no_call),
+            spoken_language=spoken_language,
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         self.sessions[sid] = session
@@ -2578,6 +2627,14 @@ class SessionManager:
                 await self.reject(
                     ws, CLOSE_NO_START, "session_not_found", "no resumable session with that id"
                 )
+                return
+            try:
+                languages.validate_language(
+                    state.get("spoken_language") or "en", self.svc.settings.verified_call_languages
+                )
+                self._validate_recognition_language(state.get("spoken_language") or "en")
+            except ValueError as exc:
+                await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
                 return
             other = await store.claim_active(uid, sid)
             if other is not None and other != str(sid):
@@ -2633,6 +2690,7 @@ class SessionManager:
             resume_is_base=state.get("resume_base") == "1",
             answer_style=state.get("answer_style") or "bullets",
             no_call=state.get("no_call") == "1",
+            spoken_language=state.get("spoken_language") or "en",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state

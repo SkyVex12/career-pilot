@@ -649,6 +649,10 @@ impl Validate for Usage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionStart {
     pub mode: Mode,
+    /// Spoken call language, fixed for the session. Omitted by older clients means English.
+    /// Validated against the server's enabled catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_language: Option<String>,
     /// UUID (v7 for ids we generate), lowercase hex with dashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<Uuid>,
@@ -686,6 +690,10 @@ pub struct SessionStart {
 
 impl Validate for SessionStart {
     fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(v) = &self.spoken_language {
+            check::min_len("spoken_language", v, 2)?;
+            check::max_len("spoken_language", v, 16)?;
+        }
         if let Some(v) = &self.agenda {
             check::max_len("agenda", v, 2000)?;
         }

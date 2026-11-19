@@ -4,7 +4,7 @@ import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from websockets.asyncio.client import ClientConnection, connect
 
@@ -32,6 +32,16 @@ class DeepgramSTT:
         params += [("keyterm", term) for term in keyterms or []]
         self.url = f"{url}?{urlencode(params)}"
         self.ws: ClientConnection | None = None
+
+    def set_language(self, language: str) -> None:
+        from copilot_core.languages import CALL_LANGUAGES
+
+        if self.ws is not None:
+            raise RuntimeError("Call language cannot change after recognition starts")
+        parts = urlsplit(self.url)
+        params = [(k, v) for k, v in parse_qsl(parts.query) if k != "language"]
+        params.append(("language", CALL_LANGUAGES[language].deepgram_code))
+        self.url = urlunsplit(parts._replace(query=urlencode(params)))
 
     async def connect(self) -> None:
         self.ws = await connect(
