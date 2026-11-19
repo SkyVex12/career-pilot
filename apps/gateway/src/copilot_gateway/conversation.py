@@ -91,7 +91,9 @@ def starts_question(text: str) -> bool:
     head = parts[index:]
     if not head:
         return False
-    if head[0] in ASK_WORDS | ASK_VERBS:
+    # The tokenizer keeps ASCII apostrophes: "what's" and "who'd" still start
+    # independent questions, just like their uncontracted forms.
+    if head[0].split("'", 1)[0] in ASK_WORDS | ASK_VERBS:
         return True
     if head[0] in {
         "can",
@@ -117,16 +119,45 @@ def starts_question(text: str) -> bool:
     return joined.startswith(("i wonder", "i was wondering", "i'm curious", "i am curious"))
 
 
-def starts_greeting(text: str) -> bool:
-    """A social opening is a fresh reply opportunity, not a prior question's last words."""
-    return bool(
-        re.match(
+def starts_brief_reply(text: str) -> bool:
+    """Standalone courtesies and checks do not inherit an earlier substantive ask.
+
+    These only separate already-detected replies; they do not trigger answers. Keep
+    fragments such as "for the rollout, agreed?" eligible for continuation.
+    """
+    parts = words(text)
+    for index in range(min(6, len(parts))):
+        head = " ".join(parts[index:])
+        if re.match(
             r"^(?:hi|hello|hey)\b|^good (?:morning|afternoon|evening)\b"
             r"|^(?:it(?:'s| is) )?nice to meet\b",
-            text.strip(),
-            re.IGNORECASE,
-        )
-    )
+            head,
+        ) or re.match(
+            r"^(?:goodbye|bye(?: bye| now)?|take care|see you(?: soon| later)?"
+            r"|talk(?: to you)? soon|good luck|all the best)\b",
+            head,
+        ):
+            return True
+        if head in {
+            "agreed",
+            "understood",
+            "clear",
+            "all clear",
+            "makes sense",
+            "make sense",
+            "sound good",
+            "sounds good",
+            "right",
+            "okay",
+            "ok",
+            "fair enough",
+            "any questions",
+            "anything else",
+        }:
+            return True
+        if parts[index] not in LEAD_INS:
+            break
+    return False
 
 
 def echo_share(me_text: str, them_texts: Iterable[str]) -> float:
@@ -253,7 +284,7 @@ class Conversation:
         before the new words' STT final is. In the 2026-10-29 technical round an interviewer
         who paused mid-question got 15 answers for 6 questions, each on its own fragment
         ("for the big set of services, yes"), and one answered the topic before."""
-        if not self.asked or gap_ms <= 0 or starts_question(text) or starts_greeting(text):
+        if not self.asked or gap_ms <= 0 or starts_question(text) or starts_brief_reply(text):
             return text
         prev = self.asked[-1]
         if any(ln.channel == "me" and ln.end_ms > prev.at_ms for ln in self.lines):

@@ -86,8 +86,9 @@ _RULES = """Rules:
   before, relatives or friends here, holds a certification, needs sponsorship): use a
   supported fact if one answers it; otherwise give a neutral acknowledgement or a useful
   clarification, never a guessed yes or no in either direction.
-- Brief exchanges still get an answer: greetings, pleasantries, audio checks, requests to
-  share a screen or unmute, short factual and yes-or-no questions. One or two short cues or
+- Brief exchanges still get an answer: greetings, farewells, personal good wishes, closing
+  invitations or contact offers, direct confirmation checks, audio checks, requests to share
+  a screen or unmute, short factual and yes-or-no questions. One or two short cues or
   sentences are enough; this overrides the usual cue count, expansion and style length.
   There is no minimum word count. A greeting can simply return the greeting.
   Do not invent a mood, a weekend activity,
@@ -489,23 +490,29 @@ DETECTOR_WORK_ANSWERS = (*QUESTION_TYPES, *WORK_TYPES, "wait", "none")
 DETECTOR_SYSTEM = (
     "Decide whether the latest utterance in {mode} calls for a reply from {user_name}. "
     "Answer every recognizable question or reply-seeking exchange addressed to them, "
-    "including a greeting or a question answered in a word.\n"
+    "including greetings, farewells and questions answered in a word.\n"
     "Return JSON only:\n"
     '{{"answer": "behavioral|technical|system_design|coding|standup_status|'
     'small_talk|respond|other|wait|none"}}\n'
     """- The question type when the intended question or reply is identifiable. It need not end
   with a question mark or a perfectly complete sentence. Answer a recognizable ask even
   when speech trails off, adds filler, repeats itself or starts another unfinished thought.
-  small_talk is greetings and pleasantries ("hello", "how's your week been?"). "Do you have any
+  small_talk is greetings and pleasantries, including farewells and personal good wishes.
+  When addressed to {user_name}, these need a brief polite reply even without a question
+  mark, or when combined with thanks or a longer explanation. Do not dismiss a farewell,
+  good wish or personal closing courtesy as a mere acknowledgement. "Do you have any
   questions for us?" is other. behavioral asks for a past situation ("tell me about a
   time...", "how did you handle..."). Why {user_name} is looking or leaving, why this role or
   company, pay, location, availability, notice and the hiring process are other, never
   behavioral. Experience with a named tool or platform is technical.
-- respond: not a question, but said to {user_name} and needing a reply now: a request or a
-  task for them, a reminder or a concern aimed at them, or a check right after they spoke
-  ("makes sense?", "your thoughts?"). Audio checks ("can you hear me?"), immediate requests
-  (share your screen, wait a moment, unmute), and offers that ask for the user's go-ahead
-  ("shall I describe the role?") also need a short reply, of type respond.
+- respond: said to {user_name} and needing a reply now: a request or task for them, a
+  reminder or concern aimed at them, a closing invitation or offer of future contact, or
+  a direct confirmation or tag check ("is that clear to you?", "agreed?"). Detect such a
+  check even inside a longer explanation; {user_name} need not have just spoken. A check
+  seeking their understanding or go-ahead differs from the speaker thinking aloud or
+  answering their own rhetorical question. Audio checks ("can you hear me?"), immediate
+  requests (share your screen, wait a moment, unmute), and offers that ask for the user's
+  go-ahead ("shall I describe the role?") also need a short reply, of type respond.
 - Short factual and yes-or-no questions need an answer too. A check of {user_name}'s own
   situation is other: are you authorized to work here, will you need sponsorship, have you
   worked for us before, do relatives or friends work here, do you hold a certification,
@@ -515,8 +522,9 @@ DETECTOR_SYSTEM = (
 - wait: only when the speaker is still forming an ask and its intended question cannot yet
   be identified ("could you tell me about your..."). If an earlier part already asks
   something identifiable, answer it now rather than waiting for the unfinished tail.
-- none: pure exposition, the speaker's own update, an acknowledgement with no reply sought,
-  or something explicitly addressed to someone else. A rhetorical question within the
+- none: pure exposition, the speaker's own update, an acknowledgement with no reply sought
+  and no greeting, farewell, personal good wish, invitation or direct check, or something
+  explicitly addressed to someone else. A rhetorical question within the
   speaker's own explanation is not an ask. "What is that?" or "oh really?" addressed to
   {user_name} as a genuine request for explanation needs an answer. A question can be
   phrased as a statement or a request ("I'm curious how you handled X", "walk me through Y")
@@ -822,6 +830,12 @@ class DecisionRequest:
 # "okay?", and a choice put to the user.
 DECISION_RULES = """
 More on what needs an answer:
+- Greetings, farewells, personal good wishes and closing courtesies addressed to {user_name}
+  need a short reply, of type small_talk. A closing invitation or contact offer needs
+  respond. Neither is a mere acknowledgement, even when mixed with thanks or exposition.
+- A direct confirmation or tag check addressed to {user_name} needs respond, including
+  one inside a longer explanation or before they have spoken. A speaker's internal
+  rhetorical question does not. Checks about personal facts or work keep their own types.
 - An open question about {user_name}'s own situation (where they are based, the pay they
   expect, when they could start, how their search is going) needs an answer, of type other.
   A short factual or yes-or-no check also needs an answer, even if {user_name} already
@@ -839,13 +853,16 @@ More on what needs an answer:
 
 DECISION_TURN = {
     "answer": "It calls for a reply from {user_name} now: an identifiable question or ask, "
-    "including greetings, pleasantries, audio checks, short factual or yes-or-no questions, "
-    "requests, offers seeking permission, and a problem, limit or cost about their own work. "
+    "including greetings, farewells, personal good wishes, closing invitations or contact "
+    "offers, direct confirmation or tag checks, audio checks, short factual or yes-or-no "
+    "questions, requests, offers seeking permission, and a problem, limit or cost about "
+    "their own work. A brief courtesy or direct check counts even within exposition. "
     "An identifiable ask still counts when followed by filler or an unfinished clause",
     "wait": "The speaker is forming an ask but the intended question is not yet identifiable; "
     "no earlier part already asks something answerable",
-    "none": "Pure exposition, an acknowledgement without a reply sought, a rhetorical "
-    "question inside the speaker's own explanation, the other side's own update, or "
+    "none": "Pure exposition, a mere acknowledgement without a greeting, farewell, "
+    "personal good wish, invitation or direct check, a rhetorical question inside the "
+    "speaker's own explanation, the other side's own update, or "
     "something addressed to someone else",
 }
 
@@ -857,13 +874,15 @@ DECISION_TYPES = {
     "named tool, language, platform or field, including how many years of it",
     "system_design": "Design a system or an architecture",
     "coding": "Write, read or analyse code",
-    "small_talk": "A greeting, goodbye or pleasantry addressed to {user_name}, including "
-    "hello and how their day or week has been; needs a short polite reply",
+    "small_talk": "A greeting, farewell, personal good wish or closing courtesy addressed "
+    "to {user_name}, including hello and how their day or week has been; needs a short "
+    "polite reply even without a question",
     "other": "The job and {user_name}'s situation: why they are looking or leaving, why this "
     "role or company, pay, location, availability, notice, the hiring process, their "
     "questions for the interviewer, culture, the future",
-    "respond": "A request, task, reminder or concern aimed at {user_name}, a check right "
-    "after they spoke, an audio check, or an offer seeking their go-ahead; needs a short reply",
+    "respond": "A request, task, reminder or concern aimed at {user_name}, a closing "
+    "invitation or contact offer, a direct confirmation or tag check, an audio check, or "
+    "an offer seeking their go-ahead; needs a short reply",
 }
 # At work the general types give way to the work types for anything about the team's own
 # system or the user's own items (the detector's group rule says the same).
@@ -871,9 +890,9 @@ DECISION_AT_WORK = {
     "technical": "General technical knowledge, not about the team's own system or "
     "{user_name}'s own work items (those have their own types below)",
     "other": "Anything else that needs an answer and fits no other type",
-    "respond": "A request, task, reminder, audio check or offer seeking {user_name}'s "
-    "go-ahead, or a check right after they spoke, that none of the work types below fits; "
-    "needs a short reply",
+    "respond": "A request, task, reminder, closing invitation or contact offer, audio "
+    "check, direct confirmation or tag check, or offer seeking {user_name}'s go-ahead, "
+    "that none of the work types below fits; needs a short reply",
 }
 DECISION_WORK_TYPES = {
     "standup_status": "{user_name}'s own update or plan as a whole, or an open hand-off to "

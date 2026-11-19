@@ -5,6 +5,8 @@ eval checks whether a model follows the contracts on questions and non-questions
 """
 
 import json
+import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -55,7 +57,7 @@ def test_detection_waits_only_for_an_unidentifiable_ask_and_keeps_addressee_rule
         assert ("This is a group call" in rules) == (mode in prompts.GROUP_MODES)
     turn_choices = {c["value"]: c["description"] for c in decisions.questions[0]["choices"]}
     assert "not yet identifiable" in turn_choices["wait"]
-    assert "greetings, pleasantries, audio checks" in turn_choices["answer"]
+    assert "greetings, farewells, personal good wishes" in turn_choices["answer"]
     assert "yes-or-no questions" in turn_choices["answer"]
     assert "audio check" not in turn_choices["none"]
     assert "small talk" not in turn_choices["none"]
@@ -134,3 +136,65 @@ def test_previous_suggestions_stay_separate_from_spoken_answers_and_cached_facts
     with_history = prompts.fast_pass(ctx, call, "Which failure mode?", "technical", 250)
     assert original.system == with_history.system
     assert "<earlier_suggestions>" not in str(original.content)
+
+
+@pytest.mark.parametrize("mode", ["interview", "standup", "meeting"])
+def test_both_apis_distinguish_courtesies_and_checks_from_silent_acknowledgements(
+    mode: str,
+) -> None:
+    utterance = "Alex, feel free to write if another topic comes to mind."
+    response = prompts.detector("Alex Rivera", "", utterance, 80, mode)
+    decisions = prompts.detector_decision("Alex Rivera", "", utterance, mode)
+    for rules in (response.system[0].text, decisions.input[0]["content"][0]["text"]):
+        assert "farewells and personal good wishes" in rules
+        assert "a closing invitation or offer of future contact" in rules
+        assert "a direct confirmation or tag check" in rules
+        assert "even inside a longer explanation" in rules
+        assert "need not have just spoken" in rules
+        assert "no greeting, farewell, personal good wish, invitation or direct check" in rules
+        assert "explicitly addressed to someone else" in rules
+        assert "answering their own rhetorical question" in rules
+    turn_choices = {c["value"]: c["description"] for c in decisions.questions[0]["choices"]}
+    for category in ("farewells", "personal good wishes", "closing invitations", "tag checks"):
+        assert category in turn_choices["answer"]
+    assert "mere acknowledgement without a greeting, farewell" in turn_choices["none"]
+    assert "rhetorical question" in turn_choices["none"]
+    type_choices = {c["value"]: c["description"] for c in decisions.questions[1]["choices"]}
+    assert "personal good wish" in type_choices["small_talk"]
+    assert "contact offer" in type_choices["respond"]
+    assert "tag check" in type_choices["respond"]
+
+
+def test_fictional_brief_reply_fixture_preserves_positive_and_negative_contrasts() -> None:
+    path = Path(__file__).resolve().parents[3] / "evals/bench/brief_reply_policy.toml"
+    rows = tomllib.loads(path.read_text("utf-8"))["utterance"]
+    expected = {
+        "greeting": "small_talk",
+        "acknowledgement": None,
+        "embedded_check": "respond",
+        "rhetorical_explanation": None,
+        "next_steps": None,
+        "contact_offer": "respond",
+        "closing_invitation": "respond",
+        "personal_courtesy": "small_talk",
+        "reported_good_wish": None,
+        "other_addressee_farewell": None,
+        "personal_good_wish": "small_talk",
+        "plain_thanks": None,
+        "farewell_with_thanks": "small_talk",
+    }
+    assert {row["id"] for row in rows} == set(expected)
+    for row in rows:
+        qtype = expected[row["id"]]
+        assert row["expect"] == ("answer" if qtype else "none")
+        assert row.get("type") == qtype
+        # Both actual request builders accept the same fictional eval inputs and labels.
+        utterance = " ".join(row["parts"])
+        response = prompts.detector("Alex Rivera", "", utterance, 80, "interview")
+        decisions = prompts.detector_decision("Alex Rivera", "", utterance, "interview")
+        assert utterance in str(response.content)
+        assert utterance in str(decisions.input)
+        assert response.json_schema is not None
+        assert (qtype or "none") in response.json_schema["properties"]["answer"]["enum"]
+        if qtype:
+            assert qtype in {choice["value"] for choice in decisions.questions[1]["choices"]}

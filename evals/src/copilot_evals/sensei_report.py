@@ -166,25 +166,111 @@ def compare(baseline: Path, current: Path, output: Path) -> None:
     new = {row["id"]: row for row in new_scope}
     if old.keys() != new.keys() or not old:
         raise ValueError("Before/after question sets differ or are empty")
+    old_answers, new_answers = [
+        {row["id"]: row for row in json.loads((path / "answers.json").read_text("utf-8"))}
+        for path in (baseline, current)
+    ]
+    if not old.keys() <= old_answers.keys() or not new.keys() <= new_answers.keys():
+        raise ValueError("Before/after answer coverage is incomplete")
+    human_valid = all(
+        calibration(path, summary, json.loads((path / "grades.json").read_text("utf-8"))).get(
+            "status"
+        )
+        == "passes_predeclared_threshold"
+        for path, summary in ((baseline, before), (current, after))
+    )
     lines = [
         "# Sensei before/after comparison",
         "",
         "Same source evidence, pack, labels, addressee eligibility and judge. "
         "Explicit other addressees are excluded; unclear cases are retained. "
-        "Provisional until human calibration.",
+        + (
+            "Both runs pass the recorded human-calibration thresholds."
+            if human_valid
+            else "Human calibration is not established for both runs. Any AI-only review "
+            "measures judge consistency, not human validity."
+        ),
         "",
-        "| Criterion | Initial before | Initial after | Change | Expanded change |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        f"Fixed primary scope: {len(old)} turns. Replay settings, model routes and speed "
+        "must also be checked against the recorded replay identities.",
+        "",
+        "| Coverage in the fixed scope | Before | After |",
+        "| --- | ---: | ---: |",
     ]
-    for i, criterion in enumerate(RUBRIC):
-        left = statistics.mean(row["ours"]["initial"][i] for row in old.values())
-        right = statistics.mean(row["ours"]["initial"][i] for row in new.values())
-        expanded = statistics.mean(
-            new[key]["ours"]["expanded"][i] - old[key]["ours"]["expanded"][i] for key in old
+    scoped = [[answers[key] for key in old] for answers in (old_answers, new_answers)]
+    for label, field in (
+        ("Surviving visible-card turns", "detected"),
+        ("Nonempty initial-output turns", "fast"),
+        ("Nonempty deep-output turns", "deep"),
+    ):
+        counts = [
+            sum(bool(row[field]) and not row.get("cancelled", False) for row in rows)
+            for rows in scoped
+        ]
+        lines.append(f"| {label} | {counts[0]}/{len(old)} | {counts[1]}/{len(old)} |")
+    for label, multiple in (
+        ("Recorded card IDs, including withdrawn", False),
+        ("Turns with multiple recorded card IDs", True),
+    ):
+        counts = [
+            str(sum(len(row["cards"]) > 1 if multiple else len(row["cards"]) for row in rows))
+            if all("cards" in row for row in rows)
+            else "unavailable"
+            for rows in scoped
+        ]
+        lines.append(f"| {label} | {counts[0]} | {counts[1]} |")
+    lines += [
+        "",
+        "Coverage is exported-turn card attribution, not semantic-question recall. "
+        "Nonempty outputs include streamed partial answers; completion and error events "
+        "require separate audit. Multiple card IDs can include withdrawn speculation or "
+        "replacement cards and do not alone prove repeated visible answers. Newly supported "
+        "exchanges outside this fixed scope require a separate policy-aware audit.",
+    ]
+
+    def score_table(keys: list[int], title: str) -> None:
+        lines.extend(
+            [
+                "",
+                title,
+                "",
+                "| Criterion | Initial before | Initial after | Change | Expanded change |",
+                "| --- | ---: | ---: | ---: | ---: |",
+            ]
         )
-        lines.append(
-            f"| {criterion} | {left:.2f} | {right:.2f} | {right - left:+.2f} | {expanded:+.2f} |"
-        )
+        for i, criterion in enumerate((*RUBRIC, "Overall")):
+
+            def value(row: dict[str, Any], stage: str, index: int = i) -> float:
+                scores = row["ours"][stage]
+                return statistics.mean(scores) if index == len(RUBRIC) else scores[index]
+
+            left = statistics.mean(value(old[key], "initial") for key in keys)
+            right = statistics.mean(value(new[key], "initial") for key in keys)
+            expanded = statistics.mean(
+                value(new[key], "expanded") - value(old[key], "expanded") for key in keys
+            )
+            lines.append(
+                f"| {criterion} | {left:.2f} | {right:.2f} | {right - left:+.2f} "
+                f"| {expanded:+.2f} |"
+            )
+
+    score_table(list(old), "## Fixed-scope quality, including missing answers")
+    delivered = [
+        key
+        for key in old
+        if old_answers[key]["fast"] and not old_answers[key].get("cancelled", False)
+    ]
+    if delivered:
+        score_table(delivered, f"## Baseline-delivered initial-answer cohort (n={len(delivered)})")
+        lines += [
+            "",
+            "This cohort keeps the same baseline-delivered questions in both columns. "
+            "A newly missing answer remains scored as missing; newly recovered questions "
+            "do not enter this cohort. Each run's separate conditional mean can cover "
+            "different questions and is not a paired quality comparison.",
+        ]
+    else:
+        lines += ["", "No baseline initial answers were delivered; the paired cohort is empty."]
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -237,11 +323,12 @@ def report(directory: Path, output: Path, fixtures: Path) -> None:
         "Answer quality is the primary outcome. **Provisional model grades.** "
         + (
             f"At the user's request, {cal['completed']}/15 samples received independent AI "
-            "review instead of human scoring. AI agreement does not establish human validity. "
+            "review instead of human scoring. This is AI-only agreement; human calibration "
+            "remains unvalidated. "
             if cal.get("reviewer_kind") == "ai"
             else f"Human calibration has {cal['completed']}/15 completed reviews. "
         )
-        + "No production prompts or answer code changed.",
+        + "Results describe the selected recorded run.",
         "",
         f"{len(rows)} exported suggestions over 45 minutes 13 seconds; {len(original_scope)} "
         "turns originally labelled as requiring a response by a question-only annotator. "
@@ -579,8 +666,8 @@ def report(directory: Path, output: Path, fixtures: Path) -> None:
         *[proposal for _, proposal in sorted(proposals, key=lambda item: item[0], reverse=True)],
         "",
         "Every proposed change must compare per-criterion and per-type scores, agreement, "
-        "unsupported claims, coverage and win regressions on the same evidence. No changes "
-        "from this plan have been made.",
+        "unsupported claims, coverage and win regressions on the same evidence. Implemented "
+        "changes require a separate before/after comparison.",
         "",
         "## Calibration and reproducibility",
         "",
@@ -629,8 +716,10 @@ def report(directory: Path, output: Path, fixtures: Path) -> None:
         f"Conservative unresolved-call/embedding reservations: "
         f"${unresolved_cost:.6f}. "
         f"**Combined conservative ledger: ${known_cost + unresolved_cost:.6f}.** "
-        "The user lifted the original $3 cap. The ledger includes the earlier aborted replay "
-        "and failed preparation attempts. Unknown usage is reserved conservatively. "
+        "This is the selected run directory's ledger only. Calls from other run directories, "
+        "including earlier aborted attempts or reused preparation, are not included unless "
+        "their entries were explicitly carried into this ledger. Reservations are conservative "
+        "estimates for unresolved usage, not confirmed billed charges. "
         "No new billed infrastructure. Usage-accounted amounts apply configured token prices; "
         "cache-write premiums and billing adjustments are not exposed by the live adapter. "
         "The combined ledger is an estimate with unresolved allowances, not an invoice "
@@ -638,8 +727,8 @@ def report(directory: Path, output: Path, fixtures: Path) -> None:
         "",
         "Prices checked against [OpenAI pricing](https://developers.openai.com/api/docs/pricing) "
         "and [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing). "
-        "Setup, embeddings, detector calls, prewarming, fast/deep generation, annotations and "
-        "both judge orders, independent AI review and the addressee audit are included. "
+        "The ledger covers the setup, embedding, generation and review calls metered in this "
+        "run. Reusing evidence or labels does not copy the costs of their earlier preparation. "
         "Independent reviewer rates use the [GPT-6.2 Astra model page]"
         "(https://developers.openai.com/api/docs/models/gpt-6.2-astra).",
         "",

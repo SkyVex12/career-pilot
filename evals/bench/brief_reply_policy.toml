@@ -1,0 +1,94 @@
+# Entirely fictional contrasts for the brief-reply policy; no private interview text.
+# copilot-detector-eval --script evals/bench/brief_reply_policy.toml --mode interview
+# The candidate is Alex Rivera. A courtesy/check requires a brief cue; plain exposition,
+# acknowledgements, internal rhetorical questions and explicit other addressees do not.
+
+[defaults]
+voice = "cedar"
+style = "A friendly interviewer in a video call."
+pause_s = 0.0
+
+[[utterance]]
+id = "greeting"
+parts = ["Welcome, Alex. Good morning!"]
+gap_s = 1.0
+expect = "answer"
+type = "small_talk"
+
+[[utterance]]
+id = "acknowledgement"
+parts = ["Okay, noted."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "embedded_check"
+parts = ["The short exercise is optional. Is that clear to you, Alex? We reserve Friday for interviews."]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+
+[[utterance]]
+id = "rhetorical_explanation"
+parts = ["Why keep two drafts? Because the panel reviews them separately."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "next_steps"
+parts = ["I will send an outline to the review panel next week."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "contact_offer"
+parts = ["Alex, I am available by email if you would like more context."]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+
+[[utterance]]
+id = "closing_invitation"
+parts = ["Alex, feel free to write if another topic comes to mind."]
+gap_s = 1.0
+expect = "answer"
+type = "respond"
+
+[[utterance]]
+id = "personal_courtesy"
+parts = ["It has been a pleasure meeting you, Alex."]
+gap_s = 1.0
+expect = "answer"
+type = "small_talk"
+
+[[utterance]]
+id = "reported_good_wish"
+parts = ["I wished Morgan well after our last meeting."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "other_addressee_farewell"
+parts = ["Morgan, goodbye and enjoy the rest of your week."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "personal_good_wish"
+parts = ["I hope your next project goes smoothly, Alex."]
+gap_s = 1.0
+expect = "answer"
+type = "small_talk"
+
+[[utterance]]
+id = "plain_thanks"
+parts = ["Thanks, that is helpful."]
+gap_s = 1.0
+expect = "none"
+
+[[utterance]]
+id = "farewell_with_thanks"
+parts = ["Thanks for joining us, Alex. Have a pleasant evening."]
+gap_s = 1.0
+expect = "answer"
+type = "small_talk"

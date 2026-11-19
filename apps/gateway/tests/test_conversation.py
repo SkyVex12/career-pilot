@@ -274,3 +274,40 @@ def test_a_question_continued_after_a_pause_joins_the_one_before() -> None:
     assert conv.continued("And which is your favorite?", 5000, [4500]) == (
         "And which is your favorite?"
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What's your monitoring approach?",
+        "And who's on call?",
+        "Where's the bottleneck",
+        "When's the next deployment?",
+        "Who'd own the migration?",
+        "How's the rollback handled?",
+        "What\u2019s your monitoring approach?",
+        "Agreed?",
+        "Okay, sounds good?",
+        "Right?",
+        "Thanks. Take care!",
+        "Take care, Alex!",
+        "Good luck with the launch!",
+        "Well, see you later.",
+        "Good luck!",
+        "Any questions?",
+    ],
+)
+def test_independent_contracted_questions_and_brief_replies_keep_their_text(text: str) -> None:
+    conv = Conversation("Alex", Budget())
+    conv.question("q1", "How do you deploy services?", 1000)
+    assert conv.continued(text, 5000, [2000]) == text
+
+
+@pytest.mark.parametrize(
+    "text", ["for our next launch?", "and with retries, okay?", "for the rollout, agreed?"]
+)
+def test_checks_inside_continuation_fragments_keep_the_prior_context(text: str) -> None:
+    conv = Conversation("Alex", Budget())
+    previous = "How do you deploy services?"
+    conv.question("q1", previous, 1000)
+    assert conv.continued(text, 5000, [2000]) == f"{previous} {text}"

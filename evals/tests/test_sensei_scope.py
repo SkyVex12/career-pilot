@@ -28,6 +28,7 @@ def write_run(directory):
                 "deep": "",
                 "detected": answered,
                 "cancelled": False,
+                "cards": [f"card-{identifier}"] if answered else [],
                 "offset_s": identifier * 10,
                 "latency": {"fast_first_s": 1.0} if answered else {},
             }
@@ -170,3 +171,82 @@ def test_before_after_uses_identical_candidate_scope(tmp_path):
     save(current / "eligibility.json", audit)
     with pytest.raises(ValueError, match="eligibility differs"):
         compare(baseline, current, tmp_path / "comparison.md")
+
+
+def test_comparison_keeps_baseline_delivered_cohort_when_outputs_change(tmp_path):
+    baseline, current = tmp_path / "before", tmp_path / "after"
+    baseline.mkdir()
+    current.mkdir()
+    write_run(baseline)
+    rows, summary = write_run(current)
+    for directory in (baseline, current):
+        for name in ("inputs.json", "profile.json", "annotations.json"):
+            save(directory / name, {})
+        save(
+            directory / "judge-identity.json",
+            {
+                "model": "synthetic",
+                "rubric_sha256": "a",
+                "evidence_sha256": "b",
+                "seed": 1,
+            },
+        )
+    rows[0].update(fast="", detected=False, cancelled=True, cards=["withdrawn"])
+    summary["questions"][0]["ours"].update(initial=[1] * 6, expanded=[1] * 6)
+    for index in (1, 2):
+        rows[index].update(
+            fast="New synthetic cue",
+            deep="More synthetic detail",
+            detected=True,
+            cards=["new", "extra"],
+        )
+        summary["questions"][index]["ours"].update(initial=[5] * 6, expanded=[5] * 6)
+    save(current / "answers.json", rows)
+    save(current / "summary.json", summary)
+    output = tmp_path / "comparison.md"
+    compare(baseline, current, output)
+    text = output.read_text("utf-8")
+    assert "Fixed primary scope: 2 turns" in text
+    assert "| Nonempty initial-output turns | 1/2 | 1/2 |" in text
+    assert "| Nonempty deep-output turns | 0/2 | 1/2 |" in text
+    assert "| Surviving visible-card turns | 1/2 | 1/2 |" in text
+    assert "| Recorded card IDs, including withdrawn | 1 | 3 |" in text
+    assert "| Turns with multiple recorded card IDs | 0 | 1 |" in text
+    assert "| Overall | 2.50 | 3.00 | +0.50 | +0.50 |" in text
+    cohort = text.split("## Baseline-delivered initial-answer cohort (n=1)")[1]
+    assert "| Overall | 4.00 | 1.00 | -3.00 | -3.00 |" in cohort
+    assert "newly recovered questions do not enter this cohort" in cohort
+    assert "Human calibration is not established for both runs" in text
+    assert "New synthetic cue" not in text
+    assert "More synthetic detail" not in text
+
+
+def test_report_uses_run_scoped_costs_and_does_not_assert_unchanged_production(tmp_path):
+    write_run(tmp_path)
+    save(
+        tmp_path / "cost.json",
+        [
+            {"model": "synthetic", "charged_usd": 0.25, "status": "usage"},
+            {"model": "synthetic", "charged_usd": 0.75, "status": "reserved"},
+            {"model": "synthetic", "charged_usd": 0.0, "status": "failed_before_submission"},
+        ],
+    )
+    save(
+        tmp_path / "ai-review.json",
+        {
+            "reviewer_kind": "ai",
+            "model": "synthetic",
+            "items": [],
+        },
+    )
+    report(tmp_path, tmp_path / "report.md", tmp_path / "fixtures.json")
+    text = (tmp_path / "report.md").read_text("utf-8")
+    assert "Usage-accounted calls: $0.250000" in text
+    assert "reservations: $0.750000" in text
+    assert "Combined conservative ledger: $1.000000" in text
+    assert "selected run directory's ledger only" in text
+    assert "not confirmed billed charges" in text
+    assert "Reusing evidence or labels does not copy the costs" in text
+    assert "AI-only agreement; human calibration remains unvalidated" in text
+    assert "No production prompts or answer code changed" not in text
+    assert "No changes from this plan have been made" not in text

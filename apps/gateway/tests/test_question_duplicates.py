@@ -322,3 +322,41 @@ async def test_a_slow_detector_keeps_the_original_question_context_anchor(
         )
         assert len(cards(client)) == 2
         assert session.turns.detached_turns >= 1
+
+
+@pytest.mark.parametrize(
+    ("text", "qtype"),
+    [
+        ("What's your monitoring approach?", "technical"),
+        ("Agreed?", "respond"),
+        ("Thanks. Take care!", "small_talk"),
+    ],
+)
+async def test_a_fresh_brief_reply_or_contracted_ask_does_not_repeat_the_prior_question(
+    env, text: str, qtype: str
+) -> None:
+    def reply(job: str, req: LLMRequest) -> Reply:
+        if job == "detector":
+            utterance = str(req.content).split("<utterance>")[-1].split("</utterance>")[0].strip()
+            return Reply([json.dumps({"answer": qtype if utterance == text else "technical"})])
+        return default_reply(job, req)
+
+    provider = ScriptedProvider("anthropic", reply)
+    env.providers = [provider]
+    async with GatewayServer(env.services(env.settings(deep_pass_auto=False))) as gw:
+        client = ProtocolClient(gw.url)
+        await client.start()
+        await client.say("How do you deploy services?")
+        first = await client.wait_type("question.detected", speculative=False)
+        await client.wait_type("answer.done", question_id=first["question_id"], pass_="fast")
+        await client.say(text, capture_ms=1000)
+        second = await client.wait(
+            lambda m: m["type"] == "question.detected" and m["question_id"] != first["question_id"]
+        )
+        assert second["text"] == text
+        await client.wait_type("answer.done", question_id=second["question_id"], pass_="fast")
+        assert len(cards(client)) == 2
+    request = [req for job, req in provider.requests if job == "fast"][-1]
+    question = str(request.content).splitlines()[-1]
+    assert question.startswith("Question")
+    assert question.split(": ", 1)[1] == text

@@ -261,7 +261,7 @@ database); keyword search and the digest are.
 
 Run from the workspace after `uv sync`. This uses real model APIs and costs money; no
 new infrastructure is provisioned. `fakeredis` and the gateway text-STT transport replace
-storage and audio, while the worker pack builder and gateway answer pipeline are unchanged.
+storage and audio; the run uses the checkout's actual worker pack builder and gateway answer pipeline.
 Keep the export and **all private artifacts outside the repository**. Documents are data,
 never instructions. Neither candidate speech nor Sensei answers enter our gateway.
 
@@ -294,9 +294,12 @@ question labels can be reused for a later code change:
 uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-after' --reuse-profile 'C:\private\sensei-baseline' --baseline 'C:\private\sensei-baseline' --year 2026 --max-cost 20 --ai-review --report 'docs/analysis/sensei-after.md' --fixtures 'evals/sensei/after-paraphrased.json'
 ```
 
-The comparison requires identical sources, pack, labels and judge. Report and comparison
-files contain only paraphrases, IDs and measurements; the `.scores.json` fixture is the
-numeric baseline. Exact reproduction requires the original private export, because
+The comparison requires identical sources, pack, labels and judge. It reports fixed-scope
+card/output coverage and quality, plus quality on the same baseline-delivered questions so
+newly recovered answers cannot hide regressions. Check model routes, settings and replay
+speed in the private replay identities before attributing differences to a code change.
+Report and comparison files contain only paraphrases, IDs and measurements; the
+`.scores.json` fixture is the numeric baseline. Exact reproduction requires the original private export, because
 rewriting an interview question changes the experiment. The committed paraphrased
 question fixture documents the eval cases without publishing the interview.
 

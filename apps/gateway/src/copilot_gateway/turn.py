@@ -240,6 +240,18 @@ def recoverable_question(text: str) -> str | None:
             }
         ):
             continue
+        # Leading wh-clauses can be exposition: "what we do is ..." or "how we
+        # deploy is documented ...". Their subject precedes the main copula; ordinary
+        # direct questions invert that order ("what do we do", "how are we ...").
+        # Only the outage/wait fallback uses this guard; a positive model decision wins.
+        if (
+            len(words) >= 4
+            and words[0] in QUESTION_WORDS
+            and words[1].split("'", 1)[0]
+            in {"i", "we", "you", "they", "he", "she", "it", "my", "our", "your", "their"}
+            and any(word in {"is", "are", "was", "were"} for word in words[2:])
+        ):
+            continue
         if head in {"why", "why not", "how so"}:
             return "other"
         if len(words) < 3:

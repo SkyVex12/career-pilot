@@ -32,6 +32,12 @@ from copilot_gateway.turn import recoverable_question
         ("Why?", "other"),
         ("We use SQL to join the data.", None),
         ("I explained how the dashboard works.", None),
+        ("What we do is process device telemetry.", None),
+        ("How we deploy is documented in the runbook.", None),
+        ("What we're building is a reporting dashboard.", None),
+        ("What do you do if the service is down?", "other"),
+        ("How do you know the deployment is healthy?", "other"),
+        ("How are you validating the rollout?", "other"),
         ("Morgan, could you introduce yourself?", None),
         ("Can you explain the", None),
         ("And what about databases that you're", None),
@@ -130,3 +136,43 @@ async def test_a_late_final_during_wait_recovery_replaces_stale_held_cues(env) -
     assert "And why choose a queue?" not in fast[0]
     assert "And why choose a queue?" in fast[1]
     assert sum(job == "detector" for job, _ in provider.requests) == 2
+
+
+@pytest.mark.parametrize("decision", ["wait", "error", "technical"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What we do is process device telemetry.",
+        "How we deploy is documented in the runbook.",
+    ],
+)
+async def test_recovery_leaves_leading_declarative_wh_clauses_to_the_detector(
+    env, decision: str, text: str
+) -> None:
+    def reply(job, req):
+        if job == "detector":
+            return (
+                Reply([], error=TimeoutError())
+                if decision == "error"
+                else Reply([json.dumps({"answer": decision})])
+            )
+        return default_reply(job, req)
+
+    env.providers = [ScriptedProvider("anthropic", reply)]
+    async with GatewayServer(env.services(env.settings(deep_pass_auto=False))) as gw:
+        client = ProtocolClient(gw.url)
+        await client.start()
+        await client.say(text)
+        await client.wait_type("transcript.final")
+        session = next(iter(gw.manager.sessions.values()))
+        if session.turns.task is not None:
+            await asyncio.wait_for(asyncio.shield(session.turns.task), 5)
+        assert session.turns.recovered == 0
+        if decision == "technical":
+            # Heuristics must not veto a detector-positive interpretation of the turn.
+            question = await client.wait_type("question.detected", speculative=False)
+            assert question["text"] == text
+            await client.wait_type("answer.done", question_id=question["question_id"], pass_="fast")
+        else:
+            assert client.of_type("question.detected") == []
+            assert client.of_type("answer.delta") == []
