@@ -2,12 +2,17 @@ import { emit } from "@tauri-apps/api/event";
 import { mockWindows } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it } from "vitest";
+import { beforeAll, expect, it } from "vitest";
 import App from "../src/App";
 import { settingsView } from "./fixtures";
 import { ipc } from "./ipc";
 
-function setup() {
+// Load the real lazy screen before interaction deadlines, outside cold CI transforms.
+beforeAll(async () => {
+  await import("../src/SettingsScreen");
+});
+
+async function setup() {
   mockWindows("main");
   ipc.handle("get_settings", () => settingsView());
   ipc.handle("snapshot", () => [[], false, 0]);
@@ -29,7 +34,8 @@ function setup() {
   ipc.api("GET", /^\/employers$/, () => ({ employers: [] }));
   ipc.api("GET", /^\/sessions\/live$/, () => ({ sessions: [] }));
   ipc.api("GET", /^\/resumes$/, () => ({ base: null, versions: [] }));
-  return render(<App />);
+  // Settle settings and profile bootstrap before polling the interactive controls.
+  await act(async () => { render(<App />); });
 }
 
 async function compact(mode: "toolbar" | "dot") {
@@ -59,7 +65,7 @@ function holdRestore() {
 }
 
 it.each(["toolbar", "dot"] as const)("restores %s bounds before opening native Settings", async mode => {
-  setup();
+  await setup();
   const surface = await compact(mode);
   const restore = holdRestore();
   await act(() => emit("copilot://open-settings"));
@@ -76,7 +82,7 @@ it.each(["toolbar", "dot"] as const)("restores %s bounds before opening native S
 });
 
 it("restores compact bounds for the idle overlay's return-to-call event", async () => {
-  setup();
+  await setup();
   const surface = await compact("dot");
   await act(() => emit("copilot://open-call"));
   await waitFor(() => expect(surface).toHaveAttribute("data-mini", "full"));
@@ -86,7 +92,7 @@ it("restores compact bounds for the idle overlay's return-to-call event", async 
 });
 
 it("keeps compact controls reachable when expansion fails and allows a later retry", async () => {
-  setup();
+  await setup();
   const surface = await compact("toolbar");
   ipc.handle("set_compact_window_shape", ({ shape }) => {
     if (shape === "full") throw "Could not restore the window";
@@ -104,7 +110,7 @@ it("keeps compact controls reachable when expansion fails and allows a later ret
 });
 
 it("uses the latest native destination during a single pending expansion", async () => {
-  setup();
+  await setup();
   const surface = await compact("toolbar");
   const before = ipc.calls.filter(call => call.cmd === "plugin:window|set_size").length;
   const restore = holdRestore();
