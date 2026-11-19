@@ -333,8 +333,8 @@ def test_the_detector_prompt_knows_the_call_type() -> None:
     interview = prompts.detector("Alex", "", "Could you share your screen?", 80).system[0].text
     assert "in an interview" in interview
     assert "one-on-one call" in interview
-    assert "share your screen" in interview  # a request for an action is not a question
-    assert '"what is that?"' in interview  # nor a short reaction
+    assert "share your screen" in interview  # now gets a brief acknowledgement
+    assert '"What is that?"' in interview  # a genuine request for explanation is answered
     standup = prompts.detector("Alex", "", "x", 80, mode="standup").system[0].text
     assert "in a standup" in standup
 

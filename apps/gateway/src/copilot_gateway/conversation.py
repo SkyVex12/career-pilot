@@ -31,6 +31,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from copilot_core.prompts import CallContext
+from copilot_gateway.turn import ASK_VERBS, LEAD_INS, REQUEST_CUES
+from copilot_gateway.turn import QUESTION_WORDS as ASK_WORDS
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +76,88 @@ _WORD = re.compile(r"[a-z0-9']+")
 
 def words(text: str) -> list[str]:
     return _WORD.findall(text.lower())
+
+
+def starts_question(text: str) -> bool:
+    """A new ask, including an unpunctuated one, must not inherit the prior question.
+
+    An explicit fragment such as "for fifty services?" can still continue it. Missing STT
+    punctuation alone is never evidence that a complete new ask is a continuation.
+    """
+    parts = words(text)
+    index = 0
+    while index < min(6, len(parts)) and parts[index] in LEAD_INS:
+        index += 1
+    head = parts[index:]
+    if not head:
+        return False
+    # The tokenizer keeps ASCII apostrophes: "what's" and "who'd" still start
+    # independent questions, just like their uncontracted forms.
+    if head[0].split("'", 1)[0] in ASK_WORDS | ASK_VERBS:
+        return True
+    if head[0] in {
+        "can",
+        "could",
+        "would",
+        "will",
+        "do",
+        "does",
+        "did",
+        "have",
+        "has",
+        "are",
+        "is",
+        "was",
+        "were",
+        "should",
+        "shall",
+    }:
+        return True
+    joined = " ".join(head)
+    if any(joined.startswith(cue) for cue in REQUEST_CUES):
+        return True
+    return joined.startswith(("i wonder", "i was wondering", "i'm curious", "i am curious"))
+
+
+def starts_brief_reply(text: str) -> bool:
+    """Standalone courtesies and checks do not inherit an earlier substantive ask.
+
+    These only separate already-detected replies; they do not trigger answers. Keep
+    fragments such as "for the rollout, agreed?" eligible for continuation.
+    """
+    parts = words(text)
+    for index in range(min(6, len(parts))):
+        head = " ".join(parts[index:])
+        if re.match(
+            r"^(?:hi|hello|hey)\b|^good (?:morning|afternoon|evening)\b"
+            r"|^(?:it(?:'s| is) )?nice to meet\b",
+            head,
+        ) or re.match(
+            r"^(?:goodbye|bye(?: bye| now)?|take care|see you(?: soon| later)?"
+            r"|talk(?: to you)? soon|good luck|all the best)\b",
+            head,
+        ):
+            return True
+        if head in {
+            "agreed",
+            "understood",
+            "clear",
+            "all clear",
+            "makes sense",
+            "make sense",
+            "sound good",
+            "sounds good",
+            "right",
+            "okay",
+            "ok",
+            "fair enough",
+            "any questions",
+            "anything else",
+        }:
+            return True
+        if parts[index] not in LEAD_INS:
+            break
+    return False
 
 
 def echo_share(me_text: str, them_texts: Iterable[str]) -> float:
@@ -200,7 +284,7 @@ class Conversation:
         before the new words' STT final is. In the 2026-10-29 technical round an interviewer
         who paused mid-question got 15 answers for 6 questions, each on its own fragment
         ("for the big set of services, yes"), and one answered the topic before."""
-        if not self.asked or gap_ms <= 0:
+        if not self.asked or gap_ms <= 0 or starts_question(text) or starts_brief_reply(text):
             return text
         prev = self.asked[-1]
         if any(ln.channel == "me" and ln.end_ms > prev.at_ms for ln in self.lines):
@@ -214,7 +298,7 @@ class Conversation:
         said = " ".join(text.split())
         if not said:
             return text
-        if said in prev.text:
+        if " ".join(words(said)) in " ".join(words(prev.text)):
             return prev.text
         return " ".join(f"{prev.text} {said}".split()[-CONTINUED_WORDS:])
 

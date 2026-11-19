@@ -8,7 +8,11 @@ from copilot_evals.answer_eval import grader_input, items, known_ids, summarize,
 
 def test_items_are_the_benchmark_questions_that_need_an_answer() -> None:
     got = {i.id: i for i in items()}
-    assert not {"share_screen", "greet", "unfinished"} & got.keys()
+    assert "unfinished" not in got
+    assert got["greet"].qtype == "respond"
+    assert got["share_screen"].qtype == "respond"
+    assert got["week"].qtype == "small_talk"
+    assert got["bye"].qtype == "small_talk"
     assert got["rate_limiter"].qtype == "system_design"
     assert "that has to work across several regions?" in got["rate_limiter"].question
     # The transcript before a question holds the earlier lines, as the live call would.
@@ -89,7 +93,9 @@ def test_group_standup_script_puts_the_users_lines_in_context_only() -> None:
     week = next(c for c in all_cases if c.id == "dana_week")
     assert "Alex Rivera: I'm finishing the label retry fix" in week.transcript
     fire = {c.id for c in all_cases if c.should_fire}
-    assert fire == {"dana_turns_to_alex", "dana_week", "dana_reminder", "dana_request"}
+    assert fire == {
+        "dana_turns_to_alex", "dana_week", "dana_reminder", "dana_request", "dana_audio",
+    }  # fmt: skip
 
 
 def test_review_standup_cases_carry_the_turn_taking() -> None:
@@ -107,6 +113,18 @@ def test_review_standup_cases_carry_the_turn_taking() -> None:
     assert all_cases["dana_own_update"].should_fire is False
     assert "about" in all_cases["dana_bye"].turns or "minute" in all_cases["dana_bye"].turns
     fire = {c.id for c in all_cases.values() if c.should_fire}
-    assert fire == {"dana_clear", "dana_aware", "dana_rest_review", "dana_plan", "dana_move",
-                    "dana_migration", "dana_next", "dana_name"}  # fmt: skip
+    assert fire == {
+        "dana_hello", "dana_clear", "dana_aware", "dana_rest_review", "dana_plan",
+        "dana_move", "dana_migration", "dana_next", "dana_name", "dana_bye",
+    }  # fmt: skip
     assert all_cases["dana_mhmm"].should_fire is False
+
+
+def test_fast_grader_accepts_brief_exchanges_without_shortening_substantive_answers() -> None:
+    questions = {item.id: item for item in items()}
+    for identity in ("greet", "week", "share_screen", "worked_here_before", "rate_limiter"):
+        text = grader_input("# digest", "Mode: interview", questions[identity], "fast", "- A cue")
+        assert "1 or 2 short cues are enough" in text
+        assert "short factual or yes-or-no question" in text
+        assert "fewer lines or reward padding" in text
+        assert "3 or 4 short talking points for a substantive question" in text

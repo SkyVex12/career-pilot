@@ -10,8 +10,8 @@
 #             inside one utterance (the speaker hesitates mid-sentence)
 #   gap_s     silence before this utterance
 #   voice     TTS voice; `style` is the delivery instruction given to the TTS model
-#   expect    "answer": a question for the user that needs talking points (should fire)
-#             "none":   no answer wanted (small talk, statements, requests, reactions)
+#   expect    "answer": a question or reply-seeking exchange for the user (should fire)
+#             "none":   exposition, acknowledgements or an ask addressed to someone else
 #             "either": not scored for detection (an unfinished question the user forces)
 #   type      expected question type when expect = "answer"
 #   prepared  id of the prepared answer in profile.toml this question paraphrases, if any
@@ -27,15 +27,17 @@ pause_s = 0.0
 id = "greet"
 parts = ["Hi Alex, thanks for joining today. Can you hear me okay?"]
 gap_s = 1.5
-expect = "none"
-case = "small talk"
+expect = "answer"
+case = "greeting and audio check"
+type = "respond"
 
 [[utterance]]
 id = "week"
 parts = ["Great. How's your week been so far?"]
 gap_s = 3.0
-expect = "none"
+expect = "answer"
 case = "small talk"
+type = "small_talk"
 
 [[utterance]]
 id = "team_intro"
@@ -85,22 +87,25 @@ case = "question with a mid-sentence pause"
 id = "share_screen"
 parts = ["Actually, could you share your screen for a second?"]
 gap_s = 12.0
-expect = "none"
+expect = "answer"
 case = "request for an action (fired in the live test)"
+type = "respond"
 
 [[utterance]]
 id = "what_is_that"
 parts = ["Hmm, what is that?"]
 gap_s = 4.0
-expect = "none"
-case = "short reaction to something on screen (fired in the live test)"
+expect = "answer"
+case = "a short request for explanation about something on screen"
+type = "other"
 
 [[utterance]]
 id = "seen_it"
 parts = ["Oh okay, got it, that's the dashboard. You can stop sharing now."]
 gap_s = 3.0
-expect = "none"
-case = "statement"
+expect = "answer"
+case = "an acknowledgement followed by a request to stop sharing"
+type = "respond"
 
 [[utterance]]
 id = "schema_changes"
@@ -190,5 +195,6 @@ case = "closing question, paraphrase of a prepared answer"
 id = "bye"
 parts = ["Great, thanks so much Alex. We'll be in touch with next steps soon."]
 gap_s = 10.0
-expect = "none"
-case = "statement"
+expect = "answer"
+case = "closing courtesy to the candidate"
+type = "small_talk"

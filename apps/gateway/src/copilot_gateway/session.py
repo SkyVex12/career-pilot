@@ -64,6 +64,7 @@ from copilot_gateway.answer import (
     Question,
     ScreenAsk,
     is_answer_command,
+    normalize_question,
 )
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
 from copilot_gateway.config import Settings
@@ -162,6 +163,25 @@ class ApplicationMemory:
     pack: SessionPack | None
     resume_version_id: UUID | None
     is_base: bool
+
+
+@dataclass(frozen=True)
+class QuestionSource:
+    """Capture timing when the utterance was detected, before asynchronous model work."""
+
+    at_ms: int
+    observed_at: float
+    turn_at: float | None
+
+
+@dataclass
+class AutomaticQuestion:
+    """The original words and visible output of one automatic card, kept only in memory."""
+
+    text: str
+    at_ms: int
+    emitted: set[str] = field(default_factory=set[str])
+    completed: set[str] = field(default_factory=set[str])
 
 
 # Echo (see Session._settle_me): this many lines taken for echo within ECHO_WINDOW_S turn the
@@ -271,6 +291,9 @@ class Session:
             early_all_modes=self.settings.early_decision_all_modes,
         )
         self.answers = AnswerEngine(self)
+        self._automatic_questions: OrderedDict[UUID, AutomaticQuestion] = OrderedDict()
+        self._question_sources: OrderedDict[tuple[str, int], QuestionSource] = OrderedDict()
+        self._latest_them_result_ms = 0
         self.dedupe = audio.FrameDedupe(
             {ch: int(restored[f"hw_{ch}"]) for ch in ("them", "me") if f"hw_{ch}" in restored}
         )
@@ -358,6 +381,14 @@ class Session:
     # Messages to the client.
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
+        qid = fields.get("question_id")
+        automatic = self._automatic_questions.get(qid) if isinstance(qid, UUID) else None
+        pass_ = fields.get("pass")
+        if automatic is not None and isinstance(pass_, str):
+            if cls is models.AnswerDelta and fields.get("text", "").strip():
+                automatic.emitted.add(pass_)
+            elif cls is models.AnswerDone and pass_ in automatic.emitted:
+                automatic.completed.add(pass_)
         if fields.get("question_type") == "respond" and not self.knows_respond:
             fields["question_type"] = "other"
         if fields.get("question_type") == "follow":  # the protocol has no such type
@@ -658,6 +689,13 @@ class Session:
     # TurnHost.
 
     def detect(self, utterance: str) -> "asyncio.Future[Detection]":
+        duplicate = self._duplicate_question(utterance)
+        if duplicate is not None:
+            self.log_entry({"kind": "question_duplicate", "question_id": str(duplicate.qid)})
+            skipped: asyncio.Future[Detection] = asyncio.get_running_loop().create_future()
+            skipped.set_result(Detection("duplicate", duplicate.qtype))
+            return skipped
+        self._snapshot_question(utterance)
         transcript = self.conv.recent(self.settings.detector_context_tokens)
         turns = ""
         if self.info.mode in prompts.GROUP_MODES:
@@ -679,6 +717,107 @@ class Session:
         ):
             return asyncio.ensure_future(named_or_model(call, grace / 1000))
         return call
+
+    def _duplicate_question(self, utterance: str) -> Question | None:
+        """Suppress a short repeat of the latest usable card, never a later follow-up.
+
+        Compare the words before continuation joins fragments. A deliberate force bypasses
+        this detector path; failed or withdrawn cards do not make retries disappear.
+        """
+        window_ms = min(self.settings.continuation_gap_ms, 10_000)
+        if window_ms <= 0:
+            return None
+        latest = next((q for q in reversed(self.answers.questions.values()) if not q.held), None)
+        if (
+            latest is None
+            or latest.forced
+            or latest.cancelled
+            or latest.discarded
+            or latest.superseded
+        ):
+            return None
+        automatic = self._automatic_questions.get(latest.qid)
+        if automatic is None or normalize_question(utterance) != automatic.text:
+            return None
+        if time.monotonic() - latest.t0 > window_ms / 1000:
+            return None
+        capture_at = max(
+            self.conv.them_end,
+            self.them_open or 0,
+            self.them_spans[-1][1] if self.them_spans else 0,
+        )
+        if capture_at - automatic.at_ms > window_ms:
+            return None
+        if any(
+            line.channel == "me"
+            and line.end_ms > automatic.at_ms
+            and (not line.text or substantive_words(line.text) > 0)
+            for line in self.conv.lines
+        ):
+            return None
+        if any(
+            line.channel == "them"
+            and line.end_ms > automatic.at_ms
+            and normalize_question(line.text) != automatic.text
+            and substantive_words(line.text) > 0
+            for line in self.conv.lines
+        ):
+            return None
+        if automatic.completed or any(not task.done() for task in latest.tasks.values()):
+            return latest
+        return None
+
+    def _snapshot_question(self, text: str) -> None:
+        # Include the capture end in the key: two identical questions can both be waiting
+        # on slow detector calls. The later one must not overwrite the earlier source.
+        at_ms = max(self._latest_them_result_ms, self.conv.them_end)
+        turn = self.turns.turn
+        turn_at = turn.t0 if turn is not None and not self.turns.speaking else None
+        key = (normalize_question(text), at_ms)
+        self._question_sources[key] = QuestionSource(at_ms, time.monotonic(), turn_at)
+        self._question_sources.move_to_end(key)
+        while len(self._question_sources) > 100:
+            self._question_sources.popitem(last=False)
+
+    def _question_anchor(self, text: str, t0: float | None) -> int | None:
+        if t0 is None:
+            return None
+        words = normalize_question(text)
+        sources = [source for (said, _), source in self._question_sources.items() if said == words]
+        exact = [source for source in sources if source.turn_at == t0]
+        if exact:
+            return exact[-1].at_ms
+        # Early detection precedes the speech-end turn. A held pass records its source at
+        # creation; without one, use only a source observed by that turn's start. The small
+        # tolerance covers synchronous held creation just after the early timer was read.
+        early = [
+            source
+            for source in sources
+            if source.turn_at is None and source.observed_at <= t0 + 0.05
+        ]
+        return early[-1].at_ms if early else None
+
+    def _remember_automatic(self, qid: UUID, text: str, *, t0: float | None = None) -> None:
+        words = normalize_question(text)
+        automatic = self._automatic_questions.get(qid)
+        if automatic is not None and automatic.text == words:
+            return  # A later release or confirmation cannot advance the source's clock.
+        question = self.answers.questions.get(qid)
+        anchor = self._question_anchor(
+            text, t0 if t0 is not None else question.t0 if question else None
+        )
+        if automatic is None:
+            self._automatic_questions[qid] = AutomaticQuestion(
+                words, anchor if anchor is not None else self.conv.them_end
+            )
+        else:
+            automatic.text = words
+            # A materially changed final may have a new snapshot for this same turn. If
+            # not, retain its original source instead of borrowing a later turn's end.
+            if anchor is not None:
+                automatic.at_ms = anchor
+        while len(self._automatic_questions) > 100:
+            self._automatic_questions.popitem(last=False)
 
     def _remember_detection(self, call: "asyncio.Future[Detection]") -> None:
         if not call.cancelled() and call.exception() is None:
@@ -702,6 +841,7 @@ class Session:
         t0: float,
         match: "asyncio.Task[object] | None",
     ) -> UUID:
+        original = text
         text = self._continued(text)
         q = Question(
             qid=uuid7(),
@@ -717,6 +857,7 @@ class Session:
             decided_ms=detection.decided_ms,
             depth=detection.depth,
         )
+        self._remember_automatic(q.qid, original, t0=t0)
         self.emit(
             models.QuestionDetected,
             question_id=q.qid,
@@ -743,6 +884,7 @@ class Session:
     def confirm_question(
         self, qid: UUID, text: str, turn_end_ms: int, final_ms: int | None
     ) -> None:
+        self._remember_automatic(qid, text)
         text = self._continued(text)
         self.answers.confirm(qid, text, turn_end_ms, final_ms)
         # Paired with what the user says after the question's own words, which may already
@@ -766,6 +908,7 @@ class Session:
             match=match,
             held=True,
         )
+        self._remember_automatic(q.qid, text, t0=t0)
         self.answers.add(q)
         return q.qid
 
@@ -775,6 +918,7 @@ class Session:
         q = self.answers.questions.get(qid)
         if q is None:
             return
+        self._remember_automatic(qid, text)
         text = self._continued(text)
         q.text = text
         q.qtype = detection.qtype
@@ -821,6 +965,7 @@ class Session:
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
+        self._latest_them_result_ms = max(self._latest_them_result_ms, r.end_ms)
         if r.text:
             if r.is_final:
                 self.emit(
