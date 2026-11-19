@@ -6,7 +6,9 @@
   color-scheme: light;
   --bg: #f1efe8;
   --surface: #fbfaf5;
+  --surface-rgb: 251 250 245;
   --surface-2: #f1efe8;
+  --surface-2-rgb: 241 239 232;
   --surface-sunken: #e8e5dc;
   --border: #cbc8bd;
   --border-strong: #8c887e;
@@ -39,7 +41,9 @@
   color-scheme: dark;
   --bg: #11110f;
   --surface: #1c1c19;
+  --surface-rgb: 28 28 25;
   --surface-2: #282823;
+  --surface-2-rgb: 40 40 35;
   --surface-sunken: #151512;
   --border: #414138;
   --border-strong: #818176;

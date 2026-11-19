@@ -24,10 +24,20 @@ static char CopilotCaptureMaskKey;
 - (BOOL)install:(NSWindow *)window;
 - (void)remove;
 - (BOOL)prime;
+- (AVQueuedSampleBufferRenderingStatus)renderStatus;
+- (void)flushRenderer;
 - (void)refresh:(NSNotification *)notification;
 @end
 
 @implementation CopilotCaptureMask
+- (AVQueuedSampleBufferRenderingStatus)renderStatus {
+    if (@available(macOS 14.0, *)) return self.shield.sampleBufferRenderer.status;
+    return self.shield.status;
+}
+- (void)flushRenderer {
+    if (@available(macOS 14.0, *)) [self.shield.sampleBufferRenderer flush];
+    else [self.shield flush];
+}
 - (BOOL)prime {
     // One opaque image supplies mask alpha. A layer background color alone is not video
     // content and does not exercise preventsCapture. All CF objects have bounded ownership.
@@ -57,12 +67,13 @@ static char CopilotCaptureMaskKey;
             CFMutableDictionaryRef entry = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(attachments, 0);
             CFDictionarySetValue(entry, kCMSampleAttachmentKey_DisplayImmediately, kCFBooleanTrue);
         }
-        [self.shield.sampleBufferRenderer enqueueSampleBuffer:sample];
+        if (@available(macOS 14.0, *)) [self.shield.sampleBufferRenderer enqueueSampleBuffer:sample];
+        else [self.shield enqueueSampleBuffer:sample];
     }
     if (sample) CFRelease(sample);
     if (format) CFRelease(format);
     CFRelease(pixels);
-    return result == noErr && self.shield.sampleBufferRenderer.status != AVQueuedSampleBufferRenderingStatusFailed;
+    return result == noErr && [self renderStatus] != AVQueuedSampleBufferRenderingStatusFailed;
 }
 
 - (BOOL)install:(NSWindow *)window {
@@ -114,13 +125,21 @@ static char CopilotCaptureMaskKey;
     NSWindow *window = self.window;
     NSView *view = self.view;
     if (!window || !view) { [self remove]; return; }
-    AVSampleBufferVideoRenderer *renderer = self.shield.sampleBufferRenderer;
+    BOOL needsFlush;
+    NSError *renderError;
+    if (@available(macOS 14.0, *)) {
+        needsFlush = self.shield.sampleBufferRenderer.requiresFlushToResumeDecoding;
+        renderError = self.shield.sampleBufferRenderer.error;
+    } else {
+        needsFlush = self.shield.requiresFlushToResumeDecoding;
+        renderError = self.shield.error;
+    }
     BOOL wake = [notification.name isEqualToString:NSWorkspaceDidWakeNotification];
-    if (wake || renderer.requiresFlushToResumeDecoding || renderer.status == AVQueuedSampleBufferRenderingStatusFailed) {
-        [renderer flush];
+    if (wake || needsFlush || [self renderStatus] == AVQueuedSampleBufferRenderingStatusFailed) {
+        [self flushRenderer];
         if (![self prime]) {
             // Recover usability, not a false guarantee of capture protection.
-            NSLog(@"Copilot: experimental capture mask failed (%@); restoring visible content. Stop screen sharing and retry Stealth mode.", renderer.error);
+            NSLog(@"Copilot: experimental capture mask failed (%@); restoring visible content. Stop screen sharing and retry Stealth mode.", renderError);
             [self remove];
             return;
         }
@@ -149,7 +168,7 @@ static char CopilotCaptureMaskKey;
     self.window.backgroundColor = self.background;
     self.window.opaque = self.opaque;
     self.window.hasShadow = self.shadow;
-    [self.shield.sampleBufferRenderer flush];
+    [self flushRenderer];
 }
 
 - (void)dealloc {

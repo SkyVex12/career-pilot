@@ -248,8 +248,8 @@ pub fn capture_window(id: u32) -> Result<image::RgbaImage, String> {
         );
     }
     extern "C" fn receive(context: *mut c_void, bytes: *const u8, len: usize, error: *const c_char) {
-        // SAFETY: the bridge calls once before returning, while result is live. Its semaphore
-        // synchronizes this callback's writes with the calling worker. Bytes live for the call.
+        // SAFETY: the bridge calls once on this worker before returning, while result is live.
+        // Its async Apple completions never retain this context. Bytes live for the call.
         unsafe {
             let result = &mut *(context as *mut Result<Vec<u8>, String>);
             *result = if !error.is_null() {

@@ -678,13 +678,14 @@ export interface SessionDetail extends Partial<SessionItem> {
   questions: number;
 }
 
-/** An output device for guests' voice: only headphones that are not the call's own qualify. */
+/** A native output device, including the call route and current system default. */
 export interface VoiceDevice {
   id: string;
   name: string;
   form_factor: "headphones" | "headset" | "speakers" | "other" | "unknown";
   private: boolean;
   call: boolean;
+  system_default?: boolean;
 }
 
 /** A guest seat as the host lists it (GET /sessions/{id}/seats). */

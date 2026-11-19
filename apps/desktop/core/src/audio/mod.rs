@@ -6,7 +6,14 @@
 //! turns speech into [`OutFrame`]s, which the network client numbers and sends.
 
 pub mod aec;
+#[cfg(not(target_os = "macos"))]
 pub mod capture;
+#[cfg(target_os = "macos")]
+#[path = "capture_macos.rs"]
+pub mod capture;
+#[cfg(all(test, not(target_os = "macos")))]
+#[path = "capture_macos.rs"]
+mod capture_macos_tests;
 pub mod check;
 pub mod clock;
 pub mod framer;

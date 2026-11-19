@@ -64,12 +64,12 @@ function setup(over: Partial<VoiceDeps> = {}) {
     unlockLabels: vi.fn(async () => undefined),
     hostToken: vi.fn(async () => ({ url: "wss://lk", token: "host-token" })),
     guestToken: vi.fn(async () => ({ url: "wss://lk", token: "guest-token" })),
-    onDeviceChange: (f) => {
+    onDeviceChange: vi.fn((f) => {
       changed = f;
       return () => {
         changed = null;
       };
-    },
+    }),
     ...over,
   };
   const statuses: VoiceStatus[] = [];
@@ -104,10 +104,11 @@ describe("the host's voice", () => {
     expect(t.room.connect).not.toHaveBeenCalled();
   });
 
-  it("a window that cannot route sound to a device gets no voice", async () => {
+  it("requires native confirmation of the system output when routing is unsupported", async () => {
     const t = setup({ newAudio: () => fakeAudio([], false) as never });
     await t.c.handle(host);
-    expect(t.c.status).toMatchObject({ host: "off", error: "This window cannot choose an output device." });
+    expect(t.c.status).toMatchObject({ host: "off", error: expect.stringContaining("sound output") });
+    expect(t.room.connect).not.toHaveBeenCalled();
   });
 
   it("plays each guest routed to the headphones first, and only seats with voice", async () => {
@@ -135,7 +136,7 @@ describe("the host's voice", () => {
     t.deviceChange();
     await flush();
     await flush();
-    expect(t.c.status).toMatchObject({ host: "off", error: "The headphones went away, so guests' voice stopped." });
+    expect(t.c.status).toMatchObject({ host: "off", error: expect.stringContaining("disconnected") });
     expect(t.room.disconnect).toHaveBeenCalled();
   });
 
@@ -164,6 +165,102 @@ describe("the host's voice", () => {
     await t.c.handle({ cmd: "outputs" });
     expect(t.deps.unlockLabels).toHaveBeenCalled();
     expect(t.c.status.outputs).toEqual([{ deviceId: "d-hp", label: "Headphones (USB)" }]);
+  });
+
+  it("requests labels when WebKit hides every output until microphone permission", async () => {
+    const t = setup();
+    t.setDevices([]);
+    t.deps.unlockLabels = vi.fn(async () => t.setDevices([HP]));
+    await t.c.handle(host);
+    expect(t.deps.unlockLabels).toHaveBeenCalledOnce();
+    expect(t.c.status.host).toBe("on");
+  });
+
+  it("does not fall back to system playback after an explicit routing failure", async () => {
+    const audio = fakeAudio([]);
+    audio.setSinkId = vi.fn(async () => { throw new Error("Output access denied"); });
+    const t = setup({ newAudio: () => audio as never });
+    await t.c.handle(host);
+    expect(t.c.status).toMatchObject({ host: "off", error: "Output access denied" });
+    expect(t.room.connect).not.toHaveBeenCalled();
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+});
+
+describe("older WebKit system output", () => {
+  const output = { id: "coreaudio:headset", name: "Headset", form_factor: "headphones" as const, private: true, call: true, system_default: true };
+  function systemVoice() {
+    const audio = fakeAudio([], false);
+    const t = setup({
+      newAudio: () => audio as never,
+      devices: vi.fn(async () => []),
+      callOutput: vi.fn(async () => output),
+    });
+    return { ...t, audio };
+  }
+
+  it("uses the confirmed call output without output enumeration or microphone access", async () => {
+    const t = systemVoice();
+    await t.c.handle(host);
+    expect(t.c.status).toMatchObject({ host: "on", device: "", error: null });
+    expect(t.deps.devices).not.toHaveBeenCalled();
+    expect(t.deps.unlockLabels).not.toHaveBeenCalled();
+    expect(t.deps.onDeviceChange).toHaveBeenCalledWith(expect.any(Function), true);
+    const a = track();
+    t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    await flush();
+    expect(a.attach).toHaveBeenCalledWith(t.audio);
+    expect(t.audio.play).toHaveBeenCalledOnce();
+    expect(t.audio.muted).toBe(false);
+    await t.c.handle({ cmd: "host_off" });
+    const checks = vi.mocked(t.deps.callOutput).mock.calls.length;
+    t.deviceChange();
+    await flush();
+    expect(t.deps.callOutput).toHaveBeenCalledTimes(checks);
+  });
+
+  it("refuses a selected device that is not the system output", async () => {
+    const t = systemVoice();
+    vi.mocked(t.deps.callOutput).mockResolvedValue({ ...output, system_default: false });
+    await t.c.handle(host);
+    expect(t.c.status.host).toBe("off");
+    expect(t.deps.hostToken).not.toHaveBeenCalled();
+    expect(t.audio.play).not.toHaveBeenCalled();
+  });
+
+  it("checks the default again after connection before reporting voice ready", async () => {
+    const t = systemVoice();
+    vi.mocked(t.deps.callOutput).mockResolvedValueOnce(output).mockResolvedValue({ ...output, system_default: false });
+    await t.c.handle(host);
+    expect(t.c.status).toMatchObject({ host: "off", error: expect.stringContaining("output changed") });
+    expect(t.room.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks native identity before a newly subscribed track can play", async () => {
+    const t = systemVoice();
+    await t.c.handle(host);
+    vi.mocked(t.deps.callOutput).mockResolvedValue({ ...output, id: "coreaudio:speakers" });
+    const a = track();
+    t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    await flush();
+    expect(a.attach).not.toHaveBeenCalled();
+    expect(t.audio.play).not.toHaveBeenCalled();
+    expect(t.c.status.host).toBe("off");
+  });
+
+  it.each(["changed", "unavailable"])("stops playback when native output is %s", async problem => {
+    const t = systemVoice();
+    await t.c.handle(host);
+    const a = track();
+    t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    await flush();
+    if (problem === "changed") vi.mocked(t.deps.callOutput).mockResolvedValue({ ...output, id: "coreaudio:speakers" });
+    else vi.mocked(t.deps.callOutput).mockRejectedValue(new Error("Device lookup failed"));
+    t.deviceChange();
+    await flush();
+    expect(t.c.status.host).toBe("off");
+    expect(t.audio.pause).toHaveBeenCalledOnce();
+    expect(t.room.disconnect).toHaveBeenCalledOnce();
   });
 });
 

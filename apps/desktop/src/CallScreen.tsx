@@ -23,6 +23,7 @@ import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
 import { STOPPED, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
+import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
 import { plural, relative, useShowCount } from "./shared";
 import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
@@ -681,7 +682,7 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
     <div className="audio-summary">
       <div className="ui-row-inline audio-line">
         <div className="audio-device"><Icon name="mic" /><div><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div></div>
-        <div className="audio-device"><Icon name="headphones" /><div><span>Call audio</span><strong>{name(devices?.outputs, settings.output_device)}</strong></div></div>
+        <div className="audio-device"><Icon name="headphones" /><div><span>{isMac() ? "System audio" : "Call audio"}</span><strong>{isMac() ? "All apps" : name(devices?.outputs, settings.output_device)}</strong></div></div>
         <Button size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? "Done" : "Change or test"}
         </Button>
@@ -706,6 +707,7 @@ function useDevices() {
 /** The microphone and call-audio pickers, each with its Test; saved the moment one is picked. */
 export function DevicePickers({ settings, disabled, onSaved }: { settings: Settings; disabled: boolean; onSaved: () => void }) {
   const devices = useDevices();
+  const outputLabel = isMac() ? "Playback output" : "Call audio from";
   const [mic, setMic] = useState(settings.mic_device);
   const [output, setOutput] = useState(settings.output_device);
   const [error, setError] = useState<string | null>(null);
@@ -741,11 +743,11 @@ export function DevicePickers({ settings, disabled, onSaved }: { settings: Setti
         </DeviceTest>
       </div>
       <div className="ui-field">
-        <span className="ui-field-label">Call audio from</span>
+        <span className="ui-field-label">{outputLabel}</span>
         <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled}>
-          {select(devices?.outputs, output, "output_device", "Call audio from")}
+          {select(devices?.outputs, output, "output_device", outputLabel)}
         </DeviceTest>
-        <p className="ui-field-hint">The speakers or headset the call plays on; captured in loopback.</p>
+        <p className="ui-field-hint">{isMac() ? "Guest audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>
       </div>
       {error && <p className="ui-field-error">{error}</p>}
     </div>

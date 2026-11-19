@@ -105,6 +105,92 @@ void copilot_screen_stop(void *handle) {
     }
 }
 
+// Ventura has SCStream but not SCScreenshotManager. Collect exactly one complete frame
+// from the same selected-window filter. No display fallback and no Rust callbacks outlive
+// the synchronous snapshot request, including timeout/error paths.
+@interface CopilotSnapshot : NSObject <SCStreamOutput, SCStreamDelegate>
+@property (strong) dispatch_semaphore_t ready;
+@property (strong) NSData *png;
+@property (strong) NSString *failure;
+@property BOOL finished;
+@property BOOL started;
+@property BOOL stopping;
+- (void)finish:(NSData *)png error:(NSString *)error;
+@end
+@implementation CopilotSnapshot
+- (void)finish:(NSData *)png error:(NSString *)error {
+    @synchronized (self) {
+        if (self.finished) return;
+        self.finished = YES;
+        self.png = png;
+        self.failure = error;
+        dispatch_semaphore_signal(self.ready);
+    }
+}
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
+    [self finish:nil error:error.localizedDescription];
+}
+- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sample ofType:(SCStreamOutputType)type {
+    if (type != SCStreamOutputTypeScreen || !CMSampleBufferIsValid(sample)) return;
+    @synchronized (self) { if (self.finished) return; }
+    CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sample, false);
+    if (!attachments || CFArrayGetCount(attachments) == 0) return;
+    NSDictionary *info = (__bridge NSDictionary *)CFArrayGetValueAtIndex(attachments, 0);
+    NSNumber *status = info[SCStreamFrameInfoStatus];
+    if (!status || status.integerValue != SCFrameStatusComplete) return;
+    CVImageBufferRef buffer = CMSampleBufferGetImageBuffer(sample);
+    if (!buffer) return;
+    @autoreleasepool {
+        CIImage *image = [CIImage imageWithCVPixelBuffer:buffer];
+        CIContext *context = [CIContext contextWithOptions:nil];
+        CGImageRef cgImage = [context createCGImage:image fromRect:image.extent];
+        if (!cgImage) { [self finish:nil error:@"Could not read the screenshot."]; return; }
+        NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cgImage];
+        CGImageRelease(cgImage);
+        NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        [self finish:png error:png ? nil : @"Could not encode the screenshot."];
+    }
+}
+@end
+
+static void copilot_snapshot_stop(SCStream *stream, CopilotSnapshot *owner) {
+    @synchronized (owner) {
+        // A timeout may precede the start completion. That completion retries cleanup.
+        if (!owner.started || owner.stopping) return;
+        owner.stopping = YES;
+    }
+    [stream stopCaptureWithCompletionHandler:^(NSError *err) {
+        [stream removeStreamOutput:owner type:SCStreamOutputTypeScreen error:nil];
+    }];
+}
+
+static NSData *copilot_snapshot_stream(SCContentFilter *filter, SCStreamConfiguration *config, NSString **failure) {
+    CopilotSnapshot *owner = [CopilotSnapshot new];
+    owner.ready = dispatch_semaphore_create(0);
+    dispatch_queue_t queue = dispatch_queue_create("com.copilot.screen.snapshot", DISPATCH_QUEUE_SERIAL);
+    SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:owner];
+    NSError *error = nil;
+    if (![stream addStreamOutput:owner type:SCStreamOutputTypeScreen sampleHandlerQueue:queue error:&error]) {
+        *failure = error.localizedDescription ?: @"Could not start the screenshot.";
+        return nil;
+    }
+    [stream startCaptureWithCompletionHandler:^(NSError *err) {
+        if (err) {
+            [owner finish:nil error:err.localizedDescription];
+            [stream removeStreamOutput:owner type:SCStreamOutputTypeScreen error:nil];
+        } else {
+            @synchronized (owner) { owner.started = YES; }
+            if (owner.finished) copilot_snapshot_stop(stream, owner);
+        }
+    }];
+    if (dispatch_semaphore_wait(owner.ready, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0)
+        [owner finish:nil error:@"The selected window did not provide a screenshot. Try again."];
+    // Keep the output owner alive until native capture stops, even when a timeout returns.
+    copilot_snapshot_stop(stream, owner);
+    *failure = owner.failure;
+    return owner.png;
+}
+
 // One-shot window capture also uses ScreenCaptureKit, replacing removed legacy CG capture.
 typedef void (*SnapshotFn)(void *, const unsigned char *, size_t, const char *);
 void copilot_window_snapshot(uint32_t identifier, void *context, SnapshotFn callback) {
@@ -115,7 +201,11 @@ void copilot_window_snapshot(uint32_t identifier, void *context, SnapshotFn call
         [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:YES completionHandler:^(SCShareableContent *value, NSError *err) {
             content = value; failure = err; dispatch_semaphore_signal(ready);
         }];
-        dispatch_semaphore_wait(ready, DISPATCH_TIME_FOREVER);
+        // Completion blocks own only Objective-C state, never the Rust stack context.
+        if (dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) != 0) {
+            callback(context, NULL, 0, "Screen access is still pending. Allow Screen Recording, then try again.");
+            return;
+        }
         SCWindow *selected = nil;
         for (SCWindow *window in content.windows) if (window.windowID == identifier && window.owningApplication.processID != getpid()) { selected = window; break; }
         if (!selected) { callback(context, NULL, 0, (failure.localizedDescription ?: @"The selected window is no longer available.").UTF8String); return; }
@@ -126,16 +216,28 @@ void copilot_window_snapshot(uint32_t identifier, void *context, SnapshotFn call
         config.width = MAX(1, (NSUInteger)(width * scale));
         config.height = MAX(1, (NSUInteger)(height * scale));
         config.showsCursor = NO;
-        [SCScreenshotManager captureImageWithFilter:filter configuration:config completionHandler:^(CGImageRef image, NSError *error) {
-            if (!image) callback(context, NULL, 0, (error.localizedDescription ?: @"Window capture failed.").UTF8String);
-            else {
-                NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:image];
-                NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-                if (png) callback(context, png.bytes, png.length, NULL);
-                else callback(context, NULL, 0, "Could not encode the screenshot.");
-            }
-            dispatch_semaphore_signal(ready);
-        }];
-        dispatch_semaphore_wait(ready, DISPATCH_TIME_FOREVER);
+        NSData *png = nil;
+        NSString *error = nil;
+        if (@available(macOS 14.0, *)) {
+            CopilotSnapshot *result = [CopilotSnapshot new];
+            result.ready = dispatch_semaphore_create(0);
+            [SCScreenshotManager captureImageWithFilter:filter configuration:config completionHandler:^(CGImageRef image, NSError *err) {
+                if (!image) [result finish:nil error:err.localizedDescription ?: @"Window capture failed."];
+                else {
+                    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithCGImage:image];
+                    NSData *encoded = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+                    [result finish:encoded error:encoded ? nil : @"Could not encode the screenshot."];
+                }
+            }];
+            if (dispatch_semaphore_wait(result.ready, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0)
+                [result finish:nil error:@"The selected window did not provide a screenshot. Try again."];
+            png = result.png;
+            error = result.failure;
+        } else {
+            png = copilot_snapshot_stream(filter, config, &error);
+        }
+        // Exactly one callback on the calling worker, before its Rust context is released.
+        if (png) callback(context, png.bytes, png.length, NULL);
+        else callback(context, NULL, 0, (error ?: @"Window capture failed.").UTF8String);
     }
 }

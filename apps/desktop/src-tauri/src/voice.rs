@@ -18,6 +18,9 @@ pub struct VoiceDevice {
     /// The device the call plays on and is captured from. Allowed: guests heard there are
     /// transcribed like the call, which the host accepts.
     pub call: bool,
+    /// Older WebKit plays through the system output without a speaker-selection API.
+    /// Expose the native default so the frontend can verify that route before playback.
+    pub system_default: bool,
 }
 
 pub fn devices(call_output: Option<&str>) -> Vec<VoiceDevice> {
@@ -30,6 +33,7 @@ pub fn devices(call_output: Option<&str>) -> Vec<VoiceDevice> {
             VoiceDevice {
                 private: form_factor.is_private(),
                 call: is_call,
+                system_default: d.is_default,
                 form_factor,
                 id: d.id,
                 name: d.name,

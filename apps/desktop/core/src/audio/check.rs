@@ -117,12 +117,23 @@ fn mic_verdict(c: &Channel) -> Verdict {
     let (ok, message) = if c.heard_ms == 0 {
         (
             false,
-            "No audio came from this microphone. Pick another one, or check that Windows lets apps use it.",
+            if cfg!(target_os = "macos") {
+                "No audio came from this microphone. Pick another one, or allow Microphone access in System Settings."
+            } else {
+                "No audio came from this microphone. Pick another one, or check that Windows lets apps use it."
+            },
         )
     } else if peak_db < SILENT_DB {
         (false, "The microphone sends only silence: it may be muted, or it is not the one you speak into.")
     } else if c.sound_ms < MIC_OK_MS {
-        (false, "Too quiet: speak during the test, move closer, or raise the microphone's level in Windows.")
+        (
+            false,
+            if cfg!(target_os = "macos") {
+                "Too quiet: speak during the test, move closer, or raise the microphone's input level in System Settings."
+            } else {
+                "Too quiet: speak during the test, move closer, or raise the microphone's level in Windows."
+            },
+        )
     } else {
         (true, "Your voice comes through.")
     };
@@ -132,11 +143,25 @@ fn mic_verdict(c: &Channel) -> Verdict {
 fn call_verdict(c: &Channel, tone_played: bool) -> Verdict {
     let peak_db = dbfs(c.peak);
     let (ok, message) = if c.sound_ms >= CALL_OK_MS {
-        (true, "The app hears what plays on this output. Set the call app to play here too.")
+        (
+            true,
+            if cfg!(target_os = "macos") {
+                "System audio comes through. Audio from other apps is captured regardless of their playback output."
+            } else {
+                "The app hears what plays on this output. Set the call app to play here too."
+            },
+        )
     } else if !tone_played {
         (false, "The test sound could not be played on this output; play something on it and test again.")
     } else {
-        (false, "Nothing was heard from this output. Pick the speakers or headset the call app plays on.")
+        (
+            false,
+            if cfg!(target_os = "macos") {
+                "Nothing was heard from system audio. Allow Screen Recording in System Settings, then play audio and test again."
+            } else {
+                "Nothing was heard from this output. Pick the speakers or headset the call app plays on."
+            },
+        )
     };
     Verdict { ok, message: message.into(), peak_db, sound_ms: c.sound_ms }
 }

@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Copilot records call audio from your selected output device to transcribe the other speakers during a session.</string>
+	<string>Copilot records system audio to transcribe the other speakers during a session.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Copilot uses your microphone to transcribe your speech during a session and for guest voice chat.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Copilot captures the problem window when you request a screenshot.</string>
+	<string>Copilot uses Screen Recording for system audio during calls, and captures a selected screen or window only when you share it or request a screenshot.</string>
 </dict>
 </plist>
