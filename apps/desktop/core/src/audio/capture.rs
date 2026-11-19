@@ -1,8 +1,7 @@
 //! Capture devices through cpal: the microphone ("me") and the system output ("them"). On
 //! Windows, cpal opens an output device as an input in WASAPI loopback mode, so "them" is
-//! exactly what the call app plays, whatever the call platform. On macOS 14.6+, cpal uses
-//! a Core Audio process tap on that output device. The app bundle declares microphone and
-//! system-audio usage descriptions so macOS can ask for permission.
+//! exactly what the call app plays, whatever the call platform. macOS uses the separate
+//! AudioQueue/ScreenCaptureKit backend in capture_macos.rs.
 //!
 //! Each callback averages the device's channels and resamples to 16 kHz before handing the
 //! audio on, so the audio thread only sees 16 kHz mono.

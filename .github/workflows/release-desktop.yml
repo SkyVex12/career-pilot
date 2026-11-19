@@ -213,7 +213,7 @@ jobs:
       - name: Merge Windows and Mac updater entries
         if: needs.macos.result == 'success'
         run: |
-          node apps/desktop/scripts/release.mjs merge --version "$VERSION" --out dist-release/latest.json dist-release/latest.json dist-release/manifest-darwin-aarch64.json dist-release/manifest-darwin-x86_64.json
+          node apps/desktop/scripts/release.mjs merge --version "$VERSION" --out dist-release/latest.json dist-release/latest.json dist-release/manifest-darwin-universal.json
       - name: The manifest points at this bucket
         run: |
           url=$(jq -r '.platforms["windows-x86_64"].url' dist-release/latest.json)

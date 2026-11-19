@@ -6,7 +6,7 @@
       "dmg"
     ],
     "macOS": {
-      "minimumSystemVersion": "15.4",
+      "minimumSystemVersion": "13.0",
       "entitlements": "Entitlements.plist",
       "infoPlist": "Info.plist"
     }

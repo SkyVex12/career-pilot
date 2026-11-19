@@ -1,6 +1,6 @@
 # Copilot
 
-macOS: see [building, permissions, and releases](docs/macos.md) (Apple Silicon and Intel, macOS 15.4+).
+macOS: see [building, permissions, and releases](docs/macos.md) (Universal app for Apple Silicon and Intel, macOS 13+).
 
 Desktop career copilot: listens to live interviews and meetings, detects questions aimed at
 the user, and shows answers grounded in their career memory. The design is in
@@ -679,7 +679,7 @@ tests. To uninstall: Settings → Apps → Copilot Desktop → Uninstall; the si
 Credential Manager (`com.copilot.desktop` entries) until you sign out.
 
 **Mac preview downloads:** see [Mac installation and direct GCP links](docs/macos.md#ci-and-public-releases).
-These DMGs require macOS 15.4 or newer; they are previews and may trigger Gatekeeper.
+The Universal DMG targets macOS 13 Ventura and newer on Apple Silicon and Intel; previews may trigger Gatekeeper.
 
 ## Releasing the desktop app
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, onAudioCheck, type AudioPart } from "./api";
 import { type CheckState, meterFill, partLevel, partLine, partVerdict } from "./audiotest";
 import { Button } from "./ui";
+import { isMac } from "./platform";
 
 export function DeviceTest({
   part,
@@ -69,7 +70,7 @@ export function DeviceTest({
         </Button>
       </div>
       {running && (
-        <div className="device-meter" role="meter" aria-label={part === "mic" ? "Microphone level" : "Call audio level"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(meterFill(partLevel(part, check.meter)) * 100)}>
+        <div className="device-meter" role="meter" aria-label={part === "mic" ? "Microphone level" : isMac() ? "System audio level" : "Call audio level"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(meterFill(partLevel(part, check.meter)) * 100)}>
           <div className="device-meter-fill" style={{ width: `${Math.round(meterFill(partLevel(part, check.meter)) * 100)}%` }} />
         </div>
       )}

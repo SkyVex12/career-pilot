@@ -167,7 +167,7 @@
 .ov-single > .ov-pane-transcript { flex: 1; border-right: 0; }
 /* Compact session console, based on the supplied desktop references. */
 .shell-content:has(.session-console) { max-width: 840px; padding: 0 0 28px; margin: 0 auto; }
-.session-commandbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 20px; padding: 14px 28px; background: color-mix(in srgb, var(--surface-2) calc(var(--workspace-opacity, 1) * 100%), transparent); border-bottom: 1px solid var(--border); }
+.session-commandbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 20px; padding: 14px 28px; background: rgb(var(--surface-2-rgb) / var(--workspace-opacity, 1)); border-bottom: 1px solid var(--border); }
 .session-title { display: flex; align-items: center; gap: 10px; }
 .session-title h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .session-title > svg { color: var(--accent); }
@@ -225,7 +225,7 @@
 .session-window:not([data-mini="full"]) { position: fixed; inset: 0; }
 .session-window:not([data-mini="full"]) > :not(.session-commandbar) { display: none; }
 .session-window:not([data-mini="full"]) .session-commandbar { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); isolation: isolate; width: 280px; height: 56px; padding: 8px 10px; gap: 8px; border: 0; border-radius: 28px; background: none; }
-.session-compact-outline { position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; border: 1px solid var(--border-strong); border-radius: inherit; background: color-mix(in srgb, var(--surface-2) calc(var(--workspace-opacity, 1) * 100%), transparent); }
+.session-compact-outline { position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; border: 1px solid var(--border-strong); border-radius: inherit; background: rgb(var(--surface-2-rgb) / var(--workspace-opacity, 1)); }
 .session-commandbar > .ui-btn-ghost:not(.window-mode-toggle) { padding: 0 8px; }
 .session-commandbar > .ui-btn-primary { flex: 1; min-width: 100px; }
 .session-compact-ruby { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; flex: none; cursor: grab; touch-action: none; user-select: none; }
@@ -252,7 +252,7 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) {
 .session-window[data-mini="full"] .session-commandbar { position: static; padding: 0 0 22px; background: none; border: 0; flex-direction: row-reverse; justify-content: space-between; }
 .session-window[data-mini="full"] .session-title h1 { font-size: 25px; font-weight: 600; letter-spacing: -.7px; }
 .session-window[data-mini="full"] .session-commandbar > .ui-btn-ghost { border: 1px solid var(--border); width: 34px; height: 34px; border-radius: 10px; }
-.next-call { padding: var(--frame-padding, 22px); background: color-mix(in srgb, var(--surface) calc(var(--workspace-opacity, 1) * 100%), transparent); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 12px 40px #0000000a; }
+.next-call { padding: var(--frame-padding, 22px); background: rgb(var(--surface-rgb) / var(--workspace-opacity, 1)); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 12px 40px #0000000a; }
 .call-kind { display: flex; align-items: flex-start; gap: var(--space-3); margin-bottom: 18px; }
 .call-kind .call-ruby-button { height: var(--control-h-md); }
 .call-kind > .window-mode-toggle { margin-top: 5px; }
@@ -311,7 +311,7 @@ html[data-card-window] .shell-content:has(.session-window[data-mini="full"]) { w
 /* Every destination shares the same floating card; only its contents change. */
 .shell { background: transparent; }
 .shell-main { width: 100%; max-width: 100%; margin: 0 auto; padding: 8px; overflow: visible; }
-.workspace-card { background: color-mix(in srgb, var(--surface) calc(var(--workspace-opacity, 1) * 100%), transparent); border: 1px solid var(--border); border-radius: 20px; display: flex; flex-direction: column; max-height: var(--card-max-height, 860px); }
+.workspace-card { background: rgb(var(--surface-rgb) / var(--workspace-opacity, 1)); border: 1px solid var(--border); border-radius: 20px; display: flex; flex-direction: column; max-height: var(--card-max-height, 860px); }
 .workspace-card { --frame-padding: 22px; }
 .workspace-card-header { flex: none; padding: var(--frame-padding) var(--frame-padding) 0; }
 .workspace-card-tools { display: flex; align-items: center; gap: var(--space-3); min-height: 36px; cursor: grab; }

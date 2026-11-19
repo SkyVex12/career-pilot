@@ -1,10 +1,10 @@
 // Platform-specific desktop release bundles and the shared updater manifest.
-// config --version X [--platform windows-x86_64|darwin-aarch64|darwin-x86_64]
+// config --version X [--platform windows-x86_64|darwin-aarch64|darwin-x86_64|darwin-universal]
 //   [--preview] [--out FILE]: write the Tauri release overlay (default: Windows).
 // manifest --version X [--platform ...] [--bundle-dir DIR] [--out DIR]: stage the
 //   installer, signed update archive, and one platform's latest.json.
 // merge --version X --out FILE MANIFEST...: combine platforms after all builds succeed.
-// See docs/macos.md for Apple signing and the two native build targets.
+// See docs/macos.md for Apple signing and Universal Mac distribution.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ const installerName = (version) => `Copilot-Desktop_${version}_x64-setup.exe`;
 
 function platform(a) {
   const value = a.platform ?? "windows-x86_64";
-  if (!["windows-x86_64", "darwin-aarch64", "darwin-x86_64"].includes(value)) fail(`unsupported --platform ${value}`);
+  if (!["windows-x86_64", "darwin-aarch64", "darwin-x86_64", "darwin-universal"].includes(value)) fail(`unsupported --platform ${value}`);
   return value;
 }
 
@@ -111,28 +111,28 @@ function writeManifest(a) {
   copyFileSync(installer, join(out, v, name));
   copyFileSync(`${installer}.sig`, join(out, v, `${name}.sig`));
   if (mac) {
-    const dmgArch = arch === "x86_64" ? "x64" : "aarch64";
+    const dmgArch = arch === "x86_64" ? "x64" : arch;
     const dmg = join(dirname(bundle), "dmg", `Copilot Desktop_${v}_${dmgArch}.dmg`);
     if (!existsSync(dmg)) fail(`${dmg} not found: build the dmg bundle first`);
     copyFileSync(dmg, join(out, v, `Copilot-Desktop_${v}_${arch}.dmg`));
-    copyFileSync(dmg, join(out, `Copilot-${arch}.dmg`));
+    for (const alias of arch === "universal" ? ["universal", "aarch64", "x86_64"] : [arch]) {
+      copyFileSync(dmg, join(out, `Copilot-${alias}.dmg`));
+    }
   } else {
     copyFileSync(installer, join(out, "Copilot-setup.exe"));
   }
+  // Tauri updaters look up the running CPU, even when the archive is Universal.
+  const targets = arch === "universal" ? ["darwin-aarch64", "darwin-x86_64"] : [target];
+  const entry = { signature: readFileSync(`${installer}.sig`, "utf8").trim(), url: `${baseUrl(cfg)}/${v}/${name}` };
   const manifest = {
     version: v,
     // --notes, or COPILOT_RELEASE_NOTES (release-desktop.yml: the merged pull requests' titles).
     notes: typeof a.notes === "string" ? a.notes : process.env.COPILOT_RELEASE_NOTES?.trim() || `Copilot ${v}`,
     pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
-    platforms: {
-      [target]: {
-        signature: readFileSync(`${installer}.sig`, "utf8").trim(),
-        url: `${baseUrl(cfg)}/${v}/${name}`,
-      },
-    },
+    platforms: Object.fromEntries(targets.map(key => [key, entry])),
   };
   writeFileSync(join(out, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
-  console.log(`wrote ${out}: ${v}/${name}, latest.json -> ${manifest.platforms[target].url}`);
+  console.log(`wrote ${out}: ${v}/${name}, latest.json -> ${entry.url}`);
 }
 
 function mergeManifests(a) {
@@ -165,5 +165,5 @@ switch (a._[0]) {
     writeManifest(a);
     break;
   default:
-    fail("usage: release.mjs config --version X | manifest --version X [--out DIR] [--bundle-dir DIR] [--notes TEXT] [--platform windows-x86_64|darwin-aarch64|darwin-x86_64] | merge --version X --out FILE MANIFEST...");
+    fail("usage: release.mjs config --version X | manifest --version X [--out DIR] [--bundle-dir DIR] [--notes TEXT] [--platform windows-x86_64|darwin-aarch64|darwin-x86_64|darwin-universal] | merge --version X --out FILE MANIFEST...");
 }

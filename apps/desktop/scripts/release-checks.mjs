@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import "./macos-bundle-checks.mjs";
 
 const script = fileURLToPath(new URL("./release.mjs", import.meta.url));
 function fixture(t) {
@@ -18,7 +19,7 @@ function fixture(t) {
 
 test("Mac config selects DMG and app; preview does not require an updater key", (t) => {
   const { dir, run } = fixture(t);
-  for (const platform of ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"]) {
+  for (const platform of ["darwin-aarch64", "darwin-x86_64", "darwin-universal", "windows-x86_64"]) {
     const out = join(dir, `${platform}.json`);
     const result = run("config", "--version", "1.2.3", "--platform", platform, "--out", out);
     assert.equal(result.status, 0, result.stderr);
@@ -72,4 +73,30 @@ test("missing signature stops packaging", (t) => {
   const result = run("manifest", "--version", "1.2.3", "--platform", "darwin-aarch64", "--bundle-dir", dir, "--out", join(dir, "out"));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /TAURI_SIGNING_PRIVATE_KEY/);
+});
+
+test("a Universal release serves the same signed updater and DMG to both Mac architectures", t => {
+  const { dir, run } = fixture(t);
+  const bundle = join(dir, "bundle/macos");
+  mkdirSync(bundle, { recursive: true });
+  mkdirSync(join(dir, "bundle/dmg"));
+  writeFileSync(join(bundle, "Copilot Desktop.app.tar.gz"), "Universal updater");
+  writeFileSync(join(bundle, "Copilot Desktop.app.tar.gz.sig"), "signed-universal");
+  writeFileSync(join(dir, "bundle/dmg/Copilot Desktop_1.2.3_universal.dmg"), "Universal DMG");
+  const out = join(dir, "out");
+  const result = run("manifest", "--version", "1.2.3", "--platform", "darwin-universal", "--bundle-dir", bundle, "--out", out);
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(readFileSync(join(out, "latest.json")));
+  assert.deepEqual(Object.keys(manifest.platforms).sort(), ["darwin-aarch64", "darwin-x86_64"]);
+  assert.deepEqual(manifest.platforms["darwin-aarch64"], manifest.platforms["darwin-x86_64"]);
+  assert.equal(manifest.platforms["darwin-aarch64"].signature, "signed-universal");
+  assert.match(manifest.platforms["darwin-aarch64"].url, /Copilot-Desktop_1\.2\.3_universal\.app\.tar\.gz$/);
+  for (const alias of ["universal", "aarch64", "x86_64"]) {
+    assert.equal(readFileSync(join(out, `Copilot-${alias}.dmg`), "utf8"), "Universal DMG");
+  }
+  const windows = join(dir, "windows.json");
+  writeFileSync(windows, JSON.stringify({ version: "1.2.3", platforms: { "windows-x86_64": { url: "https://example.com/windows.exe", signature: "signed-windows" } } }));
+  const merged = join(dir, "merged.json");
+  assert.equal(run("merge", "--version", "1.2.3", "--out", merged, windows, join(out, "latest.json")).status, 0);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(merged)).platforms).sort(), ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"]);
 });

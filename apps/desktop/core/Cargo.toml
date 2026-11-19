@@ -10,7 +10,6 @@ publish.workspace = true
 aes-gcm = "0.10"
 base64 = "0.22"
 copilot-protocol = { path = "../../../packages/protocol/rust" }
-cpal = "0.18"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 keyring = "4"
 # Silero VAD. download-binaries links a static ONNX Runtime at build time, so there is no DLL
@@ -28,6 +27,11 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync",
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["serde", "v7"] }
+
+# CPAL's macOS backend imports process-tap symbols introduced after Ventura. Mac capture
+# uses the native AudioQueue/ScreenCaptureKit bridge so it can launch on macOS 13.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+cpal = "0.18"
 
 # Windows' audio endpoints: is the voice device headphones (voice/isolation.rs). The version
 # cpal uses.

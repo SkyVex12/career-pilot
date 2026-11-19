@@ -3,10 +3,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
+// macOS 13.0 ships WebKit/Safari 16.1; do not let Vite upgrades raise that runtime floor.
+const browserTargets = ["chrome111", "edge111", "firefox114", "safari16.1"];
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
+  build: { target: browserTargets, cssTarget: browserTargets },
   // Component tests (*.test.tsx) run in jsdom; the rest in node. tests/setup.ts fakes the core.
   test: {
     setupFiles: ["tests/setup.ts"],

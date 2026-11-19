@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { LiveStatus } from "../src/api";
 import { Applications, checkApplication, filterApplications, listStamp } from "../src/Applications";
 import { CallScreen, type CallProps } from "../src/CallScreen";
@@ -372,6 +372,21 @@ describe("Settings", () => {
     expect(saves).toHaveLength(1);
     expect((saves[0].args.settings as typeof SETTINGS).echo_cancellation).toBe(false);
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
+  });
+
+  it("distinguishes Mac system capture from the selected playback output", async () => {
+    const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    try {
+      ipc.handle("list_devices", () => ({ inputs: [], outputs: [{ id: "headset", name: "USB headset", is_default: true }] }));
+      wrap(<SettingsScreen {...props()} />);
+      await userEvent.click(screen.getByRole("button", { name: "Audio" }));
+      expect(screen.getByText("Guest audio and test tone. Transcription captures system audio from all apps.")).toBeVisible();
+      expect(screen.queryByRole("combobox", { name: "Call audio from" })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("combobox", { name: "Playback output" }));
+      await userEvent.click(await screen.findByRole("option", { name: "USB headset (default)" }));
+      const save = ipc.calls.find(call => call.cmd === "save_settings");
+      expect((save?.args.settings as typeof SETTINGS).output_device).toBe("headset");
+    } finally { platform.mockRestore(); }
   });
 
   it("the theme switches at once and is kept", async () => {

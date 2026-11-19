@@ -3,13 +3,8 @@ name: desktop-macos
 on:
   workflow_dispatch:
     inputs:
-      architecture:
-        description: Mac architecture to build (signed releases always build both)
-        type: choice
-        default: aarch64
-        options: [aarch64, x86_64, both]
       source_run_id:
-        description: Reuse a successful preview artifact from this main run instead of rebuilding (optional)
+        description: Publish a verified Universal preview run whose source commit is now on main (optional)
         type: string
         default: ""
         required: false
@@ -28,16 +23,12 @@ defaults:
     shell: bash
 jobs:
   build:
-    name: macOS (${{ matrix.arch }})
+    name: macOS (Universal)
     if: inputs.source_run_id == ''
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: ${{ fromJSON((inputs.version != '' || inputs.architecture == 'both') && '["aarch64","x86_64"]' || inputs.architecture == 'x86_64' && '["x86_64"]' || '["aarch64"]') }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'macos-15' || 'macos-15-intel' }}
+    runs-on: macos-15
     timeout-minutes: 90
     env:
-      MACOSX_DEPLOYMENT_TARGET: '15.4'
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
       CARGO_INCREMENTAL: '0'
       # Smaller native dependency caches and faster test links; installer optimization is unchanged.
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -53,14 +44,27 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: desktop-macos-${{ matrix.arch }}
+          shared-key: desktop-macos-universal
           # Only main builds update the shared dependency cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - name: Frontend and packaging tests
         run: pnpm --filter @copilot/desktop test
+      - name: Check native bridge syntax and macOS 13 availability
+        run: |
+          sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          for arch in arm64 x86_64; do
+            xcrun clang -fsyntax-only -fobjc-arc -fblocks -arch "$arch" \
+              -mmacosx-version-min="$MACOSX_DEPLOYMENT_TARGET" \
+              -Werror=unguarded-availability -isysroot "$sdk" \
+              apps/desktop/core/native/audio.m \
+              apps/desktop/src-tauri/native/screen.m \
+              apps/desktop/src-tauri/native/capture_mask.m
+          done
       - name: Native Rust tests (also compiles the Apple bridges)
         run: cargo test -p copilot-client -p copilot-desktop --lib --locked
       - name: Configure bundle and updater
@@ -70,7 +74,7 @@ jobs:
         run: |
           preview=()
           if [ "$RELEASE" != true ]; then preview=(--preview); fi
-          node scripts/release.mjs config --version "$VERSION" --platform darwin-${{ matrix.arch }} "${preview[@]}"
+          node scripts/release.mjs config --version "$VERSION" --platform darwin-universal "${preview[@]}"
       - name: Check release signing credentials
         if: inputs.version != ''
         env:
@@ -103,39 +107,54 @@ jobs:
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           fi
-          pnpm tauri build --target ${{ matrix.arch }}-apple-darwin --features release --config src-tauri/tauri.release.conf.json
+          pnpm tauri build --target universal-apple-darwin --features release --config src-tauri/tauri.release.conf.json
+      - name: Verify the Universal app inside the DMG
+        working-directory: apps/desktop
+        run: |
+          shopt -s nullglob
+          dmgs=(../../target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] || { echo "::error::Expected one Universal DMG"; exit 1; }
+          mount="$RUNNER_TEMP/copilot-universal-dmg"
+          mkdir -p "$mount" ../../dist-preview
+          hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -quiet' EXIT
+          codesign --verify --deep --strict "$mount/Copilot Desktop.app"
+          node scripts/macos-bundle.mjs verify --app "$mount/Copilot Desktop.app" \
+            --dmg "${dmgs[0]}" --sha "$(git rev-parse HEAD)" --out ../../dist-preview/verification.json
+          cp "${dmgs[0]}" ../../dist-preview/
+          hdiutil detach "$mount" -quiet
+          trap - EXIT
       - name: Package release files
         if: inputs.version != ''
         working-directory: apps/desktop
         run: |
-          node scripts/release.mjs manifest --version "$VERSION" --platform darwin-${{ matrix.arch }} --bundle-dir ../../target/${{ matrix.arch }}-apple-darwin/release/bundle/macos --out ../../dist-release
-          mv ../../dist-release/latest.json ../../dist-release/manifest-darwin-${{ matrix.arch }}.json
+          node scripts/release.mjs manifest --version "$VERSION" --platform darwin-universal --bundle-dir ../../target/universal-apple-darwin/release/bundle/macos --out ../../dist-release
+          mv ../../dist-release/latest.json ../../dist-release/manifest-darwin-universal.json
       - uses: actions/upload-artifact@v4
         if: inputs.version != ''
         with:
-          name: desktop-macos-${{ matrix.arch }}-${{ env.VERSION }}
+          name: desktop-macos-universal-${{ env.VERSION }}
           path: dist-release
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         id: preview
         if: inputs.version == ''
         with:
-          name: desktop-macos-preview-${{ matrix.arch }}
-          path: target/${{ matrix.arch }}-apple-darwin/release/bundle/dmg/*.dmg
+          name: desktop-macos-preview-universal
+          path: dist-preview
           if-no-files-found: error
           retention-days: 14
       - name: Preview download instructions
         if: inputs.version == ''
         env:
           ARTIFACT_URL: ${{ steps.preview.outputs.artifact-url }}
-          ARCH: ${{ matrix.arch }}
         run: |
           {
-            echo "### Mac preview ($ARCH)"
+            echo "### Universal Mac preview (Apple Silicon and Intel)"
             echo
             echo "[Download the DMG artifact]($ARTIFACT_URL), unzip it, and open the DMG."
             echo
-            echo "Built from commit $GITHUB_SHA. Requires macOS 15.4 or newer."
+            echo "Built from commit $GITHUB_SHA. Requires macOS 13 or newer."
             echo "This is an ad-hoc signed test build, not a notarized public release."
             echo "Stealth is experimental: test the received screen share from another meeting participant."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -143,7 +162,7 @@ jobs:
   publish-preview:
     name: publish Mac preview downloads
     needs: build
-    # Only this repository's manually built main previews may reach the public bucket.
+    # Only main may publish; a manually built branch artifact is reusable after its exact commit reaches main.
     # The GCP identity provider also restricts the repository and main ref.
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && inputs.version == '' &&
@@ -161,7 +180,6 @@ jobs:
       cancel-in-progress: false
     env:
       SHA: ${{ github.sha }}
-      ARCHITECTURE: ${{ inputs.architecture || 'aarch64' }}
       SOURCE_RUN_ID: ${{ inputs.source_run_id || github.run_id }}
       BUCKET: ${{ vars.GCP_RELEASES_BUCKET }}
       RELEASE_ACCOUNT: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
@@ -180,7 +198,7 @@ jobs:
           for key in BUCKET RELEASE_ACCOUNT IDENTITY_PROVIDER; do
             [ -n "${!key}" ] || { echo "::error::Missing preview publication setting: $key"; exit 1; }
           done
-      - name: Verify source run and selected architecture artifacts
+      - name: Verify source run and Universal artifact
         id: source
         uses: actions/github-script@v8
         with:
@@ -194,35 +212,29 @@ jobs:
             const expectedRepo = context.repo.owner + '/' + context.repo.repo;
             const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
             if (run.repository.full_name !== expectedRepo || run.head_repository?.full_name !== expectedRepo ||
-                run.path !== '.github/workflows/desktop-macos.yml' || run.head_branch !== 'main' ||
-                !['push', 'workflow_dispatch'].includes(run.event) || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
+                run.path !== '.github/workflows/desktop-macos.yml' ||
+                run.event !== 'workflow_dispatch' || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
                 !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1) {
-              throw new Error('Preview source must be the desktop-macos workflow on main in this repository');
+              throw new Error('Preview source must be a manually dispatched desktop-macos workflow in this repository');
             }
-            const architectures = {
-              aarch64: ['aarch64'], x86_64: ['x86_64'], both: ['aarch64', 'x86_64'],
-            }[process.env.ARCHITECTURE];
-            if (!architectures) throw new Error('Unknown Mac architecture');
             const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
               ...context.repo, run_id: runId, filter: 'all', per_page: 100,
             });
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
               ...context.repo, run_id: runId, per_page: 100,
             });
-            for (const arch of architectures) {
-              // A publisher-only retry must still see the successful earlier build.
-              const matches = jobs.filter(job => job.name === 'macOS (' + arch + ')')
-                .sort((a, b) => b.id - a.id);
-              if (matches.length === 0 || matches[0].status !== 'completed' || matches[0].conclusion !== 'success') {
-                throw new Error('Source run has no successful ' + arch + ' build');
-              }
-              const matchingArtifacts = artifacts.filter(artifact =>
-                artifact.name === 'desktop-macos-preview-' + arch && !artifact.expired);
-              if (matchingArtifacts.length !== 1 || matchingArtifacts[0].size_in_bytes <= 0 ||
-                  matchingArtifacts[0].workflow_run?.id !== runId ||
-                  matchingArtifacts[0].workflow_run?.head_sha !== run.head_sha) {
-                throw new Error('Source run has no unexpired ' + arch + ' preview artifact for its commit');
-              }
+            // Skipped build jobs from publisher-only retries do not replace the successful build.
+            const matches = jobs.filter(job => job.name === 'macOS (Universal)' && job.conclusion !== 'skipped')
+              .sort((a, b) => b.id - a.id);
+            if (matches.length === 0 || matches[0].status !== 'completed' || matches[0].conclusion !== 'success') {
+              throw new Error('Source run has no successful Universal build');
+            }
+            const matchingArtifacts = artifacts.filter(artifact =>
+              artifact.name === 'desktop-macos-preview-universal' && !artifact.expired);
+            if (matchingArtifacts.length !== 1 || matchingArtifacts[0].size_in_bytes <= 0 ||
+                matchingArtifacts[0].workflow_run?.id !== runId ||
+                matchingArtifacts[0].workflow_run?.head_sha !== run.head_sha) {
+              throw new Error('Source run has no unexpired Universal preview artifact for its commit');
             }
             core.setOutput('run_id', String(runId));
             core.setOutput('sha', run.head_sha);
@@ -235,26 +247,19 @@ jobs:
             { echo "::error::Artifact source commit is not on main"; exit 1; }
       - uses: actions/download-artifact@v4
         with:
-          pattern: desktop-macos-preview-*
+          name: desktop-macos-preview-universal
           path: dist-preview
           run-id: ${{ steps.source.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Validate preview artifacts
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Validate Universal preview receipt and DMG hash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          case "$ARCHITECTURE" in
-            aarch64) arches=(aarch64) ;;
-            x86_64) arches=(x86_64) ;;
-            both) arches=(aarch64 x86_64) ;;
-            *) echo "::error::Unknown Mac architecture: $ARCHITECTURE"; exit 1 ;;
-          esac
-          mkdir -p publish-preview
-          shopt -s nullglob
-          for arch in "${arches[@]}"; do
-            dmgs=("dist-preview/desktop-macos-preview-$arch/"*.dmg)
-            [ "${#dmgs[@]}" -eq 1 ] && [ -f "${dmgs[0]}" ] ||
-              { echo "::error::Expected one $arch DMG from this run"; exit 1; }
-            cp "${dmgs[0]}" "publish-preview/Copilot-$arch.dmg"
-          done
+          node apps/desktop/scripts/macos-bundle.mjs preview \
+            --artifacts dist-preview --sha "$SOURCE_SHA" --out publish-preview
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -282,6 +287,6 @@ jobs:
           done
           {
             echo
-            echo "Ad-hoc signed preview from commit $SOURCE_SHA; not a notarized public release."
+            echo "Universal macOS 13+ preview from commit $SOURCE_SHA (Apple Silicon and Intel); ad-hoc signed, not notarized."
             echo "The signed updater manifest and release download links are unchanged."
           } >> "$GITHUB_STEP_SUMMARY"

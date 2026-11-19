@@ -827,6 +827,7 @@
 }
 .seat-section + .seat-section {
   padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
   border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
 }
 .seat-section-title {
@@ -869,8 +870,10 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: var(--radius-md);
+  background: var(--surface-2);
   background: color-mix(in srgb, currentColor 4%, transparent);
 }
 .seat-card-head {
@@ -889,6 +892,7 @@
   flex: none;
   padding: 1px var(--space-3);
   border-radius: 999px;
+  background: var(--surface-sunken);
   background: color-mix(in srgb, currentColor 10%, transparent);
   font-size: var(--text-xs);
   opacity: 0.85;
@@ -914,6 +918,7 @@
   align-items: center;
   gap: var(--space-1, 4px);
   padding: 2px var(--space-3);
+  border: 1px solid var(--border-strong);
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   border-radius: 999px;
   background: transparent;
@@ -928,6 +933,7 @@
 }
 .seat-chip[aria-pressed="true"] {
   border-color: var(--accent, #4f7cff);
+  background: var(--accent-soft);
   background: color-mix(in srgb, var(--accent, #4f7cff) 22%, transparent);
   opacity: 1;
 }
@@ -980,12 +986,14 @@
   display: grid;
   place-items: center;
   overflow: hidden;
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: var(--radius-md);
   background: #000;
 }
 .screen-view-frame.is-empty {
   aspect-ratio: 16 / 9;
+  background: var(--surface-2);
   background: color-mix(in srgb, currentColor 4%, transparent);
 }
 .screen-view-video {
