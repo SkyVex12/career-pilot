@@ -52,7 +52,10 @@ def bind_inputs(directory: Path, export: Path, year: int) -> None:
 def reuse_profile(directory: Path, source: Path) -> None:
     source = source.resolve()
     private_directory(source)
-    for name in ("resume.txt", "jd.txt", "profile.json", "extracted.json", "annotations.json"):
+    names = ["resume.txt", "jd.txt", "profile.json", "extracted.json", "annotations.json"]
+    if (source / "eligibility.json").exists():
+        names.append("eligibility.json")
+    for name in names:
         target = directory / name
         origin = source / name
         if target.exists() and fingerprint(target) != fingerprint(origin):
@@ -167,6 +170,9 @@ def load_turns(path: Path, year: int) -> list[dict[str, Any]]:
 async def execute(args: argparse.Namespace) -> None:
     directory = private_directory(args.private_dir)
     if args.reuse_profile:
+        original = json.loads((args.reuse_profile / "inputs.json").read_text("utf-8"))
+        if original["export_sha256"] != fingerprint(args.export) or original["year"] != args.year:
+            raise ValueError("Reused question labels require the same export and year")
         reuse_profile(directory, args.reuse_profile)
     bind_inputs(directory, args.export, args.year)
     if args.max_cost is not None:
@@ -187,10 +193,16 @@ async def execute(args: argparse.Namespace) -> None:
         if not target.exists() or not json.loads(target.read_text("utf-8")).get("complete"):
             await replay(directory, turns, speed=args.speed)
     if args.phase in ("all", "judge"):
-        from copilot_evals.sensei_diagnosis import diagnose
         from copilot_evals.sensei_judge import judge_run
 
         await judge_run(directory, turns)
+    if args.ai_review:
+        from copilot_evals.sensei_review import independent_review
+
+        await independent_review(directory)
+    if args.phase in ("all", "judge") or args.ai_review:
+        from copilot_evals.sensei_diagnosis import diagnose
+
         await diagnose(directory)
     if args.phase in ("all", "report"):
         from copilot_evals.sensei_report import report
@@ -214,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-cost", type=float, help="Persist an explicit API spend guard in USD")
     parser.add_argument("--reuse-profile", type=Path, help="Reuse a prior private run's fixed pack")
     parser.add_argument("--baseline", type=Path, help="Prior private run to compare scores against")
+    parser.add_argument(
+        "--ai-review", action="store_true", help="Independent AI review; not human calibration"
+    )
     parser.add_argument(
         "--report", type=Path, default=Path("docs/analysis/2026-11-19-benchmark-sensei.md")
     )

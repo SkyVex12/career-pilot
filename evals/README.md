@@ -263,7 +263,7 @@ content. Confirm these field roles before using a different export. Dates need a
 year; timestamp semantics are not inferred.
 
 ```powershell
-uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-baseline' --year 2026 --max-cost 20
+uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-baseline' --year 2026 --max-cost 20 --ai-review
 ```
 
 This is one sequential command: parse, prepare/cache the profile, replay all interviewer
@@ -282,7 +282,7 @@ Input hashes prevent reuse after the export, resume or JD changes. A fixed pack 
 question labels can be reused for a later code change:
 
 ```powershell
-uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-after' --reuse-profile 'C:\private\sensei-baseline' --baseline 'C:\private\sensei-baseline' --year 2026 --max-cost 20 --report 'docs/analysis/sensei-after.md' --fixtures 'evals/sensei/after-paraphrased.json'
+uv run python -m copilot_evals.sensei_benchmark --export 'C:\private\interview.txt' --private-dir 'C:\private\sensei-after' --reuse-profile 'C:\private\sensei-baseline' --baseline 'C:\private\sensei-baseline' --year 2026 --max-cost 20 --ai-review --report 'docs/analysis/sensei-after.md' --fixtures 'evals/sensei/after-paraphrased.json'
 ```
 
 The comparison requires identical sources, pack, labels and judge. Report and comparison
@@ -306,6 +306,13 @@ remain model-only. Order disagreements are reported separately, never converted 
 
 The report includes coverage-inclusive scores (missing answer = 1), conditional scores,
 per-type scores, unsupported personal-claim counts, timing from text injection, and ten
-largest losses. Export timestamps do not establish question-end time; no STT or Sensei
+largest losses. `--ai-review` runs a separate GPT-6.2 Astra review of the 15 sampled
+initial pairs and a question-only addressee audit. It writes `ai-review.json` and
+`eligibility.json`, never overwrites human scores, and reports AI-to-AI agreement without
+claiming human calibration. Only clearly other-directed questions are excluded from the
+primary denominator; the unfiltered score remains visible as a sensitivity check. Reused
+profiles carry the fixed eligibility labels into before/after comparisons.
+
+Export timestamps do not establish question-end time; no STT or Sensei
 latency claim is made. Only suggested responses present in the export are observed, so
 Sensei's coverage is 100% by construction, not measured recall over an entire call.

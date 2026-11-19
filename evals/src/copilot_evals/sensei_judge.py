@@ -1,5 +1,6 @@
 """Blind, swapped-order quality scoring and private human calibration artifacts."""
 
+import asyncio
 import hashlib
 import html
 import json
@@ -45,7 +46,7 @@ Prefer the more helpful truthful response for this exact question; ties are allo
 
 
 def remove_citations(text: str) -> str:
-    return re.sub(r"\[n:[a-z0-9]+\]", "", text).strip()
+    return re.sub(r"\[n:[a-z0-9]+\]", "", text, flags=re.IGNORECASE).strip()
 
 
 def validate_grade(data: Any) -> dict[str, Any]:
@@ -64,11 +65,18 @@ def validate_grade(data: Any) -> dict[str, Any]:
             count = data[side][f"invented_{stage}"]
             if type(count) is not int or count < 0:
                 raise ValueError("Invalid invented-claim count")
-        if not isinstance(data[side]["unsupported"], list):
+        unsupported = data[side]["unsupported"]
+        if (
+            not isinstance(unsupported, list)
+            or len(cast(list[Any], unsupported)) > 5
+            or any(not isinstance(v, str) for v in cast(list[Any], unsupported))
+        ):
             raise ValueError("Invalid unsupported claims")
     for key in ("preference", "expanded_preference"):
         if data[key] not in ("A", "B", "tie"):
             raise ValueError("Invalid pairwise preference")
+    if any(not isinstance(data.get(key), str) for key in ("reason", "expanded_reason")):
+        raise ValueError("Judge explanations must be strings")
     return data
 
 
@@ -83,10 +91,11 @@ def orders(ids: list[int], seed: int = SEED) -> dict[int, list[list[str]]]:
 
 
 def collect_answers(run: dict[str, Any], turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Match confirmed cards by exact normalized text, not whichever question was last sent.
+    """Reconstruct cards before choosing the first surviving answer for each turn.
 
-    If a card merged turns, attach it to the latest contributing turn and record the
-    ambiguity. Never silently credit the same answer to several source questions.
+    A withdrawn speculative card is never combined with its replacement. If a card's
+    confirmation extends its text, move the whole card to the latest contributing turn
+    and retain the attribution history for audit. No card is credited to several turns.
     """
 
     def norm(text: str) -> str:
@@ -100,18 +109,45 @@ def collect_answers(run: dict[str, Any], turns: list[dict[str, Any]]) -> list[di
             "deep": "",
             "qtype": None,
             "cards": [],
+            "card_audit": [],
+            "selected_card": None,
+            "attribution_ambiguities": [],
             "latency": {},
             "citations": [],
             "cancelled": False,
         }
         for t in turns
     }
-    mapping: dict[str, int] = {}
     sent = {t["id"]: float(t["at"]) for t in run["sent"]}
-    unmatched: list[str] = []
+    cards: dict[str, dict[str, Any]] = {}
     for event in run["events"]:
         msg, at = event["message"], float(event["at"])
         kind, qid = msg.get("type"), msg.get("question_id")
+        if qid is None or kind not in (
+            "question.detected",
+            "question.cancelled",
+            "answer.delta",
+            "answer.done",
+            "answer.error",
+        ):
+            continue
+        card = cards.setdefault(
+            str(qid),
+            {
+                "question_id": str(qid),
+                "turn_id": None,
+                "fast": "",
+                "deep": "",
+                "qtype": None,
+                "cancelled": False,
+                "speculative": True,
+                "attribution": [],
+                "times": {},
+                "stages": {},
+                "citations": [],
+                "errors": [],
+            },
+        )
         if kind == "question.detected":
             text = norm(str(msg.get("text", "")))
             candidates = [
@@ -124,43 +160,81 @@ def collect_answers(run: dict[str, Any], turns: list[dict[str, Any]]) -> list[di
                 candidates = [
                     t
                     for t in turns
-                    if norm(t["question"]) in text and sent.get(t["id"], float("inf")) <= at
+                    if norm(t["question"])
+                    and f" {norm(t['question'])} " in f" {text} "
+                    and sent.get(t["id"], float("inf")) <= at
                 ]
                 merged = True
-            if not candidates:
-                unmatched.append(str(qid))
-                continue
-            chosen = max(candidates, key=lambda t: sent[t["id"]])
-            identifier = chosen["id"]
-            mapping[str(qid)] = identifier
-            row = rows[identifier]
-            row["detected"] = True
-            row["qtype"] = msg.get("question_type", msg.get("qtype"))
-            if qid not in row["cards"]:
-                row["cards"].append(qid)
-            row["merged_match"] = merged
-            row["latency"].setdefault("detected_s", at - sent[identifier])
+            chosen = max(candidates, key=lambda t: sent[t["id"]]) if candidates else None
+            card["turn_id"] = chosen["id"] if chosen else None
+            card["attribution"].append(
+                {
+                    "at": at,
+                    "turn_id": card["turn_id"],
+                    "candidate_turn_ids": [t["id"] for t in candidates],
+                    "merged": merged and bool(candidates),
+                }
+            )
+            card["qtype"] = msg.get("question_type", msg.get("qtype"))
+            card["speculative"] = msg.get("speculative", False)
+            card["times"].setdefault("detected_s", at)
             if not msg.get("speculative", False):
-                row["latency"]["confirmed_s"] = at - sent[identifier]
-        if str(qid) not in mapping:
-            continue
-        row = rows[mapping[str(qid)]]
-        elapsed = at - sent[mapping[str(qid)]]
+                card["times"].setdefault("confirmed_s", at)
         stage = msg.get("pass", "fast")
         if kind == "answer.delta" and stage in ("fast", "deep"):
-            row[stage] += str(msg.get("text", msg.get("delta", "")))
-            row["latency"].setdefault(f"{stage}_first_s", elapsed)
-        elif kind == "answer.done":
-            row["latency"][f"{stage}_done_s"] = elapsed
-            row["latency"][f"{stage}_stages"] = msg.get("latency_ms", {})
-            row["citations"].extend(msg.get("memory_refs", []))
-            row[f"{stage}_source"] = msg.get("source")
+            text = str(msg.get("text", msg.get("delta", "")))
+            card[stage] += text
+            if text:
+                card["times"].setdefault(f"{stage}_first_s", at)
+        elif kind == "answer.done" and stage in ("fast", "deep"):
+            card["times"][f"{stage}_done_s"] = at
+            card["stages"][f"{stage}_stages"] = msg.get("latency_ms", {})
+            card["citations"].extend(msg.get("memory_refs", []))
+            card[f"{stage}_source"] = msg.get("source")
         elif kind == "answer.error":
-            row.setdefault("errors", []).append({"stage": stage, "code": msg.get("code")})
+            card["errors"].append({"stage": stage, "code": msg.get("code")})
         elif kind == "question.cancelled":
-            row["cancelled"] = True
+            card["cancelled"] = True
+
+    unmatched = sum(card["turn_id"] is None for card in cards.values())
+    for card in cards.values():
+        identifier = card["turn_id"]
+        if identifier is None:
+            continue
+        row = rows[identifier]
+        row["cards"].append(card["question_id"])
+        card["latency"] = {
+            **{key: at - sent[identifier] for key, at in card["times"].items()},
+            **card["stages"],
+        }
+        row["card_audit"].append(card)
+
     for row in rows.values():
-        row["unmatched_card_count"] = len(unmatched)
+        audit = row["card_audit"]
+        surviving = [card for card in audit if not card["cancelled"]]
+        answered = [card for card in surviving if card["fast"] or card["deep"]]
+        selected = next(iter(answered or surviving), None)
+        row["detected"] = bool(surviving)
+        row["cancelled"] = bool(audit) and not surviving
+        row["merged_match"] = any(
+            attribution["merged"] for card in audit for attribution in card["attribution"]
+        )
+        if len(audit) > 1:
+            row["attribution_ambiguities"].append("multiple_cards")
+        if row["merged_match"]:
+            row["attribution_ambiguities"].append("merged_turns")
+        if any(len({a["turn_id"] for a in card["attribution"]}) > 1 for card in audit):
+            row["attribution_ambiguities"].append("card_reassigned")
+        if any(len(a["candidate_turn_ids"]) > 1 for card in audit for a in card["attribution"]):
+            row["attribution_ambiguities"].append("multiple_source_matches")
+        if selected is not None:
+            row["selected_card"] = selected["question_id"]
+            for field in ("fast", "deep", "qtype", "latency", "citations", "errors", "speculative"):
+                row[field] = selected[field]
+            for stage in ("fast", "deep"):
+                if f"{stage}_source" in selected:
+                    row[f"{stage}_source"] = selected[f"{stage}_source"]
+        row["unmatched_card_count"] = unmatched
     return list(rows.values())
 
 
@@ -225,14 +299,38 @@ Every item must retain its id. No quotations or original sentences in paraphrase
     return annotations
 
 
-async def judge_json(budget: Budget, system: str, payload: Any) -> dict[str, Any]:
+def blind_payload(
+    row: dict[str, Any], order: list[str], turns: list[dict[str, Any]]
+) -> dict[str, Any]:
+    if sorted(order) != ["ours", "sensei"]:
+        raise ValueError("Pair must contain both assistants exactly once")
+    competitor = remove_citations(row["suggestion"])
+    answers = {
+        "ours": {
+            "initial": remove_citations(row["fast"]),
+            "expanded": remove_citations(row["deep"] or row["fast"]),
+        },
+        "sensei": {"initial": competitor, "expanded": competitor},
+    }
+    return {
+        "question": row["question"],
+        "interviewer_context": [t["question"] for t in turns if t["id"] < row["id"]][-8:],
+        "question_type": row["type"],
+        "A": answers[order[0]],
+        "B": answers[order[1]],
+    }
+
+
+async def judge_json(
+    budget: Budget, system: str, payload: Any, *, model: str = JUDGE_MODEL
+) -> dict[str, Any]:
     from copilot_core.llm import LLMDone, LLMUsage
     from copilot_core.providers import openai_client
 
-    ticket = budget.reserve(JUDGE_MODEL, [system, payload], 6000)
+    ticket = budget.reserve(model, [system, payload], 6000)
     async with openai_client(budget.settings, timeout_s=120).with_options(timeout=120) as client:
         response = await client.responses.create(
-            model=JUDGE_MODEL,
+            model=model,
             instructions=system,
             input="Return JSON for these data:\n" + json.dumps(payload),
             reasoning={"effort": "medium"},
@@ -252,7 +350,7 @@ async def judge_json(budget: Budget, system: str, payload: Any) -> dict[str, Any
                 ),
                 "done",
                 "openai",
-                JUDGE_MODEL,
+                model,
             ),
         )
     if response.status != "completed":
@@ -278,7 +376,6 @@ async def judge_run(directory: Path, turns: list[dict[str, Any]]) -> None:
     by_id = {a["id"]: a for a in annotations}
     for row in rows:
         row.update(by_id[row["id"]])
-    save(directory / "answers.json", rows)
     profile = json.loads((directory / "profile.json").read_text("utf-8"))
     truth = json.dumps({"resume": profile["resume_source"], "JD": profile["jd_source"]})
     assignments = orders([r["id"] for r in rows])
@@ -293,29 +390,15 @@ async def judge_run(directory: Path, turns: list[dict[str, Any]]) -> None:
     if identity_path.exists() and json.loads(identity_path.read_text("utf-8")) != identity:
         raise ValueError("Judge inputs changed; use a fresh run to avoid mixing judgments")
     save(identity_path, identity)
+    save(directory / "answers.json", rows)
     target = directory / "grades.json"
     grades: list[dict[str, Any]] = json.loads(target.read_text("utf-8")) if target.exists() else []
     have = {(g["id"], g["round"]) for g in grades}
-    for row in rows:
-        if not row["needs_answer"]:
-            continue
-        answers = {
-            "ours": {
-                "initial": remove_citations(row["fast"]),
-                "expanded": remove_citations(row["deep"] or row["fast"]),
-            },
-            "sensei": {"initial": remove_citations(row["suggestion"])},
-        }
-        for iteration, order in enumerate(assignments[row["id"]]):
-            if (row["id"], iteration) in have:
-                continue
-            payload = {
-                "question": row["question"],
-                "interviewer_context": [t["question"] for t in turns if t["id"] < row["id"]][-8:],
-                "question_type": row["type"],
-                "A": answers[order[0]],
-                "B": answers[order[1]],
-            }
+    semaphore = asyncio.Semaphore(4)
+
+    async def score(row: dict[str, Any], iteration: int, order: list[str]) -> None:
+        async with semaphore:
+            payload = blind_payload(row, order, turns)
             grade = validate_grade(
                 await judge_json(
                     budget,
@@ -333,6 +416,22 @@ async def judge_run(directory: Path, turns: list[dict[str, Any]]) -> None:
                     "cost_upper_usd": budget.total,
                 },
             )
+
+    pending = [
+        score(row, iteration, order)
+        for row in rows
+        if row["needs_answer"]
+        for iteration, order in enumerate(assignments[row["id"]])
+        if (row["id"], iteration) not in have
+    ]
+    # Drain every dispatched request for accounting, even if another judge response fails.
+    results = await asyncio.gather(*pending, return_exceptions=True)
+    failures = [type(result).__name__ for result in results if isinstance(result, BaseException)]
+    if failures:
+        save(directory / "judge-failures.json", failures)
+        raise ValueError("Some judgments failed; completed pairs are cached for resumption")
+    grades.sort(key=lambda item: (item["id"], item["round"]))
+    save(target, grades)
     save(directory / "summary.json", aggregate(rows, grades))
     make_review(directory, rows, assignments)
 

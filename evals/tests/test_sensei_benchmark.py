@@ -207,3 +207,77 @@ def test_existing_cache_cannot_be_adopted_for_different_sources(tmp_path):
     save(tmp_path / "turns.json", [])
     with pytest.raises(ValueError, match="Export differs"):
         bind_inputs(tmp_path, export, 2026)
+
+
+def test_blind_payload_has_symmetric_fields_and_no_product_labels():
+    from copilot_evals.sensei_judge import blind_payload
+
+    row = {
+        "id": 1,
+        "question": "Explain indexing",
+        "type": "technical",
+        "fast": "Index a filtered column [n:A12]",
+        "deep": "",
+        "suggestion": "Check the query plan [n:B21]",
+    }
+    payload = blind_payload(row, ["ours", "sensei"], [row])
+    assert set(payload) == {"question", "interviewer_context", "question_type", "A", "B"}
+    assert set(payload["A"]) == set(payload["B"]) == {"initial", "expanded"}
+    assert payload["A"]["initial"] == "Index a filtered column"
+    assert payload["B"]["initial"] == "Check the query plan"
+    reverse = blind_payload(row, ["sensei", "ours"], [row])
+    assert reverse["A"] == payload["B"]
+    assert reverse["B"] == payload["A"]
+
+
+def test_report_displays_completed_human_agreement(tmp_path):
+    from copilot_evals.sensei_report import report
+
+    rows = []
+    grades = []
+    reviews = []
+    for identifier in range(15):
+        rows.append(
+            {
+                "id": identifier,
+                "question": f"Synthetic indexing question {identifier}",
+                "suggestion": "Another synthetic cue",
+                "paraphrase": f"Index use case {identifier}",
+                "type": "technical",
+                "needs_answer": True,
+                "fast": "A synthetic cue",
+                "deep": "",
+                "detected": True,
+                "cancelled": False,
+                "offset_s": identifier * 10,
+                "latency": {"fast_first_s": 1.0},
+            }
+        )
+        first, second = grade(), grade()
+        second["preference"] = "B"
+        grades.extend(
+            [
+                {"id": identifier, "round": 0, "order": ["ours", "sensei"], "grade": first},
+                {"id": identifier, "round": 1, "order": ["sensei", "ours"], "grade": second},
+            ]
+        )
+        reviews.append(
+            {
+                "id": identifier,
+                "preference": "A",
+                "A": {"scores": dict.fromkeys(RUBRIC, 4)},
+                "B": {"scores": dict.fromkeys(RUBRIC, 4)},
+            }
+        )
+    save(tmp_path / "summary.json", aggregate(rows, grades))
+    save(tmp_path / "answers.json", rows)
+    save(tmp_path / "grades.json", grades)
+    save(tmp_path / "cost.json", [])
+    save(tmp_path / "replay.json", {"speed": 1.0})
+    save(tmp_path / "diagnosis.json", {"losses": [], "strengths": []})
+    save(tmp_path / "human-review.json", reviews)
+    report(tmp_path, tmp_path / "report.md", tmp_path / "fixture.json")
+    text = (tmp_path / "report.md").read_text("utf-8")
+    assert "passes_predeclared_threshold" in text
+    assert "Preference agreement: 100.0%" in text
+    assert "| relevance | 0.000 |" in text
