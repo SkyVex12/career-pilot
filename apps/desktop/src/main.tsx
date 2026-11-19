@@ -1,4 +1,5 @@
 import React from "react";
+import { installWindowDragging } from "./windowDrag";
 import ReactDOM from "react-dom/client";
 import { api, inTauri } from "./api";
 import { throttled } from "./updates";
@@ -6,6 +7,7 @@ import "./ui/tokens.css";
 import "./overlay.css";
 import "./ui/ui.css";
 import "./screens.css";
+import "./workspace.css";
 import { startTheme } from "./ui/theme";
 
 // One bundle, two windows: the overlay loads index.html#overlay.
@@ -19,6 +21,8 @@ else startTheme();
 // Clicks, keys and scrolls in either window tell the updater the user is here, so an
 // automatic update waits for a quiet moment (src-tauri/src/release.rs, schedule).
 if (inTauri) {
+  const stopDragging = installWindowDragging();
+  if (import.meta.hot) import.meta.hot.dispose(stopDragging);
   const report = throttled(() => void api.noteActivity().catch(() => {}), 20_000);
   for (const type of ["pointerdown", "keydown", "wheel"]) {
     window.addEventListener(type, report, { passive: true, capture: true });

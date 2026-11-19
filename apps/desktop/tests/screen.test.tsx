@@ -11,6 +11,7 @@ import {
   MAX_EVENTS_PER_S,
   TOPIC,
   matchingMonitors,
+  sharedMonitor,
   pictureSpot,
   readStats,
   type GuestDeps,
@@ -21,6 +22,7 @@ import {
 } from "../src/screen";
 import { withCapability } from "../src/seats";
 import { statsLine } from "../src/screenui";
+import { nativeShares } from "../src/nativeScreen";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -48,13 +50,14 @@ function fakeRoom() {
   };
 }
 
-function fakeScreenTrack(surface = "monitor", width = 1920, height = 1080) {
+function fakeScreenTrack(surface = "monitor", width = 1920, height = 1080, label = "") {
   const ended: (() => void)[] = [];
   return {
     kind: "video",
     stop: vi.fn(),
     ended: () => ended.forEach((f) => f()),
     mediaStreamTrack: {
+      label,
       getSettings: () => ({ displaySurface: surface, width, height }),
       addEventListener: (_: string, f: () => void) => ended.push(f),
     },
@@ -314,16 +317,13 @@ describe("control of the host's screen", () => {
     expect(u.deps.begin).not.toHaveBeenCalled();
   });
 
-  it("asks the host which monitor when several fit, once per share", async () => {
-    const twin: Monitor = { id: "\\\\.\\DISPLAY3", rect: { x: -2560, y: 0, w: 2560, h: 1440 }, primary: false };
-    const t = host({ monitors: vi.fn(async () => [MAIN, twin]) });
+  it("uses the shared display identity even when two monitors have identical dimensions", async () => {
+    const twin: Monitor = { id: "\\\\.\\DISPLAY3", rect: { x: -2560, y: 0, w: 2560, h: 1440 }, primary: false, capture_id: 7 };
+    const t = host({ monitors: vi.fn(async () => [{ ...MAIN, capture_id: 2 }, twin]) }, fakeScreenTrack("monitor", 1920, 1080, "screen:7:0"));
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
-    await vi.waitFor(() => expect(t.h.status.choose?.monitors.map((m) => m.id)).toEqual([MAIN.id, twin.id]));
-    expect(t.deps.begin).not.toHaveBeenCalled();
-    await t.h.allow(PAVLO, twin.id);
+    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     expect(t.log).toEqual(["begin -2560,0 2560x1440"]);
-    expect(t.h.status.choose).toBeNull();
     // Given back and taken again: the same screen, without asking.
     t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
     await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
@@ -331,9 +331,57 @@ describe("control of the host's screen", () => {
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     expect(t.log[t.log.length - 1]).toBe("begin -2560,0 2560x1440");
   });
+
+  it("keeps an unidentified display view-only without offering a second picker", async () => {
+    const twin = { ...MAIN, id: "another-display", primary: false };
+    const t = host({ monitors: vi.fn(async () => [MAIN, twin]) });
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO]);
+    await vi.waitFor(() => expect(t.h.status.error).toMatch(/shared display could not be identified/));
+    expect(t.h.status.host).toBe("on");
+    expect(t.deps.begin).not.toHaveBeenCalled();
+  });
+
+  it("does not move control to a changed display after capture starts", async () => {
+    const t = host();
+    await t.h.share("s1");
+    vi.mocked(t.deps.monitors).mockResolvedValue([{ ...MAIN, rect: { ...MAIN.rect, x: -2560 } }, SIDE]);
+    t.h.setAllowed([PAVLO]);
+    await vi.waitFor(() => expect(t.h.status.error).toMatch(/shared display could not be identified/));
+    expect(t.deps.begin).not.toHaveBeenCalled();
+  });
+
+  it("cannot grant control after sharing stops while native begin is pending", async () => {
+    let finish!: () => void;
+    const t = host({ begin: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })) });
+    await t.h.share("s1");
+    t.h.setAllowed([PAVLO]);
+    await vi.waitFor(() => expect(t.deps.begin).toHaveBeenCalled());
+    await t.h.stop(null);
+    finish();
+    await vi.waitFor(() => expect(t.deps.end).toHaveBeenCalledTimes(2));
+    expect(t.h.status.host).toBe("off");
+    expect(t.h.status.controller).toBeNull();
+    expect(t.room.sent).not.toContainEqual(expect.objectContaining({ body: { on: true } }));
+  });
 });
 
 describe("placing the guest's pointer", () => {
+  it("never guesses another display when a captured source disappears or is a native-picker session", () => {
+    const monitors = [{ ...MAIN, capture_id: 2 }];
+    for (const label of ["screen:7:0", "screen:2:0:s", "screen:-1:0"]) {
+      expect(sharedMonitor(monitors, fakeScreenTrack("monitor", 1920, 1080, label).mediaStreamTrack as never)).toBeNull();
+    }
+  });
+
+  it("keeps the native Mac display identity instead of choosing an identical monitor", () => {
+    const track = fakeScreenTrack().mediaStreamTrack as unknown as MediaStreamTrack;
+    nativeShares.set(track, { id: 7, kind: "monitor", title: "External display" });
+    const native = { ...MAIN, id: "7", primary: false };
+    expect(sharedMonitor([MAIN, native], track)).toEqual(native);
+    expect(sharedMonitor([MAIN], track)).toBeNull();
+  });
+
   it("matches monitors by shape", () => {
     expect(matchingMonitors([MAIN, SIDE], 1280, 720)).toEqual([MAIN]);
     expect(matchingMonitors([MAIN, SIDE], 1280, 1024)).toEqual([SIDE]);
@@ -521,5 +569,15 @@ describe("screen grants", () => {
     expect(withCapability(["view"], "device.control", true)).toEqual(["view", "device.view", "device.control"]);
     expect(withCapability(["view", "device.view", "device.control"], "device.view", false)).toEqual(["view"]);
     expect(withCapability(["view", "device.view", "device.control"], "device.control", false)).toEqual(["view", "device.view"]);
+  });
+});
+
+
+describe("native Mac capture failures", () => {
+  it("shows permission guidance instead of treating it as picker cancellation", async () => {
+    const t = host({ capture: vi.fn(async () => { throw new Error("Allow Screen Recording in System Settings."); }) });
+    await t.h.share("session");
+    expect(t.h.status.host).toBe("off");
+    expect(t.h.status.error).toBe("Allow Screen Recording in System Settings.");
   });
 });

@@ -10,6 +10,7 @@ import { when } from "./shared";
 import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 import { Banner, Button, Card, ConfirmDialog, EmptyState, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, useToast } from "./ui";
 import { MODE_LABEL } from "./calls";
+import { Icon } from "./ui/Icon";
 
 export function SessionDetail({
   sessionId,
@@ -73,7 +74,7 @@ export function SessionDetail({
           </Card>
         ))}
       {state.phase === "ready" && outputs.length === 0 && (
-        <EmptyState icon="✓" title="No summary">
+        <EmptyState icon={<Icon name="document" size={28} />} title="No summary">
           This call was saved with its transcript only.
         </EmptyState>
       )}
@@ -113,7 +114,7 @@ export function SessionDetail({
   const transcriptPanel = transcript === null ? (
     replayError ? replayPanel : <SkeletonList rows={4} label="Loading the transcript" />
   ) : transcript.length === 0 ? (
-    <EmptyState icon="…" title="Nothing was transcribed" />
+    <EmptyState icon={<Icon name="mic" size={28} />} title="Nothing was transcribed" />
   ) : (
     <ol className="sd-transcript">
       {transcript.map((r) => (

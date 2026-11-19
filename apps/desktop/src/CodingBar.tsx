@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { api, inTauri, onShotError, onShots, type CodingMode, type ShotView } from "./api";
 import { prettyKey } from "./hotkeys";
-import { cx } from "./ui";
+import { Select, cx } from "./ui";
 
 export const LANGUAGES = ["", "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", "Go", "Kotlin", "Swift", "Ruby", "Rust", "SQL"];
 const MAX_SHOTS = 6;
@@ -18,7 +18,8 @@ export function shotTitle(s: ShotView): string {
   return `${from} · ${s.width}×${s.height} · ${kb} KB · ${s.capture_ms + s.encode_ms} ms`;
 }
 
-export function CodingBar({ running }: { running: boolean }) {
+export function CodingBar({ running, collapsible = false }: { running: boolean; collapsible?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const [shots, setShots] = useState<ShotView[]>([]);
   const [mode, setMode] = useState<CodingMode>("interview");
   const [language, setLanguage] = useState("");
@@ -69,9 +70,13 @@ export function CodingBar({ running }: { running: boolean }) {
   };
   const full = shots.length >= MAX_SHOTS;
   const n = shots.length;
+  useEffect(() => { if (n > 0 || error) setExpanded(true); }, [n, error]);
+  const toolsOpen = expanded;
 
   return (
     <section className="ov-coding" aria-label="Coding">
+      {collapsible && <button className="ov-coding-toggle" type="button" aria-expanded={toolsOpen} onClick={() => setExpanded(!expanded)}>Screen tools <span aria-hidden="true">{toolsOpen ? "−" : "+"}</span></button>}
+      <div hidden={collapsible && !toolsOpen}>
       <div className="ov-coding-row">
         <button type="button" className="ov-ask-btn" disabled={busy !== null || full} onClick={() => run("add")} title={full ? "6 shots at most" : `A shot of the window in front${keys.add ? ` (${prettyKey(keys.add)})` : ""}`}>
           {busy === "add" ? "Adding…" : "+ Shot"}
@@ -92,13 +97,13 @@ export function CodingBar({ running }: { running: boolean }) {
             </button>
           ))}
         </div>
-        <select className="ov-coding-lang" aria-label="Code language" value={language} onChange={(e) => prefs(mode, e.target.value)} title="The code's language; Auto takes it from the screen">
+        <Select className="ov-coding-lang" aria-label="Code language" value={language} onChange={(e) => prefs(mode, e.target.value)} title="The code's language; Auto takes it from the screen">
           {LANGUAGES.map((l) => (
             <option key={l} value={l}>
               {l || "Auto"}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       {n > 0 && (
         <ol className="ov-shots" aria-label="Shots to solve">
@@ -120,6 +125,7 @@ export function CodingBar({ running }: { running: boolean }) {
           {error}
         </p>
       )}
+      </div>
     </section>
   );
 }

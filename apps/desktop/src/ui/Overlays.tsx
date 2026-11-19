@@ -43,7 +43,7 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="ui-scrim" />
-        <RadixDialog.Content className={cx("ui-dialog", `ui-dialog-${size}`)} onCloseAutoFocus={returnFocus}>
+        <RadixDialog.Content className={cx("ui-dialog", `ui-dialog-${size}`)} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
           <div className="ui-dialog-head">
             <RadixDialog.Title className="ui-dialog-title">{title}</RadixDialog.Title>
             <RadixDialog.Close className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost" aria-label="Close">
@@ -76,6 +76,7 @@ export function ConfirmDialog({
   typed,
   onConfirm,
   extra,
+  secondaryAction,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -89,9 +90,13 @@ export function ConfirmDialog({
   onConfirm: () => unknown;
   /** More choices between Cancel and the confirm button. */
   extra?: ReactNode;
+  /** A second completion choice with the same pending and error handling as the main action. */
+  secondaryAction?: { label: string; onConfirm: () => unknown };
 }) {
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<"primary" | "secondary" | null>(null);
+  const busy = pending !== null;
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const returnFocus = useReturnFocus(open);
   const ok = !typed || text.trim().toLowerCase() === typed.trim().toLowerCase();
@@ -103,24 +108,27 @@ export function ConfirmDialog({
     }
     onOpenChange(o);
   };
-  const confirm = async () => {
-    setBusy(true);
+  const confirm = async (choice: "primary" | "secondary") => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(choice);
     setError(null);
     try {
-      await onConfirm();
+      await (choice === "secondary" ? secondaryAction?.onConfirm() : onConfirm());
       setText("");
       onOpenChange(false);
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      setPending(null);
     }
   };
   return (
     <AlertDialog.Root open={open} onOpenChange={change}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="ui-scrim" />
-        <AlertDialog.Content className={extra ? "ui-dialog ui-dialog-md" : "ui-dialog ui-dialog-sm"} onCloseAutoFocus={returnFocus}>
+        <AlertDialog.Content className={extra || secondaryAction ? "ui-dialog ui-dialog-md" : "ui-dialog ui-dialog-sm"} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
           <AlertDialog.Title className="ui-dialog-title">{title}</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="ui-dialog-desc">{children}</div>
@@ -145,7 +153,12 @@ export function ConfirmDialog({
               </Button>
             </AlertDialog.Cancel>
             {extra}
-            <Button variant={danger ? "danger" : "primary"} disabled={!ok} loading={busy} onClick={confirm}>
+            {secondaryAction && (
+              <Button disabled={busy} loading={pending === "secondary"} onClick={() => void confirm("secondary")}>
+                {secondaryAction.label}
+              </Button>
+            )}
+            <Button variant={danger ? "danger" : "primary"} disabled={!ok || busy} loading={pending === "primary"} onClick={() => void confirm("primary")}>
               {confirmLabel}
             </Button>
           </div>

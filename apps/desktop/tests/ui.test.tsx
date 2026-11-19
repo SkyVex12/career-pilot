@@ -1,5 +1,5 @@
 // The design system's components: their states, names and keyboard behaviour.
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -22,6 +22,7 @@ import {
   Switch,
   Tabs,
   ToastProvider,
+  Tooltip,
   Truncate,
   middleTruncate,
   required,
@@ -73,11 +74,77 @@ describe("Field", () => {
     expect(url("jobs.example.com")).toMatch(/not a link/);
   });
 
+  it("shows optional help beside its label on hover and keyboard focus without changing the field", async () => {
+    render(<Field label="Company" hint="As on the posting" hintMode="tooltip" error="Enter the company."><Input /></Field>);
+    const field = screen.getByRole("textbox", { name: "Company" });
+    const help = screen.getByRole("button", { name: "About Company" });
+    expect(field).toHaveAccessibleDescription("Enter the company. As on the posting");
+    expect(help.closest("label")).toBeNull();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await userEvent.hover(help);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("As on the posting");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await userEvent.unhover(help);
+    await userEvent.tab();
+    expect(help).toHaveFocus();
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    expect(help).toHaveFocus();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(field).toHaveValue("");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter the company.");
+  });
+
+  it("keeps a switch's name and action separate from its help icon", async () => {
+    const changed = vi.fn();
+    render(<Switch label="Echo cancellation" hint="Removes call sound from the microphone." hintMode="tooltip" checked={false} onChange={changed} />);
+    const toggle = screen.getByRole("switch", { name: "Echo cancellation" });
+    expect(toggle).toHaveAccessibleDescription("Removes call sound from the microphone.");
+    await userEvent.click(screen.getByRole("button", { name: "About Echo cancellation" }));
+    expect(changed).not.toHaveBeenCalled();
+    expect(screen.getByRole("tooltip")).toBeVisible();
+    await userEvent.click(toggle);
+    expect(changed).toHaveBeenCalledWith(true);
+  });
+
   it("a checkbox is labelled and toggles", async () => {
     const onChange = vi.fn();
     render(<Checkbox checked={false} onChange={onChange} label="Store the transcript" />);
     await userEvent.click(screen.getByLabelText("Store the transcript"));
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("Tooltip", () => {
+  it("stays within the viewport outside scroll containers and preserves existing descriptions", async () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 200 });
+    let anchorTop = 2;
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (this.classList.contains("ui-tooltip-wrap")) return { left: 312, top: anchorTop, right: 330, bottom: anchorTop + 18, width: 18, height: 18, x: 312, y: anchorTop, toJSON() {} };
+      return { left: 0, top: 0, right: 260, bottom: 50, width: 260, height: 50, x: 0, y: 0, toJSON() {} };
+    });
+    try {
+      render(<div style={{ overflow: "hidden" }}><span id="existing">Existing description.</span><Tooltip content="More information."><button aria-describedby="existing">Help</button></Tooltip></div>);
+      const trigger = screen.getByRole("button", { name: "Help" });
+      expect(trigger).toHaveAccessibleDescription("Existing description. More information.");
+      await userEvent.hover(trigger);
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip.parentElement).toBe(document.body);
+      expect(tooltip).toHaveStyle({ left: "52px", top: "28px" });
+      anchorTop = 170;
+      fireEvent.scroll(window);
+      expect(tooltip).toHaveStyle({ left: "52px", top: "112px" });
+      await userEvent.unhover(trigger);
+      await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+    } finally {
+      rect.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+    }
   });
 });
 

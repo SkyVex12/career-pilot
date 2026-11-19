@@ -6,16 +6,23 @@
 //! current session so a window opened or reloaded mid-call (the overlay) rebuilds the whole
 //! conversation with `snapshot` (see `history`).
 
+mod call_window;
+mod compact_window;
 mod history;
 mod hotkeys;
 mod layout;
+mod native_screen;
 mod program_name;
 mod release;
 mod remote;
+#[cfg(any(target_os = "macos", test))]
+mod remote_macos;
 mod settings;
 mod shots;
 mod stealth;
 mod voice;
+mod window_drag;
+mod workspace_window;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -72,6 +79,8 @@ const SHOTS_ERROR_EVENT: &str = "copilot://coding-error";
 const SHOTS_SENT_EVENT: &str = "copilot://coding-sent";
 /// The overlay asked to open the main window's Settings screen ("All settings…").
 const OPEN_SETTINGS_EVENT: &str = "copilot://open-settings";
+/// A call ended, or the idle overlay asked to return to the main Call screen.
+const OPEN_CALL_EVENT: &str = "copilot://open-call";
 /// The on-demand server (wake.rs): {"state": "starting" | "ready" | "failed", "detail"}.
 const SERVER_EVENT: &str = "copilot://server";
 /// A background call while the VM is stopped: it does not start the VM by itself.
@@ -131,6 +140,7 @@ const SENT_SHOTS_KEPT: usize = 10;
 #[derive(Default)]
 struct OverlayState {
     click_through: AtomicBool,
+    temporary_taskbar: AtomicBool,
     geom_gen: AtomicU64,
     shortcuts: Mutex<Vec<(Shortcut, Action)>>,
 }
@@ -471,7 +481,7 @@ struct SettingsView {
     settings: Settings,
     /// The app's version (the tag's, in a release build).
     version: String,
-    /// A release build: no local environment or dev token, the stage's URLs fixed.
+    /// A cloud build: no local environment or dev token, the stage's URLs fixed.
     release: Option<ReleaseView>,
     dev_token_set: bool,
     /// The cloud environment's signed-in user (their email), if any.
@@ -517,7 +527,7 @@ fn get_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsView {
         email_sign_in,
         ready,
         warnings,
-        updates: UpdatesView { enabled: release::config().is_some(), checked_at: checked_at(&app) },
+        updates: UpdatesView { enabled: cfg!(feature = "release"), checked_at: checked_at(&app) },
         hotkey_review,
     }
 }
@@ -960,13 +970,21 @@ async fn sign_out(state: State<'_, AppState>) -> Res<()> {
 /// session act for; None is the account itself. Refused while a session runs or starts, so a
 /// session never changes profile halfway.
 #[tauri::command]
-async fn set_profile(state: State<'_, AppState>, profile: Option<String>) -> Res<()> {
+async fn set_profile(app: AppHandle, state: State<'_, AppState>, profile: Option<String>) -> Res<()> {
     let _starting = state.begin_start()?;
-    if state.engine.lock().unwrap().is_some() {
+    if state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some() {
         return Err("end the session first".into());
     }
     let profile = profile.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
-    state.update_settings(|s| s.profile = profile);
+    if state.settings.lock().unwrap().profile == profile {
+        return Ok(());
+    }
+    state.update_settings(|s| {
+        s.profile = profile;
+        s.last_session_id = None;
+    });
+    let reset = state.history.lock().unwrap().reset_context();
+    let _ = app.emit(EVENT, reset);
     Ok(())
 }
 
@@ -1181,24 +1199,56 @@ async fn launch(
     let engine = Engine::start(config, tokens, parts, sink).map_err(|e| e.to_string())?;
     *state.engine.lock().unwrap() = Some(engine.clone());
 
+    let showing = engine.clone();
+    let show_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        let current = {
+            let state = show_app.state::<AppState>();
+            state.engine.lock().unwrap().as_ref().is_some_and(|engine| Arc::ptr_eq(engine, &showing))
+        };
+        // Check identity after reaching the UI thread: an immediate failure or a newer call
+        // may already have replaced this one. No engine lock crosses native window calls.
+        if current && let Err(error) = call_window::started(&show_app) {
+            tracing::warn!("show live call window: {error}");
+        }
+    }) {
+        tracing::warn!("schedule live call window: {error}");
+    }
+
     // When the client stops (ended, replaced, no minutes, ...), stop the audio and clear up:
     // the socket is closed for good.
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         engine.finish().await;
-        {
+        let finished_current = {
             let state = app2.state::<AppState>();
-            let mut slot = state.engine.lock().unwrap();
-            if slot.as_ref().is_some_and(|e| Arc::ptr_eq(e, &engine)) {
-                *slot = None;
-            }
+            let finished_current = {
+                let mut slot = state.engine.lock().unwrap();
+                let current = slot.as_ref().is_some_and(|e| Arc::ptr_eq(e, &engine));
+                if current {
+                    *slot = None;
+                }
+                current
+            };
             let now = state.clock();
             state.activity.lock().unwrap().last_session_end = Some(now);
+            finished_current
+        };
+        if finished_current {
+            let restore_app = app2.clone();
+            if let Err(error) = app2.run_on_main_thread(move || {
+                let active = {
+                    let state = restore_app.state::<AppState>();
+                    state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some()
+                };
+                if !active && let Err(error) = call_window::stopped(&restore_app) {
+                    tracing::warn!("restore main call window: {error}");
+                }
+            }) {
+                tracing::warn!("schedule main call window: {error}");
+            }
         }
     });
-    if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.show();
-    }
     Ok(())
 }
 
@@ -1620,9 +1670,16 @@ fn minimize_overlay(app: AppHandle) -> Res<()> {
     // button hidden; the show hotkey brings the overlay back.
     let stealth = app.state::<AppState>().settings.lock().unwrap().stealth;
     if !stealth {
-        let _ = w.set_skip_taskbar(false);
+        w.set_skip_taskbar(false).map_err(|e| e.to_string())?;
+        app.state::<AppState>().overlay.temporary_taskbar.store(true, Ordering::SeqCst);
     }
-    w.minimize().map_err(|e| e.to_string())
+    if let Err(error) = w.minimize() {
+        if app.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst) {
+            let _ = w.set_skip_taskbar(true);
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 /// Show the overlay, restoring it if it was minimized, and focus it.
@@ -1639,6 +1696,10 @@ fn bring_back_overlay(w: &WebviewWindow) {
 /// so the handler can dispatch. Invalid or unbound accelerators are skipped (the settings
 /// screen flags them); the click-through off switch always keeps a working key (hotkeys.rs).
 fn register_hotkeys(app: &AppHandle) {
+    if let Err(error) = workspace_window::clear_click_through(app) {
+        tracing::warn!("workspace click-through recovery before rebinding: {error}");
+        return;
+    }
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     let state = app.state::<AppState>();
@@ -1671,7 +1732,12 @@ fn dispatch(app: &AppHandle, action: Action) {
             let on = !app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
             apply_click_through(app, on);
         }
-        Action::ClickThroughOff => apply_click_through(app, false),
+        Action::ClickThroughOff => {
+            apply_click_through(app, false);
+            if let Err(error) = workspace_window::clear_click_through(app) {
+                tracing::warn!("workspace click-through recovery: {error}");
+            }
+        }
         Action::OpacityUp => nudge_opacity(app, 1),
         Action::OpacityDown => nudge_opacity(app, -1),
         Action::AddShot | Action::Solve => {
@@ -1926,6 +1992,24 @@ fn open_main_settings(app: AppHandle) -> Res<()> {
     Ok(())
 }
 
+/// The idle overlay's power button returns to setup. During a live call, opening the main
+/// screen leaves its overlay in place; only an actual terminal stop hides live controls.
+#[tauri::command]
+async fn open_main_call(app: AppHandle) -> Res<()> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let main_app = app.clone();
+    app.run_on_main_thread(move || {
+        let active = {
+            let state = main_app.state::<AppState>();
+            state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some()
+        };
+        let result = if active { call_window::show_main(&main_app) } else { call_window::stopped(&main_app) };
+        let _ = send.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    receive.await.map_err(|_| "main window operation was interrupted".to_string())?
+}
+
 /// The app's log file, emptied once it passes 2 MB so it never grows without bound.
 /// `None` off Windows or when the folder cannot be written; logs then go to stderr.
 fn open_log_file() -> Option<std::fs::File> {
@@ -1973,6 +2057,7 @@ pub fn run() {
         // Closing the main window quits the app. Otherwise the hidden overlay window kept the
         // process alive with no window to show, and a second launch had nothing to bring forward.
         .on_window_event(|window, event| {
+            compact_window::on_window_event(window, event);
             if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {
                 // A guest's control ends with the app: nothing they held stays pressed.
                 remote::end();
@@ -2065,6 +2150,7 @@ pub fn run() {
                 let _ = std::fs::remove_dir_all(&leftover);
                 let _ = secrets.delete(OLD_RECORDING_KEY);
             }
+            app.manage(workspace_window::WorkspaceWindowState::default());
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 settings_path,
@@ -2133,6 +2219,7 @@ pub fn run() {
                     .transparent(true)
                     .visible(false)
                     .additional_browser_args(BROWSER_ARGS)
+                    .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                     .build()?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).
             let handle = app.handle().clone();
@@ -2141,9 +2228,10 @@ pub fn run() {
                     schedule_remember(&handle);
                 }
                 // Restored from its taskbar button after a minimize: drop that button again.
-                if matches!(event, WindowEvent::Resized(_) | WindowEvent::Focused(true))
+                if matches!(event, WindowEvent::Focused(true))
                     && let Some(w) = overlay_window(&handle)
                     && matches!(w.is_minimized(), Ok(false))
+                    && handle.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst)
                 {
                     let _ = w.set_skip_taskbar(true);
                 }
@@ -2185,6 +2273,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            compact_window::set_compact_window_shape,
+            compact_window::resize_compact_window,
+            window_drag::start_window_drag,
+            workspace_window::window_prefs,
+            workspace_window::set_window_opacity,
+            workspace_window::set_window_on_top,
+            workspace_window::set_window_click_through,
             get_settings,
             save_settings,
             list_devices,
@@ -2226,6 +2321,10 @@ pub fn run() {
             ask_note,
             set_sharing,
             voice_devices,
+            native_screen::native_screen_sources,
+            native_screen::native_screen_start,
+            native_screen::native_screen_frame,
+            native_screen::native_screen_stop,
             remote_monitors,
             remote_begin,
             remote_input,
@@ -2238,6 +2337,7 @@ pub fn run() {
             set_click_through,
             set_overlay_on_top,
             open_main_settings,
+            open_main_call,
             quit_app,
             update_status,
             install_update,
@@ -2269,8 +2369,8 @@ fn remote_monitors() -> Vec<remote::Monitor> {
 
 /// A guest begins controlling the shared monitor `target`.
 #[tauri::command]
-fn remote_begin(target: remote::Rect) {
-    remote::begin(target);
+fn remote_begin(target: remote::Rect) -> Res<()> {
+    remote::begin(target)
 }
 
 /// The controlling guest's events, carried out on that monitor. Err when no one controls.

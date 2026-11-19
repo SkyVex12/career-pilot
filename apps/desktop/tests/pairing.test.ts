@@ -43,9 +43,9 @@ describe("Career-OS pull", () => {
 });
 
 describe("start screen", () => {
-  it("names the application with its stage and resume", () => {
+  it("names the application with its resume without the stage", () => {
     const app = { company: "Globex", role: "Staff Engineer", stage: "interview" as const, resume: detail(false).resume };
-    expect(applicationOption(app)).toBe("Globex · Staff Engineer · Interviewing · Tailored: Globex cut");
+    expect(applicationOption(app)).toBe("Globex · Staff Engineer · Tailored: Globex cut");
   });
 
   it("reads text files in the app and uploads the rest", () => {

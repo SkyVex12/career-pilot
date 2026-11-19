@@ -1,15 +1,10 @@
-// Release builds of the desktop app (README.md, "Releasing the desktop app"). Two steps around
-// `tauri build`, both reading apps/desktop/release.json (or the file COPILOT_RELEASE_CONFIG
-// names), the same file build.rs embeds:
-//
-//   node scripts/release.mjs config --version 0.2.0
-//       writes src-tauri/tauri.release.conf.json: the version, the NSIS installer, updater
-//       artifacts, the updater's endpoint and public key, and the Windows signing command if
-//       WINDOWS_SIGN_COMMAND is set (a drop-in for code signing later)
-//   node scripts/release.mjs manifest --version 0.2.0 --out dist-release
-//       copies the installer and its signature from target/release/bundle/nsis into the
-//       folder, as they are published to the releases bucket, and writes latest.json, the
-//       update manifest the installed apps check (notes from --notes or COPILOT_RELEASE_NOTES)
+// Platform-specific desktop release bundles and the shared updater manifest.
+// config --version X [--platform windows-x86_64|darwin-aarch64|darwin-x86_64]
+//   [--preview] [--out FILE]: write the Tauri release overlay (default: Windows).
+// manifest --version X [--platform ...] [--bundle-dir DIR] [--out DIR]: stage the
+//   installer, signed update archive, and one platform's latest.json.
+// merge --version X --out FILE MANIFEST...: combine platforms after all builds succeed.
+// See docs/macos.md for Apple signing and the two native build targets.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,9 +20,16 @@ const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const builtName = (version) => `Copilot Desktop_${version}_x64-setup.exe`;
 const installerName = (version) => `Copilot-Desktop_${version}_x64-setup.exe`;
 
+function platform(a) {
+  const value = a.platform ?? "windows-x86_64";
+  if (!["windows-x86_64", "darwin-aarch64", "darwin-x86_64"].includes(value)) fail(`unsupported --platform ${value}`);
+  return value;
+}
+
 function args(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--preview") { out.preview = true; continue; }
     if (argv[i].startsWith("--")) out[argv[i].slice(2)] = argv[i + 1]?.startsWith("--") ? true : argv[++i] ?? true;
     else out._.push(argv[i]);
   }
@@ -61,13 +63,14 @@ const baseUrl = (cfg) => cfg.update_url.slice(0, cfg.update_url.lastIndexOf("/")
 function writeConfig(a) {
   const cfg = releaseConfig();
   const v = version(a);
+  const mac = platform(a).startsWith("darwin-");
   const local = /^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(cfg.update_url);
   if (cfg.update_url.startsWith("http://") && !local) fail("update_url must be https (http only for a local test)");
   const overlay = {
     version: v,
     bundle: {
-      targets: ["nsis"],
-      createUpdaterArtifacts: true,
+      targets: mac ? ["app", "dmg"] : ["nsis"],
+      createUpdaterArtifacts: !a.preview,
       windows: {
         nsis: { installMode: "currentUser" },
         ...(process.env.WINDOWS_SIGN_COMMAND ? { signCommand: process.env.WINDOWS_SIGN_COMMAND } : {}),
@@ -85,7 +88,7 @@ function writeConfig(a) {
       },
     },
   };
-  const out = join(desktop, "src-tauri", "tauri.release.conf.json");
+  const out = a.out ? resolve(a.out) : join(desktop, "src-tauri", "tauri.release.conf.json");
   writeFileSync(out, JSON.stringify(overlay, null, 2) + "\n");
   console.log(`wrote ${out} (version ${v}, updates from ${cfg.update_url})`);
 }
@@ -93,9 +96,12 @@ function writeConfig(a) {
 function writeManifest(a) {
   const cfg = releaseConfig();
   const v = version(a);
-  const bundle = a["bundle-dir"] ? resolve(a["bundle-dir"]) : join(repo, "target", "release", "bundle", "nsis");
-  const name = installerName(v);
-  const installer = join(bundle, builtName(v));
+  const target = platform(a);
+  const mac = target.startsWith("darwin-");
+  const arch = target.slice("darwin-".length);
+  const bundle = a["bundle-dir"] ? resolve(a["bundle-dir"]) : join(repo, "target", "release", "bundle", mac ? "macos" : "nsis");
+  const name = mac ? `Copilot-Desktop_${v}_${arch}.app.tar.gz` : installerName(v);
+  const installer = join(bundle, mac ? "Copilot Desktop.app.tar.gz" : builtName(v));
   if (!existsSync(installer)) fail(`${installer} not found: build first`);
   if (!existsSync(`${installer}.sig`)) fail(`${installer}.sig not found: TAURI_SIGNING_PRIVATE_KEY was not set for the build`);
   const out = resolve(a.out ?? "dist-release");
@@ -104,25 +110,54 @@ function writeManifest(a) {
   // the newest, for the download link; <base>/latest.json, written last.
   copyFileSync(installer, join(out, v, name));
   copyFileSync(`${installer}.sig`, join(out, v, `${name}.sig`));
-  copyFileSync(installer, join(out, "Copilot-setup.exe"));
+  if (mac) {
+    const dmgArch = arch === "x86_64" ? "x64" : "aarch64";
+    const dmg = join(dirname(bundle), "dmg", `Copilot Desktop_${v}_${dmgArch}.dmg`);
+    if (!existsSync(dmg)) fail(`${dmg} not found: build the dmg bundle first`);
+    copyFileSync(dmg, join(out, v, `Copilot-Desktop_${v}_${arch}.dmg`));
+    copyFileSync(dmg, join(out, `Copilot-${arch}.dmg`));
+  } else {
+    copyFileSync(installer, join(out, "Copilot-setup.exe"));
+  }
   const manifest = {
     version: v,
     // --notes, or COPILOT_RELEASE_NOTES (release-desktop.yml: the merged pull requests' titles).
     notes: typeof a.notes === "string" ? a.notes : process.env.COPILOT_RELEASE_NOTES?.trim() || `Copilot ${v}`,
     pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     platforms: {
-      "windows-x86_64": {
+      [target]: {
         signature: readFileSync(`${installer}.sig`, "utf8").trim(),
         url: `${baseUrl(cfg)}/${v}/${name}`,
       },
     },
   };
   writeFileSync(join(out, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
-  console.log(`wrote ${out}: ${v}/${name}, Copilot-setup.exe, latest.json -> ${manifest.platforms["windows-x86_64"].url}`);
+  console.log(`wrote ${out}: ${v}/${name}, latest.json -> ${manifest.platforms[target].url}`);
+}
+
+function mergeManifests(a) {
+  const v = version(a);
+  const files = a._.slice(1);
+  if (!files.length) fail("merge needs manifest file paths");
+  let merged;
+  for (const file of files) {
+    const next = JSON.parse(readFileSync(resolve(file), "utf8"));
+    if (next.version !== v) fail(`${file}: version does not match ${v}`);
+    merged ??= { ...next, platforms: {} };
+    for (const [key, entry] of Object.entries(next.platforms)) {
+      if (merged.platforms[key]) fail(`duplicate platform ${key}`);
+      if (!entry.signature || !entry.url) fail(`${file}: incomplete ${key} artifact`);
+      merged.platforms[key] = entry;
+    }
+  }
+  writeFileSync(resolve(a.out ?? "latest.json"), JSON.stringify(merged, null, 2) + "\n");
 }
 
 const a = args(process.argv.slice(2));
 switch (a._[0]) {
+  case "merge":
+    mergeManifests(a);
+    break;
   case "config":
     writeConfig(a);
     break;
@@ -130,5 +165,5 @@ switch (a._[0]) {
     writeManifest(a);
     break;
   default:
-    fail("usage: release.mjs config --version X | manifest --version X [--out DIR] [--bundle-dir DIR] [--notes TEXT]");
+    fail("usage: release.mjs config --version X | manifest --version X [--out DIR] [--bundle-dir DIR] [--notes TEXT] [--platform windows-x86_64|darwin-aarch64|darwin-x86_64] | merge --version X --out FILE MANIFEST...");
 }

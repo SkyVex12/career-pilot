@@ -2,8 +2,8 @@
 // History, Settings, and the debug panel (hidden unless turned on in the settings, or with
 // Ctrl+Shift+D). Signing in and the Career-OS link, when the stage requires one, come first:
 // the Call screen walks through them, and the other screens wait.
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, inTauri, onOpenSettings, onServer, onSettingsChanged, onUpdate, rest, type CareerOsConnection, type LiveSession, type ServerState, type SettingsView, type UpdateState } from "./api";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { api, inTauri, onOpenCall, onOpenSettings, onServer, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type ServerState, type SettingsView, type UpdateState } from "./api";
 import { bar } from "./updates";
 import { Applications } from "./Applications";
 import { CallScreen } from "./CallScreen";
@@ -11,9 +11,11 @@ import { Resumes } from "./Resumes";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
 import { startScreenHost } from "./screen";
-import { Shell, type Tab } from "./Shell";
+import { Shell, type Tab, type WorkspaceWindowActions } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
+import { PageHeadingActive } from "./ui/Layout";
+import { Icon } from "./ui/Icon";
 import { Work } from "./Work";
 
 // Screens not needed at startup load when first opened: History (with the call replay, which
@@ -22,13 +24,41 @@ const History = lazy(() => import("./History").then((m) => ({ default: m.History
 const SettingsScreen = lazy(() => import("./SettingsScreen").then((m) => ({ default: m.SettingsScreen })));
 const DebugPanel = lazy(() => import("./Debug").then((m) => ({ default: m.DebugPanel })));
 
+export function useWorkspaceWindowOpacity() {
+  useEffect(() => {
+    if (!inTauri) return;
+    let disposed = false;
+    let revision = 0;
+    let unlisten: (() => void) | undefined;
+    const apply = (opacity: number) => {
+      if (!disposed && Number.isFinite(opacity)) document.documentElement.style.setProperty("--workspace-opacity", String(Math.max(0.3, Math.min(1, opacity))));
+    };
+    const load = async () => {
+      try {
+        unlisten = await onWorkspaceWindowPrefs(prefs => { revision++; apply(prefs.opacity); });
+      } catch { /* The initial preferences can still be loaded if events are unavailable. */ }
+      if (disposed) { unlisten?.(); return; }
+      const initialRevision = revision;
+      try {
+        const prefs = await api.windowPrefs();
+        if (revision === initialRevision) apply(prefs?.opacity);
+      } catch { /* Keep the readable default until the next preference change. */ }
+    };
+    void load();
+    return () => { disposed = true; unlisten?.(); document.documentElement.style.removeProperty("--workspace-opacity"); };
+  }, []);
+}
+
 export default function App() {
+  useWorkspaceWindowOpacity();
   const [session, dispatch] = useSession();
   // Guest seats' voice lives in this window alone (voice.ts); the overlay drives it by events.
   useEffect(() => (inTauri ? startVoice() : undefined), []);
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
   const [tab, setTab] = useState<Tab>("start");
+  const windowActions = useRef<WorkspaceWindowActions | null>(null);
+  const registerWindowActions = useCallback((actions: WorkspaceWindowActions | null) => { windowActions.current = actions; }, []);
   // Tabs opened once stay open (hidden), so coming back shows what they had at once and they
   // refresh in the background (useOnShow) instead of starting from nothing.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set(["start"]));
@@ -47,7 +77,12 @@ export default function App() {
   const environment = view?.settings.environment ?? "local";
   // Whose data the screens show: everything loaded is dropped when this changes.
   const account = accountOf(view);
-  const profiles = useProfiles(tokenSet, view?.settings.profile ?? null, account);
+  const clearProfileContext = useCallback(() => {
+    if (!session.running) dispatch({ type: "reset", running: false });
+    setPreset(null);
+    setFocusApp(null);
+  }, [session.running, dispatch]);
+  const profiles = useProfiles(tokenSet, view?.settings.profile ?? null, account, clearProfileContext);
   const link = useLinkRequired(tokenSet, account);
   const update = useUpdate();
   const check = useCheckNow(update);
@@ -71,11 +106,29 @@ export default function App() {
     if (!inTauri) return;
     reload();
     const off = onSettingsChanged(reload);
+    let disposed = false;
+    let navigating = false;
+    let destination: Tab = "start";
+    const navigate = async (next: Tab) => {
+      destination = next;
+      if (navigating) return;
+      navigating = true;
+      try {
+        // Keep compact content mounted until its native bounds and input region are restored.
+        // A second request during expansion updates the destination without racing the resize.
+        const expanded = await (windowActions.current?.expand() ?? true);
+        if (expanded && !disposed) setTab(destination);
+      } catch { /* A failed expansion keeps the current usable page and its recovery controls. */ }
+      finally { navigating = false; }
+    };
     // The overlay's "All settings…" opens this window on the Settings screen.
-    const offOpen = onOpenSettings(() => setTab("settings"));
+    const offOpen = onOpenSettings(() => { void navigate("settings"); });
+    const offCall = onOpenCall(() => { void navigate("start"); });
     return () => {
+      disposed = true;
       off.then((f) => f());
       offOpen.then((f) => f());
+      offCall.then((f) => f());
     };
   }, []);
   useEffect(() => {
@@ -113,14 +166,14 @@ export default function App() {
   const gate = (body: ReactNode) => {
     if (!tokenSet) {
       return (
-        <EmptyState icon="→" title={environment === "cloud" || view?.release ? "Sign in first" : "Set the dev token first"} action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
+        <EmptyState icon={<Icon name="arrow" size={28} />} title={environment === "cloud" || view?.release ? "Sign in first" : "Set the dev token first"} action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
           This screen shows your data once you are signed in.
         </EmptyState>
       );
     }
     if (locked) {
       return (
-        <EmptyState icon="→" title="Link Career-OS first" action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
+        <EmptyState icon={<Icon name="arrow" size={28} />} title="Link Career-OS first" action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
           This stage needs your Career-OS account linked before the app can work for you.
         </EmptyState>
       );
@@ -130,7 +183,7 @@ export default function App() {
   const page = (t: Tab, body: ReactNode, wide = false) =>
     keep(t) && (
       <div hidden={tab !== t} className={wide ? "shell-content shell-content-wide" : "shell-content"}>
-        <Suspense fallback={<SkeletonList rows={3} />}>{body}</Suspense>
+        <PageHeadingActive.Provider value={tab === t && t !== "start"}><Suspense fallback={<SkeletonList rows={3} />}>{body}</Suspense></PageHeadingActive.Provider>
       </div>
     );
 
@@ -139,6 +192,7 @@ export default function App() {
       <Shell
         tab={tab}
         onTab={setTab}
+        onWindowActionsChanged={registerWindowActions}
         session={session}
         profiles={profiles.state}
         onSwitchProfile={switchProfile}

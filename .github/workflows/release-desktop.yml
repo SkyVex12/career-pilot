@@ -150,9 +150,22 @@ jobs:
           path: dist-release
           if-no-files-found: error
 
+  macos:
+    name: installers (macOS)
+    needs: plan
+    if: needs.plan.outputs.release == 'true' && vars.MACOS_RELEASE_ENABLED == 'true'
+    uses: ./.github/workflows/desktop-macos.yml
+    with:
+      sha: ${{ needs.plan.outputs.sha }}
+      version: ${{ needs.plan.outputs.version }}
+    secrets: inherit
+
   publish:
     name: publish to the releases bucket
-    needs: [plan, build]
+    needs: [plan, build, macos]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.build.result == 'success' &&
+      (needs.macos.result == 'success' || needs.macos.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # One publish at a time, whether from a merge or a tag pushed by hand.
@@ -183,6 +196,20 @@ jobs:
         with:
           name: desktop-${{ needs.plan.outputs.version }}
           path: dist-release
+      - uses: actions/download-artifact@v4
+        if: needs.macos.result == 'success'
+        with:
+          pattern: desktop-macos-*-${{ needs.plan.outputs.version }}
+          path: dist-release
+          merge-multiple: true
+      - uses: actions/setup-node@v5
+        if: needs.macos.result == 'success'
+        with:
+          node-version: 22
+      - name: Merge Windows and Mac updater entries
+        if: needs.macos.result == 'success'
+        run: |
+          node apps/desktop/scripts/release.mjs merge --version "$VERSION" --out dist-release/latest.json dist-release/latest.json dist-release/manifest-darwin-aarch64.json dist-release/manifest-darwin-x86_64.json
       - name: The manifest points at this bucket
         run: |
           url=$(jq -r '.platforms["windows-x86_64"].url' dist-release/latest.json)
@@ -210,6 +237,10 @@ jobs:
           base="gs://$BUCKET/desktop"
           gcloud storage cp --cache-control="public, max-age=31536000, immutable"             "dist-release/$VERSION/"* "$base/$VERSION/"
           gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/Copilot-setup.exe "$base/Copilot-setup.exe"
+          for dmg in dist-release/Copilot-*.dmg; do
+            [ -f "$dmg" ] || continue
+            gcloud storage cp --cache-control="no-cache, max-age=0" "$dmg" "$base/$(basename "$dmg")"
+          done
           gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/latest.json "$base/latest.json"
       - name: Summary
         run: |

@@ -1,6 +1,7 @@
-//! Release builds (the `release` feature): the installer teammates use. The stage's URLs come
+//! Cloud builds (the `cloud` feature): the stage's URLs come
 //! from apps/desktop/release.json, embedded at build time (build.rs); the local environment and
-//! the dev token are gone, and the app updates itself (the Tauri updater, whose endpoint and
+//! the dev token are gone. The `release` feature additionally enables updates
+//! (the Tauri updater, whose endpoint and
 //! public key are in the generated tauri.release.conf.json, from the same file).
 //!
 //! Updates (README.md, "Installing the desktop app"): the app checks at start and every four
@@ -30,7 +31,7 @@ pub struct ReleaseConfig {
     pub wake_url: Option<String>,
 }
 
-#[cfg(feature = "release")]
+#[cfg(feature = "cloud")]
 pub fn config() -> Option<&'static ReleaseConfig> {
     use std::sync::OnceLock;
     static CONFIG: OnceLock<ReleaseConfig> = OnceLock::new();
@@ -40,7 +41,7 @@ pub fn config() -> Option<&'static ReleaseConfig> {
     }))
 }
 
-#[cfg(not(feature = "release"))]
+#[cfg(not(feature = "cloud"))]
 pub fn config() -> Option<&'static ReleaseConfig> {
     None
 }
@@ -769,6 +770,24 @@ mod tests {
     use super::schedule::*;
 
     const S: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn cloud_build_has_the_deployed_connection_and_wake_configuration() {
+        let config = super::config();
+        assert_eq!(config.is_some(), cfg!(feature = "cloud"));
+        if let Some(config) = config {
+            let mut settings = crate::settings::Settings::default();
+            settings.pin_to_release(config);
+            assert_eq!(settings.environment, crate::settings::Environment::Cloud);
+            assert_eq!(settings.active_urls(), (config.gateway_url.as_str(), config.api_url.as_str()));
+            if [config.api_url.as_str(), config.gateway_url.as_str()]
+                .iter()
+                .any(|url| copilot_client::wake::needs_host(url))
+            {
+                assert!(config.wake_url.as_ref().is_some_and(|url| url.starts_with("https://")));
+            }
+        }
+    }
 
     fn idle() -> Activity {
         Activity::default()

@@ -9,12 +9,13 @@
 //   dev=1    a development build (shows the environment and dev token settings)
 //
 // window.__harness.play() streams a new question's answers into a running call (call=stream).
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { Numbered, SettingsView, UiEvent } from "../../../apps/desktop/src/api";
 import type { ServerMessage } from "../../../packages/protocol/src/generated";
 import * as fx from "./fixtures";
 
+mockWindows("main", "overlay");
 const q = new URLSearchParams(location.search);
 const data = q.get("data") ?? "full";
 const call = q.get("call") ?? "none";
@@ -164,6 +165,7 @@ function rest(method: string, path: string): unknown {
   }
   const [p] = path.split("?");
   const m = (re: RegExp) => re.exec(p);
+  if (p === "/seats" || m(/^\/sessions\/[^/]+\/seats$/)) return { seats: [], voice: false, screen: false };
   if (method !== "GET") {
     if (m(/^\/employers\/[^/]+\/packs\/\w+$/)) return { mode: "standup", status: "ready", built_at: new Date().toISOString() };
     return {};
@@ -207,6 +209,11 @@ mockIPC(
   (cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     switch (cmd) {
+      case "plugin:window|inner_size": return { width: 1080, height: 780 };
+      case "plugin:window|is_decorated": return true;
+      case "plugin:window|set_size":
+      case "plugin:window|set_min_size":
+      case "plugin:window|set_decorations": return null;
       case "get_settings":
         return settingsView();
       case "update_status":

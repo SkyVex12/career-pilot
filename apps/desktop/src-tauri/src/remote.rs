@@ -40,6 +40,12 @@ pub struct Monitor {
     pub id: String,
     pub rect: Rect,
     pub primary: bool,
+    /// Backing pixels for matching Retina screen video; input uses rect desktop points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pixels: Option<(u32, u32)>,
+    /// WebRTC's Windows source ID is the EnumDisplayDevices index, not monitor enumeration order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<u32>,
 }
 
 /// What to send Windows, already checked and placed.
@@ -135,7 +141,8 @@ impl Remote {
                         continue;
                     }
                     let down = matches!(e, Input::Down { .. });
-                    ops.extend(self.point(*x, *y));
+                    let Some(point) = self.point(*x, *y) else { continue };
+                    ops.push(point);
                     let held = self.buttons.contains(button);
                     if down && !held {
                         self.buttons.push(*button);
@@ -265,22 +272,72 @@ pub fn scan_code(code: &str) -> Option<(u16, bool)> {
 pub static REMOTE: Mutex<Remote> = Mutex::new(Remote::new());
 
 /// Begin control on `target`, letting go of anything held before.
-pub fn begin(target: Rect) {
-    let ops = REMOTE.lock().unwrap().begin(target);
+pub fn begin(target: Rect) -> Result<(), String> {
+    if !cfg!(any(windows, target_os = "macos")) {
+        return Err("Remote input is supported on Windows and macOS.".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::remote_macos::permission(true)?;
+    }
+    if !valid_target(target) {
+        return Err("The shared display changed. Share it again before allowing control.".into());
+    }
+    let mut remote = REMOTE.lock().unwrap();
+    let ops = remote.begin(target);
     send(&ops);
+    Ok(())
 }
 
 /// End control now (the window, the hotkey, the call ending): let go of everything.
 pub fn end() {
-    let ops = REMOTE.lock().unwrap().end();
+    let mut remote = REMOTE.lock().unwrap();
+    let ops = remote.end();
     send(&ops);
 }
 
 /// Carry out a batch of the controlling guest's events.
 pub fn input(events: &[Input]) -> Result<(), String> {
-    let ops = REMOTE.lock().unwrap().plan(events).map_err(str::to_string)?;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = crate::remote_macos::permission(false) {
+        end();
+        return Err(error);
+    }
+    let mut remote = REMOTE.lock().unwrap();
+    if remote.target.is_some_and(|target| !valid_target(target)) {
+        send(&remote.end());
+        return Err("The shared display changed. Stop and restart screen sharing.".into());
+    }
+    let ops = remote.plan(events).map_err(str::to_string)?;
     send(&ops);
     Ok(())
+}
+
+/// Validate bounds before every input batch without re-enumerating display adapters.
+#[cfg(windows)]
+fn valid_target(target: Rect) -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect,
+    };
+    let Some(right) = target.x.checked_add(target.w) else { return false };
+    let Some(bottom) = target.y.checked_add(target.h) else { return false };
+    if target.w <= 0 || target.h <= 0 {
+        return false;
+    }
+    let rect = RECT { left: target.x, top: target.y, right, bottom };
+    let monitor = unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) };
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool()
+        && info.rcMonitor.left == rect.left
+        && info.rcMonitor.top == rect.top
+        && info.rcMonitor.right == rect.right
+        && info.rcMonitor.bottom == rect.bottom
+}
+
+#[cfg(not(windows))]
+fn valid_target(target: Rect) -> bool {
+    monitors().iter().any(|m| m.rect == target)
 }
 
 #[cfg(windows)]
@@ -364,7 +421,12 @@ fn send(ops: &[Op]) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn send(ops: &[Op]) {
+    crate::remote_macos::send(ops);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn send(_ops: &[Op]) {}
 
 #[cfg(windows)]
@@ -387,7 +449,8 @@ fn virtual_desktop() -> Rect {
 pub fn monitors() -> Vec<Monitor> {
     use windows::Win32::Foundation::{LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
-        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
+        DISPLAY_DEVICE_ACTIVE, DISPLAY_DEVICEW, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW,
+        HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
     };
     use windows::core::BOOL;
 
@@ -402,6 +465,8 @@ pub fn monitors() -> Vec<Monitor> {
                 id: String::from_utf16_lossy(&info.szDevice[..end]),
                 rect: Rect { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top },
                 primary: info.monitorInfo.dwFlags & 1 != 0, // MONITORINFOF_PRIMARY
+                pixels: None,
+                capture_id: None,
             });
         }
         BOOL(1)
@@ -411,10 +476,33 @@ pub fn monitors() -> Vec<Monitor> {
     unsafe {
         let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut out as *mut Vec<Monitor> as isize));
     }
+    // Chromium's screen:<id>:0 track label uses this exact device index. Matching device
+    // names preserves the shared display across different monitor orderings and DPI values.
+    let mut index = 0;
+    loop {
+        let mut device =
+            DISPLAY_DEVICEW { cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32, ..Default::default() };
+        if !unsafe { EnumDisplayDevicesW(None, index, &mut device, 0) }.as_bool() {
+            break;
+        }
+        if device.StateFlags & DISPLAY_DEVICE_ACTIVE != Default::default() {
+            let end = device.DeviceName.iter().position(|&c| c == 0).unwrap_or(device.DeviceName.len());
+            let name = String::from_utf16_lossy(&device.DeviceName[..end]);
+            if let Some(monitor) = out.iter_mut().find(|m| m.id == name) {
+                monitor.capture_id = Some(index);
+            }
+        }
+        index += 1;
+    }
     out
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn monitors() -> Vec<Monitor> {
+    crate::remote_macos::monitors()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn monitors() -> Vec<Monitor> {
     Vec::new()
 }
@@ -424,6 +512,39 @@ mod tests {
     use super::*;
 
     const SCREEN: Rect = Rect { x: -1920, y: 0, w: 1920, h: 1080 };
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_source_ids_match_active_display_devices() {
+        use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
+        for monitor in monitors() {
+            let id = monitor.capture_id.expect("every active monitor has a capture device index");
+            let mut device =
+                DISPLAY_DEVICEW { cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32, ..Default::default() };
+            assert!(unsafe { EnumDisplayDevicesW(None, id, &mut device, 0) }.as_bool());
+            let end = device.DeviceName.iter().position(|&c| c == 0).unwrap_or(device.DeviceName.len());
+            assert_eq!(monitor.id, String::from_utf16_lossy(&device.DeviceName[..end]));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn control_accepts_only_current_whole_display_bounds() {
+        assert!(!valid_target(Rect { x: 0, y: 0, w: 0, h: 0 }));
+        assert!(!valid_target(Rect { x: i32::MAX, y: 0, w: 1, h: 1 }));
+        for monitor in monitors() {
+            assert!(valid_target(monitor.rect));
+            assert!(!valid_target(Rect { w: monitor.rect.w - 1, ..monitor.rect }));
+        }
+    }
+
+    #[test]
+    fn invalid_click_coordinates_never_press_at_the_last_pointer_position() {
+        let mut remote = Remote::new();
+        remote.begin(SCREEN);
+        assert!(remote.plan(&[Input::Down { button: 0, x: f64::NAN, y: 0.5 }]).unwrap().is_empty());
+        assert!(remote.end().is_empty());
+    }
 
     fn on() -> Remote {
         let mut r = Remote::new();

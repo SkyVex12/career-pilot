@@ -43,7 +43,7 @@ pub trait SecretStore: Send + Sync {
     fn delete(&self, key: &str) -> Result<(), AuthError>;
 }
 
-/// Windows Credential Manager (and the macOS Keychain later), through `keyring`.
+/// Windows Credential Manager and the macOS Keychain, through `keyring`.
 pub struct OsSecretStore {
     service: String,
 }

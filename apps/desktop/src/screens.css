@@ -131,6 +131,37 @@
   margin-top: var(--space-3);
 }
 
+/* Creation stays compact enough for the desktop card, including validation. */
+.ui-dialog:has(.application-create) {
+  gap: var(--space-3);
+  padding: var(--space-5);
+}
+.ui-dialog .application-create > * + * {
+  margin-top: var(--space-3);
+}
+.ui-dialog .application-create .form-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.ui-dialog .application-create .form-2 > .ui-field { margin-top: 0; }
+@media (max-width: 420px) {
+  .ui-dialog .application-create .form-2 { grid-template-columns: minmax(0, 1fr); }
+}
+.application-create .ui-textarea {
+  height: 104px;
+  min-height: 80px;
+  max-height: 160px;
+}
+.call-application-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+}
+.call-application-picker > .ui-btn {
+  height: var(--control-h-md);
+}
+
 /* --- Call --- */
 
 .setup {
@@ -434,11 +465,28 @@
   }
 }
 
+.ui-dialog:has(.pull-search) {
+  height: calc(100dvh - 2 * var(--space-8));
+  max-height: 640px;
+}
+.ui-dialog:has(.pull-search) .ui-dialog-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.pull-search, .pull-search + .ui-banner { flex: none; }
+.pull-results { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .pull-search {
   display: grid;
-  grid-template-columns: 1fr 180px auto;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  align-items: center;
   gap: var(--space-3);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+.pull-search > .ui-input {
+  height: var(--control-h-md);
+  padding-block: 0;
 }
 .pull-search + .ui-banner {
   margin-bottom: var(--space-4);

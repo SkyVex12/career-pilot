@@ -8,6 +8,7 @@ import { useOnShow, when } from "./shared";
 import { SessionDetail } from "./SessionDetail";
 import { LiveNow, minutes, sessionTitle, statusBadge } from "./calls";
 import { Badge, Button, EmptyState, List, ListRow, ListState, PageHeader, SegmentedControl } from "./ui";
+import { Icon } from "./ui/Icon";
 
 export { MODE_LABEL, minutes, sessionTitle, statusBadge } from "./calls";
 
@@ -85,7 +86,7 @@ export function History({
     return (
       <>
         <PageHeader title="History" />
-        <EmptyState icon="↺" title="Sign in to see your calls" action={onSignIn && <Button variant="primary" onClick={onSignIn}>Open settings</Button>}>
+        <EmptyState icon={<Icon name="history" size={28} />} title="Sign in to see your calls" action={onSignIn && <Button variant="primary" onClick={onSignIn}>Open settings</Button>}>
           Past calls, their summaries and replays appear here once you are signed in.
         </EmptyState>
       </>
@@ -130,7 +131,7 @@ export function History({
         onRetry={load}
         loadingLabel="calls"
         empty={
-          <EmptyState icon="↺" title={filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`}>
+          <EmptyState icon={<Icon name="history" size={28} />} title={filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`}>
             {filter === "all" ? "Each call you start appears here with its summary, replay and transcript." : "Calls of other kinds are under All."}
           </EmptyState>
         }
@@ -144,8 +145,9 @@ export function History({
                 <ListRow
                   key={s.id}
                   onClick={() => setOpen(s.id)}
-                  leading={<span className="history-when">{s.started_at ? when(s.started_at) : "–"}</span>}
+                  leading={<span className="history-session-icon"><Icon name={s.mode === "interview" ? "briefcase" : "call"} /></span>}
                   title={title}
+                  meta={<span>{s.started_at ? when(s.started_at) : "Date unavailable"} · {s.mode === "interview" ? "Interview" : s.mode === "standup" ? "Standup" : "Meeting"}</span>}
                   fullTitle={title}
                   trailing={
                     <>

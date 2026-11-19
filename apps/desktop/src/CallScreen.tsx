@@ -9,27 +9,26 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import { api, rest, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type Settings } from "./api";
 import { parseTarget, upcoming } from "./catalog";
-import { roundLabel, useCatalog } from "./Applications";
+import { AddApplication, roundLabel, useCatalog } from "./Applications";
 import { applicationOption, resumeLabel } from "./pairing";
 import { DeviceTest } from "./AudioCheck";
+import { useWindowMode } from "./windowMode";
+import { Icon } from "./ui/Icon";
+import { useHoverMenu } from "./ui/useHoverMenu";
+import { WorkspaceQuickSettings } from "./WorkspaceQuickSettings";
+import { RubyLauncher } from "./RubyLauncher";
+import { WorkspaceMenu, WorkspaceProfileSwitch, useWorkspaceCompactWindow } from "./Shell";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
 import { STOPPED, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { defaultEmployer, packLabel } from "./workday";
-import { PackBadge, plural, relative, useShowCount } from "./shared";
-import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, Input, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
+import { plural, relative, useShowCount } from "./shared";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
 
 // The post-call view (with the call's replay) loads when a call ends.
 const SessionDetail = lazy(() => import("./SessionDetail").then((m) => ({ default: m.SessionDetail })));
-
-const PLATFORMS: [string, string][] = [
-  ["zoom", "Zoom"],
-  ["meet", "Google Meet"],
-  ["teams", "Microsoft Teams"],
-  ["other", "Other"],
-];
 
 const MODES = [
   ["interview", "Interview"],
@@ -207,6 +206,8 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 // --- Ready and live -----------------------------------------------------------------------------
 
 function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsSaved, onSettings, onResumes, onOpenLive, preset, active = true }: CallProps) {
+  const mini = useWindowMode(false, active && !session.running);
+  useWorkspaceCompactWindow(() => { void mini.change("toolbar"); }, () => mini.change("full"));
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => (read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets"));
@@ -217,15 +218,23 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
     if (tokenSet && shown > 0) reloadCatalog();
   }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   const [target, setTarget] = useState("");
-  const [title, setTitle] = useState("");
-  const [platform, setPlatform] = useState("zoom");
+  const [addingApplication, setAddingApplication] = useState(false);
   const [consent, setConsent] = useState(true);
   // An online test (coding mode): no call, so nothing is listened to.
   const [noCall, setNoCall] = useState(false);
   const testing = noCall && mode === "interview";
   const [busy, setBusy] = useState(false);
+  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
+  const [quickSettingsHover, setQuickSettingsHover] = useState(false);
+  const changeQuickSettings = useCallback((open: boolean) => { setQuickSettingsHover(false); setQuickSettingsOpen(open); }, []);
+  const compactSettingsHover = useHoverMenu({
+    onOpen: () => {
+      if (mini.mode === "toolbar") void mini.change("full").then(changed => { if (changed) { setQuickSettingsHover(true); setQuickSettingsOpen(true); } });
+    },
+    onClose: () => {},
+  });
   const [message, setMessage] = useState<string | null>(null);
-  const [more, setMore] = useState(false);
+
   const work = useCompanies(tokenSet, shown);
   const [employerId, setEmployerId] = useState("");
   const [agenda, setAgenda] = useState("");
@@ -270,14 +279,15 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
       const picked = mode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
       const company = atWork && employerId ? employerId : null;
       if (company) write(LAST_COMPANY, company);
+      if (mini.mode !== "full" && !await mini.change("full")) return;
       await api.startSession({
         mode,
         ...picked,
-        meeting_title: title.trim() || null,
+        meeting_title: null,
         employer_id: company,
         agenda: mode === "meeting" ? agenda.trim() || null : null,
         material_ids: company ? materialIds : [],
-        platform: testing ? "test" : platform,
+        platform: testing ? "test" : "other",
         store_transcript: consent,
         answer_style: answerStyle,
         no_call: testing,
@@ -347,54 +357,76 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
   }
 
   return (
-    <>
-      <PageHeader title="Call" />
-      {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
-      {tokenSet && <GuestInvites running={running} />}
-      {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
-      {stopped && (
-        <Banner
-          tone={stopped === "outdated" ? "info" : "warning"}
-          title={STOPPED[stopped]}
-          action={
-            stopped === "session_active" ? (
-              <Button size="sm" onClick={endOther}>
-                End the other call
-              </Button>
-            ) : stopped === "unauthorized" ? (
-              <Button size="sm" onClick={onSettings}>
-                Open settings
-              </Button>
-            ) : undefined
-          }
-        >
-          {stopped === "session_active" && "Another call is running for this profile."}
-          {stopped === "no_minutes" && "No minutes left on the plan."}
-          {stopped === "outdated" && "This version is older than the server supports. The app is updating and restarts by itself."}
-          {stopped === "unauthorized" && (environment === "cloud" ? "Sign in again under Settings, Account." : "Check the dev token in Settings, Advanced.")}
-          {stopped === "replaced" && "The call continued in another app."}
-        </Banner>
-      )}
-      {hasResume === false && (
-        <Banner tone="info" title="No resume yet" action={<Button size="sm" onClick={onResumes}>Add resume</Button>}>
-          Answers stay general until you add one.
-        </Banner>
-      )}
-
-      <div className="call-mode">
-        <SegmentedControl label="Mode" value={mode} options={MODES} onChange={changeMode} />
+    <div className="session-window" data-mini={mini.mode} onPointerEnter={mini.onPointerEnter} onPointerLeave={mini.onPointerLeave} onPointerDownCapture={mini.cancelHover}>
+      <header ref={mini.compactRef} className="session-commandbar" data-shape={mini.mode === "dot" ? "dot" : "toolbar"} data-morphing={mini.busy || undefined} inert={mini.busy || undefined} hidden={mini.mode === "full"} data-native-drag-region="header">
+        <span className="session-compact-outline" aria-hidden="true" />
+        <Button className="window-mode-toggle" variant="ghost" disabled={mini.mode === "dot"} aria-label="Expand setup" title="Expand window" onClick={() => void mini.change("full")} icon={<Icon name="chevronDown" size={16} />} />
+        <RubyLauncher className="session-compact-ruby" label={mini.mode === "dot" ? "Expand compact toolbar" : "Expand full window"} title={mini.mode === "dot" ? "Hover to open · Drag to move" : "Click to expand · Drag to move"} onOpen={() => void mini.change(mini.mode === "dot" ? "toolbar" : "full")} onDrag={mini.drag} />
+        {mini.mode === "toolbar" && <Button className="session-start" variant="primary" loading={busy} disabled={!tokenSet} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>}
+        {mini.mode === "toolbar" && <Button variant="ghost" aria-label="Quick settings" onPointerEnter={compactSettingsHover.onPointerEnter} onPointerLeave={compactSettingsHover.onPointerLeave} onClick={async () => { compactSettingsHover.cancel(); if (await mini.change("full")) changeQuickSettings(true); }} icon={<Icon name="settings" size={16} />} />}
+      </header>
+      <div className="session-console next-call" hidden={mini.mode !== "full"} data-native-drag-region>
+      <div className="call-kind" data-native-drag-region="header">
+        <Button className="window-mode-toggle" variant="ghost" disabled={mini.busy} aria-label="Compact window" title="Compact toolbar" onClick={() => void mini.change("toolbar")} icon={<Icon name="chevronUp" size={16} />} />
+        <RubyLauncher className="call-ruby-button" label="Collapse to toolbar" title="Click to compact · Drag to move" disabled={mini.busy} onOpen={() => void mini.change("toolbar")} onDrag={mini.drag} />
+        <Button className="session-start" variant="primary" loading={busy} disabled={!tokenSet} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>
+        <Field className="call-mode-field" label="Session type" hideLabel>
+          <Select value={testing ? "test" : mode} onChange={(e) => { const v = e.target.value; setNoCall(v === "test"); changeMode(v === "test" ? "interview" : v as Mode); }}>
+            <option value="interview">Interview</option><option value="standup">Standup</option><option value="meeting">Meeting</option><option value="test">Online test</option>
+          </Select>
+        </Field>
+        <WorkspaceProfileSwitch busy={busy} />
+        <WorkspaceMenu />
+        <WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} />
       </div>
+      {/* Notices stay mounted and refresh while compact, but never paint over the ruby.
+          Keep them below the controls so arriving notices cannot move the header. */}
+      <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
+        {mini.error && <Banner tone="danger">{mini.error}</Banner>}
+        {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
+        {tokenSet && <GuestInvites running={running} />}
+        {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
+        {stopped && (
+          <Banner
+            tone={stopped === "outdated" ? "info" : "warning"}
+            title={STOPPED[stopped]}
+            action={
+              stopped === "session_active" ? (
+                <Button size="sm" onClick={endOther}>
+                  End the other call
+                </Button>
+              ) : stopped === "unauthorized" ? (
+                <Button size="sm" onClick={onSettings}>
+                  Open settings
+                </Button>
+              ) : undefined
+            }
+          >
+            {stopped === "session_active" && "Another call is running for this profile."}
+            {stopped === "no_minutes" && "No minutes left on the plan."}
+            {stopped === "outdated" && "This version is older than the server supports. The app is updating and restarts by itself."}
+            {stopped === "unauthorized" && (environment === "cloud" ? "Sign in again under Settings, Account." : "Check the dev token in Settings, Advanced.")}
+            {stopped === "replaced" && "The call continued in another app."}
+          </Banner>
+        )}
+        {hasResume === false && (
+          <Banner tone="info" title="No resume yet" action={<Button size="sm" onClick={onResumes}>Add resume</Button>}>
+            Answers stay general until you add one.
+          </Banner>
+        )}
+        {message && <Banner tone="danger">{message}</Banner>}
+      </div>
+      <div className="call-context">
 
-      <Card className="next-up">
         {atWork ? (
           <div className="ui-stack">
             <Field
               label="Company"
               hint={work.employers?.length === 0 ? "No company yet: add the one you work at under Work." : undefined}
-              error={work.error}
+              error={work.error && !message?.includes(work.error) ? work.error : undefined}
             >
               <div className="ui-row-inline">
-                <Select value={employerId} onChange={(e) => setEmployerId(e.target.value)}>
+                <Select aria-label="Company" value={employerId} onChange={(e) => setEmployerId(e.target.value)}>
                   <option value="">None (no company's notes)</option>
                   {work.employers
                     ?.filter((e) => e.status === "active")
@@ -408,7 +440,6 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
                 {employerId && <PackStateBadge state={pack} />}
               </div>
             </Field>
-            {employerId && <MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} />}
             {mode === "meeting" && (
               <Field label="Agenda" optional hint="The topic, so answers start from the right systems and decisions.">
                 <Textarea rows={3} value={agenda} onChange={(e) => setAgenda(e.target.value)} />
@@ -416,29 +447,8 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
             )}
           </div>
         ) : (
-          <div className="ui-stack">
-            <div className="next-up-head">
-              <span className="ui-section-title">{interview ? "Next up" : "Call for"}</span>
-              {interview ? (
-                <>
-                  <h2 className="next-up-title ui-truncate" title={forWhat}>
-                    {interview.company ?? "?"} · {interview.title ?? ""}
-                  </h2>
-                  <p className="ui-text-2">
-                    {roundLabel(interview.round)} round · {relative(interview.starts_at)}
-                  </p>
-                </>
-              ) : (
-                <h2 className="next-up-title ui-truncate" title={forWhat}>
-                  {forWhat}
-                </h2>
-              )}
-              <div className="ui-row-inline">
-                {(interview || application) && <PackBadge pack={interview ? interview.pack : application?.pack} />}
-                {application && <span className="ui-muted">{resumeLabel(application)}</span>}
-              </div>
-            </div>
-            <Field label="Call for" hint="The answers use this application's job description and its paired resume only." error={catalog.error}>
+          <div className="call-application-picker">
+            <Field label="Application or interview" hideLabel error={catalog.error && !message?.includes(catalog.error) ? catalog.error : undefined}>
               <Select value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="">No application (your base resume only)</option>
                 {interviews.length > 0 && (
@@ -461,75 +471,31 @@ function Ready({ session, dispatch, tokenSet, environment, settings, onSettingsS
                 )}
               </Select>
             </Field>
+            <Button size="sm" disabled={busy} onClick={() => setAddingApplication(true)}>Add application</Button>
           </div>
-        )}
-        {mode === "interview" && (
-          <div className="call-consent">
-            <Checkbox
-              checked={noCall}
-              onChange={setNoCall}
-              label="Online test, no call"
-              hint="Nothing is listened to: the microphone and speakers stay closed. Solve the screen with Ctrl+Shift+Enter (or the overlay's Solve), and type questions in the overlay."
-            />
-          </div>
-        )}
-        <div className="call-consent">
-          <Checkbox
-            checked={consent}
-            onChange={setConsent}
-            label="Store the transcript after the call (everyone on the call has agreed)"
-            hint={
-              consent
-                ? "Both sides are transcribed live and the transcript is stored, encrypted. No audio is recorded."
-                : "Both sides are transcribed live for the answers, but no words are stored; the summary covers only the call's length and the questions' types."
-            }
-          />
-        </div>
-        <div className="call-start">
-          <Button variant="primary" size="lg" loading={busy} disabled={!tokenSet} onClick={start}>
-            {testing ? "Start test" : "Start call"}
-          </Button>
-          <Button onClick={() => api.showOverlay(true)}>Show overlay</Button>
-        </div>
-        {message && <Banner tone="danger">{message}</Banner>}
-      </Card>
-
-      {settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
-
-      <div className="call-more">
-        <Button variant="link" aria-expanded={more} onClick={() => setMore((m) => !m)}>
-          {more ? "▾ Fewer options" : "▸ More options (title, call app, detailed answer style)"}
-        </Button>
-        {more && (
-          <Card inset>
-            <div className="form-2">
-              <Field label="Title" optional hint="Shown in History.">
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-              </Field>
-              <Field label="Call app">
-                <Select value={platform} onChange={(e) => setPlatform(e.target.value)}>
-                  {PLATFORMS.map(([v, l]) => (
-                    <option key={v} value={v}>
-                      {l}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            <Field
-              label="Detailed answer"
-              hint={
-                answerStyle === "paragraph"
-                  ? "The talking points stay short; the detailed answer is a connected paragraph you can say as it is."
-                  : "The talking points stay short; the detailed answer is more lines, going deeper than the points."
-              }
-            >
-              <SegmentedControl label="Detailed answer" value={answerStyle} options={ANSWER_STYLES} onChange={changeStyle} />
-            </Field>
-          </Card>
         )}
       </div>
-    </>
+      {settings && !testing && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
+      <details className="call-options">
+        <summary>Customize <span className="call-options-toggle" aria-hidden="true"><Icon name="chevronDown" size={16} /></span></summary>
+        <div className="call-options-body">
+        <Field label="Answer format">
+          <Select value={answerStyle} onChange={(e) => changeStyle(e.target.value as AnswerStyle)}><option value="bullets">Bullet points</option><option value="paragraph">Paragraphs</option></Select>
+        </Field>
+          {atWork ? employerId ? <MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /> : <p className="ui-muted">Choose a company in setup.</p> : <div className="session-document"><Icon name="document" /><span>{application ? resumeLabel(application) : "Base resume"}</span><Button size="sm" onClick={onResumes}>Manage resumes</Button></div>}
+
+
+        </div>
+      </details>
+      <div className="session-privacy"><Checkbox checked={consent} onChange={setConsent} label="Save transcript (everyone has agreed)" /></div>
+      {testing && <p className="session-note">Audio off · Type a question or capture your screen.</p>}
+      <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => {
+        catalog.includeApplication(app);
+        setTarget(`job:${app.id}`);
+        void reloadCatalog();
+      }} />
+      </div>
+    </div>
   );
 }
 
@@ -632,16 +598,10 @@ function Live({
         cancelLabel="Keep going"
         confirmLabel="Summarize and end"
         onConfirm={() => endNow(true)}
-        extra={
-          <Button
-            onClick={() => {
-              setEnding(false);
-              endNow(false).catch(() => undefined);
-            }}
-          >
-            {consent ? "End, transcript only" : "End without a summary"}
-          </Button>
-        }
+        secondaryAction={{
+          label: consent ? "End, transcript only" : "End without a summary",
+          onConfirm: () => endNow(false),
+        }}
       >
         {mode === "standup"
           ? "Summarize if you will need this later: the standup report and your commitments feed the next standup."
@@ -718,20 +678,10 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
   const devices = useDevices();
   const name = (list: DeviceInfo[] | undefined, id: string | null) => (id ? (list?.find((d) => d.id === id)?.name ?? "Unknown device") : "System default");
   return (
-    <Card className="audio-summary">
+    <div className="audio-summary">
       <div className="ui-row-inline audio-line">
-        <span>
-          <span aria-hidden="true">🎙 </span>
-          <span className="ui-visually-hidden">Microphone: </span>
-          {name(devices?.inputs, settings.mic_device)}
-        </span>
-        <span>
-          <span aria-hidden="true">🔊 </span>
-          <span className="ui-visually-hidden">Call audio: </span>
-          {name(devices?.outputs, settings.output_device)}
-        </span>
-        <span className="ui-muted">Echo cancellation {settings.echo_cancellation ? "on" : "off"}</span>
-        <span className="ui-spacer" />
+        <div className="audio-device"><Icon name="mic" /><div><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div></div>
+        <div className="audio-device"><Icon name="headphones" /><div><span>Call audio</span><strong>{name(devices?.outputs, settings.output_device)}</strong></div></div>
         <Button size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? "Done" : "Change or test"}
         </Button>
@@ -741,7 +691,7 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
           <DevicePickers settings={settings} disabled={false} onSaved={onSaved} />
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -876,7 +826,7 @@ function MaterialPicker({ materials, selected, onChange }: { materials: { docume
       </legend>
       {error && <p className="ui-field-error">{error}</p>}
       {documents === null && !error && <Spinner size="sm" label="Loading the company's material" />}
-      {documents?.length === 0 && <EmptyState title="No documents read yet">Upload or paste some under Work, Engineering context.</EmptyState>}
+      {documents?.length === 0 && <EmptyState icon={<Icon name="document" size={28} />} title="No documents read yet">Upload or paste some under Work, Engineering context.</EmptyState>}
       {documents?.map((d) => (
         <Checkbox key={d.id} checked={selected.includes(d.id)} onChange={(on) => toggle(d.id, on)} label={`${d.name} (${plural(d.approved_proposals ?? 0, "fact")})`} />
       ))}

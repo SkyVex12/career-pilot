@@ -2,6 +2,7 @@
 import * as RadixTabs from "@radix-ui/react-tabs";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cx } from "./Button";
+import { HelpTip } from "./Feedback";
 
 export function SegmentedControl<T extends string>({
   value,
@@ -88,23 +89,25 @@ export function Switch({
   onChange,
   label,
   hint,
+  hintMode = "inline",
   disabled,
 }: {
   checked: boolean;
   onChange: (on: boolean) => void;
   label: ReactNode;
   hint?: ReactNode;
+  hintMode?: "inline" | "tooltip";
   disabled?: boolean;
 }) {
   const id = useId();
+  const help = hint && hintMode === "tooltip";
+  const heading = <span className="ui-switch-label" id={`${id}-label`}>{label}</span>;
   return (
     <div className="ui-switch-row">
       <div className="ui-switch-text">
-        <span className="ui-switch-label" id={`${id}-label`}>
-          {label}
-        </span>
+        {help ? <span className="ui-field-heading">{heading}<HelpTip label={label}>{hint}</HelpTip></span> : heading}
         {hint && (
-          <span className="ui-field-hint" id={`${id}-hint`}>
+          <span className={help ? "ui-visually-hidden" : "ui-field-hint"} id={`${id}-hint`}>
             {hint}
           </span>
         )}
@@ -167,7 +170,10 @@ export function Menu({ label, trigger, items, align = "end" }: { label: string; 
     else if (e.key === "ArrowUp") (e.preventDefault(), focusItem(at - 1));
     else if (e.key === "Home") (e.preventDefault(), focusItem(0));
     else if (e.key === "End") (e.preventDefault(), focusItem(-1));
-    else if (e.key === "Escape" || e.key === "Tab") {
+    else if (e.key === "Tab") {
+      // Focus the trigger synchronously so the browser advances to its next sibling.
+      close();
+    } else if (e.key === "Escape") {
       e.preventDefault();
       close();
     }

@@ -4,15 +4,14 @@
 //
 // The host's side: a Guests button in the overlay's header (who is watching, at a glance) that
 // opens the guest panel; the guests' notes in a lane of their own (never mixed into the answers,
-// each with Ask AI). The panel invites with what the guest may do already chosen (chips, as
-// last time), changes it on each guest's card, shares the screen, picks where guests' voice
-// plays, and pauses what guests see. Guests' voice turns on by itself once a guest may talk.
+// each with Ask AI). Invitations include notes and voice; screen access stays explicit.
+// Guests' voice turns on by itself on the call's audio output once a guest may talk.
 // The guest's side: the invites (Call screen), a notice that this is someone else's private
 // call, the note box when notes are allowed, and Leave.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
 import type { SeatInfo } from "@copilot/protocol";
-import { api, inTauri, rest, type MySeat, type VoiceDevice } from "./api";
-import { VOICE_OFF, onVoiceStatus, voiceCommand, windowsName, type VoiceOutput, type VoiceStatus } from "./voice";
+import { api, inTauri, rest, type MySeat } from "./api";
+import { VOICE_OFF, onVoiceStatus, voiceCommand, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
 import { GuestScreenView, HostScreenSection, STOP_CONTROL_KEY } from "./screenui";
 import type { SentNote, SessionView } from "./session";
@@ -183,11 +182,8 @@ function consentSeen(): boolean {
   }
 }
 
-/** What a guest may do: a chip each, on the invite and on each guest's card. Voice and the
- * screen show only where the server can carry them. Control goes with the screen. */
+/** Optional screen permissions. Notes and voice are included with the invitation. */
 export const PERMS: { cap: string; label: string; icon: string; title: string; needs?: "voice" | "screen" }[] = [
-  { cap: "note", label: "Notes", icon: "✎", title: "May send you notes only you see" },
-  { cap: "voice", label: "Voice", icon: "🎙", title: "May talk to you. You hear them on your headphones, never on the call", needs: "voice" },
   { cap: "device.view", label: "Screen", icon: "🖥", title: "Sees your screen while you share it", needs: "screen" },
   {
     cap: "device.control",
@@ -202,13 +198,14 @@ type Media = { voice: boolean; screen: boolean };
 
 /** The capabilities among `caps` this server can grant. */
 function grantable(caps: string[], media: Media): string[] {
-  return caps.filter((c) => {
+  return ["note", ...(media.voice ? ["voice"] : []), ...caps.filter((c) => {
     const p = PERMS.find((x) => x.cap === c);
     return p !== undefined && (!p.needs || media[p.needs]);
-  });
+  })];
 }
 
 function PermChips({ label, caps, media, disabled, onToggle }: { label: string; caps: string[]; media: Media; disabled?: boolean; onToggle: (cap: string, on: boolean) => void }) {
+  if (!media.screen) return null;
   return (
     <div className="seat-chips" role="group" aria-label={label}>
       {PERMS.filter((p) => !p.needs || media[p.needs]).map((p) => {
@@ -225,15 +222,17 @@ function PermChips({ label, caps, media, disabled, onToggle }: { label: string; 
 
 const INVITE_CAPS_KEY = "seats.invite-caps";
 
-/** What the next guest may do: as the host chose for the last one; notes only at first. */
+/** Keep optional screen permissions from the last invite; always include notes and voice. */
 export function savedInviteCaps(): string[] {
   try {
     const v: unknown = JSON.parse(window.localStorage.getItem(INVITE_CAPS_KEY) ?? "null");
-    if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v;
+    if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+      return ["note", "voice", ...v.filter((cap) => PERMS.some((p) => p.cap === cap))];
+    }
   } catch {
     // Nothing saved, or unreadable: the first-time choice.
   }
-  return ["note"];
+  return ["note", "voice"];
 }
 
 function saveInviteCaps(caps: string[]) {
@@ -255,15 +254,26 @@ export function GuestPanel({ s }: { s: SessionView }) {
   const [error, setError] = useState<string | null>(null);
   const [seatErrors, setSeatErrors] = useState<Record<string, string>>({});
   const [media, setMedia] = useState<Media>({ voice: false, screen: false });
+  const [mediaReady, setMediaReady] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
+  const [mediaAttempt, setMediaAttempt] = useState(0);
   const [showConsent] = useState(() => !consentSeen());
   // Whether the server can carry voice and the screen at all: no chip that can only fail.
   useEffect(() => {
     if (!sid || !inTauri) return;
+    let disposed = false;
+    setMediaReady(false);
+    setMediaError(false);
     rest.seatsOf(sid).then(
-      (r) => setMedia({ voice: r.voice === true, screen: r.screen === true }),
-      () => setMedia({ voice: false, screen: false }),
+      (r) => {
+        if (disposed) return;
+        setMedia({ voice: r.voice === true, screen: r.screen === true });
+        setMediaReady(true);
+      },
+      () => { if (!disposed) setMediaError(true); },
     );
-  }, [sid]);
+    return () => { disposed = true; };
+  }, [sid, mediaAttempt]);
   const guarded = async (f: () => Promise<unknown>, done?: string) => {
     setError(null);
     setMessage(null);
@@ -310,14 +320,20 @@ export function GuestPanel({ s }: { s: SessionView }) {
           className="seat-invite"
           onSubmit={(e) => {
             e.preventDefault();
-            if (email.trim()) void invite();
+            if (email.trim() && mediaReady && !busy) void invite();
           }}
         >
           <Input type="email" aria-label="Guest's Copilot email" placeholder="Invite by Copilot email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
-          <Button size="sm" type="submit" disabled={busy || !email.trim()}>
+          <Button size="sm" type="submit" disabled={busy || !mediaReady || !email.trim()}>
             Invite
           </Button>
         </form>
+        {mediaError && (
+          <div className="seat-error" role="alert">
+            Guest options could not be loaded. {" "}
+            <Button size="sm" variant="ghost" onClick={() => setMediaAttempt((attempt) => attempt + 1)}>Retry</Button>
+          </div>
+        )}
         <PermChips label="What a new guest may do" caps={caps} media={media} disabled={busy} onToggle={(cap, on) => setCaps((c) => withCapability(c, cap, on))} />
         {showConsent && <p className="seat-hint">Guests see this call live, including the other side's words. Invite only people the call's participants would be fine with.</p>}
         {message && <p className="seat-hint">{message}</p>}
@@ -568,40 +584,8 @@ export function useVoice(active: boolean): VoiceStatus {
   return status;
 }
 
-const VOICE_DEVICE_KEY = "seats.voice-device";
-
-function savedDevice(): string {
-  try {
-    return window.localStorage.getItem(VOICE_DEVICE_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/** What to warn about a device for guests' voice, or null. Only a warning: the host may pick
- * it anyway, and the checks on Turn on decide. */
-export function deviceProblem(d: VoiceDevice): string | null {
-  if (!d.private) return "not headphones";
-  return null;
-}
-
-/** The window's output device, with what Windows says about it (matched by name). */
-function annotate(o: VoiceOutput, known: VoiceDevice[]): string | null {
-  const name = windowsName(o.label).toLowerCase();
-  const d = known.find((k) => k.name.toLowerCase() === name);
-  return d ? deviceProblem(d) : "not known to Windows";
-}
-
-function saveDevice(id: string) {
-  try {
-    window.localStorage.setItem(VOICE_DEVICE_KEY, id);
-  } catch {
-    // Remembered only for convenience.
-  }
-}
-
-/** Guests' voice on by itself once a guest may talk (on the headphones used last, or Windows'
- * default output), off when none may, and who is heard kept in step. Tried once a call: after
+/** Guests' voice on by itself using the call's output, off when none may talk,
+ * and who is heard kept in step. Tried once a call: after
  * an error, Try again in the panel. */
 export function useGuestVoice(s: SessionView) {
   const hosting = s.running && !s.seat && s.sessionId !== null;
@@ -621,55 +605,25 @@ export function useGuestVoice(s: SessionView) {
     }
     if (status.host !== "off" || tried.current === s.sessionId) return;
     tried.current = s.sessionId;
-    void voiceCommand({ cmd: "host_on", deviceId: savedDevice(), sessionId: s.sessionId, allowed: ids });
+    void voiceCommand({ cmd: "host_on", sessionId: s.sessionId, allowed: ids });
   }, [hosting, key, status.host, s.sessionId]);
 }
 
-/** Where guests' voice plays (switchable while it plays), and why it stopped. It turns on by
- * itself (useGuestVoice); the header's button mutes it. */
+/** Only show connection progress or an actionable error. Output follows the call. */
 export function HostVoice({ s }: { s: SessionView }) {
   const wanted = voiceIdentities(s.seats);
   const status = useVoice(s.running);
-  const [known, setKnown] = useState<VoiceDevice[]>([]);
-  const [chosen, setChosen] = useState(savedDevice);
   const shown = wanted.length > 0 || status.host !== "off";
-  useEffect(() => {
-    if (!shown || !inTauri) return;
-    void voiceCommand({ cmd: "outputs" });
-    api.voiceDevices().then(setKnown, () => setKnown([]));
-  }, [shown]);
   if (!shown || !s.sessionId) return null;
+  if (status.host !== "checking" && !(status.host === "off" && status.error)) return null;
   const sid = s.sessionId;
-  const on = (deviceId: string) => void voiceCommand({ cmd: "host_on", deviceId, sessionId: sid, allowed: wanted });
-  const choose = (deviceId: string) => {
-    setChosen(deviceId);
-    saveDevice(deviceId);
-    if (status.host === "on") void voiceCommand({ cmd: "host_device", deviceId });
-    else if (status.host === "off") on(deviceId);
-  };
-  const value = status.device ?? chosen;
   return (
     <section className="seat-section seat-voice" aria-label="Guests' voice">
-      <label className="seat-voice-row">
-        <span className="seat-hint">Guests' voice on</span>
-        <select className="ui-input" aria-label="Headphones for guests' voice" value={value} onChange={(e) => choose(e.target.value)} disabled={status.host === "checking"}>
-          <option value="">Windows default output</option>
-          {status.outputs.map((o) => {
-            const problem = annotate(o, known);
-            return (
-              <option key={o.deviceId} value={o.deviceId}>
-                {o.label}
-                {problem ? ` ⚠ ${problem}` : ""}
-              </option>
-            );
-          })}
-        </select>
-      </label>
-      {status.host === "checking" && <span className="seat-hint">Turning on…</span>}
+      {status.host === "checking" && <span className="seat-hint">Connecting guest audio…</span>}
       {status.host === "off" && status.error && (
         <p className="seat-error" role="alert">
           {status.error}{" "}
-          <Button size="sm" variant="ghost" onClick={() => on(value)}>
+          <Button size="sm" variant="ghost" onClick={() => void voiceCommand({ cmd: "host_on", sessionId: sid, allowed: wanted })}>
             Try again
           </Button>
         </p>

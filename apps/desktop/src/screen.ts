@@ -32,6 +32,8 @@ import {
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { rest } from "./api";
+import { isMac } from "./platform";
+import { captureMacScreen, nativeShares } from "./nativeScreen";
 
 export const HOST = "host";
 
@@ -51,6 +53,9 @@ export interface Monitor {
   id: string;
   rect: Rect;
   primary: boolean;
+  pixels?: [number, number];
+  /** Windows/WebRTC source ID, matched by native display device name (not array order). */
+  capture_id?: number;
 }
 
 /** One event of a controlling guest (remote.rs `Input`); x and y are 0 to 1 across the picture. */
@@ -68,20 +73,18 @@ export interface ScreenStatus {
   controller: Person | null;
   /** Guests who asked to control. */
   asking: Person[];
-  /** More than one monitor could be the shared one: the host says which, for this guest. */
-  choose: { person: Person; monitors: Monitor[] } | null;
   /** Guests the host stopped (Stop control, the hotkey): the UI takes their Control away. */
   stopped: Person[];
   error: string | null;
 }
 
-export const SCREEN_OFF: ScreenStatus = { host: "off", surface: null, controller: null, asking: [], choose: null, stopped: [], error: null };
+export const SCREEN_OFF: ScreenStatus = { host: "off", surface: null, controller: null, asking: [], stopped: [], error: null };
 
 type ScreenCmd =
   | { cmd: "stop" }
   | { cmd: "status" }
   | { cmd: "controllers"; allowed: Person[] }
-  | { cmd: "control"; person: Person; monitorId?: string }
+  | { cmd: "control"; person: Person }
   | { cmd: "control_off" };
 
 /** Why control ended: the host stopped it (their Control is then taken away), the guest gave
@@ -127,7 +130,7 @@ export interface HostDeps {
 
 export const hostDeps: HostDeps = {
   newRoom: () => new Room({ adaptiveStream: false, dynacast: false }),
-  capture: () =>
+  capture: () => isMac() ? captureMacScreen() :
     createLocalScreenTracks({
       audio: false,
       // Captured at up to 60 frames, so control can send them all (ENCODING).
@@ -153,8 +156,34 @@ const decoder = new TextDecoder();
 export function matchingMonitors(monitors: Monitor[], width: number, height: number): Monitor[] {
   if (!(width > 0 && height > 0)) return monitors;
   const ratio = width / height;
-  return monitors.filter((m) => m.rect.h > 0 && Math.abs(m.rect.w / m.rect.h - ratio) < 0.02);
+  return monitors.filter((m) => {
+    const [w, h] = m.pixels ?? [m.rect.w, m.rect.h];
+    return h > 0 && Math.abs(w / h - ratio) < 0.02;
+  });
 }
+
+/** Bind input to the display chosen by the capture picker. Chromium exposes the Windows
+ * EnumDisplayDevices source ID in the track label; native Mac capture keeps its display ID.
+ * A known but missing source must never fall back to another display of the same size. */
+export function sharedMonitor(monitors: Monitor[], track: MediaStreamTrack): Monitor | null {
+  const native = nativeShares.get(track);
+  if (native) return native.kind === "monitor" ? monitors.find((m) => m.id === String(native.id)) ?? null : null;
+  const settings = track.getSettings();
+  if (settings.displaySurface !== "monitor") return null;
+  if (track.label?.startsWith("screen:")) {
+    const source = /^screen:(\d+):0$/.exec(track.label);
+    if (!source) return null; // A native-picker session or whole-desktop source is not one monitor.
+    const id = Number(source[1]);
+    return monitors.find((m) => m.capture_id === id) ?? null;
+  }
+  // Other capture implementations do not expose a source identity. Only an unambiguous
+  // whole-screen shape may be used; identical displays remain view-only.
+  const fit = matchingMonitors(monitors, settings.width ?? 0, settings.height ?? 0);
+  return fit.length === 1 ? fit[0] : null;
+}
+
+const sameMonitor = (a: Monitor, b: Monitor) => a.id === b.id && a.capture_id === b.capture_id &&
+  a.rect.x === b.rect.x && a.rect.y === b.rect.y && a.rect.w === b.rect.w && a.rect.h === b.rect.h;
 
 /** The host's share in one window. */
 export class HostScreen {
@@ -170,8 +199,9 @@ export class HostScreen {
   /** Guests who don't get control by themselves now: they gave it back ("guest", until they
    * take it again) or the host stopped them ("host", until their Control is given again). */
   private blocked = new Map<string, EndedBy>();
-  /** The monitor the host picked for this share, when several fit: asked once per share. */
+  /** The display chosen for this share. Control never selects a different display. */
   private target: Monitor | null = null;
+  private controlEpoch = 0;
   private granting = false;
   private stopping = false;
 
@@ -197,15 +227,18 @@ export class HostScreen {
     let tracks: LocalTrack[] = [];
     try {
       tracks = await this.deps.capture();
-    } catch {
-      // Closing the picker is no error: nothing was chosen.
-      this.set({ host: "off", surface: null, error: null });
+    } catch (error) {
+      // Browser pickers report denial/cancellation as NotAllowedError; native failures carry
+      // actionable permission errors and must be shown rather than looking like cancellation.
+      const cancelled = error instanceof DOMException && ["AbortError", "NotAllowedError"].includes(error.name);
+      this.set({ host: "off", surface: null, error: cancelled ? null : String(error instanceof Error ? error.message : error) });
       return;
     }
     try {
       const video = tracks.find((t) => t.kind === Track.Kind.Video);
       if (!video) throw new Error("No screen was chosen.");
       this.tracks = tracks;
+      this.target = sharedMonitor(await this.deps.monitors(), video.mediaStreamTrack);
       const grant = await this.deps.token(sessionId);
       const room = this.deps.newRoom();
       this.room = room;
@@ -223,7 +256,7 @@ export class HostScreen {
         else void this.auto();
       });
       // The host stops it from the system's own "stop sharing", or the screen goes away.
-      video.mediaStreamTrack.addEventListener("ended", () => void this.stop(null));
+      video.mediaStreamTrack.addEventListener("ended", () => void this.stop(nativeShares.get(video.mediaStreamTrack)?.error ?? null));
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
       await room.localParticipant.publishTrack(video, {
         source: Track.Source.ScreenShare,
@@ -235,7 +268,8 @@ export class HostScreen {
         videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
         degradationPreference: ENCODING.watch.degradation,
       });
-      const surface = video.mediaStreamTrack.getSettings().displaySurface ?? null;
+      const native = nativeShares.get(video.mediaStreamTrack);
+      const surface = native?.kind ?? video.mediaStreamTrack.getSettings().displaySurface ?? null;
       this.set({ host: "on", surface, error: null });
       await this.auto();
     } catch (e) {
@@ -282,50 +316,42 @@ export class HostScreen {
    * who is in the room and isn't held back. One at a time. */
   private async auto(): Promise<void> {
     if (this.granting || this.stopping || !this.room || this.status.host !== "on" || this.status.surface !== "monitor") return;
-    if (this.status.controller || this.status.choose) return;
+    if (this.status.controller) return;
     const next = this.allowed.find((p) => !this.blocked.has(p.identity) && this.present(p.identity));
     if (next) await this.allow(next);
   }
 
-  private shared(): { width: number; height: number } | null {
-    const video = this.tracks.find((t) => t.kind === Track.Kind.Video);
-    if (!video) return null;
-    const s = video.mediaStreamTrack.getSettings();
-    return { width: s.width ?? 0, height: s.height ?? 0 };
-  }
-
-  /** Let this guest control the shared screen (`monitorId` when the host chose among several). */
-  async allow(person: Person, monitorId?: string): Promise<void> {
+  /** Let this guest control the display already chosen in the sharing picker. */
+  async allow(person: Person): Promise<void> {
     if (this.granting) return;
     this.granting = true;
+    let epoch = this.controlEpoch;
+    const stillAllowed = () => epoch === this.controlEpoch && !this.stopping && this.status.host === "on" &&
+      this.allowed.some((a) => a.identity === person.identity);
     try {
       if (!this.room || this.status.host !== "on") throw new Error("Share your screen first.");
       if (this.status.surface !== "monitor") throw new Error("Share a whole screen to let a guest control it.");
       if (!this.allowed.some((a) => a.identity === person.identity)) throw new Error(`${person.name} may not control your screen.`);
-      this.blocked.delete(person.identity);
       const all = await this.deps.monitors();
-      let target: Monitor | undefined;
-      if (monitorId) target = all.find((m) => m.id === monitorId);
-      else if (this.target) target = all.find((m) => m.id === this.target?.id);
-      if (target) this.target = target;
-      else {
-        const size = this.shared();
-        const fit = size ? matchingMonitors(all, size.width, size.height) : all;
-        const candidates = fit.length > 0 ? fit : all;
-        if (candidates.length === 1) target = candidates[0];
-        else if (candidates.length > 1) {
-          this.set({ choose: { person, monitors: candidates }, error: null });
-          return;
-        }
+      if (!stillAllowed()) return;
+      const target = this.target && all.find((m) => sameMonitor(m, this.target!));
+      if (!target) throw new Error("The shared display could not be identified. Stop sharing and share that display again to allow control.");
+      if (this.status.controller && this.status.controller.identity !== person.identity) {
+        epoch += 1; // Our endControl invalidates the old grant; another stop still cancels us.
+        await this.endControl(null);
       }
-      if (!target) throw new Error("The shared screen was not found.");
-      if (this.status.controller && this.status.controller.identity !== person.identity) await this.endControl(null);
+      if (!stillAllowed()) return;
       await this.deps.begin(target.rect);
-      this.set({ controller: person, choose: null, asking: this.status.asking.filter((p) => p.identity !== person.identity), error: null });
+      if (!stillAllowed()) {
+        await this.deps.end();
+        return;
+      }
+      this.blocked.delete(person.identity);
+      this.set({ controller: person, asking: this.status.asking.filter((p) => p.identity !== person.identity), error: null });
       await this.tell(person.identity, true);
       await this.tune("control");
     } catch (e) {
-      this.set({ choose: null, error: e instanceof Error ? e.message : String(e) });
+      if (epoch === this.controlEpoch) this.set({ error: e instanceof Error ? e.message : String(e) });
     } finally {
       this.granting = false;
     }
@@ -333,6 +359,7 @@ export class HostScreen {
 
   /** Control ends: the app lets go of everything the guest held, and the guest is told. */
   async endControl(error: string | null, by: EndedBy = "other"): Promise<void> {
+    this.controlEpoch += 1;
     const was = this.status.controller;
     let stopped = this.status.stopped;
     if (by === "host") {
@@ -340,11 +367,11 @@ export class HostScreen {
       for (const p of this.allowed) this.blocked.set(p.identity, "host");
       stopped = [...stopped, ...this.allowed.filter((p) => !stopped.some((q) => q.identity === p.identity))];
     } else if (was && by === "guest") this.blocked.set(was.identity, "guest");
-    if (!was && !this.status.choose) {
+    if (!was && !this.granting) {
       if (stopped !== this.status.stopped) this.set({ stopped });
       return;
     }
-    this.set({ controller: null, choose: null, stopped, error: error ?? this.status.error });
+    this.set({ controller: null, stopped, error: error ?? this.status.error });
     this.spare = null;
     try {
       await this.deps.end();
@@ -448,10 +475,11 @@ export class HostScreen {
   }
 
   private run(events: InputEvent[]): Promise<void> {
+    const epoch = this.controlEpoch;
     this.pending += 1;
     this.queue = this.queue
-      .then(() => this.deps.input(events))
-      .catch(() => undefined)
+      .then(() => epoch === this.controlEpoch && this.status.controller ? this.deps.input(events) : undefined)
+      .catch((error) => this.endControl(error instanceof Error ? error.message : String(error), "host"))
       .finally(() => {
         this.pending -= 1;
         const spare = this.spare;
@@ -475,7 +503,7 @@ export function startScreenHost(deps: HostDeps = hostDeps): () => void {
     if (c.cmd === "controllers") return host.setAllowed(c.allowed); // every window keeps the list
     if (!host.sharing && host.status.host === "off") return;
     if (c.cmd === "stop") void host.stop(null);
-    else if (c.cmd === "control") void host.allow(c.person, c.monitorId);
+    else if (c.cmd === "control") void host.allow(c.person);
     else if (c.cmd === "control_off") void host.endControl(null, "host");
     else void emit(STATUS, host.status);
   });
@@ -507,8 +535,8 @@ export function screenControllers(allowed: Person[]): Promise<void> {
 }
 
 /** Let a guest control the shared screen. */
-export function allowControl(person: Person, monitorId?: string): Promise<void> {
-  return emit(CMD, { cmd: "control", person, monitorId } satisfies ScreenCmd);
+export function allowControl(person: Person): Promise<void> {
+  return emit(CMD, { cmd: "control", person } satisfies ScreenCmd);
 }
 
 /** End a guest's control now. */

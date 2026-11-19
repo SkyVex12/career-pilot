@@ -5,7 +5,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { emit } from "@tauri-apps/api/event";
-import { describe, expect, it } from "vitest";
+import { mockWindows } from "@tauri-apps/api/mocks";
+import { describe, expect, it, vi } from "vitest";
 import type { Numbered, UiEvent } from "../src/api";
 import { answerLines } from "../src/AnswerText";
 import Overlay, { ConversationView, passState } from "../src/Overlay";
@@ -43,6 +44,58 @@ const twoQuestions = () => {
 };
 
 describe("the overlay's answers", () => {
+  it("keeps the live transcript and answers visible together, with screen tools on demand", async () => {
+    start([...twoQuestions(), srv({ type: "transcript.partial", channel: "them", seg_id: 0, text: "What would you monitor?" })]);
+    const answers = await screen.findByRole("region", { name: "Suggestions" });
+    const transcript = screen.getByRole("region", { name: "Transcript" });
+    expect(within(transcript).getByText("What would you monitor?")).toBeVisible();
+    expect(within(answers).getAllByRole("article")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /^(Answers|Transcript)$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Solve" })).not.toBeInTheDocument();
+    await act(() => emit("copilot://event", srv({ type: "transcript.final", channel: "them", seg_id: 0, text: "What would you monitor first?", start_ms: 0, end_ms: 1500 })));
+    await act(() => emit("copilot://event", delta("q2", "fast", " Track latency")));
+    expect(within(transcript).getByText("What would you monitor first?")).toBeVisible();
+    expect(within(answers).getByText("Track latency")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Screen tools" }));
+    expect(screen.getByRole("button", { name: "Solve" })).toBeVisible();
+  });
+
+  it("links a transcript question to its visible answer without changing the layout", async () => {
+    n = 0;
+    start([
+      live(),
+      srv({ type: "transcript.final", channel: "them", seg_id: 0, text: "How did you recover?", start_ms: 0, end_ms: 1500 }),
+      detected("recovery", "How did you recover?"),
+      delta("recovery", "fast", "- Rolled back"),
+    ]);
+    const answer = await screen.findByRole("article");
+    const scroll = vi.spyOn(answer, "scrollIntoView");
+    await userEvent.click(within(screen.getByRole("region", { name: "Transcript" })).getByRole("button", { name: "Suggestion →" }));
+    expect(scroll).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
+    expect(answer).toBeVisible();
+    scroll.mockRestore();
+  });
+
+  it("remembers a combined one-column layout and can return to simultaneous split panes", async () => {
+    const first = start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "One column: transcript and answers together" }));
+    expect(localStorage.getItem("overlay.layout")).toBe("stacked");
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Current suggestion" })).toBeVisible();
+    first.unmount();
+    start(twoQuestions());
+    await screen.findByRole("region", { name: "Current suggestion" });
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Split: transcript left, answers right" }));
+    expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Suggestions" })).toBeVisible();
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
+
   it("puts the newest question first, marked Now, with the earlier ones in full", async () => {
     start(twoQuestions());
     const cards = await screen.findAllByRole("article");
@@ -103,6 +156,96 @@ describe("the overlay's answers", () => {
 });
 
 describe("the overlay's frame", () => {
+  it("asks before ending a host call and keeps the call intact when cancelled", async () => {
+    start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    const dialog = screen.getByRole("alertdialog", { name: "End this call?" });
+    expect(ipc.calls.some((c) => c.cmd === "end_session")).toBe(false);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Keep going" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(ipc.calls.some((c) => c.cmd === "end_session" || c.cmd === "plugin:window|hide")).toBe(false);
+  });
+
+  it.each([true, false])("ends a host call with summarize=%s only after confirmation", async (summarize) => {
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", mode: "interview", store_transcript: true }));
+    let finish!: () => void;
+    ipc.handle("end_session", () => new Promise<void>((resolve) => { finish = resolve; }));
+    start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    const dialog = screen.getByRole("alertdialog");
+    await within(dialog).findByRole("button", { name: "End, transcript only" });
+    await userEvent.click(within(dialog).getByRole("button", { name: summarize ? "Summarize and end" : "End, transcript only" }));
+    expect(ipc.calls.filter((c) => c.cmd === "end_session")).toEqual([{ cmd: "end_session", args: { summarize } }]);
+    for (const button of within(dialog).getAllByRole("button")) expect(button).toBeDisabled();
+    expect(dialog).toBeVisible();
+    await act(async () => finish());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(ipc.calls.some((c) => c.cmd === "plugin:window|hide" || c.cmd === "open_main_call")).toBe(false);
+  });
+
+  it.each([true, false])("keeps a failed end attempt visible and retryable with summarize=%s", async (summarize) => {
+    ipc.handle("end_session", () => { throw "Could not end the call. Try again."; });
+    start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    const dialog = screen.getByRole("alertdialog");
+    const action = within(dialog).getByRole("button", { name: summarize ? "Summarize and end" : "End without a summary" });
+    await userEvent.click(action);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not end the call. Try again.");
+    expect(action).toBeEnabled();
+    expect(ipc.calls.some((c) => c.cmd === "plugin:window|hide" || c.cmd === "open_main_call")).toBe(false);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Keep going" }));
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Answer" })).toBeEnabled();
+  });
+
+  it("uses the standup and transcript choices saved for the active call", async () => {
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", mode: "standup", store_transcript: false }));
+    start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    const dialog = screen.getByRole("alertdialog");
+    await within(dialog).findByText(/the standup report and your commitments feed the next standup/);
+    expect(dialog).toHaveTextContent("The transcript is not being stored for this call");
+    expect(within(dialog).getByRole("button", { name: "End without a summary" })).toBeEnabled();
+  });
+
+  it("returns to setup from an inactive overlay without ending a call", async () => {
+    n = 0;
+    start([], false);
+    await userEvent.click(screen.getByRole("button", { name: "Return to call setup" }));
+    expect(ipc.calls.some((c) => c.cmd === "open_main_call")).toBe(true);
+    expect(ipc.calls.some((c) => c.cmd === "end_session")).toBe(false);
+  });
+
+  it("dismisses stale end confirmations when the call stops or changes", async () => {
+    start(twoQuestions());
+    await screen.findAllByRole("article");
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    await act(() => emit("copilot://event", ev({ kind: "stopped", reason: "ended" })));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await act(() => emit("copilot://event", ev({ kind: "connection", state: { state: "live", session_id: "s2", resumed: false } })));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "End call" }));
+    await act(() => emit("copilot://event", ev({ kind: "connection", state: { state: "live", session_id: "s3", resumed: false } })));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(ipc.calls.some((c) => c.cmd === "end_session")).toBe(false);
+  });
+
+  it("lets guests hide their overlay without offering to end the host's call", async () => {
+    mockWindows("overlay");
+    n = 0;
+    start([srv({ type: "seat.ready", session_id: "s1", seat_id: "guest-1", host_name: "Alex", mode: "interview", title: "Acme onsite", capabilities: ["view", "note"], host_connected: true, sharing: true })]);
+    const hide = await screen.findByRole("button", { name: "Hide overlay" });
+    expect(screen.queryByRole("button", { name: "End call" })).not.toBeInTheDocument();
+    await userEvent.click(hide);
+    expect(ipc.calls.some((c) => c.cmd === "plugin:window|hide")).toBe(true);
+    expect(ipc.calls.some((c) => c.cmd === "end_session")).toBe(false);
+  });
+
   it("fades the background with the opacity setting, never the whole window", async () => {
     const { container } = start(twoQuestions(), true, { opacity: 0.35 });
     const root = container.querySelector(".ov") as HTMLElement;
@@ -155,6 +298,7 @@ describe("the overlay's frame", () => {
     await screen.findAllByRole("article");
     await userEvent.keyboard("{Control>}={/Control}");
     expect(localStorage.getItem("overlay.textScale")).toBe("1.1");
+    await userEvent.click(screen.getByRole("button", { name: "Overlay settings" }));
     await userEvent.click(screen.getByRole("button", { name: /Larger text/ }));
     expect(localStorage.getItem("overlay.textScale")).toBe("1.25");
     await userEvent.click(screen.getByRole("button", { name: "Compact: answers only" }));

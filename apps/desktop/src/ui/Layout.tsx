@@ -1,15 +1,24 @@
 // Page structure: page header, card, list rows, a definition row, and text that truncates.
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { createContext, useContext, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+export const PageHeadingHost = createContext<HTMLElement | null>(null);
+export const PageHeadingActive = createContext(true);
 import { cx } from "./Button";
 
 export function PageHeader({ title, meta, actions, back }: { title: ReactNode; meta?: ReactNode; actions?: ReactNode; back?: ReactNode }) {
+  const host = useContext(PageHeadingHost);
+  const active = useContext(PageHeadingActive);
+  const heading = <h1 className="ui-page-title" data-native-drag-region="header">{title}</h1>;
+  const docked = host !== null && active;
   return (
     <header className="ui-page-head">
+      {docked && createPortal(heading, host)}
       {back && <div className="ui-page-back">{back}</div>}
-      <div className="ui-page-head-row">
-        <h1 className="ui-page-title">{title}</h1>
+      {(!docked || actions) && <div className="ui-page-head-row">
+        {!docked && heading}
         {actions && <div className="ui-page-actions">{actions}</div>}
-      </div>
+      </div>}
       {meta && <div className="ui-page-meta">{meta}</div>}
     </header>
   );

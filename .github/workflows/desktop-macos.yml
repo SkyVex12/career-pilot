@@ -1,0 +1,155 @@
+# Native Mac builds are required: Apple frameworks and the DMG bundler cannot run on Windows.
+name: desktop-macos
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/protocol/**'
+      - 'Cargo.*'
+      - '*lock*'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.cargo/**'
+      - '.github/workflows/desktop-macos.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/protocol/**'
+      - 'Cargo.*'
+      - '*lock*'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.cargo/**'
+      - '.github/workflows/desktop-macos.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+permissions:
+  contents: read
+# Only superseded PR previews are cancelled. Release calls and manual builds finish.
+concurrency:
+  group: desktop-macos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: aarch64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.4'
+      CARGO_INCREMENTAL: '0'
+      VERSION: ${{ inputs.version || '0.0.0-ci' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-macos-${{ matrix.arch }}
+      - run: pnpm install --frozen-lockfile
+      - name: Frontend and packaging tests
+        run: pnpm --filter @copilot/desktop test
+      - name: Native Rust tests (also compiles the Apple bridges)
+        run: cargo test -p copilot-client -p copilot-desktop --lib --locked
+      - name: Configure bundle and updater
+        working-directory: apps/desktop
+        env:
+          RELEASE: ${{ inputs.version != '' }}
+        run: |
+          preview=()
+          if [ "$RELEASE" != true ]; then preview=(--preview); fi
+          node scripts/release.mjs config --version "$VERSION" --platform darwin-${{ matrix.arch }} "${preview[@]}"
+      - name: Check release signing credentials
+        if: inputs.version != ''
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          for key in CERT IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID UPDATER_KEY; do
+            [ -n "${!key}" ] || { echo "::error::Missing Mac release credential: $key"; exit 1; }
+          done
+      - name: Build app and DMG
+        working-directory: apps/desktop
+        env:
+          RELEASE: ${{ inputs.version != '' }}
+          APPLE_CERTIFICATE: ${{ inputs.version != '' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ inputs.version != '' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ inputs.version != '' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_ID: ${{ inputs.version != '' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ inputs.version != '' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ inputs.version != '' && secrets.APPLE_TEAM_ID || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.version != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.version != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          if [ "$RELEASE" != true ]; then
+            # Tauri treats present-but-empty credentials as signing/notarization requests.
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          pnpm tauri build --target ${{ matrix.target }} --features release --config src-tauri/tauri.release.conf.json
+      - name: Package release files
+        if: inputs.version != ''
+        working-directory: apps/desktop
+        run: |
+          node scripts/release.mjs manifest --version "$VERSION" --platform darwin-${{ matrix.arch }} --bundle-dir ../../target/${{ matrix.target }}/release/bundle/macos --out ../../dist-release
+          mv ../../dist-release/latest.json ../../dist-release/manifest-darwin-${{ matrix.arch }}.json
+      - uses: actions/upload-artifact@v4
+        if: inputs.version != ''
+        with:
+          name: desktop-macos-${{ matrix.arch }}-${{ env.VERSION }}
+          path: dist-release
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        id: preview
+        if: inputs.version == ''
+        with:
+          name: desktop-macos-preview-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preview download instructions
+        if: inputs.version == ''
+        env:
+          ARTIFACT_URL: ${{ steps.preview.outputs.artifact-url }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          {
+            echo "### Mac preview ($ARCH)"
+            echo
+            echo "[Download the DMG artifact]($ARTIFACT_URL), unzip it, and open the DMG."
+            echo
+            echo "Built from commit $GITHUB_SHA. Requires macOS 15.4 or newer."
+            echo "This is an ad-hoc signed test build, not a notarized public release."
+            echo "Stealth is experimental: test the received screen share from another meeting participant."
+          } >> "$GITHUB_STEP_SUMMARY"

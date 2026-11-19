@@ -125,6 +125,16 @@ impl History {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    /// Forget the previous profile's call while preserving the event watermark. Windows
+    /// already subscribed skip old events still in flight and apply this reset in order.
+    pub fn reset_context(&mut self) -> Value {
+        self.entries.clear();
+        self.slots.clear();
+        let event = serde_json::json!({ "kind": "context_reset" });
+        let n = self.push(event.clone());
+        serde_json::json!({ "n": n, "event": event })
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +228,20 @@ mod tests {
         h.clear();
         assert_eq!(h.snapshot(), (vec![], 0));
         assert_eq!(h.push(json!({ "kind": "warning", "message": "b" })), 0);
+    }
+
+    #[test]
+    fn profile_change_discards_the_call_but_preserves_the_event_watermark() {
+        let mut h = History::default();
+        h.push(json!({ "kind": "connection", "state": { "state": "live", "session_id": "old" } }));
+        h.push(json!({ "kind": "stopped", "reason": "ended" }));
+        let reset = h.reset_context();
+        assert_eq!(reset, json!({ "n": 2, "event": { "kind": "context_reset" } }));
+        assert_eq!(h.snapshot(), (vec![reset], 3));
+        h.clear(); // A real new session still starts its usual sequence from zero.
+        assert_eq!(
+            h.push(json!({ "kind": "connection", "state": { "state": "connecting", "attempt": 0 } })),
+            0
+        );
     }
 }

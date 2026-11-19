@@ -3,11 +3,8 @@
 // JavaScript SDK): no native WebRTC in the app. The voice lives in the main window alone; both
 // windows drive it with `voice:cmd` events and show its `voice:status`.
 //
-// The host hears guests on the output device they pick, any of them, the call's own included
-// (guests are then transcribed with the call, which the host accepts); the picker warns about a
-// device Windows doesn't call headphones. Voice turns on by itself once a guest may talk, on the
-// headphones the host used last, or Windows' default output ("") when those aren't there; the
-// host can switch devices while it plays. Each guest's <audio> element is routed with setSinkId
+// The host hears guests on the call's selected output. Voice turns on by itself once a guest
+// may talk. Each guest's <audio> element is routed with setSinkId
 // before anything plays; if routing fails, or a chosen device goes away mid-call, voice stops
 // rather than moving to another device. Web Audio mixing (which plays on the default device) is
 // off.
@@ -16,12 +13,11 @@
 // browser's echo cancellation, noise suppression and gain control.
 import { Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack } from "livekit-client";
 import { emit, listen } from "@tauri-apps/api/event";
-import { rest } from "./api";
+import { api, rest, type VoiceDevice } from "./api";
 
 export type VoiceCmd =
   | { cmd: "outputs" }
-  | { cmd: "host_on"; deviceId: string; sessionId: string; allowed: string[] }
-  | { cmd: "host_device"; deviceId: string }
+  | { cmd: "host_on"; sessionId: string; allowed: string[] }
   | { cmd: "host_off" }
   | { cmd: "host_mute"; on: boolean }
   | { cmd: "host_allowed"; identities: string[] }
@@ -72,6 +68,7 @@ export interface VoiceDeps {
   newRoom(): Room;
   newAudio(): HTMLAudioElement;
   devices(): Promise<MediaDeviceInfo[]>;
+  callOutput(): Promise<VoiceDevice | null>;
   /** One short microphone grant, so device names are readable (WebView2 hides them before). */
   unlockLabels(): Promise<void>;
   hostToken(sessionId: string): Promise<{ url: string; token: string }>;
@@ -91,6 +88,7 @@ export const browserDeps: VoiceDeps = {
     }),
   newAudio: () => new Audio(),
   devices: () => navigator.mediaDevices.enumerateDevices(),
+  callOutput: async () => (await api.voiceDevices()).find((device) => device.call) ?? null,
   unlockLabels: async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     for (const t of stream.getTracks()) t.stop();
@@ -140,9 +138,7 @@ export class VoiceController {
         case "outputs":
           return await this.outputs();
         case "host_on":
-          return await this.hostOn(c.deviceId, c.sessionId, c.allowed);
-        case "host_device":
-          return await this.switchDevice(c.deviceId);
+          return await this.hostOn(c.sessionId, c.allowed);
         case "host_off":
           return await this.stop(null);
         case "host_mute":
@@ -178,12 +174,14 @@ export class VoiceController {
     this.set({ outputs });
   }
 
-  private async hostOn(deviceId: string, sessionId: string, allowed: string[]): Promise<void> {
+  private async hostOn(sessionId: string, allowed: string[]): Promise<void> {
     if (this.room) return;
     this.set({ host: "checking", error: null });
     await this.outputs();
-    // The headphones used last aren't there: Windows' default output.
-    if (deviceId && !this.status.outputs.some((o) => o.deviceId === deviceId)) deviceId = "";
+    const call = await this.deps.callOutput();
+    const matches = call ? this.status.outputs.filter((output) => windowsName(output.label).toLowerCase() === windowsName(call.name).toLowerCase()) : [];
+    if (matches.length !== 1) throw new Error("Guest audio could not find the call's output. Check Call audio and try again.");
+    const deviceId = matches[0].deviceId;
     await routed(this.deps.newAudio(), deviceId); // the window can play there, or no voice
 
     const grant = await this.deps.hostToken(sessionId);
@@ -204,14 +202,6 @@ export class VoiceController {
     this.stopWatching = this.deps.onDeviceChange(() => void this.watchDevice());
     await room.connect(grant.url, grant.token, { autoSubscribe: true });
     this.set({ host: "on", hostMuted: false, device: deviceId, error: null });
-  }
-
-  /** Play guests on another device from now on, without a break in the call. */
-  private async switchDevice(deviceId: string): Promise<void> {
-    if (this.role !== "host" || !this.room) return;
-    for (const el of this.elements.values()) await routed(el, deviceId);
-    this.deviceId = deviceId;
-    this.set({ device: deviceId, error: null });
   }
 
   /** A guest's track, on the chosen headphones only. */

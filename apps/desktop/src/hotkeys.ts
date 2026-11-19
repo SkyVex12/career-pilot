@@ -2,6 +2,7 @@
 // the overlay and Settings), and finding two actions on one key. Stored in Tauri's accelerator
 // form, as before (src-tauri/src/hotkeys.rs parses it and re-checks every saved hotkey).
 import type { HotkeyAction, Settings } from "./api";
+import { isMac } from "./platform";
 
 export const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string; hint?: string; fallback?: string }[] = [
   { key: "hotkey", action: "force_question", label: "Answer the last thing said", hint: "When detection missed a question." },
@@ -11,7 +12,7 @@ export const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string
     key: "click_through_off_hotkey",
     action: "click_through_off",
     label: "Turn click-through off",
-    hint: "The way back. It always works: cleared, it falls back to Ctrl+Shift+G.",
+    hint: `The way back. It always works: cleared, it falls back to ${isMac() ? "Cmd" : "Ctrl"}+Shift+G.`,
     fallback: "CommandOrControl+Shift+G",
   },
   { key: "opacity_up_hotkey", action: "opacity_up", label: "Overlay more opaque" },
@@ -26,27 +27,45 @@ export const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string
 ];
 
 const KEY_LABELS: Record<string, string> = {
-  CommandOrControl: "Ctrl",
-  CommandOrCtrl: "Ctrl",
-  CmdOrCtrl: "Ctrl",
-  CmdOrControl: "Ctrl",
-  Control: "Ctrl",
-  Command: "Cmd",
-  Super: "Win",
-  Up: "↑",
-  Down: "↓",
-  Left: "←",
-  Right: "→",
+  commandorcontrol: "Ctrl",
+  commandorctrl: "Ctrl",
+  cmdorctrl: "Ctrl",
+  cmdorcontrol: "Ctrl",
+  control: "Ctrl",
+  ctrl: "Ctrl",
+  command: "Cmd",
+  cmd: "Cmd",
+  super: "Win",
+  shift: "Shift",
+  alt: "Alt",
+  option: "Alt",
+  up: "↑",
+  arrowup: "↑",
+  down: "↓",
+  arrowdown: "↓",
+  left: "←",
+  arrowleft: "←",
+  right: "→",
+  arrowright: "→",
 };
+const MODIFIER_ORDER = ["Ctrl", "Cmd", "Alt", "Shift", "Win"];
 
 /** A readable chip for an accelerator: "CommandOrControl+Shift+H" -> "Ctrl+Shift+H". */
 export function prettyKey(accel: string): string {
-  return accel
+  const labels = accel
     .split("+")
     .map((p) => p.trim())
     .filter(Boolean)
-    .map((p) => KEY_LABELS[p] ?? p)
-    .join("+");
+    .map((p) => {
+      const key = p.toLowerCase();
+      if (isMac() && /^(commandorcontrol|commandorctrl|cmdorctrl|cmdorcontrol|super)$/.test(key)) return "Cmd";
+      if (/^key[a-z]$/.test(key)) return p.slice(3).toUpperCase();
+      if (/^digit[0-9]$/.test(key)) return p.slice(5);
+      return KEY_LABELS[key] ?? p;
+    });
+  // The native shortcut serializer puts Shift before Control. Keep every hint in the
+  // same readable order, whether its source is a saved accelerator or native state.
+  return [...MODIFIER_ORDER.filter(modifier => labels.includes(modifier)), ...labels.filter(label => !MODIFIER_ORDER.includes(label))].join("+");
 }
 
 const CODE_KEYS: Record<string, string> = {
@@ -91,7 +110,7 @@ export function recordKey(e: { code: string; key: string; ctrlKey: boolean; altK
   else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(e.code)) key = e.code;
   else key = CODE_KEYS[e.code] ?? null;
   if (!key) return { error: `That key (${e.key}) can't be used. Try a letter, a number or an F key.` };
-  const mods = [e.ctrlKey && "CommandOrControl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super"].filter(Boolean) as string[];
+  const mods = [e.ctrlKey && (isMac() ? "Control" : "CommandOrControl"), e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && (isMac() ? "CommandOrControl" : "Super")].filter(Boolean) as string[];
   if (!mods.length && !/^F\d+$/.test(key)) return { error: "Add Ctrl, Alt, Shift or Win, so typing never triggers it." };
   return { accel: [...mods, key].join("+") };
 }
@@ -104,7 +123,8 @@ export function normAccel(a: string): string | null {
   const mods = new Set<string>();
   let key = "";
   for (const p of parts) {
-    if (["CONTROL", "CTRL", "COMMANDORCONTROL", "COMMANDORCTRL", "CMDORCTRL", "CMDORCONTROL"].includes(p)) mods.add("CTRL");
+    if (["COMMANDORCONTROL", "COMMANDORCTRL", "CMDORCTRL", "CMDORCONTROL"].includes(p)) mods.add(isMac() ? "SUPER" : "CTRL");
+    else if (["CONTROL", "CTRL"].includes(p)) mods.add("CTRL");
     else if (["COMMAND", "CMD", "SUPER"].includes(p)) mods.add("SUPER");
     else if (["ALT", "OPTION"].includes(p)) mods.add("ALT");
     else if (p === "SHIFT") mods.add("SHIFT");

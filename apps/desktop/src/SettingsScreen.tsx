@@ -1,7 +1,8 @@
 // Settings (docs/design/ui-proposal.md, "Settings"): General, Account, Audio, Overlay & hotkeys,
 // Advanced. Toggles, choices and devices save the moment they change, and a recorded hotkey
 // when it is valid; free-text fields (a development build's URLs and token) keep a Save button.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
+import { isMac } from "./platform";
 import { api, rest, type Settings, type SettingsView, type UpdateState } from "./api";
 import { cloudUrlsFor } from "./urls";
 import { ago, settingsLine } from "./updates";
@@ -11,7 +12,14 @@ import { HOTKEYS, clashWith } from "./hotkeys";
 import { accountOf } from "./profiles";
 import { SignIn, signInWays } from "./SignIn";
 import { HotkeyInput } from "./ui/HotkeyInput";
-import { Banner, Button, Card, ConfirmDialog, Field, Input, PageHeader, SegmentedControl, Select, Switch, useTheme, useToast } from "./ui";
+import { Banner, Button, Card, ConfirmDialog, Field as BaseField, Input, PageHeader, SegmentedControl, Select, Switch as BaseSwitch, useTheme, useToast } from "./ui";
+
+function Field(props: ComponentProps<typeof BaseField>) {
+  return <BaseField {...props} hintMode="tooltip" />;
+}
+function Switch(props: ComponentProps<typeof BaseSwitch>) {
+  return <BaseSwitch {...props} hintMode="tooltip" />;
+}
 
 type Section = "general" | "account" | "audio" | "overlay" | "advanced";
 const SECTIONS: [Section, string][] = [
@@ -133,15 +141,15 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
       <Card title="Stealth">
         <div className="ui-stack">
           <Switch
-            label="Stealth mode"
-            hint="Hides this app from screen sharing, screenshots, and recordings, and takes its button off the taskbar. The windows stay open and usable. Supported Windows capture leaves them out, with no black rectangle. Capture tools that ignore this setting can still show the app."
+            label={isMac() ? "Stealth mode (experimental)" : "Stealth mode"}
+            hint={isMac() ? "Hides the Dock icon and attempts to exclude windows from capture. Experimental: verify from another participant's view before relying on it." : "Excludes windows from supported screen captures and hides the taskbar button. Some capture tools may still show the app."}
             checked={view.settings.stealth}
             onChange={(on) => save({ stealth: on }).catch(() => undefined)}
           />
           <Field
-            label="Task Manager name"
+            label={isMac() ? "Window name" : "Task Manager name"}
             error={nameError}
-            hint="A plain name for this app, such as Copilot. Quit and start the app again, and Task Manager shows this name. The program file stays copilot-desktop.exe."
+            hint={isMac() ? "Changes window titles; Activity Monitor keeps the signed app name." : "The app name shown in Task Manager after restart. The program file keeps its name."}
           >
             <Input
               value={displayName}
@@ -172,14 +180,14 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
           {updates.enabled ? (
             <p className={check.error || update.state === "check_failed" ? "ui-field-error" : "ui-field-hint"} aria-live="polite">
               {check.busy
-                ? "Asking the release server for a newer version…"
-                : (check.error ?? line ?? `Last checked ${updates.checked_at ? ago(updates.checked_at) : "not yet"}. Checks at start and every four hours.`)}
+                ? "Checking…"
+                : (check.error ?? line ?? `Last checked ${updates.checked_at ? ago(updates.checked_at) : "not yet"}.`)}
             </p>
           ) : (
             <p className="ui-field-hint">A development build: it does not update itself.</p>
           )}
           {updates.enabled && (
-            <Field label="Install updates" hint="Never during a call. Automatic updates install when you have not used the app for two minutes; it then restarts and says “Updated to …”.">
+            <Field label="Install updates" hint="Automatic updates install after two idle minutes and restart the app. Updates wait until your call ends.">
               <Select value={view.settings.update_mode} onChange={(e) => save({ update_mode: e.target.value as Settings["update_mode"] }).catch(() => undefined)}>
                 <option value="auto">By themselves</option>
                 <option value="ask">Ask me first</option>
@@ -363,10 +371,10 @@ function Advanced({ view, save, onSaved }: { view: SettingsView; save: Save; onS
                 <Field label="Gateway URL">
                   <Input value={draft.gateway_url} onChange={(e) => set("gateway_url", e.target.value)} spellCheck={false} />
                 </Field>
-                <Field label="API URL" hint="The Copilot API's /v1 root, for example http://127.0.0.1:8080/v1. The same token signs in to both.">
+                <Field label="API URL" hint="The API's /v1 address, for example http://127.0.0.1:8080/v1. Uses the same token as the gateway.">
                   <Input value={draft.api_url} onChange={(e) => set("api_url", e.target.value)} spellCheck={false} />
                 </Field>
-                <Field label="Dev token" hint="Kept in the Windows Credential Manager, not in the settings file. Local only: the services refuse it in the cloud.">
+                <Field label="Dev token" hint="Stored in Windows Credential Manager. Works with local services only.">
                   <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={view.dev_token_set ? "Saved (type to replace)" : "COPILOT_DEV_TOKEN from the .env"} autoComplete="off" />
                 </Field>
               </>
