@@ -4,9 +4,10 @@
 # reusable workflow) and deploys only if they pass.
 #
 # To save Actions minutes, each job runs only when its area changed (scripts/ci_changes.py):
-# on a pull request, its changes; on main, what the push brought. A manual run, a change to CI
-# itself, or a file no area knows runs everything. The Rust caches are saved from main only;
-# pull requests restore main's (saving a branch's own copy took eight minutes on Windows).
+# on a pull request, its changes; on main, what the push brought. Workflow-only changes run
+# lightweight workflow and planner checks, without a server rebuild. Manual runs and unknown
+# files run everything. The Rust caches are saved from main only; pull requests restore main's
+# (saving a branch's own copy took eight minutes on Windows).
 name: ci
 
 on:
@@ -43,6 +44,9 @@ jobs:
       rust_linux: ${{ steps.areas.outputs.rust_linux }}
       python: ${{ steps.areas.outputs.python }}
       typescript: ${{ steps.areas.outputs.typescript }}
+      codegen: ${{ steps.areas.outputs.codegen }}
+      tooling: ${{ steps.areas.outputs.tooling }}
+      workflows: ${{ steps.areas.outputs.workflows }}
       terraform: ${{ steps.areas.outputs.terraform }}
       server: ${{ steps.areas.outputs.server }}
     steps:
@@ -113,6 +117,55 @@ jobs:
       - name: Tests
         run: uv run pytest -q
 
+  workflows:
+    name: workflows (syntax and expressions)
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Validate workflow definitions
+        shell: bash
+        run: |
+          version=1.7.12
+          archive="actionlint_${version}_linux_amd64.tar.gz"
+          checksums="actionlint_${version}_checksums.txt"
+          release="https://github.com/rhysd/actionlint/releases/download/v${version}"
+          lint_dir="$(mktemp -d "$RUNNER_TEMP/actionlint.XXXXXX")"
+          curl --fail --silent --show-error --location "$release/$archive" --output "$lint_dir/$archive"
+          curl --fail --silent --show-error --location "$release/$checksums" --output "$lint_dir/$checksums"
+          (cd "$lint_dir" && sha256sum --check --strict --ignore-missing "$checksums")
+          tar -xzf "$lint_dir/$archive" -C "$lint_dir" actionlint
+          "$lint_dir/actionlint" -shellcheck= -pyflakes=
+
+  tooling:
+    name: tooling (CI and release planners)
+    needs: changes
+    # The full Python job already checks these files when backend code also changed.
+    if: needs.changes.outputs.tooling == 'true' && needs.changes.outputs.python != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.7"
+          enable-cache: true
+      - run: uv sync --frozen --only-dev
+      - name: Lint and format
+        run: |
+          uv run --no-sync ruff check scripts/ci_changes.py scripts/desktop_release.py tests/test_ci_changes.py tests/test_desktop_release.py
+          uv run --no-sync ruff format --check scripts/ci_changes.py scripts/desktop_release.py tests/test_ci_changes.py tests/test_desktop_release.py
+      - name: Types
+        run: uv run --no-sync pyright scripts/ci_changes.py scripts/desktop_release.py tests/test_ci_changes.py tests/test_desktop_release.py
+      - name: Tests
+        run: uv run --no-sync pytest -q tests/test_ci_changes.py tests/test_desktop_release.py
+
   typescript:
     name: typescript (types, tests, codegen)
     needs: changes
@@ -129,12 +182,15 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: astral-sh/setup-uv@v7
+        if: needs.changes.outputs.codegen == 'true'
         with:
           version: "0.12.7"
           enable-cache: true
       - run: pnpm install --frozen-lockfile
       - run: uv sync --frozen
+        if: needs.changes.outputs.codegen == 'true'
       - name: Generated protocol types are current
+        if: needs.changes.outputs.codegen == 'true'
         run: pnpm codegen:check
       - run: pnpm typecheck
       - run: pnpm test

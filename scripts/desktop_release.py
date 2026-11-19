@@ -36,6 +36,7 @@ SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 
 # What the installer is built from. A path ships if it starts with one of these and is not
 # a test, a doc, or the protocol's Python side.
+# The Mac validation/preview workflow alone does not change shipped app inputs.
 SHIPPED_PREFIXES = (
     "apps/desktop/",
     "packages/protocol/",
@@ -45,7 +46,6 @@ SHIPPED_PREFIXES = (
     "pnpm-workspace.yaml",
     "rust-toolchain.toml",
     ".github/workflows/release-desktop.yml",
-    ".github/workflows/desktop-macos.yml",
 )
 NOT_SHIPPED_PREFIXES = (
     "packages/protocol/python/",

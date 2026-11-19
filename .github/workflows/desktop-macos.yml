@@ -1,27 +1,6 @@
-# Native Mac builds are required: Apple frameworks and the DMG bundler cannot run on Windows.
+# Native Mac validation and DMGs run manually or for signed releases to conserve Actions minutes.
 name: desktop-macos
 on:
-  pull_request:
-    paths:
-      - 'apps/desktop/**'
-      - 'packages/protocol/**'
-      - 'Cargo.*'
-      - '*lock*'
-      - 'package.json'
-      - 'pnpm-workspace.yaml'
-      - '.cargo/**'
-      - '.github/workflows/desktop-macos.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'apps/desktop/**'
-      - 'packages/protocol/**'
-      - 'Cargo.*'
-      - '*lock*'
-      - 'package.json'
-      - 'pnpm-workspace.yaml'
-      - '.cargo/**'
-      - '.github/workflows/desktop-macos.yml'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -33,10 +12,6 @@ on:
         required: true
 permissions:
   contents: read
-# Only superseded PR previews are cancelled. Release calls and manual builds finish.
-concurrency:
-  group: desktop-macos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
     shell: bash
@@ -58,6 +33,9 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.4'
       CARGO_INCREMENTAL: '0'
+      # Smaller native dependency caches and faster test links; installer optimization is unchanged.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
       VERSION: ${{ inputs.version || '0.0.0-ci' }}
     steps:
       - uses: actions/checkout@v5
@@ -72,6 +50,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop-macos-${{ matrix.arch }}
+          # Only main builds update the shared dependency cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - name: Frontend and packaging tests
         run: pnpm --filter @copilot/desktop test
