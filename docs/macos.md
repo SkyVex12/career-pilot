@@ -154,28 +154,54 @@ shared planner, key mappings, UI stream lifecycle, and release packaging, not Ap
 ## CI and public releases
 
 `desktop-macos.yml` runs manually or through the signed-release workflow. It has no automatic
-pull-request or `main` push trigger, conserving Actions minutes. Both Apple Silicon and Intel
-builds retain native Rust library tests, frontend and packaging tests, and DMG creation with
-the release feature. Shared CI still checks affected Windows, Linux, and TypeScript code.
-Mac-specific changes need a manual native run before merging when validation is required.
-Builds of `main` update the shared Rust dependency cache; other refs only restore it.
+pull-request or `main` push trigger, conserving Actions minutes. Manual builds default to Apple
+Silicon (`aarch64`); choose `x86_64` for Intel or `both` when both need validation. Signed
+releases always build both architectures. Each selected architecture retains native Rust
+library tests, frontend and packaging tests, and DMG creation with the release feature.
+Shared CI still checks affected Windows, Linux, and TypeScript code. Builds of `main` update
+the shared Rust dependency cache; other refs only restore it.
 
 To create a preview:
 
-1. Open **Actions > desktop-macos > Run workflow**, choose the branch, and run it.
-   Or run `gh workflow run desktop-macos.yml --ref main` (replace `main` to test another branch).
-2. Wait for both architecture jobs to finish. Each compiles the Objective-C bridges and
-   bundles the app using Xcode on its native architecture.
-3. Open the run's **Artifacts** section (or the download link in the job summary):
-   `desktop-macos-preview-aarch64` for Apple Silicon, or
-   `desktop-macos-preview-x86_64` for Intel.
-4. Unzip the artifact and open the DMG. Artifacts are retained for 14 days. Test builds use
-   ad-hoc signing and do not need Apple certificates or updater signing secrets. Gatekeeper
-   may reject downloaded previews; the local-build instructions above remain available.
+1. Open **Actions > desktop-macos > Run workflow**, choose the branch and architecture, and run it.
+   Or run `gh workflow run desktop-macos.yml --ref main -f architecture=aarch64`
+   (use `x86_64` or `both` as needed; replace `main` to test another branch).
+2. Wait for the selected architecture jobs to finish. Each compiles the Objective-C bridges
+   and bundles the app using Xcode on its native architecture.
+3. Main builds publish direct GCP download links in the **publish Mac preview downloads**
+   job summary. Other branches produce GitHub artifacts only:
+   `desktop-macos-preview-aarch64` or `desktop-macos-preview-x86_64`.
+4. Open the downloaded DMG. GitHub artifacts must be unzipped first and are retained for
+   14 days. Previews use ad-hoc signing, not notarization. Gatekeeper may reject downloaded
+   previews; the local-build instructions above remain available.
 
-Manual runs create downloadable test artifacts; they do not publish preview builds
-to installed users. The Windows release workflow calls the same Mac build workflow for signed
-public releases when `MACOS_RELEASE_ENABLED=true`.
+To republish an existing preview without rebuilding on a Mac, supply its Actions run ID:
+
+```sh
+gh workflow run desktop-macos.yml --ref main -f architecture=aarch64 -f source_run_id=RUN_ID
+```
+
+This runs only the Linux publisher. The source must be this repository's `desktop-macos`
+workflow on `main`, with a successful build and an unexpired artifact for every selected
+architecture. A cancelled run is usable if the requested architecture completed successfully;
+for example, a successful Apple Silicon build remains usable when Intel was cancelled.
+The publisher verifies the source commit belongs to `main` and retains that commit and run
+in the download path. Leaving `source_run_id` empty builds a new preview as above.
+
+Preview publication runs on Linux after the selected Mac builds succeed or existing artifacts
+are verified, using the existing
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_RELEASE_SERVICE_ACCOUNT`, and `GCP_RELEASES_BUCKET`
+repository variables. Only manual runs on this repository's `main` publish to the bucket.
+The direct links use the same public GCP download method as Windows, under a preview prefix:
+
+- `https://storage.googleapis.com/<GCP_RELEASES_BUCKET>/desktop/previews/Copilot-aarch64.dmg`
+- `https://storage.googleapis.com/<GCP_RELEASES_BUCKET>/desktop/previews/Copilot-x86_64.dmg`
+
+Each build also has an immutable path at
+`desktop/previews/<commit>/<run-id>-<attempt>/Copilot-<arch>.dmg`. Preview publication updates
+only the selected architecture's preview alias; it never writes `desktop/latest.json` or
+replaces signed release download links. The Windows release workflow calls the same Mac
+build workflow for signed public releases when `MACOS_RELEASE_ENABLED=true`.
 
 After native acceptance, configure these repository secrets for public distribution:
 

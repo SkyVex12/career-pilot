@@ -1,4 +1,4 @@
-# The desktop installer (README.md, "Releasing the desktop app"). Two ways in:
+# The desktop installer (README.md, "Releasing the desktop app"). Release entries:
 #
 # - After every deploy of main (deploy.yml calls this workflow once the backend deploy passed):
 #   the plan job (scripts/desktop_release.py) releases the next patch version only if the merge
@@ -155,6 +155,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.release == 'true' && vars.MACOS_RELEASE_ENABLED == 'true'
     uses: ./.github/workflows/desktop-macos.yml
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     with:
       sha: ${{ needs.plan.outputs.sha }}
       version: ${{ needs.plan.outputs.version }}
@@ -173,7 +177,7 @@ jobs:
       group: release-desktop-publish
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write # tag the published commit using GITHUB_TOKEN; starts no other workflow
       id-token: write # Workload Identity Federation into the release account: no stored key
     env:
       VERSION: ${{ needs.plan.outputs.version }}
@@ -233,6 +237,7 @@ jobs:
           service_account: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
       - name: Upload (the versioned installer, then the download link, then latest.json)
+        id: upload
         run: |
           base="gs://$BUCKET/desktop"
           gcloud storage cp --cache-control="public, max-age=31536000, immutable"             "dist-release/$VERSION/"* "$base/$VERSION/"
@@ -242,6 +247,27 @@ jobs:
             gcloud storage cp --cache-control="no-cache, max-age=0" "$dmg" "$base/$(basename "$dmg")"
           done
           gcloud storage cp --cache-control="no-cache, max-age=0" dist-release/latest.json "$base/latest.json"
+      # Tag in this job: a separate downstream job can inherit the optional Mac job's skip.
+      - name: Tag the published commit
+        if: success() && needs.plan.outputs.create_tag == 'true' && steps.upload.outcome == 'success'
+        env:
+          TAG: desktop-v${{ needs.plan.outputs.version }}
+        run: |
+          tag_ref="refs/tags/$TAG"
+          target=$(git rev-parse --verify "$SHA^{commit}")
+          remote=$(git ls-remote --tags origin "$tag_ref")
+          if [ -n "$remote" ]; then
+            git fetch --no-tags origin "$tag_ref"
+            existing=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+            if [ "$existing" != "$target" ]; then
+              echo "::error::$TAG already points at $existing, not published commit $target"
+              exit 1
+            fi
+            echo "Tag \`$TAG\` already points at \`$target\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git push origin "$target:$tag_ref"
+            echo "Tagged \`$target\` as \`$TAG\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Summary
         run: |
           {
@@ -251,26 +277,3 @@ jobs:
             echo "- Update manifest: https://storage.googleapis.com/$BUCKET/desktop/latest.json"
             echo "- Installed apps find it at their next check (at start, then every four hours) and install it when no call is running."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # A release from a merge gets its tag once it is published, so the next plan counts from it.
-  # (Pushed with GITHUB_TOKEN, the tag starts no other run.)
-  tag:
-    name: tag desktop-v${{ needs.plan.outputs.version }}
-    needs: [plan, publish]
-    if: needs.plan.outputs.create_tag == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.plan.outputs.sha }}
-      - name: Push the tag
-        env:
-          TAG: desktop-v${{ needs.plan.outputs.version }}
-          SHA: ${{ needs.plan.outputs.sha }}
-        run: |
-          git tag "$TAG" "$SHA"
-          git push origin "refs/tags/$TAG"
-          echo "Tagged \`$SHA\` as \`$TAG\`." >> "$GITHUB_STEP_SUMMARY"

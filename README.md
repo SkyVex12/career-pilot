@@ -678,6 +678,9 @@ stops with a note and the app updates at once, in either mode.
 tests. To uninstall: Settings → Apps → Copilot Desktop → Uninstall; the sign-in stays in the Windows
 Credential Manager (`com.copilot.desktop` entries) until you sign out.
 
+**Mac preview downloads:** see [Mac installation and direct GCP links](docs/macos.md#ci-and-public-releases).
+These DMGs require macOS 15.4 or newer; they are previews and may trigger Gatekeeper.
+
 ## Releasing the desktop app
 
 **On merge (patch versions).** After every deploy of `main` (`deploy.yml`, once the backend is
@@ -685,8 +688,9 @@ deployed and healthy), `release-desktop.yml` runs its plan (`scripts/desktop_rel
 if anything the app ships changed since the last `desktop-v*` tag, it builds and publishes the
 next patch version and then pushes its tag; otherwise it skips. What ships: `apps/desktop/`
 (not its tests or docs), the protocol's schema, Rust and TypeScript (not its Python side or
-fixtures), `Cargo.toml`, `Cargo.lock`, `pnpm-lock.yaml` and `release-desktop.yml`. A merge of
-backend, infrastructure or docs only releases nothing. Changes add up: if a release was skipped
+fixtures), `Cargo.toml`, `Cargo.lock`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` and
+`rust-toolchain.toml`. A merge of backend, infrastructure, docs or CI workflows only releases
+nothing. A workflow-only packaging fix can be released explicitly with a version tag. Changes add up: if a release was skipped
 or cancelled, the next one covers them. The version is one patch above the newest of every
 `desktop-v*` tag and the version already published in `latest.json`. The release notes (in
 `latest.json`, and in the run's summary) list the titles of the pull requests merged since the

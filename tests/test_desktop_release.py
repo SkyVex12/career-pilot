@@ -98,7 +98,11 @@ def test_a_merge_that_changes_the_app_releases_the_next_patch(repo: Repo) -> Non
         {"apps/desktop/tests/session.test.ts": "t", "apps/desktop/core/tests/gateway.rs": "t"},
         {"packages/protocol/python/copilot_protocol/models.py": "py"},
         {"infra/gcp/envs/stage0/main.tf": "tf", ".github/workflows/deploy.yml": "ci"},
-        {".github/workflows/desktop-macos.yml": "ci", "scripts/ci_changes.py": "ci"},
+        {
+            ".github/workflows/desktop-macos.yml": "ci",
+            ".github/workflows/release-desktop.yml": "ci",
+            "scripts/ci_changes.py": "ci",
+        },
     ],
     ids=["backend", "docs", "tests", "protocol-python", "infra", "ci"],
 )
@@ -121,7 +125,6 @@ def test_backend_docs_and_tests_only_skip(repo: Repo, files: dict[str, str]) -> 
         "apps/desktop/core/src/net/close.rs",
         "Cargo.lock",
         "pnpm-lock.yaml",
-        ".github/workflows/release-desktop.yml",
     ],
 )
 def test_what_ships(path: str) -> None:
@@ -205,3 +208,17 @@ def test_github_output_and_cli(repo: Repo, tmp_path: Path, monkeypatch: pytest.M
     assert "\n0.1.1\n" in text
     assert dr.main(["newer", "0.1.1", "0.1.0"]) == 0
     assert dr.main(["newer", "0.1.0", "0.1.1"]) == 1
+
+
+def test_repaired_published_tag_prevents_a_duplicate_release(repo: Repo) -> None:
+    released = repo.merge_pr("Desktop update", {"apps/desktop/src/App.tsx": "v2"})
+    # Publication succeeded, but the old workflow skipped its tagging job.
+    repo.merge_pr("CI only", {".github/workflows/release-desktop.yml": "fixed"})
+    assert repo.plan(published_version="0.1.1").release
+    repo.tag("desktop-v0.1.1", released)
+    p = repo.plan(published_version="0.1.1")
+    assert not p.release
+    assert p.previous == "desktop-v0.1.1"
+    # Actual application changes must still produce the next version.
+    repo.merge_pr("Next desktop update", {"apps/desktop/src/App.tsx": "v3"})
+    assert repo.plan(published_version="0.1.1").version == "0.1.2"
