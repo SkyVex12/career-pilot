@@ -1,6 +1,6 @@
 # Backend security and lifecycle audit — 2026-11-19
 
-Scope: calendar preparation, Central Ask, private AI context/MCP, mobile companion, practice, and account-bound call/language integration. No external provider/model charges were required. Tests use real local PostgreSQL, Valkey and object-store services where marked `stack`, with scripted providers elsewhere.
+Scope: calendar preparation, Central Ask, private AI context/MCP, mobile companion, practice, and account-bound call/language integration. The initial security audit required no external provider/model calls; later bounded provider smoke checks are recorded below. Tests use real local PostgreSQL, Valkey and object-store services where marked `stack`, with scripted providers elsewhere.
 
 ## Corrections
 
@@ -27,3 +27,30 @@ Scope: calendar preparation, Central Ask, private AI context/MCP, mobile compani
 Existing signed access-token expiry and refresh-token revocation rules remain authoritative. Companion grant revocation is immediate on its next feed check and does not end capture. Mobile sign-out removes local credentials and revokes display grants through the account endpoint. Calendar OAuth secrets and refresh tokens remain backend-only, with encrypted persistence and one-use PKCE state; no credential-bearing QR or URL was added.
 
 Real Google/Microsoft consent, signed mobile-device background behavior, and external provider quality/cost acceptance remain separate release validations. This audit does not claim those were exercised.
+
+
+## Final OAuth and integration review
+
+The MCP-only OAuth implementation was independently reviewed without changing its security logic. No blocking security defect was found in the reviewed consent, authorization-code, token, metadata or scoped MCP routes.
+
+- Consent uses an authenticated same-origin request, explicit approval, nonce-based CSP, frame denial and no-store responses. Credentials remain in page memory; no credential-bearing callback is introduced.
+- Public clients are pre-registered. HTTPS redirect matching is exact. Literal IPv4/IPv6 loopback callbacks may vary only their port; scheme, host, path and query remain bound to registration, and the chosen redirect remains bound to the code.
+- S256 PKCE, client, resource and issuer checks precede atomic single-use authorization-code consumption. Codes expire after 120 seconds. Opaque access credentials are stored by hash-derived key, scoped to MCP, short lived and capped at 20 active grants per account.
+- MCP access enforces issuer/resource, expiry, configured client, current account existence, required linkage and per-tool scope. Ordinary application routes do not accept MCP credentials. Account-managed disconnect and token revocation invalidate grants.
+- Focused coverage includes concurrent redemption with one winner, grant-cap cleanup, expiry, client removal, resource mismatch, explicit revocation, account deletion, cross-account grant isolation and redirect/PKCE/consent rejection. Independent review initially passed 33 focused tests; the owner added concurrency and loopback cases afterward.
+- A real local Codex host exercised the scoped read/publish/refresh/remove workflow, including an OAuth-issued token. Remote consumer-host registration, public HTTPS deployment and production consent remain separate activation checks.
+
+### Final regression evidence
+
+- Progressive Ask checkpoint `93929af` uses real model streaming with bounded encrypted partial writes, locked attempt/status guards and no provisional trusted citations. Practice comparison checkpoint `0a5f2e2` uses retained feedback and verified answer excerpts, records rubric compatibility and qualifies changes in coaching conditions.
+- Before OAuth integration, the broad local-stack suite passed **1,700 tests in 401.17 seconds**. Global Ruff, formatting, Pyright and protocol generation checks passed. Test-only typing corrections are committed as `1b91188`.
+- The first post-OAuth run passed 1,702 tests and hit two existing gateway memory-search 100 ms deadlines while native Android compilation was running. Both cases passed unchanged on immediate targeted rerun. No code, latency budget or assertion was weakened.
+- After native compilation ended, the complete unchanged post-OAuth suite passed **1,704 tests in 351.86 seconds (5 minutes 51 seconds)**, exit code 0. Evidence: `.implementation/final-oauth-clean.txt` and `.implementation/final-oauth-clean.xml`. The earlier resource-contention result remains in `.implementation/final-oauth.txt`; the exact two-case rerun is in `.implementation/oauth-company-recheck.txt`.
+
+Command used for the final clean run:
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q --tb=short --basetemp=.implementation/final-oauth-clean-tmp -o cache_dir=.implementation/final-oauth-clean-cache --junitxml=.implementation/final-oauth-clean.xml
+```
+
+One bounded real Ask check with fictional evidence passed through OpenAI `gpt-6.1-sol` (243 input / 21 output tokens), including citation and progressive text. A separate synthetic English Deepgram TTS/STT roundtrip passed. These checks demonstrate configured provider operation; they do not certify factual grounding quality, physical microphone/echo behavior or additional speech languages.
