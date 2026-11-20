@@ -6,7 +6,7 @@ This is not yet a verified real-Hushed integration. Hushed explicitly does not s
 
 ## Set it up
 
-Use a desktop build containing the Telecom detector. The new local Windows preview is named `.implementation/artifacts/windows/CareerPilot-hushed-telecom-preview.exe`; its planned build/test receipt is `evidence/hushed-telecom-2026-11-20.json`. Exit the existing Career Pilot process using its tray **Exit completely** action before opening the preview; closing the window can leave the older process running. The unsigned preview preserves existing settings. The earlier [notification-only preview receipt](evidence/hushed-call-detection-2026-11-20.json) does not validate the Telecom implementation.
+Use a desktop build containing the Telecom detector. The new local Windows preview is named `.implementation/artifacts/windows/CareerPilot-hushed-telecom-preview.exe`; its [build/test receipt](evidence/hushed-telecom-2026-11-20.json) records the source revision and checksum. Exit the existing Career Pilot process using its tray **Exit completely** action before opening the preview; closing the window can leave the older process running. The unsigned preview preserves existing settings. The earlier [notification-only preview receipt](evidence/hushed-call-detection-2026-11-20.json) does not validate the Telecom implementation.
 
 1. Start the LDPlayer instance containing Hushed and enable **local ADB** in LDPlayer. Identify the intended instance yourself; Career Pilot does not infer an instance from its display name.
 2. In Career Pilot desktop settings, open **Background**. Turn on **Suggest assistance for detected calls**, leave **Pause call suggestions** off, and enable **LDPlayer** under **Applications**.
