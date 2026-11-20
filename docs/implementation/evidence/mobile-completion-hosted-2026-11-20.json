@@ -1,0 +1,65 @@
+{
+  "date": "2026-11-20",
+  "status": "passed",
+  "source_commit": "d8b9048033cd22c6f78166f1abe7e82aee80cec7",
+  "product_commit": "ed4ef21d64ced73d06ba6346e614c815e13c4bd3",
+  "mobile_product_diff": "git diff ed4ef21 d8b9048 -- apps/mobile: empty",
+  "run_url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690564500",
+  "checks": {
+    "tests_passed": 74,
+    "typescript": "passed",
+    "secure_android_ios_exports": "passed"
+  },
+  "android": {
+    "result": "BUILD SUCCESSFUL in 6m 53s",
+    "command": "assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon",
+    "distribution": "development-key preview; secure HTTPS/WSS policy; not an owner-signed store release",
+    "local_apk_inspection": false,
+    "runtime_acceptance": "No trial of this secure APK; separately delivered HTTP-test APK has scoped emulator acceptance."
+  },
+  "ios": {
+    "result": "BUILD SUCCEEDED",
+    "xcode": "26.4.1",
+    "configuration": "Release iphonesimulator, arm64, CODE_SIGNING_ALLOWED=NO",
+    "distribution": "unsigned simulator app; not installable on a physical iPhone",
+    "local_app_inspection": false
+  },
+  "artifacts": [
+    {
+      "id": 14609315435,
+      "name": "career-pilot-android-preview",
+      "archive_size_bytes": 12242148,
+      "archive_sha256": "5e8d1ed9ecf48f134d0082880201820be8a8309c6da7bfe34e723aae80f09e96",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690564500/artifacts/14609315435",
+      "digest_source": "GitHub artifact API, not locally recomputed"
+    },
+    {
+      "id": 14608288571,
+      "name": "career-pilot-ios-simulator",
+      "archive_size_bytes": 10210661,
+      "archive_sha256": "b9f743be8ccd5ed868c2a850f778463a8a7bbdbde15e85810ef583f48419ff33",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690564500/artifacts/14608288571",
+      "digest_source": "GitHub artifact API, not locally recomputed"
+    },
+    {
+      "id": 14608268486,
+      "name": "career-pilot-ios-build-evidence",
+      "archive_size_bytes": 601257,
+      "archive_sha256": "b81e32ed3960086eaa9342e2915372d6774af6e2926a5292f495f7c5e802afaa",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690564500/artifacts/14608268486",
+      "digest_source": "GitHub artifact API, not locally recomputed"
+    }
+  ],
+  "local_evidence": {
+    "build_log": ".implementation/artifacts/mobile/native-completion-d8b9048.log",
+    "build_log_sha256": "62f5d5bc316adfe18aeb2469ed2273c1be40b03a3d5b26fceb92fd44577a9b06",
+    "artifact_metadata": ".implementation/artifacts/mobile/final-native-artifacts.json",
+    "binary_download": "Single bounded final gh download attempt failed at artifact-storage TLS connection; no extracted binaries or Podfile.lock available locally."
+  },
+  "limitations": [
+    "Artifact digests are GitHub-reported ZIP archive hashes, not hashes of enclosed APK/app files.",
+    "Native build and secure export success do not certify production TLS deployment, authenticated provider journeys, physical microphones, Bluetooth, interruptions or battery behavior.",
+    "No store publication, production signing or production deployment occurred."
+  ],
+  "related_native_http_acceptance": "docs/implementation/evidence/mobile-native-2026-11-20.json"
+}

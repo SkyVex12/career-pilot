@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "source_commit": "d8b9048033cd22c6f78166f1abe7e82aee80cec7",
+  "run_id": 44690567974,
+  "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690567974",
+  "completed_at": "2026-11-20T06:55:53Z",
+  "recorded_at": "2026-11-20T06:57:11.885916+00:00",
+  "checks": {
+    "backend": {
+      "passed": 1926,
+      "skipped": 1,
+      "elapsed_seconds": 266.02,
+      "skipped_scope": "Opt-in nginx Docker integration, independently exercised with the checked-in local receipt"
+    },
+    "desktop_frontend": {
+      "passed": 489,
+      "test_files": 51
+    },
+    "typescript_protocol": {
+      "passed": 86
+    },
+    "windows_desktop_rust": {
+      "passed": 102,
+      "ignored": 3
+    },
+    "linux_protocol_client_rust": {
+      "passed": 105,
+      "ignored": 1,
+      "scope": "Aggregate of six test-result groups in the hosted log"
+    },
+    "ruff": "passed",
+    "format": "passed",
+    "pyright": "passed",
+    "typescript": "passed",
+    "generated_protocol": "current",
+    "rust_format_clippy": "passed"
+  },
+  "unchanged_area_jobs_skipped": [
+    "terraform",
+    "workflows",
+    "tooling"
+  ],
+  "local_log": ".implementation/final-product-ci-44690567974.log",
+  "local_log_sha256": "3c8dfab91998770425f07e5dc15630224c9984210985616d618953a406254ac0",
+  "limits": [
+    "This is product-head CI before documentation-only delivery reconciliation.",
+    "Native packaging and emulator/live-provider acceptance have separate receipts.",
+    "No production deployment, hardware certification or original ANR root cause is inferred."
+  ]
+}

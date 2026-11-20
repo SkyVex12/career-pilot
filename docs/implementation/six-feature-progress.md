@@ -1,16 +1,43 @@
 # Six-feature implementation progress
 
-Status: original six-feature implementation merged by the user in PR #98. Post-merge mobile HTTP testing and current-server authentication compatibility are implemented and locally validated on codex/mobile-local-http-testing; an installable, separately labeled Android test APK is available. Production TLS and real-device/browser acceptance remain separate release checks.
+Status: all feasible source implementation, integration and validation are complete after the user's mobile crash/reconnection reports and expanded 24-language requirement. PR #98 remains merged; draft PR #100 carries the completed follow-up on codex/mobile-local-http-testing. Scoped Android native recovery acceptance, secure Android/iOS simulator builds and Mac Universal packaging passed. No production proxy deployment or physical-device stability is claimed.
 
 ## Integration and preservation
 
 - Current follow-up branch: codex/mobile-local-http-testing (from cleaned main 226712b); original integration branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: follow the final-head checks on draft PR #100, then perform real-user browser/device acceptance with the verified Android HTTP test APK. Production HTTPS deployment remains separate; no production changes are authorized by this follow-up.
+- Next action: review draft PR #100 and follow the explicit activation/release requirements in `six-feature-delivery.md`. No source implementation is queued. Current mobile product source is ed4ef21; integrated product and sourced-host validation head is d8b9048. The final delivery commit changes documentation/evidence only; PR checks report its current status. Production deployment remains separate.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
 - Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
-- Decision: non-English catalog entries remain gated until speech and full application checks pass.
+- Decision: the user superseded the earlier small-language preference with 24 popular practical call languages. Publish only recognition/model-compatible catalog entries, distinguish text/transcription from voice playback, and report speech-quality evidence separately from deterministic implementation.
+
+## Completion checkpoint — 2026-11-20
+
+- All feasible engineering milestones are complete. Source milestones: `2a2cd77` backend/languages/resume/proxy, `24a76a6` desktop integration (including PR99 fixes), `7956ac6` mobile redesign/runtime, `a9af830` meeting drafts/keyboard/landscape, `5caa61e` malformed-event recovery and content navigation, `b3736ae` ignoring queued socket frames after terminal failure, `ed4ef21` shared grant retirement and recoverable practice setup, `d8b9048` real sourced-host→Ask verification.
+- Confirmed deployed defect: public `/v1/companion` returned HTTP404 while `/v1/session` upgraded. Source now forwards companion WebSocket upgrades separately from REST routes and preserves the original host. Real local nginx handshake/replay/host checks passed. The public proxy has not been deployed by this task.
+- Replay, profile-header and runtime fixes: unordered folded answers now replay in sequence; the default profile omits an empty header; operations have bounded deadlines/cancellation; foreground sockets renew relay authentication; malformed events stop the display and expose explicit retry. Existing desktop capture is reused throughout.
+- Mobile design now has four primary tabs, focused answer/feedback cards, profile/account sheets, compact landscape rail, accessible controls, large-text/dark styling, and searchable selectors. Ask, Practice, Companion and unsaved meeting drafts survive tab changes within the selected account/profile. Hidden audio/polling pauses; profile/sign-out clears private state.
+- Android 14 native acceptance uses only isolated LDPlayer **CareerPilotValidation**, serial **emulator-5556**, fictional localhost services and an embedded Hermes APK with ARM64/x86_64 libraries. The user's LDPlayer instance/account were not changed. Completed: server/auth restore; Ask pending→answer/source/draft; live replay/commands; same-phone grant reuse after process restart; drop/foreground reconnect;503/cancel/15s attach timeout/silent handshake; explicit End confirmation; practice context/language/question/answer/feedback/pause/resume/finish; history question import; meeting draft retention/discard confirmation/context/save; portrait, compact landscape,1.3xtext and dark layout. Final b3736ae invalid-event recovery passed: stale queued host frames cannot re-enable commands; explicit Retry restores answers and a subsequent command executes. The isolated crash buffer is empty; exit records contain only intentional package replacement and force-stop. Receipt and selected screenshots: `evidence/mobile-native-2026-11-20.json`.
+- Shared deterministic checks: 74 mobile tests and strict TypeScript pass; 11 fictional native fixture tests pass. Final product-head hosted CI44690567974 passed all 1,926 backend tests (one opt-in nginx test skipped), 489 desktop tests across 51 files, 86 TypeScript protocol tests and Linux/Windows Rust checks; Ruff/format/Pyright, TypeScript and generated types are clean. The earlier local 1,919 unique passes across a Windows temp-directory rerun remain historical evidence. Windows native 102 passed/3 intentionally ignored; Windows preview built. Real provider Spanish/Japanese synthetic speech and multilingual retrieval evidence remains separate from fixtures; Tamil/Telugu/Punjabi cross-language recall limitations are documented.
+- Uploaded original resumes are worker-extracted into encrypted, source-hash-bound storage via migration 0027, including lazy older-upload backfill. Real database authorization/invalidation/deletion and bounded parser checks passed. Practice reuses authorized private AI briefs. Calendar corrected application/saved-call context and authoritative empty action lists are integrated and tested.
+- Final hosted checks, Android/iOS exports, secure Android native package and unsigned iOS simulator build all passed in run 44690564500 at d8b9048; exact artifacts are recorded in `evidence/mobile-completion-hosted-2026-11-20.json`. Mobile product inputs are unchanged from ed4ef21. Mac Universal run 44686036872 succeeded at 7956ac6 with unchanged current desktop inputs. Earlier b3736ae secure Android and iOS native builds passed and are retained as candidate evidence. Final HTTP-test Android APK: 56,081,446 bytes, SHA256 `d5c911784be74861a074d4e30ec557b006a48ea7809b2fecb0d8deac84931b7b`; ARM64/x86_64 signature/ELF/Hermes/manifest checks passed.
+- Final ed4ef21 native targeted checks passed: a setup catalog 503 exposes Retry, which restores 24 selectable languages without remounting; malformed live data disables commands and explicit Retry restores answers, followed by a successful command. Shared retirement tests cover delayed A→B→A cleanup without revoking a replacement grant. The broad emulator suite and exact source revisions remain in the native receipt.
+- Sourced personal-AI verification passed: two real Codex runs retrieved a pinned public excerpt, published and refreshed a scoped brief; one genuine Ask answer cited it in 3,797 ms. Source authorization, cross-account denial, replacement, deletion, historical answer retention and disposable database cleanup passed. Seven new harness guards plus the existing scoped tests passed (56 total). See `evidence/personal-ai-sourced-host-2026-11-20.json`. No private repository content was sent.
+- The 429-requirement source/evidence reconciliation is complete. Independent final review verified local links, artifact/source hashes and CI counts; the final delivery documentation does not change tested product inputs. External activation remains owner OAuth registrations, compatible backend/migration/worker/proxy deployment and language configuration, HTTPS/WSS for normal releases, host access, production signing, and physical audio/device/conferencing validation. No ANR root cause or all-device stability is inferred from emulator success.
+
+Current requirement reconciliation: **429 unique IDs: 383 implemented, 16 verified, 30 externally blocked**. No requirement is omitted or pending source implementation. “Implemented” records complete code and appropriate local checks, not release certification. M06-032 now includes the 24-question same-language matrix, bounded cross-language tests and one actual synthetic embedding comparison; Tamil/Telugu/Punjabi recall limits remain explicit. M05-047 retains only its remote-host release dependency; the sourced local host→Ask journey is complete.
+
+| Material | Implemented | Verified | Externally blocked |
+| --- | ---: | ---: | ---: |
+| 01 |63|6|10|
+| 02 |80|2|4|
+| 03 |70|3|0|
+| 04 |72|1|13|
+| 05 |53|1|1|
+| 06 |45|3|2|
+
+Android emulator evidence supplements M04-070–080; those rows remain externally blocked wherever the original acceptance requires physical devices. No simulator or synthetic provider result is promoted to physical audio certification.
 
 ## Requirement ledger
 
@@ -35,7 +62,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-016** [externally blocked] Browser meetings: Google Meet, Zoom Web, and Teams Web in major browsers, without extensions.
 - **M01-017** [externally blocked] Android emulators: BlueStacks and LDPlayer, including multiple running instances.
 - **M01-018** [externally blocked] Phone linking: Microsoft Phone Link on Windows and iPhone call relay on Mac.
-- **M01-019** [externally blocked] Evaluate Samsung Flow, AirDroid, and Lenovo/Motorola Smart Connect for additional integrations.
+- **M01-019** [verified] Evaluate Samsung Flow, AirDroid, and Lenovo/Motorola Smart Connect for additional integrations.
 - **M01-020** [implemented] Separate these capabilities:
 - **M01-021** [externally blocked] Detecting an incoming call.
 - **M01-022** [externally blocked] Detecting an active call.
@@ -437,7 +464,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M06-029** [implemented] 4. Retrieval and grounding
 - **M06-030** [implemented] Check Unicode handling, tokenization, and language-dependent full-text search behavior.
 - **M06-031** [implemented] Ensure selecting a supported language does not quietly disable useful resume, application, company, or saved-context retrieval.
-- **M06-032** [externally blocked] Test representative questions with documents in the selected language and with the user's existing documents in another language.
+- **M06-032** [implemented] Test representative questions with documents in the selected language and with the user's existing documents in another language.
 - **M06-033** [implemented] Reuse existing retrieval capabilities where suitable. Add the smallest necessary improvements, rather than creating a separate knowledge store for every language.
 - **M06-034** [implemented] Keep citations linked to the original source and preserve account/profile boundaries.
 - **M06-035** [implemented] Treat missing evidence as missing evidence; language conversion must not invent experience, decisions, or achievements.
@@ -461,7 +488,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 ## Milestone evidence — 2026-11-19
 
 - M06 language runtime implemented: protocol/Python/TS/Rust regenerated; per-profile users.call_language is separate from synchronized account settings; nullable sessions.spoken_language preserves unknown old history. API catalog and preference validation, Customize UI, immutable session language, both Deepgram channels/reconnect, detector/answer/postcall prompts.
-- Language runtime: 149 deterministic tests passed; scoped Ruff and Pyright clean. Call/profile UI regressions: 21 passed. Desktop TypeScript check passed before subsequent Ask UI integration. See call-languages.md. No live speech or macOS claims. Spanish/Vietnamese remain deployment-gated.
+- Language runtime: 149 deterministic tests passed; scoped Ruff and Pyright clean. Call/profile UI regressions: 21 passed. Desktop TypeScript check passed before subsequent Ask UI integration. See call-languages.md. No live speech or macOS claims. Historical checkpoint: Spanish/Vietnamese were deployment-gated then; superseded by the 24-language completion evidence above.
 - M01 components: 25 deterministic suggestion/matching tests; 8 native background unit tests; explicit Windows WASAPI activity diagnostic passed (3 external processes, 0 device warnings). It does not establish a call: verified app detection still pending. Tray/background/login UI integration underway.
 - M03: encrypted persistent conversation backend and Ask page implemented, integration/testing still in progress.
 - Historical initial blocker (resolved): Docker was stopped; local Docker services subsequently started and the complete migrated backend suite passed. Provider/device verification remains separate.
@@ -472,7 +499,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - M05 encrypted account-private lifecycle, two authenticated MCP tools, revision/idempotency/correction/removal, paste fallback and scoped Ask/practice/live retrieval implemented. Sticky privacy protects historical session artifacts after brief deletion; private sessions reject guests and other profile accounts. See `docs/implementation/personal-ai-context.md`.
 - M05 migrated PostgreSQL/RLS workflow: 1 passed (`test_personal_ai_stack.py`). Desktop: 3 passed (`personal-ai.test.tsx`) covering schema/scope fallback, stable retry identity, version-aware correction/removal and failed refresh retention. Typecheck and scoped Ruff passed. Real host connection/write confirmation, remote OAuth registration, production HTTPS sleep/wake and physical companion display remain unverified.
 - M06 immutable language, en/es/vi validation gate, both Deepgram channels/reconnect/failover, Unicode detection, language prompts and nullable history metadata implemented. Existing retrieval retained; non-English prepared direct answers disabled because packs lack language metadata. Official nova-3 compatibility and deployment gate documented in `docs/implementation/call-languages.md`.
-- Combined personal-AI unit/private-context/language/worker-sessionlog run: 58 passed using live Docker stack. Earlier gateway regression: 149 passed. Spanish/Vietnamese remain disabled until actual speech, native devices, same/cross-language retrieval and deployed model/cost evidence is recorded. Implemented rows describe code contracts, not provider/device certification.
+- Combined personal-AI unit/private-context/language/worker-sessionlog run: 58 passed using live Docker stack. Earlier gateway regression: 149 passed. Historical checkpoint, superseded by the 24-language completion: Spanish/Vietnamese were disabled at that time pending speech/retrieval/deployment evidence. Implemented rows describe code contracts, not provider/device certification.
 
 ## Integration milestone: Ask, practice, calendar, personal context (2026-11-19)
 
@@ -563,6 +590,23 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 
 - Verified HTTP test artifact: `.implementation/artifacts/mobile/CareerPilot-0.1.0-http-test-arm64.apk`, **31,930,539 bytes**, SHA256 **fa46785face54e7370c1466db2d9631397e568837ec09e449a853254371df094**. APK v2 development signature, ARM64/minSDK24/target36, cleartext permission, non-debuggable test identity, distinct deep links, embedded Hermes/current endpoints and native audio library verified. Original APK retained. Receipt is next to the installer; detailed evidence in `apps/mobile/BUILD-VALIDATION.md`.
 - Actual mobile-client unauthenticated readiness at 22:54:52 CST reached current Stage0 and confirmed its auth configuration; health200 at 22:55:18 CST. APK prefills the current public endpoints; mobile has no VM wake flow, so open desktop first if asleep. No device installation or real-user sign-in was performed.
-- Current reconciliation remains **429 unique requirement IDs**: 382 implemented, 15 verified, 32 externally blocked. M04-059 now explicitly records that current Stage0 lacks production TLS; this HTTP test variant does not satisfy that production requirement. Original acceptance text and historical evidence are retained.
+- Historical HTTP-test checkpoint reconciliation (superseded by the current table above): **429 unique requirement IDs**, 382 implemented, 15 verified, 32 externally blocked. M04-059 now explicitly records that current Stage0 lacks production TLS; this HTTP test variant does not satisfy that production requirement. Original acceptance text and historical evidence are retained.
 
 - Draft follow-up PR **#100**: https://github.com/SkyVex12/career-pilot/pull/100. APK product source **bca47d7**; machine-readable receipt records that revision and review URL. Branch is pushed, with hosted mobile/CI checks tracked on the PR. No merge, backend deployment, production configuration change or store publication performed.
+
+
+### Remaining-work integration checkpoint (2026-11-20 UTC)
+
+- Mobile shared navigation and call/Work/practice/history/preparation screens have been redesigned. There are still four primary tabs: Call, Interview prep, Work and History. No new Ask or practice tab was added. Searchable selectors replace long button rows; selectors/source sheets preserve the underlying screen. Runtime malformed responses now surface recoverable errors. Strict TypeScript and53 mobile deterministic tests pass before final device validation.
+- PR99 code/test patch (`eed3446`, evidence `0eecc98`) integrated without overwriting newer shared documentation. Current focused notification tests:19 native +19 frontend pass; desktop TypeScript/rustfmt pass. Historical Windows preview is preserved; a combined artifact must be rebuilt because the calendar frontend has changed.
+- Independent review caught an additional original-resume gap: uploaded file versions do not store text in `text_enc`. Bounded worker-only extraction and encrypted hash-bound original text are now implemented, including migration 0027, lazy legacy backfill and real migrated RLS/deletion/hash-change tests. No parsing on each Ask request and no production migration performed.
+- Actual local nginx routing test upgrades `/v1/companion` (HTTP101) and forwards ready/snapshot/host frames using a fictional upstream. Public Stage0 still returns404; local validation does not imply deployment.
+- Android HTTP-test build with native arm64-v8a and x86_64 is in progress. Native/runtime acceptance and the user's ANR cause remain unverified until recorded below.
+
+
+### Combined backend regression closure (2026-11-20)
+
+- Frozen-source repository run: **1,874 passed, 1 skipped, 45 setup errors in 396.31 seconds**. Every setup error was the same Windows permission failure accessing the pre-existing `Temp/pytest-of-A` directory; no test assertion failed. All affected files were rerun with a fresh contained workspace temporary directory: **132 passed in 42.88 seconds**, including all 45 previously blocked setups. Across these runs, all **1,919 runnable tests passed**; this is combined coverage, not a claim that the first invocation exited successfully.
+- Commands: `.venv/Scripts/python.exe -m pytest -q`, followed by the affected 15 files with `-p no:cacheprovider --basetemp=.implementation/pytest-final-20261120-review`. The single opt-in real nginx test is skipped by default and has separate successful actual forwarding evidence in `evidence/companion-nginx-local-2026-11-20.json`.
+- Repository-wide Ruff check, Ruff format check (266 files), Pyright (zero errors/warnings) and `git diff --check` pass. Final corrections were limited to typing and formatting in the new resume/proxy tests. The fictional native acceptance fixture and modified resume/proxy checks additionally passed 15 focused tests.
+- Uploaded resume original text now uses worker-only bounded extraction, encrypted storage tied to the current content hash, lazy legacy queuing and current-profile/source deletion checks. Synchronous and asynchronous per-request embedding clients both close correctly. Implementation details and backfill limitations: `resume-original-text.md`. No production migration, deployment or provider-quality claim follows from these local regressions.

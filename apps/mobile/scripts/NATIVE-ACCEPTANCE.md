@@ -27,7 +27,7 @@ Acceptance assertions:
 
 - `normal`: connect to Fictional product interview. Both “Tell me about a fictional launch.” and “What did you learn?” appear with their answers despite deliberately unordered folded snapshot sequences. Answer/follow-up produces “A fictional live answer arrived successfully.” Reconnect restores generated answers. End requires confirmation and removes the fictional session from discovery. A repeated command UUID must not create duplicate answers (`command_count` counts unique commands).
 - `drop_once`: first socket closes after one second; app reconnects, returns to connected state, and restores both answers without duplicates. `joins` reaches 2.
-- `slow_attach`: response waits 25 seconds. Connect is cancellable; it must leave busy state within its 15-second deadline. A late successful response must be revoked, not silently attach the screen.
+- `slow_attach`: response waits 25 seconds. Connect is cancellable; it must leave busy state within its 15-second deadline. A late successful response received by the client is revoked rather than opening the screen. If the response is lost after the server creates a grant, the next explicit Connect can recover that exact phone/profile/session grant; otherwise its server TTL remains authoritative.
 - `reject_attach`: HTTP 503 surfaces a useful retryable error without a crash or indefinite spinner.
 - `missing_gateway`: websocket upgrade is rejected; reconnect attempts are bounded and an explicit retry/disconnect remains usable.
 - `silent_gateway`: websocket connects but no ready frame arrives; handshake times out at 15 seconds and bounded retry occurs.
@@ -44,4 +44,8 @@ Fictional complete journeys (available after restarting the updated fixture):
 - **Practice:** review Fictional Acme context, choose a topic/duration, and start text practice. First fetch stays preparing; second presents one question. Submit an answer, poll twice, and inspect versioned fixed feedback with an exact answer excerpt. Try hint/sample, save for later, skip, pause/resume, repeat a question, and finish. The fixture uses the real practice state reducer and rubric validator with deterministic fictional results. Voice and speech capability flags are false; this is not provider certification.
 - **Preparation:** open Fictional Acme interview. Review the application source, choose or clear the application and linked saved call, edit unfinished actions, and save. Refresh confirms all selections, including an empty action list. No call is started by saving context.
 
-State is local to this process. Restarting resets these fictional journeys; changing `/__fixture` modes changes companion behavior only. Coordinate a restart before a native run so an in-progress acceptance journey is not lost.
+State is local to this process. Restarting resets these fictional journeys; changing `/__fixture` modes changes the selected companion or setup-catalog failure behavior without resetting saved fixture state. Coordinate a restart before a native run so an in-progress acceptance journey is not lost.
+
+### Setup catalog recovery
+
+Set fixture mode `setup_unavailable` before opening Interview prep. The language endpoint returns503 while application choices remain available. The page must offer **Retry setup choices**. Set mode back to `normal` and tap Retry without leaving/restarting the page: the error disappears and the24-language selector opens with selectable entries. Existing topic/application drafts and consent must not be reset by this retry. This scenario uses only fictional local data.
