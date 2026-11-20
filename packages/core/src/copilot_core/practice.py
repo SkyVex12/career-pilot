@@ -308,17 +308,8 @@ def apply_result(state: dict[str, Any], result: dict[str, Any]) -> None:
             prior = [
                 a for a in question["attempts"] if a["id"] != attempt["id"] and a.get("feedback")
             ]
-            if prior and prior[-1]["feedback"]["rubric_version"] == RUBRIC_VERSION:
-                old = prior[-1]
-                attempt["comparison"] = {
-                    "previous_attempt_id": old["id"],
-                    "comparable": old["assistance"] == attempt["assistance"],
-                    "note": "Same question/rubric; check coaching conditions before comparing.",
-                    "dimensions": {
-                        k: {"previous": old["feedback"]["dimensions"][k], "current": value}
-                        for k, value in feedback["dimensions"].items()
-                    },
-                }
+            if prior:
+                attempt["comparison"] = compare_attempts(prior[-1], attempt)
         if kind == "plan":
             plan = result.get("plan")
             if not isinstance(plan, list) or not plan:
@@ -379,3 +370,107 @@ def validate_feedback(raw: Any, answer: str) -> dict[str, Any]:
         raise PracticeError("Feedback is missing suggested wording")
     out["suggested_wording"] = wording[:6000]
     return out
+
+
+def compare_attempts(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """Compare retries of one question using retained evidence, never another model call.
+
+    Feedback observations remain attributed to feedback. A missing old gap is not proof
+    that it was resolved, and changed coaching prevents causal claims about progress.
+    """
+    old, new = previous["feedback"], current["feedback"]
+    compatible = old["rubric_version"] == new["rubric_version"] and set(old["dimensions"]) == set(
+        new["dimensions"]
+    )
+    coached_same = previous["assistance"] == current["assistance"]
+
+    def items(feedback: dict[str, Any], field: str) -> list[str]:
+        return list(
+            dict.fromkeys(
+                str(item).strip()[:600] for item in feedback.get(field, []) if str(item).strip()
+            )
+        )[:8]
+
+    def normalized(values: list[str]) -> set[str]:
+        return {" ".join(value.casefold().split()) for value in values}
+
+    gaps = items(new, "improvements")
+    old_gaps = normalized(items(old, "improvements"))
+    recurring = [gap for gap in gaps if " ".join(gap.casefold().split()) in old_gaps]
+    old_strengths = normalized(items(old, "strengths"))
+    new_strengths = [
+        strength
+        for strength in items(new, "strengths")
+        if " ".join(strength.casefold().split()) not in old_strengths
+    ]
+    dimensions = (
+        {
+            name: {"previous": old["dimensions"][name], "current": score}
+            for name, score in new["dimensions"].items()
+        }
+        if compatible
+        else {}
+    )
+    rises = [
+        f"{name.capitalize()} score increased from {scores['previous']} to {scores['current']}."
+        for name, scores in dimensions.items()
+        if scores["current"] > scores["previous"]
+    ]
+    declines = [
+        name for name, scores in dimensions.items() if scores["current"] < scores["previous"]
+    ]
+    improvements = (
+        (rises + [f"Newly noted strength in feedback: {strength}" for strength in new_strengths])[
+            :8
+        ]
+        if compatible
+        else []
+    )
+    if not compatible:
+        summary = (
+            "The rubric changed, so these scores cannot establish improvement. "
+            "Review the current feedback and answer excerpts."
+        )
+        note = (
+            "Same question; incompatible rubric versions or dimensions. "
+            "No score comparison is made."
+        )
+    else:
+        summary = f"{len(rises)} rubric dimensions increased; {len(declines)} decreased. "
+        summary += (
+            f"Current feedback records {len(new_strengths)} newly noted strengths "
+            f"and {len(gaps)} areas to work on."
+        )
+        if recurring:
+            summary += f" {len(recurring)} of those areas were also noted previously."
+        note = "Same question and rubric. " + (
+            "Coaching conditions match."
+            if coached_same
+            else (
+                "Coaching conditions differ; score changes do not establish "
+                "independent improvement."
+            )
+        )
+        note += " A gap omitted from later feedback is not necessarily resolved."
+
+    def evidence(attempt: dict[str, Any]) -> list[str]:
+        return [
+            quote[:600]
+            for quote in attempt["feedback"].get("excerpts", [])
+            if isinstance(quote, str) and quote and quote in attempt["answer"]
+        ][:4]
+
+    return {
+        "previous_attempt_id": previous["id"],
+        "comparable": compatible and coached_same,
+        "rubric_compatible": compatible,
+        "rubric_version": new["rubric_version"],
+        "previous_rubric_version": old["rubric_version"],
+        "note": note,
+        "summary": summary,
+        "dimensions": dimensions,
+        "improvements": improvements,
+        "remaining_gaps": gaps,
+        "recurring_gaps": recurring,
+        "evidence": {"previous": evidence(previous), "current": evidence(current)},
+    }

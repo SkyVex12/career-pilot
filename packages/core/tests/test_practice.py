@@ -174,3 +174,62 @@ def test_finish_clears_pending_and_raw_audio_retention_is_explicitly_disabled():
     assert state["running_since"] is None
     with pytest.raises(ValidationError):
         practice.Setup.model_validate({"request_id": str(uuid4()), "retain_audio": True})
+
+
+def comparison_attempt(answer, score=2, **changes):
+    raw = feedback(answer, score)
+    raw.update(changes)
+    return {
+        "id": str(uuid4()),
+        "answer": answer,
+        "assistance": [],
+        "feedback": practice.validate_feedback(raw, answer),
+    }
+
+
+def test_comparison_explains_recorded_changes_and_repeated_gaps_without_inventing_resolution():
+    old = comparison_attempt(
+        "I measured latency", improvements=["Explain the outcome", "Name an alternative"]
+    )
+    new = comparison_attempt(
+        "I measured latency and compared two approaches",
+        3,
+        strengths=["Concrete action", "Compared two approaches"],
+        improvements=["Explain the outcome"],
+    )
+    result = practice.compare_attempts(old, new)
+    assert result["comparable"]
+    assert result["rubric_compatible"]
+    assert "5 rubric dimensions increased" in result["summary"]
+    assert "1 of those areas were also noted previously" in result["summary"]
+    assert "Newly noted strength in feedback: Compared two approaches" in result["improvements"]
+    assert result["remaining_gaps"] == result["recurring_gaps"] == ["Explain the outcome"]
+    assert "not necessarily resolved" in result["note"]
+    assert result["evidence"] == {"previous": [old["answer"]], "current": [new["answer"]]}
+
+
+def test_comparison_rejects_incompatible_rubric_and_qualifies_coaching():
+    old, new = comparison_attempt("Original answer"), comparison_attempt("Revised answer", 4)
+    new["assistance"] = ["sample"]
+    result = practice.compare_attempts(old, new)
+    assert not result["comparable"]
+    assert result["rubric_compatible"]
+    assert "do not establish independent improvement" in result["note"]
+    old["feedback"]["rubric_version"] = "practice-old"
+    result = practice.compare_attempts(old, new)
+    assert not result["rubric_compatible"]
+    assert result["dimensions"] == {}
+    assert result["improvements"] == []
+    assert result["previous_rubric_version"] == "practice-old"
+    assert result["remaining_gaps"]
+
+
+def test_comparison_uses_only_actual_answer_excerpts_and_bounds_output():
+    old, new = comparison_attempt("Original answer"), comparison_attempt("Revised answer")
+    new["feedback"]["excerpts"] = ["Fabricated metric", "Revised answer"]
+    new["feedback"]["improvements"] = [str(i) + "x" * 9000 for i in range(20)]
+    result = practice.compare_attempts(old, new)
+    assert result["evidence"]["current"] == ["Revised answer"]
+    assert len(result["remaining_gaps"]) == 8
+    assert all(len(gap) <= 600 for gap in result["remaining_gaps"])
+    assert "0 rubric dimensions increased; 0 decreased" in result["summary"]
