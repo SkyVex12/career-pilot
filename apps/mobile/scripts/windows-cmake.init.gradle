@@ -1,0 +1,22 @@
+// Optional workaround for Ninja/MAX_PATH on Windows. Keep the supplied directory short.
+// gradlew -I ../scripts/windows-cmake.init.gradle -PmobileCxxDir=C:/short/cxx assembleRelease
+// This changes only intermediate output paths, not application behavior or signing.
+def stageRoot = gradle.startParameter.projectProperties['mobileCxxDir'] ?: System.getProperty('careerPilot.mobileCxxDir')
+if (!stageRoot) {
+    throw new GradleException('Supply -PmobileCxxDir=<short absolute build directory>')
+}
+// Included plugin builds do not inherit command-line project properties.
+System.setProperty('careerPilot.mobileCxxDir', stageRoot)
+def stage = new File(stageRoot)
+if (!stage.isAbsolute()) {
+    throw new GradleException('mobileCxxDir must be an absolute directory')
+}
+gradle.beforeProject { project ->
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        project.plugins.withId(pluginId) {
+            def android = project.extensions.getByName('android')
+            android.defaultConfig.externalNativeBuild.cmake.arguments '-DCMAKE_OBJECT_PATH_MAX=240'
+            android.externalNativeBuild.cmake.buildStagingDirectory = new File(stage, Integer.toHexString(project.path.hashCode()))
+        }
+    }
+}
