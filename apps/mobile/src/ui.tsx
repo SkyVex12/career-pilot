@@ -8,6 +8,9 @@ import {
   Modal,
   ScrollView,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
   type TextProps,
   type TextInputProps,
   type ViewStyle,
@@ -535,6 +538,8 @@ export function Select({
   disabled?: boolean;
 }) {
   const c = useContext(Theme);
+  const { width, height } = useWindowDimensions();
+  const compact = width > height || height < 500;
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState("");
   const selected = options.find((o) => o.value === value);
@@ -584,7 +589,8 @@ export function Select({
         animationType="slide"
         onRequestClose={() => setOpen(false)}
       >
-        <View
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={{
             flex: 1,
             justifyContent: "flex-end",
@@ -600,7 +606,9 @@ export function Select({
             edges={["bottom"]}
             accessibilityViewIsModal
             style={{
-              maxHeight: "82%",
+              maxHeight: compact ? "96%" : "82%",
+              minHeight: 0,
+              flexShrink: 1,
               backgroundColor: c.card,
               borderTopLeftRadius: 26,
               borderTopRightRadius: 26,
@@ -609,9 +617,17 @@ export function Select({
               alignSelf: "center",
             }}
           >
-            <View style={{ padding: 20, paddingBottom: 10, gap: 12 }}>
+            <View
+              style={{
+                paddingHorizontal: compact ? 12 : 20,
+                paddingVertical: compact ? 4 : 10,
+              }}
+            >
               <Row style={{ justifyContent: "space-between" }}>
-                <Txt style={{ fontWeight: "700", fontSize: 20, flex: 1 }}>
+                <Txt
+                  numberOfLines={compact ? 1 : 2}
+                  style={{ fontWeight: "700", fontSize: 20, flex: 1 }}
+                >
                   {label}
                 </Txt>
                 <IconButton
@@ -620,16 +636,24 @@ export function Select({
                   onPress={() => setOpen(false)}
                 />
               </Row>
-              {options.length > 7 ? (
-                <Input
-                  placeholder={`Search ${label.toLowerCase()}`}
-                  value={query}
-                  onChangeText={setQuery}
-                  autoCorrect={false}
-                />
-              ) : null}
             </View>
             <FlatList
+              style={{ minHeight: 0, flexShrink: 1 }}
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
+              }
+              ListHeaderComponent={
+                options.length > 7 ? (
+                  <View style={{ paddingBottom: compact ? 6 : 12 }}>
+                    <Input
+                      placeholder={`Search ${label.toLowerCase()}`}
+                      value={query}
+                      onChangeText={setQuery}
+                      autoCorrect={false}
+                    />
+                  </View>
+                ) : undefined
+              }
               data={filtered}
               keyExtractor={(item) => item.value}
               keyboardShouldPersistTaps="handled"
@@ -688,7 +712,7 @@ export function Select({
               )}
             />
           </SafeAreaView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );

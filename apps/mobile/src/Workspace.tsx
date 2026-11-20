@@ -7,7 +7,7 @@ import { Practice, type ImportedQuestion } from "./Practice";
 import { History, Preparation } from "./History";
 import { InPerson } from "./InPerson";
 import { ScreenBoundary } from "./ScreenBoundary";
-const retained = ["Companion", "Ask", "Practice"];
+const retained = ["Companion", "Ask", "Practice", "Preparation"];
 /** Scoped to one signed-in account/profile by App's key. Views retain drafts while
  * hidden, but their explicit visibility lifecycle releases audio and live polling. */
 export function Workspace({
@@ -50,6 +50,8 @@ export function Workspace({
               <Companion api={api} url={url} visible={name === tab} />
             ) : name === "Ask" ? (
               <Ask api={api} visible={name === tab} />
+            ) : name === "Preparation" ? (
+              <Preparation api={api} visible={name === tab} />
             ) : (
               <Practice api={api} imported={imported} visible={name === tab} />
             )}
@@ -58,9 +60,7 @@ export function Workspace({
       ))}
       {!retained.includes(tab) ? (
         <ScreenBoundary key={tab}>
-          {tab === "Preparation" ? (
-            <Preparation api={api} />
-          ) : tab === "In-person" ? (
+          {tab === "In-person" ? (
             <InPerson api={api} url={url} />
           ) : (
             <History api={api} practice={onPractice} />

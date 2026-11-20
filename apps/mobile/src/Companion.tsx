@@ -907,11 +907,15 @@ export function Companion({
                 if (draft.trim() && usable) send("followup");
               }}
             />
-            <Row style={compact ? { flexShrink: 0 } : undefined}>
+            <Row
+              style={
+                compact ? { flexShrink: 0, flexWrap: "nowrap" } : undefined
+              }
+            >
               <Button
                 label={draft.trim() ? "Ask follow-up" : "Answer now"}
                 icon="arrow"
-                style={{ flex: 1 }}
+                style={compact ? undefined : { flex: 1 }}
                 disabled={!usable || !!pending.current}
                 onPress={() => send(draft.trim() ? "followup" : "answer")}
               />

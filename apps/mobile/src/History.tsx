@@ -376,17 +376,29 @@ export function History({
   );
 }
 
-export function Preparation({ api }: { api: Api }) {
+export function Preparation({
+  api,
+  visible = true,
+}: {
+  api: Api;
+  visible?: boolean;
+}) {
   const [data, setData] = useState<PreparationData | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false),
     [selected, setSelected] = useState<string | null>(null),
     [version, setVersion] = useState(0),
-    [saved, setSaved] = useState(false);
+    [saved, setSaved] = useState(false),
+    [editorState, setEditorState] = useState({ dirty: false, saving: false });
   const listing = useRef(new RequestScope()),
     revision = useRef(0),
-    preparationAlive = useRef(true);
+    preparationAlive = useRef(true),
+    visibleRef = useRef(visible),
+    reloadPending = useRef(true);
+  visibleRef.current = visible;
   async function refresh() {
+    reloadPending.current = true;
+    if (!visibleRef.current) return;
     const ticket = ++revision.current;
     setLoading(true);
     setError("");
@@ -403,6 +415,7 @@ export function Preparation({ api }: { api: Api }) {
         ),
       );
       if (!next) return;
+      reloadPending.current = false;
       setData(next);
       setVersion((v) => v + 1);
     } catch (e) {
@@ -413,13 +426,40 @@ export function Preparation({ api }: { api: Api }) {
   }
   useEffect(() => {
     preparationAlive.current = true;
-    void refresh();
     return () => {
       preparationAlive.current = false;
       revision.current++;
       listing.current.invalidate();
     };
   }, [api]);
+  useEffect(() => {
+    if (visible) {
+      if (reloadPending.current) void refresh();
+    } else {
+      revision.current++;
+      listing.current.invalidate();
+      setLoading(false);
+    }
+  }, [api, visible]);
+  useEffect(() => {
+    if (editorState.dirty) setSaved(false);
+  }, [editorState.dirty]);
+  function backToMeetings() {
+    const leave = () => {
+      setSelected(null);
+      setSaved(false);
+      setEditorState({ dirty: false, saving: false });
+    };
+    if (!editorState.dirty) return leave();
+    Alert.alert(
+      "Discard meeting changes?",
+      "Your application, saved call, and action edits have not been saved.",
+      [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Discard changes", style: "destructive", onPress: leave },
+      ],
+    );
+  }
   const item = data?.items.find((i) => meetingKey(i) === selected);
   return (
     <Screen>
@@ -428,10 +468,8 @@ export function Preparation({ api }: { api: Api }) {
           label="Back to meetings"
           secondary
           compact
-          onPress={() => {
-            setSelected(null);
-            setSaved(false);
-          }}
+          disabled={editorState.saving}
+          onPress={backToMeetings}
         />
       ) : null}
       <ScreenTitle
@@ -475,6 +513,8 @@ export function Preparation({ api }: { api: Api }) {
           api={api}
           item={item}
           data={data}
+          visible={visible}
+          onStateChange={setEditorState}
           onSaved={async () => {
             await refresh();
             if (preparationAlive.current) setSaved(true);
@@ -549,11 +589,15 @@ function MeetingEditor({
   api,
   item,
   data,
+  visible,
+  onStateChange,
   onSaved,
 }: {
   api: Api;
   item: PreparationItem;
   data: PreparationData;
+  visible: boolean;
+  onStateChange: (state: { dirty: boolean; saving: boolean }) => void;
   onSaved: () => Promise<void>;
 }) {
   const [application, setApplication] = useState(
@@ -571,7 +615,25 @@ function MeetingEditor({
   const previewScope = useRef(new RequestScope()),
     saveScope = useRef(new RequestScope()),
     revision = useRef(0),
-    alive = useRef(true);
+    alive = useRef(true),
+    baseline = useRef({ application, session, actions }),
+    savingRef = useRef(false);
+  const dirty =
+    application !== baseline.current.application ||
+    session !== baseline.current.session ||
+    actions !== baseline.current.actions;
+  useEffect(() => {
+    onStateChange({ dirty, saving });
+  }, [dirty, saving, onStateChange]);
+  useEffect(() => {
+    if (!visible) {
+      // Read-only review stops offscreen. An explicit save may finish so its
+      // acknowledgement is retained; Preparation defers its refresh until visible.
+      revision.current++;
+      previewScope.current.invalidate();
+      setPreviewing(false);
+    }
+  }, [visible]);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -591,6 +653,7 @@ function MeetingEditor({
     (c) => c.connection_id === item.meeting.account_id,
   )?.provider;
   async function preview() {
+    if (!visible) return;
     const ticket = ++revision.current;
     setSources(null);
     setPreviewing(true);
@@ -615,7 +678,8 @@ function MeetingEditor({
     }
   }
   async function save() {
-    if (!provider || saving) return;
+    if (!provider || savingRef.current || !visible) return;
+    savingRef.current = true;
     setSaving(true);
     setError("");
     setSaved(false);
@@ -636,11 +700,14 @@ function MeetingEditor({
         return true;
       });
       if (!done) return;
+      baseline.current = { application, session, actions };
       setSaved(true);
+      onStateChange({ dirty: false, saving: true });
       await onSaved();
     } catch (e) {
       setError(String(e));
     } finally {
+      savingRef.current = false;
       if (alive.current) setSaving(false);
     }
   }
@@ -687,6 +754,38 @@ function MeetingEditor({
             disabled={saving}
             onPress={() => void preview()}
           />
+        ) : null}
+        {previewing ? (
+          <Button
+            label="Cancel context review"
+            secondary
+            compact
+            onPress={closeSources}
+          />
+        ) : null}
+        {sources ? (
+          <View style={{ gap: 12 }} accessibilityLiveRegion="polite">
+            <Row style={{ justifyContent: "space-between" }}>
+              <Txt style={heading}>Application context</Txt>
+              <IconButton
+                label="Close context"
+                icon="close"
+                onPress={closeSources}
+              />
+            </Row>
+            {!sources.length ? (
+              <Notice>
+                No source context is available for this application.
+              </Notice>
+            ) : (
+              sources.map((source, index) => (
+                <Card key={index}>
+                  <Txt style={heading}>{source.label}</Txt>
+                  <Txt selectable>{source.excerpt}</Txt>
+                </Card>
+              ))
+            )}
+          </View>
         ) : null}
         <Select
           label="Linked saved call"
@@ -735,38 +834,6 @@ function MeetingEditor({
         )}
         {saved ? <Notice tone="success">Meeting context saved.</Notice> : null}
       </Card>
-      {previewing ? (
-        <Button
-          label="Cancel context review"
-          secondary
-          compact
-          onPress={closeSources}
-        />
-      ) : null}
-      {sources ? (
-        <View style={{ gap: 12 }}>
-          <Row style={{ justifyContent: "space-between" }}>
-            <Txt style={heading}>Application context</Txt>
-            <IconButton
-              label="Close context"
-              icon="close"
-              onPress={closeSources}
-            />
-          </Row>
-          {!sources.length ? (
-            <Notice>
-              No source context is available for this application.
-            </Notice>
-          ) : (
-            sources.map((source, index) => (
-              <Card key={index}>
-                <Txt style={heading}>{source.label}</Txt>
-                <Txt selectable>{source.excerpt}</Txt>
-              </Card>
-            ))
-          )}
-        </View>
-      ) : null}
       {item.previous.some((p) => p.notes) ? (
         <View style={{ gap: 12 }}>
           <Txt style={heading}>Notes from linked calls</Txt>
