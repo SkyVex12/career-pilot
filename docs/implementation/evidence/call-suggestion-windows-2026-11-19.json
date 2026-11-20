@@ -1,0 +1,23 @@
+{
+  "source_commit": "eed3446",
+  "artifact": ".implementation/artifacts/windows/CareerPilot-call-suggestions-preview.exe",
+  "size_bytes": 51025920,
+  "sha256": "13152ce9057ff9a263ebf1dedec0e5fa92fd6a10c670fa72865d25abe8998a29",
+  "build": "Tauri debug, cloud feature, embedded frontend, no bundle/updater; not installed or launched",
+  "validation": {
+    "native_tests_passed": 102,
+    "native_ignored": 3,
+    "desktop_ui_passed": 474,
+    "typescript": "passed",
+    "clippy": "passed",
+    "mac_adapter_metadata": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
+    ]
+  },
+  "native_host_observations": [
+    "Before query optimization: browser microphone and call controls matched; notifications allowed; one sample20.96seconds.",
+    "After query optimization: sample546ms, no microphone/call active by then. Not a same-call performance benchmark."
+  ],
+  "remaining": "Patched real-call popup delivery, focus, acceptance and DND/device lifecycle not verified."
+}

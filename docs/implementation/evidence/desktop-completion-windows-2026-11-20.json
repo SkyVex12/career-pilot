@@ -1,0 +1,42 @@
+{
+  "built_at": "2026-11-20T06:02:06.136469+00:00",
+  "artifact": ".implementation/artifacts/windows/CareerPilot-six-feature-completion-preview.exe",
+  "size_bytes": 51030016,
+  "sha256": "7b1436cf3864b74e0bd98f2852ff70e85f8a5a124edc247d3ffc02eb0319036a",
+  "architecture": "Windows x86_64 (PE machine 0x8664)",
+  "build": "Tauri debug cloud preview; embedded frontend; no bundle, updater, signing, install or launch",
+  "source": {
+    "base_commit": "59a6b8dc64631917cf36bfad3242c5ba53c58318",
+    "working_tree_changes_included": true,
+    "native_source_matches": "0eecc98c5a48e61a010590d26ea2494abf3a2c20",
+    "changed_frontend_files": {
+      "apps/desktop/src/CallLanguage.tsx": "ec16e222d48ea2f99b353eacdb401188661342da1a493711001c8285304a96c7",
+      "apps/desktop/src/MeetingPreparation.tsx": "3c404714907c4b142767d93248f7db55a27b83201c01babf806f157e541735f1",
+      "apps/desktop/src/Practice.tsx": "06414ae419d4938617efc5286dd8689c09689dcc2ed3e4d25f94d77eee990f20",
+      "apps/desktop/src/ui/Select.tsx": "99220b87fab2e6b15a0c9048a30da9d59bdf0114149f99ce0fdfc37465b0c493"
+    },
+    "input_manifest": ".implementation/desktop-completion-build-inputs.json",
+    "input_manifest_sha256": "cafb15a4dd0460f692ada656c66d701b3ac74cb33b413aaa8b0517dd071505fa",
+    "inputs_verified_unchanged_after_build": 205
+  },
+  "validation": {
+    "desktop_ui_full_suite": {
+      "passed": 488,
+      "files": 51,
+      "scope": "before the final legacy-English notice; language/voice/calendar/PR99 changes included"
+    },
+    "final_language_suite": {
+      "passed": 11,
+      "scope": "after the final legacy-English notice/reset"
+    },
+    "native_lib": {
+      "passed": 102,
+      "ignored": 3
+    },
+    "release_checks_passed": 10,
+    "strict_typescript": "passed, including final frontend build",
+    "frontend_and_native_build": "passed",
+    "source_and_copy_hashes": "verified"
+  },
+  "limitations": "Unsigned local preview, not a production installer. Actual call popup/device/permission behavior remains unverified. API contract and 24-language availability depend on deploying the corresponding server changes and configured providers."
+}

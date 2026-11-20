@@ -59,6 +59,7 @@ struct BackgroundState {
     exiting: AtomicBool,
     detector: Mutex<detection::Detector>,
     accepted: Mutex<Option<&'static str>>,
+    detection_status: Mutex<DetectionCache>,
 }
 
 pub(crate) fn is_background_arguments<'a>(args: impl IntoIterator<Item = &'a str>) -> bool {
@@ -135,6 +136,7 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
         exiting: AtomicBool::new(false),
         detector: Mutex::new(detection::Detector::default()),
         accepted: Mutex::new(None),
+        detection_status: Mutex::new(DetectionCache::default()),
     });
     TrayIconBuilder::with_id("ruby-background")
         .icon(icon)
@@ -383,6 +385,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn detection_diagnostics_distinguish_policy_evidence_and_delivery() {
+        let mut prefs = BackgroundPreferences { call_suggestions: true, ..Default::default() };
+        let mut cache = DetectionCache::default();
+        assert_eq!(detection_state(true, &prefs, false, &cache, false), "checking");
+        cache.diagnostics = Some(detection::DetectionDiagnostics {
+            microphone_active: Some(false),
+            notifications_allowed: true,
+            ..Default::default()
+        });
+        assert_eq!(detection_state(true, &prefs, false, &cache, false), "waiting_microphone");
+        cache.diagnostics.as_mut().unwrap().microphone_active = Some(true);
+        assert_eq!(detection_state(true, &prefs, false, &cache, false), "no_call_controls");
+        cache.diagnostics.as_mut().unwrap().matched_calls.push("Browser".into());
+        assert_eq!(detection_state(true, &prefs, false, &cache, false), "watching");
+        prefs.disabled_apps.push("Browser".into());
+        assert_eq!(detection_state(true, &prefs, false, &cache, false), "app_disabled");
+        prefs.disabled_apps.clear();
+        cache.presentation_error = Some("Window creation failed".into());
+        assert_eq!(detection_state(true, &prefs, false, &cache, true), "suggestion_pending");
+        cache.diagnostics.as_mut().unwrap().notifications_allowed = false;
+        assert_eq!(detection_state(true, &prefs, false, &cache, true), "notifications_suppressed");
+        assert_eq!(detection_state(true, &prefs, true, &cache, true), "active_session");
+        cache.error = Some("Scan failed".into());
+        assert_eq!(detection_state(true, &prefs, false, &cache, true), "error");
+        prefs.suggestions_paused = true;
+        assert_eq!(detection_state(true, &prefs, false, &cache, true), "paused");
+        prefs.call_suggestions = false;
+        assert_eq!(detection_state(true, &prefs, false, &cache, true), "disabled");
+        assert_eq!(detection_state(false, &prefs, false, &cache, true), "unavailable");
+    }
+
+    #[test]
+    fn popup_retry_restores_hidden_unchanged_offer_but_ignores_expired_or_dismissed_attempts() {
+        let pending = Some(detection::Suggestion {
+            id: "call:Browser".into(),
+            platform: "Browser".into(),
+            kind: "start",
+        });
+        let timely = std::time::Duration::from_millis(100);
+        assert!(presentation_attempt_current(&pending, &pending, timely));
+        // A failed show leaves the window hidden even though detector state did not change.
+        assert!(should_restore_suggestion(false, false, false));
+        assert!(should_restore_suggestion(false, true, true));
+        assert!(!should_restore_suggestion(false, true, false));
+        assert!(!presentation_attempt_current(&pending, &None, timely));
+        assert!(!presentation_attempt_current(&pending, &pending, std::time::Duration::from_secs(5)));
+        assert!(!presentation_attempt_current(&None, &pending, std::time::Duration::from_secs(6)));
+        // Fresh suppression may hide a pending offer without clearing its lifecycle record.
+        assert!(presentation_attempt_current(&None, &pending, timely));
+    }
+
+    #[test]
+    fn suggestion_position_respects_negative_monitors_and_small_work_areas() {
+        assert_eq!(suggestion_position((0, 0), (1920, 1040), (340, 200), 16), (1564, 824));
+        assert_eq!(suggestion_position((-1920, -200), (1920, 1040), (340, 200), 16), (-356, 624));
+        assert_eq!(suggestion_position((50, 60), (200, 100), (340, 200), 16), (50, 60));
+        assert_eq!(suggestion_position((i32::MAX, 0), (u32::MAX, 100), (1, 200), 16), (i32::MAX, 0));
+    }
+
+    #[test]
     fn explicit_background_arguments_only() {
         assert!(is_background_arguments(["Ruby.exe", "--background"]));
         assert!(!is_background_arguments(["Ruby.exe", "--background=false"]));
@@ -602,6 +664,221 @@ mod native_tests {
 
 const SUGGESTION_EVENT: &str = "copilot://call-suggestion";
 
+#[derive(Clone, Default)]
+struct DetectionCache {
+    last_checked_unix_ms: Option<u64>,
+    diagnostics: Option<detection::DetectionDiagnostics>,
+    error: Option<String>,
+    presentation_error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct DetectionStatus {
+    preferences: BackgroundPreferences,
+    active_session: bool,
+    state: &'static str,
+    last_checked_unix_ms: Option<u64>,
+    diagnostics: Option<detection::DetectionDiagnostics>,
+    error: Option<String>,
+    presentation_error: Option<String>,
+    pending: Option<detection::Suggestion>,
+}
+
+fn active_session(app: &AppHandle) -> bool {
+    app.try_state::<crate::AppState>().is_some_and(|s| {
+        s.gate.starting()
+            || s.engine.lock().map(|e| e.is_some()).unwrap_or(true)
+            || s.seat.lock().map(|e| e.is_some()).unwrap_or(true)
+    })
+}
+
+fn detection_state(
+    supported: bool,
+    prefs: &BackgroundPreferences,
+    active: bool,
+    cache: &DetectionCache,
+    pending: bool,
+) -> &'static str {
+    if !supported {
+        return "unavailable";
+    }
+    if !prefs.call_suggestions {
+        return "disabled";
+    }
+    if prefs.suggestions_paused {
+        return "paused";
+    }
+    if cache.error.is_some() {
+        return "error";
+    }
+    if active {
+        return "active_session";
+    }
+    let Some(diagnostics) = &cache.diagnostics else {
+        return "checking";
+    };
+    if !diagnostics.notifications_allowed {
+        return "notifications_suppressed";
+    }
+    if pending {
+        return "suggestion_pending";
+    }
+    if !diagnostics.matched_calls.is_empty()
+        && diagnostics.matched_calls.iter().all(|app| prefs.disabled_apps.contains(app))
+    {
+        return "app_disabled";
+    }
+    if diagnostics.microphone_active == Some(false) {
+        return "waiting_microphone";
+    }
+    if diagnostics.matched_calls.is_empty() {
+        return "no_call_controls";
+    }
+    "watching"
+}
+
+/// Read the most recent background scan; never trigger a second accessibility scan.
+#[tauri::command]
+pub(crate) fn background_detection_status(app: AppHandle) -> Result<DetectionStatus, String> {
+    let state = app.state::<BackgroundState>();
+    let preferences = state.preferences.lock().map_err(|e| e.to_string())?.clone();
+    let cache = state.detection_status.lock().map_err(|e| e.to_string())?.clone();
+    let pending = state.detector.lock().map_err(|e| e.to_string())?.pending.clone();
+    let active_session = active_session(&app);
+    Ok(DetectionStatus {
+        state: detection_state(
+            cfg!(any(windows, target_os = "macos")),
+            &preferences,
+            active_session,
+            &cache,
+            pending.is_some(),
+        ),
+        preferences,
+        active_session,
+        pending,
+        last_checked_unix_ms: cache.last_checked_unix_ms,
+        diagnostics: cache.diagnostics,
+        error: cache.error,
+        presentation_error: cache.presentation_error,
+    })
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn suggestion_position(origin: (i32, i32), area: (u32, u32), size: (u32, u32), margin: i32) -> (i32, i32) {
+    // Physical coordinates support negative monitor origins and mixed DPI layouts.
+    let coordinate = |start: i32, available: u32, extent: u32| {
+        (i64::from(start) + (i64::from(available) - i64::from(extent) - i64::from(margin)).max(0))
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    };
+    (coordinate(origin.0, area.0, size.0), coordinate(origin.1, area.1, size.1))
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn should_restore_suggestion(changed: bool, visible: bool, minimized: bool) -> bool {
+    changed || !visible || minimized
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn presentation_attempt_current(
+    expected: &Option<detection::Suggestion>,
+    current: &Option<detection::Suggestion>,
+    age: std::time::Duration,
+) -> bool {
+    age < std::time::Duration::from_secs(5) && (expected.is_none() || current == expected)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn present_suggestion(
+    app: &AppHandle,
+    pending: Option<detection::Suggestion>,
+    changed: bool,
+) -> Result<(), String> {
+    if pending.is_none() && app.get_webview_window("call-suggestion").is_none() {
+        return Ok(());
+    }
+    // Creation marshals to the UI thread. Never hold state locks while waiting for it.
+    let window = match app.get_webview_window("call-suggestion") {
+        Some(window) => window,
+        None => tauri::WebviewWindowBuilder::new(
+            app,
+            "call-suggestion",
+            tauri::WebviewUrl::App("index.html?call-suggestion".into()),
+        )
+        .title("Call detected")
+        .inner_size(340.0, 170.0)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .closable(false)
+        .focused(false)
+        .visible(false)
+        .build()
+        .map_err(|e| format!("Could not create call suggestion: {e}"))?,
+    };
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let handle = app.clone();
+    let queued = std::time::Instant::now();
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            // A response cannot interleave on the UI thread between this validation and show.
+            // Release every state lock before invoking any native window operation.
+            let state = handle.state::<BackgroundState>();
+            let current = state.detector.lock().map_err(|e| e.to_string())?.pending.clone();
+            if !presentation_attempt_current(&pending, &current, queued.elapsed()) {
+                return Ok(());
+            }
+            let prefs = state.preferences.lock().map_err(|e| e.to_string())?.clone();
+            let allowed = prefs.call_suggestions
+                && !prefs.suggestions_paused
+                && pending.as_ref().is_some_and(|s| {
+                    !prefs.disabled_apps.contains(&s.platform)
+                        && (s.kind != "start" || !active_session(&handle))
+                });
+            if !allowed {
+                window.hide().map_err(|e| format!("Could not hide call suggestion: {e}"))?;
+                return Ok(());
+            }
+            if should_restore_suggestion(
+                changed,
+                window.is_visible().map_err(|e| e.to_string())?,
+                window.is_minimized().map_err(|e| e.to_string())?,
+            ) {
+                let monitor = handle
+                    .get_webview_window("main")
+                    .and_then(|main| main.current_monitor().ok().flatten())
+                    .or(window.primary_monitor().map_err(|e| e.to_string())?);
+                if let Some(monitor) = monitor {
+                    let area = monitor.work_area();
+                    let size = window.outer_size().map_err(|e| e.to_string())?;
+                    let (x, y) = suggestion_position(
+                        (area.position.x, area.position.y),
+                        (area.size.width, area.size.height),
+                        (size.width, size.height),
+                        (16.0 * monitor.scale_factor()).round() as i32,
+                    );
+                    window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+                } else {
+                    window.center().map_err(|e| e.to_string())?;
+                }
+                // A delayed callback must not revive a timed-out delivery attempt.
+                if !presentation_attempt_current(&pending, &current, queued.elapsed()) {
+                    return Ok(());
+                }
+                window.unminimize().map_err(|e| e.to_string())?;
+                window.show().map_err(|e| format!("Could not show call suggestion: {e}"))?;
+            }
+            Ok(())
+        })();
+        let _ = sender.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "Call suggestion window did not respond; retrying".to_string())?
+}
+
 fn start_detection(app: AppHandle) {
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
@@ -618,62 +895,70 @@ fn start_detection(app: AppHandle) {
             let enabled = cfg!(any(windows, target_os = "macos"))
                 && prefs.call_suggestions
                 && !prefs.suggestions_paused;
-            let (mut evidence, notifications) = if enabled {
-                match detection::sample_with_tracking(
+            let result = if enabled {
+                Some(detection::sample_with_tracking(
                     state.detector.lock().map(|d| d.tracking()).unwrap_or(false),
-                ) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                }
+                ))
             } else {
-                (vec![], false)
+                None
             };
-            evidence.retain(|e| !prefs.disabled_apps.contains(&e.app));
-            let active = app.try_state::<crate::AppState>().is_some_and(|s| {
-                s.gate.starting()
-                    || s.engine.lock().map(|e| e.is_some()).unwrap_or(true)
-                    || s.seat.lock().map(|e| e.is_some()).unwrap_or(true)
-            });
+            let active = active_session(&app);
+            let mut cache = DetectionCache {
+                last_checked_unix_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|t| t.as_millis() as u64),
+                ..Default::default()
+            };
             let mut detector = match state.detector.lock() {
                 Ok(d) => d,
                 Err(_) => continue,
             };
             let before = detector.pending.clone();
             detector.suppress_apps(&prefs.disabled_apps);
-            if enabled {
-                detector.tick(started.elapsed().as_secs(), &evidence, notifications, active);
-            } else {
-                // Pausing must not forget a dismissed call and re-offer it on resume.
-                detector.pending = None;
+            let mut can_present = false;
+            match result {
+                Some(Ok(mut sample)) => {
+                    sample.evidence.retain(|e| !prefs.disabled_apps.contains(&e.app));
+                    can_present = sample.notifications;
+                    detector.tick(
+                        started.elapsed().as_secs(),
+                        &sample.evidence,
+                        sample.notifications,
+                        active,
+                    );
+                    cache.diagnostics = Some(sample.diagnostics);
+                }
+                Some(Err(error)) => {
+                    // Keep an unresponded offer for recovery, but never display using stale OS policy.
+                    cache.error = Some(error);
+                }
+                None => {
+                    // Defer only unanswered offers; explicit dismissals remain remembered.
+                    detector.defer_pending();
+                }
             }
             let next = detector.pending.clone();
+            let changed = before != next;
             drop(detector);
-            if before != next {
+            // Failed delivery retries next poll without resetting dismissal state.
+            #[cfg(not(target_os = "macos"))]
+            if let Err(error) =
+                present_suggestion(&app, if can_present { next.clone() } else { None }, changed)
+            {
+                tracing::warn!("Call suggestion presentation failed: {error}");
+                cache.presentation_error = Some(error);
+            }
+            #[cfg(target_os = "macos")]
+            if changed || !can_present {
+                macos::notify(if can_present { next.as_ref() } else { None });
+            }
+            // Resend pending state too: a transient event delivery failure must be recoverable.
+            if changed || next.is_some() {
                 let _ = app.emit(SUGGESTION_EVENT, &next);
-                #[cfg(target_os = "macos")]
-                macos::notify(next.as_ref());
-                #[cfg(not(target_os = "macos"))]
-                if next.is_some() {
-                    if let Some(window) = app.get_webview_window("call-suggestion") {
-                        let _ = window.show();
-                    } else {
-                        let _ = tauri::WebviewWindowBuilder::new(
-                            &app,
-                            "call-suggestion",
-                            tauri::WebviewUrl::App("index.html?call-suggestion".into()),
-                        )
-                        .title("Call detected")
-                        .inner_size(340.0, 150.0)
-                        .resizable(false)
-                        .always_on_top(true)
-                        .skip_taskbar(true)
-                        .closable(false)
-                        .focused(false)
-                        .build();
-                    }
-                } else if let Some(window) = app.get_webview_window("call-suggestion") {
-                    let _ = window.hide();
-                }
+            }
+            if let Ok(mut current) = state.detection_status.lock() {
+                *current = cache;
             }
         }
     });
