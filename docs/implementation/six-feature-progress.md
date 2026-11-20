@@ -1,13 +1,13 @@
 # Six-feature implementation progress
 
-Status: integrated implementation and available native artifacts delivered for draft review. Full-material requirements and external validation limits remain explicit. Final branch CI results are recorded on draft PR #98, linked below.
+Status: PR #98 was merged by the user. Post-merge real-use validation exposed a missing call-suggestion incident and a mobile/server transport mismatch. Follow-up fixes and remaining activation work are tracked below; earlier test/build evidence does not prove these user journeys work in production.
 
 ## Integration and preservation
 
-- Branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
+- Current branch: codex/fix-meet-call-suggestions from merged main226712b; worktree: C:/Users/A/WorkSpace/career-pilot. Initial status clean. Prior integration branch: codex/six-feature-program.
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: verify the checks on draft PR #98, then address the documented external release/device prerequisites before a production release. All available local/native/provider checks are complete; setup steps are in six-feature-delivery.md.
+- Next action: finish native call-suggestion follow-up validation and deliver its fix; prepare secure mobile/server integration before claiming the installed APK is usable with Stage0. Production deployment still requires explicit authorization.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
 - Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
 - Decision: non-English catalog entries remain gated until speech and full application checks pass.
@@ -273,7 +273,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-010** [externally blocked] Keep the shared screen free of phone UI unless the user deliberately mirrors it. Describe screen-share behavior through tested configurations rather than promising universal undetectability. — Physical screen-share/mirroring matrix needs desktop and phones; no undetectability claim is made.
 - **M04-011** [implemented] Do not quietly fall back to the phone microphone when the desktop disconnects. Explain the interruption and offer an explicit supported alternative.
 - **M04-012** [implemented] 2. Account connection and session access
-- **M04-013** [implemented] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
+- **M04-013** [in progress] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
 - **M04-014** [implemented] If QR pairing improves the flow, use a short-lived, single-use pairing exchange with confirmation and revocation. Do not place reusable account credentials or long-lived bearer tokens in QR codes or URLs. — Same-account email sign-in and explicit attachment used; QR is unnecessary and no credentials enter URLs.
 - **M04-015** [implemented] Enforce account, profile, session, and command permissions on the backend.
 - **M04-016** [implemented] Clearly identify the session and selected profile before attaching.
@@ -319,7 +319,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-056** [implemented] Calendar-based preparation from Material 01 when a calendar is connected.
 - **M04-057** [implemented] Keep account/profile isolation and the same data lifecycle across devices. Opening a source on mobile should preserve the Ask conversation. Practice must keep its generated interviewer audio separate from the user's captured speech, as specified in Material 02.
 - **M04-058** [implemented] 7. Data, battery, and production behavior
-- **M04-059** [implemented] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport.
+- **M04-059** [in progress] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport.
 - **M04-060** [implemented] Revalidate access when loading or reconnecting to a session.
 - **M04-061** [implemented] Stop unused capture, wake locks, event subscriptions, and generation tasks promptly.
 - **M04-062** [implemented] Keep idle and background behavior lightweight; do not wake production services unnecessarily.
@@ -341,7 +341,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-078** [externally blocked] End call confirmation and restoration of the normal desktop page. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
 - **M04-079** [externally blocked] Standalone phone microphone interruptions and unavailable same-phone call audio. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
 - **M04-080** [externally blocked] Portrait/landscape layout, large text, keyboard, and assistive-technology behavior. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-081** [implemented] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements. — Native apps and integration delivered; Android APK signature/bundle verified and iOS simulator build passed. Physical device and production signing checks remain external.
+- **M04-081** [in progress] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements. — Native apps and integration delivered; Android APK signature/bundle verified and iOS simulator build passed. Physical device and production signing checks remain external.
 - **M04-082** [implemented] [LockedIn mobile](https://www.lockedinai.com/mobile-app) describes placing a phone beside a laptop to listen to the room. Its page reserves Stealth Mode for the desktop app. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
 - **M04-083** [implemented] [OfferGoose help](https://blog.offergoose.com/post104/) documents mobile microphone listening, the speaker/headphone limitation, and the need for another device when taking a phone call. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
 - **M04-084** [implemented] [Android audio-input sharing](https://developer.android.com/media/platform/sharing-audio-input) explains microphone contention and restrictions on call audio. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
@@ -552,3 +552,16 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Delivery guide: `docs/implementation/six-feature-delivery.md`; Windows/Android stable local artifacts and Mac/iOS GitHub artifacts included. All original requirement files and existing work preserved.
 
 - Hosted CI caught two Linux type errors in the optional Codex/browser validation scripts: Windows-only `subprocess.CREATE_NO_WINDOW` was unguarded. Reproduced with Pyright's Linux target; Windows checks were clean. The helper subprocess flags now select the Windows constant only on Windows, with zero flags on other platforms. Product code and native artifact inputs are unchanged. Final-head hosted CI is rerun after this portability correction; TypeScript/mobile/workflow and both native Rust jobs already passed on the preceding head.
+
+### Post-merge user validation: call suggestions and mobile connection (2026-11-19)
+
+- User reported no Career Pilot suggestion in Google Meet while Zoom showed its prompt. Actual installed desktop0.3.5; saved preferences have call_suggestions=true, suggestions_paused=false, keep_running=true, disabled_apps=[]. No settings were changed during diagnosis.
+- Read-only native host probe found Browser microphone activity and matched call controls; notifications_allowed=true. One scan took20.96seconds. This confirms a candidate during the probe, not delivery by the installed app. Existing unit tests had never proven a real popup.
+- Confirmed source defects: a failed popup create/show was discarded permanently; transient OS suppression and pause consumed unanswered offers; UIA used many cross-process reads with a20second default provider timeout. Follow-up caches button queries and bounds provider timeouts. A subsequent scan took546ms with no active microphone/call at that time; this is not a controlled same-call latency benchmark.
+- Cached diagnostics expose native errors, policy/session suppression, microphone/control evidence and presentation errors without recording audio or retaining window text. Final regression/build evidence pending.
+- Mobile APK screenshot exposed a deployment mismatch: its HTTPS/WSS-only configuration cannot connect to Stage0's public HTTP/WS VM. Existing HTTPS wake URL is not an API proxy. No usable secure mobile server URL is currently configured. Required follow-up is TLS/WSS ingress plus bounded mobile wake/readiness bootstrap; do not enter the wake URL as the API or disable secure transport. No infrastructure was deployed.
+
+- Reopened M04-013/M04-059/M04-081: secure transport and account integration exist in code, but no production-compatible mobile entry point is delivered for the current Stage0 server. This requires engineering plus authorized deployment; physical device access alone is not the blocker.
+
+- Follow-up validation:102desktop native tests passed,3host/capture tests excluded by default; strict Windows Clippy and rustfmt clean; Mac adapter metadata checks passed for Apple Silicon and Intel. Desktop TypeScript and frontend build passed; all474Vitest tests across51files passed on a clean run. An earlier concurrent-compile run timed out in one unchanged Ask lazy-load test (473passed); the isolated4Ask tests and subsequentfullsuite passed without changing assertions or timeouts.
+- The preview is being built with the cloud feature (existing Stage0 discovery/sign-in configuration), embedded frontend, and no updater. It is not installed or launched automatically; real popup acceptance/focus behavior still needs the patched executable in a call.
