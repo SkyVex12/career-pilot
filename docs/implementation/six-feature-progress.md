@@ -7,9 +7,9 @@ Status: in progress. Full-material requirements remain binding.
 - Branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: implement Material 06 full session language contract; then 03, 05, 02, 01, 04.
+- Next action: finish native call detection/suggestions and mobile companion, validate integrated UI/native runtime, reconcile full acceptance ledger.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
-- Validation: no feature tests, provider checks, native builds or device checks completed yet.
+- Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
 - Decision: non-English catalog entries remain gated until speech and full application checks pass.
 
 ## Requirement ledger
@@ -17,19 +17,19 @@ Status: in progress. Full-material requirements remain binding.
 Each row retains original acceptance text. Evidence and files are recorded in milestone entries below.
 
 ### Material 01
-- **M01-001** [pending] Implement background call detection and optional calendar-based meeting preparation in Career Pilot.
-- **M01-002** [pending] 1. Background operation
-- **M01-003** [pending] Add an optional background mode for Windows and macOS 13 Ventura and newer, supporting both Apple Silicon and Intel in the existing Universal Mac build.
-- **M01-004** [pending] Let users enable “Launch at login” and “Keep running in the background.”
-- **M01-005** [pending] Provide a ruby icon in the Windows system tray or Mac menu bar.
-- **M01-006** [pending] Closing the main window should keep the app running when background mode is enabled.
-- **M01-007** [pending] Provide tray/menu-bar actions to open Copilot, pause/resume call suggestions, and exit completely.
-- **M01-008** [pending] Keep idle operation lightweight. Prefer native OS events over frequent polling.
-- **M01-009** [pending] Background startup must not wake the GCP backend, open an audio capture session, or establish a live transcription connection.
-- **M01-010** [pending] Preserve existing manual app startup and call behavior.
-- **M01-011** [pending] 2. Detect calls without browser extensions
-- **M01-012** [pending] Implement detection entirely in the desktop app. Do not require or build a Chrome extension.
-- **M01-013** [pending] Use native audio-session/device activity, application identity, and other appropriate OS signals to identify likely calls. Audio activity alone must not be treated as proof of a meeting.
+- **M01-001** [in progress] Implement background call detection and optional calendar-based meeting preparation in Career Pilot.
+- **M01-002** [in progress] 1. Background operation
+- **M01-003** [implemented] Add an optional background mode for Windows and macOS 13 Ventura and newer, supporting both Apple Silicon and Intel in the existing Universal Mac build.
+- **M01-004** [implemented] Let users enable “Launch at login” and “Keep running in the background.”
+- **M01-005** [implemented] Provide a ruby icon in the Windows system tray or Mac menu bar.
+- **M01-006** [implemented] Closing the main window should keep the app running when background mode is enabled.
+- **M01-007** [implemented] Provide tray/menu-bar actions to open Copilot, pause/resume call suggestions, and exit completely.
+- **M01-008** [implemented] Keep idle operation lightweight. Prefer native OS events over frequent polling.
+- **M01-009** [implemented] Background startup must not wake the GCP backend, open an audio capture session, or establish a live transcription connection.
+- **M01-010** [implemented] Preserve existing manual app startup and call behavior.
+- **M01-011** [in progress] 2. Detect calls without browser extensions
+- **M01-012** [in progress] Implement detection entirely in the desktop app. Do not require or build a Chrome extension.
+- **M01-013** [in progress] Use native audio-session/device activity, application identity, and other appropriate OS signals to identify likely calls. Audio activity alone must not be treated as proof of a meeting.
 - **M01-014** [pending] Support targets:
 - **M01-015** [pending] Desktop apps: Zoom, Microsoft Teams, Slack, Discord, WhatsApp, and FaceTime where available.
 - **M01-016** [pending] Browser meetings: Google Meet, Zoom Web, and Teams Web in major browsers, without extensions.
@@ -43,222 +43,222 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-024** [pending] Use application-specific adapters where necessary. Preserve macOS 13 compatibility through availability checks and fallbacks.
 - **M01-025** [pending] When the exact browser service, Android app, caller, or meeting title cannot be identified reliably, use a generic “Call detected” message. Do not invent metadata.
 - **M01-026** [pending] Detection must work without recording or transcribing audio. Avoid requiring screen capture just to monitor for calls.
-- **M01-027** [pending] 3. Call suggestion experience
-- **M01-028** [pending] When a likely call starts, show one small suggestion without stealing focus:
-- **M01-029** [pending] Debounce brief activity and filter microphone tests, dictation, media playback, and Copilot’s own audio.
-- **M01-030** [pending] Show at most one suggestion for the same call.
-- **M01-031** [pending] Dismissing it should suppress further suggestions for that call.
-- **M01-032** [pending] Muting, unmuting, changing devices, switching windows, or reconnecting briefly must not repeatedly trigger suggestions.
-- **M01-033** [pending] Do not suggest starting another session while Copilot already has an active session.
-- **M01-034** [pending] Respect notification preferences and Do Not Disturb.
-- **M01-035** [pending] Allow suggestions to be paused temporarily or disabled per application.
-- **M01-036** [pending] Audio capture and backend session creation begin only after the user accepts.
-- **M01-037** [pending] When the external call appears to end, offer to end the Copilot session. Do not end it just because participants are silent, the microphone is muted, or there is a brief disconnection.
-- **M01-038** [pending] 4. Optional calendar connection
-- **M01-039** [pending] Add optional Google Calendar and Microsoft Outlook calendar connections.
-- **M01-040** [pending] Use the minimum read-only calendar permissions needed.
-- **M01-041** [pending] Let users choose which calendars Copilot uses.
-- **M01-042** [pending] Support disconnecting an account and removing its cached calendar data.
-- **M01-043** [pending] Handle expired permissions, revoked access, offline operation, and provider errors gracefully.
-- **M01-044** [pending] Store credentials using the existing secure credential-storage approach.
-- **M01-045** [pending] Never embed a client secret in the desktop frontend or store tokens in plain browser storage.
-- **M01-046** [pending] Keep calendar synchronization bounded and lightweight; it must not keep the GCP backend awake unnecessarily.
-- **M01-047** [pending] If production OAuth configuration is unavailable, complete the integration and tests, clearly identify the missing configuration, and keep the rest of the feature usable. Do not present mock calendar data as a working production connection.
-- **M01-048** [pending] 5. Meeting preparation
-- **M01-049** [pending] Use the user’s connected calendars to improve preparation and session context.
-- **M01-050** [pending] Before “Interview with Acme,” suggest the matching application, job description, and resume.
-- **M01-051** [pending] Suggest the calendar event title for the Copilot session.
-- **M01-052** [pending] For a recurring meeting, surface relevant previous notes and unfinished action items when those exist.
-- **M01-053** [pending] Provide a compact preparation view with the meeting time, suggested context, and an easy way to change it.
-- **M01-054** [pending] 6. UI consistency
-- **M01-055** [pending] Put background and detection preferences in the appropriate existing settings area.
-- **M01-056** [pending] Provide clear calendar connection and synchronization states.
-- **M01-057** [pending] Use concise labels and small help tooltips where needed.
-- **M01-058** [pending] Preserve the existing large, medium, and minimal window modes.
-- **M01-059** [pending] Do not reintroduce removed sections, duplicate call controls, unnecessary scrolling, or large explanatory blocks.
-- **M01-060** [pending] Keep the existing drag behavior, quick settings, overlay, and profile selection working.
-- **M01-061** [pending] 7. Validation
-- **M01-062** [pending] Add meaningful tests for:
-- **M01-063** [pending] Background startup, closing, restoring, exiting, and single-instance behavior.
-- **M01-064** [pending] Detection state transitions, false positives, deduplication, dismissal, pause/resume, and reconnects.
-- **M01-065** [pending] Excluding Copilot’s own microphone and audio activity.
-- **M01-066** [pending] Starting through a suggestion using the existing session flow.
-- **M01-067** [pending] Calendar authorization failures, disconnects, matching, recurrence, cancellations, and time-zone handling.
-- **M01-068** [pending] Preventing capture or backend-session creation before user acceptance.
-- **M01-069** [pending] Windows and macOS compatibility, including guarded APIs for macOS 13.
-- **M01-070** [pending] Validate actual call behavior on available platforms and applications. Clearly distinguish automated tests, native compilation, and real-device testing.
-- **M01-071** [pending] Do not claim an application is supported solely because its process name is recognized. Record whether incoming-call detection, active-call detection, and usable call audio were actually verified.
-- **M01-072** [pending] Keep CI efficient. Preserve manual/release-only Mac packaging, avoid duplicate native builds, and reuse verified artifacts where appropriate.
-- **M01-073** [pending] 8. Deliverables
-- **M01-074** [pending] Finish with:
-- **M01-075** [pending] The working implementation.
-- **M01-076** [pending] Appropriate automated tests and validation results.
-- **M01-077** [pending] Setup documentation for background mode and calendar providers.
-- **M01-078** [pending] A concise compatibility matrix showing verified support and remaining platform limitations.
-- **M01-079** [pending] Any production configuration or hardware testing still needed.
+- **M01-027** [in progress] 3. Call suggestion experience
+- **M01-028** [in progress] When a likely call starts, show one small suggestion without stealing focus:
+- **M01-029** [in progress] Debounce brief activity and filter microphone tests, dictation, media playback, and Copilot’s own audio.
+- **M01-030** [in progress] Show at most one suggestion for the same call.
+- **M01-031** [in progress] Dismissing it should suppress further suggestions for that call.
+- **M01-032** [in progress] Muting, unmuting, changing devices, switching windows, or reconnecting briefly must not repeatedly trigger suggestions.
+- **M01-033** [in progress] Do not suggest starting another session while Copilot already has an active session.
+- **M01-034** [in progress] Respect notification preferences and Do Not Disturb.
+- **M01-035** [in progress] Allow suggestions to be paused temporarily or disabled per application.
+- **M01-036** [in progress] Audio capture and backend session creation begin only after the user accepts.
+- **M01-037** [in progress] When the external call appears to end, offer to end the Copilot session. Do not end it just because participants are silent, the microphone is muted, or there is a brief disconnection.
+- **M01-038** [implemented] 4. Optional calendar connection
+- **M01-039** [implemented] Add optional Google Calendar and Microsoft Outlook calendar connections.
+- **M01-040** [implemented] Use the minimum read-only calendar permissions needed.
+- **M01-041** [implemented] Let users choose which calendars Copilot uses.
+- **M01-042** [implemented] Support disconnecting an account and removing its cached calendar data.
+- **M01-043** [implemented] Handle expired permissions, revoked access, offline operation, and provider errors gracefully.
+- **M01-044** [implemented] Store credentials using the existing secure credential-storage approach.
+- **M01-045** [implemented] Never embed a client secret in the desktop frontend or store tokens in plain browser storage.
+- **M01-046** [implemented] Keep calendar synchronization bounded and lightweight; it must not keep the GCP backend awake unnecessarily.
+- **M01-047** [implemented] If production OAuth configuration is unavailable, complete the integration and tests, clearly identify the missing configuration, and keep the rest of the feature usable. Do not present mock calendar data as a working production connection.
+- **M01-048** [implemented] 5. Meeting preparation
+- **M01-049** [implemented] Use the user’s connected calendars to improve preparation and session context.
+- **M01-050** [implemented] Before “Interview with Acme,” suggest the matching application, job description, and resume.
+- **M01-051** [implemented] Suggest the calendar event title for the Copilot session.
+- **M01-052** [implemented] For a recurring meeting, surface relevant previous notes and unfinished action items when those exist.
+- **M01-053** [implemented] Provide a compact preparation view with the meeting time, suggested context, and an easy way to change it.
+- **M01-054** [in progress] 6. UI consistency
+- **M01-055** [implemented] Put background and detection preferences in the appropriate existing settings area.
+- **M01-056** [implemented] Provide clear calendar connection and synchronization states.
+- **M01-057** [implemented] Use concise labels and small help tooltips where needed.
+- **M01-058** [in progress] Preserve the existing large, medium, and minimal window modes.
+- **M01-059** [in progress] Do not reintroduce removed sections, duplicate call controls, unnecessary scrolling, or large explanatory blocks.
+- **M01-060** [in progress] Keep the existing drag behavior, quick settings, overlay, and profile selection working.
+- **M01-061** [in progress] 7. Validation
+- **M01-062** [in progress] Add meaningful tests for:
+- **M01-063** [implemented] Background startup, closing, restoring, exiting, and single-instance behavior.
+- **M01-064** [in progress] Detection state transitions, false positives, deduplication, dismissal, pause/resume, and reconnects.
+- **M01-065** [in progress] Excluding Copilot’s own microphone and audio activity.
+- **M01-066** [in progress] Starting through a suggestion using the existing session flow.
+- **M01-067** [implemented] Calendar authorization failures, disconnects, matching, recurrence, cancellations, and time-zone handling.
+- **M01-068** [implemented] Preventing capture or backend-session creation before user acceptance.
+- **M01-069** [in progress] Windows and macOS compatibility, including guarded APIs for macOS 13.
+- **M01-070** [in progress] Validate actual call behavior on available platforms and applications. Clearly distinguish automated tests, native compilation, and real-device testing.
+- **M01-071** [implemented] Do not claim an application is supported solely because its process name is recognized. Record whether incoming-call detection, active-call detection, and usable call audio were actually verified.
+- **M01-072** [implemented] Keep CI efficient. Preserve manual/release-only Mac packaging, avoid duplicate native builds, and reuse verified artifacts where appropriate.
+- **M01-073** [in progress] 8. Deliverables
+- **M01-074** [in progress] Finish with:
+- **M01-075** [in progress] The working implementation.
+- **M01-076** [in progress] Appropriate automated tests and validation results.
+- **M01-077** [implemented] Setup documentation for background mode and calendar providers.
+- **M01-078** [in progress] A concise compatibility matrix showing verified support and remaining platform limitations.
+- **M01-079** [in progress] Any production configuration or hardware testing still needed.
 
 ### Material 02
-- **M02-001** [pending] Implement Practice Interviews in Career Pilot.
-- **M02-002** [pending] 1. Practice setup
-- **M02-003** [pending] Provide a clear entry point to Practice Interviews and a compact setup flow.
-- **M02-004** [pending] Let users choose their profile and optionally an existing application with its job description and resume.
-- **M02-005** [pending] Permit practice without an application, using the selected profile and a user-specified role or topic.
-- **M02-006** [pending] Offer appropriate interview types such as recruiter screen, behavioral, technical discussion, and system design.
-- **M02-007** [pending] Let users choose a target duration, with 15 minutes as the initial default.
-- **M02-008** [pending] Show which resume, application, and experience will inform the interview, and allow correction before starting.
-- **M02-009** [pending] Make voice practice the main experience, with a usable text alternative.
-- **M02-010** [pending] Clearly identify this as a simulated practice interview.
-- **M02-011** [pending] Reuse existing context-selection controls and avoid creating another application-management workflow. Do not require a connected calendar or background call detection.
-- **M02-012** [pending] 2. An interactive interviewer
-- **M02-013** [pending] Generate an interview plan from the selected role, interview type, job description, and available candidate context.
-- **M02-014** [pending] Ask one question at a time.
-- **M02-015** [pending] Ask relevant follow-up questions based on what the user actually answered.
-- **M02-016** [pending] Probe vague claims, missing examples, reasoning, tradeoffs, and unresolved details.
-- **M02-017** [pending] Balance depth with the selected duration; avoid repeating questions or following an irrelevant branch indefinitely.
-- **M02-018** [pending] Distinguish hypothetical scenarios from factual questions about the user's experience.
-- **M02-019** [pending] Never invent an achievement, employer, project, metric, or qualification and attribute it to the user.
-- **M02-020** [pending] Do not claim to reproduce a particular employer's confidential questions or exact hiring process.
-- **M02-021** [pending] 3. Turn control and practice UI
-- **M02-022** [pending] Provide clear states for interviewer speaking, user answering, processing, paused, and finished.
-- **M02-023** [pending] Support repeat question, skip question, pause/resume, and finish practice.
-- **M02-024** [pending] Provide an explicit “I'm done” action for ending an answer.
-- **M02-025** [pending] If automatic end-of-answer detection is provided, allow natural thinking pauses and let the user override it.
-- **M02-026** [pending] Support interrupting interviewer speech without creating overlapping questions or orphaned audio playback.
-- **M02-027** [pending] Distinguish silence or a deliberate pause from a failed or disconnected microphone.
-- **M02-028** [pending] Let users request a hint or sample answer, and record that assistance was used.
-- **M02-029** [pending] Keep sample answers hidden during an independent attempt until requested or the attempt is complete.
-- **M02-030** [pending] Preserve completed turns when the user pauses or an error occurs.
-- **M02-031** [pending] Use the app's current ruby branding, icons, spacing, keyboard behavior, and accessible controls. Keep the active question prominent and the interface compact. Preserve existing live-call and window-mode behavior.
-- **M02-032** [pending] 4. Separate practice audio from real-call capture
-- **M02-033** [pending] Store generated interviewer questions as structured interviewer turns, rather than transcribing Copilot's own playback.
-- **M02-034** [pending] Capture and transcribe the user's microphone only for their spoken responses.
-- **M02-035** [pending] Where speaker playback is supported, use the generated playback as the echo-cancellation reference or another validated approach that prevents interviewer speech from being recognized as a user answer.
-- **M02-036** [pending] Test headphones, loudspeakers, echo, interruptions, and microphone changes.
-- **M02-037** [pending] Prevent practice playback from triggering background call suggestions.
-- **M02-038** [pending] Handle a transition to a real call explicitly: pause practice, release the microphone when switching, and avoid overlapping sessions.
-- **M02-039** [pending] Start audio capture only after the user starts practice.
-- **M02-040** [pending] Stop recording, playback, streaming, and pending generation promptly when practice ends.
-- **M02-041** [pending] Maintain Windows and macOS 13+ compatibility for Apple Silicon and Intel. Use availability checks and compatible fallbacks where necessary.
-- **M02-042** [pending] 5. Specific, grounded feedback
-- **M02-043** [pending] Answering the question asked.
-- **M02-044** [pending] Clear structure and concise explanation.
-- **M02-045** [pending] Concrete evidence from real experience.
-- **M02-046** [pending] Technical reasoning and correctness where it can be assessed.
-- **M02-047** [pending] Explanation of decisions, tradeoffs, and outcomes.
-- **M02-048** [pending] Do not grade accent, infer personality, or present a practice score as a prediction of hiring success. If scores are used, define the rubric and retain its version. Do not invent delivery measurements that were not actually calculated.
-- **M02-049** [pending] 6. Retry and progress
-- **M02-050** [pending] Let users retry a selected question immediately or save it for later practice.
-- **M02-051** [pending] Preserve the original response, feedback, assistance used, and each retry as separate attempts.
-- **M02-052** [pending] Show specific improvements and remaining gaps between attempts.
-- **M02-053** [pending] Keep coached and independent attempts distinguishable.
-- **M02-054** [pending] Compare only compatible rubrics and reasonably comparable question difficulty.
-- **M02-055** [pending] Provide a simple practice history with topics practiced and questions worth revisiting.
-- **M02-056** [pending] Keep practice records distinguishable from real interview and meeting records.
-- **M02-057** [pending] 7. Practice from previous interviews
-- **M02-058** [pending] Allow users to explicitly choose questions from their own saved interview transcripts as practice material.
-- **M02-059** [pending] Link each imported question back to the source session and transcript location when available.
-- **M02-060** [pending] Keep retrieval within the selected profile and authorized records.
-- **M02-061** [pending] Handle missing, deleted, or unavailable transcripts gracefully.
-- **M02-062** [pending] Preserve the original question and identify any generated variations or follow-ups.
-- **M02-063** [pending] Do not imply access to calls that were not saved or authorized.
-- **M02-064** [pending] 8. Reliability, data, and integration
-- **M02-065** [pending] Reuse existing authentication, account/profile context, backend services, transcript consent, secure storage, and deletion mechanisms where appropriate.
-- **M02-066** [pending] Persist completed turns and attempts so a temporary connection failure does not lose the session.
-- **M02-067** [pending] Define retry behavior for transcription, speech generation, and feedback without duplicating questions, answers, or charges.
-- **M02-068** [pending] Keep text mode usable when voice features are unavailable, while explaining any backend outage honestly.
-- **M02-069** [pending] Make retention of raw microphone audio an explicit choice; distinguish it from saving transcripts and feedback.
-- **M02-070** [pending] Provide deletion of a practice session and its associated retained data through the existing lifecycle.
-- **M02-071** [pending] Keep provider credentials out of the frontend and avoid unnecessary idle connections.
-- **M02-072** [pending] Document any additional production provider configuration needed. Do not present mocked speech or feedback as a production integration.
-- **M02-073** [pending] Do not automatically turn tentative practice answers into approved career facts or modify the user's resume.
-- **M02-074** [pending] 9. Validation and deliverables
-- **M02-075** [pending] Add meaningful tests for:
-- **M02-076** [pending] Setup and context isolation between profiles/applications.
-- **M02-077** [pending] Interview planning, adaptive follow-ups, turn order, and duration handling.
-- **M02-078** [pending] Repeat, skip, hints, interruptions, pause/resume, finish, and retries.
-- **M02-079** [pending] Keeping generated interviewer speech out of the user's transcript.
-- **M02-080** [pending] Microphone loss, echo handling, real-call transitions, and cleanup.
-- **M02-081** [pending] Grounded feedback, retained attempt history, and rubric compatibility.
-- **M02-082** [pending] Prior-question imports and deleted source records.
-- **M02-083** [pending] Offline/provider failures, persistence, deletion, and text fallback.
-- **M02-084** [pending] Windows and macOS compatibility.
-- **M02-085** [pending] Use deterministic fixtures for routine tests instead of making paid live model calls. Clearly distinguish automated tests, native builds, and actual microphone/playback testing. Keep CI efficient and avoid duplicate Mac packaging builds.
-- **M02-086** [pending] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device testing still needed.
+- **M02-001** [in progress] Implement Practice Interviews in Career Pilot.
+- **M02-002** [implemented] 1. Practice setup
+- **M02-003** [implemented] Provide a clear entry point to Practice Interviews and a compact setup flow.
+- **M02-004** [implemented] Let users choose their profile and optionally an existing application with its job description and resume.
+- **M02-005** [implemented] Permit practice without an application, using the selected profile and a user-specified role or topic.
+- **M02-006** [implemented] Offer appropriate interview types such as recruiter screen, behavioral, technical discussion, and system design.
+- **M02-007** [implemented] Let users choose a target duration, with 15 minutes as the initial default.
+- **M02-008** [implemented] Show which resume, application, and experience will inform the interview, and allow correction before starting.
+- **M02-009** [in progress] Make voice practice the main experience, with a usable text alternative.
+- **M02-010** [implemented] Clearly identify this as a simulated practice interview.
+- **M02-011** [implemented] Reuse existing context-selection controls and avoid creating another application-management workflow. Do not require a connected calendar or background call detection.
+- **M02-012** [implemented] 2. An interactive interviewer
+- **M02-013** [implemented] Generate an interview plan from the selected role, interview type, job description, and available candidate context.
+- **M02-014** [implemented] Ask one question at a time.
+- **M02-015** [implemented] Ask relevant follow-up questions based on what the user actually answered.
+- **M02-016** [implemented] Probe vague claims, missing examples, reasoning, tradeoffs, and unresolved details.
+- **M02-017** [implemented] Balance depth with the selected duration; avoid repeating questions or following an irrelevant branch indefinitely.
+- **M02-018** [implemented] Distinguish hypothetical scenarios from factual questions about the user's experience.
+- **M02-019** [implemented] Never invent an achievement, employer, project, metric, or qualification and attribute it to the user.
+- **M02-020** [implemented] Do not claim to reproduce a particular employer's confidential questions or exact hiring process.
+- **M02-021** [implemented] 3. Turn control and practice UI
+- **M02-022** [implemented] Provide clear states for interviewer speaking, user answering, processing, paused, and finished.
+- **M02-023** [implemented] Support repeat question, skip question, pause/resume, and finish practice.
+- **M02-024** [implemented] Provide an explicit “I'm done” action for ending an answer.
+- **M02-025** [implemented] If automatic end-of-answer detection is provided, allow natural thinking pauses and let the user override it.
+- **M02-026** [implemented] Support interrupting interviewer speech without creating overlapping questions or orphaned audio playback.
+- **M02-027** [implemented] Distinguish silence or a deliberate pause from a failed or disconnected microphone.
+- **M02-028** [implemented] Let users request a hint or sample answer, and record that assistance was used.
+- **M02-029** [implemented] Keep sample answers hidden during an independent attempt until requested or the attempt is complete.
+- **M02-030** [implemented] Preserve completed turns when the user pauses or an error occurs.
+- **M02-031** [in progress] Use the app's current ruby branding, icons, spacing, keyboard behavior, and accessible controls. Keep the active question prominent and the interface compact. Preserve existing live-call and window-mode behavior.
+- **M02-032** [implemented] 4. Separate practice audio from real-call capture
+- **M02-033** [implemented] Store generated interviewer questions as structured interviewer turns, rather than transcribing Copilot's own playback.
+- **M02-034** [implemented] Capture and transcribe the user's microphone only for their spoken responses.
+- **M02-035** [in progress] Where speaker playback is supported, use the generated playback as the echo-cancellation reference or another validated approach that prevents interviewer speech from being recognized as a user answer.
+- **M02-036** [in progress] Test headphones, loudspeakers, echo, interruptions, and microphone changes.
+- **M02-037** [implemented] Prevent practice playback from triggering background call suggestions.
+- **M02-038** [implemented] Handle a transition to a real call explicitly: pause practice, release the microphone when switching, and avoid overlapping sessions.
+- **M02-039** [implemented] Start audio capture only after the user starts practice.
+- **M02-040** [implemented] Stop recording, playback, streaming, and pending generation promptly when practice ends.
+- **M02-041** [in progress] Maintain Windows and macOS 13+ compatibility for Apple Silicon and Intel. Use availability checks and compatible fallbacks where necessary.
+- **M02-042** [implemented] 5. Specific, grounded feedback
+- **M02-043** [implemented] Answering the question asked.
+- **M02-044** [implemented] Clear structure and concise explanation.
+- **M02-045** [implemented] Concrete evidence from real experience.
+- **M02-046** [implemented] Technical reasoning and correctness where it can be assessed.
+- **M02-047** [implemented] Explanation of decisions, tradeoffs, and outcomes.
+- **M02-048** [implemented] Do not grade accent, infer personality, or present a practice score as a prediction of hiring success. If scores are used, define the rubric and retain its version. Do not invent delivery measurements that were not actually calculated.
+- **M02-049** [implemented] 6. Retry and progress
+- **M02-050** [implemented] Let users retry a selected question immediately or save it for later practice.
+- **M02-051** [implemented] Preserve the original response, feedback, assistance used, and each retry as separate attempts.
+- **M02-052** [implemented] Show specific improvements and remaining gaps between attempts.
+- **M02-053** [implemented] Keep coached and independent attempts distinguishable.
+- **M02-054** [implemented] Compare only compatible rubrics and reasonably comparable question difficulty.
+- **M02-055** [implemented] Provide a simple practice history with topics practiced and questions worth revisiting.
+- **M02-056** [implemented] Keep practice records distinguishable from real interview and meeting records.
+- **M02-057** [implemented] 7. Practice from previous interviews
+- **M02-058** [implemented] Allow users to explicitly choose questions from their own saved interview transcripts as practice material.
+- **M02-059** [in progress] Link each imported question back to the source session and transcript location when available.
+- **M02-060** [implemented] Keep retrieval within the selected profile and authorized records.
+- **M02-061** [implemented] Handle missing, deleted, or unavailable transcripts gracefully.
+- **M02-062** [implemented] Preserve the original question and identify any generated variations or follow-ups.
+- **M02-063** [implemented] Do not imply access to calls that were not saved or authorized.
+- **M02-064** [implemented] 8. Reliability, data, and integration
+- **M02-065** [implemented] Reuse existing authentication, account/profile context, backend services, transcript consent, secure storage, and deletion mechanisms where appropriate.
+- **M02-066** [implemented] Persist completed turns and attempts so a temporary connection failure does not lose the session.
+- **M02-067** [implemented] Define retry behavior for transcription, speech generation, and feedback without duplicating questions, answers, or charges.
+- **M02-068** [implemented] Keep text mode usable when voice features are unavailable, while explaining any backend outage honestly.
+- **M02-069** [implemented] Make retention of raw microphone audio an explicit choice; distinguish it from saving transcripts and feedback.
+- **M02-070** [implemented] Provide deletion of a practice session and its associated retained data through the existing lifecycle.
+- **M02-071** [implemented] Keep provider credentials out of the frontend and avoid unnecessary idle connections.
+- **M02-072** [implemented] Document any additional production provider configuration needed. Do not present mocked speech or feedback as a production integration.
+- **M02-073** [implemented] Do not automatically turn tentative practice answers into approved career facts or modify the user's resume.
+- **M02-074** [in progress] 9. Validation and deliverables
+- **M02-075** [in progress] Add meaningful tests for:
+- **M02-076** [implemented] Setup and context isolation between profiles/applications.
+- **M02-077** [implemented] Interview planning, adaptive follow-ups, turn order, and duration handling.
+- **M02-078** [implemented] Repeat, skip, hints, interruptions, pause/resume, finish, and retries.
+- **M02-079** [in progress] Keeping generated interviewer speech out of the user's transcript.
+- **M02-080** [in progress] Microphone loss, echo handling, real-call transitions, and cleanup.
+- **M02-081** [implemented] Grounded feedback, retained attempt history, and rubric compatibility.
+- **M02-082** [implemented] Prior-question imports and deleted source records.
+- **M02-083** [implemented] Offline/provider failures, persistence, deletion, and text fallback.
+- **M02-084** [in progress] Windows and macOS compatibility.
+- **M02-085** [implemented] Use deterministic fixtures for routine tests instead of making paid live model calls. Clearly distinguish automated tests, native builds, and actual microphone/playback testing. Keep CI efficient and avoid duplicate Mac packaging builds.
+- **M02-086** [in progress] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device testing still needed.
 
 ### Material 03
-- **M03-001** [pending] Implement Central Ask in Career Pilot.
-- **M03-002** [pending] 1. One shared Ask experience
-- **M03-003** [pending] Add an Ask page to the app's main navigation that works without starting a call.
-- **M03-004** [pending] Provide one conversation area with an input, streamed or progressively available answers, and follow-up questions.
-- **M03-005** [pending] Let users start a new conversation and return to saved conversations.
-- **M03-006** [pending] Retain drafts and conversation position when opening a source and returning.
-- **M03-007** [pending] Use the current ruby branding, icons, compact spacing, and accessible controls.
-- **M03-008** [pending] Keep the main interface simple. Avoid separate tabs for each knowledge source or a large setup form before asking.
-- **M03-009** [pending] Support general explanations, drafting, comparisons, career questions, and questions about the user's available information. Do not imply access to information that has not been provided, saved, or connected.
-- **M03-010** [pending] Which of my projects best fits this role?
-- **M03-011** [pending] What did we decide about authentication?
-- **M03-012** [pending] What commitments are still unfinished?
-- **M03-013** [pending] Help me prepare for tomorrow's interview.
-- **M03-014** [pending] Explain this technical concept.
-- **M03-015** [pending] Help draft a follow-up message.
-- **M03-016** [pending] 2. Automatic, visible context selection
-- **M03-017** [pending] Resumes and approved career facts.
-- **M03-018** [pending] Applications and job descriptions.
-- **M03-019** [pending] Company documents and work logs.
-- **M03-020** [pending] Stored memory, decisions, and commitments.
-- **M03-021** [pending] Saved call summaries and transcripts where available.
-- **M03-022** [pending] Practice interviews from Material 02, when that feature is implemented.
-- **M03-023** [pending] Connected calendar information from Material 01, when connected and available.
-- **M03-024** [pending] Make the selected scope visible and editable.
-- **M03-025** [pending] Preserve an explicit scope across follow-up questions until the user changes it.
-- **M03-026** [pending] Ask a brief clarification when multiple employers, applications, or events make the question materially ambiguous.
-- **M03-027** [pending] Keep account and profile boundaries enforced by the backend, not just by interface filters or prompts.
-- **M03-028** [pending] On a profile change, clearly switch the conversation context; never silently combine another profile's private data.
-- **M03-029** [pending] 3. Reuse existing knowledge and add cross-call retrieval
-- **M03-030** [pending] Reuse the existing Work knowledge question service, company document retrieval, employer memory, and History views where practical.
-- **M03-031** [pending] Extend retrieval to relevant saved transcripts across multiple calls, along with summaries and existing facts. Handle long histories through retrieval rather than placing the entire account history in every model request.
-- **M03-032** [pending] Search only records the user is authorized to access.
-- **M03-033** [pending] Respect whether each call's transcript was stored.
-- **M03-034** [pending] Distinguish original source content, summaries, approved facts, and generated suggestions.
-- **M03-035** [pending] Consider source dates and current commitment status; do not present an old open commitment as current after it has been completed.
-- **M03-036** [pending] Surface conflicting or outdated sources when they change the answer materially.
-- **M03-037** [pending] Keep follow-up conversation context separate from durable approved career facts.
-- **M03-038** [pending] 4. Answers with actionable evidence
-- **M03-039** [pending] Link to the actual application, document, work item, fact, or saved call.
-- **M03-040** [pending] For transcript-backed claims, open the relevant call at its supporting timestamp or transcript location.
-- **M03-041** [pending] Include dates where they help distinguish events or changing information.
-- **M03-042** [pending] Extend existing source labels with stable authorized source targets as needed.
-- **M03-043** [pending] Recheck access when opening or retrieving a source, and handle deleted or unavailable records gracefully.
-- **M03-044** [pending] Treat text in retrieved documents, transcripts, and web pages as source content, not as instructions that override the user's request or access restrictions.
-- **M03-045** [pending] 5. Contextual entry points and live-call behavior
-- **M03-046** [pending] Let users open the shared Ask experience from a company, application, or saved call with that item selected as context.
-- **M03-047** [pending] The live overlay remains focused on its current call.
-- **M03-048** [pending] Asking on the central page must not implicitly send a question into, start, or change a running call.
-- **M03-049** [pending] Reuse common answer and source components where useful while preserving the live call's latency and interaction needs.
-- **M03-050** [pending] Opening a cited History or Work item must preserve the Ask conversation and allow a predictable return.
-- **M03-051** [pending] 6. Conversations, drafts, and data lifecycle
-- **M03-052** [pending] Save conversations under the correct account and profile using the existing backend and authentication patterns.
-- **M03-053** [pending] Support deleting a conversation and its retained messages.
-- **M03-054** [pending] Define how source deletion or changed access affects retrieval, cached content, and already-generated conversation excerpts. Explain any retained answer snapshots through the existing data lifecycle rather than implying deletion removes data it does not remove.
-- **M03-055** [pending] Cancel pending generation and preserve the user's draft when interrupted.
-- **M03-056** [pending] Recover from connection failures without duplicate messages or duplicate charges where controllable.
-- **M03-057** [pending] Avoid sending every source or unrelated profile data to the model.
-- **M03-058** [pending] Keep provider credentials out of the frontend.
-- **M03-059** [pending] 7. Validation and deliverables
-- **M03-060** [pending] Validate meaningful user journeys and failure cases:
-- **M03-061** [pending] Asking general questions without a call or documents.
-- **M03-062** [pending] Asking within a selected application or company.
-- **M03-063** [pending] Searching across multiple saved calls with correct source timestamps.
-- **M03-064** [pending] Follow-up questions, context changes, and ambiguous source selection.
-- **M03-065** [pending] Account/profile isolation, changed access, and deleted sources.
-- **M03-066** [pending] Missing transcripts, conflicting dates, and completed commitments.
-- **M03-067** [pending] Grounded answers and honest statements when evidence is insufficient.
-- **M03-068** [pending] Opening sources and returning without losing drafts or conversations.
-- **M03-069** [pending] Separation between central conversations and an active live call.
-- **M03-070** [pending] Streaming, cancellation, retries, persistence, and deletion.
-- **M03-071** [pending] Prompt-like text inside retrieved material remaining untrusted source content.
-- **M03-072** [pending] Use deterministic fixtures for routine tests instead of paid live model requests. Keep CI efficient and avoid unrelated native packaging jobs for changes that do not require them.
-- **M03-073** [pending] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device verification still required.
+- **M03-001** [in progress] Implement Central Ask in Career Pilot.
+- **M03-002** [implemented] 1. One shared Ask experience
+- **M03-003** [implemented] Add an Ask page to the app's main navigation that works without starting a call.
+- **M03-004** [implemented] Provide one conversation area with an input, streamed or progressively available answers, and follow-up questions.
+- **M03-005** [implemented] Let users start a new conversation and return to saved conversations.
+- **M03-006** [implemented] Retain drafts and conversation position when opening a source and returning.
+- **M03-007** [in progress] Use the current ruby branding, icons, compact spacing, and accessible controls.
+- **M03-008** [implemented] Keep the main interface simple. Avoid separate tabs for each knowledge source or a large setup form before asking.
+- **M03-009** [implemented] Support general explanations, drafting, comparisons, career questions, and questions about the user's available information. Do not imply access to information that has not been provided, saved, or connected.
+- **M03-010** [implemented] Which of my projects best fits this role?
+- **M03-011** [implemented] What did we decide about authentication?
+- **M03-012** [implemented] What commitments are still unfinished?
+- **M03-013** [implemented] Help me prepare for tomorrow's interview.
+- **M03-014** [implemented] Explain this technical concept.
+- **M03-015** [implemented] Help draft a follow-up message.
+- **M03-016** [implemented] 2. Automatic, visible context selection
+- **M03-017** [implemented] Resumes and approved career facts.
+- **M03-018** [implemented] Applications and job descriptions.
+- **M03-019** [implemented] Company documents and work logs.
+- **M03-020** [implemented] Stored memory, decisions, and commitments.
+- **M03-021** [implemented] Saved call summaries and transcripts where available.
+- **M03-022** [implemented] Practice interviews from Material 02, when that feature is implemented.
+- **M03-023** [implemented] Connected calendar information from Material 01, when connected and available.
+- **M03-024** [implemented] Make the selected scope visible and editable.
+- **M03-025** [implemented] Preserve an explicit scope across follow-up questions until the user changes it.
+- **M03-026** [implemented] Ask a brief clarification when multiple employers, applications, or events make the question materially ambiguous.
+- **M03-027** [implemented] Keep account and profile boundaries enforced by the backend, not just by interface filters or prompts.
+- **M03-028** [implemented] On a profile change, clearly switch the conversation context; never silently combine another profile's private data.
+- **M03-029** [implemented] 3. Reuse existing knowledge and add cross-call retrieval
+- **M03-030** [implemented] Reuse the existing Work knowledge question service, company document retrieval, employer memory, and History views where practical.
+- **M03-031** [implemented] Extend retrieval to relevant saved transcripts across multiple calls, along with summaries and existing facts. Handle long histories through retrieval rather than placing the entire account history in every model request.
+- **M03-032** [implemented] Search only records the user is authorized to access.
+- **M03-033** [implemented] Respect whether each call's transcript was stored.
+- **M03-034** [implemented] Distinguish original source content, summaries, approved facts, and generated suggestions.
+- **M03-035** [implemented] Consider source dates and current commitment status; do not present an old open commitment as current after it has been completed.
+- **M03-036** [implemented] Surface conflicting or outdated sources when they change the answer materially.
+- **M03-037** [implemented] Keep follow-up conversation context separate from durable approved career facts.
+- **M03-038** [implemented] 4. Answers with actionable evidence
+- **M03-039** [in progress] Link to the actual application, document, work item, fact, or saved call.
+- **M03-040** [in progress] For transcript-backed claims, open the relevant call at its supporting timestamp or transcript location.
+- **M03-041** [implemented] Include dates where they help distinguish events or changing information.
+- **M03-042** [implemented] Extend existing source labels with stable authorized source targets as needed.
+- **M03-043** [implemented] Recheck access when opening or retrieving a source, and handle deleted or unavailable records gracefully.
+- **M03-044** [implemented] Treat text in retrieved documents, transcripts, and web pages as source content, not as instructions that override the user's request or access restrictions.
+- **M03-045** [implemented] 5. Contextual entry points and live-call behavior
+- **M03-046** [implemented] Let users open the shared Ask experience from a company, application, or saved call with that item selected as context.
+- **M03-047** [implemented] The live overlay remains focused on its current call.
+- **M03-048** [implemented] Asking on the central page must not implicitly send a question into, start, or change a running call.
+- **M03-049** [in progress] Reuse common answer and source components where useful while preserving the live call's latency and interaction needs.
+- **M03-050** [implemented] Opening a cited History or Work item must preserve the Ask conversation and allow a predictable return.
+- **M03-051** [implemented] 6. Conversations, drafts, and data lifecycle
+- **M03-052** [implemented] Save conversations under the correct account and profile using the existing backend and authentication patterns.
+- **M03-053** [implemented] Support deleting a conversation and its retained messages.
+- **M03-054** [implemented] Define how source deletion or changed access affects retrieval, cached content, and already-generated conversation excerpts. Explain any retained answer snapshots through the existing data lifecycle rather than implying deletion removes data it does not remove.
+- **M03-055** [implemented] Cancel pending generation and preserve the user's draft when interrupted.
+- **M03-056** [implemented] Recover from connection failures without duplicate messages or duplicate charges where controllable.
+- **M03-057** [implemented] Avoid sending every source or unrelated profile data to the model.
+- **M03-058** [implemented] Keep provider credentials out of the frontend.
+- **M03-059** [in progress] 7. Validation and deliverables
+- **M03-060** [in progress] Validate meaningful user journeys and failure cases:
+- **M03-061** [implemented] Asking general questions without a call or documents.
+- **M03-062** [implemented] Asking within a selected application or company.
+- **M03-063** [in progress] Searching across multiple saved calls with correct source timestamps.
+- **M03-064** [in progress] Follow-up questions, context changes, and ambiguous source selection.
+- **M03-065** [implemented] Account/profile isolation, changed access, and deleted sources.
+- **M03-066** [in progress] Missing transcripts, conflicting dates, and completed commitments.
+- **M03-067** [in progress] Grounded answers and honest statements when evidence is insufficient.
+- **M03-068** [implemented] Opening sources and returning without losing drafts or conversations.
+- **M03-069** [implemented] Separation between central conversations and an active live call.
+- **M03-070** [in progress] Streaming, cancellation, retries, persistence, and deletion.
+- **M03-071** [implemented] Prompt-like text inside retrieved material remaining untrusted source content.
+- **M03-072** [implemented] Use deterministic fixtures for routine tests instead of paid live model requests. Keep CI efficient and avoid unrelated native packaging jobs for changes that do not require them.
+- **M03-073** [in progress] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device verification still required.
 
 ### Material 04
 - **M04-001** [pending] Implement Career Pilot Mobile for iOS and Android, prioritizing a companion to the existing Windows and macOS desktop app.
@@ -349,113 +349,113 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-086** [pending] [Apple recording audio sessions](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/record) documents recording behavior and interruptions.
 
 ### Material 05
-- **M05-001** [pending] Implement Context from my AI in Career Pilot.
-- **M05-002** [pending] Start with one complete, tested MCP publishing workflow, two narrowly scoped tools, and one context card. Support additional AI hosts after validating their actual capabilities. Check current official provider documentation at implementation time.
-- **M05-003** [pending] 1. User experience
-- **M05-004** [pending] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
-- **M05-005** [pending] Explain the connection in product language: the AI can receive a preparation request and send a brief to the selected Career Pilot project or company.
-- **M05-006** [pending] Support a natural request such as: "Prepare context for tomorrow's standup from this project's recent work and send it to Career Pilot."
-- **M05-007** [pending] Also support publishing from the conversation where work happened: "Update Career Pilot with what we completed here."
-- **M05-008** [pending] Select the intended profile and company/application explicitly, using existing entities where possible.
-- **M05-009** [pending] Show a compact context card with title, preparation time, source count, and View, Refresh, and Remove actions.
-- **M05-010** [pending] View shows the brief, source references, coverage gaps, and editable corrections. Do not make users fill out a long form before importing.
-- **M05-011** [pending] Reuse the brief across the relevant call, practice session, and Central Ask conversation when those features are available.
-- **M05-012** [pending] Keep the core flow usable without calendar access or every other saved material being implemented.
-- **M05-013** [pending] 2. Small MCP interface
-- **M05-014** [pending] get_context_request(request_id): returns the selected context scope, preparation questions, date range, request revision, and expected brief format.
-- **M05-015** [pending] publish_context_brief(request_id, request_revision, idempotency_key, brief): validates and publishes the prepared result for that request.
-- **M05-016** [pending] Authenticate each tool call and derive account/profile/company authority from the stored request and authenticated caller.
-- **M05-017** [pending] Do not trust identity or target ownership supplied in generated brief text.
-- **M05-018** [pending] A repeated publication must not create duplicates. Reject obsolete request revisions and preserve the last usable version if a replacement fails.
-- **M05-019** [pending] Use ordinary code for schema, length, ownership, and version validation. Do not add a model call just to import a brief.
-- **M05-020** [pending] Keep source credentials with the AI host. Career Pilot does not need to copy the user's ChatGPT/Codex credential files or acquire every source-system token.
-- **M05-021** [pending] Expose only the request context needed for this task and a bounded publishing action; the initial tools do not need general account administration or arbitrary execution.
-- **M05-022** [pending] 3. Brief contents and reliability
-- **M05-023** [pending] Store a compact snapshot rather than a complete export of the user's work systems. Depending on the request, it may contain:
-- **M05-024** [pending] Current projects and recent progress.
-- **M05-025** [pending] Decisions and the reasons supported by available evidence.
-- **M05-026** [pending] Blockers, next steps, and outstanding commitments.
-- **M05-027** [pending] Relevant terminology and project names.
-- **M05-028** [pending] Career examples relevant to a selected interview or application.
-- **M05-029** [pending] Source references, source dates where available, preparation time, and coverage gaps.
-- **M05-030** [pending] Preserve source links and enough attribution to inspect the evidence, subject to the source's retention permissions.
-- **M05-031** [pending] Display freshness without treating preparation time as proof that every source is current.
-- **M05-032** [pending] Let users correct or remove individual items and replace or delete an entire brief.
-- **M05-033** [pending] Keep imported context separate from approved resume facts. Importing a brief does not silently certify achievements or edit the resume, work log, or task tracker.
-- **M05-034** [pending] Treat source text and imported instructions as context data, not authority to execute unrelated actions.
-- **M05-035** [pending] Validate claims with targeted evidence or user correction when necessary; avoid running a second autonomous research pipeline on every import.
-- **M05-036** [pending] 4. Calls and reuse
-- **M05-037** [pending] Load the latest eligible brief for the selected profile and company/application.
-- **M05-038** [pending] Use bounded relevant content; do not attach every saved brief to every answer.
-- **M05-039** [pending] Never make live answer generation wait for an external AI preparation task.
-- **M05-040** [pending] Keep refresh separate from the live answer path. A failed refresh preserves the existing brief with its actual preparation time visible.
-- **M05-041** [pending] Publish replacements atomically. Make the active context version clear when a refresh arrives during a call.
-- **M05-042** [pending] Remove deleted or revoked briefs from future retrieval and invalidate affected caches. Follow the existing explicit policy for already saved call artifacts.
-- **M05-043** [pending] Keep private imported context scoped to the authorizing account. Shared profile access alone must not expose it to another account or a guest.
-- **M05-044** [pending] A companion device signed into the same authorized account can use the same context; guest sharing requires an explicit supported sharing policy.
-- **M05-045** [pending] 5. Cost and supported capabilities
-- **M05-046** [pending] Reuse prepared briefs and refresh on deliberate requests in the first version. Add bounded import sizes and cancellation/error handling. Avoid continuous background preparation, bulk source ingestion, or a new vector database solely for this feature.
-- **M05-047** [pending] 6. Verification before release
-- **M05-048** [pending] [MCP architecture](https://modelcontextprotocol.io/specification/2026-07-28/architecture): the AI host coordinates models and context; a server exposes focused capabilities and does not receive the full conversation by default.
-- **M05-049** [pending] [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured tool interfaces for the request and publication operations.
-- **M05-050** [pending] [OpenAI: Add a custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server): ChatGPT supports custom read and write tools, subject to connection and confirmation settings.
-- **M05-051** [pending] [OpenAI: Sign in with ChatGPT](https://learn.chatgpt.com/docs/sign-in-with-chatgpt): using a plan does not grant access to ChatGPT conversations or memories, and usage remains subject to the plan's limits.
-- **M05-052** [pending] Material 01 can supply meeting timing and a preparation prompt when a calendar is connected.
-- **M05-053** [pending] Material 02 can use a relevant brief for practice interviews without inventing career facts.
-- **M05-054** [pending] Material 03 can retrieve permitted briefs as another source in Central Ask.
-- **M05-055** [pending] Material 04 can display assistance using the same authorized session context on mobile.
+- **M05-001** [in progress] Implement Context from my AI in Career Pilot.
+- **M05-002** [in progress] Start with one complete, tested MCP publishing workflow, two narrowly scoped tools, and one context card. Support additional AI hosts after validating their actual capabilities. Check current official provider documentation at implementation time.
+- **M05-003** [implemented] 1. User experience
+- **M05-004** [in progress] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
+- **M05-005** [implemented] Explain the connection in product language: the AI can receive a preparation request and send a brief to the selected Career Pilot project or company.
+- **M05-006** [implemented] Support a natural request such as: "Prepare context for tomorrow's standup from this project's recent work and send it to Career Pilot."
+- **M05-007** [implemented] Also support publishing from the conversation where work happened: "Update Career Pilot with what we completed here."
+- **M05-008** [implemented] Select the intended profile and company/application explicitly, using existing entities where possible.
+- **M05-009** [implemented] Show a compact context card with title, preparation time, source count, and View, Refresh, and Remove actions.
+- **M05-010** [implemented] View shows the brief, source references, coverage gaps, and editable corrections. Do not make users fill out a long form before importing.
+- **M05-011** [in progress] Reuse the brief across the relevant call, practice session, and Central Ask conversation when those features are available.
+- **M05-012** [implemented] Keep the core flow usable without calendar access or every other saved material being implemented.
+- **M05-013** [implemented] 2. Small MCP interface
+- **M05-014** [implemented] get_context_request(request_id): returns the selected context scope, preparation questions, date range, request revision, and expected brief format.
+- **M05-015** [implemented] publish_context_brief(request_id, request_revision, idempotency_key, brief): validates and publishes the prepared result for that request.
+- **M05-016** [implemented] Authenticate each tool call and derive account/profile/company authority from the stored request and authenticated caller.
+- **M05-017** [implemented] Do not trust identity or target ownership supplied in generated brief text.
+- **M05-018** [implemented] A repeated publication must not create duplicates. Reject obsolete request revisions and preserve the last usable version if a replacement fails.
+- **M05-019** [implemented] Use ordinary code for schema, length, ownership, and version validation. Do not add a model call just to import a brief.
+- **M05-020** [implemented] Keep source credentials with the AI host. Career Pilot does not need to copy the user's ChatGPT/Codex credential files or acquire every source-system token.
+- **M05-021** [implemented] Expose only the request context needed for this task and a bounded publishing action; the initial tools do not need general account administration or arbitrary execution.
+- **M05-022** [implemented] 3. Brief contents and reliability
+- **M05-023** [implemented] Store a compact snapshot rather than a complete export of the user's work systems. Depending on the request, it may contain:
+- **M05-024** [implemented] Current projects and recent progress.
+- **M05-025** [implemented] Decisions and the reasons supported by available evidence.
+- **M05-026** [implemented] Blockers, next steps, and outstanding commitments.
+- **M05-027** [implemented] Relevant terminology and project names.
+- **M05-028** [implemented] Career examples relevant to a selected interview or application.
+- **M05-029** [implemented] Source references, source dates where available, preparation time, and coverage gaps.
+- **M05-030** [implemented] Preserve source links and enough attribution to inspect the evidence, subject to the source's retention permissions.
+- **M05-031** [implemented] Display freshness without treating preparation time as proof that every source is current.
+- **M05-032** [implemented] Let users correct or remove individual items and replace or delete an entire brief.
+- **M05-033** [implemented] Keep imported context separate from approved resume facts. Importing a brief does not silently certify achievements or edit the resume, work log, or task tracker.
+- **M05-034** [implemented] Treat source text and imported instructions as context data, not authority to execute unrelated actions.
+- **M05-035** [implemented] Validate claims with targeted evidence or user correction when necessary; avoid running a second autonomous research pipeline on every import.
+- **M05-036** [implemented] 4. Calls and reuse
+- **M05-037** [implemented] Load the latest eligible brief for the selected profile and company/application.
+- **M05-038** [implemented] Use bounded relevant content; do not attach every saved brief to every answer.
+- **M05-039** [implemented] Never make live answer generation wait for an external AI preparation task.
+- **M05-040** [implemented] Keep refresh separate from the live answer path. A failed refresh preserves the existing brief with its actual preparation time visible.
+- **M05-041** [in progress] Publish replacements atomically. Make the active context version clear when a refresh arrives during a call.
+- **M05-042** [implemented] Remove deleted or revoked briefs from future retrieval and invalidate affected caches. Follow the existing explicit policy for already saved call artifacts.
+- **M05-043** [implemented] Keep private imported context scoped to the authorizing account. Shared profile access alone must not expose it to another account or a guest.
+- **M05-044** [in progress] A companion device signed into the same authorized account can use the same context; guest sharing requires an explicit supported sharing policy.
+- **M05-045** [implemented] 5. Cost and supported capabilities
+- **M05-046** [implemented] Reuse prepared briefs and refresh on deliberate requests in the first version. Add bounded import sizes and cancellation/error handling. Avoid continuous background preparation, bulk source ingestion, or a new vector database solely for this feature.
+- **M05-047** [in progress] 6. Verification before release
+- **M05-048** [in progress] [MCP architecture](https://modelcontextprotocol.io/specification/2026-07-28/architecture): the AI host coordinates models and context; a server exposes focused capabilities and does not receive the full conversation by default.
+- **M05-049** [in progress] [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured tool interfaces for the request and publication operations.
+- **M05-050** [in progress] [OpenAI: Add a custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server): ChatGPT supports custom read and write tools, subject to connection and confirmation settings.
+- **M05-051** [in progress] [OpenAI: Sign in with ChatGPT](https://learn.chatgpt.com/docs/sign-in-with-chatgpt): using a plan does not grant access to ChatGPT conversations or memories, and usage remains subject to the plan's limits.
+- **M05-052** [in progress] Material 01 can supply meeting timing and a preparation prompt when a calendar is connected.
+- **M05-053** [implemented] Material 02 can use a relevant brief for practice interviews without inventing career facts.
+- **M05-054** [implemented] Material 03 can retrieve permitted briefs as another source in Central Ask.
+- **M05-055** [in progress] Material 04 can display assistance using the same authorized session context on mobile.
 
 ### Material 06
 - **M06-001** [in progress] Implement selectable call languages in Career Pilot.
-- **M06-002** [in progress] 1. Selection and defaults
-- **M06-003** [in progress] Add one compact Language selector under Customize on the call setup screen, keeping the main toolbar compact.
-- **M06-004** [in progress] Save a default per profile and allow an override before starting a call.
-- **M06-005** [in progress] Keep English as the default for existing profiles that do not have a selection.
-- **M06-006** [in progress] Snapshot the effective language when a call starts. Changing a profile default must not silently change an active session.
-- **M06-007** [in progress] For the first release, choose the language before starting rather than switching recognition streams midway through a call. Make this behavior clear in the settings.
+- **M06-002** [implemented] 1. Selection and defaults
+- **M06-003** [implemented] Add one compact Language selector under Customize on the call setup screen, keeping the main toolbar compact.
+- **M06-004** [implemented] Save a default per profile and allow an override before starting a call.
+- **M06-005** [implemented] Keep English as the default for existing profiles that do not have a selection.
+- **M06-006** [implemented] Snapshot the effective language when a call starts. Changing a profile default must not silently change an active session.
+- **M06-007** [implemented] For the first release, choose the language before starting rather than switching recognition streams midway through a call. Make this behavior clear in the settings.
 - **M06-008** [in progress] Switching profiles must load the correct profile's preference and avoid leaking another profile's draft selection.
-- **M06-009** [in progress] Use clear language names, including a locale or regional distinction only when that distinction actually changes supported behavior.
+- **M06-009** [implemented] Use clear language names, including a locale or regional distinction only when that distinction actually changes supported behavior.
 - **M06-010** [in progress] Preserve current compact window modes, the start-call flow, and overlay behavior.
-- **M06-011** [in progress] 2. Supported language catalog
-- **M06-012** [in progress] Establish an explicit, backend-validated list of supported call languages.
-- **M06-013** [in progress] Verify the configured production speech-recognition model's current language support from official documentation before choosing the initial list.
+- **M06-011** [implemented] 2. Supported language catalog
+- **M06-012** [implemented] Establish an explicit, backend-validated list of supported call languages.
+- **M06-013** [implemented] Verify the configured production speech-recognition model's current language support from official documentation before choosing the initial list.
 - **M06-014** [in progress] Verify the complete application behavior for each offered language, including question detection, generation, retrieval, and post-call output.
-- **M06-015** [in progress] Do not claim support solely because the underlying language model can produce text in that language.
-- **M06-016** [in progress] Map stable language identifiers to provider-specific settings in ordinary code. Do not confuse spoken-language selection with existing programming-language controls.
-- **M06-017** [in progress] Validate unsupported or malformed values on the backend and provide an actionable message before starting an unusable call.
-- **M06-018** [in progress] Apply the selection to every configured recognition path and fallback. Do not silently fall back to English when the selected language is unavailable.
-- **M06-019** [in progress] 3. End-to-end propagation
-- **M06-020** [in progress] Carry the effective language through the desktop request, protocol, backend session, recognition setup, question detection, answer generation, and retained session metadata.
-- **M06-021** [in progress] Persist it through reconnects, resumed sessions, and supported provider failover.
-- **M06-022** [in progress] Preserve backward compatibility for older clients and settings records using the established English default.
-- **M06-023** [in progress] Keep stored transcripts in their recognized language. Do not translate and overwrite the original transcript.
-- **M06-024** [in progress] Adapt question detection beyond English-only keywords or sentence patterns.
-- **M06-025** [in progress] Generate answers in the selected language while preserving proper names, code, source identifiers, and quoted evidence where needed.
-- **M06-026** [in progress] Keep answer-format choices, such as bullets or paragraphs, independent of spoken language.
-- **M06-027** [in progress] Generate the applicable summaries and feedback in the session language, and retain that metadata for History.
-- **M06-028** [in progress] Do not label old historical content with a guessed language merely because new calls default to English.
-- **M06-029** [in progress] 4. Retrieval and grounding
+- **M06-015** [implemented] Do not claim support solely because the underlying language model can produce text in that language.
+- **M06-016** [implemented] Map stable language identifiers to provider-specific settings in ordinary code. Do not confuse spoken-language selection with existing programming-language controls.
+- **M06-017** [implemented] Validate unsupported or malformed values on the backend and provide an actionable message before starting an unusable call.
+- **M06-018** [implemented] Apply the selection to every configured recognition path and fallback. Do not silently fall back to English when the selected language is unavailable.
+- **M06-019** [implemented] 3. End-to-end propagation
+- **M06-020** [implemented] Carry the effective language through the desktop request, protocol, backend session, recognition setup, question detection, answer generation, and retained session metadata.
+- **M06-021** [implemented] Persist it through reconnects, resumed sessions, and supported provider failover.
+- **M06-022** [implemented] Preserve backward compatibility for older clients and settings records using the established English default.
+- **M06-023** [implemented] Keep stored transcripts in their recognized language. Do not translate and overwrite the original transcript.
+- **M06-024** [implemented] Adapt question detection beyond English-only keywords or sentence patterns.
+- **M06-025** [implemented] Generate answers in the selected language while preserving proper names, code, source identifiers, and quoted evidence where needed.
+- **M06-026** [implemented] Keep answer-format choices, such as bullets or paragraphs, independent of spoken language.
+- **M06-027** [implemented] Generate the applicable summaries and feedback in the session language, and retain that metadata for History.
+- **M06-028** [implemented] Do not label old historical content with a guessed language merely because new calls default to English.
+- **M06-029** [implemented] 4. Retrieval and grounding
 - **M06-030** [in progress] Check Unicode handling, tokenization, and language-dependent full-text search behavior.
-- **M06-031** [in progress] Ensure selecting a supported language does not quietly disable useful resume, application, company, or saved-context retrieval.
+- **M06-031** [implemented] Ensure selecting a supported language does not quietly disable useful resume, application, company, or saved-context retrieval.
 - **M06-032** [in progress] Test representative questions with documents in the selected language and with the user's existing documents in another language.
-- **M06-033** [in progress] Reuse existing retrieval capabilities where suitable. Add the smallest necessary improvements, rather than creating a separate knowledge store for every language.
-- **M06-034** [in progress] Keep citations linked to the original source and preserve account/profile boundaries.
-- **M06-035** [in progress] Treat missing evidence as missing evidence; language conversion must not invent experience, decisions, or achievements.
-- **M06-036** [in progress] Explain any deliberately limited source-language combinations in the verified support matrix.
-- **M06-037** [in progress] 5. Cost and failure behavior
-- **M06-038** [in progress] Use the existing recognition and answer-generation path with the selected language configuration.
-- **M06-039** [in progress] Avoid adding a separate continual translation service or an extra model request solely to route language settings.
+- **M06-033** [implemented] Reuse existing retrieval capabilities where suitable. Add the smallest necessary improvements, rather than creating a separate knowledge store for every language.
+- **M06-034** [implemented] Keep citations linked to the original source and preserve account/profile boundaries.
+- **M06-035** [implemented] Treat missing evidence as missing evidence; language conversion must not invent experience, decisions, or achievements.
+- **M06-036** [implemented] Explain any deliberately limited source-language combinations in the verified support matrix.
+- **M06-037** [implemented] 5. Cost and failure behavior
+- **M06-038** [implemented] Use the existing recognition and answer-generation path with the selected language configuration.
+- **M06-039** [implemented] Avoid adding a separate continual translation service or an extra model request solely to route language settings.
 - **M06-040** [in progress] Check provider/model compatibility and any material cost differences before enabling a language in production.
 - **M06-041** [in progress] Keep brief silence, recognition reconnects, and device changes from resetting the selected language.
-- **M06-042** [in progress] Report an unavailable recognition language honestly and preserve the user's selection for the next attempt.
-- **M06-043** [in progress] 6. Validation and delivery
+- **M06-042** [implemented] Report an unavailable recognition language honestly and preserve the user's selection for the next attempt.
+- **M06-043** [implemented] 6. Validation and delivery
 - **M06-044** [in progress] Use deterministic fixtures for routine tests. Validate settings persistence, profile switching, older-client defaults, rejected identifiers, session propagation, reconnect/failover behavior, prompt language, question detection, citation preservation, and post-call language.
-- **M06-045** [in progress] Deliver the implementation, the tested language matrix, meaningful validation results, setup/configuration notes, and any remaining provider or real-device verification needed. Keep subsequent language additions behind the same validation standard.
+- **M06-045** [implemented] Deliver the implementation, the tested language matrix, meaningful validation results, setup/configuration notes, and any remaining provider or real-device verification needed. Keep subsequent language additions behind the same validation standard.
 - **M06-046** [in progress] Material 01 starts calls using the selected profile's language preference.
 - **M06-047** [in progress] Material 02 should use the same language identifiers for practice; spoken interviewer output additionally needs a verified speech-generation voice.
-- **M06-048** [in progress] Material 03 may reuse the language catalog, but its conversation preferences must not unexpectedly change an active call.
+- **M06-048** [implemented] Material 03 may reuse the language catalog, but its conversation preferences must not unexpectedly change an active call.
 - **M06-049** [in progress] Material 04 displays the existing session's selected language and does not create a second recognition pipeline.
-- **M06-050** [in progress] Material 05 can supply evidence in available source languages while the call answer follows the selected language.
+- **M06-050** [implemented] Material 05 can supply evidence in available source languages while the call answer follows the selected language.
 
 
 ## Milestone evidence — 2026-11-19
@@ -466,3 +466,19 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - M03: encrypted persistent conversation backend and Ask page implemented, integration/testing still in progress.
 - Local database validation currently unavailable: no PostgreSQL listener and Docker daemon is stopped. Provider checks, Mac/device builds, speech certification, OAuth registrations remain unverified.
 - Next: finish language persistence/UI regression tests and commit milestone; continue Ask, personal AI briefs, practice, calendars and actual mobile apps.
+
+### M05/M06 validation update (2026-11-19)
+
+- M05 encrypted account-private lifecycle, two authenticated MCP tools, revision/idempotency/correction/removal, paste fallback and scoped Ask/practice/live retrieval implemented. Sticky privacy protects historical session artifacts after brief deletion; private sessions reject guests and other profile accounts. See `docs/implementation/personal-ai-context.md`.
+- M05 migrated PostgreSQL/RLS workflow: 1 passed (`test_personal_ai_stack.py`). Desktop: 3 passed (`personal-ai.test.tsx`) covering schema/scope fallback, stable retry identity, version-aware correction/removal and failed refresh retention. Typecheck and scoped Ruff passed. Real host connection/write confirmation, remote OAuth registration, production HTTPS sleep/wake and physical companion display remain unverified.
+- M06 immutable language, en/es/vi validation gate, both Deepgram channels/reconnect/failover, Unicode detection, language prompts and nullable history metadata implemented. Existing retrieval retained; non-English prepared direct answers disabled because packs lack language metadata. Official nova-3 compatibility and deployment gate documented in `docs/implementation/call-languages.md`.
+- Combined personal-AI unit/private-context/language/worker-sessionlog run: 58 passed using live Docker stack. Earlier gateway regression: 149 passed. Spanish/Vietnamese remain disabled until actual speech, native devices, same/cross-language retrieval and deployed model/cost evidence is recorded. Implemented rows describe code contracts, not provider/device certification.
+
+## Integration milestone: Ask, practice, calendar, personal context (2026-11-19)
+
+- Ask: account-owned encrypted conversations/messages/source references; scoped bounded cross-call retrieval, saved conversation UI, drafts/source drawer, cancellation/retry idempotency. Added private briefs, completed practice evidence, selected cached calendar events to authoritative retrieval. Calendar citations are revalidated on open and describe planned/cached events rather than proof a meeting occurred.
+- Practice: encrypted state/operation migration0022, adaptive plan/followups, versioned evidence feedback, independent/coached retry comparison, saved-question history; real provider speech/STT JSON endpoints. Desktop microphone-only recording, half-duplex playback, explicit record/submit, consent for transcript retention, never raw retention, current profile/application preview, saved transcript entry points. Real-call starts await pause and audio release.
+- Calendar: Google/Outlook read-only OAuth/PKCE, encrypted rotated tokens/cache, selection/disconnect, bounded sync, meeting-context overrides and recurring notes/actions. Desktop selection and preparation panels integrated; explicit call setup acceptance never joins/captures.
+- Automated evidence: focused desktop Ask/practice/audio/language 10 passed; API/core Ask/practice combined 37 passed including 3 real-stack lifecycle cases; calendar agent reports 48 deterministic tests plus 1 real-stack consent/encryption/isolation/disconnect test. Personal context evidence recorded separately below/above by owner. Full desktop regression underway.
+- Database tests use disposable migrated databases, local Valkey and object store. Provider answers/auth are deterministic fixtures; no live paid model or calendar consent claimed.
+- Remaining: native call evidence adapters/suggestions, mobile native app and authoritative companion transport, actual Windows/macOS audio/device checks, signed mobile builds/real phone workflow, UI visual/accessibility pass, full regression and final requirement reconciliation. No broad feature is marked complete based only on first journey.

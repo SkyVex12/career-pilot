@@ -20,7 +20,7 @@ Prepared answers lack source-language metadata, so non-English calls generate lo
 
 149 tests passed across gateway language, Decisions, question coverage prompts, turns, providers, resume, screenshots and session-flow suites. The final dedicated language suite adds retained-state restore coverage and has 21 passing tests. Scoped Ruff and Pyright checks pass. Run `.venv/Scripts/python.exe -m pytest apps/gateway/tests/test_call_languages.py -q -p no:cacheprovider` for the focused contract checks.
 
-Worker session-log integration was attempted but PostgreSQL at localhost:5432 was unavailable (connection refused/access denied); it is not counted as passing. Run the existing worker session-log suite against the migrated local stack before release.
+After the Docker stack became available, worker session-log integration passed against migrated PostgreSQL. The combined personal-AI unit, private context, call language and worker session-log run passed 58 tests on 2026-11-19. This validates persistence contracts, not real speech accuracy or native audio device behavior.
 
 ## Remaining release evidence
 

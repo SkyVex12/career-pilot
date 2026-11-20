@@ -113,6 +113,13 @@ async def ensure_session(
         sid,
     )
     if row is not None:
+        if meta.get("private_context_account_id"):
+            await conn.execute(
+                "update app.sessions set private_context_account_id=$2 "
+                "where id=$1 and private_context_account_id is null",
+                sid,
+                UUID(str(meta["private_context_account_id"])),
+            )
         return dict(row)
     started_at = _when(meta.get("started_at"))
     if not meta or started_at is None:
@@ -135,9 +142,9 @@ async def ensure_session(
     )
     await conn.execute(
         "insert into app.sessions (id, user_id, mode, job_id, interview_id, platform, title,"
-        " store_transcript, started_at, employer_id, spoken_language)"
+        " store_transcript, started_at, employer_id, spoken_language, private_context_account_id)"
         " values ($1, $2, $3, $4, $5, $6, $7, $8, $9,"
-        " $10, $11) on conflict (id) do nothing",
+        " $10, $11, $12) on conflict (id) do nothing",
         sid,
         uid,
         mode,
@@ -149,6 +156,7 @@ async def ensure_session(
         started_at,
         employer_id,
         meta.get("spoken_language") or None,
+        _uuid(meta.get("private_context_account_id")),
     )
     agenda = str(meta.get("agenda") or "")
     if agenda and crypto is not None:
@@ -621,7 +629,8 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     async with ctx.user(uid) as conn:
         session = await conn.fetchrow(
             "select s.mode, s.store_transcript, s.started_at, s.ended_at, s.billed_seconds,"
-            " s.employer_id, s.spoken_language, e.name as employer_name,"
+            " s.employer_id, s.spoken_language, s.private_context_account_id,"
+            " e.name as employer_name,"
             " j.company, j.title as job_title, i.round, u.display_name, u.settings"
             " from app.sessions s join app.users u on u.id = s.user_id"
             " left join app.jobs j on j.id = s.job_id"
@@ -689,7 +698,11 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
             )
         employer_id = session["employer_id"]
         version = None
-        if mode == "standup" and employer_id is not None:
+        if (
+            mode == "standup"
+            and employer_id is not None
+            and session["private_context_account_id"] is None
+        ):
             # The standup's commitments go back into that company's memory and feed the next
             # standup pack. They are the user's own promises, so they are kept at once (the
             # post-call screen shows them with a remove button). A rerun replaces them.

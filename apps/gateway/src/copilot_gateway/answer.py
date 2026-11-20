@@ -668,7 +668,8 @@ class AnswerEngine:
             # a screenshot: its text says what the screen holds, not what it asks; nor a
             # question while a problem is open: "optimize it" means that problem.
             reuse = (
-                cacheable(q.text)
+                not host.settings.personal_ai_api_url
+                and cacheable(q.text)
                 and q.qtype != "follow"
                 and q.screen is None
                 and self.open_problem() is None
@@ -697,6 +698,10 @@ class AnswerEngine:
                 await host.memory_lines(q.text, pass_) if q.screen is None else ([], {})
             )
             state["memory"] = memory_stats
+            if host.settings.personal_ai_api_url:
+                private = getattr(host, "private_memory", None)
+                if private is not None:
+                    memory = [*memory, *(await private())]
             req = self._request(q, pass_, memory)
             state["req"] = req
 
@@ -973,6 +978,8 @@ class AnswerEngine:
     def _prepared(self, q: Question) -> PreparedAnswer | None:
         """The prepared answer, if the question's match has finished with a hit. A reply to a
         remark (respond) is never a prepared standup answer."""
+        if self.host.settings.personal_ai_api_url:
+            return None
         if q.qtype in ("respond", "follow", *prompts.WORK_TYPES):
             return None  # nor is a question about a decision, a mechanism or an estimate
         result = self._match_result(q)

@@ -74,6 +74,8 @@ class SeatDesk:
                 del self.pending[: PENDING_MAX // 10]
             self.pending.append((seq, data))
             return
+        if self.s.private_context_account_id:
+            self.fold.sharing = False
         self.fold.add(seq, data)
 
     def start(self) -> None:

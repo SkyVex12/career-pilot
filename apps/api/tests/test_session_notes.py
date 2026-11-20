@@ -12,7 +12,7 @@ import httpx2
 import pytest
 from fastapi import FastAPI
 
-from copilot_api.deps import current_user, services
+from copilot_api.deps import current_account, current_user, services
 from copilot_api.routes.sessions import router
 from copilot_core.auth import Principal
 
@@ -23,7 +23,9 @@ def notes_api():
     conn = MagicMock()
     conn.fetchrow = AsyncMock(return_value={"ended_at": datetime.now(UTC)})
     conn.execute = AsyncMock()
+    conn.fetchval = AsyncMock(return_value=None)
     svc = MagicMock()
+    svc.valkey.hgetall = AsyncMock(return_value={})
     svc.crypto.encrypt = AsyncMock(return_value=(b"encrypted-notes", 3))
 
     @asynccontextmanager
@@ -36,6 +38,7 @@ def notes_api():
     app.include_router(router)
     app.dependency_overrides[services] = lambda: svc
     app.dependency_overrides[current_user] = lambda: profile
+    app.dependency_overrides[current_account] = lambda: profile
     return app, svc, conn, profile
 
 

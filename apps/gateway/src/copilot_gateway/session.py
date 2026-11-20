@@ -23,6 +23,7 @@ from typing import Any, cast, get_args
 from uuid import UUID
 
 import asyncpg
+import httpx2
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
@@ -32,6 +33,7 @@ from copilot_core import (
     knowledge,
     languages,
     logs,
+    personal_ai,
     profiles,
     prompts,
     resumes,
@@ -68,6 +70,7 @@ from copilot_gateway.answer import (
     normalize_question,
 )
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
+from copilot_gateway.companionhost import CompanionDesk
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector, named_or_model
@@ -240,6 +243,12 @@ class Session:
         self.principal = principal
         self.info = info
         self.spoken_language = info.spoken_language
+        self.account_id: UUID | None = None
+        self.account_token: str | None = None
+        self.private_context_account_id: str | None = (restored or {}).get(
+            "private_context_account_id"
+        )
+        self.private_context_versions: tuple[str, ...] = ()
         self.digest = digest
         self.pack = pack
         restored = restored or {}
@@ -380,6 +389,7 @@ class Session:
         self.lost = False
         # Guest seats: runs beside the call, never inside its task group (seathost.py).
         self.seatdesk = SeatDesk(self, dict(restored), resumed=bool(restored))
+        self.companiondesk = CompanionDesk(self, dict(restored))
         self.core_task: asyncio.Task[None] | None = None
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
@@ -406,6 +416,7 @@ class Session:
         data = message.model_dump_json(exclude_none=True, by_alias=True)
         self.ring.append((self.seq, data))
         self.seatdesk.observe(self.seq, data)
+        self.companiondesk.observe(self.seq, data)
         self.writer.event(self.seq, data)
         self.writer.set_state(last_seq=str(self.seq), updated_at=str(time.time()))
         if self.send_q is not None:
@@ -634,6 +645,47 @@ class Session:
 
     def _memory_on(self) -> bool:
         return self.company_memory is not None and self.info.mode in ("standup", "meeting")
+
+    async def private_memory(self) -> list[str]:
+        url = self.settings.personal_ai_api_url
+        if not url or not self.account_token or not self.account_id:
+            return []
+        try:
+            async with httpx2.AsyncClient(timeout=self.settings.personal_ai_timeout_s) as client:
+                response = await client.get(
+                    url.rstrip("/") + "/v1/personal-ai/live-context",
+                    headers={
+                        "Authorization": "Bearer " + self.account_token,
+                        "x-copilot-profile": str(self.principal.user_id),
+                    },
+                    params={
+                        "session_id": str(self.sid),
+                        **(
+                            {"employer_id": str(self.info.employer_id)}
+                            if self.info.employer_id
+                            else {}
+                        ),
+                        **({"job_id": str(self.info.job_id)} if self.info.job_id else {}),
+                    },
+                )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+            briefs = cast(list[dict[str, Any]], data.get("briefs", []))
+            if not briefs:
+                return []
+            self.private_context_account_id = str(self.account_id)
+            self.writer.set_state(private_context_account_id=str(self.account_id), sharing="0")
+            self.emit(models.Sharing, on=False)
+            versions = tuple(str(b["id"]) for b in briefs)
+            if versions != self.private_context_versions:
+                self.private_context_versions = versions
+                self.set_status(
+                    "memory", "ok", "Private AI context versions: " + ", ".join(versions)
+                )
+            return [personal_ai.context_text(briefs)]
+        except (httpx2.HTTPError, OSError, ValueError, KeyError):
+            # The existing live path stays usable; no stale private brief cache is reused.
+            return []
 
     async def memory_lines(self, text: str, pass_: str) -> tuple[list[str], dict[str, int]]:
         """The `<memory>` block for a pass: what search found in the chosen company's memory
@@ -1397,12 +1449,19 @@ class Session:
             "me_audio": "1" if self.me_audio else "0",
             "no_call": "1" if self.info.no_call else "0",
             "spoken_language": self.spoken_language,
+            "account_id": str(self.account_id) if self.account_id else "",
+            **(
+                {"private_context_account_id": self.private_context_account_id}
+                if self.private_context_account_id
+                else {}
+            ),
             "task_id": self.svc.task_id,
         }
 
     def start_core(self) -> None:
         self.core_task = asyncio.create_task(self._run_core())
         self.seatdesk.start()
+        self.companiondesk.start()
 
     async def _run_core(self) -> None:
         try:
@@ -1705,6 +1764,7 @@ class Session:
     async def _stop(self) -> None:
         self.manager.forget(self)
         await self.seatdesk.stop()
+        await self.companiondesk.stop()
         self.conv.close()
         for task in list(self._settling):
             task.cancel()
@@ -1909,6 +1969,11 @@ class Session:
                 self.writer.set_state(answer_style=message.answer_style)
                 self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
             case models.SharingSet():
+                if message.on and self.private_context_account_id:
+                    self.error(
+                        "unexpected_message", "Calls using private AI context cannot be shared"
+                    )
+                    return
                 # Guests see nothing from here until sharing is on again (seatview.py): the
                 # marker sits in the event stream, so replays and snapshots honour it too.
                 self.writer.set_state(sharing="1" if message.on else "0")
@@ -1931,6 +1996,14 @@ class Session:
             reason = str(e)
         else:
             reason = "token is for another user"
+            if (
+                self.private_context_account_id
+                and str(principal.user_id) != self.private_context_account_id
+            ):
+                self.error("unauthorized", "Private session belongs to another account", fatal=True)
+                if self.ws is not None:
+                    await close_ws(self.ws, CLOSE_UNAUTHORIZED, "unauthorized")
+                return
             if principal.user_id != self.principal.user_id:
                 # A session of a profile: the new token must be its account's.
                 principal = await self.manager.as_profile(principal, str(self.principal.user_id))
@@ -1942,6 +2015,7 @@ class Session:
                 await close_ws(ws, CLOSE_UNAUTHORIZED, "unauthorized")
             return
         self.principal = principal
+        self.account_token = token
         self.auth_warned = False
 
     @property
@@ -2386,6 +2460,7 @@ class SessionManager:
             # 4410: the app stops and does not reconnect; the error says why.
             await self.reject(ws, CLOSE_REPLACED, careeros.REQUIRED_CODE, careeros.REQUIRED_MESSAGE)
             return
+        account = principal
         profile = ws.query_params.get(profiles.QUERY)
         if profile or self.svc.pool is not None:
             # The session acts for one of the account's profiles, or for "Me", which for a
@@ -2413,9 +2488,9 @@ class SessionManager:
             if versions.is_outdated(first.client_version, s.min_client_version):
                 await self.reject_outdated(ws, first.client_version)
                 return
-            await self.start(ws, principal, first)
+            await self.start(ws, principal, first, account=account, account_token=token)
         elif isinstance(first, models.SessionResume):
-            await self.resume(ws, principal, first)
+            await self.resume(ws, principal, first, account=account, account_token=token)
         else:
             await self.reject(
                 ws,
@@ -2480,7 +2555,15 @@ class SessionManager:
                 "Selected language is unavailable on the configured recognition paths."
             )
 
-    async def start(self, ws: WebSocket, principal: Principal, msg: models.SessionStart) -> None:
+    async def start(
+        self,
+        ws: WebSocket,
+        principal: Principal,
+        msg: models.SessionStart,
+        *,
+        account: Principal | None = None,
+        account_token: str | None = None,
+    ) -> None:
         store = self.svc.store
         uid = principal.user_id
         try:
@@ -2577,6 +2660,8 @@ class SessionManager:
             spoken_language=spoken_language,
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
+        session.account_id = (account or principal).user_id
+        session.account_token = account_token
         self.sessions[sid] = session
         with contextlib.suppress(*UNAVAILABLE):
             await store.take_lease(sid, self.svc.task_id)
@@ -2609,14 +2694,29 @@ class SessionManager:
             session.set_status("memory", "degraded", "No career digest loaded")
         await session.attach(ws, last_seq=0)
 
-    async def resume(self, ws: WebSocket, principal: Principal, msg: models.SessionResume) -> None:
+    async def resume(
+        self,
+        ws: WebSocket,
+        principal: Principal,
+        msg: models.SessionResume,
+        *,
+        account: Principal | None = None,
+        account_token: str | None = None,
+    ) -> None:
         store = self.svc.store
         uid = principal.user_id
         sid = msg.session_id
         logs.set_ids(session_id=sid)
         log.info("session resume from seq %d", msg.last_seq)
+        actor = (account or principal).user_id
         local = self.sessions.get(sid)
         if local is not None and local.principal.user_id == uid and not local.ending:
+            if local.private_context_account_id and local.private_context_account_id != str(actor):
+                await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
+                return
+            local.account_id = actor
+            local.writer.set_state(account_id=str(actor))
+            local.account_token = account_token
             local.principal = principal
             local.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
             await local.attach(ws, msg.last_seq)
@@ -2635,6 +2735,9 @@ class SessionManager:
                 self._validate_recognition_language(state.get("spoken_language") or "en")
             except ValueError as exc:
                 await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
+                return
+            if state.get("private_context_account_id") not in (None, "", str(actor)):
+                await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
                 return
             other = await store.claim_active(uid, sid)
             if other is not None and other != str(sid):
@@ -2695,8 +2798,10 @@ class SessionManager:
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state
         )
+        session.account_id = actor
+        session.account_token = account_token
         self.sessions[sid] = session
-        session.writer.set_state(status="active", task_id=self.svc.task_id)
+        session.writer.set_state(status="active", task_id=self.svc.task_id, account_id=str(actor))
         session.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
         session.start_core()
         await session.attach(ws, msg.last_seq, replay=replay)
