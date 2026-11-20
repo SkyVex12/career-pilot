@@ -15,6 +15,35 @@ it("requires transcript consent and keeps text practice usable without voice", a
   expect(screen.getByLabelText(/Your answer/)).toBeEnabled();
   expect(ipc.calls.some(c => c.cmd === "start_session")).toBe(false);
 });
+
+it.each([undefined, null, "false", 0, 1, {}])("does not expose audio actions for nonboolean capability values: %j", async capability => {
+  setup(); ipc.api("POST", /^\/practice\/sessions$/, () => ({ ...fixture(), voice_available: capability, speech_available: capability }));
+  render(<Practice active running={false} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: /Save practice transcripts/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+  await screen.findByText("Describe a tradeoff.", { selector: "h2" });
+  expect(screen.queryByRole("button", { name: "Answer with microphone" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Read / repeat aloud" })).not.toBeInTheDocument();
+  expect(ipc.apiCalls().some(call => /speech-json|transcribe-json/.test(call.path))).toBe(false);
+});
+
+it("updates voice actions after a response disables them and supports bidirectional answers", async () => {
+  setup(); const session = { ...fixture(), spoken_language: "ar", voice_available: true,
+    questions: [{ ...fixture().questions[0], text: "كيف حسنت الأداء؟" }] };
+  ipc.api("POST", /^\/practice\/sessions$/, () => session);
+  ipc.api("POST", /^\/practice\/sessions\/p1\/actions$/, () => ({ ...session, voice_available: false, speech_available: false }));
+  render(<Practice active running={false} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: /Save practice transcripts/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+  const question = await screen.findByRole("heading", { name: "كيف حسنت الأداء؟" });
+  expect(question).toHaveAttribute("dir", "auto"); expect(question).toHaveAttribute("lang", "ar");
+  expect(screen.getByLabelText(/Your answer/)).toHaveAttribute("dir", "auto");
+  expect(screen.getByRole("button", { name: "Answer with microphone" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Read / repeat aloud" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Save question" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Answer with microphone" })).not.toBeInTheDocument());
+  expect(screen.getByLabelText(/Your answer/)).toBeEnabled();
+});
 it("retains an answer and command ID after a network failure", async () => {
   setup(); ipc.api("POST", /^\/practice\/sessions$/, () => fixture()); const ids: string[] = [];
   ipc.api("POST", /^\/practice\/sessions\/p1\/actions$/, (_p, body) => { ids.push((body as {request_id:string}).request_id); throw new Error("Disconnected"); });

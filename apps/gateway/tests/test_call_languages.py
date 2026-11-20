@@ -1,6 +1,8 @@
 """Deterministic language contract and runtime checks; no live speech certification."""
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -17,8 +19,8 @@ from copilot_worker import prompts as worker_prompts
 from copilot_worker.sessionlog import metadata_summary, render_outputs
 
 
-@pytest.mark.parametrize("language", ["es", "vi", "ES", "es-MX", "", "fr", "en\nignore"])
-def test_language_requires_explicit_verification(language):
+@pytest.mark.parametrize("language", ["ES", "es-MX", "", "xx", "en\nignore"])
+def test_unknown_language_is_rejected(language):
     with pytest.raises(ValueError, match="language"):
         validate_language(language)
 
@@ -58,7 +60,7 @@ def test_every_prompt_uses_selected_language_and_preserves_evidence(language):
     assert CALL_LANGUAGES[language].name in str(decision.input)
 
 
-@pytest.mark.parametrize("language", ["es", "vi"])
+@pytest.mark.parametrize("language", CALL_LANGUAGES)
 async def test_snapshot_reused_for_every_recognition_factory(env, language):
     svc = env.services(env.settings(verified_call_languages=("en", language)))
 
@@ -90,7 +92,7 @@ async def test_snapshot_reused_for_every_recognition_factory(env, language):
 
 
 async def test_unverified_language_rejected_before_claim_or_model(env):
-    svc = env.services()
+    svc = env.services(env.settings(verified_call_languages=("en",)))
     async with GatewayServer(svc) as gateway:
         client = ProtocolClient(gateway.url)
         await client.connect()
@@ -127,7 +129,7 @@ def test_postcall_labels_and_unknown_legacy_language():
     assert "selected spoken call language" not in legacy.system[0].text
 
 
-@pytest.mark.parametrize("language", [None, "es", "vi"])
+@pytest.mark.parametrize("language", [None, *CALL_LANGUAGES])
 async def test_restore_uses_retained_language_not_current_default(env, monkeypatch, language):
     from typing import cast
 
@@ -135,7 +137,7 @@ async def test_restore_uses_retained_language_not_current_default(env, monkeypat
 
     from copilot_protocol import models
 
-    svc = env.services(env.settings(verified_call_languages=("en", "es", "vi")))
+    svc = env.services(env.settings(verified_call_languages=tuple(CALL_LANGUAGES)))
     svc.stt_providers = [
         (
             "deepgram",
@@ -168,3 +170,41 @@ async def test_restore_uses_retained_language_not_current_default(env, monkeypat
     )
     assert attached == [language or "en"]
     assert manager.sessions[sid].state_fields()["spoken_language"] == (language or "en")
+
+
+CORPUS = json.loads(
+    (Path(__file__).resolve().parents[3] / "tests/fixtures/call_languages.json").read_text("utf-8")
+)
+
+
+@pytest.mark.parametrize("case", CORPUS, ids=lambda c: c["language"])
+def test_corpus_question_detection_and_postcall_output(case):
+    language = case["language"]
+    assert likely_question(case["question"], spoken_language=language)
+    assert not likely_question(case["statement"], spoken_language=language)
+    evidence = case["evidence"] + " [n:abcd]"
+    rendered = render_outputs(
+        "interview",
+        {
+            "summary": evidence,
+            "strengths": [evidence],
+            "follow_up_email": {"subject": "Acme", "body": evidence},
+        },
+        language,
+    )
+    assert rendered["summary"] == evidence
+    assert evidence in rendered["feedback"]
+    assert "[n:abcd]" in rendered["follow_up_email"]
+    if language != "en":
+        assert "Strengths" not in rendered["feedback"]
+        assert "The transcript was not stored" not in metadata_summary(
+            "interview", 2, ["technical"], language
+        )
+
+
+@pytest.mark.parametrize("language", CALL_LANGUAGES)
+def test_known_language_available_by_default_with_operator_opt_out(language):
+    assert validate_language(language) == language
+    if language != "en":
+        with pytest.raises(ValueError, match="not enabled"):
+            validate_language(language, ("en",))

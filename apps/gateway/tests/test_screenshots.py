@@ -126,6 +126,10 @@ async def test_an_assessment_has_no_call_and_a_screen_without_code_gets_no_code_
         await c.start(consent={"store_transcript": False})
         await c.say("Hello there, can you hear me?")
         await c.wait_type("transcript.final")
+        # A prior call question may finish before the screenshot on a busy runner.
+        # Exercise that ordering explicitly; its answer is independent of the assessment.
+        greeting = await c.wait_type("question.detected")
+        await c.wait_type("answer.done", question_id=greeting["question_id"], pass_="deep")
         await c.send(
             {
                 "type": "screenshot",
@@ -144,7 +148,8 @@ async def test_an_assessment_has_no_call_and_a_screen_without_code_gets_no_code_
     # the reading showed nothing needs code: no deep text, and no error for the client.
     [early] = requests_for(provider, "screen_code")
     assert "read the tasks from the shots yourself" in blocks(early)[-1]["text"]
-    assert not any(m["type"] == "answer.delta" and m["pass"] == "deep" for m in c.messages)
+    assert text_of(c, greeting["question_id"], "deep")
+    assert text_of(c, q["question_id"], "deep") == ""
     errors = [m for m in c.messages if m["type"] == "answer.error"]
     assert [m for m in errors if m["question_id"] == q["question_id"]] == []
     [req] = requests_for(provider, "screen_fast")

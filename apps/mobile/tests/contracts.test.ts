@@ -84,7 +84,8 @@ test("signout revokes only this phone attachments and clears credentials", async
   });
   await api.accept(tokens);
   api.attachments.add("this-phone");
-  await api.signout();
+  assert.equal(await api.signout(), true);
+  assert(calls.includes("https://example.com/v1/auth/token/signout"));
   assert.equal(memory.get(), null);
   assert(
     calls.includes("https://example.com/v1/companion/attachments/this-phone"),
@@ -358,4 +359,58 @@ test("signout queues credential deletion after an already-started secure write",
   await Promise.all([accepting, signingOut]);
   assert.equal(await memory.read(), null);
   await assert.rejects(api.token(), /Sign in/);
+});
+
+test("Career-OS tokens refresh and revoke when email authentication is disabled", async () => {
+  const memory = store({ ...tokens, expires_at: 1 });
+  const calls: string[] = [];
+  const api = new Api("https://example.com", memory, async (raw, options) => {
+    const path = new URL(String(raw)).pathname;
+    calls.push(path);
+    if (path.startsWith("/v1/auth/email/"))
+      return new Response("{}", { status: 404 });
+    if (path === "/v1/auth/token/refresh") {
+      assert.equal(options?.method, "POST");
+      assert.deepEqual(JSON.parse(String(options?.body)), {
+        refresh_token: "refresh-secret",
+      });
+      return Response.json({
+        ...tokens,
+        access_token: "career-access",
+        refresh_token: "career-refresh",
+      });
+    }
+    if (path === "/v1/auth/token/signout") {
+      assert.deepEqual(JSON.parse(String(options?.body)), {
+        refresh_token: "career-refresh",
+      });
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected endpoint ${path}`);
+  });
+  await api.restore();
+  assert.equal(await api.token(), "career-access");
+  assert.equal(memory.get()?.refresh_token, "career-refresh");
+  assert.equal(await api.signout(), true);
+  assert.equal(memory.get(), null);
+  assert.deepEqual(calls, ["/v1/auth/token/refresh", "/v1/auth/token/signout"]);
+});
+
+test("signout distinguishes an absent attachment from unconfirmed token revocation", async () => {
+  for (const tokenStatus of [204, 404, 500]) {
+    const memory = store();
+    const api = new Api("https://example.com", memory, async (raw) => {
+      const path = new URL(String(raw)).pathname;
+      if (path === "/v1/companion/attachments/already-removed")
+        return new Response(null, { status: 404 });
+      assert.equal(path, "/v1/auth/token/signout");
+      return new Response(null, { status: tokenStatus });
+    });
+    await api.accept(tokens);
+    api.attachments.add("already-removed");
+    assert.equal(await api.signout(), tokenStatus === 204);
+    assert.equal(memory.get(), null);
+    assert.equal(api.attachments.size, 0);
+    await assert.rejects(() => api.token(), /Sign in/);
+  }
 });

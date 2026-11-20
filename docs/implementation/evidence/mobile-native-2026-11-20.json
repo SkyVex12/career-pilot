@@ -1,0 +1,146 @@
+{
+  "status": "completed_scoped_emulator_acceptance",
+  "date": "2026-11-20",
+  "source_commit": "ed4ef21d64ced73d06ba6346e614c815e13c4bd3",
+  "artifact": {
+    "path": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.apk",
+    "sha256": "d5c911784be74861a074d4e30ec557b006a48ea7809b2fecb0d8deac84931b7b",
+    "bytes": 56081446
+  },
+  "environment": {
+    "emulator": "isolated LDPlayer CareerPilotValidation",
+    "serial": "emulator-5556",
+    "android": "14",
+    "abi": "x86_64",
+    "hermes": "embedded; no Metro",
+    "service": "fictional loopback fixture on port8765 via adb reverse",
+    "screen_dp": [
+      "360x640 portrait",
+      "640x360 landscape"
+    ],
+    "font_scales": [
+      1.0,
+      1.3
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ]
+  },
+  "journeys": [
+    "Server connection, email authentication, profile load and persisted authentication/server restore after restart.",
+    "Work Ask pending-to-answer, citation/source open-close and draft/conversation retention across tabs.",
+    "Desktop companion attaches without creating another audio pipeline; default profile sends no empty profile header.",
+    "Unordered snapshot replay renders both answers in sequence; Answer now and follow-up return live answer and executed status.",
+    "Same-phone attachment reused across tab changes and process force-stop/relaunch: joins increased1-to2 with attachment_creations unchanged1.",
+    "Drop-once and background/foreground reconnect recover without duplicate answers.",
+    "503 attachment failure is visible; cancel returns control; slow attach and silent handshake time out at15seconds; missing gateway ends bounded retries with usable Retry and disabled commands.",
+    "End confirmation cancellation sends no command; confirmed End sends one command.",
+    "Practice context review, Spanish selection, consent, question, typed answer, rubric/exact-excerpt feedback, pause/tab retention/resume/finish.",
+    "Saved call summary and timestamped transcript; question import into practice.",
+    "Meeting action edits retain across tabs; leaving prompts Keep editing/Discard; context opens inline; save is acknowledged.",
+    "Large text and dark theme, portrait and compact landscape inspected; final compact composer has reachable Answer and End controls.",
+    "Final b3736ae malformed snapshot stops live state despite a queued host-state frame: Retry enabled and Answer/End disabled. Returning fixture to normal and Retry restores answers and enabled commands. Subsequent Answer now yields Question3 and Desktop: executed."
+  ],
+  "diagnostics": {
+    "crash_buffer_entries": 0,
+    "exit_reasons_observed": [
+      "PACKAGE UPDATED (intentional APK replacements)",
+      "USER REQUESTED / FORCE STOP (intentional persistence test)"
+    ],
+    "anr_exit_records": 0,
+    "claim": "No crash or ANR observed during this isolated acceptance. This does not establish the original user ANR cause."
+  },
+  "limitations": [
+    "Fictional service responses exercise native rendering/lifecycle and transport; they do not prove deployed backend configuration or live provider/audio behavior.",
+    "Physical Android/iPhone, cellular/Wi-Fi switching, Bluetooth, speaker echo, real-call audio and long-duration stability remain unverified.",
+    "Emulator input focus/editing works; its IME reports shown but no visible on-screen keyboard occlusion occurred, so physical keyboard/IME layout coverage is not claimed.",
+    "Earlier candidate screenshots03/07/08/21/22 documented failures and are not included as success evidence.",
+    "Practice/large-text screenshots predate final socket guard but their relevant source inputs are unchanged.",
+    "Public companion proxy returned404 before implementation; deploying the fixed compatible backend/proxy is still necessary for the current server."
+  ],
+  "screenshots": [
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/practice-feedback.png",
+      "sha256": "c656d862d987c5609d1db2eb37bf440649cd913855a4ae44dbcb7870aae9a6f1",
+      "bytes": 97660,
+      "source_commit": "a9af830"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/large-text-dark.png",
+      "sha256": "60041600bcfa7ec0db73cfe5df2a4aab531b645ac13900dbb37161d763bf939d",
+      "bytes": 108107,
+      "source_commit": "a9af830"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/invalid-event-retry.png",
+      "sha256": "719ba52500b2db6b99d661932c2f9cd0dd18f5281e68f0bac048eedf8751d972",
+      "bytes": 89629,
+      "source_commit": "b3736ae"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/live-landscape.png",
+      "sha256": "35a03f05bec4804e7f12613cae8d889bb3e79784acdb2db2f56f8e3e7e0c902d",
+      "bytes": 83195,
+      "source_commit": "b3736ae"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/live-portrait.png",
+      "sha256": "1c81f890714acd5c20ddbb8251d074bb47a206f2e35a81a3aecc9a6a81cf4eed",
+      "bytes": 93378,
+      "source_commit": "b3736ae"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/setup-retry.png",
+      "sha256": "a997ca665993e4dec37cb445b85c9881d2eff78f1cc336d197054579590473aa",
+      "bytes": 90304,
+      "source_commit": "ed4ef21"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/setup-languages-recovered.png",
+      "sha256": "18b34dab444e83a7d16e19ba4daaf9acda17dfbbfa471b6f5386b761b01bf058",
+      "bytes": 61921,
+      "source_commit": "ed4ef21"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/final-live-retry.png",
+      "sha256": "0316361474f5987f321e92fcae5dec457abf2b5a5590e08c04a0c41ab1c4bec6",
+      "bytes": 94918,
+      "source_commit": "ed4ef21"
+    },
+    {
+      "path": "docs/implementation/evidence/mobile-native-2026-11-20/final-live-answer.png",
+      "sha256": "9e991882b0d1a48c2a78a7501dca997968fd34f79c1ebf1552372c9af09de9e2",
+      "bytes": 84283,
+      "source_commit": "ed4ef21"
+    }
+  ],
+  "cleanup": {
+    "fixture": "Stopped only verified native_fixture.py processes24724/36876; logs archived under .implementation/native-acceptance",
+    "adb_reverse": "tcp8765 removed on emulator-5556",
+    "isolated_device_settings": "density240, rotation0, font_scale1.0, night modeoff restored",
+    "user_instance": "not accessed or changed",
+    "final_targeted_fixture": "Stopped only verified native_fixture.py processes34772/23356, removed tcp8765 reverse, restored isolated emulator settings; logs retained locally."
+  },
+  "broad_journey_sources": [
+    "a9af830",
+    "5caa61e",
+    "b3736ae"
+  ],
+  "previous_broad_journey_artifact": {
+    "path": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.b3736ae-candidate.apk",
+    "sha256": "a08a14581b7d8de299cf09d5942bf694e51ace2bf46eba12109cdf3971f2ec90",
+    "bytes": 56078642
+  },
+  "final_source_targeted_checks": [
+    "ed4ef21 installed successfully; persisted server/authentication/profile restored.",
+    "Fictional setup_unavailable mode returned503 for languages: Practice displayed Retry setup choices while application choices remained available.",
+    "Without remounting Practice, changing fixture to normal and tapping Retry removed error and restored the24-language selector; Spanish selected successfully.",
+    "Malformed live snapshot displayed Retry and disabled Answer/End. Normal fixture plusRetry recovered live answers; Answernow deliveredQuestion3 and Desktop:executed.",
+    "Full74 deterministic mobile tests and strictTypeScript pass;11 fictionalfixturetests pass, including503catalogrecovery.",
+    "Account-scoped retirement regressions simulate delayed profileA\u2192B\u2192A cleanup and verify the replacementgrant survives; this exact multi-profile race was not exercised in the single-profile nativefixture."
+  ],
+  "observations": [
+    "One uiautomator dump command exceeded its20second tool deadline after scrolling; screenshot/ADB remained responsive and retry succeeded without app restart. No app crash/ANR exit record accompanied it."
+  ]
+}

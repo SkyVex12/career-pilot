@@ -1,0 +1,225 @@
+{
+  "at": "2026-11-20T05:34:28.538179+00:00",
+  "synthetic_only": true,
+  "device_certification": false,
+  "speech": [
+    {
+      "language": "es",
+      "voice": "aura-2-estrella-es",
+      "stt_model": "nova-3",
+      "transcript": "¿Cómo mejoraste el rendimiento de Poscre SQL en Agni?",
+      "nonempty": true,
+      "elapsed_ms": 5735
+    },
+    {
+      "language": "ja",
+      "voice": "aura-2-izanami-ja",
+      "stt_model": "nova-3",
+      "transcript": "あくめでポストグレースqlの性能をどのように改善しましたか。",
+      "nonempty": true,
+      "elapsed_ms": 5531
+    }
+  ],
+  "answers": [
+    {
+      "language": "es",
+      "answer": "En Acme, mejoré el rendimiento de PostgreSQL añadiendo un índice, lo que redujo la latencia de **200 ms a 120 ms**, una mejora del **40 %**. [S1]\n\nEl CV original no especifica qué consulta se optimizó ni el tipo de índice utilizado. [S1]",
+      "citation_present": true,
+      "elapsed_ms": 3984
+    },
+    {
+      "language": "ja",
+      "answer": "Acmeでは、**インデックスを追加することで、PostgreSQLのレイテンシを200msから120msに短縮**しました。これは40%の削減に相当します。[S1]\n\n元の履歴書には、対象のクエリやインデックスの種類、計測条件までは記載されていません。[S1]",
+      "citation_present": true,
+      "elapsed_ms": 4266
+    }
+  ],
+  "embeddings": {
+    "model": "openai:text-embedding-3-large@1024",
+    "batch_size": 26,
+    "elapsed_ms": 2500,
+    "languages": [
+      {
+        "language": "en",
+        "relevant_similarity": 1.0,
+        "distractor_similarity": 0.1002,
+        "passes_threshold": true
+      },
+      {
+        "language": "es",
+        "relevant_similarity": 0.7532,
+        "distractor_similarity": -0.0209,
+        "passes_threshold": true
+      },
+      {
+        "language": "vi",
+        "relevant_similarity": 0.7007,
+        "distractor_similarity": 0.0496,
+        "passes_threshold": true
+      },
+      {
+        "language": "zh",
+        "relevant_similarity": 0.7544,
+        "distractor_similarity": 0.0224,
+        "passes_threshold": true
+      },
+      {
+        "language": "hi",
+        "relevant_similarity": 0.6727,
+        "distractor_similarity": 0.1196,
+        "passes_threshold": true
+      },
+      {
+        "language": "ar",
+        "relevant_similarity": 0.7081,
+        "distractor_similarity": 0.0374,
+        "passes_threshold": true
+      },
+      {
+        "language": "fr",
+        "relevant_similarity": 0.8285,
+        "distractor_similarity": 0.0727,
+        "passes_threshold": true
+      },
+      {
+        "language": "bn",
+        "relevant_similarity": 0.6207,
+        "distractor_similarity": 0.0818,
+        "passes_threshold": true
+      },
+      {
+        "language": "pt",
+        "relevant_similarity": 0.7483,
+        "distractor_similarity": 0.0153,
+        "passes_threshold": true
+      },
+      {
+        "language": "ru",
+        "relevant_similarity": 0.7614,
+        "distractor_similarity": 0.0653,
+        "passes_threshold": true
+      },
+      {
+        "language": "ur",
+        "relevant_similarity": 0.6219,
+        "distractor_similarity": 0.1313,
+        "passes_threshold": true
+      },
+      {
+        "language": "id",
+        "relevant_similarity": 0.7698,
+        "distractor_similarity": 0.0844,
+        "passes_threshold": true
+      },
+      {
+        "language": "de",
+        "relevant_similarity": 0.7913,
+        "distractor_similarity": 0.0575,
+        "passes_threshold": true
+      },
+      {
+        "language": "ja",
+        "relevant_similarity": 0.7513,
+        "distractor_similarity": 0.0232,
+        "passes_threshold": true
+      },
+      {
+        "language": "tr",
+        "relevant_similarity": 0.644,
+        "distractor_similarity": 0.0362,
+        "passes_threshold": true
+      },
+      {
+        "language": "ta",
+        "relevant_similarity": 0.3483,
+        "distractor_similarity": -0.0377,
+        "passes_threshold": false
+      },
+      {
+        "language": "te",
+        "relevant_similarity": 0.5291,
+        "distractor_similarity": 0.0768,
+        "passes_threshold": false
+      },
+      {
+        "language": "mr",
+        "relevant_similarity": 0.6356,
+        "distractor_similarity": 0.0618,
+        "passes_threshold": true
+      },
+      {
+        "language": "ko",
+        "relevant_similarity": 0.7248,
+        "distractor_similarity": 0.0705,
+        "passes_threshold": true
+      },
+      {
+        "language": "it",
+        "relevant_similarity": 0.8269,
+        "distractor_similarity": 0.0875,
+        "passes_threshold": true
+      },
+      {
+        "language": "fa",
+        "relevant_similarity": 0.6884,
+        "distractor_similarity": 0.0406,
+        "passes_threshold": true
+      },
+      {
+        "language": "th",
+        "relevant_similarity": 0.6754,
+        "distractor_similarity": 0.042,
+        "passes_threshold": true
+      },
+      {
+        "language": "sw",
+        "relevant_similarity": 0.696,
+        "distractor_similarity": 0.0805,
+        "passes_threshold": true
+      },
+      {
+        "language": "pa",
+        "relevant_similarity": 0.5092,
+        "distractor_similarity": 0.1069,
+        "passes_threshold": false
+      }
+    ]
+  },
+  "speech_with_keyterms": [
+    {
+      "language": "es",
+      "keyterms": [
+        "PostgreSQL",
+        "Acme"
+      ],
+      "transcript": "¿Cómo mejoraste el rendimiento de PostgreSQL en Acme?",
+      "elapsed_ms": 6063,
+      "technical_term_present_casefold": true,
+      "company_present_casefold": true,
+      "technical_term_present_exact": true,
+      "company_present_exact": true
+    },
+    {
+      "language": "ja",
+      "keyterms": [
+        "Acme",
+        "PostgreSQL"
+      ],
+      "transcript": "acmeでpostgresqlの性能をどのように改善しましたか。",
+      "elapsed_ms": 4328,
+      "technical_term_present_casefold": true,
+      "company_present_casefold": true,
+      "technical_term_present_exact": false,
+      "company_present_exact": false
+    }
+  ],
+  "interpretation": {
+    "speech": "Two synthetic TTS round trips, not accent/device certification. Hints restored technical names in both samples, Japanese lowercase.",
+    "retrieval": "21 of 24 same-fact cross-language embeddings cleared 0.55. Tamil/Telugu/Punjabi did not; preserve threshold and use explicit source scopes for low recall.",
+    "requests": {
+      "speech": 8,
+      "answer": 2,
+      "embedding_batches": 1
+    }
+  }
+}

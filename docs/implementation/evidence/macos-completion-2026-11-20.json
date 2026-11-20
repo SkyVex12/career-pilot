@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-20",
+  "platform": "macOS",
+  "status": "native_build_and_mounted_bundle_verification_passed",
+  "run_url": "https://github.com/SkyVex12/career-pilot/actions/runs/44686036872",
+  "source_commit": "7956ac6027dcf1df964a01d5062bb79150efe8ac",
+  "completion_product_commit": "ed4ef21",
+  "desktop_source_diff": "git diff 7956ac6 ed4ef21 -- apps/desktop: empty",
+  "artifact": {
+    "id": 14606973432,
+    "name": "desktop-macos-preview-universal",
+    "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44686036872/artifacts/14606973432",
+    "archive_size_bytes": 27458038,
+    "archive_sha256": "ff599a0a9c0ae8744accb9f7d953c264909335aba6dbe219cd5af8eb9158daac",
+    "digest_source": "GitHub artifact API and successful upload log, not local binary hashing",
+    "local_download": "unavailable after gh TLS timeout and bounded standard-library transfer failure"
+  },
+  "verified_by_successful_ci_steps": {
+    "bundle": "Copilot Desktop_0.0.0-ci_universal.dmg",
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ],
+    "minimum_macos": "13.0",
+    "mounted_verifier_output": "Verified 1 Universal Mach-O image(s), macOS 13.0 or newer.",
+    "signature": "ad-hoc identity -, codesign --verify --deep --strict passed",
+    "notarization": false
+  },
+  "local_log": ".implementation/artifacts/macos/completion-44686036872.log",
+  "limitations": [
+    "Enclosed DMG hash and verification.json were not locally downloaded or inspected.",
+    "Native compile/signature evidence does not certify interactive microphone, screen-capture permissions, call detection or Focus behavior.",
+    "Development preview, not notarized or published to production."
+  ]
+}

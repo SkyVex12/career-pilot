@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import re
+from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -11,10 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep, require_link
 from copilot_api.routes import ask
 from copilot_core import practice
-from copilot_core.ask import Scope
+from copilot_core.ask import Scope, semantic_window
 from copilot_core.auth import Principal
 from copilot_core.db import Conn
-from copilot_core.languages import validate_language
+from copilot_core.languages import (
+    practice_voice_supported,
+    recognition_supported,
+    validate_language,
+)
 from copilot_core.llm import LLMRequest, ModelRouter, Route
 from copilot_core.providers import make_providers, openai_params
 
@@ -62,11 +68,25 @@ async def save(
     )
 
 
-def public(sid: UUID, state: dict[str, Any]) -> dict[str, Any]:
+def public(sid: UUID, state: dict[str, Any], svc: Services) -> dict[str, Any]:
     result = {k: v for k, v in state.items() if k not in ("pending", "active_operation")}
     result["sources"] = [
         {k: v for k, v in source.items() if k != "content"} for source in state["sources"]
     ]
+    result["voice_available"] = bool(
+        svc.settings.deepgram_api_key
+        and state["spoken_language"] in svc.settings.verified_call_languages
+        and recognition_supported(
+            state["spoken_language"], svc.settings.deepgram_model, ("deepgram",)
+        )
+    )
+    result["speech_available"] = bool(
+        svc.settings.deepgram_api_key
+        and state["spoken_language"] in svc.settings.verified_call_languages
+        and practice_voice_supported(
+            state["spoken_language"], svc.settings.practice_tts_models.get(state["spoken_language"])
+        )
+    )
     return {
         "id": str(sid),
         **result,
@@ -74,6 +94,29 @@ def public(sid: UUID, state: dict[str, Any]) -> dict[str, Any]:
         "retention_notice": "Answers, feedback and generated questions remain until you delete "
         "practice. Raw microphone audio is never retained; transcription text is saved.",
     }
+
+
+async def practice_sources(
+    svc: Services,
+    user: Principal,
+    account: Principal,
+    scope: Scope,
+    query: str,
+    *,
+    preview: bool = False,
+) -> list[dict[str, Any]]:
+    async with svc.tx(user) as conn:
+        sources = await ask.retrieve(
+            conn, svc, user, scope, query, account.user_id, rank_results=not preview
+        )
+    if preview:
+        sources = semantic_window(
+            sources, 9
+        )  # A source preview does not make embedding/model calls.
+    # Explicit private context is already scoped to this account/profile and selected
+    # application. Keep its provenance and re-read current versions before each turn.
+    briefs = await ask.private_brief_sources(svc, user, account, scope)
+    return [*briefs, *sources][:12]
 
 
 @router.get("/context")
@@ -85,10 +128,9 @@ async def preview_context(
 ) -> dict[str, Any]:
     """Preview authorized source records without starting a practice or provider call."""
     scope = Scope(kind="application", id=application_id) if application_id else Scope()
-    async with svc.tx(user) as conn:
-        sources = await ask.retrieve(
-            conn, svc, user, scope, "projects experience skills", account.user_id
-        )
+    sources = await practice_sources(
+        svc, user, account, scope, "projects experience skills", preview=True
+    )
     return {
         "sources": [
             {k: v for k, v in source.items() if k != "content"}
@@ -152,7 +194,7 @@ async def create_session(
             if existing["request_hash"] != hashed or existing["profile_id"] != user.user_id:
                 raise HTTPException(409, "request_id already used with another setup")
             _, state = await load(conn, svc, account, user, existing["id"])
-            return public(existing["id"], state)
+            return public(existing["id"], state, svc)
     async with svc.tx(user) as conn:
         language = (
             body.spoken_language
@@ -166,9 +208,9 @@ async def create_session(
         scope = (
             Scope(kind="application", id=body.application_id) if body.application_id else Scope()
         )
-        sources = await ask.retrieve(
-            conn, svc, user, scope, body.topic + " projects experience skills", account.user_id
-        )
+    sources = await practice_sources(
+        svc, user, account, scope, body.topic + " projects experience skills"
+    )
     imported = None
     if body.source_question:
         selected = body.source_question
@@ -224,7 +266,7 @@ async def create_session(
             hashed,
         )
     background.add_task(generate, svc, user, account, sid, operation)
-    return public(sid, state)
+    return public(sid, state, svc)
 
 
 @router.get("/sessions/{sid}")
@@ -247,14 +289,9 @@ async def get_session(sid: UUID, svc: SvcDep, user: UserDep, account: AccountDep
                     sid,
                 )
                 await save(conn, svc, account, sid, state)
-    result = public(sid, state)
+    result = public(sid, state, svc)
     result["created_at"] = row["created_at"]
     result["updated_at"] = row["updated_at"]
-    result["voice_available"] = bool(svc.settings.deepgram_api_key)
-    result["speech_available"] = bool(
-        svc.settings.deepgram_api_key
-        and getattr(svc.settings, "practice_tts_models", {}).get(state["spoken_language"])
-    )
     return result
 
 
@@ -279,7 +316,7 @@ async def action(
         if previous:
             if previous["request_hash"] != hashed:
                 raise HTTPException(409, "request_id already used with another action")
-            return public(sid, state)
+            return public(sid, state, svc)
         try:
             needs_model = practice.reduce(state, body)
         except practice.PracticeError as exc:
@@ -308,7 +345,7 @@ async def action(
         task.cancel()
     if needs_model:
         background.add_task(generate, svc, user, account, sid, body.request_id)
-    return public(sid, state)
+    return public(sid, state, svc)
 
 
 @router.delete("/sessions/{sid}", status_code=204)
@@ -368,6 +405,14 @@ async def generate(
                 return
         # Resolve again on every turn so deleted material is never reintroduced as evidence.
         authorized: list[dict[str, Any]] = []
+        setup = state["setup"]
+        application_id = setup.get("application_id")
+        scope = Scope(kind="application", id=UUID(application_id)) if application_id else Scope()
+        current_briefs = await ask.private_brief_sources(svc, user, account, scope)
+        # Old brief versions can remain readable for old citations; only currently
+        # active versions may become evidence for a new generation.
+        state["sources"] = [s for s in state["sources"] if s["kind"] != "private_brief"]
+        state["sources"] = [*current_briefs, *state["sources"]][:12]
         for source in state["sources"]:
             try:
                 resolved = await ask.resolve_source(
@@ -446,10 +491,44 @@ async def generate(
             _running.pop(sid, None)
 
 
+def practice_keyterms(question: str, sources: list[dict[str, Any]]) -> list[str]:
+    """Bounded proper-name/product hints; audio alone remains the transcript source."""
+    text = question[:2000] + " " + " ".join(str(s.get("label", ""))[:150] for s in sources[:12])
+    common = {
+        "Describe",
+        "Explain",
+        "Tell",
+        "What",
+        "How",
+        "When",
+        "Which",
+        "Why",
+        "Could",
+        "Would",
+        "Can",
+        "Resume",
+        "Original",
+        "Kind",
+        "Private",
+        "Interview",
+    }
+    return list(
+        dict.fromkeys(
+            word for word in re.findall(r"[A-Z][A-Za-z0-9+#.-]{1,39}", text) if word not in common
+        )
+    )[:20]
+
+
 # Voice is microphone-only at the client. Only these explicit uploads reach recognition;
 # generated interviewer audio is never written as a candidate transcript.
 async def voice_request(
-    svc: Services, kind: str, payload: bytes, content_type: str, language: str, text: str = ""
+    svc: Services,
+    kind: str,
+    payload: bytes,
+    content_type: str,
+    language: str,
+    text: str = "",
+    keyterms: Sequence[str] = (),
 ) -> bytes:
     import httpx2
 
@@ -458,11 +537,23 @@ async def voice_request(
     key = svc.settings.deepgram_api_key
     if key is None:
         raise HTTPException(503, "Voice is not configured. Continue in text mode.")
+    try:
+        validate_language(language, svc.settings.verified_call_languages)
+    except ValueError as exc:
+        raise HTTPException(
+            503, "Voice is unavailable for this session language; use text."
+        ) from exc
+    if kind != "speech" and not recognition_supported(
+        language, svc.settings.deepgram_model, ("deepgram",)
+    ):
+        raise HTTPException(
+            503, "Microphone transcription is unavailable in this language; use text."
+        )
     headers = {"Authorization": "Token " + key.get_secret_value()}
     async with httpx2.AsyncClient(timeout=90) as client:
         if kind == "speech":
             model = getattr(svc.settings, "practice_tts_models", {}).get(language)
-            if not model:
+            if not practice_voice_supported(language, model):
                 raise HTTPException(
                     503, "Speech playback is unavailable in this language; use text."
                 )
@@ -474,14 +565,21 @@ async def voice_request(
             )
             response.raise_for_status()
             return response.content
+        params: list[tuple[str, str]] = [
+            ("model", svc.settings.deepgram_model),
+            ("smart_format", "true"),
+            ("language", CALL_LANGUAGES[language].deepgram_code),
+            ("mip_opt_out", "true"),
+            ("redact_usage", "true"),
+        ]
+        if svc.settings.deepgram_model in {"nova-3", "nova-3-general"}:
+            params.extend(
+                ("keyterm", term[:40]) for term in dict.fromkeys(keyterms) if term.strip()
+            )
+            params = params[:25]  # At most 20 short hints; below the provider 500-token limit.
         response = await client.post(
             "https://api.deepgram.com/v1/listen",
-            params={
-                "model": svc.settings.deepgram_model,
-                "smart_format": "true",
-                "language": CALL_LANGUAGES[language].deepgram_code,
-                "mip_opt_out": "true",
-            },
+            params=tuple(params),
             headers={**headers, "Content-Type": content_type},
             content=payload,
         )
@@ -562,7 +660,15 @@ async def media(
             hashed,
         )
     pending = asyncio.create_task(
-        voice_request(svc, kind, payload, content_type, state["spoken_language"], question["text"])
+        voice_request(
+            svc,
+            kind,
+            payload,
+            content_type,
+            state["spoken_language"],
+            question["text"],
+            keyterms=practice_keyterms(question["text"], state["sources"]),
+        )
     )
     try:
         async with asyncio.timeout(100):

@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-20",
+  "status": "passed_superseded_mobile_candidate",
+  "source_commit": "b3736ae0736fe83bebabbacfe82e86608f6c42e9",
+  "run_url": "https://github.com/SkyVex12/career-pilot/actions/runs/44688789078",
+  "checks": {
+    "tests": 69,
+    "typescript": "passed",
+    "secure_exports": "Android and iOS passed"
+  },
+  "native": {
+    "android": {
+      "result": "BUILD SUCCESSFUL in 7m 32s",
+      "variant": "release, arm64-v8a, development signing, secure transport policy",
+      "runtime_acceptance": "not tested for this secure APK"
+    },
+    "ios": {
+      "result": "BUILD SUCCEEDED",
+      "xcode": "26.4.1",
+      "configuration": "Release iphonesimulator arm64, CODE_SIGNING_ALLOWED=NO",
+      "physical_iphone_installable": false
+    }
+  },
+  "artifacts": [
+    {
+      "id": 14608320925,
+      "name": "career-pilot-android-preview",
+      "archive_size_bytes": 12241211,
+      "archive_sha256": "0bd3c359c31104ccbde93fdf5f185601f4edc7da1dd76ca6ec346cc222e55bf2",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44688789078/artifacts/14608320925"
+    },
+    {
+      "id": 14608166629,
+      "name": "career-pilot-ios-simulator",
+      "archive_size_bytes": 10209173,
+      "archive_sha256": "afa482179d42b469ac9eea271f1edba8cb8a74167ea145f218776379eac5a788",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44688789078/artifacts/14608166629"
+    },
+    {
+      "id": 14608341112,
+      "name": "career-pilot-ios-build-evidence",
+      "archive_size_bytes": 605215,
+      "archive_sha256": "f0687f29af33b025a7c95ba59e6d6ecfaf7ef6120211116e9c21e62c60f15ff4",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44688789078/artifacts/14608341112"
+    }
+  ],
+  "local_log": ".implementation/artifacts/mobile/native-candidate-b3736ae.log",
+  "local_binary_inspection": false,
+  "download_note": "Bounded GitHub artifact downloads failed at storage TLS connection; successful CI log was retrieved. Digests are GitHub archive digests, not enclosed APK/app hashes.",
+  "superseded_by": "ed4ef21 mobile lifecycle corrections; do not present this candidate as final current mobile source."
+}

@@ -2288,6 +2288,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_calendar_authorization,
             background::background_status,
+            background::background_detection_status,
             background::background_suggestion,
             background::background_respond,
             background::background_take_accepted,

@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "status": "verified_native_package",
+  "artifact": "CareerPilot-0.1.0-completion-http-test.apk",
+  "path": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.apk",
+  "bytes": 56081446,
+  "sha256": "d5c911784be74861a074d4e30ec557b006a48ea7809b2fecb0d8deac84931b7b",
+  "artifact_modified_at": "2026-11-20T06:46:15.795459+00:00",
+  "verified_at": "2026-11-20T06:48:35.872601+00:00",
+  "source_commit": "ed4ef21d64ced73d06ba6346e614c815e13c4bd3",
+  "branch": "codex/mobile-local-http-testing",
+  "source_provenance": {
+    "product_source_clean": true,
+    "tracked_documentation_changes": [
+      "apps/mobile/BUILD-VALIDATION.md",
+      "apps/mobile/README.md",
+      "apps/mobile/scripts/NATIVE-ACCEPTANCE.md"
+    ],
+    "input_manifest": ".implementation/mobile-completion-source-inputs.json",
+    "input_manifest_sha256": "2ae4eee97dbb64159862ab458c368e2e8d66a68961f64a822cd3faed0adbf579",
+    "input_count": 108,
+    "inputs_unchanged_during_verification": true,
+    "matches_gradle_output": true,
+    "note": "Mobile product source matches the frozen commit. Includes shared account-scoped grant retirement and explicit practice setup retry, in addition to terminal WebSocket recovery. Only mobile documentation is modified; unrelated workspace changes are outside this artifact's input scope. Native UI acceptance is reported separately."
+  },
+  "package": "app.careerpilot.mobile.httptest",
+  "label": "Career Pilot HTTP Test",
+  "version_name": "0.1.0-http-test",
+  "version_code": 1,
+  "min_sdk": 24,
+  "target_sdk": 36,
+  "compile_sdk": 37,
+  "abis": [
+    "arm64-v8a",
+    "x86_64"
+  ],
+  "debuggable": false,
+  "allow_backup": false,
+  "cleartext_enabled": true,
+  "transport_policy": {
+    "variant": "httpTest",
+    "production_manifest_cleartext": false,
+    "policy_scope": "Cleartext is enabled only by the explicitly named Android HTTP-test variant. Standard release source rejects cleartext; no new standard-release APK is claimed by this receipt."
+  },
+  "deep_link_schemes": [
+    "careerpilot-httptest",
+    "exp+career-pilot-mobile-httptest"
+  ],
+  "signature": {
+    "verification": "passed",
+    "scheme": "APK Signature Scheme v2",
+    "signers": 1,
+    "certificate_dn": "CN=Android Debug, OU=Android, O=Unknown, L=Unknown, ST=Unknown, C=US",
+    "certificate_sha256": "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c",
+    "distribution": "Development certificate; not an owner-signed store release"
+  },
+  "hermes": {
+    "entry": "assets/index.android.bundle",
+    "bytes": 1811180,
+    "sha256": "1841759d0ed294738145bb1d8ff87aa2bc6c0ff2315120a89eb1274658490cdb",
+    "magic_hex": "c61fbc03c103191f",
+    "bytecode_version": 99,
+    "metro_required": false
+  },
+  "native_libraries": [
+    "lib/arm64-v8a/libappmodules.so",
+    "lib/arm64-v8a/libc++_shared.so",
+    "lib/arm64-v8a/libexpo-modules-core.so",
+    "lib/arm64-v8a/libexpo-modules-jsi.so",
+    "lib/arm64-v8a/libexpo-modules-v2.so",
+    "lib/arm64-v8a/libfbjni.so",
+    "lib/arm64-v8a/libgifimage.so",
+    "lib/arm64-v8a/libhermestooling.so",
+    "lib/arm64-v8a/libhermesvm.so",
+    "lib/arm64-v8a/libimagepipeline.so",
+    "lib/arm64-v8a/libjsi.so",
+    "lib/arm64-v8a/libnative-filters.so",
+    "lib/arm64-v8a/libnative-imagetranscoder.so",
+    "lib/arm64-v8a/liboboe.so",
+    "lib/arm64-v8a/libreact-native-audio-api.so",
+    "lib/arm64-v8a/libreact_codegen_rnsvg.so",
+    "lib/arm64-v8a/libreact_codegen_safeareacontext.so",
+    "lib/arm64-v8a/libreactnative.so",
+    "lib/arm64-v8a/libstatic-webp.so",
+    "lib/arm64-v8a/libzstd-kmp.so",
+    "lib/x86_64/libappmodules.so",
+    "lib/x86_64/libc++_shared.so",
+    "lib/x86_64/libexpo-modules-core.so",
+    "lib/x86_64/libexpo-modules-jsi.so",
+    "lib/x86_64/libexpo-modules-v2.so",
+    "lib/x86_64/libfbjni.so",
+    "lib/x86_64/libgifimage.so",
+    "lib/x86_64/libhermestooling.so",
+    "lib/x86_64/libhermesvm.so",
+    "lib/x86_64/libimagepipeline.so",
+    "lib/x86_64/libjsi.so",
+    "lib/x86_64/libnative-filters.so",
+    "lib/x86_64/libnative-imagetranscoder.so",
+    "lib/x86_64/liboboe.so",
+    "lib/x86_64/libreact-native-audio-api.so",
+    "lib/x86_64/libreact_codegen_rnsvg.so",
+    "lib/x86_64/libreact_codegen_safeareacontext.so",
+    "lib/x86_64/libreactnative.so",
+    "lib/x86_64/libstatic-webp.so",
+    "lib/x86_64/libzstd-kmp.so"
+  ],
+  "verified_native_modules": [
+    {
+      "path": "lib/arm64-v8a/libappmodules.so",
+      "bytes": 872720,
+      "sha256": "b27d5c532725532f79218be7a17edd8f11cc764274a95d5fd883480bd1314b9c",
+      "elf_machine": 183
+    },
+    {
+      "path": "lib/arm64-v8a/libhermesvm.so",
+      "bytes": 2705536,
+      "sha256": "692e6644a32faead01e1a06b8b95d49b1c77c0b7e687e8cf09c26f46ff8bf55d",
+      "elf_machine": 183
+    },
+    {
+      "path": "lib/arm64-v8a/libreact-native-audio-api.so",
+      "bytes": 2924512,
+      "sha256": "3db6cbe2d12ca5bade0cae93f593abcf3c280887173634f721ec23b4a9dfb6ac",
+      "elf_machine": 183
+    },
+    {
+      "path": "lib/arm64-v8a/libreact_codegen_rnsvg.so",
+      "bytes": 772008,
+      "sha256": "2f295b299f195a2324938c406e6ef061454b9cccdf6c1075e9917a51725a1329",
+      "elf_machine": 183
+    },
+    {
+      "path": "lib/x86_64/libappmodules.so",
+      "bytes": 910600,
+      "sha256": "e1ee5ddfca5494389cddb897104f0dacb023ab5f768e8734d2e40a00e27ac49a",
+      "elf_machine": 62
+    },
+    {
+      "path": "lib/x86_64/libhermesvm.so",
+      "bytes": 2832176,
+      "sha256": "aaff59d9a36ed9aeb933186c24ae1bfd0db65cdf7a63c26c53709485662b643f",
+      "elf_machine": 62
+    },
+    {
+      "path": "lib/x86_64/libreact-native-audio-api.so",
+      "bytes": 3154688,
+      "sha256": "430724b3db4315da75d641329a7cc553d229630eb79872700d8d44610c734940",
+      "elf_machine": 62
+    },
+    {
+      "path": "lib/x86_64/libreact_codegen_rnsvg.so",
+      "bytes": 863728,
+      "sha256": "3a2b12571f8a3ad2a79c26c365ab25b719088ffd44fe518aabeb265c9eeaa5f2",
+      "elf_machine": 62
+    }
+  ],
+  "public_bundle_marker_checks": {
+    "/auth/token/refresh": true,
+    "/auth/token/signout": true,
+    "/client-capabilities": true,
+    "career-pilot-companion-device-v1": true,
+    "HTTP test": true,
+    "Retry setup choices": true,
+    "This display was disconnected while connecting.": true
+  },
+  "server_prefill": {
+    "previous_stage0_ip_embedded": false,
+    "local_fixture_endpoint_embedded": false,
+    "usage": "Enter the intended API origin and optional gateway, or restore this installation's previously saved addresses."
+  },
+  "build": {
+    "log": ".implementation/mobile-completion-lifecycle-build.log",
+    "log_sha256": "6ed14a4c9f3e68ed1328322b6422bed70bb97dbf7f3e0ced28def41241cbbc18",
+    "result": "success",
+    "duration_seconds": 58,
+    "tasks": 661,
+    "executed": 22,
+    "up_to_date": 639,
+    "release_lint": "passed"
+  },
+  "validation": {
+    "aapt_badging_and_manifest": "passed",
+    "apksigner_verify": "passed",
+    "zipalign_4_byte": "passed",
+    "both_abis_audio_svg_hermes_elf": "passed",
+    "embedded_hermes": "passed",
+    "mobile_tests": {
+      "passed": 74,
+      "failed": 0,
+      "log": ".implementation/mobile-completion-final-tests.log",
+      "log_sha256": "47cdbaa147b938638224885f960a5c1ed7a9b50cb64344a0af93769d2195f5ee",
+      "source_commit": "ed4ef21d64ced73d06ba6346e614c815e13c4bd3"
+    },
+    "strict_typescript": "passed after final integration corrections (integration owner validation)",
+    "android_ios_hermes_export": "Passed at d8b9048 with unchanged ed4ef21 mobile product inputs; final hosted receipt records exact workflow provenance.",
+    "native_ui_acceptance": {
+      "status": "completed_scoped_broad_suite_and_final_targeted_recovery",
+      "receipt": "docs/implementation/evidence/mobile-native-2026-11-20.json",
+      "receipt_sha256": "630702fede4d3331773fe5316be40bc2edf14626939c9d3f4060d1dc5530f2f1",
+      "note": "Broad native suite ran through b3736ae; finaled4ef21 installed package passed setup503\u2192Retry\u219224languages and malformedsnapshot\u2192Retry\u2192livecommand checks. The linked receipt preserves exact sources and limits. The static package verifier did not operate ADB."
+    }
+  },
+  "hosted_validation": {
+    "head": "d8b9048",
+    "status_at_receipt": "success: 74 mobile tests, TypeScript, Android/iOS exports, secure Android native build and unsigned iOS simulator build passed.",
+    "previous_native_run": {
+      "head": "b3736ae0736fe83bebabbacfe82e86608f6c42e9",
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44688789078",
+      "conclusion": "success",
+      "native_jobs": [
+        "secure Android preview",
+        "iOS simulator"
+      ],
+      "verification": "Reported by CI evidence owner; artifact receipts recorded separately."
+    },
+    "note": "Final hosted native success is recorded separately from this locally inspected HTTP-test APK; signing, archive digests and inspection limits remain explicit.",
+    "mobile_product_source": "ed4ef21",
+    "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44690564500",
+    "receipt": "docs/implementation/evidence/mobile-completion-hosted-2026-11-20.json"
+  },
+  "limitations": [
+    "HTTP/WS carries sign-in/content without transport encryption; use test accounts/content.",
+    "Development-signed internal APK; not an owner-signed store release.",
+    "No real calendar consent, production proxy/TLS deployment or provider/device-quality certification follows from packaging.",
+    "No emulator or physical device was inspected or changed by this static verifier.",
+    "Native UI acceptance is a fictional-service emulator trial with explicit limits in its linked receipt; current secure Android/iOS/Universal Mac artifact results are recorded separately."
+  ],
+  "prior_candidate": {
+    "source_commit": "a9af8309f8a74148e31107b38bc723831a5de9b6",
+    "bytes": 56078310,
+    "sha256": "34d29a166922808b8a479cdb7522d5a671c25cb134bd5d2596229084aa092453",
+    "status": "superseded_by_recovery_fix",
+    "receipt": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.a9af830-candidate.receipt.json",
+    "prior_ci": {
+      "url": "https://github.com/SkyVex12/career-pilot/actions/runs/44686436871",
+      "head": "a9af8309f8a74148e31107b38bc723831a5de9b6",
+      "conclusion": "success",
+      "checks": [
+        "npm ci",
+        "npm run typecheck",
+        "npm test",
+        "npm run export"
+      ],
+      "native_jobs": "not requested; skipped"
+    }
+  },
+  "previous_verified_package": {
+    "source_commit": "b3736ae0736fe83bebabbacfe82e86608f6c42e9",
+    "bytes": 56078642,
+    "sha256": "a08a14581b7d8de299cf09d5942bf694e51ace2bf46eba12109cdf3971f2ec90",
+    "status": "superseded_by_lifecycle_and_setup_retry_fixes",
+    "artifact": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.b3736ae-candidate.apk",
+    "receipt": ".implementation/artifacts/mobile/CareerPilot-0.1.0-completion-http-test.b3736ae-candidate.receipt.json"
+  }
+}

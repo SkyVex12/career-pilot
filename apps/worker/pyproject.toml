@@ -5,6 +5,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "copilot-core",
   "tzdata>=2025.1",
+  "pypdf>=7.0.1,<8",
 ]
 
 [project.scripts]

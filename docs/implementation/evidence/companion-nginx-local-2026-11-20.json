@@ -1,0 +1,17 @@
+{
+  "validated_at": "2026-11-20T05:51:59.802852+00:00",
+  "environment": "isolated local Docker Desktop; localhost listeners only",
+  "test": "tests/test_proxy_forwarding.py::test_actual_nginx_companion_upgrade_and_rest_fallback",
+  "command": "COPILOT_PROXY_TEST=1 python -m pytest tests/test_proxy_forwarding.py -q -p no:cacheprovider",
+  "result": "1 passed in 3.11s",
+  "nginx_image": "public.ecr.aws/nginx/nginx:1.29-alpine",
+  "routing_config_sha256": "a87754aabaabd8f229869dc11840439d4e013267b7c98697fcf9849f14b0bb62",
+  "upstream": "fictional native_fixture.py; test-only tokens",
+  "assertions": [
+    "REST companion attachment reaches API fallback with HTTP200",
+    "Exact /v1/companion WebSocket upgrades with HTTP101",
+    "companion.ready, companion.snapshot and companion.host frames pass through nginx"
+  ],
+  "cleanup": "test container removed; fixture subprocess terminated",
+  "production_mutation": false
+}

@@ -28,6 +28,7 @@ class DeepgramSTT:
             ("interim_results", "true"),
             ("punctuate", "true"),
             ("smart_format", "true"),
+            ("redact_usage", "true"),
         ]
         params += [("keyterm", term) for term in keyterms or []]
         self.url = f"{url}?{urlencode(params)}"

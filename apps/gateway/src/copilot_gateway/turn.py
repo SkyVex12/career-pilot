@@ -66,6 +66,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import UUID
 
+from copilot_core.languages import has_question_cue, speech_units
 from copilot_gateway.stt import TimedResult
 
 
@@ -117,20 +118,13 @@ def likely_question(text: str, min_words: int = 3, spoken_language: str = "en") 
     lets through by mistake costs one discarded fast pass, and one it misses still gets its
     fast pass once the detector fires, only later.
     """
-    words = re.sub(r"[^\w\s]", "", text.lower()).split()
-    if len(words) < min_words:
+    if speech_units(text, spoken_language) < min_words:
         return False
-    local_words = {
-        "es": {"qué", "cómo", "cuál", "cuáles", "cuándo", "dónde", "quién", "puedes", "podrías"},
-        "vi": {"gì", "sao", "nào", "ai", "đâu"},
-    }
-    cues = {"es": ("háblame", "cuéntame", "explica"), "vi": ("hãy", "có thể", "bao nhiêu")}
     if spoken_language != "en":
-        return (
-            "?" in text
-            or bool(local_words.get(spoken_language, set()).intersection(words))
-            or any(cue in " ".join(words) for cue in cues.get(spoken_language, ()))
+        return any(mark in text for mark in "?\uff1f\u061f") or has_question_cue(
+            text, spoken_language
         )
+    words = re.sub(r"[^\w\s]", "", text.lower()).split()
     if "?" in text or QUESTION_WORDS.intersection(words):
         return True
     joined = " ".join(words)
@@ -599,7 +593,11 @@ class TurnDetector:
         if self.early_s is None or not (self.group_call() or self.early_all_modes):
             return
         text = self.utterance()
-        if not text or text[-1] not in ".?!" or len(_words(text)) < self.hold_min_words:
+        if (
+            not text
+            or text[-1] not in ".?!\u3002\uff1f\uff01\u061f"
+            or speech_units(text, self.spoken_language) < self.hold_min_words
+        ):
             return
         if self.early is not None and not materially_changed(self.early.cand.text, text):
             return
@@ -788,7 +786,7 @@ class TurnDetector:
         if likely_question(text, self.hold_min_words, self.spoken_language):
             return True
         n = self.hold_any_min_words
-        return n is not None and self.group_call() and len(_words(text)) >= n
+        return n is not None and self.group_call() and speech_units(text, self.spoken_language) >= n
 
     def _hold(self, turn: _Turn, text: str, match: "asyncio.Task[object] | None") -> None:
         """Step 1: a held fast pass alongside the detector, if the text looks like a question
