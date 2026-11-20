@@ -4,6 +4,12 @@
 //! foreground startup work when `background_start_requested()` is true. The frontend
 //! must inspect `background_status` before starting its own API/bootstrap work.
 
+#[path = "call_detection.rs"]
+mod detection;
+#[cfg(target_os = "macos")]
+#[path = "call_detection_macos.rs"]
+mod macos;
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex,
@@ -29,6 +35,8 @@ pub(crate) struct BackgroundPreferences {
     pub launch_at_login: bool,
     pub keep_running: bool,
     pub suggestions_paused: bool,
+    pub call_suggestions: bool,
+    pub disabled_apps: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -39,6 +47,7 @@ pub(crate) struct BackgroundStatus {
     /// Whether the requested entry is currently present. Does not claim OS policy allows it.
     pub login_entry_present: bool,
     pub call_detection_available: bool,
+    pub accessibility_required: bool,
     pub limitation: &'static str,
 }
 
@@ -48,6 +57,8 @@ struct BackgroundState {
     pause_item: CheckMenuItem<tauri::Wry>,
     background_start: AtomicBool,
     exiting: AtomicBool,
+    detector: Mutex<detection::Detector>,
+    accepted: Mutex<Option<&'static str>>,
 }
 
 pub(crate) fn is_background_arguments<'a>(args: impl IntoIterator<Item = &'a str>) -> bool {
@@ -87,10 +98,10 @@ pub(crate) fn open(app: &AppHandle) -> Result<(), String> {
 
 /// Keep the existing single-instance plugin; background login launches must not steal focus.
 pub(crate) fn second_instance(app: &AppHandle, args: &[String]) {
-    if !is_background_arguments(args.iter().map(String::as_str)) {
-        if let Err(error) = open(app) {
-            tracing::warn!("Could not restore workspace: {error}");
-        }
+    if !is_background_arguments(args.iter().map(String::as_str))
+        && let Err(error) = open(app)
+    {
+        tracing::warn!("Could not restore workspace: {error}");
     }
 }
 
@@ -122,6 +133,8 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
         pause_item,
         background_start: AtomicBool::new(background_start_requested()),
         exiting: AtomicBool::new(false),
+        detector: Mutex::new(detection::Detector::default()),
+        accepted: Mutex::new(None),
     });
     TrayIconBuilder::with_id("ruby-background")
         .icon(icon)
@@ -163,10 +176,13 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
         })
         .build(app)
         .map_err(|e| e.to_string())?;
-    if background_start_requested() {
-        if let Some(main) = app.get_webview_window("main") {
-            main.hide().map_err(|e| e.to_string())?;
-        }
+    #[cfg(target_os = "macos")]
+    macos::setup(app.clone());
+    start_detection(app.clone());
+    if background_start_requested()
+        && let Some(main) = app.get_webview_window("main")
+    {
+        main.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -199,8 +215,9 @@ pub(crate) fn background_status(app: AppHandle) -> Result<BackgroundStatus, Stri
         background_start: state.background_start.load(Ordering::SeqCst),
         launch_at_login_supported: cfg!(any(windows, target_os = "macos")),
         login_entry_present: login_entry_present(&app)?,
-        call_detection_available: false,
-        limitation: "Native call adapters are not yet verified. Background controls do not record audio. Login changes take effect at the next sign-in; OS policy may disable startup.",
+        call_detection_available: cfg!(any(windows, target_os = "macos")),
+        accessibility_required: cfg!(target_os = "macos"),
+        limitation: "Windows experimental detection checks accessible call controls and native microphone activity without recording. English control labels only; real app calls are not yet certified. macOS requires Accessibility and notification permission; system notifications respect Focus. macOS full app linking and device behavior are not yet verified. Login changes take effect at the next sign-in; OS policy may disable startup.",
     })
 }
 
@@ -216,10 +233,10 @@ pub(crate) fn background_set_preferences(
             set_launch_at_login(&app, preferences.launch_at_login)?;
         }
         if let Err(error) = save(&state.path, &preferences) {
-            if current.launch_at_login != preferences.launch_at_login {
-                if let Err(rollback) = set_launch_at_login(&app, current.launch_at_login) {
-                    return Err(format!("{error}; login rollback failed: {rollback}"));
-                }
+            if current.launch_at_login != preferences.launch_at_login
+                && let Err(rollback) = set_launch_at_login(&app, current.launch_at_login)
+            {
+                return Err(format!("{error}; login rollback failed: {rollback}"));
             }
             return Err(error);
         }
@@ -408,8 +425,12 @@ mod tests {
 
     #[test]
     fn preferences_roundtrip_without_tokens() {
-        let preferences =
-            BackgroundPreferences { keep_running: true, suggestions_paused: true, launch_at_login: false };
+        let preferences = BackgroundPreferences {
+            keep_running: true,
+            suggestions_paused: true,
+            launch_at_login: false,
+            ..Default::default()
+        };
         let text = serde_json::to_string(&preferences).unwrap();
         assert_eq!(serde_json::from_str::<BackgroundPreferences>(&text).unwrap(), preferences);
         assert!(!text.contains("token"));
@@ -549,8 +570,12 @@ mod native_tests {
         let directory = std::env::temp_dir().join(format!("ruby-background-test-{}", uuid::Uuid::now_v7()));
         let path = directory.join("background.json");
         assert_eq!(load(&path).unwrap(), BackgroundPreferences::default());
-        let expected =
-            BackgroundPreferences { keep_running: true, launch_at_login: false, suggestions_paused: true };
+        let expected = BackgroundPreferences {
+            keep_running: true,
+            launch_at_login: false,
+            suggestions_paused: true,
+            ..Default::default()
+        };
         save(&path, &expected).unwrap();
         assert_eq!(load(&path).unwrap(), expected);
         std::fs::write(&path, b"{broken").unwrap();
@@ -575,3 +600,128 @@ mod native_tests {
     }
 }
 
+const SUGGESTION_EVENT: &str = "copilot://call-suggestion";
+
+fn start_detection(app: AppHandle) {
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let state = app.state::<BackgroundState>();
+            if state.exiting.load(Ordering::SeqCst) {
+                break;
+            }
+            let prefs = match state.preferences.lock() {
+                Ok(p) => p.clone(),
+                Err(_) => continue,
+            };
+            let enabled = cfg!(any(windows, target_os = "macos"))
+                && prefs.call_suggestions
+                && !prefs.suggestions_paused;
+            let (mut evidence, notifications) = if enabled {
+                match detection::sample_with_tracking(
+                    state.detector.lock().map(|d| d.tracking()).unwrap_or(false),
+                ) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                }
+            } else {
+                (vec![], false)
+            };
+            evidence.retain(|e| !prefs.disabled_apps.contains(&e.app));
+            let active = app.try_state::<crate::AppState>().is_some_and(|s| {
+                s.gate.starting()
+                    || s.engine.lock().map(|e| e.is_some()).unwrap_or(true)
+                    || s.seat.lock().map(|e| e.is_some()).unwrap_or(true)
+            });
+            let mut detector = match state.detector.lock() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let before = detector.pending.clone();
+            detector.suppress_apps(&prefs.disabled_apps);
+            if enabled {
+                detector.tick(started.elapsed().as_secs(), &evidence, notifications, active);
+            } else {
+                // Pausing must not forget a dismissed call and re-offer it on resume.
+                detector.pending = None;
+            }
+            let next = detector.pending.clone();
+            drop(detector);
+            if before != next {
+                let _ = app.emit(SUGGESTION_EVENT, &next);
+                #[cfg(target_os = "macos")]
+                macos::notify(next.as_ref());
+                #[cfg(not(target_os = "macos"))]
+                if next.is_some() {
+                    if let Some(window) = app.get_webview_window("call-suggestion") {
+                        let _ = window.show();
+                    } else {
+                        let _ = tauri::WebviewWindowBuilder::new(
+                            &app,
+                            "call-suggestion",
+                            tauri::WebviewUrl::App("index.html?call-suggestion".into()),
+                        )
+                        .title("Call detected")
+                        .inner_size(340.0, 150.0)
+                        .resizable(false)
+                        .always_on_top(true)
+                        .skip_taskbar(true)
+                        .closable(false)
+                        .focused(false)
+                        .build();
+                    }
+                } else if let Some(window) = app.get_webview_window("call-suggestion") {
+                    let _ = window.hide();
+                }
+            }
+        }
+    });
+}
+
+#[tauri::command]
+pub(crate) fn background_suggestion(app: AppHandle) -> Result<Option<detection::Suggestion>, String> {
+    let state = app.state::<BackgroundState>();
+    let result = state.detector.lock().map_err(|e| e.to_string())?.pending.clone();
+    Ok(result)
+}
+
+#[tauri::command]
+pub(crate) fn background_respond(app: AppHandle, id: String, accept: bool) -> Result<(), String> {
+    let state = app.state::<BackgroundState>();
+    let suggestion =
+        state.detector.lock().map_err(|e| e.to_string())?.respond(&id, accept).ok_or("Suggestion expired")?;
+    if let Some(window) = app.get_webview_window("call-suggestion") {
+        let _ = window.hide();
+    }
+    #[cfg(target_os = "macos")]
+    macos::notify(None);
+    let _ = app.emit(SUGGESTION_EVENT, Option::<detection::Suggestion>::None);
+    if accept {
+        *state.accepted.lock().map_err(|e| e.to_string())? = Some(suggestion.kind);
+        open(&app)?;
+        app.emit("copilot://call-accepted", suggestion.kind).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn background_take_accepted(app: AppHandle) -> Result<Option<&'static str>, String> {
+    let state = app.state::<BackgroundState>();
+    let result = state.accepted.lock().map_err(|e| e.to_string())?.take();
+    Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn background_request_permissions() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    return tauri::async_runtime::spawn_blocking(|| -> Result<bool, String> {
+        macos::request_accessibility()?;
+        let notifications = macos::request_notifications()?;
+        Ok(notifications && macos::trusted())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "macos"))]
+    Err("Extra background permissions are only required on macOS".into())
+}

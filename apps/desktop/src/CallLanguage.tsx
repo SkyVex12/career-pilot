@@ -18,6 +18,7 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
     setLoading(true); onReady?.(false);
     Promise.all([request<Catalog>("GET", "/call-languages"), request<Preference>("GET", "/profile/call-preferences")]).then(([catalog, pref]) => {
       if (!alive) return;
+      if (!Array.isArray(catalog.items) || typeof pref.spoken_language !== "string") throw new Error("The server returned invalid language settings. Retry or update the server.");
       setItems(catalog.items); onChange(pref.spoken_language); setError(null); onReady?.(catalog.items.some(item => item.id === pref.spoken_language));
     }).catch(e => { if (alive) { if (String(e).includes("HTTP 404")) { onChange("en"); onReady?.(true); } else setError(String(e)); } }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };

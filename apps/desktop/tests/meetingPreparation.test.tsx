@@ -1,0 +1,32 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { MeetingPreparation } from "../src/MeetingPreparation";
+import { ipc } from "./ipc";
+it("loads calendar context only when opened and applies a confirmed match without starting a call", async () => {
+  const onChoose = vi.fn();
+  ipc.api("GET", /^\/calendars$/, () => ({items:[{provider:"google",available:true,connected:true,status:"connected",calendars:[{id:"cal",name:"Interviews"}],selected_calendars:["cal"]}]}));
+  ipc.api("GET", /^\/meeting-preparation$/, () => ({connections:[{connection_id:"connection",provider:"google"}],items:[{meeting:{account_id:"connection",calendar_id:"cal",instance_id:"event",title:"Acme interview",start:"2026-11-20T15:00:00Z",end:"2026-11-20T16:00:00Z"},candidates:[{application_id:"app",company:"Acme",job_title:"Engineer"}],selected_application_id:null,requires_confirmation:true,overlaps:true,previous:[{notes:"Prior discussion",unfinished_actions:["Review the design"]}]}]}));
+  render(<MeetingPreparation onChoose={onChoose}/>);
+  expect(ipc.apiCalls()).toHaveLength(0);
+  const disclosure = screen.getByText("Meeting preparation").closest("details")!;
+  disclosure.open = true; fireEvent(disclosure, new Event("toggle"));
+  expect(await screen.findByText("Acme interview")).toBeVisible();
+  expect(onChoose).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("combobox",{name:"Meeting application"}));
+  fireEvent.click(screen.getByRole("option",{name:"Acme · Engineer"}));
+  fireEvent.click(screen.getByRole("button",{name:"Use for call setup"}));
+  expect(onChoose).toHaveBeenCalledWith("Acme interview","app");
+  expect(ipc.calls.some(c => ["start_session","open_session"].includes(c.cmd))).toBe(false);
+});
+it("opens provider consent only on explicit connect", async () => {
+  ipc.api("GET", /^\/calendars$/, () => ({items:[{provider:"google",available:true,connected:false,status:"disconnected",calendars:[],selected_calendars:[]}]}));
+  ipc.api("GET", /^\/meeting-preparation$/, () => ({connections:[],items:[]}));
+  ipc.api("POST", /^\/calendars\/google\/connect$/, () => ({authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?state=opaque"}));
+  render(<MeetingPreparation/>);
+  const disclosure = screen.getByText("Meeting preparation").closest("details")!;
+  disclosure.open = true; fireEvent(disclosure, new Event("toggle"));
+  const connect = await screen.findByRole("button",{name:"Connect read-only calendar"});
+  expect(ipc.calls.some(c => c.cmd === "open_calendar_authorization")).toBe(false);
+  fireEvent.click(connect);
+  await waitFor(() => expect(ipc.calls.find(c => c.cmd === "open_calendar_authorization")?.args.url).toBe("https://accounts.google.com/o/oauth2/v2/auth?state=opaque"));
+});

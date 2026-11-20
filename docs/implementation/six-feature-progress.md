@@ -18,7 +18,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 
 ### Material 01
 - **M01-001** [in progress] Implement background call detection and optional calendar-based meeting preparation in Career Pilot.
-- **M01-002** [in progress] 1. Background operation
+- **M01-002** [implemented] 1. Background operation
 - **M01-003** [implemented] Add an optional background mode for Windows and macOS 13 Ventura and newer, supporting both Apple Silicon and Intel in the existing Universal Mac build.
 - **M01-004** [implemented] Let users enable “Launch at login” and “Keep running in the background.”
 - **M01-005** [implemented] Provide a ruby icon in the Windows system tray or Mac menu bar.
@@ -27,33 +27,33 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-008** [implemented] Keep idle operation lightweight. Prefer native OS events over frequent polling.
 - **M01-009** [implemented] Background startup must not wake the GCP backend, open an audio capture session, or establish a live transcription connection.
 - **M01-010** [implemented] Preserve existing manual app startup and call behavior.
-- **M01-011** [in progress] 2. Detect calls without browser extensions
-- **M01-012** [in progress] Implement detection entirely in the desktop app. Do not require or build a Chrome extension.
-- **M01-013** [in progress] Use native audio-session/device activity, application identity, and other appropriate OS signals to identify likely calls. Audio activity alone must not be treated as proof of a meeting.
-- **M01-014** [pending] Support targets:
-- **M01-015** [pending] Desktop apps: Zoom, Microsoft Teams, Slack, Discord, WhatsApp, and FaceTime where available.
-- **M01-016** [pending] Browser meetings: Google Meet, Zoom Web, and Teams Web in major browsers, without extensions.
-- **M01-017** [pending] Android emulators: BlueStacks and LDPlayer, including multiple running instances.
-- **M01-018** [pending] Phone linking: Microsoft Phone Link on Windows and iPhone call relay on Mac.
-- **M01-019** [pending] Evaluate Samsung Flow, AirDroid, and Lenovo/Motorola Smart Connect for additional integrations.
-- **M01-020** [pending] Separate these capabilities:
-- **M01-021** [pending] Detecting an incoming call.
-- **M01-022** [pending] Detecting an active call.
-- **M01-023** [pending] Accessing the call’s audio through the computer.
-- **M01-024** [pending] Use application-specific adapters where necessary. Preserve macOS 13 compatibility through availability checks and fallbacks.
-- **M01-025** [pending] When the exact browser service, Android app, caller, or meeting title cannot be identified reliably, use a generic “Call detected” message. Do not invent metadata.
-- **M01-026** [pending] Detection must work without recording or transcribing audio. Avoid requiring screen capture just to monitor for calls.
-- **M01-027** [in progress] 3. Call suggestion experience
-- **M01-028** [in progress] When a likely call starts, show one small suggestion without stealing focus:
-- **M01-029** [in progress] Debounce brief activity and filter microphone tests, dictation, media playback, and Copilot’s own audio.
-- **M01-030** [in progress] Show at most one suggestion for the same call.
-- **M01-031** [in progress] Dismissing it should suppress further suggestions for that call.
-- **M01-032** [in progress] Muting, unmuting, changing devices, switching windows, or reconnecting briefly must not repeatedly trigger suggestions.
-- **M01-033** [in progress] Do not suggest starting another session while Copilot already has an active session.
-- **M01-034** [in progress] Respect notification preferences and Do Not Disturb.
-- **M01-035** [in progress] Allow suggestions to be paused temporarily or disabled per application.
-- **M01-036** [in progress] Audio capture and backend session creation begin only after the user accepts.
-- **M01-037** [in progress] When the external call appears to end, offer to end the Copilot session. Do not end it just because participants are silent, the microphone is muted, or there is a brief disconnection.
+- **M01-011** [implemented] 2. Detect calls without browser extensions
+- **M01-012** [implemented] Implement detection entirely in the desktop app. Do not require or build a Chrome extension.
+- **M01-013** [implemented] Use native audio-session/device activity, application identity, and other appropriate OS signals to identify likely calls. Audio activity alone must not be treated as proof of a meeting.
+- **M01-014** [in progress] Support targets:
+- **M01-015** [externally blocked] Desktop apps: Zoom, Microsoft Teams, Slack, Discord, WhatsApp, and FaceTime where available.
+- **M01-016** [externally blocked] Browser meetings: Google Meet, Zoom Web, and Teams Web in major browsers, without extensions.
+- **M01-017** [externally blocked] Android emulators: BlueStacks and LDPlayer, including multiple running instances.
+- **M01-018** [externally blocked] Phone linking: Microsoft Phone Link on Windows and iPhone call relay on Mac.
+- **M01-019** [externally blocked] Evaluate Samsung Flow, AirDroid, and Lenovo/Motorola Smart Connect for additional integrations.
+- **M01-020** [implemented] Separate these capabilities:
+- **M01-021** [externally blocked] Detecting an incoming call.
+- **M01-022** [externally blocked] Detecting an active call.
+- **M01-023** [externally blocked] Accessing the call’s audio through the computer.
+- **M01-024** [implemented] Use application-specific adapters where necessary. Preserve macOS 13 compatibility through availability checks and fallbacks.
+- **M01-025** [implemented] When the exact browser service, Android app, caller, or meeting title cannot be identified reliably, use a generic “Call detected” message. Do not invent metadata.
+- **M01-026** [implemented] Detection must work without recording or transcribing audio. Avoid requiring screen capture just to monitor for calls.
+- **M01-027** [implemented] 3. Call suggestion experience
+- **M01-028** [implemented] When a likely call starts, show one small suggestion without stealing focus:
+- **M01-029** [implemented] Debounce brief activity and filter microphone tests, dictation, media playback, and Copilot’s own audio.
+- **M01-030** [implemented] Show at most one suggestion for the same call.
+- **M01-031** [implemented] Dismissing it should suppress further suggestions for that call.
+- **M01-032** [implemented] Muting, unmuting, changing devices, switching windows, or reconnecting briefly must not repeatedly trigger suggestions.
+- **M01-033** [implemented] Do not suggest starting another session while Copilot already has an active session.
+- **M01-034** [implemented] Respect notification preferences and Do Not Disturb.
+- **M01-035** [implemented] Allow suggestions to be paused temporarily or disabled per application.
+- **M01-036** [implemented] Audio capture and backend session creation begin only after the user accepts.
+- **M01-037** [implemented] When the external call appears to end, offer to end the Copilot session. Do not end it just because participants are silent, the microphone is muted, or there is a brief disconnection.
 - **M01-038** [implemented] 4. Optional calendar connection
 - **M01-039** [implemented] Add optional Google Calendar and Microsoft Outlook calendar connections.
 - **M01-040** [implemented] Use the minimum read-only calendar permissions needed.
@@ -70,32 +70,32 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-051** [implemented] Suggest the calendar event title for the Copilot session.
 - **M01-052** [implemented] For a recurring meeting, surface relevant previous notes and unfinished action items when those exist.
 - **M01-053** [implemented] Provide a compact preparation view with the meeting time, suggested context, and an easy way to change it.
-- **M01-054** [in progress] 6. UI consistency
+- **M01-054** [implemented] 6. UI consistency
 - **M01-055** [implemented] Put background and detection preferences in the appropriate existing settings area.
 - **M01-056** [implemented] Provide clear calendar connection and synchronization states.
 - **M01-057** [implemented] Use concise labels and small help tooltips where needed.
-- **M01-058** [in progress] Preserve the existing large, medium, and minimal window modes.
-- **M01-059** [in progress] Do not reintroduce removed sections, duplicate call controls, unnecessary scrolling, or large explanatory blocks.
-- **M01-060** [in progress] Keep the existing drag behavior, quick settings, overlay, and profile selection working.
-- **M01-061** [in progress] 7. Validation
-- **M01-062** [in progress] Add meaningful tests for:
+- **M01-058** [verified] Preserve the existing large, medium, and minimal window modes.
+- **M01-059** [implemented] Do not reintroduce removed sections, duplicate call controls, unnecessary scrolling, or large explanatory blocks.
+- **M01-060** [verified] Keep the existing drag behavior, quick settings, overlay, and profile selection working.
+- **M01-061** [implemented] 7. Validation
+- **M01-062** [implemented] Add meaningful tests for:
 - **M01-063** [implemented] Background startup, closing, restoring, exiting, and single-instance behavior.
-- **M01-064** [in progress] Detection state transitions, false positives, deduplication, dismissal, pause/resume, and reconnects.
-- **M01-065** [in progress] Excluding Copilot’s own microphone and audio activity.
-- **M01-066** [in progress] Starting through a suggestion using the existing session flow.
+- **M01-064** [verified] Detection state transitions, false positives, deduplication, dismissal, pause/resume, and reconnects.
+- **M01-065** [verified] Excluding Copilot’s own microphone and audio activity.
+- **M01-066** [verified] Starting through a suggestion using the existing session flow.
 - **M01-067** [implemented] Calendar authorization failures, disconnects, matching, recurrence, cancellations, and time-zone handling.
 - **M01-068** [implemented] Preventing capture or backend-session creation before user acceptance.
-- **M01-069** [in progress] Windows and macOS compatibility, including guarded APIs for macOS 13.
-- **M01-070** [in progress] Validate actual call behavior on available platforms and applications. Clearly distinguish automated tests, native compilation, and real-device testing.
+- **M01-069** [externally blocked] Windows and macOS compatibility, including guarded APIs for macOS 13.
+- **M01-070** [externally blocked] Validate actual call behavior on available platforms and applications. Clearly distinguish automated tests, native compilation, and real-device testing.
 - **M01-071** [implemented] Do not claim an application is supported solely because its process name is recognized. Record whether incoming-call detection, active-call detection, and usable call audio were actually verified.
 - **M01-072** [implemented] Keep CI efficient. Preserve manual/release-only Mac packaging, avoid duplicate native builds, and reuse verified artifacts where appropriate.
-- **M01-073** [in progress] 8. Deliverables
-- **M01-074** [in progress] Finish with:
-- **M01-075** [in progress] The working implementation.
-- **M01-076** [in progress] Appropriate automated tests and validation results.
+- **M01-073** [implemented] 8. Deliverables
+- **M01-074** [implemented] Finish with:
+- **M01-075** [implemented] The working implementation.
+- **M01-076** [implemented] Appropriate automated tests and validation results.
 - **M01-077** [implemented] Setup documentation for background mode and calendar providers.
-- **M01-078** [in progress] A concise compatibility matrix showing verified support and remaining platform limitations.
-- **M01-079** [in progress] Any production configuration or hardware testing still needed.
+- **M01-078** [implemented] A concise compatibility matrix showing verified support and remaining platform limitations.
+- **M01-079** [implemented] Any production configuration or hardware testing still needed.
 
 ### Material 02
 - **M02-001** [in progress] Implement Practice Interviews in Career Pilot.
@@ -106,7 +106,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M02-006** [implemented] Offer appropriate interview types such as recruiter screen, behavioral, technical discussion, and system design.
 - **M02-007** [implemented] Let users choose a target duration, with 15 minutes as the initial default.
 - **M02-008** [implemented] Show which resume, application, and experience will inform the interview, and allow correction before starting.
-- **M02-009** [in progress] Make voice practice the main experience, with a usable text alternative.
+- **M02-009** [implemented] Make voice practice the main experience, with a usable text alternative.
 - **M02-010** [implemented] Clearly identify this as a simulated practice interview.
 - **M02-011** [implemented] Reuse existing context-selection controls and avoid creating another application-management workflow. Do not require a connected calendar or background call detection.
 - **M02-012** [implemented] 2. An interactive interviewer
@@ -128,17 +128,17 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M02-028** [implemented] Let users request a hint or sample answer, and record that assistance was used.
 - **M02-029** [implemented] Keep sample answers hidden during an independent attempt until requested or the attempt is complete.
 - **M02-030** [implemented] Preserve completed turns when the user pauses or an error occurs.
-- **M02-031** [in progress] Use the app's current ruby branding, icons, spacing, keyboard behavior, and accessible controls. Keep the active question prominent and the interface compact. Preserve existing live-call and window-mode behavior.
+- **M02-031** [verified] Use the app's current ruby branding, icons, spacing, keyboard behavior, and accessible controls. Keep the active question prominent and the interface compact. Preserve existing live-call and window-mode behavior.
 - **M02-032** [implemented] 4. Separate practice audio from real-call capture
 - **M02-033** [implemented] Store generated interviewer questions as structured interviewer turns, rather than transcribing Copilot's own playback.
 - **M02-034** [implemented] Capture and transcribe the user's microphone only for their spoken responses.
-- **M02-035** [in progress] Where speaker playback is supported, use the generated playback as the echo-cancellation reference or another validated approach that prevents interviewer speech from being recognized as a user answer.
-- **M02-036** [in progress] Test headphones, loudspeakers, echo, interruptions, and microphone changes.
+- **M02-035** [externally blocked] Where speaker playback is supported, use the generated playback as the echo-cancellation reference or another validated approach that prevents interviewer speech from being recognized as a user answer.
+- **M02-036** [externally blocked] Test headphones, loudspeakers, echo, interruptions, and microphone changes.
 - **M02-037** [implemented] Prevent practice playback from triggering background call suggestions.
 - **M02-038** [implemented] Handle a transition to a real call explicitly: pause practice, release the microphone when switching, and avoid overlapping sessions.
 - **M02-039** [implemented] Start audio capture only after the user starts practice.
 - **M02-040** [implemented] Stop recording, playback, streaming, and pending generation promptly when practice ends.
-- **M02-041** [in progress] Maintain Windows and macOS 13+ compatibility for Apple Silicon and Intel. Use availability checks and compatible fallbacks where necessary.
+- **M02-041** [externally blocked] Maintain Windows and macOS 13+ compatibility for Apple Silicon and Intel. Use availability checks and compatible fallbacks where necessary.
 - **M02-042** [implemented] 5. Specific, grounded feedback
 - **M02-043** [implemented] Answering the question asked.
 - **M02-044** [implemented] Clear structure and concise explanation.
@@ -156,7 +156,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M02-056** [implemented] Keep practice records distinguishable from real interview and meeting records.
 - **M02-057** [implemented] 7. Practice from previous interviews
 - **M02-058** [implemented] Allow users to explicitly choose questions from their own saved interview transcripts as practice material.
-- **M02-059** [in progress] Link each imported question back to the source session and transcript location when available.
+- **M02-059** [verified] Link each imported question back to the source session and transcript location when available.
 - **M02-060** [implemented] Keep retrieval within the selected profile and authorized records.
 - **M02-061** [implemented] Handle missing, deleted, or unavailable transcripts gracefully.
 - **M02-062** [implemented] Preserve the original question and identify any generated variations or follow-ups.
@@ -171,28 +171,28 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M02-071** [implemented] Keep provider credentials out of the frontend and avoid unnecessary idle connections.
 - **M02-072** [implemented] Document any additional production provider configuration needed. Do not present mocked speech or feedback as a production integration.
 - **M02-073** [implemented] Do not automatically turn tentative practice answers into approved career facts or modify the user's resume.
-- **M02-074** [in progress] 9. Validation and deliverables
-- **M02-075** [in progress] Add meaningful tests for:
+- **M02-074** [implemented] 9. Validation and deliverables
+- **M02-075** [implemented] Add meaningful tests for:
 - **M02-076** [implemented] Setup and context isolation between profiles/applications.
 - **M02-077** [implemented] Interview planning, adaptive follow-ups, turn order, and duration handling.
 - **M02-078** [implemented] Repeat, skip, hints, interruptions, pause/resume, finish, and retries.
-- **M02-079** [in progress] Keeping generated interviewer speech out of the user's transcript.
-- **M02-080** [in progress] Microphone loss, echo handling, real-call transitions, and cleanup.
+- **M02-079** [implemented] Keeping generated interviewer speech out of the user's transcript.
+- **M02-080** [implemented] Microphone loss, echo handling, real-call transitions, and cleanup.
 - **M02-081** [implemented] Grounded feedback, retained attempt history, and rubric compatibility.
 - **M02-082** [implemented] Prior-question imports and deleted source records.
 - **M02-083** [implemented] Offline/provider failures, persistence, deletion, and text fallback.
-- **M02-084** [in progress] Windows and macOS compatibility.
+- **M02-084** [externally blocked] Windows and macOS compatibility.
 - **M02-085** [implemented] Use deterministic fixtures for routine tests instead of making paid live model calls. Clearly distinguish automated tests, native builds, and actual microphone/playback testing. Keep CI efficient and avoid duplicate Mac packaging builds.
-- **M02-086** [in progress] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device testing still needed.
+- **M02-086** [implemented] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device testing still needed.
 
 ### Material 03
 - **M03-001** [in progress] Implement Central Ask in Career Pilot.
 - **M03-002** [implemented] 1. One shared Ask experience
-- **M03-003** [implemented] Add an Ask page to the app's main navigation that works without starting a call.
+- **M03-003** [implemented] Add an Ask page to the app's main navigation that works without starting a call. **Superseded placement by explicit user instruction on 2026-11-19: Ask lives inside Work; Practice lives inside Interview prep; no new main tabs.**
 - **M03-004** [implemented] Provide one conversation area with an input, streamed or progressively available answers, and follow-up questions.
 - **M03-005** [implemented] Let users start a new conversation and return to saved conversations.
 - **M03-006** [implemented] Retain drafts and conversation position when opening a source and returning.
-- **M03-007** [in progress] Use the current ruby branding, icons, compact spacing, and accessible controls.
+- **M03-007** [verified] Use the current ruby branding, icons, compact spacing, and accessible controls.
 - **M03-008** [implemented] Keep the main interface simple. Avoid separate tabs for each knowledge source or a large setup form before asking.
 - **M03-009** [implemented] Support general explanations, drafting, comparisons, career questions, and questions about the user's available information. Do not imply access to information that has not been provided, saved, or connected.
 - **M03-010** [implemented] Which of my projects best fits this role?
@@ -224,8 +224,8 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M03-036** [implemented] Surface conflicting or outdated sources when they change the answer materially.
 - **M03-037** [implemented] Keep follow-up conversation context separate from durable approved career facts.
 - **M03-038** [implemented] 4. Answers with actionable evidence
-- **M03-039** [in progress] Link to the actual application, document, work item, fact, or saved call.
-- **M03-040** [in progress] For transcript-backed claims, open the relevant call at its supporting timestamp or transcript location.
+- **M03-039** [implemented] Link to the actual application, document, work item, fact, or saved call.
+- **M03-040** [verified] For transcript-backed claims, open the relevant call at its supporting timestamp or transcript location.
 - **M03-041** [implemented] Include dates where they help distinguish events or changing information.
 - **M03-042** [implemented] Extend existing source labels with stable authorized source targets as needed.
 - **M03-043** [implemented] Recheck access when opening or retrieving a source, and handle deleted or unavailable records gracefully.
@@ -234,7 +234,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M03-046** [implemented] Let users open the shared Ask experience from a company, application, or saved call with that item selected as context.
 - **M03-047** [implemented] The live overlay remains focused on its current call.
 - **M03-048** [implemented] Asking on the central page must not implicitly send a question into, start, or change a running call.
-- **M03-049** [in progress] Reuse common answer and source components where useful while preserving the live call's latency and interaction needs.
+- **M03-049** [implemented] Reuse common answer and source components where useful while preserving the live call's latency and interaction needs.
 - **M03-050** [implemented] Opening a cited History or Work item must preserve the Ask conversation and allow a predictable return.
 - **M03-051** [implemented] 6. Conversations, drafts, and data lifecycle
 - **M03-052** [implemented] Save conversations under the correct account and profile using the existing backend and authentication patterns.
@@ -244,15 +244,15 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M03-056** [implemented] Recover from connection failures without duplicate messages or duplicate charges where controllable.
 - **M03-057** [implemented] Avoid sending every source or unrelated profile data to the model.
 - **M03-058** [implemented] Keep provider credentials out of the frontend.
-- **M03-059** [in progress] 7. Validation and deliverables
-- **M03-060** [in progress] Validate meaningful user journeys and failure cases:
+- **M03-059** [implemented] 7. Validation and deliverables
+- **M03-060** [implemented] Validate meaningful user journeys and failure cases:
 - **M03-061** [implemented] Asking general questions without a call or documents.
 - **M03-062** [implemented] Asking within a selected application or company.
-- **M03-063** [in progress] Searching across multiple saved calls with correct source timestamps.
-- **M03-064** [in progress] Follow-up questions, context changes, and ambiguous source selection.
+- **M03-063** [implemented] Searching across multiple saved calls with correct source timestamps.
+- **M03-064** [implemented] Follow-up questions, context changes, and ambiguous source selection.
 - **M03-065** [implemented] Account/profile isolation, changed access, and deleted sources.
-- **M03-066** [in progress] Missing transcripts, conflicting dates, and completed commitments.
-- **M03-067** [in progress] Grounded answers and honest statements when evidence is insufficient.
+- **M03-066** [implemented] Missing transcripts, conflicting dates, and completed commitments.
+- **M03-067** [implemented] Grounded answers and honest statements when evidence is insufficient.
 - **M03-068** [implemented] Opening sources and returning without losing drafts or conversations.
 - **M03-069** [implemented] Separation between central conversations and an active live call.
 - **M03-070** [in progress] Streaming, cancellation, retries, persistence, and deletion.
@@ -261,105 +261,105 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M03-073** [in progress] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device verification still required.
 
 ### Material 04
-- **M04-001** [pending] Implement Career Pilot Mobile for iOS and Android, prioritizing a companion to the existing Windows and macOS desktop app.
-- **M04-002** [pending] 1. Headphone-compatible desktop companion: first priority
-- **M04-003** [pending] Support this explicit flow:
-- **M04-004** [pending] The meeting stays on the computer. Headphones and microphone stay connected to the computer.
-- **M04-005** [pending] The desktop captures the selected call audio and microphone using its existing supported capture paths.
-- **M04-006** [pending] The phone displays session events and answers; it does not need to hear room audio or request microphone access for this mode.
-- **M04-007** [pending] Connecting the phone attaches to the existing session. Do not start a second transcription pipeline, generate duplicate answers, or bill a duplicate session merely because another display is connected.
-- **M04-008** [pending] Make the audio-source computer and connection state visible on the phone.
-- **M04-009** [pending] Let the user choose to use the phone as the guidance display while the desktop overlay is hidden. Preserve a way to reopen the overlay or main app.
-- **M04-010** [pending] Keep the shared screen free of phone UI unless the user deliberately mirrors it. Describe screen-share behavior through tested configurations rather than promising universal undetectability.
-- **M04-011** [pending] Do not quietly fall back to the phone microphone when the desktop disconnects. Explain the interruption and offer an explicit supported alternative.
-- **M04-012** [pending] 2. Account connection and session access
-- **M04-013** [pending] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
-- **M04-014** [pending] If QR pairing improves the flow, use a short-lived, single-use pairing exchange with confirmation and revocation. Do not place reusable account credentials or long-lived bearer tokens in QR codes or URLs.
-- **M04-015** [pending] Enforce account, profile, session, and command permissions on the backend.
-- **M04-016** [pending] Clearly identify the session and selected profile before attaching.
-- **M04-017** [pending] Treat attaching a companion as a separate action from taking over audio capture on another device.
-- **M04-018** [pending] Keep a single audio-capture owner until the user deliberately transfers or ends it.
-- **M04-019** [pending] Reuse existing session-owner and guest-role semantics where appropriate without granting broader permissions than a companion needs.
-- **M04-020** [pending] Disconnect a paired device safely on sign-out or revocation.
-- **M04-021** [pending] Do not record audio merely because a user opens a pairing link or signs in.
-- **M04-022** [pending] 3. A phone interface built for live use
-- **M04-023** [pending] Keep the current question and its answer together in one clear view.
-- **M04-024** [pending] Support portrait and landscape, readable text sizes, dark/light themes, and accessible touch targets.
-- **M04-025** [pending] Let users review previous answers without new content forcibly moving their reading position. Provide a clear return-to-latest action.
-- **M04-026** [pending] Provide compact Answer, ask-a-follow-up, and End call controls.
-- **M04-027** [pending] End call must use the existing confirmation and post-call choices, operate on the same session, and restore the normal desktop page through the established lifecycle.
-- **M04-028** [pending] Keep presentation preferences such as text size local to the device unless the user deliberately synchronizes them.
-- **M04-029** [pending] Offer keeping the screen awake during an active companion session; release that state when the session ends or the user leaves it.
-- **M04-030** [pending] Avoid presenting detailed private answer text in lock-screen notifications by default.
-- **M04-031** [pending] 4. Reliable synchronization and remote actions
-- **M04-032** [pending] Replay missed events or load a current snapshot after reconnecting without duplicating transcript lines or answers.
-- **M04-033** [pending] Distinguish connected, reconnecting, ended, and unavailable states; do not present stale text as a newly received live answer.
-- **M04-034** [pending] Preserve the phone's draft and reading position during connection changes.
-- **M04-035** [pending] Handle Wi-Fi/cellular switching, device sleep, app backgrounding, and returning to the foreground.
-- **M04-036** [pending] A phone disconnect must not end the desktop call or lose its ongoing capture.
-- **M04-037** [pending] Respect mobile background limits instead of assuming an indefinitely active socket while suspended.
-- **M04-038** [pending] Make remote commands idempotent where appropriate and acknowledge their actual result.
-- **M04-039** [pending] Resolve simultaneous desktop and phone actions predictably, especially Answer and End call.
-- **M04-040** [pending] Authorize every remote command for the current user and session.
-- **M04-041** [pending] 5. Standalone phone microphone mode
-- **M04-042** [pending] Explain the selected audio source before starting.
-- **M04-043** [pending] Request microphone permission only for a feature that uses it.
-- **M04-044** [pending] Show recording/listening state and offer immediate pause and stop actions.
-- **M04-045** [pending] Preserve the existing transcript-consent, retention, and deletion behavior.
-- **M04-046** [pending] Handle noise, microphone interruption, permission loss, headphones, and incoming calls honestly.
-- **M04-047** [pending] If the remote speaker is audible only through headphones on another device, explain that the phone microphone cannot hear them and offer desktop companion mode when available.
-- **M04-048** [pending] Use platform-supported background recording only after an explicit user start, with the platform's required indicators and lifecycle handling.
-- **M04-049** [pending] Do not promise universal capture of cellular, FaceTime, WhatsApp, Google Meet, or other calls running on the same phone. Treat those as separate app/OS-specific capabilities that require verified API support and real-device testing. Background microphone permission does not establish access to another app's call audio.
-- **M04-050** [pending] Do not bypass operating-system permissions or imply that a mobile app can hide every indicator or detection signal. Test and describe the supported screen-sharing and audio behavior precisely.
-- **M04-051** [pending] 6. Central Ask, practice, and existing information
-- **M04-052** [pending] Extend the mobile app with these shared experiences as their backend capabilities become available:
-- **M04-053** [pending] Central Ask from Material 03, including context scope, saved conversations, grounded answers, and source links.
-- **M04-054** [pending] Spoken practice interviews from Material 02, including turn controls, feedback, retries, and progress.
-- **M04-055** [pending] Existing applications, resumes, and saved call summaries/transcripts for preparation and review.
-- **M04-056** [pending] Calendar-based preparation from Material 01 when a calendar is connected.
-- **M04-057** [pending] Keep account/profile isolation and the same data lifecycle across devices. Opening a source on mobile should preserve the Ask conversation. Practice must keep its generated interviewer audio separate from the user's captured speech, as specified in Material 02.
-- **M04-058** [pending] 7. Data, battery, and production behavior
-- **M04-059** [pending] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport.
-- **M04-060** [pending] Revalidate access when loading or reconnecting to a session.
-- **M04-061** [pending] Stop unused capture, wake locks, event subscriptions, and generation tasks promptly.
-- **M04-062** [pending] Keep idle and background behavior lightweight; do not wake production services unnecessarily.
-- **M04-063** [pending] Define cache and offline behavior explicitly. Cached answers may be readable when allowed, but generating a new live answer must not appear to work without the necessary connection.
-- **M04-064** [pending] Apply deletion and access changes to mobile caches and source views consistently with the existing backend lifecycle.
-- **M04-065** [pending] Keep model/provider secrets on the backend.
-- **M04-066** [pending] Provide production configuration and install instructions using the actual release channels. Report any signing or store-account requirements that need the user to complete an external step.
-- **M04-067** [pending] 8. Delivery order
-- **M04-068** [pending] 9. Validation and deliverables
-- **M04-069** [pending] Add meaningful automated tests for pairing, authorization, profile isolation, attachment versus capture takeover, event ordering/replay, command deduplication, cancellation, session end, reconnect recovery, and cleanup.
-- **M04-070** [pending] Validate the main workflow on actual devices, including:
-- **M04-071** [pending] Windows and macOS desktops paired with both iPhone and Android.
-- **M04-072** [pending] Supported wired, USB, and Bluetooth headphone/microphone configurations, including device changes.
-- **M04-073** [pending] Meeting audio from supported desktop apps and browser calls.
-- **M04-074** [pending] Operation while phone microphone permission is denied in companion mode.
-- **M04-075** [pending] Simultaneous desktop/phone actions and multiple connected displays.
-- **M04-076** [pending] Phone lock/unlock, background/foreground, Wi-Fi/cellular changes, desktop sleep, and network loss.
-- **M04-077** [pending] Clear handling of an ended or deleted session and sign-out/revocation.
-- **M04-078** [pending] End call confirmation and restoration of the normal desktop page.
-- **M04-079** [pending] Standalone phone microphone interruptions and unavailable same-phone call audio.
-- **M04-080** [pending] Portrait/landscape layout, large text, keyboard, and assistive-technology behavior.
-- **M04-081** [pending] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements.
-- **M04-082** [pending] [LockedIn mobile](https://www.lockedinai.com/mobile-app) describes placing a phone beside a laptop to listen to the room. Its page reserves Stealth Mode for the desktop app.
-- **M04-083** [pending] [OfferGoose help](https://blog.offergoose.com/post104/) documents mobile microphone listening, the speaker/headphone limitation, and the need for another device when taking a phone call.
-- **M04-084** [pending] [Android audio-input sharing](https://developer.android.com/media/platform/sharing-audio-input) explains microphone contention and restrictions on call audio.
-- **M04-085** [pending] [Android playback capture](https://developer.android.com/media/platform/av-capture) limits which playback streams can be captured and requires user authorization.
-- **M04-086** [pending] [Apple recording audio sessions](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/record) documents recording behavior and interruptions.
+- **M04-001** [in progress] Implement Career Pilot Mobile for iOS and Android, prioritizing a companion to the existing Windows and macOS desktop app. — Native Android/iOS projects and all client flows implemented; local APK packaging underway; signed iOS installation requires macOS/signing.
+- **M04-002** [implemented] 1. Headphone-compatible desktop companion: first priority
+- **M04-003** [implemented] Support this explicit flow:
+- **M04-004** [implemented] The meeting stays on the computer. Headphones and microphone stay connected to the computer.
+- **M04-005** [implemented] The desktop captures the selected call audio and microphone using its existing supported capture paths.
+- **M04-006** [implemented] The phone displays session events and answers; it does not need to hear room audio or request microphone access for this mode.
+- **M04-007** [implemented] Connecting the phone attaches to the existing session. Do not start a second transcription pipeline, generate duplicate answers, or bill a duplicate session merely because another display is connected.
+- **M04-008** [implemented] Make the audio-source computer and connection state visible on the phone.
+- **M04-009** [implemented] Let the user choose to use the phone as the guidance display while the desktop overlay is hidden. Preserve a way to reopen the overlay or main app.
+- **M04-010** [blocked] Keep the shared screen free of phone UI unless the user deliberately mirrors it. Describe screen-share behavior through tested configurations rather than promising universal undetectability. — Physical screen-share/mirroring matrix needs desktop and phones; no undetectability claim is made.
+- **M04-011** [implemented] Do not quietly fall back to the phone microphone when the desktop disconnects. Explain the interruption and offer an explicit supported alternative.
+- **M04-012** [implemented] 2. Account connection and session access
+- **M04-013** [implemented] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
+- **M04-014** [implemented] If QR pairing improves the flow, use a short-lived, single-use pairing exchange with confirmation and revocation. Do not place reusable account credentials or long-lived bearer tokens in QR codes or URLs. — Same-account email sign-in and explicit attachment used; QR is unnecessary and no credentials enter URLs.
+- **M04-015** [implemented] Enforce account, profile, session, and command permissions on the backend.
+- **M04-016** [implemented] Clearly identify the session and selected profile before attaching.
+- **M04-017** [implemented] Treat attaching a companion as a separate action from taking over audio capture on another device.
+- **M04-018** [implemented] Keep a single audio-capture owner until the user deliberately transfers or ends it.
+- **M04-019** [implemented] Reuse existing session-owner and guest-role semantics where appropriate without granting broader permissions than a companion needs.
+- **M04-020** [implemented] Disconnect a paired device safely on sign-out or revocation.
+- **M04-021** [implemented] Do not record audio merely because a user opens a pairing link or signs in.
+- **M04-022** [implemented] 3. A phone interface built for live use
+- **M04-023** [implemented] Keep the current question and its answer together in one clear view.
+- **M04-024** [implemented] Support portrait and landscape, readable text sizes, dark/light themes, and accessible touch targets. — Responsive native layouts, system theme, adjustable live text, safe areas and 48dp controls; real accessibility/layout device checks remain M04-080.
+- **M04-025** [implemented] Let users review previous answers without new content forcibly moving their reading position. Provide a clear return-to-latest action.
+- **M04-026** [implemented] Provide compact Answer, ask-a-follow-up, and End call controls.
+- **M04-027** [implemented] End call must use the existing confirmation and post-call choices, operate on the same session, and restore the normal desktop page through the established lifecycle.
+- **M04-028** [implemented] Keep presentation preferences such as text size local to the device unless the user deliberately synchronizes them.
+- **M04-029** [implemented] Offer keeping the screen awake during an active companion session; release that state when the session ends or the user leaves it.
+- **M04-030** [implemented] Avoid presenting detailed private answer text in lock-screen notifications by default.
+- **M04-031** [implemented] 4. Reliable synchronization and remote actions
+- **M04-032** [implemented] Replay missed events or load a current snapshot after reconnecting without duplicating transcript lines or answers.
+- **M04-033** [implemented] Distinguish connected, reconnecting, ended, and unavailable states; do not present stale text as a newly received live answer.
+- **M04-034** [implemented] Preserve the phone's draft and reading position during connection changes.
+- **M04-035** [implemented] Handle Wi-Fi/cellular switching, device sleep, app backgrounding, and returning to the foreground. — Foreground reconnect/backoff and snapshot recovery implemented; physical network-switch matrix remains M04-076.
+- **M04-036** [implemented] A phone disconnect must not end the desktop call or lose its ongoing capture.
+- **M04-037** [implemented] Respect mobile background limits instead of assuming an indefinitely active socket while suspended.
+- **M04-038** [implemented] Make remote commands idempotent where appropriate and acknowledge their actual result.
+- **M04-039** [implemented] Resolve simultaneous desktop and phone actions predictably, especially Answer and End call.
+- **M04-040** [implemented] Authorize every remote command for the current user and session.
+- **M04-041** [implemented] 5. Standalone phone microphone mode
+- **M04-042** [implemented] Explain the selected audio source before starting.
+- **M04-043** [implemented] Request microphone permission only for a feature that uses it.
+- **M04-044** [implemented] Show recording/listening state and offer immediate pause and stop actions.
+- **M04-045** [implemented] Preserve the existing transcript-consent, retention, and deletion behavior.
+- **M04-046** [implemented] Handle noise, microphone interruption, permission loss, headphones, and incoming calls honestly. — Native error/permission/disconnection stop paths plus explicit typed fallback; real interruption and Bluetooth tests remain M04-079.
+- **M04-047** [implemented] If the remote speaker is audible only through headphones on another device, explain that the phone microphone cannot hear them and offer desktop companion mode when available.
+- **M04-048** [implemented] Use platform-supported background recording only after an explicit user start, with the platform's required indicators and lifecycle handling. — Deliberately foreground-only microphone; suspend stops capture and no background recording capability is enabled.
+- **M04-049** [implemented] Do not promise universal capture of cellular, FaceTime, WhatsApp, Google Meet, or other calls running on the same phone. Treat those as separate app/OS-specific capabilities that require verified API support and real-device testing. Background microphone permission does not establish access to another app's call audio.
+- **M04-050** [implemented] Do not bypass operating-system permissions or imply that a mobile app can hide every indicator or detection signal. Test and describe the supported screen-sharing and audio behavior precisely.
+- **M04-051** [implemented] 6. Central Ask, practice, and existing information
+- **M04-052** [implemented] Extend the mobile app with these shared experiences as their backend capabilities become available:
+- **M04-053** [implemented] Central Ask from Material 03, including context scope, saved conversations, grounded answers, and source links.
+- **M04-054** [implemented] Spoken practice interviews from Material 02, including turn controls, feedback, retries, and progress.
+- **M04-055** [implemented] Existing applications, resumes, and saved call summaries/transcripts for preparation and review. — Call history/transcripts plus authorized application/resume context previews for preparation/practice; original source editing remains desktop.
+- **M04-056** [implemented] Calendar-based preparation from Material 01 when a calendar is connected.
+- **M04-057** [implemented] Keep account/profile isolation and the same data lifecycle across devices. Opening a source on mobile should preserve the Ask conversation. Practice must keep its generated interviewer audio separate from the user's captured speech, as specified in Material 02.
+- **M04-058** [implemented] 7. Data, battery, and production behavior
+- **M04-059** [implemented] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport.
+- **M04-060** [implemented] Revalidate access when loading or reconnecting to a session.
+- **M04-061** [implemented] Stop unused capture, wake locks, event subscriptions, and generation tasks promptly.
+- **M04-062** [implemented] Keep idle and background behavior lightweight; do not wake production services unnecessarily.
+- **M04-063** [implemented] Define cache and offline behavior explicitly. Cached answers may be readable when allowed, but generating a new live answer must not appear to work without the necessary connection.
+- **M04-064** [implemented] Apply deletion and access changes to mobile caches and source views consistently with the existing backend lifecycle.
+- **M04-065** [implemented] Keep model/provider secrets on the backend.
+- **M04-066** [implemented] Provide production configuration and install instructions using the actual release channels. Report any signing or store-account requirements that need the user to complete an external step. — README, native projects, EAS internal/production profiles and path-scoped CI supplied; store signing/accounts are external.
+- **M04-067** [implemented] 8. Delivery order
+- **M04-068** [implemented] 9. Validation and deliverables
+- **M04-069** [verified] Add meaningful automated tests for pairing, authorization, profile isolation, attachment versus capture takeover, event ordering/replay, command deduplication, cancellation, session end, reconnect recovery, and cleanup. — Mobile deterministic lifecycle/transport tests plus companion real socket and DB authorization/replay/control tests passed; see backend companion validation.
+- **M04-070** [blocked] Validate the main workflow on actual devices, including: — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-071** [blocked] Windows and macOS desktops paired with both iPhone and Android. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-072** [blocked] Supported wired, USB, and Bluetooth headphone/microphone configurations, including device changes. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-073** [blocked] Meeting audio from supported desktop apps and browser calls. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-074** [blocked] Operation while phone microphone permission is denied in companion mode. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-075** [blocked] Simultaneous desktop/phone actions and multiple connected displays. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-076** [blocked] Phone lock/unlock, background/foreground, Wi-Fi/cellular changes, desktop sleep, and network loss. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-077** [blocked] Clear handling of an ended or deleted session and sign-out/revocation. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-078** [blocked] End call confirmation and restoration of the normal desktop page. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-079** [blocked] Standalone phone microphone interruptions and unavailable same-phone call audio. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-080** [blocked] Portrait/landscape layout, large text, keyboard, and assistive-technology behavior. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-081** [in progress] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements. — Native app and integration delivered; final local APK build evidence pending; physical/iOS signing checks explicitly external.
+- **M04-082** [not applicable] [LockedIn mobile](https://www.lockedinai.com/mobile-app) describes placing a phone beside a laptop to listen to the room. Its page reserves Stealth Mode for the desktop app. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-083** [not applicable] [OfferGoose help](https://blog.offergoose.com/post104/) documents mobile microphone listening, the speaker/headphone limitation, and the need for another device when taking a phone call. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-084** [not applicable] [Android audio-input sharing](https://developer.android.com/media/platform/sharing-audio-input) explains microphone contention and restrictions on call audio. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-085** [not applicable] [Android playback capture](https://developer.android.com/media/platform/av-capture) limits which playback streams can be captured and requires user authorization. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-086** [not applicable] [Apple recording audio sessions](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/record) documents recording behavior and interruptions. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
 
 ### Material 05
 - **M05-001** [in progress] Implement Context from my AI in Career Pilot.
 - **M05-002** [in progress] Start with one complete, tested MCP publishing workflow, two narrowly scoped tools, and one context card. Support additional AI hosts after validating their actual capabilities. Check current official provider documentation at implementation time.
 - **M05-003** [implemented] 1. User experience
-- **M05-004** [in progress] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
+- **M05-004** [externally blocked] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
 - **M05-005** [implemented] Explain the connection in product language: the AI can receive a preparation request and send a brief to the selected Career Pilot project or company.
 - **M05-006** [implemented] Support a natural request such as: "Prepare context for tomorrow's standup from this project's recent work and send it to Career Pilot."
 - **M05-007** [implemented] Also support publishing from the conversation where work happened: "Update Career Pilot with what we completed here."
 - **M05-008** [implemented] Select the intended profile and company/application explicitly, using existing entities where possible.
 - **M05-009** [implemented] Show a compact context card with title, preparation time, source count, and View, Refresh, and Remove actions.
 - **M05-010** [implemented] View shows the brief, source references, coverage gaps, and editable corrections. Do not make users fill out a long form before importing.
-- **M05-011** [in progress] Reuse the brief across the relevant call, practice session, and Central Ask conversation when those features are available.
+- **M05-011** [implemented] Reuse the brief across the relevant call, practice session, and Central Ask conversation when those features are available.
 - **M05-012** [implemented] Keep the core flow usable without calendar access or every other saved material being implemented.
 - **M05-013** [implemented] 2. Small MCP interface
 - **M05-014** [implemented] get_context_request(request_id): returns the selected context scope, preparation questions, date range, request revision, and expected brief format.
@@ -389,10 +389,10 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M05-038** [implemented] Use bounded relevant content; do not attach every saved brief to every answer.
 - **M05-039** [implemented] Never make live answer generation wait for an external AI preparation task.
 - **M05-040** [implemented] Keep refresh separate from the live answer path. A failed refresh preserves the existing brief with its actual preparation time visible.
-- **M05-041** [in progress] Publish replacements atomically. Make the active context version clear when a refresh arrives during a call.
+- **M05-041** [implemented] Publish replacements atomically. Make the active context version clear when a refresh arrives during a call.
 - **M05-042** [implemented] Remove deleted or revoked briefs from future retrieval and invalidate affected caches. Follow the existing explicit policy for already saved call artifacts.
 - **M05-043** [implemented] Keep private imported context scoped to the authorizing account. Shared profile access alone must not expose it to another account or a guest.
-- **M05-044** [in progress] A companion device signed into the same authorized account can use the same context; guest sharing requires an explicit supported sharing policy.
+- **M05-044** [implemented] A companion device signed into the same authorized account can use the same context; guest sharing requires an explicit supported sharing policy.
 - **M05-045** [implemented] 5. Cost and supported capabilities
 - **M05-046** [implemented] Reuse prepared briefs and refresh on deliberate requests in the first version. Add bounded import sizes and cancellation/error handling. Avoid continuous background preparation, bulk source ingestion, or a new vector database solely for this feature.
 - **M05-047** [in progress] 6. Verification before release
@@ -400,10 +400,10 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M05-049** [in progress] [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured tool interfaces for the request and publication operations.
 - **M05-050** [in progress] [OpenAI: Add a custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server): ChatGPT supports custom read and write tools, subject to connection and confirmation settings.
 - **M05-051** [in progress] [OpenAI: Sign in with ChatGPT](https://learn.chatgpt.com/docs/sign-in-with-chatgpt): using a plan does not grant access to ChatGPT conversations or memories, and usage remains subject to the plan's limits.
-- **M05-052** [in progress] Material 01 can supply meeting timing and a preparation prompt when a calendar is connected.
+- **M05-052** [implemented] Material 01 can supply meeting timing and a preparation prompt when a calendar is connected.
 - **M05-053** [implemented] Material 02 can use a relevant brief for practice interviews without inventing career facts.
 - **M05-054** [implemented] Material 03 can retrieve permitted briefs as another source in Central Ask.
-- **M05-055** [in progress] Material 04 can display assistance using the same authorized session context on mobile.
+- **M05-055** [implemented] Material 04 can display assistance using the same authorized session context on mobile.
 
 ### Material 06
 - **M06-001** [in progress] Implement selectable call languages in Career Pilot.
@@ -413,13 +413,13 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M06-005** [implemented] Keep English as the default for existing profiles that do not have a selection.
 - **M06-006** [implemented] Snapshot the effective language when a call starts. Changing a profile default must not silently change an active session.
 - **M06-007** [implemented] For the first release, choose the language before starting rather than switching recognition streams midway through a call. Make this behavior clear in the settings.
-- **M06-008** [in progress] Switching profiles must load the correct profile's preference and avoid leaking another profile's draft selection.
+- **M06-008** [verified] Switching profiles must load the correct profile's preference and avoid leaking another profile's draft selection.
 - **M06-009** [implemented] Use clear language names, including a locale or regional distinction only when that distinction actually changes supported behavior.
-- **M06-010** [in progress] Preserve current compact window modes, the start-call flow, and overlay behavior.
+- **M06-010** [verified] Preserve current compact window modes, the start-call flow, and overlay behavior.
 - **M06-011** [implemented] 2. Supported language catalog
 - **M06-012** [implemented] Establish an explicit, backend-validated list of supported call languages.
 - **M06-013** [implemented] Verify the configured production speech-recognition model's current language support from official documentation before choosing the initial list.
-- **M06-014** [in progress] Verify the complete application behavior for each offered language, including question detection, generation, retrieval, and post-call output.
+- **M06-014** [externally blocked] Verify the complete application behavior for each offered language, including question detection, generation, retrieval, and post-call output.
 - **M06-015** [implemented] Do not claim support solely because the underlying language model can produce text in that language.
 - **M06-016** [implemented] Map stable language identifiers to provider-specific settings in ordinary code. Do not confuse spoken-language selection with existing programming-language controls.
 - **M06-017** [implemented] Validate unsupported or malformed values on the backend and provide an actionable message before starting an unusable call.
@@ -435,9 +435,9 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M06-027** [implemented] Generate the applicable summaries and feedback in the session language, and retain that metadata for History.
 - **M06-028** [implemented] Do not label old historical content with a guessed language merely because new calls default to English.
 - **M06-029** [implemented] 4. Retrieval and grounding
-- **M06-030** [in progress] Check Unicode handling, tokenization, and language-dependent full-text search behavior.
+- **M06-030** [implemented] Check Unicode handling, tokenization, and language-dependent full-text search behavior.
 - **M06-031** [implemented] Ensure selecting a supported language does not quietly disable useful resume, application, company, or saved-context retrieval.
-- **M06-032** [in progress] Test representative questions with documents in the selected language and with the user's existing documents in another language.
+- **M06-032** [externally blocked] Test representative questions with documents in the selected language and with the user's existing documents in another language.
 - **M06-033** [implemented] Reuse existing retrieval capabilities where suitable. Add the smallest necessary improvements, rather than creating a separate knowledge store for every language.
 - **M06-034** [implemented] Keep citations linked to the original source and preserve account/profile boundaries.
 - **M06-035** [implemented] Treat missing evidence as missing evidence; language conversion must not invent experience, decisions, or achievements.
@@ -445,16 +445,16 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M06-037** [implemented] 5. Cost and failure behavior
 - **M06-038** [implemented] Use the existing recognition and answer-generation path with the selected language configuration.
 - **M06-039** [implemented] Avoid adding a separate continual translation service or an extra model request solely to route language settings.
-- **M06-040** [in progress] Check provider/model compatibility and any material cost differences before enabling a language in production.
-- **M06-041** [in progress] Keep brief silence, recognition reconnects, and device changes from resetting the selected language.
+- **M06-040** [externally blocked] Check provider/model compatibility and any material cost differences before enabling a language in production.
+- **M06-041** [implemented] Keep brief silence, recognition reconnects, and device changes from resetting the selected language.
 - **M06-042** [implemented] Report an unavailable recognition language honestly and preserve the user's selection for the next attempt.
 - **M06-043** [implemented] 6. Validation and delivery
-- **M06-044** [in progress] Use deterministic fixtures for routine tests. Validate settings persistence, profile switching, older-client defaults, rejected identifiers, session propagation, reconnect/failover behavior, prompt language, question detection, citation preservation, and post-call language.
+- **M06-044** [verified] Use deterministic fixtures for routine tests. Validate settings persistence, profile switching, older-client defaults, rejected identifiers, session propagation, reconnect/failover behavior, prompt language, question detection, citation preservation, and post-call language.
 - **M06-045** [implemented] Deliver the implementation, the tested language matrix, meaningful validation results, setup/configuration notes, and any remaining provider or real-device verification needed. Keep subsequent language additions behind the same validation standard.
-- **M06-046** [in progress] Material 01 starts calls using the selected profile's language preference.
-- **M06-047** [in progress] Material 02 should use the same language identifiers for practice; spoken interviewer output additionally needs a verified speech-generation voice.
+- **M06-046** [implemented] Material 01 starts calls using the selected profile's language preference.
+- **M06-047** [implemented] Material 02 should use the same language identifiers for practice; spoken interviewer output additionally needs a verified speech-generation voice.
 - **M06-048** [implemented] Material 03 may reuse the language catalog, but its conversation preferences must not unexpectedly change an active call.
-- **M06-049** [in progress] Material 04 displays the existing session's selected language and does not create a second recognition pipeline.
+- **M06-049** [implemented] Material 04 displays the existing session's selected language and does not create a second recognition pipeline.
 - **M06-050** [implemented] Material 05 can supply evidence in available source languages while the call answer follows the selected language.
 
 
@@ -464,8 +464,8 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Language runtime: 149 deterministic tests passed; scoped Ruff and Pyright clean. Call/profile UI regressions: 21 passed. Desktop TypeScript check passed before subsequent Ask UI integration. See call-languages.md. No live speech or macOS claims. Spanish/Vietnamese remain deployment-gated.
 - M01 components: 25 deterministic suggestion/matching tests; 8 native background unit tests; explicit Windows WASAPI activity diagnostic passed (3 external processes, 0 device warnings). It does not establish a call: verified app detection still pending. Tray/background/login UI integration underway.
 - M03: encrypted persistent conversation backend and Ask page implemented, integration/testing still in progress.
-- Local database validation currently unavailable: no PostgreSQL listener and Docker daemon is stopped. Provider checks, Mac/device builds, speech certification, OAuth registrations remain unverified.
-- Next: finish language persistence/UI regression tests and commit milestone; continue Ask, personal AI briefs, practice, calendars and actual mobile apps.
+- Historical initial blocker (resolved): Docker was stopped; local Docker services subsequently started and the complete migrated backend suite passed. Provider/device verification remains separate.
+- Historical next action completed; see later milestones and the current next action at the top.
 
 ### M05/M06 validation update (2026-11-19)
 
@@ -482,3 +482,25 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Automated evidence: focused desktop Ask/practice/audio/language 10 passed; API/core Ask/practice combined 37 passed including 3 real-stack lifecycle cases; calendar agent reports 48 deterministic tests plus 1 real-stack consent/encryption/isolation/disconnect test. Personal context evidence recorded separately below/above by owner. Full desktop regression underway.
 - Database tests use disposable migrated databases, local Valkey and object store. Provider answers/auth are deterministic fixtures; no live paid model or calendar consent claimed.
 - Remaining: native call evidence adapters/suggestions, mobile native app and authoritative companion transport, actual Windows/macOS audio/device checks, signed mobile builds/real phone workflow, UI visual/accessibility pass, full regression and final requirement reconciliation. No broad feature is marked complete based only on first journey.
+
+### M01 native detection completion update (2026-11-19)
+
+- Implemented Windows WASAPI activity + process identity + app-specific Accessibility button evidence; opt-in, per-app controls, five-second debounce, dismissal/reconnect suppression, own/active/starting-session exclusion, Windows shell notification-state gate, 120-second end review (never automatic stop). No capture/network is started by detection or acceptance. Pause retains dismissed-call identity.
+- macOS 13 public NSWorkspace/AX/CoreAudio adapter and UserNotifications permission/delivery/click bridge implemented. Notifications remain under OS Focus/DND control. Source uses no post-Ventura per-process audio APIs or screen capture. Apple Silicon and Intel adapter metadata checks pass against public objc2 bindings using `apps/desktop/native-checks/macos-call-adapter`; this is not full Universal linking or real-device certification.
+- Native Windows background suite: 13 passed, 2 host diagnostics excluded by default. Explicit read-only UIA/WASAPI host diagnostic passed (zero call candidates). Suggestion UI: 2 passed for no API/capture on acceptance and no session stop on dismissal. Separate personal-AI UI suite: 3 passed.
+- `docs/implementation/background-native-integration.md` records target-specific evidence, official API citations and exact commands. Incoming calls, live conferencing trials, muted/device-switch behavior, DND versions, phone/emulator audio routing, Mac packaging/permissions/hardware remain unverified. Samsung Flow/AirDroid/Smart Connect have no verified adapter and remain excluded. Code-complete rows do not certify these app/device combinations.
+
+### Desktop integration and design revision (2026-11-19)
+
+- User-directed placement: primary navigation remains Call / Interview prep / Work context / Past calls. Ask opens within Work; practice opens within Interview prep. Redesigned compact setup, question/answer workspace, conversation composer, inline context and expandable personal-AI panel reuse ruby design tokens. No independent Ask/Practice main tabs.
+- Full desktop Vitest run: **451 passed across49 files**. Release script tests run separately. Deferred-response regressions protect selections, drafts, source views and late practice starts; profile/account entry ownership is checked before remount. Saved-call citations open the actual History component with exact segment/timestamp focus while preserving Ask.
+- Rendered Ask, practice and narrow practice: zero axe violations, zero horizontal overflow, no page errors. Reproducible harness and screenshots live under docs/design/harness/features-shoot.mjs and docs/design/screens/features. Browser fixtures are fictional and not production integration evidence.
+- Native broad validation: client library81 tests completed, desktop96 passed/3 ignored; strict Clippy for both libraries and workspace rustfmt passed. Windows embedded development executable packaging is underway. Full Mac SDK linking/signing and physical calls are not verified by the two-architecture adapter metadata checks.
+- Backend checkpoint **7f66430**: full local-stack suite **1684 passed**, scoped Ruff/Pyright clean. Migration0026 closes cross-request active-brief references; private-context account transfer and stale calendar callback races fixed. See backend-security-audit.md.
+- Ask/practice setup and retention guide: ask-and-practice.md. Half-duplex microphone/playback lifecycle is implemented and fixture-tested; physical loudspeaker/headphone/echo/device behavior remains externally blocked. All application/emulator/phone-link matrices require actual accessible applications and call peers before support certification. Missing OAuth app registrations/provider credentials, real AI-host connection and Mac/iOS signing/device hosts are activation/verification dependencies, not mock successes.
+- Current remaining engineering: partial Ask response delivery review, mobile APK build/integration, final ledger reconciliation and focused draft PR. Windows artifact packaging and mobile native tooling are running locally; no production deployment or user installation performed.
+
+### Mobile native milestone (2026-11-19)
+- Material04 native Expo58/RN0.88 clients now include same-account desktop companion, standalone microphone turns, grouped Ask/practice/preparation/history, SecureStore credentials, per-profile lifecycle cleanup and honest foreground-only capture.
+- Strict TypeScript, 10 deterministic tests and Android/iOS Hermes export passed. Native Android/iOS projects generated; isolated workflow validates these and optionally builds an Android preview. CI planner 41 tests passed; mobile/native harness paths do not trigger backend deployment, while unknown paths still fail closed.
+- Portable JDK17 and Android SDK37 tools installed with official archive checksums; Gradle/NDK downloads and bundled APK build remain in progress. Physical devices, macOS/Xcode, store accounts and production signing are external and remain unverified.

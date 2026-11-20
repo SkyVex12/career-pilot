@@ -717,6 +717,17 @@ async fn list_devices() -> Devices {
 
 /// One Copilot API call for the UI's screens (documents, jobs, interviews, sessions, usage).
 #[tauri::command]
+fn open_calendar_authorization(app: AppHandle, url: String) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    if !(url.starts_with("https://accounts.google.com/")
+        || url.starts_with("https://login.microsoftonline.com/"))
+    {
+        return Err("Only configured calendar authorization providers may be opened".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn api_call(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2280,7 +2291,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_calendar_authorization,
             background::background_status,
+            background::background_suggestion,
+            background::background_respond,
+            background::background_take_accepted,
+            background::background_request_permissions,
             background::background_native_activity,
             background::background_set_preferences,
             compact_window::set_compact_window_shape,

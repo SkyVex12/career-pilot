@@ -1,3 +1,5 @@
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 // The main window: the app shell (Shell.tsx) around the Call screen, Interview prep, Work,
 // History, Settings, and the debug panel (hidden unless turned on in the settings, or with
 // Ctrl+Shift+D). Signing in and the Career-OS link, when the stage requires one, come first:
@@ -15,6 +17,8 @@ import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
 import { PageHeadingActive } from "./ui/Layout";
 import { Icon } from "./ui/Icon";
+import { type AskEntry, type AskScope } from "./Ask";
+import { type PracticeEntry } from "./Practice";
 import { Work } from "./Work";
 
 // Screens not needed at startup load when first opened: History (with the call replay, which
@@ -56,6 +60,25 @@ export default function App() {
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
   const [tab, setTab] = useState<Tab>("start");
+  const contextKey = useRef("");
+  const [practiceEntry, setPracticeEntry] = useState<(PracticeEntry & { owner: string }) | null>(null);
+  useEffect(() => { const open = (event: Event) => { setPracticeEntry({ ...(event as CustomEvent).detail, n: Date.now(), owner: contextKey.current }); setTab("applications"); }; window.addEventListener("copilot:open-practice", open); return () => window.removeEventListener("copilot:open-practice", open); }, []);
+  const [askEntry, setAskEntry] = useState<(AskEntry & { owner: string }) | null>(null);
+  useEffect(() => { const open = (event: Event) => { setAskEntry({ scope: (event as CustomEvent<AskScope>).detail, n: Date.now(), owner: contextKey.current }); setTab("work"); }; window.addEventListener("copilot:open-ask", open); return () => window.removeEventListener("copilot:open-ask", open); }, []);
+  useEffect(() => {
+    if (!inTauri) return;
+    let disposed = false;
+    const accept = async () => {
+      const kind = await invoke<"start" | "end" | null>("background_take_accepted").catch(() => null);
+      if (disposed || !kind) return;
+      await windowActions.current?.expand();
+      setTab("start");
+      if (kind === "end") window.dispatchEvent(new Event("copilot:review-end-call"));
+    };
+    const off = listen("copilot://call-accepted", () => void accept());
+    void off.then(() => { if (!disposed) void accept(); });
+    return () => { disposed = true; void off.then(stop => stop()); };
+  }, []);
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const windowActions = useRef<WorkspaceWindowActions | null>(null);
@@ -82,10 +105,13 @@ export default function App() {
   const clearProfileContext = useCallback(() => {
     if (!session.running) dispatch({ type: "reset", running: false });
     setPreset(null);
+    setAskEntry(null);
+    setPracticeEntry(null);
     setFocusApp(null);
     setBaseResumeRequest(0);
   }, [session.running, dispatch]);
   const profiles = useProfiles(tokenSet, view?.settings.profile ?? null, account, clearProfileContext);
+  contextKey.current = `${account}/${profiles.state.here ?? "me"}`;
   const link = useLinkRequired(tokenSet, account);
   const update = useUpdate();
   const check = useCheckNow(update);
@@ -242,6 +268,8 @@ export default function App() {
             gate(
               <Applications
                 active={tab === "applications"}
+                practiceEntry={practiceEntry?.owner === contextKey.current ? practiceEntry : null}
+                running={session.running}
                 focus={focusApp}
                 baseResumeRequest={baseResumeRequest}
                 onStartInterview={(id) => {
@@ -252,7 +280,7 @@ export default function App() {
             ),
             true,
           )}
-          {page("work", gate(<Work active={tab === "work"} />), true)}
+          {page("work", gate(<Work active={tab === "work"} askEntry={askEntry?.owner === contextKey.current ? askEntry : null} />), true)}
           {page(
             "history",
             locked ? (

@@ -40,7 +40,7 @@ function workspace() {
   return { gear, note, profile, onTab, onSwitch };
 }
 
-it("keeps the four primary destinations visible without a second navigation inside Interview prep", () => {
+it("keeps the primary destinations visible without a second navigation inside Interview prep", () => {
   const { onTab, note } = workspace();
   const navigation = screen.getByRole("navigation", { name: "Main" });
   expect(within(navigation).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Call", "Interview prep", "Work context", "Past calls"]);

@@ -1,3 +1,5 @@
+import { openPractice } from "./Practice";
+import { openAsk } from "./Ask";
 // One call after it ended: the Call screen right after it ends, and a past call opened from
 // History. Polls GET /sessions/{id} for up to 5 minutes until the outputs are ready, then shows
 // them; when the transcript was stored, also the call as the overlay showed it (Replay) and the
@@ -12,6 +14,8 @@ import { Banner, Button, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Ske
 import { MODE_LABEL } from "./calls";
 import { Icon } from "./ui/Icon";
 
+export type TranscriptFocus = { sessionId: string; startMs?: number; channel?: "me" | "them"; segId?: number };
+
 export function SessionDetail({
   sessionId,
   onDeleted,
@@ -19,6 +23,7 @@ export function SessionDetail({
   companies = {},
   justEnded = false,
   onNewCall,
+  transcriptFocus,
 }: {
   sessionId: string;
   onDeleted?: () => void;
@@ -27,6 +32,8 @@ export function SessionDetail({
   /** The Call screen's view right after a call: "Call ended" and a New call button. */
   justEnded?: boolean;
   onNewCall?: () => void;
+  /** Open a cited transcript moment only when it belongs to this session. */
+  transcriptFocus?: TranscriptFocus;
 }) {
   const [state, setState] = useState<PollState>({ phase: "waiting", session: null, elapsedMs: 0, error: null });
   const [round, setRound] = useState(0); // bumped by "Look again"
@@ -40,6 +47,7 @@ export function SessionDetail({
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notesSaved, setNotesSaved] = useState(false);
+  const focusedRow = useRef<HTMLLIElement>(null);
   const currentId = useRef(sessionId);
   currentId.current = sessionId;
 
@@ -78,6 +86,27 @@ export function SessionDetail({
   const title = session ? heading(session, companies) : "Call";
   const stored = Boolean(session?.store_transcript);
   const outputs = state.phase === "ready" ? outputsInOrder(state.session) : [];
+  const matchingFocus = transcriptFocus?.sessionId === sessionId ? transcriptFocus : undefined;
+  const focusKey = useMemo(() => {
+    if (!matchingFocus || replay?.session_id !== sessionId) return null;
+    if (matchingFocus.channel && Number.isInteger(matchingFocus.segId)) {
+      const exact = replay.segments.find(s => s.channel === matchingFocus.channel && s.seg_id === matchingFocus.segId);
+      if (exact) return `${exact.channel}:${exact.seg_id}`;
+    }
+    const at = matchingFocus.startMs;
+    if (at === undefined || !Number.isFinite(at) || at < 0) return null;
+    const containing = replay.segments.find(s => s.start_ms <= at && at <= s.end_ms);
+    const nearest = containing ?? [...replay.segments].sort((a,b) => Math.abs(a.start_ms-at)-Math.abs(b.start_ms-at))[0];
+    if (!nearest || (!containing && Math.abs(nearest.start_ms-at)>2000)) return null;
+    return `${nearest.channel}:${nearest.seg_id}`;
+  }, [sessionId, replay, matchingFocus?.sessionId, matchingFocus?.channel, matchingFocus?.segId, matchingFocus?.startMs]);
+  useEffect(() => {
+    if (matchingFocus && stored && state.phase === "ready") setTab("transcript");
+  }, [sessionId, matchingFocus?.sessionId, matchingFocus?.channel, matchingFocus?.segId, matchingFocus?.startMs, stored, state.phase]);
+  useEffect(() => {
+    if (tab === "transcript" && focusKey) focusedRow.current?.scrollIntoView({ block:"center", behavior:"auto" });
+  }, [tab, focusKey, transcript]);
+
 
   useEffect(() => {
     if (session?.id !== sessionId || typeof session.notes !== "string") return;
@@ -169,15 +198,16 @@ export function SessionDetail({
   ) : transcript.length === 0 ? (
     <EmptyState icon={<Icon name="mic" size={28} />} title="Nothing was transcribed" />
   ) : (
-    <ol className="sd-transcript">
+    <>{matchingFocus && <p className="ui-field-hint">{focusKey ? "Supporting transcript moment highlighted." : "The referenced transcript moment is unavailable."}</p>}<ol className="sd-transcript">
       {transcript.map((r) => (
-        <li key={r.key}>
+        <li key={r.key} ref={r.key === focusKey ? focusedRow : undefined} aria-current={r.key === focusKey ? "location" : undefined}>
           <span className="sd-at ui-num">{r.at}</span>
           <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
-          <span className="sd-text">{r.text}</span>
+          <span className="sd-text">{r.key === focusKey ? <mark style={{ background:"rgba(183, 38, 75, 0.16)", color:"inherit", borderRadius:3 }}>{r.text}</mark> : r.text}</span>
+          {r.who === "Them" && <Button size="sm" onClick={() => leave(() => openPractice({ source_question: { session_id: sessionId, channel: "them", seg_id: Number(r.key.split(":")[1]) }, topic: "Rehearse a saved interview question" }))}>Practice this question</Button>}
         </li>
       ))}
-    </ol>
+    </ol></>
   );
 
   return (
@@ -194,6 +224,7 @@ export function SessionDetail({
         meta={session ? facts(session) : <Skeleton width={260} height={12} />}
         actions={
           <>
+            <Button onClick={() => openAsk({ kind: "call", id: sessionId })}>Ask about this call</Button>
             {justEnded && onNewCall && (
               <Button variant="primary" onClick={() => leave(onNewCall)}>
                 New call

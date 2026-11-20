@@ -1,0 +1,12 @@
+[package]
+name="mac-adapter-check"
+version="0.0.0"
+edition="2024"
+[workspace]
+[dependencies]
+serde={version="1",features=["derive"]}
+objc2="0.6.5"
+block2="0.6.2"
+objc2-foundation={version="0.3.2",default-features=false,features=["std","NSArray","NSString","NSObject","NSError"]}
+objc2-app-kit={version="0.3.2",default-features=false,features=["std","NSWorkspace","NSRunningApplication","libc"]}
+objc2-user-notifications={version="0.3.2",default-features=false,features=["std","block2","UNUserNotificationCenter","UNNotification","UNNotificationContent","UNNotificationRequest","UNNotificationResponse","UNNotificationTrigger"]}

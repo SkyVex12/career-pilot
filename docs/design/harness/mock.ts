@@ -1,3 +1,4 @@
+import { featureRest } from "./features";
 // The Rust core's commands and events, faked for the design harness (README.md). The URL picks
 // the state, for example /?data=empty, /?call=midcall&compact=1#overlay:
 //
@@ -165,6 +166,8 @@ function rest(method: string, path: string, body?: unknown): unknown {
   if (data === "error" && method === "GET" && !path.startsWith("/career-os/connection") && !path.startsWith("/profiles")) {
     throw "The API did not answer: connection refused (HTTP 502)";
   }
+  const feature = featureRest(method, path, body);
+  if (feature !== undefined) return feature;
   const [p] = path.split("?");
   const m = (re: RegExp) => re.exec(p);
   if (p === "/seats" || m(/^\/sessions\/[^/]+\/seats$/)) return { seats: [], voice: false, screen: false };

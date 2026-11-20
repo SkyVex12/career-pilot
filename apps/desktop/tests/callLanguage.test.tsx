@@ -36,3 +36,11 @@ describe("profile call language", () => {
     await Promise.resolve(); expect(change).not.toHaveBeenCalled();
   });
 });
+
+it("keeps call start unavailable when a server returns malformed language settings", async () => {
+  ipc.api("GET", /^\/call-languages$/, () => ({}));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
+  const ready = vi.fn(); render(<CallLanguage value="en" onChange={() => {}} onReady={ready} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("invalid language settings");
+  expect(ready).not.toHaveBeenCalledWith(true);
+});
