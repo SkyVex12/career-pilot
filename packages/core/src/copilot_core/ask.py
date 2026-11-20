@@ -87,3 +87,9 @@ def request(
         ),
         max_tokens=2400,
     )
+
+
+def partial_answer(text: str) -> str:
+    """Preview text is provisional: source links are published only on completion."""
+    text = re.sub(r"\[S\d+\]", "", text)
+    return re.sub(r"\[S?\d*$", "", text)

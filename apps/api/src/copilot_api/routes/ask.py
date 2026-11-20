@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,7 +14,7 @@ from copilot_core import ask, personal_ai
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.db import Conn
-from copilot_core.llm import ModelRouter, Route
+from copilot_core.llm import ModelRouter, RefusedError, Route
 from copilot_core.providers import make_providers, openai_params
 
 router = APIRouter(prefix="/ask", tags=["ask"], dependencies=[Depends(require_link)])
@@ -104,7 +105,7 @@ async def authorize_scope(
 
 async def expire(conn: Conn, cid: UUID) -> None:
     await conn.execute(
-        "update app.ask_messages set status='failed', error="
+        "update app.ask_messages set status='failed',answer_enc=null,answer_key_version=null,error="
         "'Generation interrupted; retry explicitly.',updated_at=now() "
         "where conversation_id=$1 and status='pending' "
         "and updated_at < now()-interval '5 minutes'",
@@ -324,6 +325,7 @@ async def retry_message(
         await authorize_scope(conn, account, user, ask.Scope.model_validate(obj(row["scope"])))
         row = await conn.fetchrow(
             "update app.ask_messages set status='pending',error=null,"
+            "answer_enc=null,answer_key_version=null,sources_enc=null,sources_key_version=null,"
             "attempt=attempt+1,updated_at=now() where id=$1 returning *",
             mid,
         )
@@ -567,7 +569,11 @@ async def retrieve(
 
 
 async def answer(
-    svc: Services, question: str, history: list[dict[str, str]], sources: list[dict[str, Any]]
+    svc: Services,
+    question: str,
+    history: list[dict[str, str]],
+    sources: list[dict[str, Any]],
+    progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     providers = make_providers(svc.settings, timeout_s=120)
     try:
@@ -585,7 +591,22 @@ async def answer(
                 params = {"thinking": {"type": "adaptive"}}
             routes.append(Route(provider, model, params))
         model_router = ModelRouter({"ask": routes}, first_token_timeout_s=60)
-        text, done = await model_router.complete("ask", ask.request(question, history, sources))
+        text = ""
+        done = None
+        last_write = 0.0
+        async for chunk in model_router.stream("ask", ask.request(question, history, sources)):
+            if isinstance(chunk, str):
+                text += chunk
+                now = asyncio.get_running_loop().time()
+                if progress is not None and now - last_write >= 0.5:
+                    await progress(ask.partial_answer(text))
+                    last_write = now
+            else:
+                done = chunk
+        if done is None:
+            raise RuntimeError("model stream ended without completion")
+        if done.stop_reason == "refusal":
+            raise RefusedError("ask", done)
         if done.stop_reason == "max_tokens":
             text += "\n\n[Answer reached its length limit; ask a follow-up to continue.]"
         return text
@@ -683,6 +704,11 @@ async def generate(
                                 )
                             )
             for brief in briefs:
+                when = str(brief["prepared_at"])
+                if scope.from_date and when[:10] < str(scope.from_date):
+                    continue
+                if scope.to_date and when[:10] > str(scope.to_date):
+                    continue
                 sources.append(
                     source(
                         "private_brief",
@@ -696,7 +722,32 @@ async def generate(
             if scope.kind in ("auto", "all"):
                 sources.extend(await calendar_sources(svc, account, user, scope))
             sources = ask.rank(query, sources) or sources[:12]
-        model_task = asyncio.create_task(answer(svc, original["question"], history, sources))
+
+        async def progress(text: str) -> None:
+            async with svc.tx(account) as conn:
+                # Same account RLS and locked attempt guard as the final write.
+                row = await conn.fetchrow(
+                    "select id from app.ask_messages where id=$1 and status='pending' "
+                    "and attempt=$2 for update",
+                    mid,
+                    attempt,
+                )
+                if row is None:
+                    raise asyncio.CancelledError
+                sealed, version = await svc.crypto.encrypt(
+                    conn, account.user_id, "ask_messages", str(mid), text
+                )
+                await conn.execute(
+                    "update app.ask_messages set answer_enc=$2,answer_key_version=$3,"
+                    "updated_at=now() where id=$1",
+                    mid,
+                    sealed,
+                    version,
+                )
+
+        model_task = asyncio.create_task(
+            answer(svc, original["question"], history, sources, progress)
+        )
         async with asyncio.timeout(180):
             while not model_task.done():
                 done, _ = await asyncio.wait({model_task}, timeout=1)
@@ -752,7 +803,8 @@ async def generate(
             model_task.cancel()
         async with svc.tx(account) as conn:
             await conn.execute(
-                "update app.ask_messages set status='failed',error="
+                "update app.ask_messages set status='failed',answer_enc=null,"
+                "answer_key_version=null,error="
                 "'Could not generate an answer. Check model configuration or retry.',"
                 "updated_at=now() where id=$1 and status='pending' and attempt=$2",
                 mid,

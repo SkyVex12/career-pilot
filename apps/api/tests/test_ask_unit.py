@@ -214,3 +214,42 @@ async def test_inactive_fact_cannot_reenter_practice_or_citation_context(ask_api
     with pytest.raises(HTTPException) as failure:
         await routes.resolve_source("fact", str(uuid4()), svc, profile, profile)
     assert failure.value.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Decision [S1]", "Decision "),
+        ("Decision [S12", "Decision "),
+        ("Use [S", "Use "),
+        ("Plain answer", "Plain answer"),
+    ],
+)
+def test_partial_answer_does_not_publish_citation_tokens(text, expected):
+    assert ask.partial_answer(text) == expected
+
+
+async def test_answer_stream_reports_provisional_text_and_closes_provider(ask_api, monkeypatch):
+    from copilot_core.llm import LLMDone, LLMUsage
+
+    _, svc, _, _ = ask_api
+    provider = MagicMock(name="provider")
+    provider.name = "openai"
+    provider.client.close = AsyncMock()
+    svc.settings.openai_route.return_value = ("model", {})
+    monkeypatch.setattr(routes, "make_providers", lambda *a, **kw: [provider])
+    monkeypatch.setattr(routes, "openai_params", lambda *a: {})
+
+    async def stream(*args):
+        yield "First part [S1]"
+        yield " and the rest."
+        yield LLMDone(LLMUsage(), "end_turn")
+
+    router = MagicMock()
+    router.stream = stream
+    monkeypatch.setattr(routes, "ModelRouter", lambda *a, **kw: router)
+    progress = AsyncMock()
+    result = await routes.answer(svc, "question", [], [], progress)
+    assert result == "First part [S1] and the rest."
+    progress.assert_awaited_once_with("First part ")
+    provider.client.close.assert_awaited_once()
