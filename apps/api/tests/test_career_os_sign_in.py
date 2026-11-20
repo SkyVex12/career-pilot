@@ -381,7 +381,7 @@ async def test_an_account_linked_to_another_career_os_account_is_refused(
         COMPLETE, json={"ticket": asked["ticket"], "choice": "existing"}, headers={**IP, **google}
     )
     assert code_of(r) == (409, "linked_to_another")
-    assert "different Career-OS account" in r.json()["detail"]["message"]
+    assert "different HubRuby account" in r.json()["detail"]["message"]
     assert await identity_of(api, "user:u1") is None
     assert await link_of(api, uid) == ("active", "user", "u2")
     # The same refusal when the account, signed in, tries to add the sign-in itself.
@@ -604,7 +604,7 @@ async def test_when_career_os_is_down_the_button_says_so_and_other_sign_ins_work
     fake.down = True
     r = await cos(api, fake, "u1")
     assert code_of(r) == (503, "career_os_unavailable")
-    assert "Career-OS could not be reached" in r.json()["detail"]["message"]
+    assert "HubRuby could not be reached" in r.json()["detail"]["message"]
     # Whoever is signed in stays signed in, and can refresh.
     assert (await api.client.get("/v1/me", headers=bearer(out))).status_code == 200
     r = await api.client.post(

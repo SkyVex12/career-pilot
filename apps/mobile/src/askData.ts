@@ -46,7 +46,7 @@ export type SourceDetail = {
 };
 const invalid = () =>
   new Error(
-    "The server returned an incomplete Work response. Retry, or update the server to the current Career Pilot version.",
+    "The server returned an incomplete Work response. Retry, or update the server to the current CoRuby version.",
   );
 function object(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw invalid();

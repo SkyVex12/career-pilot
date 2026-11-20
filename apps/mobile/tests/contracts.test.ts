@@ -361,7 +361,7 @@ test("signout queues credential deletion after an already-started secure write",
   await assert.rejects(api.token(), /Sign in/);
 });
 
-test("Career-OS tokens refresh and revoke when email authentication is disabled", async () => {
+test("HubRuby tokens refresh and revoke when email authentication is disabled", async () => {
   const memory = store({ ...tokens, expires_at: 1 });
   const calls: string[] = [];
   const api = new Api("https://example.com", memory, async (raw, options) => {

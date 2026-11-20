@@ -268,9 +268,9 @@ pub(super) fn notify(suggestion: Option<&Suggestion>) {
                 "Call detected"
             }));
             content.setBody(&NSString::from_str(if s.kind == "end" {
-                "Click to review ending Copilot."
+                "Click to review ending CoRuby."
             } else {
-                "Click to review call setup in Copilot. Audio starts only after confirmation."
+                "Click to review call setup in CoRuby. Audio starts only after confirmation."
             }));
             let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
                 &NSString::from_str(&s.id),

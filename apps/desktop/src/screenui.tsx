@@ -325,7 +325,7 @@ export function GuestScreenView({ s, active = true, window: viewerWindow = "main
   const fullscreen = () => action(async () => {
     if (document.fullscreenElement === desktop.current) await document.exitFullscreen();
     else if (desktop.current?.requestFullscreen) await desktop.current.requestFullscreen();
-    else throw new Error("Full screen is unavailable. Maximize the Ruby window to enlarge the shared screen.");
+    else throw new Error("Full screen is unavailable. Maximize the CoRuby window to enlarge the shared screen.");
   });
   const status = !allowed ? "No screen access" : viewer.elsewhere ? "Open in another window" : controlling ? "You have control" : watching ? "Viewing" : state.state === "off" && state.error ? "Disconnected" : state.state === "connecting" || !viewer.owns ? "Connecting" : "Waiting for screen";
   return <section ref={desktop} className={cx("screen-view remote-desktop", controlling && "is-controlling")} aria-label={`${host}'s screen`}>

@@ -1,4 +1,4 @@
-# Career Pilot native mobile
+# CoRuby native mobile
 
 Installable Expo SDK 58 / React Native 0.88 application for Android 7+ and iOS 16.4+. Node 22.13+ is required. This is a native companion and standalone client; it is not a responsive browser replacement.
 

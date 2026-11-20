@@ -81,7 +81,7 @@ export async function beginCareerOs(
     endpoint.hash ||
     !option.client_id
   )
-    throw new Error("Invalid secure Career-OS authorization endpoint.");
+    throw new Error("Invalid secure HubRuby authorization endpoint.");
   if (!endpoint.pathname.replace(/\/$/, "").endsWith("/career-pilot/authorize"))
     endpoint.pathname =
       endpoint.pathname.replace(/\/$/, "") + "/career-pilot/authorize";

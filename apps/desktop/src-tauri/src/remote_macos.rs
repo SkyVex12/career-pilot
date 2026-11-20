@@ -224,7 +224,7 @@ mod native {
         if unsafe { CGPreflightPostEventAccess() || (prompt && CGRequestPostEventAccess()) } {
             Ok(())
         } else {
-            Err("Allow Copilot Desktop in System Settings > Privacy & Security > Accessibility, then try control again.".into())
+            Err("Allow CoRuby in System Settings > Privacy & Security > Accessibility, then try control again.".into())
         }
     }
     pub fn monitors() -> Vec<Monitor> {

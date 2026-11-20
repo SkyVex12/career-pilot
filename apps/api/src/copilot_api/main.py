@@ -161,7 +161,7 @@ def career_os_sign_in(
     if client is None or tokens is None:
         raise RuntimeError("COPILOT_CAREER_OS_SIGN_IN needs COPILOT_CAREER_OS_URL")
     if settings.google_allowed_emails:
-        log.warning("Career-OS sign-in is off: this stage has an allow-list of emails")
+        log.warning("HubRuby sign-in is off: this stage has an allow-list of emails")
         return None
     return CareerOsSignIn(settings, pool, valkey, client, crypto, tokens)
 
@@ -180,7 +180,7 @@ def create_app(services: Services | None = None) -> FastAPI:
                 await app.state.services.pool.close()
                 await app.state.services.valkey.aclose()
 
-    app = FastAPI(title="Copilot API", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="CoRuby API", version=__version__, lifespan=lifespan)
     app.add_middleware(VersionGuard)
     app.add_middleware(RequestLog)
 

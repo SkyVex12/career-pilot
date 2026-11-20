@@ -194,7 +194,7 @@ export default function Overlay() {
   return (
     <div className={cx("ov", compact && "is-compact", guest && "is-guest")} style={{ "--ov-alpha": opacity } as CSSProperties}>
       <header className="ov-head" data-native-drag-region>
-        <span className="ov-brand" data-native-drag-region><RubyMark /></span>
+        <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
         {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
         <span className="ov-spacer" data-native-drag-region />
         <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />

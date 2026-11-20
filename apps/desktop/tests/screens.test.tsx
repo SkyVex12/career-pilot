@@ -541,7 +541,7 @@ describe("Call", () => {
     expect(start?.args.email).toBe("sam@example.com");
   });
 
-  it("Career-OS sign-in: several accounts, then an email that matches", async () => {
+  it("HubRuby sign-in: several accounts, then an email that matches", async () => {
     callRoutes();
     ipc.handle("career_os_sign_in", () => ({
       status: "choose_account",
@@ -555,7 +555,7 @@ describe("Call", () => {
     ipc.handle("career_os_complete", () => ({ status: "added" }));
     ipc.handle("sign_in", () => "sam@example.com");
     wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null, settings: { ...SETTINGS, career_os_sign_in: true } })} />);
-    await userEvent.click(screen.getByRole("button", { name: "Continue with Career-OS" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue with HubRuby" }));
     expect(await screen.findByText(/more than one account/)).toBeInTheDocument();
     expect(screen.getByText(/s•••@x.com/)).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Use this account" })[0]);
@@ -567,7 +567,7 @@ describe("Call", () => {
     expect(done?.args.accountId ?? done?.args.account_id).toBe("a");
   });
 
-  it("Career-OS sign-in: an unverified email offers the existing account or a new one", async () => {
+  it("HubRuby sign-in: an unverified email offers the existing account or a new one", async () => {
     callRoutes();
     ipc.handle("career_os_sign_in", () => ({
       status: "existing_or_new",
@@ -578,21 +578,21 @@ describe("Call", () => {
     }));
     ipc.handle("career_os_complete", () => ({ status: "signed_in", name: "Sam", account: "new" }));
     wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null, settings: { ...SETTINGS, career_os_sign_in: true } })} />);
-    await userEvent.click(screen.getByRole("button", { name: "Continue with Career-OS" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continue with HubRuby" }));
     expect(await screen.findByText(/only a hint/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Create a separate account" }));
     await waitFor(() => expect(ipc.calls.some((c) => c.cmd === "career_os_complete")).toBe(true));
     expect(ipc.calls.find((c) => c.cmd === "career_os_complete")?.args.choice).toBe("new");
   });
 
-  it("Career-OS being down leaves the other buttons and says why", async () => {
+  it("HubRuby being down leaves the other buttons and says why", async () => {
     callRoutes();
     ipc.handle("career_os_sign_in", () => {
       throw { code: "career_os_unavailable", message: "down" };
     });
     wrap(<CallScreen {...callProps({ tokenSet: false, signedInAs: null, careerOs: null, settings: { ...SETTINGS, career_os_sign_in: true } })} />);
-    await userEvent.click(screen.getByRole("button", { name: "Continue with Career-OS" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Career-OS isn't answering");
+    await userEvent.click(screen.getByRole("button", { name: "Continue with HubRuby" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("HubRuby isn't answering");
     expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue with email" })).toBeInTheDocument();
   });
@@ -605,7 +605,7 @@ describe("Call", () => {
     expect(screen.getByText(/With your Google account\./)).toBeInTheDocument();
   });
 
-  it("locked: the Career-OS step asks for the code", async () => {
+  it("locked: the HubRuby step asks for the code", async () => {
     callRoutes();
     wrap(<CallScreen {...callProps({ locked: true, careerOs: { connected: false, available: true, required: true } })} />);
     expect(screen.getByRole("heading", { name: /Sign in.*done/ })).toBeInTheDocument();

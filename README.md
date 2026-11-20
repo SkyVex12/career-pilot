@@ -1,4 +1,6 @@
-# Copilot
+# CoRuby
+
+Product identity and preserved installation/protocol names: [branding](docs/branding.md).
 
 macOS: see [building, permissions, and releases](docs/macos.md) (Universal app for Apple Silicon and Intel, macOS 13+).
 

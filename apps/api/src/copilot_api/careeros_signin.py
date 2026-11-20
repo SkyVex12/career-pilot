@@ -92,25 +92,25 @@ PLACEHOLDER_DOMAINS = (PLACEHOLDER_DOMAIN, "profiles.invalid")
 
 MESSAGES = {
     "career_os_unavailable": (
-        503, "Career-OS could not be reached. Try again, or sign in another way."),
+        503, "HubRuby could not be reached. Try again, or sign in another way."),
     "invalid_grant": (
-        400, "That Career-OS sign-in has expired or was already used. Start it again."),
+        400, "That HubRuby sign-in has expired or was already used. Start it again."),
     "invalid_assertion": (
-        502, "Career-OS's answer could not be verified. Try again, or sign in another way."),
-    "account_disabled": (403, "This Career-OS account is disabled or no longer exists."),
+        502, "HubRuby's answer could not be verified. Try again, or sign in another way."),
+    "account_disabled": (403, "This HubRuby account is disabled or no longer exists."),
     "linked_to_another": (
         409,
-        "That Copilot account is already linked to a different Career-OS account. Disconnect it "
-        "there first (Settings, Career-OS), or use another account.",
+        "That CoRuby account is already linked to a different HubRuby account. Disconnect it "
+        "there first (Settings, HubRuby), or use another account.",
     ),
     "identity_elsewhere": (
-        409, "This Career-OS account already signs in to another Copilot account."),
+        409, "This HubRuby account already signs in to another CoRuby account."),
     "wrong_account": (409, "That is not the account you chose. Sign in to the one you chose."),
     "proof_required": (
         401, "Sign in to that account with its own method first, then try again."),
-    "ticket_expired": (400, "That took too long. Start the Career-OS sign-in again."),
+    "ticket_expired": (400, "That took too long. Start the HubRuby sign-in again."),
     "not_a_choice": (400, "That is not one of the choices for this sign-in."),
-    "account_gone": (409, "That Copilot account no longer exists."),
+    "account_gone": (409, "That CoRuby account no longer exists."),
 }  # fmt: skip
 
 
@@ -162,7 +162,7 @@ async def own_address(conn: Any, user_id: UUID, email: str | None) -> bool:
     except asyncpg.UniqueViolationError:
         log.info("career-os sign-in: user %s keeps its placeholder; the address is taken", user_id)
         return False
-    log.info("career-os sign-in: user %s has its Career-OS address now", user_id)
+    log.info("career-os sign-in: user %s has its HubRuby address now", user_id)
     return True
 
 
@@ -215,11 +215,11 @@ class CareerOsSignIn:
             if e.status in (400, 401, 404, 410, 422):
                 raise SignInError("invalid_grant") from e
             if e.status == 403:
-                log.info("career-os sign-in: refused, the Career-OS account is disabled")
+                log.info("career-os sign-in: refused, the HubRuby account is disabled")
                 raise SignInError("account_disabled") from e
             if e.status == 429:
                 raise SignInError("career_os_unavailable", retry_after_s=60) from e
-            log.warning("career-os sign-in: Career-OS unavailable (%s)", e.status)
+            log.warning("career-os sign-in: HubRuby unavailable (%s)", e.status)
             raise SignInError("career_os_unavailable") from e
         except InvalidAssertion as e:
             log.warning("career-os sign-in: assertion refused: %s", e)
@@ -373,18 +373,18 @@ class CareerOsSignIn:
         unless all of it is. Returns the account's display name."""
         email, name = await self._check(user_id, person)
         shown = mask_email(email)
-        label = f"Career Pilot ({email})" if shown else "Career Pilot (Career-OS sign-in)"
+        label = f"CoRuby ({email})" if shown else "CoRuby (HubRuby sign-in)"
         linked = await self._link(link_code, label, person)
         await self._write(user_id, person, linked, new_account=False)
-        return name or person.name or "Career-OS account"
+        return name or person.name or "HubRuby account"
 
     async def _create(self, person: CareerOsPerson, link_code: str) -> tuple[UUID, str]:
         """A new account for this Career-OS account: the users row, the identity and the link
         together. Its address is Career-OS's (`own_address`)."""
         user_id = uuid7()
-        linked = await self._link(link_code, "Career Pilot (Career-OS sign-in)", person)
+        linked = await self._link(link_code, "CoRuby (HubRuby sign-in)", person)
         await self._write(user_id, person, linked, new_account=True)
-        return user_id, person.name or "Career-OS account"
+        return user_id, person.name or "HubRuby account"
 
     async def _write(
         self, user_id: UUID, person: CareerOsPerson, linked: dict[str, Any], new_account: bool
@@ -394,7 +394,7 @@ class CareerOsSignIn:
                 if new_account:
                     await conn.execute(
                         "insert into app.users (id, email, display_name) values ($1, $2, $3)",
-                        user_id, placeholder_email(user_id), person.name or "Career-OS account",
+                        user_id, placeholder_email(user_id), person.name or "HubRuby account",
                     )  # fmt: skip
                 # Inserted, never updated: an identity that exists keeps its account.
                 await conn.execute(
@@ -540,7 +540,7 @@ class CareerOsSignIn:
         })  # fmt: skip
         log.info(
             "career-os sign-in: case 4, principal %s shares an email with user %s"
-            " (verified by Career-OS: %s); asked",
+            " (verified by HubRuby: %s); asked",
             person.subject, match, verified,
         )  # fmt: skip
         return {

@@ -50,7 +50,7 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
         {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
       </Select>
     </Field>
-    {legacyEnglish && <p className="ui-field-hint">Using English compatibility mode. Update the Career Pilot server to choose other languages.</p>}
+    {legacyEnglish && <p className="ui-field-hint">Using English compatibility mode. Update the CoRuby server to choose other languages.</p>}
     <Checkbox label="Save selection as this profile’s default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
       setRemember(checked);
       if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));

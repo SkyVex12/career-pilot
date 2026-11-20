@@ -39,7 +39,7 @@ export function resumeStatusLabel(status: ResumeStatus): string {
 /** A Career-OS search result as the pull dialog shows it. */
 export function pullState(item: Pick<CareerOsItem, "pulled">): { label: string; action: "Pull" | "Pull again" | null } {
   if (!item.pulled) return { label: "", action: "Pull" };
-  if (item.pulled.changed) return { label: "Changed in Career-OS since the pull", action: "Pull again" };
+  if (item.pulled.changed) return { label: "Changed in HubRuby since the pull", action: "Pull again" };
   return { label: "Pulled", action: null };
 }
 

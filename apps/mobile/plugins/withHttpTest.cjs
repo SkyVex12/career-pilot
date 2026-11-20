@@ -53,7 +53,7 @@ module.exports = function withHttpTest(config) {
       fs.writeFileSync(
         path.join(root, "res/values/strings.xml"),
         `<resources>
-  <string name="app_name">Career Pilot HTTP Test</string>
+  <string name="app_name">CoRuby HTTP Test</string>
 </resources>
 `,
       );

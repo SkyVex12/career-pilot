@@ -8,7 +8,7 @@ it("accepts only the local suggestion without creating a call or calling an API"
   render(<BackgroundSuggestion/>);
   expect(await screen.findByText("Call detected")).toBeVisible();
   expect(ipc.apiCalls()).toHaveLength(0);
-  fireEvent.click(screen.getByRole("button",{name:"Start Copilot"}));
+  fireEvent.click(screen.getByRole("button",{name:"Start CoRuby"}));
   await waitFor(()=>expect(ipc.calls.some(c=>c.cmd==="background_respond" && c.args.accept===true)).toBe(true));
   expect(ipc.calls.some(c=>c.cmd==="start_session")).toBe(false);
   expect(ipc.apiCalls()).toHaveLength(0);

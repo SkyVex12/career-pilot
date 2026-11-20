@@ -86,7 +86,7 @@ def test_a_merge_that_changes_the_app_releases_the_next_patch(repo: Repo) -> Non
     assert p.release
     assert p.create_tag
     assert (p.version, p.previous, p.sha) == ("0.1.1", "desktop-v0.1.0", sha)
-    assert p.notes == "Copilot 0.1.1\n\n- Overlay: scroll the whole conversation (#1)"
+    assert p.notes == "CoRuby 0.1.1\n\n- Overlay: scroll the whole conversation (#1)"
     assert "apps/desktop/src/App.tsx" in p.reason
 
 
@@ -158,7 +158,7 @@ def test_a_tag_pushed_by_hand_sets_the_base_and_the_numbering(repo: Repo) -> Non
     repo.merge_pr("Desktop: small fix", {"apps/desktop/src/App.tsx": "v3"})
     p = repo.plan()
     assert (p.version, p.previous) == ("0.2.1", "desktop-v0.2.0")
-    assert p.notes == "Copilot 0.2.1\n\n- Desktop: small fix (#2)"
+    assert p.notes == "CoRuby 0.2.1\n\n- Desktop: small fix (#2)"
 
 
 def test_a_published_version_without_its_tag_is_not_reused(repo: Repo) -> None:
@@ -183,7 +183,7 @@ def test_the_released_commit_itself_has_nothing_new(repo: Repo) -> None:
 
 def test_commits_pushed_straight_to_main_are_listed_without_prs(repo: Repo) -> None:
     repo.commit("Desktop: hotfix the hotkey", {"apps/desktop/src/App.tsx": "v2"})
-    assert repo.plan().notes == "Copilot 0.1.1\n\n- Desktop: hotfix the hotkey"
+    assert repo.plan().notes == "CoRuby 0.1.1\n\n- Desktop: hotfix the hotkey"
 
 
 def test_versions() -> None:

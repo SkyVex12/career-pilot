@@ -626,7 +626,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
           >
             <Input
               multiline
-              placeholder={current ? "Ask a follow-up…" : "Ask Career Pilot…"}
+              placeholder={current ? "Ask a follow-up…" : "Ask CoRuby…"}
               value={draft}
               editable={!busy}
               onChangeText={(v) => {
