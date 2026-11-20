@@ -1,13 +1,13 @@
 # Six-feature implementation progress
 
-Status: integrated implementation and available native artifacts delivered for draft review. Full-material requirements and external validation limits remain explicit. Final branch CI results are recorded on draft PR #98, linked below.
+Status: original six-feature implementation merged by the user in PR #98. Post-merge mobile HTTP testing and current-server authentication compatibility are implemented and locally validated on codex/mobile-local-http-testing; an installable, separately labeled Android test APK is available. Production TLS and real-device/browser acceptance remain separate release checks.
 
 ## Integration and preservation
 
-- Branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
+- Current follow-up branch: codex/mobile-local-http-testing (from cleaned main 226712b); original integration branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: verify the checks on draft PR #98, then address the documented external release/device prerequisites before a production release. All available local/native/provider checks are complete; setup steps are in six-feature-delivery.md.
+- Next action: complete follow-up PR/hosted checks, then perform real-user browser/device acceptance with the verified Android HTTP test APK. Production HTTPS deployment remains separate; no production changes are authorized by this follow-up.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
 - Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
 - Decision: non-English catalog entries remain gated until speech and full application checks pass.
@@ -274,7 +274,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-011** [implemented] Do not quietly fall back to the phone microphone when the desktop disconnects. Explain the interruption and offer an explicit supported alternative.
 - **M04-012** [implemented] 2. Account connection and session access
 - **M04-013** [implemented] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
-- **M04-014** [implemented] If QR pairing improves the flow, use a short-lived, single-use pairing exchange with confirmation and revocation. Do not place reusable account credentials or long-lived bearer tokens in QR codes or URLs. — Same-account email sign-in and explicit attachment used; QR is unnecessary and no credentials enter URLs.
+- **M04-014** [implemented] If QR pairing improves the flow, use a short-lived, single-use pairing exchange with confirmation and revocation. Do not place reusable account credentials or long-lived bearer tokens in QR codes or URLs. — Same-account sign-in and explicit attachment used; QR is unnecessary. Career-OS uses a short-lived, single-use PKCE authorization callback; reusable credentials and bearer tokens never enter URLs.
 - **M04-015** [implemented] Enforce account, profile, session, and command permissions on the backend.
 - **M04-016** [implemented] Clearly identify the session and selected profile before attaching.
 - **M04-017** [implemented] Treat attaching a companion as a separate action from taking over audio capture on another device.
@@ -319,7 +319,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-056** [implemented] Calendar-based preparation from Material 01 when a calendar is connected.
 - **M04-057** [implemented] Keep account/profile isolation and the same data lifecycle across devices. Opening a source on mobile should preserve the Ask conversation. Practice must keep its generated interviewer audio separate from the user's captured speech, as specified in Material 02.
 - **M04-058** [implemented] 7. Data, battery, and production behavior
-- **M04-059** [implemented] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport.
+- **M04-059** [externally blocked] Store authentication secrets using platform-appropriate secure storage and use encrypted authenticated transport. — SecureStore and strict production HTTPS/WSS are implemented; the current Stage0 server exposes HTTP/WS. A separate explicitly labeled Android HTTP test build supports testing only and does not satisfy encrypted production transport. TLS activation and a live secure device trial remain outstanding.
 - **M04-060** [implemented] Revalidate access when loading or reconnecting to a session.
 - **M04-061** [implemented] Stop unused capture, wake locks, event subscriptions, and generation tasks promptly.
 - **M04-062** [implemented] Keep idle and background behavior lightweight; do not wake production services unnecessarily.
@@ -552,3 +552,15 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Delivery guide: `docs/implementation/six-feature-delivery.md`; Windows/Android stable local artifacts and Mac/iOS GitHub artifacts included. All original requirement files and existing work preserved.
 
 - Hosted CI caught two Linux type errors in the optional Codex/browser validation scripts: Windows-only `subprocess.CREATE_NO_WINDOW` was unguarded. Reproduced with Pyright's Linux target; Windows checks were clean. The helper subprocess flags now select the Windows constant only on Windows, with zero flags on other platforms. Product code and native artifact inputs are unchanged. Final-head hosted CI is rerun after this portability correction; TypeScript/mobile/workflow and both native Rust jobs already passed on the preceding head.
+
+### Post-merge mobile HTTP testing and authentication compatibility (2026-11-19)
+
+- User reported that the installed preview rejects the current HTTP Stage0 server. Added a separate Android `httpTest` variant (`app.careerpilot.mobile.httptest`, **Career Pilot HTTP Test**) with embedded JavaScript, distinct app links/storage, explicit unencrypted-test notice and native HTTP permission. Production remains HTTPS/WSS-only. Shared REST, companion and phone-microphone validation now applies the same transport rules; `/v1` API input normalizes to the origin.
+- An idempotent Expo plugin preserves the variant across prebuild. Bundle tasks track public endpoint/flag and dotenv inputs; a native wrapper forces the correct policy after dotenv loading. Two subprocess regressions verify conflicting `.env.production.local` settings cannot change the chosen native policy.
+- Read-only current deployment check: Stage0 running, public health200, Google/Career-OS available, email disabled. Setup now verifies `/v1/auth/config` before advancing, shows only configured email auth, and supports the existing Career-OS browser PKCE contract with explicit manual callback paste. Google desktop accounts must link Career-OS on desktop first; native Google client registration remains absent. No passwords handled by this app and no backend configuration changed.
+- Career-OS refresh/revocation uses shared `/auth/token/*` routes; the old email aliases return404 when email auth is disabled. Canonical token revocation404 now reports failure rather than falsely claiming revocation. Local credentials still clear immediately.
+- Validation: **30 mobile tests passed**, including transport mode matrix, callback origin/state/expiry/single-use, account proof, no-email token lifecycle and native dotenv isolation. Strict TypeScript passed. Independent reviewers checked auth contracts/lifecycle and native variant isolation. Android/iOS secure Hermes exports passed. Android HTTP test compilation, release lint and packaging passed (618 tasks); Windows long paths resolved with local Ninja1.13.2 and the existing object-path workaround. The test variant alone disables shrinking, and bounded Gradle/JVM concurrency avoids local memory exhaustion. No physical-device or real-user browser sign-in success is inferred from these checks.
+
+- Verified HTTP test artifact: `.implementation/artifacts/mobile/CareerPilot-0.1.0-http-test-arm64.apk`, **31,930,539 bytes**, SHA256 **fa46785face54e7370c1466db2d9631397e568837ec09e449a853254371df094**. APK v2 development signature, ARM64/minSDK24/target36, cleartext permission, non-debuggable test identity, distinct deep links, embedded Hermes/current endpoints and native audio library verified. Original APK retained. Receipt is next to the installer; detailed evidence in `apps/mobile/BUILD-VALIDATION.md`.
+- Actual mobile-client unauthenticated readiness at 22:54:52 CST reached current Stage0 and confirmed its auth configuration; health200 at 22:55:18 CST. APK prefills the current public endpoints; mobile has no VM wake flow, so open desktop first if asleep. No device installation or real-user sign-in was performed.
+- Current reconciliation remains **429 unique requirement IDs**: 382 implemented, 15 verified, 32 externally blocked. M04-059 now explicitly records that current Stage0 lacks production TLS; this HTTP test variant does not satisfy that production requirement. Original acceptance text and historical evidence are retained.

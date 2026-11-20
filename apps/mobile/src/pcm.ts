@@ -1,3 +1,9 @@
+import {
+  DEVELOPMENT_BUILD,
+  HTTP_TEST_BUILD,
+  transportURL,
+} from "./transport.ts";
+
 /** Existing wire contract: 10 byte big-endian header and little-endian mono PCM16. */
 export function pcmFrame(
   samples: Float32Array,
@@ -36,10 +42,13 @@ export function pcmFrame(
   }
   return data;
 }
-export function sessionURL(companion: string, profile: string) {
-  const u = new URL(companion);
-  if (u.protocol !== "wss:" || u.username || u.password || u.search || u.hash)
-    throw new Error("Use a secure gateway address without credentials.");
+export function sessionURL(
+  companion: string,
+  profile: string,
+  development = DEVELOPMENT_BUILD,
+  httpTest = HTTP_TEST_BUILD,
+) {
+  const u = transportURL(companion, "websocket", development, httpTest);
   u.pathname = "/v1/session";
   if (profile) u.searchParams.set("profile", profile);
   return u.toString();

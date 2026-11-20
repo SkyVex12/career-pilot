@@ -1,3 +1,9 @@
+import {
+  DEVELOPMENT_BUILD,
+  HTTP_TEST_BUILD,
+  transportURL,
+} from "./transport.ts";
+
 export type Event = {
   type: string;
   seq?: number;
@@ -101,11 +107,10 @@ export function command(
     ...(kind === "end" ? { confirmed: true, summarize } : {}),
   };
 }
-export function gatewayURL(raw: string): string {
-  const u = new URL(raw);
-  if (u.protocol !== "wss:" || u.search || u.hash || u.username || u.password)
-    throw new Error(
-      "Use a secure WebSocket address without credentials or tokens.",
-    );
-  return u.toString();
+export function gatewayURL(
+  raw: string,
+  development = DEVELOPMENT_BUILD,
+  httpTest = HTTP_TEST_BUILD,
+): string {
+  return transportURL(raw, "websocket", development, httpTest).toString();
 }

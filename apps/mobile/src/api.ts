@@ -1,3 +1,5 @@
+import { HTTP_TEST_BUILD, transportURL } from "./transport.ts";
+
 export interface Tokens {
   access_token: string;
   refresh_token: string;
@@ -16,22 +18,17 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
-export function secureBase(raw: string, development = false): string {
-  const u = new URL(raw);
-  if (u.username || u.password || u.search || u.hash)
+export function secureBase(
+  raw: string,
+  development = false,
+  httpTest = HTTP_TEST_BUILD,
+): string {
+  const u = transportURL(raw, "rest", development, httpTest);
+  if (!["/", "/v1", "/v1/"].includes(u.pathname))
     throw new Error(
-      "Server address must not contain credentials, queries or fragments.",
+      "Use the server origin, optionally ending in /v1; other paths are not supported.",
     );
-  if (
-    u.protocol !== "https:" &&
-    !(
-      development &&
-      u.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "10.0.2.2"].includes(u.hostname)
-    )
-  )
-    throw new Error("Use an HTTPS server address.");
-  return u.toString().replace(/\/$/, "");
+  return u.origin;
 }
 export class Api {
   readonly base: string;
@@ -48,8 +45,9 @@ export class Api {
     store: SecretStore,
     fetcher = fetch,
     development = false,
+    httpTest = HTTP_TEST_BUILD,
   ) {
-    this.base = secureBase(base, development);
+    this.base = secureBase(base, development, httpTest);
     this.store = store;
     this.fetcher = fetcher;
   }
@@ -101,7 +99,7 @@ export class Api {
     this.refreshing = (async () => {
       try {
         const data = await this.request<Tokens>(
-          "/auth/email/refresh",
+          "/auth/token/refresh",
           { refresh_token: token },
           "POST",
           false,
@@ -150,14 +148,18 @@ export class Api {
             signal: controller.signal,
           }),
         ),
-        this.fetcher(`${this.base}/v1/auth/email/signout`, {
+        this.fetcher(`${this.base}/v1/auth/token/signout`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refresh_token: previous.refresh_token }),
           signal: controller.signal,
         }),
       ]);
-      return results.every((r) => r.ok || r.status === 404);
+      // A missing attachment is already detached. A missing token endpoint does
+      // not confirm refresh-token revocation.
+      return results.every(
+        (r, index) => r.ok || (index < attachments.length && r.status === 404),
+      );
     } catch {
       return false;
     } finally {

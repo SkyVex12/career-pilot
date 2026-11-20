@@ -180,3 +180,5 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+apply from: file("../../scripts/http-test.gradle")
