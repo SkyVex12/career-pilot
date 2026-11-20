@@ -1197,3 +1197,26 @@
 .ask-messages .ui-card-body { padding:14px 16px; }
 .practice-workspace .ui-field { margin:0; }
 .practice-workspace .practice-question .ui-stack { gap:12px; }
+
+/* A native dialog has one padded body and one edge-to-edge action row. */
+.ui-dialog-window { gap: 0; padding: 0; overflow: visible; }
+.ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding: 14px 16px 0; }
+.ui-dialog-window > .ui-dialog-body { margin: 0; }
+.ui-dialog-window > .ui-dialog-foot { flex: none; }
+.ui-confirm { gap: 16px; padding: 20px; }
+.ui-confirm > .ui-dialog-title { font-size: 16px; line-height: 22px; }
+.ui-confirm > .ui-dialog-desc { color: var(--text-2); line-height: 1.5; }
+.ui-confirm > .ui-dialog-desc:empty { display: none; }
+.ui-confirm > .ui-dialog-foot { padding: 16px 20px; margin: 4px -20px -20px; gap: 8px; background: var(--surface-2); border-top: 1px solid var(--border); }
+.ui-confirm .ov-summary-choice { display: flex; align-items: center; gap: 10px; color: var(--text); }
+.ui-confirm .ov-summary-choice input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.ui-confirm .ui-dialog-desc p { margin: 10px 0 0; font-size: var(--text-sm); }
+.session-detail .sd-reading { width: min(100%, 84ch); margin-inline: 0; padding-top: 12px; }
+.session-detail .sd-output-toolbar { min-height: 36px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.session-detail .sd-output-toolbar > .ui-btn:last-child { margin-left: auto; }
+.session-detail .sd-output { line-height: 1.65; }
+.sd-unavailable { display: flex; align-items: flex-start; gap: 14px; padding: 24px 0; }
+.sd-unavailable > svg { flex: none; margin-top: 2px; color: var(--text-2); }
+.sd-unavailable h2 { margin: 0 0 6px; font-size: var(--text-lg); font-weight: 600; }
+.sd-unavailable p { margin: 0; color: var(--text-2); max-width: 60ch; line-height: 1.6; }
+.sd-unavailable .ui-btn { margin-top: 16px; }

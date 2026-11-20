@@ -18,10 +18,10 @@ import type { SeatInfo } from "@copilot/protocol";
 import { api, inTauri, rest, type MySeat } from "./api";
 import { VOICE_OFF, onVoiceStatus, voiceCommand, type VoiceStatus } from "./voice";
 import { MODE_LABEL } from "./calls";
-import { HostScreenSection, STOP_CONTROL_KEY } from "./screenui";
+import { GuestScreenView, HostScreenSection, STOP_CONTROL_KEY } from "./screenui";
 import type { SentNote, SessionView } from "./session";
 import { usePolling } from "./usePolling";
-import { Badge, Banner, Button, Checkbox, Input, Switch, cx } from "./ui";
+import { Banner, Button, Input, Select, Switch, cx } from "./ui";
 
 type Dispatcher = Dispatch<{ type: "note_sent"; id: string; text: string } | { type: "note_asked"; id: string }>;
 
@@ -57,7 +57,7 @@ export const NOTE_RESULT: Record<NonNullable<SentNote["result"]>, string> = {
 const STATUS_TEXT: Record<SeatInfo["status"], string> = {
   invited: "Invited",
   accepted: "Ready to assist",
-  admitted: "Invited, not connected yet",
+  admitted: "Not connected",
   declined: "Declined",
   removed: "Removed",
   expired: "Invite expired",
@@ -175,8 +175,15 @@ function grantable(caps: string[], media: Media): string[] {
 
 function PermChips({ label, caps, media, disabled, onToggle }: { label: string; caps: string[]; media: Media; disabled?: boolean; onToggle: (cap: string, on: boolean) => void }) {
   if (!media.screen) return null;
-  return <div className="seat-chips guest-permissions" role="group" aria-label={label}>
-    {PERMS.filter(p => !p.needs || media[p.needs]).map(p => <Checkbox key={p.cap} checked={caps.includes(p.cap)} disabled={disabled} onChange={on => onToggle(p.cap, on)} label={p.cap === "device.view" ? "View my shared screen" : "Control my mouse and keyboard"} />)}
+  const value = caps.includes("device.control") ? "control" : caps.includes("device.view") ? "view" : "off";
+  return <div className="assistant-access" role="group" aria-label={label}><span>Screen access</span>
+    <Select aria-label={label} value={value} disabled={disabled} onChange={event => {
+      const next = event.target.value;
+      if (next === "control") onToggle("device.control", true);
+      else if (next === "off") onToggle("device.view", false);
+      else if (caps.includes("device.control")) onToggle("device.control", false);
+      else onToggle("device.view", true);
+    }}><option value="off">No screen access</option><option value="view">View screen</option><option value="control">Remote control</option></Select>
   </div>;
 }
 const INVITE_CAPS_KEY = "seats.invite-caps";
@@ -288,7 +295,9 @@ export function GuestPanel({ s }: { s: SessionView }) {
   const toggle = (x: SeatInfo, cap: string, on: boolean) =>
     forSeat(x.seat_id, () => rest.setGuestCapabilities(sid, x.seat_id, withCapability(x.capabilities, cap, on)));
   return (
-    <div className="seat-panel">
+    <div className="seat-panel assistant-panel">
+      <header className="assistant-panel-head"><strong>Assistants</strong><span>{openSeats(s.seats).filter(isWatching).length} connected</span></header>
+      <HostScreenSection s={s} />
       {progress && progress.pending > 0 && <p className="seat-hint" role="status">Sending invitations…</p>}
       {progress && progress.failures.length > 0 && <div className="seat-error" role="alert"><p>{progress.failures.map(f => f.guest.name || f.guest.email).join(", ")}: invitation could not be sent.</p><p>{progress.failures[0].error}</p><Button size="sm" disabled={busy} onClick={() => guarded(() => invitePlannedGuests(sid, progress.scope, progress.failures.map(f => f.guest)))}>Retry invitations</Button></div>}
       <section className="seat-section" aria-label="Invite an assistant">
@@ -327,7 +336,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
           {seats.map((x) => (
             <li key={x.seat_id} className="seat-card">
               <div className="seat-card-head">
-                <span className="seat-name">{x.name}</span>
+                <span className="assistant-avatar" aria-hidden="true">{x.name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase()}</span><span className="seat-name">{x.name}</span>
                 <span className={cx("seat-status", isWatching(x) && "is-watching")}>{isWatching(x) ? "Assisting" : STATUS_TEXT[x.status]}</span>
                 <span className="seat-card-actions">
                   {x.status === "accepted" && (
@@ -352,7 +361,6 @@ export function GuestPanel({ s }: { s: SessionView }) {
           ))}
         </ul>
       )}
-      <HostScreenSection s={s} />
       <HostVoice s={s} />
       {openSeats(s.seats).some((x) => x.status === "admitted") && (
         <section className="seat-section" aria-label="Sharing">
@@ -445,33 +453,13 @@ export function GuestNoteBox({ s, dispatch }: { s: SessionView; dispatch: Dispat
 export function Watching({ s, dispatch }: { s: SessionView; dispatch: Dispatcher }) {
   if (!s.seat) return null;
   const seat = s.seat;
-  return (
-    <div className="ui-stack">
-      <div className="ui-row-inline">
-        <Badge tone="info" icon="👁">
-          Assisting
-        </Badge>
-        <strong>
-          {seat.hostName}'s call · {MODE_LABEL[seat.mode] ?? seat.mode}
-          {seat.title ? ` · ${seat.title}` : ""}
-        </strong>
-      </div>
-      <Banner tone="info" title="Assisting the caller">
-        You can follow {seat.hostName}'s call and send notes privately to them.
-      </Banner>
-      {!seat.hostConnected && <Banner tone="warning">{seat.hostName}'s app is reconnecting. The call goes on.</Banner>}
-      {!seat.sharing && <Banner tone="warning">{seat.hostName} paused sharing.</Banner>}
-      <div className="ui-row-inline">
-        <Button onClick={() => api.showOverlay(true)}>Show overlay</Button>
-        <Button variant="ghost" onClick={() => api.seatLeave()}>
-          Stop assisting
-        </Button>
-      </div>
-
-      <GuestTalk s={s} />
-      <GuestNoteBox s={s} dispatch={dispatch} />
-    </div>
-  );
+  return <div className="assistant-workspace">
+    <header className="assistant-workspace-head"><div><div className="assistant-eyebrow"><span className="assistant-live-dot" />Assisting live</div><h1>{seat.hostName}’s call</h1><p>{MODE_LABEL[seat.mode] ?? seat.mode}{seat.title ? ` · ${seat.title}` : ""}</p></div><div className="assistant-workspace-actions"><Button size="sm" onClick={() => api.showOverlay(true)}>Conversation overlay</Button><GuestLeaveButton s={s} /></div></header>
+    {!seat.hostConnected && <Banner tone="warning">{seat.hostName} is reconnecting.</Banner>}
+    {!seat.sharing && <Banner tone="warning">{seat.hostName} paused the call transcript and answers.</Banner>}
+    <GuestScreenView s={s} window="main" />
+    <section className="assistant-communication" aria-label={`Private communication with ${seat.hostName}`}><div className="assistant-communication-head"><span><Icon name="shield" size={14} />Only {seat.hostName} hears you and sees your notes</span><GuestTalk s={s} /></div><GuestNoteBox s={s} dispatch={dispatch} /></section>
+  </div>;
 }
 
 /** Invites to someone else's live call, on the Call screen when no call runs here: Join opens
@@ -536,14 +524,13 @@ export function withCapability(caps: string[], cap: string, on: boolean): string
 export function useVoice(active: boolean): VoiceStatus {
   const [status, setStatus] = useState<VoiceStatus>(VOICE_OFF);
   useEffect(() => {
-    if (!active || !inTauri) return;
+    if (!active || !inTauri) { setStatus(VOICE_OFF); return; }
     let disposed = false;
     let off: (() => void) | undefined;
-    onVoiceStatus((v) => setStatus(v)).then((f) => {
+    onVoiceStatus((v) => { if (!disposed) setStatus(v); }).then((f) => {
       if (disposed) f();
-      else off = f;
+      else { off = f; void voiceCommand({ cmd: "status" }); }
     });
-    void voiceCommand({ cmd: "status" });
     return () => {
       disposed = true;
       off?.();
@@ -605,17 +592,7 @@ export function VoiceMute({ s }: { s: SessionView }) {
   const status = useVoice(s.running && !s.seat);
   if (status.host !== "on") return null;
   const muted = status.hostMuted;
-  return (
-    <button
-      type="button"
-      className={cx("ov-voice-mute", muted && "is-muted")}
-      aria-pressed={muted}
-      title={muted ? "Assistants are muted: click to hear them" : "Mute assistants' voice"}
-      onClick={() => void voiceCommand({ cmd: "host_mute", on: !muted })}
-    >
-      {muted ? "🔇 Assistants" : "🔊 Assistants"}
-    </button>
-  );
+  return <div className="assistant-audio-toggle"><Switch label="Hear assistants" hint={muted ? "Muted on this device" : "Plays through your call audio output"} checked={!muted} onChange={on => void voiceCommand({ cmd: "host_mute", on: !on })} /></div>;
 }
 
 /** The guest's Talk: held (or kept on), their microphone goes to the host alone. */

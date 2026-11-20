@@ -313,3 +313,50 @@ it("keeps the toolbar and allows a retry when the native compact resize fails", 
   expect(result.current.mode).toBe("dot");
   expect(result.current.error).toBeNull();
 });
+
+
+it.each(["maximized", "fullscreen"] as const)("preserves normal restore bounds after a compact round trip from %s", async presentation => {
+  mockWindows("main");
+  let maximized = presentation === "maximized";
+  let fullscreen = presentation === "fullscreen";
+  const normal = { width: 960, height: 700 };
+  ipc.handle("plugin:window|inner_size", () => maximized || fullscreen ? { width: 2560, height: 1440 } : normal);
+  ipc.handle("plugin:window|scale_factor", () => 1);
+  ipc.handle("plugin:window|is_decorated", () => false);
+  ipc.handle("plugin:window|is_maximized", () => maximized);
+  ipc.handle("plugin:window|is_fullscreen", () => fullscreen);
+  ipc.handle("plugin:window|unmaximize", () => { maximized = false; });
+  ipc.handle("plugin:window|maximize", () => { maximized = true; });
+  ipc.handle("plugin:window|set_fullscreen", args => { fullscreen = args.value as boolean; });
+  mockResizable(true);
+  ipc.handle("set_compact_window_shape", () => true);
+  const { result } = renderHook(() => useWindowMode());
+  await act(async () => { expect(await result.current.change("toolbar")).toBe(true); });
+  expect(maximized).toBe(false);
+  expect(fullscreen).toBe(false);
+  await act(async () => { expect(await result.current.change("full")).toBe(true); });
+  const sizes = ipc.calls.filter(call => call.cmd === "plugin:window|set_size");
+  expect(JSON.parse(JSON.stringify(sizes[sizes.length - 1].args.value))).toEqual({ Logical: normal });
+  expect(maximized).toBe(presentation === "maximized");
+  expect(fullscreen).toBe(presentation === "fullscreen");
+  expect(result.current.mode).toBe("full");
+});
+
+it("restores fullscreen after a compact entry failure", async () => {
+  mockWindows("main");
+  let fullscreen = true;
+  ipc.handle("plugin:window|inner_size", () => ({ width: 960, height: 700 }));
+  ipc.handle("plugin:window|scale_factor", () => 1);
+  ipc.handle("plugin:window|is_decorated", () => false);
+  ipc.handle("plugin:window|is_maximized", () => false);
+  ipc.handle("plugin:window|is_fullscreen", () => fullscreen);
+  ipc.handle("plugin:window|set_fullscreen", args => { fullscreen = args.value as boolean; });
+  mockResizable(true);
+  ipc.handle("set_compact_window_shape", () => true);
+  ipc.handle("plugin:window|set_size", () => { throw new Error("Resize unavailable"); });
+  const { result } = renderHook(() => useWindowMode());
+  await act(async () => { expect(await result.current.change("toolbar")).toBe(false); });
+  expect(fullscreen).toBe(true);
+  expect(result.current.mode).toBe("full");
+  expect(result.current.error).toContain("Resize unavailable");
+});

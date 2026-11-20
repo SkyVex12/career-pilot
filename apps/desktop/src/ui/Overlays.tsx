@@ -43,7 +43,7 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="ui-scrim" />
-        <RadixDialog.Content className={cx("ui-dialog", `ui-dialog-${size}`)} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
+        <RadixDialog.Content className={cx("ui-dialog", "ui-dialog-window", `ui-dialog-${size}`)} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
           <div className="ui-dialog-head">
             <RadixDialog.Title className="ui-dialog-title">{title}</RadixDialog.Title>
             <RadixDialog.Close className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost" aria-label="Close">
@@ -128,7 +128,7 @@ export function ConfirmDialog({
     <AlertDialog.Root open={open} onOpenChange={change}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="ui-scrim" />
-        <AlertDialog.Content className={extra || secondaryAction ? "ui-dialog ui-dialog-md" : "ui-dialog ui-dialog-sm"} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
+        <AlertDialog.Content className={cx("ui-dialog", "ui-confirm", extra || secondaryAction ? "ui-dialog-md" : "ui-dialog-sm")} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
           <AlertDialog.Title className="ui-dialog-title">{title}</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="ui-dialog-desc">{children}</div>

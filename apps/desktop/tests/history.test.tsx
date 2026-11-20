@@ -281,3 +281,13 @@ describe("History accessibility", () => {
     expect(await check()).toEqual([]);
   });
 });
+
+  it("shows an honest empty state for old metadata-only summaries, without a fake Copy action", async () => {
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ ...call("s1", "interview", "Audio test"), questions: 0, notes: "", outputs: { summary: "Interview of about 1 minutes. No questions detected.\n\nThe transcript was not stored for this session, so there is no written summary." } }));
+    ipc.api("GET", /^\/sessions\/s1\/replay$/, () => ({ session_id: "s1", stored: true, started_at: iso, segments: [], questions: [] }));
+    render(<SessionDetail sessionId="s1" />);
+    expect(await screen.findByRole("heading", { name: "No conversation was captured" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add call notes" }));
+    expect(await screen.findByLabelText("Call notes")).toBeInTheDocument();
+  });

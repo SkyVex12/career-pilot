@@ -738,14 +738,14 @@ body {
 .ui-scrim {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: calc(var(--layer-popup) + 10);
   background: var(--scrim);
 }
 .ui-dialog {
   position: fixed;
   top: 50%;
   left: 50%;
-  z-index: 51;
+  z-index: calc(var(--layer-popup) + 11);
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
@@ -1313,7 +1313,7 @@ select option:disabled { color: var(--text-3); }
 
 .ui-select { display: flex; align-items: center; text-align: left; }
 .ui-select > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.ui-select-menu { pointer-events: auto; position: fixed; z-index: var(--layer-popup); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--text); box-shadow: var(--shadow-2); font: var(--text-sm)/var(--lh-sm) var(--font); }
+.ui-select-menu { pointer-events: auto; position: fixed; z-index: calc(var(--layer-popup) + 20); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--text); box-shadow: var(--shadow-2); font: var(--text-sm)/var(--lh-sm) var(--font); }
 .ui-select-option { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--option-h); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); cursor: pointer; overflow-wrap: anywhere; }
 .ui-select-option > :first-child { min-width: 0; }
 .ui-select-option > :last-child { flex: none; width: 14px; }

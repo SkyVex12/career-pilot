@@ -41,6 +41,7 @@ export function useOverlayPopover(
       close();
     };
     const escape = (event: KeyboardEvent) => {
+      if ((event.target as Element | null)?.closest?.(".ui-dialog")) return;
       if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[role="combobox"][aria-expanded="true"]')) return;
       event.preventDefault();
       close();

@@ -78,7 +78,12 @@ function appRoutes(failSwitch = false) {
 describe("profile session boundaries", () => {
   it("returns to setup after switching profiles without opening the previous profile's ended call", async () => {
     const requestedFor = appRoutes();
+    // The review opens only for a call ending in this app lifetime.
+    ipc.handle("snapshot", () => [[ended[0]], true, 1]);
     render(<App />);
+    await screen.findByRole("button", { name: /End call/ });
+    await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("account"));
+    await act(() => emit("copilot://event", ended[1]));
     expect(await screen.findByText(detail.outputs.summary!)).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Use Alex" }));
     await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("other"));
@@ -95,7 +100,12 @@ describe("profile session boundaries", () => {
 
   it("keeps the current profile and ended-call screen when native switching fails", async () => {
     appRoutes(true);
+    // The review opens only for a call ending in this app lifetime.
+    ipc.handle("snapshot", () => [[ended[0]], true, 1]);
     render(<App />);
+    await screen.findByRole("button", { name: /End call/ });
+    await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("account"));
+    await act(() => emit("copilot://event", ended[1]));
     expect(await screen.findByText(detail.outputs.summary!)).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Use Alex" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("end the session first");
@@ -123,6 +133,7 @@ describe("profile session boundaries", () => {
     await act(async () => complete([ended, false, 2]));
     expect(result.current[0]).toEqual(initial);
     expect(postCallFor(result.current[0])).toBeNull();
+
     await act(() => emit("copilot://event", ended[1]));
     expect(result.current[0]).toEqual(initial);
     await act(() => emit("copilot://event", { n: 0, event: { kind: "connection", state: { state: "live", session_id: "new-call", resumed: false } } }));
