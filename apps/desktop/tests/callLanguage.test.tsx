@@ -67,7 +67,7 @@ it("renders all 24 configured languages with native labels and isolated right-to
 it("explains legacy English compatibility without blocking older-server calls or saving unsupported settings", async () => {
   const change = vi.fn(), ready = vi.fn();
   render(<CallLanguage value="en" onChange={change} onReady={ready} />);
-  expect(await screen.findByText(/Using English compatibility mode/)).toHaveTextContent("Update the Career Pilot server");
+  expect(await screen.findByText(/Using English compatibility mode/)).toHaveTextContent("Update the CoRuby server");
   expect(change).toHaveBeenLastCalledWith("en");
   expect(ready).toHaveBeenLastCalledWith(true);
   expect(screen.getByLabelText("Save selection as this profile’s default")).toBeDisabled();

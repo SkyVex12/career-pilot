@@ -16,6 +16,7 @@ import { Shell, type Tab, type WorkspaceWindowActions } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
 import { PageHeadingActive } from "./ui/Layout";
+import { CoRubyWordmark } from "./ui/RubyMark";
 import { Icon } from "./ui/Icon";
 import { type AskEntry, type AskScope } from "./Ask";
 import { type PracticeEntry } from "./Practice";
@@ -173,7 +174,7 @@ export default function App() {
   if (!inTauri) {
     return (
       <main className="shell-content">
-        <h1>Copilot</h1>
+        <h1><CoRubyWordmark /></h1>
         <p>This UI needs the Rust core: run <code>pnpm --filter @copilot/desktop tauri dev</code>.</p>
       </main>
     );
@@ -201,8 +202,8 @@ export default function App() {
     }
     if (locked) {
       return (
-        <EmptyState icon={<Icon name="arrow" size={28} />} title="Link Career-OS first" action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
-          This stage needs your Career-OS account linked before the app can work for you.
+        <EmptyState icon={<Icon name="arrow" size={28} />} title="Link HubRuby first" action={<Button variant="primary" onClick={() => setTab("start")}>Go to setup</Button>}>
+          This stage needs your HubRuby account linked before the app can work for you.
         </EmptyState>
       );
     }

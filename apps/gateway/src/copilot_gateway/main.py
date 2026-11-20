@@ -137,7 +137,7 @@ def create_app(services: Services | None = None) -> FastAPI:
             if owned_pool and svc.pool is not None:
                 await svc.pool.close()
 
-    app = FastAPI(title="Copilot gateway", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="CoRuby gateway", version=__version__, lifespan=lifespan)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]

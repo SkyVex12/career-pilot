@@ -87,7 +87,7 @@ html[data-window="overlay"] #root {
 }
 .ov-head .ui-icon-btn[aria-pressed="true"],
 .ov-head .ui-icon-btn[aria-expanded="true"] {
-  background: rgb(141 180 255 / 0.16);
+  background: rgb(255 155 130 / 0.16);
   color: var(--ov-fast);
 }
 .ov-text-size {
@@ -148,7 +148,7 @@ html[data-window="overlay"] #root {
   font-weight: 600;
 }
 .ov-pill-me {
-  background: rgb(141 180 255 / 0.18);
+  background: rgb(255 155 130 / 0.18);
   color: var(--ov-fast);
 }
 
@@ -294,7 +294,7 @@ html[data-window="overlay"] #root {
   top: calc(var(--space-8) + var(--space-2));
   bottom: auto;
   background: var(--ov-fast);
-  color: #0b1020;
+  color: #191a1b;
   border-color: transparent;
 }
 
@@ -400,7 +400,7 @@ html[data-window="overlay"] #root {
 .pass-deep {
   margin-top: var(--space-4);
   padding-left: var(--space-4);
-  border-left: 2px solid rgb(195 166 255 / 0.45);
+  border-left: 2px solid rgb(212 213 214 / 0.45);
 }
 .pass-fast.is-held {
   /* Held for three lines of talking points while they are written. */
@@ -539,7 +539,7 @@ html[data-window="overlay"] #root {
 }
 .ov-get-deep {
   padding: var(--space-1) var(--space-3);
-  border: 1px solid rgb(195 166 255 / 0.5);
+  border: 1px solid rgb(212 213 214 / 0.5);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--ov-deep);
@@ -549,7 +549,7 @@ html[data-window="overlay"] #root {
   cursor: pointer;
 }
 .ov-get-deep:hover {
-  background: rgb(195 166 255 / 0.12);
+  background: rgb(212 213 214 / 0.12);
 }
 .ov-thumb {
   min-width: 32px;
@@ -562,7 +562,7 @@ html[data-window="overlay"] #root {
 }
 .ov-thumb[aria-pressed="true"] {
   border-color: var(--ov-fast);
-  background: rgb(141 180 255 / 0.16);
+  background: rgb(255 155 130 / 0.16);
 }
 .ov-thumb:disabled {
   cursor: default;
@@ -680,7 +680,7 @@ html[data-window="overlay"] #root {
    them. The guest: the notice that this is someone else's private call. */
 .ov-watching {
   padding: 0 var(--space-3);
-  border: 1px solid rgb(141 180 255 / 0.4);
+  border: 1px solid rgb(255 155 130 / 0.4);
   border-radius: 999px;
   color: var(--ov-fast);
   font-size: var(--fs-meta);
@@ -700,7 +700,7 @@ button.ov-watching {
 }
 button.ov-watching:hover,
 button.ov-watching[aria-expanded="true"] {
-  background: rgb(141 180 255 / 0.12);
+  background: rgb(255 155 130 / 0.12);
 }
 .ov-menu.ov-guests {
   left: 0;
@@ -739,9 +739,9 @@ button.ov-watching[aria-expanded="true"] {
   align-self: flex-start;
   max-width: 92%;
   padding: var(--space-2) var(--space-4);
-  border: 1px dashed rgb(195 166 255 / 0.55);
+  border: 1px dashed rgb(212 213 214 / 0.55);
   border-radius: var(--radius-md);
-  background: rgb(195 166 255 / 0.08);
+  background: rgb(212 213 214 / 0.08);
 }
 .ov-note-from {
   margin: 0;
@@ -761,7 +761,7 @@ button.ov-watching[aria-expanded="true"] {
 }
 .ov-note-ask {
   padding: var(--space-1) var(--space-3);
-  border: 1px solid rgb(195 166 255 / 0.55);
+  border: 1px solid rgb(212 213 214 / 0.55);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--ov-deep);
@@ -784,8 +784,8 @@ button.ov-watching[aria-expanded="true"] {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
-  background: rgb(141 180 255 / 0.12);
-  border-bottom: 1px solid rgb(141 180 255 / 0.35);
+  background: rgb(255 155 130 / 0.12);
+  border-bottom: 1px solid rgb(255 155 130 / 0.35);
   color: var(--ov-text);
   font-size: 13px;
 }
@@ -802,7 +802,7 @@ button.ov-watching[aria-expanded="true"] {
 /* Guest seats' voice: the host's mute in the header, the guest's Talk. */
 .ov-voice-mute {
   padding: 0 var(--space-3);
-  border: 1px solid rgb(141 180 255 / 0.4);
+  border: 1px solid rgb(255 155 130 / 0.4);
   border-radius: 999px;
   background: transparent;
   color: var(--ov-fast);
@@ -868,8 +868,8 @@ button.ov-watching[aria-expanded="true"] {
   color: var(--ov-bad);
 }
 .ov-screen-chip.is-ask {
-  border-color: rgb(141 180 255 / 0.6);
-  background: rgb(141 180 255 / 0.12);
+  border-color: rgb(255 155 130 / 0.6);
+  background: rgb(255 155 130 / 0.12);
   color: var(--ov-fast);
 }
 

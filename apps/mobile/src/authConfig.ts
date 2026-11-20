@@ -38,7 +38,7 @@ export function parseAuthConfig(raw: unknown): AuthConfig {
       typeof c.client_id !== "string" ||
       !c.client_id
     )
-      throw new Error("Invalid Career-OS sign-in configuration.");
+      throw new Error("Invalid HubRuby sign-in configuration.");
     const url = new URL(c.authorize_url);
     if (
       url.protocol !== "https:" ||
@@ -47,7 +47,7 @@ export function parseAuthConfig(raw: unknown): AuthConfig {
       url.search ||
       url.hash
     )
-      throw new Error("Career-OS sign-in requires a secure browser address.");
+      throw new Error("HubRuby sign-in requires a secure browser address.");
     career_os = { authorize_url: url.toString(), client_id: c.client_id };
   }
   return {

@@ -137,7 +137,7 @@ pub async fn browser_code(
         .map_err(|_| {
             CareerOsFailure::new(
                 "career_os_unavailable",
-                "Career-OS didn't finish sign-in. Google and email still work.",
+                "HubRuby didn't finish sign-in. Google and email still work.",
             )
         })?
         .map_err(from_auth)?;
@@ -153,7 +153,7 @@ fn random_state() -> String {
 fn from_auth(e: AuthError) -> CareerOsFailure {
     let message = e.to_string();
     if message.contains("access_denied") {
-        CareerOsFailure::new("access_denied", "You cancelled sign-in on Career-OS.")
+        CareerOsFailure::new("access_denied", "You cancelled sign-in on HubRuby.")
     } else {
         CareerOsFailure::new("unavailable", message)
     }
@@ -173,7 +173,7 @@ fn failure(status: u16, body: &str) -> CareerOsFailure {
         return f;
     }
     if status == 404 {
-        return CareerOsFailure::new("not_offered", "This server does not offer Career-OS sign-in.");
+        return CareerOsFailure::new("not_offered", "This server does not offer HubRuby sign-in.");
     }
     let text = detail.as_str().map(str::to_string).unwrap_or_else(|| format!("HTTP {status}"));
     CareerOsFailure::new("unavailable", text)
@@ -297,7 +297,7 @@ impl CareerOsTokenProvider {
             let tokens: TokenBody = serde_json::from_value(value.clone())
                 .map_err(|e| CareerOsFailure::new("unavailable", e.to_string()))?;
             let name =
-                if tokens.name.is_empty() { "Career-OS account".to_string() } else { tokens.name.clone() };
+                if tokens.name.is_empty() { "HubRuby account".to_string() } else { tokens.name.clone() };
             self.store
                 .set(&self.refresh_key(), &tokens.refresh_token)
                 .and_then(|()| self.store.set(&self.user_key(), &name))
@@ -479,7 +479,7 @@ mod tests {
     async fn career_os_being_down_keeps_its_code() {
         let (base, _) = fake_api(vec![(
             503,
-            r#"{"detail":{"code":"career_os_unavailable","message":"Career-OS did not answer.","retry_after_s":60}}"#.into(),
+            r#"{"detail":{"code":"career_os_unavailable","message":"HubRuby did not answer.","retry_after_s":60}}"#.into(),
         )])
         .await;
         let p = CareerOsTokenProvider::new(

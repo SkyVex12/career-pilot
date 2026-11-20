@@ -30,7 +30,7 @@ test("missing and older features give useful upgrade guidance while retaining kn
     contracts: { companion: 1, ask: 0 },
   });
   assert.equal(result.state, "upgrade_required");
-  assert.match(result.notice!, /Update the Career Pilot server/);
+  assert.match(result.notice!, /Update the CoRuby server/);
   assert.match(result.notice!, /Ask/);
   assert.equal(supportsClientContract(result, "companion"), true);
   assert.equal(supportsClientContract(result, "ask"), false);

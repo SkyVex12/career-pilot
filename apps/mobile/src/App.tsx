@@ -394,7 +394,7 @@ export default function App() {
                             label={
                               browserPending
                                 ? "Restart browser sign-in"
-                                : "Continue with Career-OS"
+                                : "Continue with HubRuby"
                             }
                             icon="arrow"
                             loading={busy}
@@ -438,7 +438,7 @@ export default function App() {
                       ) : null}
                       {accountChoice ? (
                         <Notice>
-                          To use your existing desktop account, add Career-OS
+                          To use your existing desktop account, add HubRuby
                           under desktop Settings → Account → Sign-in, then
                           restart sign-in here. Your accounts will stay separate
                           until you link them.
@@ -501,7 +501,7 @@ export default function App() {
                       ) : !browserPending ? (
                         <Txt muted style={{ fontSize: 12, lineHeight: 19 }}>
                           {authConfig?.career_os
-                            ? "Use Google on desktop? First add Career-OS to that same account in desktop Settings → Account → Sign-in."
+                            ? "Use Google on desktop? First add HubRuby to that same account in desktop Settings → Account → Sign-in."
                             : "This server has no sign-in method supported by this build. Update its authentication configuration."}
                         </Txt>
                       ) : null}

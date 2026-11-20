@@ -51,7 +51,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
               <Button disabled={busy} onClick={() => void run(async () => { await api("POST", `/calendars/${c.provider}/sync`); })}>Sync calendar</Button>
               <Button disabled={busy} onClick={() => void run(async () => {
                 const result = await api<{ provider_consent_removal_required: boolean }>("DELETE", `/calendars/${c.provider}`);
-                if (result.provider_consent_removal_required && alive.current) setError("Disconnected and removed cached events. Remove Career Pilot access in your calendar provider's account settings to revoke its consent too.");
+                if (result.provider_consent_removal_required && alive.current) setError("Disconnected and removed cached events. Remove CoRuby access in your calendar provider's account settings to revoke its consent too.");
               })}>Disconnect</Button>
             </div>
           </>}

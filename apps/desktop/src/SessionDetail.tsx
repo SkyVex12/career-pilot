@@ -178,7 +178,7 @@ export function SessionDetail({
     content: kind === "summary" && isSummaryNotice(text) ? <section className="sd-reading sd-unavailable">
       <Icon name="document" size={28} />
       <div><h2>{stored ? "No conversation was captured" : "No written summary"}</h2>
-        <p>{stored ? "Ruby did not receive a transcript for this call. Check microphone and call audio before your next call." : "The transcript wasn't saved, so a written summary isn't available. You can still keep your own notes."}</p>
+        <p>{stored ? "CoRuby did not receive a transcript for this call. Check microphone and call audio before your next call." : "The transcript wasn't saved, so a written summary isn't available. You can still keep your own notes."}</p>
         <Button size="sm" onClick={() => setTab("notes")}>Add call notes</Button>
       </div>
     </section> : <section className="sd-reading">

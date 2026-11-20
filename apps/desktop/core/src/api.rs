@@ -374,13 +374,13 @@ mod tests {
 
     #[test]
     fn an_outdated_app_gets_its_own_error() {
-        let body = r#"{"code":"client_outdated","message":"Copilot 0.1.4 is older than this server supports (0.2.0 or newer).","min_version":"0.2.0","client_version":"0.1.4"}"#;
+        let body = r#"{"code":"client_outdated","message":"CoRuby 0.1.4 is older than this server supports (0.2.0 or newer).","min_version":"0.2.0","client_version":"0.1.4"}"#;
         let e = parse_response(StatusCode::UPGRADE_REQUIRED, body).unwrap_err();
         assert_eq!(
             e,
             ApiError::Outdated {
                 min_version: "0.2.0".into(),
-                message: "Copilot 0.1.4 is older than this server supports (0.2.0 or newer).".into()
+                message: "CoRuby 0.1.4 is older than this server supports (0.2.0 or newer).".into()
             }
         );
         assert_eq!(e.status(), Some(426));

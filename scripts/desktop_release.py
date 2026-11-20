@@ -175,7 +175,7 @@ def release_notes(git: Git, base: str | None, head: str, version: str) -> str:
             others.append(f"- {subject}")
     # Pushed straight to main: listed only when no pull request was merged.
     items = lines or others
-    return "\n".join([f"Copilot {version}", "", *items]) if items else f"Copilot {version}"
+    return "\n".join([f"CoRuby {version}", "", *items]) if items else f"CoRuby {version}"
 
 
 @dataclass

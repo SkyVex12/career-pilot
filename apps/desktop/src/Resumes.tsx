@@ -17,7 +17,7 @@ export function versionFacts(v: ResumeVersion): string {
   return [
     v.used_by.length ? `used by ${plural(v.used_by.length, "application")}` : "not used by an application now",
     v.digest ? `${plural(v.digest.facts, "fact")}${v.digest.built_at ? `, read ${when(v.digest.built_at)}` : ""}` : null,
-    v.career_os ? `pulled from Career-OS ${when(v.career_os.pulled_at)}` : null,
+    v.career_os ? `pulled from HubRuby ${when(v.career_os.pulled_at)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");

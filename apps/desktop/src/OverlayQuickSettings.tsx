@@ -96,9 +96,9 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
       {error && <p className="ov-ask-error" role="alert">{error}</p>}
       <div className="ov-menu-sep" />
       {!guest && <Button variant="ghost" size="sm" className="ov-menu-item" onClick={() => { void api.openMainSettings().then(close, e => setError(String(e))); }}>All settings…</Button>}
-      <Button variant="danger-ghost" size="sm" className="ov-menu-item" disabled={busy} onClick={() => { if (running) { close(); setQuitting(true); } else void run(quit); }}>Quit Ruby</Button>
+      <Button variant="danger-ghost" size="sm" className="ov-menu-item" disabled={busy} onClick={() => { if (running) { close(); setQuitting(true); } else void run(quit); }}>Quit CoRuby</Button>
     </div>, document.body)}
-    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title={guest ? "Stop assisting and quit Ruby?" : "Quit during a call?"} confirmLabel={guest ? "Stop assisting & quit" : "Quit Ruby"} onConfirm={quit}>
+    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title={guest ? "Stop assisting and quit CoRuby?" : "Quit during a call?"} confirmLabel={guest ? "Stop assisting & quit" : "Quit CoRuby"} onConfirm={quit}>
       {guest ? "You’ll stop assisting. The other person’s call will continue." : "The call stops on this computer."}
     </ConfirmDialog>
   </>;

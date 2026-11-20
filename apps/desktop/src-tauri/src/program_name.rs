@@ -70,7 +70,7 @@ pub fn cleanup_previous() {
 #[cfg(windows)]
 fn install_windows(name: &str) -> Result<(), String> {
     if name.is_empty() || name.chars().count() > 64 {
-        return Err("Enter a short name for this app, such as Copilot.".into());
+        return Err("Enter a short name for this app, such as CoRuby.".into());
     }
     if applied_is(name) {
         return Ok(());

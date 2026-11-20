@@ -157,7 +157,7 @@ class TokenService:
                 )
                 fresh = await self._insert(conn, user_id, family, provider, email, subject)
                 return self._tokens(
-                    user_id, str(name or email or "Career-OS account"), fresh, provider, email,
+                    user_id, str(name or email or "HubRuby account"), fresh, provider, email,
                     subject,
                 )  # fmt: skip
         # Outside the transaction, so the revocation above is committed.

@@ -163,7 +163,7 @@ async def test_base_resume_when_career_os_has_no_version(api: Api, fake: FakeCar
     await connect(api, fake, h2, "u2")  # another person (one person's accounts share a base)
     app = await pull(api, h2, "app_other_1")
     assert app["resume"]["kind"] == "tailored"
-    assert app["resume"]["label"].startswith("Career-OS base resume")
+    assert app["resume"]["label"].startswith("HubRuby base resume")
     base = (await api.client.get("/v1/resumes", headers=h2)).json()["base"]
     assert base["source"] == "text"
 
@@ -314,7 +314,7 @@ async def test_a_required_link_gates_the_work_until_connected(
     for path in ("/v1/applications", "/v1/resumes", "/v1/sessions", "/v1/employers"):
         r = await api.client.get(path, headers=h)
         assert r.status_code == 403, (path, r.text)
-        assert "link your Career-OS account" in r.json()["detail"]
+        assert "link your HubRuby account" in r.json()["detail"]
     # Settings, profiles and the link itself stay open, so the app can link the account.
     for path in ("/v1/me", "/v1/profiles", "/v1/career-os/connection"):
         assert (await api.client.get(path, headers=h)).status_code == 200, path

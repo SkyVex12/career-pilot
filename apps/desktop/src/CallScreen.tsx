@@ -178,7 +178,7 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
             done={Boolean(careerOs?.connected)}
             title={
               <>
-                Link Career-OS {careerOs?.required ? <Badge tone="warning">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
+                Link HubRuby {careerOs?.required ? <Badge tone="warning">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
               </>
             }
             doneText={careerOs?.user ? `Linked as ${careerOs.user.name || careerOs.user.id}` : "Linked"}
@@ -203,7 +203,7 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
         <Button variant="primary" size="lg" disabled>
           Start call
         </Button>
-        <span className="ui-field-hint">{!tokenSet ? "Sign in first." : "Link Career-OS first."}</span>
+        <span className="ui-field-hint">{!tokenSet ? "Sign in first." : "Link HubRuby first."}</span>
       </div>
     </>
   );

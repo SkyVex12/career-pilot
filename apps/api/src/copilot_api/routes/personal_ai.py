@@ -169,14 +169,14 @@ def tools() -> list[dict[str, Any]]:
         {
             "name": "get_context_request",
             "description": "Read one private preparation request "
-            "created by you in Career Pilot. Includes scope and expected source-aware brief.",
+            "created by you in CoRuby. Includes scope and expected source-aware brief.",
             "inputSchema": GetArguments.model_json_schema(),
             "annotations": {"readOnlyHint": True, "openWorldHint": False},
         },
         {
             "name": "publish_context_brief",
             "description": "Publish a bounded sourced brief to "
-            "your Career Pilot request. Review the selected scope before approving the write. "
+            "your CoRuby request. Review the selected scope before approving the write. "
             "Does not edit your resume, task tracker, or work logs.",
             "inputSchema": PublishArguments.model_json_schema(),
             "annotations": {
@@ -271,7 +271,7 @@ async def mcp(request: Request, svc: SvcDep, account: McpAccountDep) -> Response
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "career-pilot-context", "version": "1.0.0"},
-            "instructions": "Only read and publish requests you created in Career Pilot. "
+            "instructions": "Only read and publish requests you created in CoRuby. "
             "Publishing needs user review. No conversation history is collected.",
         }
     elif method == "ping":

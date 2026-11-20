@@ -82,7 +82,7 @@ async def test_a_code_signs_in_once(api: Api) -> None:
     assert api.svc.email is not None
     await api.svc.email.drain()
     to, subject, text = api.mailer.sent[-1]
-    assert (to, subject) == (email, "Your Copilot sign-in code")
+    assert (to, subject) == (email, "Your CoRuby sign-in code")
     assert "expires in 10 minutes" in text
     assert "ignore this email" in text
     code = re.search(r"\b(\d{6})\b", text).group(1)  # type: ignore[union-attr]
@@ -512,11 +512,11 @@ async def test_the_local_stack_never_reaches_a_mail_provider() -> None:
     with pytest.raises(RuntimeError, match="never sends through a mail provider"):
         make_mailer(
             api_settings(email_sender="smtp", smtp_host="smtp.example.com",
-                         email_from="Copilot <sign-in@example.com>")
+                         email_from="CoRuby <sign-in@example.com>")
         )  # fmt: skip
     local = make_mailer(
         api_settings(email_sender="smtp", smtp_host="localhost", smtp_port=1025,
-                     email_from="Copilot <sign-in@example.com>")
+                     email_from="CoRuby <sign-in@example.com>")
     )  # fmt: skip
     assert isinstance(local, SmtpMailer)
 
@@ -533,7 +533,7 @@ async def test_the_log_sender_is_refused_on_a_stage() -> None:
 
 async def test_the_mail_text() -> None:
     subject, text = sign_in_message("123456", 10)
-    assert subject == "Your Copilot sign-in code"
+    assert subject == "Your CoRuby sign-in code"
     assert "123456" in text
     assert "expires in 10 minutes" in text
     assert "If you didn't ask for this code, ignore this email." in text

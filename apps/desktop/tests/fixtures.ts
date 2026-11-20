@@ -76,7 +76,7 @@ export const SETTINGS: Settings = {
   overlay_monitor: null,
   overlay_on_top: true,
   stealth: false,
-  display_name: "Copilot",
+  display_name: "CoRuby",
   show_debug: false,
   last_session_id: null,
   profile: null,
