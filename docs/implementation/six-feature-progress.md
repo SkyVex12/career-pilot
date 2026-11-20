@@ -1,13 +1,13 @@
 # Six-feature implementation progress
 
-Status: implementation and available native builds complete; final draft PR integration checks pending. Full-material requirements and external validation limits remain explicit.
+Status: integrated implementation and available native artifacts delivered for draft review. Full-material requirements and external validation limits remain explicit. Final branch CI results are recorded on draft PR #98, linked below.
 
 ## Integration and preservation
 
 - Branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: push the integrated branch, create the authorized draft PR, and validate its CI checks. All available local/native/provider checks are complete; external release/device prerequisites are documented in six-feature-delivery.md.
+- Next action: verify the checks on draft PR #98, then address the documented external release/device prerequisites before a production release. All available local/native/provider checks are complete; setup steps are in six-feature-delivery.md.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
 - Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
 - Decision: non-English catalog entries remain gated until speech and full application checks pass.
@@ -545,3 +545,8 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Final requirement reconciliation: **429 unique, consecutive IDs**, 383 implemented, 15 verified, 31 externally blocked; no pending/in-progress requirement rows. Original requirement text retained. Delivery README links resolve. Mobile evidence/workaround checkpoint **2d61976**; stable Android artifact receipt and successful iOS simulator CI run linked. Local iOS artifact downloads exhausted bounded TLS-timeout retries, so binary/lockfile inspection is not claimed.
 
 - Final Universal Mac workflow **44655879546 passed** (24m53s), source **e852e61**. Frontend/native tests, Apple bridge availability for both architectures, Universal DMG build, mounted app verification and strict signature verification all passed. Artifact **14594572590**, 27,448,627-byte archive SHA256 **1e8e2253b5c89a665e2ed9426a609e243d30748ff8af542a65bdae7f610e7296**. Preview is ad-hoc signed, not notarized; no production publication. The release configuration pins existing Stage 0 services; compatible backend deployment remains separate.
+
+### Draft integration review
+
+- Draft PR **#98**: https://github.com/SkyVex12/career-pilot/pull/98. Integrated source pushed to `codex/six-feature-program`; no merge/deployment/publication performed. The PR checks provide the authoritative final-head hosted CI result. The final ledger/documentation update is followed by one complete CI pass; already verified native artifacts are not rebuilt for documentation changes.
+- Delivery guide: `docs/implementation/six-feature-delivery.md`; Windows/Android stable local artifacts and Mac/iOS GitHub artifacts included. All original requirement files and existing work preserved.
