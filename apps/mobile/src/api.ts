@@ -1,3 +1,4 @@
+import { withDeadline } from "./requestScope.ts";
 import { HTTP_TEST_BUILD, transportURL } from "./transport.ts";
 
 export interface Tokens {
@@ -35,8 +36,9 @@ export class Api {
   private store: SecretStore;
   private fetcher: typeof fetch;
   private tokens: Tokens | null = null;
-  private refreshing: Promise<void> | null = null;
+  private refreshing: { epoch: number; promise: Promise<void> } | null = null;
   private epoch = 0;
+  private requestTimeoutMs: number;
   private writes: Promise<void> = Promise.resolve();
   profile = "";
   attachments = new Set<string>();
@@ -46,8 +48,10 @@ export class Api {
     fetcher = fetch,
     development = false,
     httpTest = HTTP_TEST_BUILD,
+    requestTimeoutMs = 120000,
   ) {
     this.base = secureBase(base, development, httpTest);
+    this.requestTimeoutMs = requestTimeoutMs;
     this.store = store;
     this.fetcher = fetcher;
   }
@@ -92,11 +96,13 @@ export class Api {
     return this.tokens.access_token;
   }
   private async refresh() {
-    if (this.refreshing) return this.refreshing;
+    if (this.refreshing?.epoch === this.epoch) return this.refreshing.promise;
     const epoch = this.epoch,
       token = this.tokens?.refresh_token;
     if (!token) throw new ApiError(401, "Sign in again.");
-    this.refreshing = (async () => {
+    const entry = { epoch, promise: Promise.resolve() };
+    this.refreshing = entry;
+    entry.promise = (async () => {
       try {
         const data = await this.request<Tokens>(
           "/auth/token/refresh",
@@ -117,10 +123,10 @@ export class Api {
         }
         throw e;
       } finally {
-        this.refreshing = null;
+        if (this.refreshing === entry) this.refreshing = null;
       }
     })();
-    return this.refreshing;
+    return entry.promise;
   }
   async signout(): Promise<boolean> {
     const previous = this.tokens,
@@ -132,38 +138,36 @@ export class Api {
     this.attachments.clear();
     await this.persist(null);
     if (!previous) return true;
-    const controller = new AbortController(),
-      timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${previous.access_token}`,
-      };
-      if (profile) headers["x-copilot-profile"] = profile;
-      const results = await Promise.all([
-        ...attachments.map((id) =>
-          this.fetcher(`${this.base}/v1/companion/attachments/${id}`, {
-            method: "DELETE",
-            headers,
-            signal: controller.signal,
+      return await withDeadline(async signal => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${previous.access_token}`,
+        };
+        if (profile) headers["x-copilot-profile"] = profile;
+        const results = await Promise.all([
+          ...attachments.map((id) =>
+            this.fetcher(`${this.base}/v1/companion/attachments/${id}`, {
+              method: "DELETE",
+              headers,
+              signal,
+            }),
+          ),
+          this.fetcher(`${this.base}/v1/auth/token/signout`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: previous.refresh_token }),
+            signal,
           }),
-        ),
-        this.fetcher(`${this.base}/v1/auth/token/signout`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: previous.refresh_token }),
-          signal: controller.signal,
-        }),
-      ]);
-      // A missing attachment is already detached. A missing token endpoint does
-      // not confirm refresh-token revocation.
-      return results.every(
-        (r, index) => r.ok || (index < attachments.length && r.status === 404),
-      );
+        ]);
+        // A missing attachment is already detached. A missing token endpoint does
+        // not confirm refresh-token revocation.
+        return results.every(
+          (r, index) => r.ok || (index < attachments.length && r.status === 404),
+        );
+      }, 8000);
     } catch {
       return false;
-    } finally {
-      clearTimeout(timer);
     }
   }
   async request<T = unknown>(
@@ -176,8 +180,11 @@ export class Api {
     profile = this.profile,
     epoch = this.epoch,
   ): Promise<T> {
+    return withDeadline(bounded => this.performRequest<T>(path, body, method, auth, bounded, retry, profile, epoch), this.requestTimeoutMs, signal);
+  }
+  private async performRequest<T>(path: string, body: unknown, method: string, auth: boolean, signal: AbortSignal, retry: boolean, profile: string, epoch: number): Promise<T> {
     this.assertEpoch(epoch);
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     if (!path.startsWith("/") || path.startsWith("//"))
       throw new Error("Invalid API path");
     const headers: Record<string, string> = {
@@ -188,6 +195,7 @@ export class Api {
       this.assertEpoch(epoch);
       if (profile) headers["x-copilot-profile"] = profile;
     }
+    signal.throwIfAborted();
     const response = await this.fetcher(`${this.base}/v1${path}`, {
       method,
       headers,
@@ -195,6 +203,7 @@ export class Api {
       signal,
     });
     this.assertEpoch(epoch);
+    signal.throwIfAborted();
     if (response.status === 401 && auth && retry) {
       await this.token(true);
       return this.request<T>(
@@ -228,6 +237,7 @@ export class Api {
         ? (undefined as T)
         : ((await response.json()) as T);
     this.assertEpoch(epoch);
+    signal.throwIfAborted();
     return data;
   }
 }

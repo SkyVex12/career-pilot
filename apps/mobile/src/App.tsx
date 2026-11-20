@@ -12,6 +12,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Api, secureBase, type Tokens } from "./api";
 import { HTTP_TEST_BUILD } from "./transport";
+import { checkClientCapabilities } from "./clientCapabilities";
 import { gatewayURL } from "./liveState";
 import { loadAuthConfig, type AuthConfig } from "./authConfig";
 import {
@@ -20,12 +21,26 @@ import {
   type CareerOsOutcome,
 } from "./careerOs";
 import { secretsFor } from "./secure";
-import { Companion } from "./Companion";
-import { Ask } from "./Ask";
-import { InPerson } from "./InPerson";
-import { Practice, type ImportedQuestion } from "./Practice";
-import { History, Preparation } from "./History";
-import { Button, Input, Row, Theme, Txt, colors, page } from "./ui";
+import { type ImportedQuestion } from "./Practice";
+import { Workspace } from "./Workspace";
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  Notice,
+  Row,
+  Theme,
+  Txt,
+  colors,
+  page,
+} from "./ui";
+import { AppShell, Brand } from "./AppShell";
+import {
+  readConnectionPreference,
+  saveConnectionPreference,
+  type ConnectionPreference,
+} from "./preferences";
 type Profile = { id: string; name: string; me: boolean };
 export default function App() {
   const dark = useColorScheme() === "dark",
@@ -39,6 +54,7 @@ export default function App() {
     [sent, setSent] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [serverNotice, setServerNotice] = useState<string | null>(null),
     [profiles, setProfiles] = useState<Profile[]>([]),
     [profile, setProfile] = useState(""),
     [tab, setTab] = useState("Companion"),
@@ -77,25 +93,47 @@ export default function App() {
     [],
   );
   async function readProfiles(client: Api, ticket: number) {
+    void checkClientCapabilities(client, authAbort.current?.signal)
+      .then((result) => {
+        if (ticket === authScope.current) setServerNotice(result.notice);
+      })
+      .catch(() => {
+        /* Cancelled by account/server change. */
+      });
     try {
       const d = await client.request<{ items: Profile[] }>("/profiles");
+      if (
+        !Array.isArray(d.items) ||
+        d.items.some(
+          (p) =>
+            !p ||
+            typeof p.id !== "string" ||
+            typeof p.name !== "string" ||
+            typeof p.me !== "boolean",
+        )
+      )
+        throw new Error(
+          "The server returned an unsupported profile response. Update the server and try again.",
+        );
       if (ticket === authScope.current) setProfiles(d.items);
     } catch (e) {
       if (ticket === authScope.current) setError(String(e));
     }
   }
-  async function connect() {
+  async function connect(preference?: ConnectionPreference) {
     const ticket = ++authScope.current;
     cancelBrowser();
+    setServerNotice(null);
     const controller = new AbortController();
     authAbort.current = controller;
     const timeout = setTimeout(() => controller.abort(), 10000);
     setBusy(true);
     setError("");
     try {
-      const base = secureBase(server, __DEV__);
+      const base = secureBase(preference?.api ?? server, __DEV__);
       const live = gatewayURL(
-        gateway.trim() || `${base.replace(/^http/, "ws")}/v1/companion`,
+        (preference?.gateway ?? gateway).trim() ||
+          `${base.replace(/^http/, "ws")}/v1/companion`,
       );
       const client = new Api(base, await secretsFor(base), fetch, __DEV__);
       if (ticket !== authScope.current) return;
@@ -108,6 +146,7 @@ export default function App() {
       setServer(base);
       setGateway(live);
       setSigned(restored);
+      void saveConnectionPreference({ api: base, gateway: live });
       if (restored) await readProfiles(client, ticket);
     } catch (e) {
       if (ticket === authScope.current) setError(String(e));
@@ -117,6 +156,19 @@ export default function App() {
       if (ticket === authScope.current) setBusy(false);
     }
   }
+  useEffect(() => {
+    let active = true;
+    void readConnectionPreference().then((preference) => {
+      if (active && preference) {
+        setServer(preference.api);
+        setGateway(preference.gateway);
+        void connect(preference);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   async function openCareerOs() {
     if (!api || !authConfig?.career_os) return;
     const ticket = ++authScope.current;
@@ -190,7 +242,7 @@ export default function App() {
       );
       if (ticket !== authScope.current) return;
       setSent(true);
-      setError("Check your email for the sign-in code.");
+      setError("");
     } catch (e) {
       if (ticket === authScope.current) setError(String(e));
     } finally {
@@ -227,6 +279,7 @@ export default function App() {
     const ticket = ++authScope.current;
     setBusy(false);
     setSigned(false);
+    setServerNotice(null);
     setProfiles([]);
     setProfile("");
     setImported(undefined);
@@ -246,14 +299,6 @@ export default function App() {
     setImported(undefined);
     setTab("Companion");
   }
-  const group =
-    tab === "Ask"
-      ? "Work"
-      : tab === "History"
-        ? "History"
-        : ["Practice", "Preparation"].includes(tab)
-          ? "Interview prep"
-          : "Call";
   return (
     <SafeAreaProvider>
       <Theme.Provider value={c}>
@@ -266,294 +311,278 @@ export default function App() {
             {!signed || !api ? (
               <ScrollView
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={page}
+                contentContainerStyle={[
+                  page,
+                  {
+                    flexGrow: 1,
+                    justifyContent: "center",
+                    maxWidth: 520,
+                    paddingVertical: 36,
+                    gap: 24,
+                  },
+                ]}
               >
-                <Txt title>
-                  {HTTP_TEST_BUILD ? "Career Pilot HTTP Test" : "Career Pilot"}
-                </Txt>
-                <Txt muted>
-                  Your phone accompanies the desktop call. Sign in with the same
-                  account.
-                </Txt>
+                <View style={{ gap: 26 }}>
+                  <Brand />
+                  <View style={{ gap: 10 }}>
+                    <Txt title style={{ fontSize: 34, lineHeight: 41 }}>
+                      {!api
+                        ? "Your next conversation,\nbetter prepared."
+                        : "Welcome back."}
+                    </Txt>
+                    <Txt muted>
+                      {!api
+                        ? "Bring live guidance, interview practice and your career context with you."
+                        : "Sign in to the same account you use on your computer."}
+                    </Txt>
+                  </View>
+                </View>
+                <Card>
+                  {!api ? (
+                    <>
+                      <Txt style={{ fontWeight: "700", fontSize: 18 }}>
+                        Connect your workspace
+                      </Txt>
+                      <Field
+                        label="API server"
+                        hint={
+                          HTTP_TEST_BUILD
+                            ? "This test build accepts HTTP or HTTPS."
+                            : "Use your workspace’s HTTPS address."
+                        }
+                      >
+                        <Input
+                          placeholder={
+                            HTTP_TEST_BUILD
+                              ? "http://your-server"
+                              : "https://your-server"
+                          }
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="url"
+                          value={server}
+                          editable={!busy}
+                          onChangeText={setServer}
+                        />
+                      </Field>
+                      <Field
+                        label="Live gateway"
+                        hint="Optional. Leave blank to use the same server."
+                      >
+                        <Input
+                          placeholder="Automatic"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          value={gateway}
+                          editable={!busy}
+                          onChangeText={setGateway}
+                        />
+                      </Field>
+                      <Button
+                        label={busy ? "Connecting…" : "Connect server"}
+                        icon="arrow"
+                        loading={busy}
+                        disabled={!server.trim()}
+                        onPress={() => void connect()}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      {authConfig?.career_os ? (
+                        <>
+                          <Button
+                            label={
+                              browserPending
+                                ? "Restart browser sign-in"
+                                : "Continue with Career-OS"
+                            }
+                            icon="arrow"
+                            loading={busy}
+                            onPress={() => void openCareerOs()}
+                          />
+                          {browserPending ? (
+                            <>
+                              <Notice>
+                                After you approve in your browser, it will show
+                                a cannot-connect page at 127.0.0.1. Copy that
+                                complete address and paste it here to finish.
+                                Keep it private.
+                              </Notice>
+                              <Field label="Sign-in callback">
+                                <Input
+                                  placeholder="Paste the complete browser address"
+                                  value={callback}
+                                  onChangeText={setCallback}
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                  secureTextEntry
+                                />
+                              </Field>
+                              <Button
+                                label="Finish sign-in"
+                                disabled={busy || !callback.trim()}
+                                onPress={() => void finishCareerOs()}
+                              />
+                              <Button
+                                label="Cancel"
+                                secondary
+                                onPress={() => {
+                                  authScope.current++;
+                                  cancelBrowser();
+                                  setBusy(false);
+                                }}
+                              />
+                            </>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {accountChoice ? (
+                        <Notice>
+                          To use your existing desktop account, add Career-OS
+                          under desktop Settings → Account → Sign-in, then
+                          restart sign-in here. Your accounts will stay separate
+                          until you link them.
+                        </Notice>
+                      ) : null}
+                      {authConfig?.email ? (
+                        <>
+                          {authConfig.career_os ? (
+                            <Txt
+                              muted
+                              style={{ textAlign: "center", fontSize: 12 }}
+                            >
+                              or use an email code
+                            </Txt>
+                          ) : null}
+                          <Field label="Email address">
+                            <Input
+                              placeholder="you@example.com"
+                              autoCapitalize="none"
+                              keyboardType="email-address"
+                              autoComplete="email"
+                              value={email}
+                              onChangeText={setEmail}
+                            />
+                          </Field>
+                          <Button
+                            label={
+                              sent ? "Send another code" : "Send sign-in code"
+                            }
+                            secondary={!!authConfig.career_os}
+                            disabled={busy || !email.trim()}
+                            onPress={() => void start()}
+                          />
+                          {sent ? (
+                            <>
+                              <Notice>
+                                Check your email for the sign-in code.
+                              </Notice>
+                              <Field label="Verification code">
+                                <Input
+                                  placeholder={`${authConfig.email.code_length}-digit code`}
+                                  keyboardType="number-pad"
+                                  autoComplete="one-time-code"
+                                  value={code}
+                                  onChangeText={setCode}
+                                  maxLength={authConfig.email.code_length}
+                                />
+                              </Field>
+                              <Button
+                                label="Sign in"
+                                loading={busy}
+                                disabled={
+                                  code.length !== authConfig.email.code_length
+                                }
+                                onPress={() => void verify()}
+                              />
+                            </>
+                          ) : null}
+                        </>
+                      ) : !browserPending ? (
+                        <Txt muted style={{ fontSize: 12, lineHeight: 19 }}>
+                          {authConfig?.career_os
+                            ? "Use Google on desktop? First add Career-OS to that same account in desktop Settings → Account → Sign-in."
+                            : "This server has no sign-in method supported by this build. Update its authentication configuration."}
+                        </Txt>
+                      ) : null}
+                      <View
+                        style={{
+                          borderTopWidth: 1,
+                          borderColor: c.line,
+                          paddingTop: 12,
+                          gap: 10,
+                        }}
+                      >
+                        <Txt muted numberOfLines={1} style={{ fontSize: 12 }}>
+                          {api.base}
+                        </Txt>
+                        <Button
+                          label="Change server"
+                          secondary
+                          onPress={() => {
+                            authScope.current++;
+                            cancelBrowser();
+                            setAuthConfig(null);
+                            void api.signout().catch(() => {});
+                            setBusy(false);
+                            setSigned(false);
+                            setProfiles([]);
+                            setCode("");
+                            setApi(null);
+                            setSent(false);
+                          }}
+                        />
+                      </View>
+                    </>
+                  )}
+                  {error ? <Notice tone="error">{error}</Notice> : null}
+                </Card>
                 {HTTP_TEST_BUILD ? (
-                  <Txt muted>
-                    HTTP test build. HTTP/WS traffic, including sign-in and call
-                    content, is unencrypted. Use a test account and test
-                    content.
+                  <Txt
+                    muted
+                    style={{
+                      fontSize: 11,
+                      lineHeight: 17,
+                      textAlign: "center",
+                    }}
+                  >
+                    HTTP TEST · HTTP traffic includes unencrypted sign-in and
+                    call content. Use a test account and test content.
                   </Txt>
                 ) : null}
-                {!api ? (
-                  <>
-                    <Input
-                      placeholder={
-                        HTTP_TEST_BUILD
-                          ? "API server (HTTP or HTTPS)"
-                          : "HTTPS API server"
-                      }
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                      value={server}
-                      editable={!busy}
-                      onChangeText={setServer}
-                    />
-                    <Input
-                      placeholder={
-                        HTTP_TEST_BUILD
-                          ? "Gateway URL (optional; derived from API server)"
-                          : "Secure gateway URL (optional)"
-                      }
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      value={gateway}
-                      editable={!busy}
-                      onChangeText={setGateway}
-                    />
-                    <Button
-                      label="Connect server"
-                      disabled={busy || !server}
-                      onPress={() => void connect()}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Txt muted>{api.base}</Txt>
-                    {authConfig?.career_os && (
-                      <>
-                        <Button
-                          label={
-                            browserPending
-                              ? "Restart Career-OS sign-in"
-                              : "Sign in with Career-OS"
-                          }
-                          disabled={busy}
-                          onPress={() => void openCareerOs()}
-                        />
-                        {browserPending && (
-                          <>
-                            <Txt muted>
-                              Sign in and approve in your browser. It will then
-                              show a cannot-connect page at 127.0.0.1. That is
-                              expected for this manual sign-in: copy the whole
-                              address from the browser bar and paste it below.
-                              Do not share that address.
-                            </Txt>
-                            <Input
-                              placeholder="Paste complete callback address"
-                              value={callback}
-                              onChangeText={setCallback}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              secureTextEntry
-                            />
-                            <Button
-                              label="Finish Career-OS sign-in"
-                              disabled={busy || !callback.trim()}
-                              onPress={() => void finishCareerOs()}
-                            />
-                            <Button
-                              label="Cancel browser sign-in"
-                              secondary
-                              onPress={() => {
-                                authScope.current++;
-                                cancelBrowser();
-                                setBusy(false);
-                              }}
-                            />
-                          </>
-                        )}
-                      </>
-                    )}
-                    {accountChoice && (
-                      <>
-                        <Txt muted>
-                          To keep the same desktop account, sign in on desktop
-                          and add Career-OS under Settings, then restart
-                          Career-OS sign-in here. This app will not create a
-                          separate account from this choice.
-                        </Txt>
-                        {accountChoice.status === "choose_account" &&
-                          accountChoice.accounts.map((a, i) => (
-                            <Txt muted key={a.id ?? i}>
-                              {a.email || "Existing account"}:{" "}
-                              {a.methods.join(", ")}
-                            </Txt>
-                          ))}
-                        {accountChoice.status === "existing_or_new" &&
-                          accountChoice.account && (
-                            <Txt muted>
-                              {accountChoice.account.email ||
-                                "Existing account"}
-                              : {accountChoice.account.methods.join(", ")}
-                            </Txt>
-                          )}
-                      </>
-                    )}
-                    {!authConfig?.email && (
-                      <Txt muted>
-                        Email codes are not enabled on this server.{" "}
-                        {authConfig?.career_os
-                          ? "Use Career-OS above. If your desktop account uses Google, add Career-OS to that account in desktop Settings first."
-                          : "This build does not support this server's browser sign-in provider yet."}
-                      </Txt>
-                    )}
-                    {authConfig?.email && (
-                      <>
-                        <Input
-                          placeholder="Email"
-                          autoCapitalize="none"
-                          keyboardType="email-address"
-                          autoComplete="email"
-                          value={email}
-                          onChangeText={setEmail}
-                        />
-                        <Button
-                          label={
-                            sent ? "Send another code" : "Send sign-in code"
-                          }
-                          disabled={busy || !email.trim()}
-                          onPress={() => void start()}
-                        />
-                        {sent ? (
-                          <>
-                            <Input
-                              placeholder={`${authConfig.email.code_length}-digit code`}
-                              keyboardType="number-pad"
-                              autoComplete="one-time-code"
-                              value={code}
-                              onChangeText={setCode}
-                              maxLength={authConfig.email.code_length}
-                            />
-                            <Button
-                              label="Sign in"
-                              disabled={
-                                busy ||
-                                code.length !== authConfig.email.code_length
-                              }
-                              onPress={() => void verify()}
-                            />
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                    <Button
-                      label="Change server"
-                      secondary
-                      onPress={() => {
-                        authScope.current++;
-                        cancelBrowser();
-                        setAuthConfig(null);
-                        void api.signout();
-                        setBusy(false);
-                        setSigned(false);
-                        setProfiles([]);
-                        setCode("");
-                        setApi(null);
-                        setSent(false);
-                      }}
-                    />
-                  </>
-                )}
-                {error ? <Txt accessibilityRole="alert">{error}</Txt> : null}
               </ScrollView>
             ) : (
-              <>
-                <View style={{ padding: 10, gap: 8 }}>
-                  <Row>
-                    <Txt style={{ fontWeight: "700" }}>
-                      {HTTP_TEST_BUILD
-                        ? "Career Pilot · HTTP TEST"
-                        : "Career Pilot"}
-                    </Txt>
-                    <Txt muted>{api.email}</Txt>
-                    <Button
-                      label="Sign out"
-                      secondary
-                      onPress={() => void signout()}
-                    />
-                  </Row>
-                  <ScrollView horizontal>
-                    {profiles.map((p) => (
-                      <View key={p.id} style={{ marginRight: 8 }}>
-                        <Button
-                          label={`${(p.me ? "" : p.id) === profile ? "✓ " : ""}${p.name || "Me"}`}
-                          secondary
-                          onPress={() => switchProfile(p)}
-                        />
-                      </View>
-                    ))}
-                  </ScrollView>
-                  {error ? <Txt accessibilityRole="alert">{error}</Txt> : null}
-                  <ScrollView horizontal>
-                    {[
-                      ["Call", "Companion"],
-                      ["Interview prep", "Practice"],
-                      ["Work", "Ask"],
-                      ["History", "History"],
-                    ].map(([label, target]) => (
-                      <View key={target} style={{ marginRight: 8 }}>
-                        <Button
-                          label={`${group === label ? "✓ " : ""}${label}`}
-                          secondary
-                          onPress={() => setTab(target)}
-                        />
-                      </View>
-                    ))}
-                  </ScrollView>
-                  {group === "Call" ? (
-                    <Row>
-                      <Button
-                        label="Desktop companion"
-                        secondary
-                        onPress={() => setTab("Companion")}
-                      />
-                      <Button
-                        label="In-person microphone"
-                        secondary
-                        onPress={() => setTab("In-person")}
-                      />
-                    </Row>
-                  ) : group === "Interview prep" ? (
-                    <Row>
-                      <Button
-                        label="Practice"
-                        secondary
-                        onPress={() => setTab("Practice")}
-                      />
-                      <Button
-                        label="Meeting preparation"
-                        secondary
-                        onPress={() => setTab("Preparation")}
-                      />
-                    </Row>
-                  ) : null}
-                </View>
-                <View key={`${api.base}:${profile}`} style={{ flex: 1 }}>
-                  {tab === "Companion" ? (
-                    <Companion api={api} url={gateway} />
-                  ) : tab === "Ask" ? (
-                    <Ask api={api} />
-                  ) : tab === "Practice" ? (
-                    <Practice api={api} imported={imported} />
-                  ) : tab === "Preparation" ? (
-                    <Preparation api={api} />
-                  ) : tab === "In-person" ? (
-                    <InPerson api={api} url={gateway} />
-                  ) : (
-                    <History
-                      api={api}
-                      practice={(q) => {
-                        setImported(q);
-                        setTab("Practice");
-                      }}
-                    />
-                  )}
-                </View>
-              </>
+              <AppShell
+                profiles={profiles}
+                profile={profile}
+                email={api.email}
+                server={api.base}
+                tab={tab}
+                error={error}
+                serverNotice={serverNotice}
+                onProfile={switchProfile}
+                onTab={setTab}
+                onSignout={() =>
+                  void signout().catch((e) => setError(String(e)))
+                }
+              >
+                <Workspace
+                  key={`${api.base}:${profile}`}
+                  api={api}
+                  url={gateway}
+                  tab={tab}
+                  imported={imported}
+                  onPractice={(q) => {
+                    setImported(q);
+                    setTab("Practice");
+                  }}
+                />
+              </AppShell>
             )}
             {!foreground ? (
               <View
                 accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
                 style={{
                   position: "absolute",
                   top: 0,
@@ -565,9 +594,7 @@ export default function App() {
                   justifyContent: "center",
                 }}
               >
-                <Txt title>
-                  {HTTP_TEST_BUILD ? "Career Pilot HTTP Test" : "Career Pilot"}
-                </Txt>
+                <Brand />
               </View>
             ) : null}
           </KeyboardAvoidingView>
