@@ -187,7 +187,7 @@ export function History({
       .includes(query.toLocaleLowerCase()),
   );
   return (
-    <Screen>
+    <Screen key={call?.id ?? "calls"}>
       {selected ? (
         <Button
           label="Back to history"
@@ -462,7 +462,7 @@ export function Preparation({
   }
   const item = data?.items.find((i) => meetingKey(i) === selected);
   return (
-    <Screen>
+    <Screen key={selected ?? "meetings"}>
       {selected ? (
         <Button
           label="Back to meetings"

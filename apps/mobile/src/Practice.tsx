@@ -831,7 +831,13 @@ export function Practice({
     );
   return (
     <View style={{ flex: 1 }}>
-      <Screen>
+      <Screen
+        key={
+          session
+            ? `${session.id}:${session.current_question_id ?? ""}:${session.status}`
+            : `${section}:${useImported && imported ? `${imported.session_id}:${imported.channel}:${imported.seg_id}` : "new"}`
+        }
+      >
         <ScreenTitle
           eyebrow="Interview prep"
           title={session ? "Your practice" : "Practice with purpose"}

@@ -327,9 +327,13 @@ export function Companion({
               ws.close();
             }
           } catch {
+            terminal = true;
+            stopTimers();
+            updateConnection("Display needs to reconnect");
             setError(
               "Invalid session event. Retry connection to reload the current state.",
             );
+            ws.close();
           }
         };
         ws.onerror = () => {
