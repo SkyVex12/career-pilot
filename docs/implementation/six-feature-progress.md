@@ -1,13 +1,13 @@
 # Six-feature implementation progress
 
-Status: in progress. Full-material requirements remain binding.
+Status: implementation and available native builds complete; final draft PR integration checks pending. Full-material requirements and external validation limits remain explicit.
 
 ## Integration and preservation
 
 - Branch: codex/six-feature-program; worktree: C:/Users/A/WorkSpace/career-pilot
 - Base: ca13ba8 on cleaned main (user requested move). Includes merged desktop redesign and answer improvements. Original isolated worktree retained, unused. No prior code changes lost.
 - Requirement documents copied byte-for-byte from source workspace.
-- Next action: finish Android packaging and actual MCP-host validation, validate the integrated native artifacts, then reconcile the full acceptance ledger and deliver the draft PR.
+- Next action: push the integrated branch, create the authorized draft PR, and validate its CI checks. All available local/native/provider checks are complete; external release/device prerequisites are documented in six-feature-delivery.md.
 - Resume: Set-Location C:/Users/A/WorkSpace/career-pilot; git status --short
 - Validation: deterministic, desktop and real local-stack tests now passing (milestones below). Live provider/device coverage remains separate. Docker Desktop found under AppData and local compose stack started; earlier database blocker resolved.
 - Decision: non-English catalog entries remain gated until speech and full application checks pass.
@@ -17,7 +17,7 @@ Status: in progress. Full-material requirements remain binding.
 Each row retains original acceptance text. Evidence and files are recorded in milestone entries below.
 
 ### Material 01
-- **M01-001** [in progress] Implement background call detection and optional calendar-based meeting preparation in Career Pilot.
+- **M01-001** [implemented] Implement background call detection and optional calendar-based meeting preparation in Career Pilot.
 - **M01-002** [implemented] 1. Background operation
 - **M01-003** [implemented] Add an optional background mode for Windows and macOS 13 Ventura and newer, supporting both Apple Silicon and Intel in the existing Universal Mac build.
 - **M01-004** [implemented] Let users enable “Launch at login” and “Keep running in the background.”
@@ -30,7 +30,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-011** [implemented] 2. Detect calls without browser extensions
 - **M01-012** [implemented] Implement detection entirely in the desktop app. Do not require or build a Chrome extension.
 - **M01-013** [implemented] Use native audio-session/device activity, application identity, and other appropriate OS signals to identify likely calls. Audio activity alone must not be treated as proof of a meeting.
-- **M01-014** [in progress] Support targets:
+- **M01-014** [externally blocked] Support targets:
 - **M01-015** [externally blocked] Desktop apps: Zoom, Microsoft Teams, Slack, Discord, WhatsApp, and FaceTime where available.
 - **M01-016** [externally blocked] Browser meetings: Google Meet, Zoom Web, and Teams Web in major browsers, without extensions.
 - **M01-017** [externally blocked] Android emulators: BlueStacks and LDPlayer, including multiple running instances.
@@ -98,7 +98,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M01-079** [implemented] Any production configuration or hardware testing still needed.
 
 ### Material 02
-- **M02-001** [in progress] Implement Practice Interviews in Career Pilot.
+- **M02-001** [implemented] Implement Practice Interviews in Career Pilot.
 - **M02-002** [implemented] 1. Practice setup
 - **M02-003** [implemented] Provide a clear entry point to Practice Interviews and a compact setup flow.
 - **M02-004** [implemented] Let users choose their profile and optionally an existing application with its job description and resume.
@@ -186,7 +186,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M02-086** [implemented] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device testing still needed.
 
 ### Material 03
-- **M03-001** [in progress] Implement Central Ask in Career Pilot.
+- **M03-001** [implemented] Implement Central Ask in Career Pilot.
 - **M03-002** [implemented] 1. One shared Ask experience
 - **M03-003** [implemented] Add an Ask page to the app's main navigation that works without starting a call. **Superseded placement by explicit user instruction on 2026-11-19: Ask lives inside Work; Practice lives inside Interview prep; no new main tabs.**
 - **M03-004** [implemented] Provide one conversation area with an input, streamed or progressively available answers, and follow-up questions.
@@ -255,13 +255,13 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M03-067** [implemented] Grounded answers and honest statements when evidence is insufficient.
 - **M03-068** [implemented] Opening sources and returning without losing drafts or conversations.
 - **M03-069** [implemented] Separation between central conversations and an active live call.
-- **M03-070** [in progress] Streaming, cancellation, retries, persistence, and deletion.
+- **M03-070** [verified] Streaming, cancellation, retries, persistence, and deletion.
 - **M03-071** [implemented] Prompt-like text inside retrieved material remaining untrusted source content.
 - **M03-072** [implemented] Use deterministic fixtures for routine tests instead of paid live model requests. Keep CI efficient and avoid unrelated native packaging jobs for changes that do not require them.
-- **M03-073** [in progress] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device verification still required.
+- **M03-073** [implemented] Finish with the working implementation, appropriate validation results, concise setup documentation, and any production configuration or real-device verification still required.
 
 ### Material 04
-- **M04-001** [in progress] Implement Career Pilot Mobile for iOS and Android, prioritizing a companion to the existing Windows and macOS desktop app. — Native Android/iOS projects and all client flows implemented; local APK packaging underway; signed iOS installation requires macOS/signing.
+- **M04-001** [implemented] Implement Career Pilot Mobile for iOS and Android, prioritizing a companion to the existing Windows and macOS desktop app. — Native Android APK and unsigned iOS simulator application compiled successfully; physical installation on iPhone requires owner signing/provisioning.
 - **M04-002** [implemented] 1. Headphone-compatible desktop companion: first priority
 - **M04-003** [implemented] Support this explicit flow:
 - **M04-004** [implemented] The meeting stays on the computer. Headphones and microphone stay connected to the computer.
@@ -270,7 +270,7 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-007** [implemented] Connecting the phone attaches to the existing session. Do not start a second transcription pipeline, generate duplicate answers, or bill a duplicate session merely because another display is connected.
 - **M04-008** [implemented] Make the audio-source computer and connection state visible on the phone.
 - **M04-009** [implemented] Let the user choose to use the phone as the guidance display while the desktop overlay is hidden. Preserve a way to reopen the overlay or main app.
-- **M04-010** [blocked] Keep the shared screen free of phone UI unless the user deliberately mirrors it. Describe screen-share behavior through tested configurations rather than promising universal undetectability. — Physical screen-share/mirroring matrix needs desktop and phones; no undetectability claim is made.
+- **M04-010** [externally blocked] Keep the shared screen free of phone UI unless the user deliberately mirrors it. Describe screen-share behavior through tested configurations rather than promising universal undetectability. — Physical screen-share/mirroring matrix needs desktop and phones; no undetectability claim is made.
 - **M04-011** [implemented] Do not quietly fall back to the phone microphone when the desktop disconnects. Explain the interruption and offer an explicit supported alternative.
 - **M04-012** [implemented] 2. Account connection and session access
 - **M04-013** [implemented] Use the existing account and profile system. Provide a simple way to open the current desktop session on the phone, such as same-account sign-in followed by a visible active-session card.
@@ -330,29 +330,29 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M04-067** [implemented] 8. Delivery order
 - **M04-068** [implemented] 9. Validation and deliverables
 - **M04-069** [verified] Add meaningful automated tests for pairing, authorization, profile isolation, attachment versus capture takeover, event ordering/replay, command deduplication, cancellation, session end, reconnect recovery, and cleanup. — Mobile deterministic lifecycle/transport tests plus companion real socket and DB authorization/replay/control tests passed; see backend companion validation.
-- **M04-070** [blocked] Validate the main workflow on actual devices, including: — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-071** [blocked] Windows and macOS desktops paired with both iPhone and Android. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-072** [blocked] Supported wired, USB, and Bluetooth headphone/microphone configurations, including device changes. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-073** [blocked] Meeting audio from supported desktop apps and browser calls. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-074** [blocked] Operation while phone microphone permission is denied in companion mode. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-075** [blocked] Simultaneous desktop/phone actions and multiple connected displays. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-076** [blocked] Phone lock/unlock, background/foreground, Wi-Fi/cellular changes, desktop sleep, and network loss. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-077** [blocked] Clear handling of an ended or deleted session and sign-out/revocation. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-078** [blocked] End call confirmation and restoration of the normal desktop page. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-079** [blocked] Standalone phone microphone interruptions and unavailable same-phone call audio. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-080** [blocked] Portrait/landscape layout, large text, keyboard, and assistive-technology behavior. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
-- **M04-081** [in progress] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements. — Native app and integration delivered; final local APK build evidence pending; physical/iOS signing checks explicitly external.
-- **M04-082** [not applicable] [LockedIn mobile](https://www.lockedinai.com/mobile-app) describes placing a phone beside a laptop to listen to the room. Its page reserves Stealth Mode for the desktop app. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
-- **M04-083** [not applicable] [OfferGoose help](https://blog.offergoose.com/post104/) documents mobile microphone listening, the speaker/headphone limitation, and the need for another device when taking a phone call. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
-- **M04-084** [not applicable] [Android audio-input sharing](https://developer.android.com/media/platform/sharing-audio-input) explains microphone contention and restrictions on call audio. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
-- **M04-085** [not applicable] [Android playback capture](https://developer.android.com/media/platform/av-capture) limits which playback streams can be captured and requires user authorization. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
-- **M04-086** [not applicable] [Apple recording audio sessions](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/record) documents recording behavior and interruptions. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-070** [externally blocked] Validate the main workflow on actual devices, including: — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-071** [externally blocked] Windows and macOS desktops paired with both iPhone and Android. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-072** [externally blocked] Supported wired, USB, and Bluetooth headphone/microphone configurations, including device changes. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-073** [externally blocked] Meeting audio from supported desktop apps and browser calls. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-074** [externally blocked] Operation while phone microphone permission is denied in companion mode. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-075** [externally blocked] Simultaneous desktop/phone actions and multiple connected displays. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-076** [externally blocked] Phone lock/unlock, background/foreground, Wi-Fi/cellular changes, desktop sleep, and network loss. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-077** [externally blocked] Clear handling of an ended or deleted session and sign-out/revocation. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-078** [externally blocked] End call confirmation and restoration of the normal desktop page. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-079** [externally blocked] Standalone phone microphone interruptions and unavailable same-phone call audio. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-080** [externally blocked] Portrait/landscape layout, large text, keyboard, and assistive-technology behavior. — Physical Android/iPhone plus Windows/macOS device matrix is unavailable in this environment; implementation and deterministic/server checks do not substitute for this device trial.
+- **M04-081** [implemented] Finish with the working mobile apps, desktop/backend integration, validation results, concise setup and release instructions, and any remaining platform-specific limitations or external signing requirements. — Native apps and integration delivered; Android APK signature/bundle verified and iOS simulator build passed. Physical device and production signing checks remain external.
+- **M04-082** [implemented] [LockedIn mobile](https://www.lockedinai.com/mobile-app) describes placing a phone beside a laptop to listen to the room. Its page reserves Stealth Mode for the desktop app. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-083** [implemented] [OfferGoose help](https://blog.offergoose.com/post104/) documents mobile microphone listening, the speaker/headphone limitation, and the need for another device when taking a phone call. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-084** [implemented] [Android audio-input sharing](https://developer.android.com/media/platform/sharing-audio-input) explains microphone contention and restrictions on call audio. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-085** [implemented] [Android playback capture](https://developer.android.com/media/platform/av-capture) limits which playback streams can be captured and requires user authorization. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
+- **M04-086** [implemented] [Apple recording audio sessions](https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/record) documents recording behavior and interruptions. — Reference/background material, not a separate implementation deliverable; supported source/foreground limitations documented in mobile README.
 
 ### Material 05
-- **M05-001** [in progress] Implement Context from my AI in Career Pilot.
-- **M05-002** [in progress] Start with one complete, tested MCP publishing workflow, two narrowly scoped tools, and one context card. Support additional AI hosts after validating their actual capabilities. Check current official provider documentation at implementation time.
+- **M05-001** [implemented] Implement Context from my AI in Career Pilot.
+- **M05-002** [implemented] Start with one complete, tested MCP publishing workflow, two narrowly scoped tools, and one context card. Support additional AI hosts after validating their actual capabilities. Check current official provider documentation at implementation time.
 - **M05-003** [implemented] 1. User experience
-- **M05-004** [externally blocked] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
+- **M05-004** [verified] Let a user connect Career Pilot to a supported AI host using an authenticated MCP connection.
 - **M05-005** [implemented] Explain the connection in product language: the AI can receive a preparation request and send a brief to the selected Career Pilot project or company.
 - **M05-006** [implemented] Support a natural request such as: "Prepare context for tomorrow's standup from this project's recent work and send it to Career Pilot."
 - **M05-007** [implemented] Also support publishing from the conversation where work happened: "Update Career Pilot with what we completed here."
@@ -395,18 +395,18 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - **M05-044** [implemented] A companion device signed into the same authorized account can use the same context; guest sharing requires an explicit supported sharing policy.
 - **M05-045** [implemented] 5. Cost and supported capabilities
 - **M05-046** [implemented] Reuse prepared briefs and refresh on deliberate requests in the first version. Add bounded import sizes and cancellation/error handling. Avoid continuous background preparation, bulk source ingestion, or a new vector database solely for this feature.
-- **M05-047** [in progress] 6. Verification before release
-- **M05-048** [in progress] [MCP architecture](https://modelcontextprotocol.io/specification/2026-07-28/architecture): the AI host coordinates models and context; a server exposes focused capabilities and does not receive the full conversation by default.
-- **M05-049** [in progress] [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured tool interfaces for the request and publication operations.
-- **M05-050** [in progress] [OpenAI: Add a custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server): ChatGPT supports custom read and write tools, subject to connection and confirmation settings.
-- **M05-051** [in progress] [OpenAI: Sign in with ChatGPT](https://learn.chatgpt.com/docs/sign-in-with-chatgpt): using a plan does not grant access to ChatGPT conversations or memories, and usage remains subject to the plan's limits.
+- **M05-047** [externally blocked] 6. Verification before release
+- **M05-048** [implemented] [MCP architecture](https://modelcontextprotocol.io/specification/2026-07-28/architecture): the AI host coordinates models and context; a server exposes focused capabilities and does not receive the full conversation by default.
+- **M05-049** [implemented] [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): structured tool interfaces for the request and publication operations.
+- **M05-050** [implemented] [OpenAI: Add a custom MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server): ChatGPT supports custom read and write tools, subject to connection and confirmation settings.
+- **M05-051** [implemented] [OpenAI: Sign in with ChatGPT](https://learn.chatgpt.com/docs/sign-in-with-chatgpt): using a plan does not grant access to ChatGPT conversations or memories, and usage remains subject to the plan's limits.
 - **M05-052** [implemented] Material 01 can supply meeting timing and a preparation prompt when a calendar is connected.
 - **M05-053** [implemented] Material 02 can use a relevant brief for practice interviews without inventing career facts.
 - **M05-054** [implemented] Material 03 can retrieve permitted briefs as another source in Central Ask.
 - **M05-055** [implemented] Material 04 can display assistance using the same authorized session context on mobile.
 
 ### Material 06
-- **M06-001** [in progress] Implement selectable call languages in Career Pilot.
+- **M06-001** [implemented] Implement selectable call languages in Career Pilot.
 - **M06-002** [implemented] 1. Selection and defaults
 - **M06-003** [implemented] Add one compact Language selector under Customize on the call setup screen, keeping the main toolbar compact.
 - **M06-004** [implemented] Save a default per profile and allow an override before starting a call.
@@ -498,12 +498,12 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Native broad validation: client library81 tests completed, desktop96 passed/3 ignored; strict Clippy for both libraries and workspace rustfmt passed. Windows embedded development executable packaging is underway. Full Mac SDK linking/signing and physical calls are not verified by the two-architecture adapter metadata checks.
 - Backend checkpoint **7f66430**: full local-stack suite **1684 passed**, scoped Ruff/Pyright clean. Migration0026 closes cross-request active-brief references; private-context account transfer and stale calendar callback races fixed. See backend-security-audit.md.
 - Ask/practice setup and retention guide: ask-and-practice.md. Half-duplex microphone/playback lifecycle is implemented and fixture-tested; physical loudspeaker/headphone/echo/device behavior remains externally blocked. All application/emulator/phone-link matrices require actual accessible applications and call peers before support certification. Calendar OAuth app registrations, real AI-host connection and Mac/iOS signing/device hosts are activation/verification dependencies, not mock successes.
-- Current remaining engineering: partial Ask response delivery review, mobile APK build/integration, final ledger reconciliation and focused draft PR. Windows artifact packaging and mobile native tooling are running locally; no production deployment or user installation performed.
+- Remaining at this checkpoint (partial Ask delivery since completed): mobile APK build/integration, final ledger reconciliation and focused draft PR. Windows artifact packaging and mobile native tooling are running locally; no production deployment or user installation performed.
 
 ### Mobile native milestone (2026-11-19)
 - Material04 native Expo58/RN0.88 clients now include same-account desktop companion, standalone microphone turns, grouped Ask/practice/preparation/history, SecureStore credentials, per-profile lifecycle cleanup and honest foreground-only capture.
-- Strict TypeScript, 10 deterministic tests and Android/iOS Hermes export passed. Native Android/iOS projects generated; isolated workflow validates these and optionally builds an Android preview. CI planner 41 tests passed; mobile/native harness paths do not trigger backend deployment, while unknown paths still fail closed.
-- Portable JDK17 and Android SDK37 tools installed with official archive checksums; Gradle/NDK downloads and bundled APK build remain in progress. Physical devices, macOS/Xcode, store accounts and production signing are external and remain unverified.
+- Strict TypeScript, 16 deterministic tests and Android/iOS Hermes export passed. Native Android/iOS projects generated; isolated workflow validates these and optionally builds an Android preview. CI planner 41 tests passed; mobile/native harness paths do not trigger backend deployment, while unknown paths still fail closed.
+- Portable JDK17, Android SDK37, Gradle9.4.1 and NDK27 installed with official archive checksums; native Gradle bundled APK build remains in progress. ADB reports no attached devices. Physical devices, macOS/Xcode, store accounts and production signing are external and remain unverified.
 
 ### Final feature depth checks (2026-11-19)
 
@@ -514,3 +514,34 @@ Each row retains original acceptance text. Evidence and files are recorded in mi
 - Additional desktop source/calendar integration checks pass: actual saved-call passage opens and highlights without losing Ask draft; calendar retrieval is disclosure-triggered, consent launch explicit, accepted meeting context does not create or join a session.
 
 - Final desktop regression after comparison feedback: 454 tests across 50 files passed; TypeScript and production frontend build passed.
+
+### Final regression and real-host evidence (2026-11-19)
+
+- Backend final pre-OAuth snapshot: **1,700 tests passed** in 401.17 seconds, global Ruff/format/Pyright and protocol codegen clean. Exact command: `.venv/Scripts/python.exe -m pytest -q --tb=short --basetemp=.implementation/backend-final-tmp -o cache_dir=.implementation/pytest-cache --junitxml=.implementation/backend-final.xml`. New OAuth tests will be recorded separately.
+- Final Windows executable includes comparison feedback; 50,902,016 bytes, SHA256 **AF003F3FFB75407AB4E076892E3B0BEDACA32AA1B0E96AB7EC2FE92660151DD1**. Replaces the initial artifact hash above.
+- Real practice model check: two requests, fictional technical-practice setup/answer only. Actual API model adapter generated a plan, validated rubric feedback and a distinct follow-up. Combined observed duration 13,188 ms, no retry loop; not a quality benchmark.
+- Actual installed Codex CLI host connected to the local HTTP MCP server, fetched and published a fictional brief, refreshed it, then verified private retrieval and deletion against a disposable migrated database. Evidence in `target/personal-ai-host/`; remote ChatGPT confirmation/HTTPS behavior remains separate. Consumer-host OAuth implementation is being completed rather than labeled an external-only blocker.
+- One final existing Universal Mac preview workflow dispatched on branch commit1b91188: https://github.com/SkyVex12/career-pilot/actions/runs/44653356543. No production publication; platform build result pending.
+
+### MCP OAuth and grant lifecycle completion (2026-11-19)
+
+- Checkpoint **e852e61** adds MCP-only OAuth discovery, registered public clients, explicit email-authenticated same-origin consent, S256 PKCE, atomic short-lived codes, hash-only scoped tokens, account grant limits/expiry and revocation. Ordinary application routes reject these tokens. No new production identity provider or migration was introduced.
+- Actual Codex host flow passed again with an OAuth-issued scoped token; redacted durable evidence: `docs/implementation/evidence/personal-ai-host-2026-11-19.json`. This verifies local host tool execution, private retrieval, refresh and removal using fictional data. Remote ChatGPT connection, browser email delivery, host confirmation UX and genuine external source gathering still require configured reachable deployment and host access; M05-047 records that release gate.
+- Focused backend35 and desktop6 tests passed, independent security review found no blocking bypass, global Ruff/Pyright clean, all252 Python files formatted and codegen current. This supplements the earlier1700 full-suite snapshot rather than pretending that snapshot included the new OAuth code.
+- iOS unsigned simulator compilation dispatched through the existing Mac workflow bridge: https://github.com/SkyVex12/career-pilot/actions/runs/44655330798. New workflows cannot be manually dispatched until registered on the default branch; the explicit bridge runs mobile validation without repeating desktop packaging or publishing.
+
+- Final desktop app after OAuth management: **457 tests passed**, TypeScript and production build clean. Windows embedded debug executable SHA256 **5CFA1C61269DD17178DA7CCEB6BF9D3FA7B5890D9E85DDC8118252E700176255**, 50,902,016 bytes, source e852e61; earlier Windows hashes are superseded.
+- Initial Mac run44653356543 passed native tests but its packaging was cancelled after final OAuth controls changed the frontend. Final current-source Universal preview run: https://github.com/SkyVex12/career-pilot/actions/runs/44655879546. No required checks were disabled; this replacement avoids delivering an older interface.
+
+### Mobile artifacts and consent browser verification (2026-11-19)
+
+- Android bundled arm64 development APK built successfully (658 Gradle tasks): 25,670,829 bytes; SHA256 **1d9ffe9b0d2b69737387269645b9aa5b9eff05df0572fb3aacf812f24568372e**. APK v2 signature verifies with the standard Android development certificate. Manifest app.careerpilot.mobile v0.1.0, minSDK24/target36; Hermes bundle and native audio library present. Windows long CMake paths were resolved with short hashed staging directories; the reproducible local Gradle init script is included with mobile setup.
+- Actual iOS simulator native build **passed**, workflow44655330798: Xcode26.4, CocoaPods, arm64 Release, CODE_SIGNING_ALLOWED=NO. This is a compiled simulator application, not a signed physical-iPhone app or an actual hardware trial.
+- Actual browser consent flow passed against the real served HTML/API and email auth with a MemoryMailer boundary: invalid code, successful sign-in/Allow, Origin/bearer/one-use handle, callback state/issuer/code, PKCE exchange/MCP access, and Deny. Grants revoked after validation. No CSP/page errors; zero axe violations; narrow390px view has no horizontal overflow. Evidence in docs/design/screens/personal-ai-consent; checkpoint373360e.
+- Broader post-OAuth backend run observed two existing live-memory searches exceeding their100ms budget under concurrent Android native compilation;1702 passed. Both failures passed unchanged on immediate focused rerun. No assertions or production deadlines were weakened. A clean full run is now executing with local compilation finished.
+
+- Final clean integrated backend regression: **1,704 tests passed in 351.86 seconds**, exit 0, after native compilation finished. No code, assertions or deadlines changed for this rerun. Logs/JUnit: `.implementation/final-oauth-clean.txt` and `.implementation/final-oauth-clean.xml`. Independent OAuth audit and final evidence committed in **b0a1956**.
+
+- Final requirement reconciliation: **429 unique, consecutive IDs**, 383 implemented, 15 verified, 31 externally blocked; no pending/in-progress requirement rows. Original requirement text retained. Delivery README links resolve. Mobile evidence/workaround checkpoint **2d61976**; stable Android artifact receipt and successful iOS simulator CI run linked. Local iOS artifact downloads exhausted bounded TLS-timeout retries, so binary/lockfile inspection is not claimed.
+
+- Final Universal Mac workflow **44655879546 passed** (24m53s), source **e852e61**. Frontend/native tests, Apple bridge availability for both architectures, Universal DMG build, mounted app verification and strict signature verification all passed. Artifact **14594572590**, 27,448,627-byte archive SHA256 **1e8e2253b5c89a665e2ed9426a609e243d30748ff8af542a65bdae7f610e7296**. Preview is ad-hoc signed, not notarized; no production publication. The release configuration pins existing Stage 0 services; compatible backend deployment remains separate.

@@ -40,3 +40,5 @@ Existing configured credentials were available. Two bounded synthetic checks use
 - Actual core Ask `answer`/ModelRouter streaming: OpenAI gpt-6.1-sol returned a cited fictional Cedar/PostgreSQL answer and nonempty partial text. 243 input/21 output tokens, end_turn, one request without retries. No private source data. Final progressive API persistence/cancellation is separately covered by real local-stack tests.
 
 Practice retry comparisons now add bounded observed improvements, current/recurring gaps and verified answer excerpts, retaining rubric/coaching qualifiers without another model call. The model cannot claim a gap was resolved solely because a later feedback response omitted it.
+
+A bounded real practice model check also passed: two requests generated an interview plan and then validated rubric feedback plus a distinct follow-up from a fictional technical answer. Combined observed duration 13,188 ms. This checks actual adapter/schema compatibility, not interview quality across candidates.
