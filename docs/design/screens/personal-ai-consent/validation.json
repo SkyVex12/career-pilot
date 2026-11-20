@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "allow": true,
+  "deny": true,
+  "invalid_code": true,
+  "origin_and_bearer": true,
+  "nonce_csp_errors": [],
+  "axe": [
+    {
+      "name": "allow-review",
+      "result": []
+    },
+    {
+      "name": "deny-review",
+      "result": []
+    },
+    {
+      "name": "deny-mobile",
+      "result": []
+    }
+  ],
+  "narrow_overflow": false,
+  "fictional_accounts_only": true
+}
