@@ -1,5 +1,13 @@
 name: mobile
 on:
+  workflow_call:
+    inputs:
+      ios_simulator:
+        type: boolean
+        default: false
+      native_apk:
+        type: boolean
+        default: false
   pull_request:
     paths: ["apps/mobile/**", ".github/workflows/mobile.yml"]
   push:

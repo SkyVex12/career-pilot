@@ -3,6 +3,10 @@ name: desktop-macos
 on:
   workflow_dispatch:
     inputs:
+      mobile_ios:
+        description: Validate only the unsigned mobile iOS simulator app (no desktop packaging or publication)
+        type: boolean
+        default: false
       source_run_id:
         description: Publish a verified Universal preview run whose source commit is now on main (optional)
         type: string
@@ -22,9 +26,15 @@ defaults:
   run:
     shell: bash
 jobs:
+  mobile-ios:
+    if: github.event_name == 'workflow_dispatch' && inputs.mobile_ios == true
+    uses: ./.github/workflows/mobile.yml
+    with:
+      ios_simulator: true
+      native_apk: false
   build:
     name: macOS (Universal)
-    if: inputs.source_run_id == ''
+    if: inputs.source_run_id == '' && inputs.mobile_ios != true
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -165,7 +175,7 @@ jobs:
     # Only main may publish; a manually built branch artifact is reusable after its exact commit reaches main.
     # The GCP identity provider also restricts the repository and main ref.
     if: >-
-      !cancelled() && github.event_name == 'workflow_dispatch' && inputs.version == '' &&
+      !cancelled() && inputs.mobile_ios != true && github.event_name == 'workflow_dispatch' && inputs.version == '' &&
       github.ref == 'refs/heads/main' && github.event.repository.fork == false &&
       (needs.build.result == 'success' ||
        (inputs.source_run_id != '' && needs.build.result == 'skipped'))

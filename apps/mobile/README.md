@@ -48,3 +48,5 @@ Official references: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/), [Ex
 ## Optional native CI validation
 
 The `mobile` workflow has explicit manual `native_apk` and `ios_simulator` inputs. The iOS job uses the standard `macos-26` ARM64 runner and installed Xcode26.4, installs CocoaPods, compiles a Release simulator app with signing disabled, and uploads a zipped `.app` plus build evidence for fourteen days. It does not publish to a store or install on a phone. [GitHub's runner catalog](https://github.com/actions/runner-images#available-images) and [macOS26 image manifest](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md) list this runner and Xcode26.4.1; [Expo's SDK table](https://docs.expo.dev/versions/latest/) requires Xcode26.4+ for SDK58. Real iPhone installation still requires provisioning/signing.
+
+Before `mobile.yml` exists on the default branch, the existing `desktop-macos` workflow exposes a manual `mobile_ios=true` bridge that calls the branch's mobile workflow. This mode skips desktop build/publication and passes no release credentials.
