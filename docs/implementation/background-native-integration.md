@@ -40,10 +40,13 @@ Preferences add `call_suggestions` (false by default) and `disabled_apps`. Windo
 | Zoom, Teams, Slack, Discord, WhatsApp (Windows) | English accessible mute + app-specific leave/hang-up + same-PID microphone session | Unverified | Unverified | Unverified |
 | Chrome/Edge/Firefox/Brave web calls | English leave/hang-up + microphone controls + browser microphone process | Unverified | Unverified; generic call only | Unverified |
 | BlueStacks/LDPlayer, Phone Link | Accessible English call controls + exact-PID microphone activity | Unverified | Unverified; no Android app/caller inference | Phone-side audio not assumed |
+| Hushed in selected local LDPlayer instances (Windows, opt-in) | Exact Android package plus structured CallStyle incoming/ongoing notification metadata over local ADB | Android 14 framework fixture verified; actual Hushed unverified | Android 14 framework fixture verified; actual Hushed unverified | Not inferred; separate audio validation required |
 | macOS 13+ / FaceTime / iPhone relay | NSWorkspace bundle identity + Accessibility call controls + CoreAudio default-input running state | Unverified | Source implemented; real calls unverified | Global device activity does not establish per-app audio routing |
 | Samsung Flow, AirDroid, Smart Connect | Official-capability evaluation complete below; no validated adapter, disabled | Vendor notifications vary; Career Pilot unverified | Career Pilot unverified | Route-specific; see evaluation |
 
 Localization, inaccessible/minimized controls, privileged application windows and process-separated native apps may prevent detection. No app is certified supported solely by these adapters. Real app calls, DND, device changes, audio routing, all macOS architectures and incoming-call behavior require device validation.
+
+The dedicated [Hushed setup guide](hushed-call-detection.md) describes explicit per-instance opt-in, local ADB, fail-closed notification parsing, polling limits and current compatibility. Hushed does not officially support emulators. The Android framework fixture validates notification format and package isolation, not an actual Hushed call or its delivery reliability. Dedicated Hushed mode replaces generic LDPlayer inference while enabled to avoid duplicate suggestions.
 
 ## Validation
 
