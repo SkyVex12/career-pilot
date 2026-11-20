@@ -12,7 +12,7 @@ Updated 2026-11-19. Both experiences use the existing signed-in account, selecte
 
 Apply migrations through 0026 using the existing migration runner. The API needs its usual configured model provider, account encryption and PostgreSQL permissions. Ask and practice use the existing model routing; no model keys are shipped to desktop or mobile.
 
-Set `DEEPGRAM_API_KEY` on the API for microphone transcription and generated interviewer speech. `COPILOT_PRACTICE_TTS_MODELS` is a JSON map of language IDs to supported provider voice IDs; its default is `{"en":"aura-2-thalia-en"}`. A language also must be enabled in the verified call-language catalog. Text practice remains available when speech is unavailable. Do not enable an untested language simply because the provider accepts its identifier. See [call-languages.md](call-languages.md).
+Set `DEEPGRAM_API_KEY` on the API for microphone transcription and generated interviewer speech. `COPILOT_PRACTICE_TTS_MODELS` is a JSON map of language IDs to supported provider voice IDs; the default contains supported English, Spanish, French, German, Italian and Japanese Aura voices. The shared 24-language capability catalog controls spoken selection. All 24 support text practice and Nova-3 microphone transcription; the other 18 use text interviewer questions. Provider capability is separate from speech/device quality certification. See [call-languages.md](call-languages.md).
 
 The gateway's private-brief reuse additionally requires `COPILOT_PERSONAL_AI_API_URL`, as described in [personal-ai-context.md](personal-ai-context.md). Optional calendar preparation setup is in [calendar-provider-setup.md](calendar-provider-setup.md).
 

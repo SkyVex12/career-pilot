@@ -81,6 +81,7 @@ async def test_voice_adapter_uses_real_deepgram_contract_without_cross_channel_t
     svc = MagicMock()
     svc.settings.deepgram_api_key = SecretStr("test-key")
     svc.settings.deepgram_model = "nova-3"
+    svc.settings.verified_call_languages = ("en",)
     svc.settings.practice_tts_models = {"en": "aura-2-thalia-en"}
     assert (
         await practice.voice_request(svc, "speech", b"", "", "en", "Describe a project")

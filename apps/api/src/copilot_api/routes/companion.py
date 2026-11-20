@@ -57,6 +57,7 @@ async def current_sessions(svc: SvcDep, account: AccountDep, user: UserDep) -> d
                 "profile_id": str(user.user_id),
                 "title": state.get("title") or "Live call",
                 "mode": state.get("mode", "interview"),
+                "spoken_language": state.get("spoken_language") or None,
                 "audio_source": "desktop",
                 "capture_connected": state.get("status") == "active",
                 "status": state.get("status"),
@@ -70,7 +71,7 @@ async def current_sessions(svc: SvcDep, account: AccountDep, user: UserDep) -> d
 async def attach(
     session_id: UUID, body: Attach, svc: SvcDep, account: AccountDep, user: UserDep
 ) -> dict[str, Any]:
-    await live(svc, account, user, session_id)
+    state = await live(svc, account, user, session_id)
     expires = datetime.now(UTC) + timedelta(seconds=companions.TTL_S)
     async with svc.tx(account) as conn:
         # Serialize the account's attach requests to enforce the display bound.
@@ -104,7 +105,11 @@ async def attach(
             expires.timestamp(),
         )
         await companions.publish(svc.valkey, record)
-    return {**asdict(record), "audio_source": "desktop"}
+    return {
+        **asdict(record),
+        "audio_source": "desktop",
+        "spoken_language": state.get("spoken_language") or None,
+    }
 
 
 @router.get("/companion/attachments")

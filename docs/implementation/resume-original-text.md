@@ -1,0 +1,13 @@
+# Original uploaded resume text
+
+Migration `0027_resume_original_text.sql` adds encrypted original-file text alongside the existing authored text field. They cannot share `text_enc`: authored text hashes text, while uploaded files hash their original bytes. The cache records its content SHA and is readable only when it matches the current resume. A replacement trigger clears the cache and its key version; deleting the resume deletes its cached text. All reads retain existing profile RLS, account authorization and per-source revalidation.
+
+The worker's normal `resume.extract` job retains original text before extracting facts. The new `resume.original` job performs only file text preparation, with no model/provider call or memory-fact regeneration. Existing uploads are lazily backfilled when encountered by Ask or practice retrieval: at most three jobs per bounded candidate request, each keyed by version/content hash. `runtime.py` registers a 60-second catalog timeout; parser subprocesses are killed after 20 seconds. A queue outage does not discard other authorized sources. API retrieval notices explain preparation delay; retrying after the worker completes makes the original available.
+
+Deploy migration before updated API/worker. No bulk production backfill is run by migration or this change. Legacy versions need no re-upload; normal retrieval queues preparation. Existing authored/pulled text remains directly usable. Unknown or unavailable source bytes are never replaced by generated facts labeled as original.
+
+The parser accepts PDF and UTF-8 text already authorized and SHA-verified by the worker. Limits: 8 MiB PDF, 25 pages, 2 MiB decoded content per page, 60,000 retained characters, separate killable process, and 512 MiB address-space limit on Linux workers. Encrypted, malformed, scanned-only, or excessive files yield no original text; existing derived facts remain distinguishable. There is no OCR or interpretation. Failed text extraction is marked for the current content hash to avoid repeated expensive attempts; replacing the content allows another attempt. Source excerpts keep the ordinary Ask bounds.
+
+Tests cover actual PDF extraction, malformed/oversized input, worker replacement/deletion races, profile-scoped encryption, lazy queueing, stale-hash rejection, synchronous/asynchronous provider cleanup, and a real migrated database RLS/replacement/deletion check. Original bytes and extracted text never enter application logs.
+
+Parser reference: [pypdf text extraction and resource considerations](https://pypdf.readthedocs.io/en/stable/user/extract-text.html).

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, SecretStr
 
 from copilot_core.config import DataSettings
+from copilot_core.languages import DEFAULT_PRACTICE_VOICES
 from copilot_core.livekit import LiveKit
 
 
@@ -17,7 +18,10 @@ class ApiSettings(DataSettings):
     personal_ai_oauth_issuer: str | None = None
     personal_ai_oauth_clients: dict[str, list[str]] = Field(default_factory=dict)
     personal_ai_oauth_token_ttl_s: int = Field(default=1200, ge=60, le=3600)
-    practice_tts_models: dict[str, str] = Field(default_factory=lambda: {"en": "aura-2-thalia-en"})
+    practice_tts_models: dict[str, str] = Field(
+        default_factory=lambda: dict(DEFAULT_PRACTICE_VOICES)
+    )
+    ask_semantic_min_similarity: float = Field(default=0.55, ge=0.0, le=1.0)
     max_document_bytes: int = 10 * 1024 * 1024
     upload_url_ttl_s: int = 900
 

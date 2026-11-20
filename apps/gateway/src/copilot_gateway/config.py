@@ -281,9 +281,6 @@ class Settings(CoreSettings):
     bedrock_refusal_model: str = "anthropic.claude-sonnet-5"
 
     # Speech to text, in fallback order (ARCHITECTURE.md "Failure modes").
-    stt_providers: Annotated[list[Literal["deepgram", "assemblyai"]], NoDecode] = Field(
-        default_factory=lambda: ["deepgram"]
-    )
     deepgram_url: str = "wss://api.deepgram.com/v1/listen"
     stt_stall_s: float = 3.0
     # A stream silent for stt_stall_s gets a Finalize first and this long to answer before it
@@ -349,7 +346,7 @@ class Settings(CoreSettings):
     def _merge_thresholds(cls, value: dict[str, PreparedThreshold]) -> dict[str, PreparedThreshold]:
         return {**DEFAULT_PREPARED_THRESHOLDS, **value}
 
-    @field_validator("deep_pass_auto_types", "stt_providers", "prewarm_jobs", mode="before")
+    @field_validator("deep_pass_auto_types", "prewarm_jobs", mode="before")
     @classmethod
     def _gateway_lists(cls, value: object) -> object:
         return split_list(value)
