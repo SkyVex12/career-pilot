@@ -13,7 +13,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
   const [mode, setMode] = useState<WindowMode>("full");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const saved = useRef<{ size: LogicalSize | PhysicalSize; decorated: boolean; maximized: boolean; resizable: boolean } | null>(null);
+  const saved = useRef<{ size: LogicalSize | PhysicalSize; decorated: boolean; maximized: boolean; fullscreen: boolean; resizable: boolean } | null>(null);
   const locked = useRef(false);
   const compactRef = useRef<HTMLElement>(null);
   const motion = useRef<ReturnType<typeof animateCompactMorph> | null>(null);
@@ -35,13 +35,14 @@ export function useWindowMode(overlay = false, autoHover = false) {
           let constraintsChanged = false;
           let decorationsChanged = false;
           let unmaximized = false;
+          let exitedFullscreen = false;
           try {
             const win = getCurrentWindow();
             if (await win.isMinimized()) throw new Error("Restore the window before changing its size.");
             if (!saved.current && next !== "full") {
               const size = await win.innerSize();
               const scale = await win.scaleFactor();
-              saved.current = { size: scale > 0 ? size.toLogical(scale) : size, decorated: await win.isDecorated(), maximized: await win.isMaximized(), resizable: await win.isResizable() };
+              saved.current = { size: scale > 0 ? size.toLogical(scale) : size, decorated: await win.isDecorated(), maximized: await win.isMaximized(), fullscreen: Boolean(await win.isFullscreen()), resizable: await win.isResizable() };
             }
             if (next === "full") {
               await clearCompactShape();
@@ -52,12 +53,21 @@ export function useWindowMode(overlay = false, autoHover = false) {
               await win.setMinSize(new LogicalSize(overlay ? 320 : 400, 240));
               if (saved.current && await win.isResizable() !== saved.current.resizable) await win.setResizable(saved.current.resizable);
               if (saved.current?.maximized) await win.maximize();
+              if (saved.current?.fullscreen) await win.setFullscreen(true);
               saved.current = null;
             } else {
               if (mode === "full") {
                 await prepareCompactShape();
                 compactPrepared = true;
+                if (saved.current?.fullscreen) { await win.setFullscreen(false); exitedFullscreen = true; }
                 if (await win.isMaximized()) { await win.unmaximize(); unmaximized = true; }
+                if (saved.current && (unmaximized || exitedFullscreen)) {
+                  // Save restored bounds, not the monitor-sized maximized/fullscreen frame.
+                  // Otherwise the next Restore action turns into another fullscreen-sized window.
+                  const size = await win.innerSize();
+                  const scale = await win.scaleFactor();
+                  saved.current.size = scale > 0 ? size.toLogical(scale) : size;
+                }
                 if (saved.current?.resizable) {
                   await win.setResizable(false);
                   resizeLocked = true;
@@ -113,6 +123,10 @@ export function useWindowMode(overlay = false, autoHover = false) {
               }
               if (unmaximized && restore?.maximized) {
                 try { await win.maximize(); }
+                catch (cleanupError) { cleanupErrors.push(cleanupError); }
+              }
+              if (exitedFullscreen && restore?.fullscreen) {
+                try { await win.setFullscreen(true); }
                 catch (cleanupError) { cleanupErrors.push(cleanupError); }
               }
               if (cleanupErrors.length) throw new Error(`${String(error)}; could not restore the window: ${cleanupErrors.map(String).join("; ")}`);

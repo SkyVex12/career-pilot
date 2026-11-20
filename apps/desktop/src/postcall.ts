@@ -126,3 +126,12 @@ export function waitingText(state: PollState, storeTranscript: boolean): string 
   void storeTranscript;
   return "Writing the summary…";
 }
+
+/** Worker-generated notices are empty states, not a written summary to copy. Keep
+ * recognizing older saved notices as well as the current localized templates. */
+export function isSummaryNotice(text: string): boolean {
+  return /^(?:Interview|Standup|Meeting) of about \d+ minutes?\./.test(text) &&
+    /(?:The transcript was not stored for this session|No conversation was captured for this session)/.test(text)
+    || /^Llamada de unos \d+ minutos\./.test(text) && /(?:No se guardó la transcripción|No se capturó ninguna conversación)/.test(text)
+    || /^Cuộc gọi khoảng \d+ phút\./.test(text) && /(?:Bản chép lời không được lưu|Không ghi nhận được cuộc hội thoại)/.test(text);
+}

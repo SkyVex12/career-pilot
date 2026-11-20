@@ -63,6 +63,7 @@ export const SETTINGS: Settings = {
   echo_cancellation: true,
   hotkey: "CommandOrControl+Shift+Space",
   toggle_overlay_hotkey: "CommandOrControl+Shift+O",
+  toggle_stealth_hotkey: "CommandOrControl+Shift+S",
   click_through_hotkey: "CommandOrControl+Shift+T",
   click_through_off_hotkey: "CommandOrControl+Shift+G",
   opacity_up_hotkey: "CommandOrControl+Shift+Up",

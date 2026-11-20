@@ -72,6 +72,7 @@ export interface Settings {
   /** The force-question hotkey, and the overlay's comfort hotkeys (all rebindable). */
   hotkey: string;
   toggle_overlay_hotkey: string;
+  toggle_stealth_hotkey: string;
   click_through_hotkey: string;
   click_through_off_hotkey: string;
   opacity_up_hotkey: string;
@@ -117,6 +118,7 @@ export interface MonitorLayout {
 export type HotkeyAction =
   | "force_question"
   | "toggle_overlay"
+  | "toggle_stealth"
   | "click_through"
   | "click_through_off"
   | "opacity_up"

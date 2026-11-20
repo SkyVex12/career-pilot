@@ -16,7 +16,7 @@ import type { Numbered, SettingsView, UiEvent } from "../../../apps/desktop/src/
 import type { ServerMessage } from "../../../packages/protocol/src/generated";
 import * as fx from "./fixtures";
 
-mockWindows("main", "overlay");
+mockWindows(...(location.hash === "#overlay" ? ["overlay", "main"] : ["main", "overlay"]));
 const q = new URLSearchParams(location.search);
 const data = q.get("data") ?? "full";
 const call = q.get("call") ?? "none";
@@ -62,6 +62,10 @@ function midcall(): Numbered[] {
     delta("q2", "fast", fx.FAST2),
     done("q2", "fast", []),
   ];
+  if (q.get("assistants") === "1") out.push(srv({ type: "seats.update", seats: [
+    { seat_id: "seat-fixture", name: "Thomas Hill", email: "thomas@example.com", status: "admitted", capabilities: ["view", "voice", "note", "device.view", "device.control"] },
+    { seat_id: "seat-invited", name: "Maya Chen", email: "maya@example.com", status: "invited", capabilities: ["view", "voice", "note"] },
+  ] } as never));
   out.push(delta("q2", "deep", fx.DEEP2_PARTIAL));
   if (call === "stream") {
     out.push(done("q2", "deep", []));
@@ -83,6 +87,11 @@ function snapshot(): [Numbered[], boolean, number] {
   n = 0;
   if (["midcall", "stream", "degraded", "reconnecting"].includes(call)) {
     const events = midcall();
+    return [events, true, n];
+  }
+  if (call === "assisting") {
+    const events = midcall();
+    events.push(srv({ type: "seat.ready", session_id: "live-1", seat_id: "seat-fixture", host_name: "James Porter", mode: "interview", title: "Product engineer", capabilities: q.get("screen") === "denied" ? ["session.view", "voice", "note"] : ["session.view", "voice", "note", "device.view", "device.control"], host_connected: true, sharing: true } as never));
     return [events, true, n];
   }
   if (call === "ended") {
@@ -110,7 +119,7 @@ async function play(wordMs = 45): Promise<void> {
   }
   await send(done("q4", "deep", []));
 }
-(window as unknown as { __harness: unknown }).__harness = { play };
+(window as unknown as { __harness: unknown }).__harness = { play, end: () => emit("copilot://event", ev({ kind: "stopped", reason: "ended" })) };
 
 // --- Settings and the REST API -----------------------------------------------------------------
 
@@ -130,6 +139,7 @@ function settingsView(): SettingsView {
       echo_cancellation: true,
       hotkey: "CommandOrControl+Shift+Space",
       toggle_overlay_hotkey: "CommandOrControl+Shift+O",
+  toggle_stealth_hotkey: "CommandOrControl+Shift+S",
       click_through_hotkey: "CommandOrControl+Shift+T",
       click_through_off_hotkey: "CommandOrControl+Shift+G",
       opacity_up_hotkey: "CommandOrControl+Shift+Up",
@@ -170,7 +180,7 @@ function rest(method: string, path: string, body?: unknown): unknown {
   if (feature !== undefined) return feature;
   const [p] = path.split("?");
   const m = (re: RegExp) => re.exec(p);
-  if (p === "/seats" || m(/^\/sessions\/[^/]+\/seats$/)) return { seats: [], voice: false, screen: false };
+  if (p === "/seats" || m(/^\/sessions\/[^/]+\/seats$/)) return { seats: q.get("assistants") === "1" ? [{ seat_id: "seat-fixture", name: "Thomas Hill", email: "thomas@example.com", status: "invited", capabilities: ["session.view", "voice", "note", "device.view", "device.control"] }] : [], voice: false, screen: true };
   if (method === "PUT" && m(/^\/sessions\/([^/]+)\/notes$/)) {
     const id = m(/^\/sessions\/([^/]+)\/notes$/)![1];
     const notes = String((body as { text: string }).text);
@@ -202,7 +212,7 @@ function rest(method: string, path: string, body?: unknown): unknown {
   if (p === "/sessions/live") return { sessions: [] };
   if (m(/^\/sessions\/([^/]+)\/replay$/)) return fx.replay(m(/^\/sessions\/([^/]+)\/replay$/)![1]);
   if (m(/^\/sessions\/([^/]+)\/transcript$/)) return { stored: true, segments: fx.replay("x").segments };
-  if (m(/^\/sessions\/([^/]+)$/)) return { ...fx.sessionDetail(m(/^\/sessions\/([^/]+)$/)![1]), notes: savedNotes.get(m(/^\/sessions\/([^/]+)$/)![1]) ?? "" };
+  if (m(/^\/sessions\/([^/]+)$/)) return { ...fx.sessionDetail(m(/^\/sessions\/([^/]+)$/)![1]), ...(q.get("summary") === "empty" ? { outputs: { summary: "Interview of about 1 minutes. No questions detected.\n\nThe transcript was not stored for this session, so there is no written summary." }, store_transcript: false } : {}), notes: savedNotes.get(m(/^\/sessions\/([^/]+)$/)![1]) ?? "" };
   if (p === "/employers") return { employers: empty ? [] : fx.employers(long) };
   if (m(/^\/employers\/[^/]+\/logs$/)) return { logs: fx.logs(long), next_before: null };
   if (m(/^\/employers\/[^/]+\/documents$/)) return { documents: fx.companyDocuments() };
@@ -233,6 +243,7 @@ mockIPC(
         if (update === "downloading") return { state: "downloading", version: "0.1.17", percent: 42 };
         if (update === "ready") return { state: "ready", version: "0.1.17", notes: null, auto: true, install_in_s: 110 };
         return { state: "none" };
+      case "native_screen_sources": return [{ id: 1, kind: "monitor", title: "Main display · 1920 × 1080", monitor_id: "\\\\.\\DISPLAY1" }, { id: 2, kind: "window", title: "Project plan — Notepad" }];
       case "list_devices":
         return {
           inputs: [{ id: "mic1", name: "Microphone (Jabra Evolve2 65)", is_default: true }, { id: "mic2", name: "Microphone Array (Realtek Audio)", is_default: false }],
@@ -241,7 +252,8 @@ mockIPC(
       case "snapshot":
         return snapshot();
       case "live_status":
-        return { running: call !== "none", session_id: "live-1", levels: { them_rms: 0.08, me_rms: 0.02, them_speech: 0.9, me_speech: 0.1, them_underruns: 0, me_underruns: 0 }, stats: null };
+        return { running: call !== "none" && call !== "ended", session_id: "live-1", levels: { them_rms: 0.08, me_rms: 0.02, them_speech: 0.9, me_speech: 0.1, them_underruns: 0, me_underruns: 0 }, stats: null };
+      case "window_prefs":
       case "overlay_prefs":
         return {
           opacity: Number(q.get("opacity") ?? 1),
@@ -260,5 +272,9 @@ mockIPC(
   { shouldMockEvents: true },
 );
 
+if (call === "assisting") {
+  const { installAssistanceFixture } = await import("./assistance");
+  await installAssistanceFixture(q.get("screen") ?? "waiting");
+}
 // The app's own entry, once the fake IPC is in place.
 await import("../../../apps/desktop/src/main.tsx");

@@ -46,6 +46,8 @@ describe("hotkeys", () => {
   it("finds a key already in use", () => {
     expect(clashWith(SETTINGS, "Ctrl+Shift+O", "hotkey")?.action).toBe("toggle_overlay");
     expect(clashWith(SETTINGS, "Ctrl+Shift+O", "toggle_overlay_hotkey")).toBeNull();
+    expect(clashWith(SETTINGS, "Ctrl+Shift+S", "hotkey")?.action).toBe("toggle_stealth");
+    expect(clashWith(SETTINGS, "Ctrl+Shift+S", "toggle_stealth_hotkey")).toBeNull();
     expect(duplicateHotkeys({ ...SETTINGS, hotkey: "CommandOrControl+Shift+T" })).toEqual(new Set(["hotkey", "click_through_hotkey"]));
   });
 });
@@ -413,6 +415,21 @@ describe("Settings", () => {
     fireEvent.keyDown(within(row).getByRole("textbox"), { code: "KeyJ", key: "j", ctrlKey: true, altKey: true });
     await waitFor(() => expect(ipc.calls.filter((c) => c.cmd === "save_settings")).toHaveLength(1));
     expect((ipc.calls.find((c) => c.cmd === "save_settings")!.args.settings as typeof SETTINGS).hotkey).toBe("CommandOrControl+Alt+J");
+  });
+
+  it("the Stealth shortcut can be rebound without accepting another action's key", async () => {
+    wrap(<SettingsScreen {...props()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
+    const row = screen.getByText("Stealth mode on or off").closest(".ui-hotkey") as HTMLElement;
+    expect(within(row).getByText("Ctrl+Shift+S")).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.keyDown(within(row).getByRole("textbox"), { code: "KeyG", key: "g", ctrlKey: true, shiftKey: true });
+    expect(await within(row).findByRole("alert")).toHaveTextContent("Turn click-through off");
+    expect(ipc.calls.filter(call => call.cmd === "save_settings")).toHaveLength(0);
+    await userEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.keyDown(within(row).getByRole("textbox"), { code: "F9", key: "F9", altKey: true });
+    await waitFor(() => expect(ipc.calls.filter(call => call.cmd === "save_settings")).toHaveLength(1));
+    expect((ipc.calls.find(call => call.cmd === "save_settings")!.args.settings as typeof SETTINGS).toggle_stealth_hotkey).toBe("Alt+F9");
   });
 
   it("the fallback hotkey cannot be cleared", async () => {

@@ -7,6 +7,7 @@ import { isMac } from "./platform";
 export const HOTKEYS: { key: keyof Settings; action: HotkeyAction; label: string; hint?: string; fallback?: string }[] = [
   { key: "hotkey", action: "force_question", label: "Answer the last thing said", hint: "When detection missed a question." },
   { key: "toggle_overlay_hotkey", action: "toggle_overlay", label: "Hide or show the overlay", hint: "The call keeps running." },
+  { key: "toggle_stealth_hotkey", action: "toggle_stealth", label: "Stealth mode on or off", hint: "Works while the app and overlay are hidden." },
   { key: "click_through_hotkey", action: "click_through", label: "Click-through on or off", hint: "Clicks pass to the window underneath." },
   {
     key: "click_through_off_hotkey",

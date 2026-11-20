@@ -1,3 +1,4 @@
+import { CaptureProtectionStatus } from "./captureProtection";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, onSettingsChanged, onWorkspaceWindowPrefs, type OverlayPrefs } from "./api";
@@ -29,6 +30,7 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
   const [prefs, setPrefs] = useState<OverlayPrefs | null>(null);
   const [stealth, setStealth] = useState<boolean | null>(null);
+  const [stealthKey, setStealthKey] = useState("");
   const [prefsError, setPrefsError] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -81,6 +83,7 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
       const next = await api.getSettings();
       if (openRef.current && request === settingsRequest.current) {
         setStealth(next.settings.stealth);
+        setStealthKey(next.settings.toggle_stealth_hotkey ?? "");
         setSettingsError(null);
       }
     } catch (error) {
@@ -245,12 +248,13 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
       </section>
       <section className="workspace-quick-settings-group" aria-label="App settings">
         {stealth === null && !settingsError ? <p role="status">Loading app settings…</p> : <Switch label={isMac() ? "Stealth mode (experimental)" : "Stealth mode"}
-          checked={stealth ?? false} disabled={stealth === null || busy} hint={isMac() ? "Experimental capture protection for app windows." : "Exclude app windows from supported screen capture."}
+          checked={stealth ?? false} disabled={stealth === null || busy} hint={<>{isMac() ? "Experimental capture protection for app windows." : "Exclude app windows from supported screen capture."}{stealthKey && <> {prettyKey(stealthKey)} toggles it.</>}</>}
           onChange={on => void run("stealth", async () => {
             const current = await api.getSettings();
             await api.saveSettings({ ...current.settings, stealth: on }, null);
             await loadSettings();
           })} />}
+        <CaptureProtectionStatus active={open} enabled={stealth} />
         {settingsError && <p role="alert" className="workspace-quick-settings-error">{settingsError}</p>}
         {(prefsError || settingsError) && <Button size="sm" variant="ghost" onClick={retry} disabled={busy}>Retry settings</Button>}
       </section>
