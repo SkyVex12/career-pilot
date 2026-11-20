@@ -319,9 +319,8 @@ fn discard_stale_hushed_sample(
         // old-device call evidence must not be offered after a settings change.
         cleanup.extend(stale.retired);
         cleanup.extend(stale.forgotten);
-        if scanned.hushed != current.hushed {
-            cleanup.extend(stale.calls.into_iter().map(|call| call.key));
-        }
+        // Existing selected instances retain their dismissal/acceptance. The
+        // next sampler pass forgets only bindings actually removed or replaced.
     }
     cleanup
 }
@@ -546,6 +545,35 @@ mod tests {
         disabled.enabled = false;
         assert!(validate_hushed_change(&saved, &disabled).is_ok());
         assert!(validate_hushed_change(&disabled, &saved).is_err());
+    }
+
+    #[test]
+    fn adding_an_emulator_during_scan_preserves_existing_call_dismissal() {
+        let mut detector = detection::Detector::default();
+        let existing = detection::Evidence {
+            key: "A:Hushed".into(),
+            app: "Hushed".into(),
+            audio: false,
+            call_phase: Some(detection::CallPhase::Incoming),
+        };
+        detector.tick(0, std::slice::from_ref(&existing), true, false);
+        let id = detector.pending.as_ref().unwrap().id.clone();
+        detector.respond(&id, false).unwrap();
+        let mut scanned = BackgroundPreferences { call_suggestions: true, ..Default::default() };
+        scanned.hushed.enabled = true;
+        scanned.hushed.serials = vec!["emulator-5554".into()];
+        let mut current = scanned.clone();
+        current.hushed.serials.push("emulator-5556".into());
+        let mut sample = Some(hushed::Sample {
+            calls: vec![hushed::Call { key: existing.key.clone(), incoming: true }],
+            ..Default::default()
+        });
+        let cleanup = discard_stale_hushed_sample(&mut sample, &scanned, &current);
+        assert!(sample.is_none());
+        assert!(cleanup.is_empty());
+        detector.retire(&cleanup, 6, false);
+        detector.tick(10, &[existing], true, false);
+        assert!(detector.pending.is_none());
     }
 
     #[test]

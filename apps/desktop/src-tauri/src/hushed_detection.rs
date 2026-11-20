@@ -153,9 +153,9 @@ impl Sampler {
                             Some(value) => Ok(Some(value)),
                             None => run_adb(
                                 &config.adb_path,
-                                &["-s", serial.as_str(), "shell", "pm", "path", PACKAGE],
+                                &["-s", serial.as_str(), "shell", "pm", "list", "packages", PACKAGE],
                             )
-                            .map(|bytes| parse_package_path(&bytes)),
+                            .map(|bytes| parse_package_list(&bytes)),
                         };
                         let installed = match installed {
                             Ok(Some(value)) => value,
@@ -325,16 +325,23 @@ impl Sampler {
     }
 }
 
-fn parse_package_path(bytes: &[u8]) -> Option<bool> {
+fn parse_package_list(bytes: &[u8]) -> Option<bool> {
     let text = std::str::from_utf8(bytes).ok()?.trim();
-    if text.is_empty() {
-        return Some(false);
+    let mut installed = false;
+    // `pm path` exits 1 for an absent package. The filtered list succeeds with
+    // empty output, but its filter is a substring, so require the exact name.
+    for line in text.lines() {
+        let package = line.trim().strip_prefix("package:")?;
+        if !package.contains(PACKAGE)
+            || !package.split('.').all(|part| {
+                !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            })
+        {
+            return None;
+        }
+        installed |= package == PACKAGE;
     }
-    if text.lines().all(|line| line.starts_with("package:/") && line.ends_with(".apk")) {
-        Some(true)
-    } else {
-        None
-    }
+    Some(installed)
 }
 
 /// Lists already connected local endpoints only; does not connect or change emulator settings.
@@ -698,16 +705,30 @@ mod tests {
 
     #[test]
     fn package_presence_does_not_confuse_shell_failure_with_not_installed() {
-        assert_eq!(parse_package_path(b""), Some(false));
+        assert_eq!(parse_package_list(b""), Some(false));
+        assert_eq!(parse_package_list(b" \r\n"), Some(false));
+        assert_eq!(parse_package_list(b"package:com.hushed.release\r\n"), Some(true));
         assert_eq!(
-            parse_package_path(
-                b"package:/data/app/fictional/base.apk\npackage:/data/app/fictional/split.apk\n"
-            ),
+            parse_package_list(b"package:com.hushed.release.beta\npackage:example.com.hushed.release\n"),
+            Some(false)
+        );
+        assert_eq!(
+            parse_package_list(b"package:com.hushed.release.beta\npackage:com.hushed.release\n"),
             Some(true)
         );
-        assert_eq!(parse_package_path(b"error: device offline"), None);
-        assert_eq!(parse_package_path(b"Permission Denial"), None);
-        assert_eq!(parse_package_path(b"package:unexpected"), None);
+        for malformed in [
+            "error: device offline",
+            "Permission Denial",
+            "package:unexpected",
+            "package:/data/app/com.hushed.release/base.apk",
+            "package:com.hushed.release\nPermission Denial",
+            "package:com.hushed.release..beta",
+            "package:com.hushed.release beta",
+            "package:com.unrelated.app",
+        ] {
+            assert_eq!(parse_package_list(malformed.as_bytes()), None, "{malformed}");
+        }
+        assert_eq!(parse_package_list(&[0xff]), None);
         let mut sampler = Sampler::default();
         let state = observe(&mut sampler, &["emulator-5556"], &[Observation::NotInstalled]);
         assert_eq!(state.status.state, "not_installed");
@@ -968,9 +989,9 @@ mod tests {
         let listed = devices(&config.adb_path).expect("list local validation devices");
         assert!(listed.iter().any(|value| local_endpoint(value) == local_endpoint(&serial)));
         // Assert absence before sampling: this test never reads any real Hushed notification.
-        let package = run_adb(&config.adb_path, &["-s", &serial, "shell", "pm", "path", PACKAGE])
-            .expect("query exact package presence");
-        assert_eq!(parse_package_path(&package), Some(false), "use a validation emulator without Hushed");
+        let package = run_adb(&config.adb_path, &["-s", &serial, "shell", "pm", "list", "packages", PACKAGE])
+            .expect("query filtered package presence");
+        assert_eq!(parse_package_list(&package), Some(false), "use a validation emulator without Hushed");
         let sample = Sampler::default().sample(&config);
         assert_eq!(sample.status.state, "not_installed");
         assert_eq!(sample.status.connected, 1);
