@@ -67,7 +67,7 @@ use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 
 const EVENT: &str = "copilot://event";
-/// The settings changed without the UI asking (the sign-in settings fetched at startup).
+/// Settings changed outside the current view (startup, another window, or a global hotkey).
 const SETTINGS_EVENT: &str = "copilot://settings";
 /// The overlay's live comfort prefs (opacity, view, click-through), pushed to the overlay
 /// window when a hotkey or a move between monitors changes them.
@@ -603,18 +603,14 @@ fn save_settings(
     release::updater::refresh_ready(&app);
     // The hotkeys may have been rebound: register the new set.
     register_hotkeys(&app);
-    // Apply when it is on, or when it was just turned off so capture works again.
-    // Leaving it off does not call the capture API. A new name still updates the window title,
-    // and is written into the program file so Task Manager shows it after the next start.
-    if settings.stealth || kept.stealth {
-        stealth::apply(&app, settings.stealth, &settings.display_name);
-    } else if settings.display_name != kept.display_name {
-        stealth::set_main_title(&app, &settings.display_name);
-    }
+    // Reconcile OFF too, including a hidden overlay or an earlier failed native transition.
+    // apply() reads the current saved settings, so concurrent saves cannot restore stale ON.
+    stealth::apply(&app, settings.stealth, &settings.display_name);
     // A failed file write still stores the name. The next save tries the file again.
     if settings.display_name != kept.display_name || program_name::differs(&settings.display_name) {
         program_name::install(&settings.display_name)?;
     }
+    let _ = app.emit(SETTINGS_EVENT, ());
     Ok(())
 }
 
@@ -1309,20 +1305,21 @@ async fn respond(state: State<'_, AppState>, text: Option<String>) -> Res<()> {
 
 /// Coding mode: a shot of the problem's window (shots.rs), on a worker thread: capturing and
 /// encoding take 100 to 400 ms. With stealth off, the overlay is kept out of a monitor grab
-/// (a window grab never shows it); a guest's overlay is already kept out.
+/// (a window grab never shows it). The current Stealth choice is restored after the grab.
 async fn take_shot(app: &AppHandle) -> Res<shots::Shot> {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let excluded = state.settings.lock().unwrap().stealth || state.seat.lock().unwrap().is_some();
+        let exclusion = std::sync::Mutex::new(None);
         let keep_out = |on: bool| {
-            if excluded {
-                return;
-            }
-            stealth::exclude_overlay(&app, on);
             if on {
-                // The affinity is set on the window's own thread; let it land first.
-                std::thread::sleep(Duration::from_millis(150));
+                let mut guard = exclusion.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(stealth::protect_screenshot_overlay(&app));
+                    // The affinity is set on the window's own thread; let it land first.
+                    std::thread::sleep(Duration::from_millis(150));
+                }
+            } else {
+                exclusion.lock().unwrap().take();
             }
         };
         let shot = shots::grab(std::process::id(), &keep_out)?;
@@ -1494,8 +1491,8 @@ fn snapshot(state: State<'_, AppState>) -> (Vec<serde_json::Value>, bool, u64) {
 
 /// Join someone else's live call as a guest (ARCHITECTURE.md, "Guest seats"), once the host
 /// admitted this account (`GET /seats`). The overlay shows the call read only, from the
-/// gateway's `/v1/seat`; nothing of this app's audio is used, and the overlay stays out of
-/// screen capture whatever the stealth setting, since the call is someone else's.
+/// gateway's `/v1/seat`; nothing of this app's audio is used. The assistant's own Stealth
+/// setting controls capture visibility, exactly as it does while hosting a call.
 #[derive(Debug, Deserialize)]
 struct SeatJoinRequest {
     session_id: Uuid,
@@ -1538,12 +1535,10 @@ async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoin
                 *slot = None;
             }
         }
-        let stealth_on = state.settings.lock().unwrap().stealth;
-        stealth::exclude_overlay(&app2, stealth_on);
     });
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.show();
-        stealth::exclude_overlay(&app, true);
+        stealth::refresh(&app);
     }
     Ok(())
 }
@@ -1666,10 +1661,7 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
             let settings = state.settings.lock().unwrap();
             (settings.stealth, settings.display_name.clone())
         };
-        stealth::set_main_title(&app, &name);
-        if on {
-            stealth::apply(&app, true, &name);
-        }
+        stealth::apply(&app, on, &name);
         Ok(())
     } else {
         w.hide().map_err(|e| e.to_string())
@@ -1744,6 +1736,7 @@ fn dispatch(app: &AppHandle, action: Action) {
             });
         }
         Action::ToggleOverlay => toggle_overlay(app),
+        Action::ToggleStealth => toggle_stealth(app),
         Action::ClickThrough => {
             let on = !app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
             apply_click_through(app, on);
@@ -1771,6 +1764,19 @@ fn dispatch(app: &AppHandle, action: Action) {
             let _ = app.emit("remote:stopped", ());
         }
     }
+}
+
+/// Flip the live saved value under the settings lock. No session or visible window is needed,
+/// and the verified native path also clears exclusion on a hidden overlay.
+fn toggle_stealth(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.update_settings(|settings| settings.stealth = !settings.stealth);
+    let (on, name) = {
+        let settings = state.settings.lock().unwrap();
+        (settings.stealth, settings.display_name.clone())
+    };
+    stealth::apply(app, on, &name);
+    let _ = app.emit(SETTINGS_EVENT, ());
 }
 
 fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -2078,18 +2084,10 @@ pub fn run() {
                 remote::end();
                 window.app_handle().exit(0);
             }
-            // Build 22000 drops capture exclusion when the WebView finishes attaching.
-            // Putting it back on focus covers that. Later Windows keeps the first call.
+            // Re-read native affinity after old Windows reattaches WebView2 on focus.
+            // Reconcile OFF as well; only bounded screenshot captures temporarily override it.
             if matches!(event, WindowEvent::Focused(true)) && stealth::capture_needs_repeat() {
-                let app = window.app_handle();
-                let Some(state) = app.try_state::<AppState>() else { return };
-                let (on, name) = {
-                    let settings = state.settings.lock().unwrap();
-                    (settings.stealth, settings.display_name.clone())
-                };
-                if on {
-                    stealth::apply(app, true, &name);
-                }
+                stealth::refresh(window.app_handle());
             }
         })
         .plugin(tauri_plugin_opener::init())
@@ -2239,6 +2237,7 @@ pub fn run() {
                     .additional_browser_args(BROWSER_ARGS)
                     .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                     .build()?;
+            window_drag::setup(app.handle())?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).
             let handle = app.handle().clone();
             overlay.on_window_event(move |event| {
@@ -2276,11 +2275,7 @@ pub fn run() {
                 app.package_info().version,
                 if on { "on" } else { "off" }
             );
-            if on {
-                stealth::apply(app.handle(), true, &name);
-            } else {
-                stealth::set_main_title(app.handle(), &name);
-            }
+            stealth::apply(app.handle(), on, &name);
             // Task Manager reads the program file, not the window title. Write the saved name
             // now; it shows up the next time this program starts.
             if let Err(e) = program_name::install(&name) {
@@ -2303,12 +2298,14 @@ pub fn run() {
             compact_window::set_compact_window_shape,
             compact_window::resize_compact_window,
             window_drag::start_window_drag,
+            window_drag::start_window_resize,
             workspace_window::window_prefs,
             workspace_window::set_window_opacity,
             workspace_window::set_window_on_top,
             workspace_window::set_window_click_through,
             get_settings,
             save_settings,
+            stealth::capture_exclusion_status,
             list_devices,
             audio_check,
             api_call,

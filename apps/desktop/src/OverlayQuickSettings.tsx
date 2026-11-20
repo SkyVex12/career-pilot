@@ -1,3 +1,4 @@
+import { CaptureProtectionStatus } from "./captureProtection";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { availableMonitors, currentMonitor, getCurrentWindow, type Monitor } from "@tauri-apps/api/window";
@@ -22,6 +23,7 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
   const [open, setOpen] = useState(false), [quitting, setQuitting] = useState(false);
   const [stealth, setStealth] = useState<boolean | null>(null), [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stealthKey, setStealthKey] = useState("");
   const [monitors, setMonitors] = useState<Monitor[]>([]), [display, setDisplay] = useState("");
   const [mode, setMode] = useState<Mode | null>(null);
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => { try { return localStorage.getItem("copilot.answerStyle") === "paragraph" ? "paragraph" : "bullets"; } catch { return "bullets"; } });
@@ -38,7 +40,7 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
   useEffect(() => {
     if (!open) return;
     let active = true;
-    const load = () => api.getSettings().then(v => { if (active) setStealth(v?.settings?.stealth ?? false); }, e => { if (active) setError(String(e)); });
+    const load = () => api.getSettings().then(v => { if (active) { setStealth(v?.settings?.stealth ?? false); setStealthKey(v?.settings?.toggle_stealth_hotkey ?? ""); } }, e => { if (active) setError(String(e)); });
     void load();
     const off = onSettingsChanged(() => void load());
     if (inTauri) void Promise.all([availableMonitors(), currentMonitor()]).then(([all, current]) => {
@@ -72,11 +74,12 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
       <Switch label="Keep on top" checked={onTop} onChange={onToggleOnTop} />
       <Switch label="Click-through" hint={`${prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G")} to restore`} checked={clickThrough} onChange={on => void run(() => api.setClickThrough(on))} />
       <div className="ov-menu-sep" />
-      <Switch label="Stealth mode" checked={stealth ?? false} disabled={stealth === null || busy} onChange={on => void run(async () => {
+      <Switch label="Stealth mode" hint={stealthKey ? prettyKey(stealthKey) : undefined} checked={stealth ?? false} disabled={stealth === null || busy} onChange={on => void run(async () => {
         const current = await api.getSettings();
         await api.saveSettings({ ...current.settings, stealth: on }, null); setStealth(on);
       })} />
       <div className="ov-menu-sep" />
+      <CaptureProtectionStatus active={open} enabled={stealth} />
       <div className="ov-menu-row"><span className="ov-menu-label">Layout</span><Select aria-label="Layout" value={compact ? "compact" : view.layout} onChange={e => {
         onCompact(e.target.value === "compact"); if (e.target.value !== "compact") view.setLayout(e.target.value as "split" | "stacked");
       }}><option value="split">Split</option><option value="stacked">Stacked</option><option value="compact">Answers only</option></Select></div>

@@ -506,20 +506,46 @@ def questions_text(t: Transcript) -> str:
 
 
 def metadata_summary(
-    mode: str, minutes: int, types: Sequence[str], spoken_language: str | None = None
+    mode: str,
+    minutes: int,
+    types: Sequence[str],
+    spoken_language: str | None = None,
+    *,
+    transcript_stored: bool = False,
 ) -> str:
-    """The only output without transcript consent: counts, never words."""
-    if template := METADATA.get(spoken_language or "en"):
+    """Counts only when speech is unavailable; distinguish absent audio from retention."""
+    if spoken_language == "es":
+        notice = (
+            "No se capturó ninguna conversación; no hay resumen escrito."
+            if transcript_stored
+            else "No se guardó la transcripción de esta sesión; no hay resumen escrito."
+        )
+        return f"Llamada de unos {minutes} minutos. {len(types)} preguntas detectadas.\n\n{notice}"
+    if spoken_language == "vi":
+        notice = (
+            "Không ghi nhận được cuộc hội thoại nên không có bản tóm tắt."
+            if transcript_stored
+            else "Bản chép lời không được lưu cho phiên này nên không có bản tóm tắt."
+        )
+        return f"Cuộc gọi khoảng {minutes} phút. Phát hiện {len(types)} câu hỏi.\n\n{notice}"
+    if not transcript_stored and (template := METADATA.get(spoken_language or "en")):
         return template.format(minutes=minutes, questions=len(types))
     counts: dict[str, int] = {}
     for t in types:
         counts[t] = counts.get(t, 0) + 1
     by_type = ", ".join(f"{n} {t.replace('_', ' ')}" for t, n in sorted(counts.items()))
-    asked = f"{len(types)} questions detected ({by_type})." if types else "No questions detected."
-    return (
-        f"{mode.capitalize()} of about {minutes} minutes. {asked}\n\n"
-        "The transcript was not stored for this session, so there is no written summary."
+    asked = (
+        f"{len(types)} question{'' if len(types) == 1 else 's'} detected ({by_type})."
+        if types
+        else "No questions detected."
     )
+    notice = (
+        "No conversation was captured for this session, so there is no written summary."
+        if transcript_stored
+        else "The transcript was not stored for this session, so there is no written summary."
+    )
+    duration = f"{minutes} minute{'' if minutes == 1 else 's'}"
+    return f"{mode.capitalize()} of about {duration}. {asked}\n\n{notice}"
 
 
 def render_outputs(
@@ -598,7 +624,15 @@ async def session_postcall(job: Job, ctx: Ctx) -> None:
     data: dict[str, Any] = {}
     closable: dict[str, UUID] = {}
     if not session["store_transcript"] or not (transcript.segments or transcript.questions):
-        outputs = {"summary": metadata_summary(mode, minutes, types, session["spoken_language"])}
+        outputs = {
+            "summary": metadata_summary(
+                mode,
+                minutes,
+                types,
+                session["spoken_language"],
+                transcript_stored=bool(session["store_transcript"]),
+            )
+        }
     else:
         # The call's day in the user's time zone, so "tomorrow" or "by Friday" becomes a date.
         day = local_today(as_dict(session["settings"]), session["started_at"])

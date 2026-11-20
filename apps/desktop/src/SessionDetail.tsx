@@ -9,7 +9,7 @@ import { rest, type Replay, type SessionDetail as Detail } from "./api";
 import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
-import { OUTPUT_TITLES, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
+import { OUTPUT_TITLES, isSummaryNotice, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
 import { Banner, Button, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
 import { MODE_LABEL } from "./calls";
 import { Icon } from "./ui/Icon";
@@ -175,7 +175,13 @@ export function SessionDetail({
   const outputTabs = outputs.map(([kind, text], index) => ({
     value: index === 0 ? "primary" : kind,
     label: kind === "follow_up_email" ? "Follow-up" : OUTPUT_TITLES[kind],
-    content: <section className="sd-reading">
+    content: kind === "summary" && isSummaryNotice(text) ? <section className="sd-reading sd-unavailable">
+      <Icon name="document" size={28} />
+      <div><h2>{stored ? "No conversation was captured" : "No written summary"}</h2>
+        <p>{stored ? "Ruby did not receive a transcript for this call. Check microphone and call audio before your next call." : "The transcript wasn't saved, so a written summary isn't available. You can still keep your own notes."}</p>
+        <Button size="sm" onClick={() => setTab("notes")}>Add call notes</Button>
+      </div>
+    </section> : <section className="sd-reading">
       <div className="sd-output-toolbar"><h2>{OUTPUT_TITLES[kind]}</h2><CopyButton text={text} /></div>
       <ReviewText text={text} />
       {kind === "standup_report" && session?.employer_id && <p className="ui-field-hint sd-output-note">Commitments are saved under Work context → Saved facts.</p>}

@@ -204,10 +204,11 @@ describe("the host's overlay", () => {
     // Notes and voice are included; only optional screen permissions need controls.
     expect(within(dialog).queryByRole("button", { name: "Notes" })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Voice" })).not.toBeInTheDocument();
-    await waitFor(() => expect(within(chips).getByRole("checkbox", { name: "Control my mouse and keyboard" })).not.toBeChecked());
-    // Control brings the screen with it.
-    await userEvent.click(within(chips).getByRole("checkbox", { name: "Control my mouse and keyboard" }));
-    expect(within(chips).getByRole("checkbox", { name: "View my shared screen" })).toBeChecked();
+    await waitFor(() => expect(within(chips).getByRole("combobox")).toHaveTextContent("No screen access"));
+    // One permission level grants viewing and control together.
+    await userEvent.click(within(chips).getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Remote control" }));
+    expect(within(chips).getByRole("combobox")).toHaveTextContent("Remote control");
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Assistant email" }), "dana@example.com");
     await userEvent.click(within(dialog).getByRole("button", { name: "Invite" }));
     expect(ipc.apiCalls("POST")).toEqual([
@@ -387,7 +388,8 @@ describe("the guest panel", () => {
     start(events());
     await open();
     const card = (await screen.findByRole("group", { name: "What Blue Angel may do" })).closest("li") as HTMLElement;
-    await userEvent.click(await within(card).findByRole("checkbox", { name: "View my shared screen" }));
+    await userEvent.click(await within(card).findByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "View screen" }));
     expect(await within(card).findByRole("alert")).toHaveTextContent("Screen access could not be updated.");
   });
 
@@ -415,22 +417,22 @@ describe("the guest panel", () => {
     ]);
     await open();
     const perms = await screen.findByRole("group", { name: "What Blue Angel may do" });
-    const chip = await within(perms).findByRole("checkbox", { name: "View my shared screen" });
-    expect(chip).toBeChecked();
+    const chip = await within(perms).findByRole("combobox");
+    expect(chip).toHaveTextContent("View screen");
     await userEvent.click(chip);
+    await userEvent.click(screen.getByRole("option", { name: "No screen access" }));
     expect(ipc.apiCalls("PATCH")).toEqual([
       { method: "PATCH", path: `/sessions/s1/seats/${SEAT}`, body: { capabilities: ["view", "note"] } },
     ]);
-    const control = within(perms).getByRole("checkbox", { name: "Control my mouse and keyboard" });
-    expect(control).not.toBeChecked();
-    await userEvent.click(control);
+    await userEvent.click(within(perms).getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "Remote control" }));
     expect(ipc.apiCalls("PATCH")[1]).toEqual({
       method: "PATCH",
       path: `/sessions/s1/seats/${SEAT}`,
       body: { capabilities: ["view", "note", "device.view", "device.control"] },
     });
     const yours = screen.getByRole("region", { name: "Your screen" });
-    expect(within(yours).getByText(/Blue Angel will see it/)).toBeInTheDocument();
+    expect(within(yours).getByText(/Screen access: Blue Angel/)).toBeInTheDocument();
     expect(within(yours).getByRole("button", { name: "Share screen" })).toBeEnabled();
   });
 

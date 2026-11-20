@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./api";
 
+export type WindowResizeDirection = "North" | "NorthEast" | "East" | "SouthEast" | "South" | "SouthWest" | "West" | "NorthWest";
+
 export const startWindowDrag = () => inTauri ? invoke<void>("start_window_drag") : Promise.resolve();
+
+export const startWindowResize = (direction: WindowResizeDirection) => inTauri ? invoke<void>("start_window_resize", { direction }) : Promise.resolve();
 
 const controls = [
   "button", "a", "input", "select", "textarea", "summary", "label",
@@ -12,7 +16,7 @@ const controls = [
 /** Blank frame space uses the same native move operation as the draggable ruby. */
 export function installWindowDragging() {
   const down = (event: PointerEvent) => {
-    if (event.button !== 0 || !(event.target instanceof Element) || event.target.closest(controls)) return;
+    if (event.defaultPrevented || event.button !== 0 || !(event.target instanceof Element) || event.target.closest(controls)) return;
     const region = event.target.closest("[data-native-drag-region]");
     // Only headers claim their text descendants; body content remains selectable.
     if (!region || (event.target !== region && region.getAttribute("data-native-drag-region") !== "header")) return;

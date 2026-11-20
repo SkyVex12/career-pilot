@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CallScreen, type CallProps } from "../src/CallScreen";
 import { GuestInvites } from "../src/seats";
 import { guestCapabilities, guestScope, invitePlannedGuests, inviteProgress, recentGuests, rememberGuest } from "../src/guestStorage";
-import { initial } from "../src/session";
+import { initial, reduce } from "../src/session";
 import { ToastProvider } from "../src/ui";
 import { app, detail, employer, interview, resume, SETTINGS, settingsView } from "./fixtures";
 import { ipc } from "./ipc";
@@ -252,5 +252,58 @@ describe("guest contact privacy and delivery", () => {
     await userEvent.click(screen.getByRole("button", { name: "Assist a call 1" }));
     await userEvent.click(screen.getByRole("button", { name: "Assist" }));
     expect(ipc.calls.find(c => c.cmd === "seat_join")?.args).toEqual({ request: { session_id: "session2", seat_id: "seat2" } });
+  });
+});
+describe("workspace startup after a call", () => {
+  it("opens Start call when a previous ended session is restored, without loading its review", async () => {
+    routes();
+    render(tree({ session: { ...initial, sessionId: "s1", stopped: "ended" } }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New call" })).not.toBeInTheDocument();
+    expect(ipc.apiCalls().filter(c => c.path === "/sessions/s1")).toHaveLength(0);
+  });
+  it("waits for the stopped event when the native connection ends in an earlier render", async () => {
+    routes();
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", status: "ready", mode: "interview", store_transcript: false, questions: 1, outputs: { summary: "The split-event call is complete." }, notes: "" }));
+    const live = reduce(initial, { type: "event", event: { kind: "connection", state: { state: "live", session_id: "s1", resumed: false } } });
+    const disconnected = reduce(live, { type: "event", event: { kind: "connection", state: { state: "stopped", reason: "ended" } } });
+    const view = render(tree({ session: live }));
+    view.rerender(tree({ session: disconnected }));
+    expect(disconnected.stopped).toBeNull();
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(ipc.apiCalls().filter(c => c.path === "/sessions/s1")).toHaveLength(0);
+
+    // The native engine emits this separately, after the connection event above.
+    view.rerender(tree({ session: reduce(disconnected, { type: "event", event: { kind: "stopped", reason: "ended" } }) }));
+    expect(await screen.findByText("The split-event call is complete.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New call" })).toBeInTheDocument();
+  });
+  it.each(["replaced", "no_minutes"] as const)("does not open review for separate %s stop events", async reason => {
+    routes();
+    const live = reduce(initial, { type: "event", event: { kind: "connection", state: { state: "live", session_id: "s1", resumed: false } } });
+    const disconnected = reduce(live, { type: "event", event: { kind: "connection", state: { state: "stopped", reason } } });
+    const view = render(tree({ session: live }));
+    view.rerender(tree({ session: disconnected }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    view.rerender(tree({ session: reduce(disconnected, { type: "event", event: { kind: "stopped", reason } }) }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New call" })).not.toBeInTheDocument();
+    expect(ipc.apiCalls().filter(c => c.path === "/sessions/s1")).toHaveLength(0);
+  });
+  it("shows review for a call that ends now, but doesn't reopen it after New call or remount", async () => {
+    routes();
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", status: "ready", mode: "interview", store_transcript: false, questions: 1, outputs: { summary: "The call is complete." }, notes: "" }));
+    const live = { ...initial, running: true, sessionId: "s1" };
+    const ended = { ...initial, sessionId: "s1", stopped: "ended" as const };
+    const view = render(tree({ session: live }));
+    view.rerender(tree({ session: ended }));
+    await screen.findByText("The call is complete.");
+    await userEvent.click(screen.getByRole("button", { name: "New call" }));
+    view.rerender(tree({ session: { ...ended } }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    view.unmount();
+    render(tree({ session: ended }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(screen.queryByText("The call is complete.")).not.toBeInTheDocument();
   });
 });

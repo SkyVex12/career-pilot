@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
-import { installWindowDragging } from "../src/windowDrag";
+import { installWindowDragging, startWindowResize } from "../src/windowDrag";
 import { ipc } from "./ipc";
 
 let dispose: (() => void) | undefined;
@@ -73,4 +73,18 @@ it("removes the listener before a replacement install so native dragging runs on
   dispose = undefined;
   press(header);
   expect(drags()).toHaveLength(1);
+});
+
+
+it("does not turn an already-handled resize gesture into a window move", () => {
+  const header = frame('<header data-native-drag-region="header"><span>Resize handle</span></header>');
+  const grip = header.querySelector("span")!;
+  grip.addEventListener("pointerdown", event => event.preventDefault());
+  expect(press(grip).defaultPrevented).toBe(true);
+  expect(drags()).toHaveLength(0);
+});
+
+it.each(["North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const)("routes %s resizing through the safe native command", async direction => {
+  await startWindowResize(direction);
+  expect(ipc.calls).toEqual([{ cmd: "start_window_resize", args: { direction } }]);
 });

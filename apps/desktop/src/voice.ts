@@ -10,7 +10,7 @@
 //
 // The guest's microphone is open only while they talk (the track stops on mute), with the
 // browser's echo cancellation, noise suppression and gain control.
-import { Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack } from "livekit-client";
+import { Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack, type RemoteAudioTrack } from "livekit-client";
 import { emit, listen } from "@tauri-apps/api/event";
 import { api, rest, type VoiceDevice } from "./api";
 
@@ -125,7 +125,10 @@ export class VoiceController {
   private defaultOutputId: string | null = null;
   private checkingDevice = false;
   private allowed = new Set<string>();
-  private elements = new Map<string, HTMLAudioElement>();
+  private elements = new Map<RemoteTrack, { identity: string; element: HTMLAudioElement | null }>();
+  private hostSessionId: string | null = null;
+  private epoch = 0;
+  private talkQueue: Promise<void> = Promise.resolve();
   private stopWatching: (() => void) | null = null;
 
   constructor(
@@ -139,14 +142,18 @@ export class VoiceController {
   }
 
   async handle(c: VoiceCmd): Promise<void> {
+    let operationEpoch = this.epoch;
     try {
       switch (c.cmd) {
         case "status":
           return this.publish(this.status);
         case "outputs":
           return await this.outputs();
-        case "host_on":
-          return await this.hostOn(c.sessionId, c.allowed);
+        case "host_on": {
+          const pending = this.hostOn(c.sessionId, c.allowed);
+          operationEpoch = this.epoch;
+          return await pending;
+        }
         case "host_off":
           return await this.stop(null);
         case "host_mute":
@@ -155,14 +162,18 @@ export class VoiceController {
         case "host_allowed":
           this.allowed = new Set(c.identities);
           return this.applyMutes();
-        case "guest_on":
-          return await this.guestOn(c.seatId);
+        case "guest_on": {
+          const pending = this.guestOn(c.seatId);
+          operationEpoch = this.epoch;
+          return await pending;
+        }
         case "guest_talk":
           return await this.talk(c.on);
         case "guest_off":
           return await this.stop(null);
       }
     } catch (e) {
+      if (operationEpoch !== this.epoch) return;
       const message = e instanceof Error ? e.message : String(e);
       if (c.cmd === "host_on" || c.cmd === "guest_on") await this.stop(message);
       else this.set({ error: message });
@@ -183,14 +194,20 @@ export class VoiceController {
   }
 
   private async hostOn(sessionId: string, allowed: string[]): Promise<void> {
-    if (this.room) return;
-    this.set({ host: "checking", error: null });
+    if (this.room || this.status.host === "checking") return;
+    const epoch = ++this.epoch;
+    const current = () => epoch === this.epoch;
+    const muted = this.hostSessionId === sessionId && this.status.hostMuted;
+    this.hostSessionId = sessionId;
+    this.set({ host: "checking", hostMuted: muted, error: null });
     const call = await this.deps.callOutput();
+    if (!current()) return;
     const probe = this.deps.newAudio();
     const canRoute = typeof (probe as Routable).setSinkId === "function";
     let deviceId = "";
     if (canRoute) {
       await this.outputs();
+      if (!current()) return;
       const matches = call ? this.status.outputs.filter((output) => windowsName(output.label).toLowerCase() === windowsName(call.name).toLowerCase()) : [];
       if (matches.length !== 1) throw new Error("Assistant audio could not find the call's output. Check Call audio and try again.");
       deviceId = matches[0].deviceId;
@@ -198,8 +215,9 @@ export class VoiceController {
       throw new Error("Set the system sound output to the selected playback device, then try assistant audio again.");
     }
     await routed(probe, deviceId);
-
+    if (!current()) return;
     const grant = await this.deps.hostToken(sessionId);
+    if (!current()) return;
     const room = this.deps.newRoom();
     this.room = room;
     this.role = "host";
@@ -207,24 +225,24 @@ export class VoiceController {
     this.defaultOutputId = canRoute ? null : call!.id;
     this.allowed = new Set(allowed);
     room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: RemoteParticipant) => {
-      if (track.kind !== Track.Kind.Audio) return;
+      if (this.room !== room || !current() || track.kind !== Track.Kind.Audio) return;
       void this.play(track, who.identity);
     });
-    room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub: unknown, who: RemoteParticipant) => {
-      track.detach();
-      this.elements.delete(who.identity);
+    room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+      if (this.room === room && current()) this.drop(track);
     });
-    room.on(RoomEvent.Disconnected, () => void this.stop(this.room ? "Voice was disconnected." : null));
+    room.on(RoomEvent.Disconnected, () => { if (this.room === room && current()) void this.stop("Voice was disconnected."); });
     this.stopWatching = this.deps.onDeviceChange(() => void this.watchDevice(), !canRoute);
     await room.connect(grant.url, grant.token, { autoSubscribe: true });
-    if (this.room !== room) return;
+    if (this.room !== room || !current()) { await room.disconnect(); return; }
     const outputReady = await this.hasDefaultOutput();
     if (this.room !== room) return;
     if (!outputReady) {
       await this.stop("The call's sound output changed. Check Call audio and try assistant audio again.");
       return;
     }
-    this.set({ host: "on", hostMuted: false, device: deviceId, error: null });
+    this.set({ host: "on", device: deviceId, error: null });
+    this.applyMutes();
   }
 
   private async hasDefaultOutput(): Promise<boolean> {
@@ -234,26 +252,53 @@ export class VoiceController {
     return current?.system_default === true && current.id === id;
   }
 
-  /** A guest's track, on the chosen headphones only. */
+  /** A binding is tracked before routing starts, so unsubscribe/stop can cancel it. */
   private async play(track: RemoteTrack, who: string): Promise<void> {
+    if (this.elements.has(track)) return;
     const room = this.room;
+    const binding = { identity: who, element: null as HTMLAudioElement | null };
+    this.elements.set(track, binding);
+    const current = () => !!room && this.room === room && this.elements.get(track) === binding;
     try {
       if (!(await this.hasDefaultOutput())) throw new Error("Call output changed");
-      if (!room || this.room !== room) return;
-      const el = await routed(this.deps.newAudio(), this.deviceId);
-      if (this.room !== room) return;
-      el.muted = this.status.hostMuted || !this.allowed.has(who);
+      if (!current()) return;
+      const el = this.deps.newAudio();
+      binding.element = el;
+      // LiveKit attach resets element.muted. Its persistent volume must be zero before
+      // attaching, then both controls are reapplied after attach and on preference changes.
+      el.muted = true; el.volume = 0;
+      await routed(el, this.deviceId);
+      if (!current()) { el.pause(); el.srcObject = null; return; }
+      (track as RemoteAudioTrack).setVolume?.(0);
       track.attach(el);
-      this.elements.set(who, el);
+      this.muteTrack(track, binding);
       await el.play();
+      if (!current()) { el.pause(); el.srcObject = null; }
     } catch {
-      track.detach();
-      if (this.room === room) await this.stop("Assistant audio could not use the call's output. Check Call audio and try again.");
+      const stillCurrent = current();
+      if (this.elements.get(track) === binding) this.drop(track);
+      if (stillCurrent) await this.stop("Assistant audio could not use the call's output. Check Call audio and try again.");
     }
   }
 
+  private muteTrack(track: RemoteTrack, binding: { identity: string; element: HTMLAudioElement | null }) {
+    const muted = this.status.hostMuted || !this.allowed.has(binding.identity);
+    (track as RemoteAudioTrack).setVolume?.(muted ? 0 : 1);
+    if (binding.element) { binding.element.volume = muted ? 0 : 1; binding.element.muted = muted; }
+  }
+
   private applyMutes() {
-    for (const [who, el] of this.elements) el.muted = this.status.hostMuted || !this.allowed.has(who);
+    for (const [track, binding] of this.elements) this.muteTrack(track, binding);
+  }
+
+  private drop(track: RemoteTrack) {
+    const binding = this.elements.get(track);
+    this.elements.delete(track);
+    if (binding?.element) {
+      binding.element.muted = true; binding.element.volume = 0;
+      binding.element.pause(); binding.element.srcObject = null;
+      track.detach(binding.element);
+    } else track.detach();
   }
 
   private async watchDevice(): Promise<void> {
@@ -270,51 +315,62 @@ export class VoiceController {
   }
 
   private async guestOn(seatId: string): Promise<void> {
-    if (this.room) return;
+    if (this.room || this.status.guest === "connecting") return;
+    const epoch = ++this.epoch;
     this.set({ guest: "connecting", error: null });
     const grant = await this.deps.guestToken(seatId);
+    if (epoch !== this.epoch) return;
     const room = this.deps.newRoom();
     this.room = room;
     this.role = "guest";
-    room.on(RoomEvent.Disconnected, () => void this.stop(this.room ? "Voice was disconnected." : null));
+    room.on(RoomEvent.Disconnected, () => { if (this.room === room && epoch === this.epoch) void this.stop("Voice was disconnected."); });
     await room.connect(grant.url, grant.token, { autoSubscribe: false });
+    if (this.room !== room || epoch !== this.epoch) { await room.disconnect(); return; }
     this.set({ guest: "on", talking: false });
   }
 
   private async talk(on: boolean): Promise<void> {
-    if (this.role !== "guest" || !this.room) {
+    const room = this.room;
+    const epoch = this.epoch;
+    if (this.role !== "guest" || !room) {
       if (on) throw new Error("Voice is not connected.");
       return;
     }
-    await this.room.localParticipant.setMicrophoneEnabled(on);
-    this.set({ talking: on });
+    const update = this.talkQueue.catch(() => undefined).then(async () => {
+      if (this.room !== room || epoch !== this.epoch) return;
+      await room.localParticipant.setMicrophoneEnabled(on);
+      if (this.room === room && epoch === this.epoch) this.set({ talking: on });
+      else if (on) await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+    });
+    this.talkQueue = update;
+    await update;
   }
 
   private async stop(error: string | null): Promise<void> {
     const room = this.room;
+    this.epoch += 1;
     this.room = null;
     this.role = null;
     this.defaultOutputId = null;
     this.stopWatching?.();
     this.stopWatching = null;
-    for (const el of this.elements.values()) {
-      el.pause();
-      el.srcObject = null;
-    }
-    this.elements.clear();
-    if (room) await room.disconnect();
-    this.set({ host: "off", hostMuted: false, device: null, guest: "off", talking: false, error });
+    for (const track of [...this.elements.keys()]) this.drop(track);
+    this.set({ host: "off", device: null, guest: "off", talking: false, error });
+    if (room) await room.disconnect().catch(() => undefined);
   }
 }
 
 /** In the main window only: the one voice controller, driven by `voice:cmd` events. */
 export function startVoice(deps: VoiceDeps = browserDeps): () => void {
   const controller = new VoiceController(deps, (s) => void emit(STATUS, s));
-  let queue = Promise.resolve();
+  let disposed = false;
+  // Stop and mute must not wait behind a token request or room connection. The controller
+  // guards async setup by generation and serializes only microphone enable/disable calls.
   const off = listen<VoiceCmd>(CMD, (e) => {
-    queue = queue.then(() => controller.handle(e.payload));
+    if (!disposed) void controller.handle(e.payload);
   });
   return () => {
+    disposed = true;
     void off.then((f) => f());
     void controller.handle({ cmd: "host_off" });
   };

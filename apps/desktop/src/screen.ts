@@ -7,8 +7,8 @@
 // The host. The browser lets a page capture the screen only right after a click in it, so the
 // share runs in the window where the host clicked (the overlay or the main window), and the
 // windows agree through `screen:cmd` / `screen:status` events: one window shares, the others
-// show its status and drive it. The overlay is excluded from capture (stealth.rs), so a guest
-// never sees it; anything else on the shared screen or window they do see.
+// show its status and drive it. App windows follow the explicit Stealth preference; with
+// Stealth off, the shared display includes them like other visible windows.
 //
 // Control (phase 5). Only while the host shares a whole screen, only a guest whose seat holds
 // `device.control` (the host's windows pass the list on as it changes), and only after the
@@ -33,7 +33,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { rest } from "./api";
 import { isMac } from "./platform";
-import { captureMacScreen, nativeShares } from "./nativeScreen";
+import { captureNativeScreen, nativeShares } from "./nativeScreen";
 
 export const HOST = "host";
 
@@ -119,7 +119,7 @@ export interface Grant {
 export interface HostDeps {
   newRoom(): Room;
   /** The screen picker (getDisplayMedia): must run right after the host's click. */
-  capture(): Promise<LocalTrack[]>;
+  capture(signal?: AbortSignal): Promise<LocalTrack[]>;
   token(sessionId: string): Promise<Grant>;
   monitors(): Promise<Monitor[]>;
   begin(target: Rect): Promise<void>;
@@ -130,7 +130,7 @@ export interface HostDeps {
 
 export const hostDeps: HostDeps = {
   newRoom: () => new Room({ adaptiveStream: false, dynacast: false }),
-  capture: () => isMac() ? captureMacScreen() :
+  capture: (signal) => (isMac() || /Win/.test(navigator.platform)) ? captureNativeScreen(signal) :
     createLocalScreenTracks({
       audio: false,
       // Captured at up to 60 frames, so control can send them all (ENCODING).
@@ -167,7 +167,7 @@ export function matchingMonitors(monitors: Monitor[], width: number, height: num
  * A known but missing source must never fall back to another display of the same size. */
 export function sharedMonitor(monitors: Monitor[], track: MediaStreamTrack): Monitor | null {
   const native = nativeShares.get(track);
-  if (native) return native.kind === "monitor" ? monitors.find((m) => m.id === String(native.id)) ?? null : null;
+  if (native) return native.kind === "monitor" ? monitors.find((m) => m.id === (native.monitor_id ?? String(native.id))) ?? null : null;
   const settings = track.getSettings();
   if (settings.displaySurface !== "monitor") return null;
   if (track.label?.startsWith("screen:")) {
@@ -204,6 +204,8 @@ export class HostScreen {
   private controlEpoch = 0;
   private granting = false;
   private stopping = false;
+  private shareEpoch = 0;
+  private captureAbort: AbortController | null = null;
 
   constructor(
     private deps: HostDeps,
@@ -222,62 +224,87 @@ export class HostScreen {
   /** Call from the click itself: the picker comes first, while the click still counts. */
   async share(sessionId: string): Promise<void> {
     if (this.room || this.status.host === "starting") return;
+    const epoch = ++this.shareEpoch;
+    const captureAbort = new AbortController();
+    this.captureAbort = captureAbort;
     this.stopping = false;
+    const current = () => !this.stopping && epoch === this.shareEpoch;
     this.set({ host: "starting", error: null });
     let tracks: LocalTrack[] = [];
+    let room: Room | null = null;
+    const discard = async () => {
+      for (const track of tracks) track.stop();
+      if (room) await room.disconnect().catch(() => undefined);
+    };
     try {
-      tracks = await this.deps.capture();
+      tracks = await this.deps.capture(captureAbort.signal);
     } catch (error) {
-      // Browser pickers report denial/cancellation as NotAllowedError; native failures carry
-      // actionable permission errors and must be shown rather than looking like cancellation.
+      if (!current()) return;
       const cancelled = error instanceof DOMException && ["AbortError", "NotAllowedError"].includes(error.name);
       this.set({ host: "off", surface: null, error: cancelled ? null : String(error instanceof Error ? error.message : error) });
       return;
     }
+    if (!current()) { await discard(); return; }
     try {
       const video = tracks.find((t) => t.kind === Track.Kind.Video);
       if (!video) throw new Error("No screen was chosen.");
       this.tracks = tracks;
-      this.target = sharedMonitor(await this.deps.monitors(), video.mediaStreamTrack);
+      const available = () => {
+        if (!current()) return false;
+        if (video.mediaStreamTrack.readyState === "ended") throw new Error(nativeShares.get(video.mediaStreamTrack)?.error || "Screen capture ended before sharing was ready. Try sharing again.");
+        return true;
+      };
+      available();
+      const monitors = await this.deps.monitors();
+      if (!available()) { await discard(); return; }
+      this.target = sharedMonitor(monitors, video.mediaStreamTrack);
       const grant = await this.deps.token(sessionId);
-      const room = this.deps.newRoom();
+      if (!available()) { await discard(); return; }
+      room = this.deps.newRoom();
+      const activeRoom = room;
       this.room = room;
-      room.on(RoomEvent.Disconnected, () => void this.stop(this.room ? "Screen sharing was disconnected." : null));
+      const ownsRoom = () => current() && this.room === activeRoom;
+      room.on(RoomEvent.Disconnected, () => { if (ownsRoom()) void this.stop("Screen sharing was disconnected."); });
       room.on(RoomEvent.DataReceived, (payload: Uint8Array, who?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-        if (who) void this.data(payload, who, topic);
+        if (ownsRoom() && who) void this.data(payload, who, topic);
       });
       room.on(RoomEvent.ParticipantDisconnected, (who: RemoteParticipant) => {
+        if (!ownsRoom()) return;
         if (this.status.controller?.identity === who.identity) void this.endControl(null);
         this.set({ asking: this.status.asking.filter((p) => p.identity !== who.identity) });
       });
-      // A guest who (re)joins: told if they control already, or given control if they may.
       room.on(RoomEvent.ParticipantConnected, (who: RemoteParticipant) => {
+        if (!ownsRoom()) return;
         if (this.status.controller?.identity === who.identity) void this.tell(who.identity, true);
         else void this.auto();
       });
-      // The host stops it from the system's own "stop sharing", or the screen goes away.
-      video.mediaStreamTrack.addEventListener("ended", () => void this.stop(nativeShares.get(video.mediaStreamTrack)?.error ?? null));
+      video.mediaStreamTrack.addEventListener("ended", () => {
+        if (ownsRoom()) void this.stop(nativeShares.get(video.mediaStreamTrack)?.error ?? null);
+      });
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
+      if (!ownsRoom() || !available()) { await discard(); return; }
       await room.localParticipant.publishTrack(video, {
         source: Track.Source.ScreenShare,
         simulcast: false,
-        // H.264: Windows encodes it on the graphics card where it can, which is faster than
-        // VP8 in software and leaves the CPU to the call. Every guest is this app (WebView2),
-        // which plays it.
         videoCodec: SCREEN_CODEC,
         videoEncoding: { maxBitrate: ENCODING.watch.maxBitrate, maxFramerate: ENCODING.watch.maxFramerate },
         degradationPreference: ENCODING.watch.degradation,
       });
+      if (!ownsRoom() || !available()) { await discard(); return; }
       const native = nativeShares.get(video.mediaStreamTrack);
       const surface = native?.kind ?? video.mediaStreamTrack.getSettings().displaySurface ?? null;
       this.set({ host: "on", surface, error: null });
       await this.auto();
     } catch (e) {
-      await this.stop(e instanceof Error ? e.message : String(e));
+      if (current()) await this.stop(e instanceof Error ? e.message : String(e));
+      else await discard();
     }
   }
 
   async stop(error: string | null): Promise<void> {
+    this.shareEpoch += 1;
+    this.captureAbort?.abort();
+    this.captureAbort = null;
     this.stopping = true;
     await this.endControl(null);
     const room = this.room;
@@ -584,10 +611,10 @@ export class GuestScreen {
   state: GuestScreenState = GUEST_OFF;
   room: Room | null = null;
   track: RemoteTrack | null = null;
-  /** The last round trip of a ping over the input path (guest → host → guest), in ms. */
   inputMs: number | null = null;
   private closed = false;
   private retries = 0;
+  private epoch = 0;
 
   constructor(
     private deps: GuestDeps,
@@ -598,121 +625,140 @@ export class GuestScreen {
   ) {}
 
   private set(patch: Partial<GuestScreenState>) {
+    if (this.closed) return;
     this.state = { ...this.state, ...patch };
     if (!this.state.controlling) this.inputMs = null;
     this.onChange(this.state, this.track);
   }
 
-  /** Time the input path once (while controlling); the answer lands in `inputMs`. */
   async ping(): Promise<void> {
     if (!this.state.controlling) return;
     await this.publish(TOPIC.ping, { t: this.now() }, false);
   }
 
   async open(): Promise<void> {
-    if (this.closed) return;
-    this.set({ state: "connecting", controlling: false, asked: false, error: null });
+    if (this.closed || this.room) return;
+    const epoch = ++this.epoch;
+    let room: Room | null = null;
+    const current = () => !this.closed && epoch === this.epoch;
+    this.track = null;
+    this.set({ ...GUEST_OFF, state: "connecting" });
     try {
       const grant = await this.deps.token(this.seatId);
-      if (this.closed) return;
-      const room = this.deps.newRoom();
+      if (!current()) return;
+      room = this.deps.newRoom();
+      const connectedRoom = room;
       this.room = room;
+      const ownsRoom = () => current() && this.room === connectedRoom;
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: unknown, who: RemoteParticipant) => {
-        if (who.identity !== HOST || track.kind !== Track.Kind.Video) return;
-        // Show each frame as soon as it can be: no smoothing buffer, which would cost the
-        // guest's hand its feel of the screen.
-        try {
-          track.setPlayoutDelay(0);
-        } catch {
-          // Not supported here: the browser's own buffer stays.
-        }
+        if (!ownsRoom() || who.identity !== HOST || track.kind !== Track.Kind.Video) return;
+        try { track.setPlayoutDelay(0); } catch { /* Older WebViews retain their own buffer. */ }
         this.track = track;
-        this.set({ state: "watching" });
+        this.set({ state: "watching", error: null });
       });
       room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-        if (track !== this.track) return;
+        if (!ownsRoom() || track !== this.track) return;
         this.track = null;
         this.set({ state: "waiting", controlling: false, asked: false });
       });
+      room.on(RoomEvent.Reconnecting, () => {
+        if (!ownsRoom()) return;
+        // LiveKit may retain the same track across reconnect without another subscription event.
+        this.set({ state: "connecting", controlling: false, asked: false });
+      });
+      room.on(RoomEvent.Reconnected, () => {
+        if (!ownsRoom()) return;
+        this.set({ state: this.track ? "watching" : "waiting" });
+      });
       room.on(RoomEvent.DataReceived, (payload: Uint8Array, who?: RemoteParticipant, _kind?: unknown, topic?: string) => {
-        if (who?.identity !== HOST) return;
+        if (!ownsRoom() || who?.identity !== HOST) return;
         if (topic === TOPIC.pong) {
           try {
             const sent = (JSON.parse(decoder.decode(payload)) as { t?: unknown }).t;
             if (typeof sent === "number" && this.state.controlling) this.inputMs = Math.max(0, this.now() - sent);
-          } catch {
-            // Not our ping: ignored.
-          }
+          } catch { /* Not our ping. */ }
           return;
         }
         if (topic !== TOPIC.control) return;
         try {
           const on = (JSON.parse(decoder.decode(payload)) as { on?: unknown }).on === true;
-          this.set({ controlling: on, asked: false });
-        } catch {
-          // Not the host's word: ignored.
-        }
+          this.set({ controlling: on && grant.control === true, asked: false });
+        } catch { /* Ignore malformed control messages. */ }
       });
-      room.on(RoomEvent.Disconnected, () => void this.reopen());
+      room.on(RoomEvent.Disconnected, () => { if (ownsRoom()) void this.reopen(connectedRoom); });
+      // Set the permission before connect: host control may arrive during connect.
+      this.set({ control: grant.control === true });
       await room.connect(grant.url, grant.token, { autoSubscribe: true });
+      if (!ownsRoom()) {
+        await room.disconnect();
+        return;
+      }
       this.retries = 0;
-      this.set({ state: this.track ? "watching" : "waiting", control: grant.control === true });
+      this.set({ state: this.track ? "watching" : "waiting" });
     } catch (e) {
+      if (!current()) {
+        if (room) await room.disconnect().catch(() => undefined);
+        return;
+      }
       this.room = null;
-      this.set({ state: "off", controlling: false, error: e instanceof Error ? e.message : String(e) });
+      this.track = null;
+      if (room) await room.disconnect().catch(() => undefined);
+      this.set({ ...GUEST_OFF, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
   private async publish(topic: string, body: unknown, reliable = true): Promise<void> {
+    if (this.closed) return;
     await this.room?.localParticipant.publishData(encoder.encode(JSON.stringify(body)), {
-      reliable,
-      destinationIdentities: [HOST],
-      topic,
+      reliable, destinationIdentities: [HOST], topic,
     });
   }
 
-  /** Ask the host to let this guest control. */
   async ask(): Promise<void> {
-    if (!this.state.control || this.state.controlling) return;
+    if (!this.state.control || this.state.controlling || !this.room || this.closed) return;
     await this.publish(TOPIC.ask, {});
     this.set({ asked: true });
   }
 
-  /** Give control back. */
   async release(): Promise<void> {
-    await this.publish(TOPIC.release, {});
+    // Release locally even if the connection fails while the command is in flight.
     this.set({ controlling: false, asked: false });
+    await this.publish(TOPIC.release, {});
   }
 
-  /** The guest's mouse and keys, while the host lets them control. Moves alone go lossy: one
-   * that is lost is overtaken by the next, where a resent one would hold up all after it.
-   * Clicks, keys and the wheel always arrive (each carries its own spot). */
   async send(events: InputEvent[]): Promise<void> {
-    if (!this.state.controlling || events.length === 0) return;
+    if (!this.state.controlling || events.length === 0 || this.closed) return;
     await this.publish(TOPIC.input, { events }, !events.every((e) => e.t === "move"));
   }
 
-  /** Taken out of the room (grants changed) or the connection dropped: try again a few times. */
-  private async reopen(): Promise<void> {
+  private async reopen(room: Room): Promise<void> {
+    if (this.closed || this.room !== room) return;
+    const epoch = ++this.epoch;
     this.room = null;
     this.track = null;
-    if (this.closed) return;
     if (this.retries >= 3) {
-      this.set({ state: "off", controlling: false, error: "The screen was disconnected." });
+      this.set({ ...GUEST_OFF, error: "The shared screen was disconnected. Try connecting again." });
       return;
     }
     this.retries += 1;
-    this.set({ state: "connecting", controlling: false });
+    this.set({ state: "connecting", controlling: false, asked: false });
     await this.wait(500 * this.retries);
-    await this.open();
+    if (!this.closed && epoch === this.epoch) await this.open();
   }
 
   async close(): Promise<void> {
-    this.closed = true;
+    if (this.closed) return;
+    // Tell the host before disconnect so held keys/buttons are released promptly.
     const room = this.room;
+    const release = this.state.controlling ? this.publish(TOPIC.release, {}).catch(() => undefined) : Promise.resolve();
+    this.closed = true;
+    this.epoch += 1;
     this.room = null;
     this.track = null;
-    if (room) await room.disconnect();
+    this.state = GUEST_OFF;
+    this.inputMs = null;
+    await release;
+    if (room) await room.disconnect().catch(() => undefined);
   }
 }
 
