@@ -10,6 +10,7 @@ import pytest
 
 from copilot_api.routes import ask, calendar
 from copilot_api.testing import Api
+from copilot_core import ask as core_ask
 
 pytestmark = pytest.mark.stack
 
@@ -117,7 +118,7 @@ async def test_calendar_consent_cache_rls_and_disconnect(api: Api, monkeypatch) 
     from copilot_core.auth import Principal
 
     principal = Principal(owner, "Owner", None)
-    assert await ask.calendar_sources(api.svc, principal, principal, ask.ask.Scope()) == []
+    assert await ask.calendar_sources(api.svc, principal, principal, core_ask.Scope()) == []
     throttled = await api.client.post("/v1/calendars/google/sync", headers=headers)
     assert throttled.status_code == 429
     deleted = await api.client.delete("/v1/calendars/google", headers=headers)

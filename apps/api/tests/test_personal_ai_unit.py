@@ -4,6 +4,7 @@ import hashlib
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from pydantic import ValidationError
 from copilot_api.deps import current_account, current_user, services
 from copilot_api.routes import personal_ai as routes
 from copilot_core import personal_ai as context
+from copilot_core import profiles
 from copilot_core.auth import Principal
 
 
@@ -338,7 +340,7 @@ async def test_mcp_publish_executes_validated_encrypted_publication(mcp_api, mon
     conn.fetchval.return_value = 0
     svc.crypto.decrypt = AsyncMock(return_value=json.dumps({"title": "Preparation"}))
     svc.crypto.encrypt = AsyncMock(return_value=(b"sealed-brief", 1))
-    monkeypatch.setattr(routes.profiles, "resolve", AsyncMock(return_value=profile))
+    monkeypatch.setattr(profiles, "resolve", AsyncMock(return_value=profile))
     async with httpx2.AsyncClient(
         transport=httpx2.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -363,6 +365,7 @@ async def test_mcp_publish_executes_validated_encrypted_publication(mcp_api, mon
     result = response.json()["result"]
     assert not result["isError"]
     assert not result["structuredContent"]["duplicate"]
+    assert svc.crypto.encrypt.await_args is not None
     assert svc.crypto.encrypt.await_args.args[1] == account.user_id
     inserted = conn.execute.await_args_list[0].args
     assert inserted[7] == "mcp"
@@ -400,7 +403,7 @@ async def test_private_claim_lua_never_overwrites_changed_or_missing_ownership()
 
     from copilot_core import keys
 
-    client = FakeAsyncValkey()
+    client: Any = FakeAsyncValkey()
     sid, account, profile = str(uuid4()), str(uuid4()), str(uuid4())
     key = keys.sess_state(sid)
     args = (routes.CLAIM_PRIVATE, 1, key, account, profile, "", "")

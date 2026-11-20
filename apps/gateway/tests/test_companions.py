@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -58,7 +59,7 @@ def test_expired_revoked_and_explicit_end_confirmation():
 
 
 async def test_queue_is_atomic_idempotent_and_conflict_detected():
-    client = FakeAsyncValkey()
+    client: Any = FakeAsyncValkey()
     r = record()
     command = companions.Command(
         type="companion.command", command_id=uuid4(), kind="followup", text="why?"
@@ -104,7 +105,7 @@ def test_private_same_account_fold_ignores_guest_sharing_and_dedupes_chunks():
 
 @pytest.mark.parametrize("revoked", [False, True])
 async def test_host_control_checks_grant_and_never_repeats(revoked):
-    client = FakeAsyncValkey()
+    client: Any = FakeAsyncValkey()
     r = record()
     await companions.publish(client, r)
     command = companions.Command(
@@ -129,7 +130,7 @@ async def test_host_control_checks_grant_and_never_repeats(revoked):
         ring=[],
         handle=AsyncMock(),
     )
-    desk = CompanionDesk(session, {})
+    desk = CompanionDesk(cast(Any, session), {})
     if revoked:
         await client.hdel(companions.records_key(r.session_id), r.attachment_id)
     await desk.command(raw)

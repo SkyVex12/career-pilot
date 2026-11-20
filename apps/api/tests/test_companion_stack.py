@@ -1,6 +1,7 @@
 """Real account RLS and grant/revoke persistence; no capture or provider side effects."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -49,21 +50,24 @@ async def test_companion_attach_and_revoke_do_not_claim_capture(api: Api):
     assert await companions.read(api.svc.valkey, str(sid), aid) is not None
     principal = Principal(owner, "Owner", None)
     relay = CompanionRelay(
-        SimpleNamespace(
-            pool=api.svc.pool,
-            store=SimpleNamespace(
-                client=api.svc.valkey,
-                load_state=AsyncMock(
-                    return_value={
-                        "account_id": str(owner),
-                        "user_id": str(owner),
-                        "status": "active",
-                        "private_context_account_id": str(owner),
-                    }
+        cast(
+            Any,
+            SimpleNamespace(
+                pool=api.svc.pool,
+                store=SimpleNamespace(
+                    client=api.svc.valkey,
+                    load_state=AsyncMock(
+                        return_value={
+                            "account_id": str(owner),
+                            "user_id": str(owner),
+                            "status": "active",
+                            "private_context_account_id": str(owner),
+                        }
+                    ),
                 ),
             ),
         ),
-        SimpleNamespace(as_profile=AsyncMock(return_value=principal)),
+        cast(Any, SimpleNamespace(as_profile=AsyncMock(return_value=principal))),
     )
     assert (await relay.authorize(principal, str(sid), aid)).account_id == str(owner)
 
