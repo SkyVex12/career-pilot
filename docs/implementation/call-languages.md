@@ -8,7 +8,7 @@ Updated 2026-11-19. Stable identifiers control spoken language independently of 
 | es | Spanish | Deepgram nova-3, language=es | Passed; Unicode question cues, prompts, factories, retained state, labels | Candidate; disabled until deployment verification |
 | vi | Vietnamese | Deepgram nova-3, language=vi | Passed; Unicode question cues, prompts, factories, retained state, labels | Candidate; disabled until deployment verification |
 
-[Deepgram official model/language catalog](https://developers.deepgram.com/docs/models-languages-overview), checked 2026-11-19, lists Spanish and Vietnamese for nova-3. Provider documentation establishes model compatibility, not whole-application or accent/device certification. No new live or recorded speech benchmark was performed in this implementation.
+[Deepgram official model/language catalog](https://developers.deepgram.com/docs/models-languages-overview), checked 2026-11-19, lists Spanish and Vietnamese for nova-3. Provider documentation establishes model compatibility, not whole-application or accent/device certification. One synthetic English TTS/transcription round trip passed with the configured Deepgram adapter; this is not a representative multilingual speech benchmark. Spanish and Vietnamese still require corpus and real-device validation.
 
 `COPILOT_VERIFIED_CALL_LANGUAGES=en` is the default release gate. After completing deployment verification, operators may explicitly set a comma-separated list such as `en,es`. Non-English calls require nova-3 and Deepgram on every configured recognition path. Unsupported, malformed and disabled identifiers are rejected before session claims or paid work. This does not add a translation service or a separate language-routing model call.
 

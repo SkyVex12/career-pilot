@@ -52,3 +52,8 @@ evals/knowledge/results/*/prepared.json
 
 # Coding eval: raw runs stay local (evals/coding)
 evals/coding/results/*/runs.json
+
+# Local implementation build tooling, isolated checkout and validation logs
+.implementation/
+.language-*-results.txt
+.language-runtime-validation.txt

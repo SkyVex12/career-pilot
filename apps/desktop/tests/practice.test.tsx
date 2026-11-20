@@ -103,3 +103,16 @@ it("pauses a late start when a real call has already taken priority", async () =
   expect(ipc.apiCalls("POST").find(call => call.path.endsWith("/p1/actions"))?.body).toMatchObject({ action: "pause" });
   expect(await screen.findByRole("button", { name: "Resume" })).toBeDisabled();
 });
+
+it("explains retry progress and remaining gaps without hiding coaching qualifications", async () => {
+  setup();
+  const saved = { ...fixture(), status:"finished", questions:[{...fixture().questions[0], attempts:[{id:"a2",answer:"I measured the outcome.",assistance:[],feedback:{rubric_version:"v1",dimensions:{evidence:3},strengths:[],improvements:[],excerpts:[],uncertainty:[],suggested_wording:""},comparison:{comparable:false,note:"Coaching conditions differ.",summary:"Your evidence is more concrete.",dimensions:{evidence:{previous:1,current:3}},improvements:["Added a measured outcome."],remaining_gaps:["Explain the alternative you rejected."],recurring_gaps:[],evidence:{previous:["I improved it."],current:["I measured the outcome."]}}}]}]};
+  ipc.api("GET", /^\/practice\/sessions$/, () => ({sessions:[saved]}));
+  ipc.api("GET", /^\/practice\/sessions\/p1$/, () => saved);
+  render(<Practice active running={false}/>);
+  await screen.findByText(/Engineering/,{selector:"option"});
+  fireEvent.change(screen.getByLabelText("Practice history",{selector:"select"}),{target:{value:"p1"}});
+  expect(await screen.findByText("Added a measured outcome.")).toBeVisible();
+  expect(screen.getByText("Explain the alternative you rejected.")).toBeVisible();
+  expect(screen.getByText("Coaching conditions differ.")).toBeVisible();
+});

@@ -13,9 +13,7 @@ class ApiSettings(DataSettings):
         default="postgresql://app_api:app_api-local@localhost:5432/copilot",
         validation_alias="COPILOT_API_DATABASE_URL",
     )
-    practice_tts_models: dict[str, str] = Field(
-        default_factory=lambda: {"en": "aura-2-thalia-en"}
-    )
+    practice_tts_models: dict[str, str] = Field(default_factory=lambda: {"en": "aura-2-thalia-en"})
     max_document_bytes: int = 10 * 1024 * 1024
     upload_url_ttl_s: int = 900
 
