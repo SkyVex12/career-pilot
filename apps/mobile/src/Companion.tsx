@@ -280,7 +280,7 @@ export function Companion({
           }
         };
         ws.onmessage = (e) => {
-          if (!current()) return;
+          if (!current() || terminal) return;
           try {
             const m = JSON.parse(String(e.data)) as Event;
             if (m.type === "auth.expiring") {
