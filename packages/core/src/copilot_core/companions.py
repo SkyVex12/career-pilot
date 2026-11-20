@@ -58,6 +58,8 @@ def allowed(
         and record.profile_id == state.get("user_id")
         and state.get("private_context_account_id") in (None, "", account_id)
         and state.get("status") not in (None, "ended")
+        and state.get("platform") != "mobile_in_person"
+        and not state.get("client_version", "").startswith("mobile-")
     )
 
 

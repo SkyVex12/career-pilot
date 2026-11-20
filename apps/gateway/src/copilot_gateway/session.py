@@ -650,6 +650,9 @@ class Session:
         url = self.settings.personal_ai_api_url
         if not url or not self.account_token or not self.account_id:
             return []
+        requested_account = self.account_id
+        requested_profile = self.principal.user_id
+        requested_scope = (self.info.employer_id, self.info.job_id)
         try:
             async with httpx2.AsyncClient(timeout=self.settings.personal_ai_timeout_s) as client:
                 response = await client.get(
@@ -673,8 +676,20 @@ class Session:
             briefs = cast(list[dict[str, Any]], data.get("briefs", []))
             if not briefs:
                 return []
-            self.private_context_account_id = str(self.account_id)
-            self.writer.set_state(private_context_account_id=str(self.account_id), sharing="0")
+            holder = await self.svc.store.lease_holder(self.sid)
+            # Account/profile can change during the HTTP await (shared-profile resume).
+            # Never attach the old account's response to the new capture owner.
+            if (
+                self.ending
+                or holder != self.svc.task_id
+                or self.account_id != requested_account
+                or self.principal.user_id != requested_profile
+                or (self.info.employer_id, self.info.job_id) != requested_scope
+                or self.private_context_account_id not in (None, str(requested_account))
+            ):
+                return []
+            self.private_context_account_id = str(requested_account)
+            self.writer.set_state(private_context_account_id=str(requested_account), sharing="0")
             self.emit(models.Sharing, on=False)
             versions = tuple(str(b["id"]) for b in briefs)
             if versions != self.private_context_versions:
@@ -683,7 +698,7 @@ class Session:
                     "memory", "ok", "Private AI context versions: " + ", ".join(versions)
                 )
             return [personal_ai.context_text(briefs)]
-        except (httpx2.HTTPError, OSError, ValueError, KeyError):
+        except (httpx2.HTTPError, OSError, ValueError, KeyError, *UNAVAILABLE):
             # The existing live path stays usable; no stale private brief cache is reused.
             return []
 

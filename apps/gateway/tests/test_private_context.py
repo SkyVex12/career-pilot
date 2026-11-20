@@ -18,6 +18,7 @@ async def test_private_context_is_revalidated_and_never_kept_after_source_remova
     )
     session.account_id = env.user_a
     session.account_token = "token-a"
+    await svc.store.take_lease(session.sid, svc.task_id)
     request = httpx2.Request("GET", "https://api.example.com/v1/personal-ai/live-context")
     http = MagicMock()
     http.get = AsyncMock(
@@ -45,3 +46,35 @@ async def test_private_context_is_revalidated_and_never_kept_after_source_remova
     assert http.get.await_count == 3
     assert http.get.await_args.kwargs["headers"]["x-copilot-profile"] == str(env.user_a)
     assert "account_token" not in session.state_fields()
+
+
+async def test_private_response_cannot_cross_account_transfer_during_fetch(env, monkeypatch):
+    svc = env.services(env.settings(personal_ai_api_url="https://api.example.com"))
+    session = Session(
+        svc,
+        SessionManager(svc),
+        uuid7(),
+        Principal(env.user_a, "Alex", None),
+        SessionInfo("interview", None, None, "test", "test", True, datetime.now(UTC)),
+        None,
+        None,
+    )
+    session.account_id, session.account_token = env.user_a, "token-a"
+    await svc.store.take_lease(session.sid, svc.task_id)
+
+    async def transferred(*args, **kwargs):
+        session.account_id = env.user_b
+        return httpx2.Response(
+            200,
+            request=httpx2.Request("GET", "https://api.example.com"),
+            json={"briefs": [{"id": "secret-a", "content": "Account A private context"}]},
+        )
+
+    http = MagicMock()
+    http.get = AsyncMock(side_effect=transferred)
+    http.__aenter__ = AsyncMock(return_value=http)
+    http.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(httpx2, "AsyncClient", MagicMock(return_value=http))
+    assert await session.private_memory() == []
+    assert session.private_context_account_id is None
+    assert not session.private_context_versions

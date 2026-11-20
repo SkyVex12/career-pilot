@@ -32,6 +32,8 @@ def state(r):
         {"user_id": "other"},
         {"private_context_account_id": "other"},
         {"status": "ended"},
+        {"platform": "mobile_in_person"},
+        {"client_version": "mobile-0.1.0"},
     ],
 )
 def test_account_profile_and_sticky_private_boundary(change):

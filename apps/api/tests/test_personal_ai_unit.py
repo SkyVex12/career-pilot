@@ -180,6 +180,7 @@ def mcp_api():
     conn.execute = AsyncMock()
     svc.valkey.hgetall = AsyncMock(return_value={})
     svc.valkey.hset = AsyncMock()
+    svc.valkey.eval = AsyncMock(return_value=1)
 
     @asynccontextmanager
     async def tx(principal):
@@ -254,6 +255,7 @@ async def test_mcp_requires_authentication_before_tool_handling(mcp_api):
 async def test_live_private_context_commits_sticky_marker_before_return(mcp_api, monkeypatch):
     app, svc, conn, account, profile = mcp_api
     sid = uuid4()
+    conn.fetchval.side_effect = [None, sid]
     svc.valkey.hgetall.return_value = {
         "user_id": str(profile.user_id),
         "account_id": str(account.user_id),
@@ -267,11 +269,13 @@ async def test_live_private_context_commits_sticky_marker_before_return(mcp_api,
     ) as client:
         response = await client.get("/personal-ai/live-context", params={"session_id": str(sid)})
     assert response.json() == {"briefs": [{"id": "version"}]}
-    assert "private_context_account_id" in conn.execute.await_args.args[0]
-    assert svc.valkey.hset.await_args.kwargs["mapping"] == {
-        "private_context_account_id": str(account.user_id),
-        "sharing": "0",
-    }
+    assert "returning id" in conn.fetchval.await_args.args[0]
+    assert svc.valkey.eval.await_args.args[-4:] == (
+        str(account.user_id),
+        str(profile.user_id),
+        "",
+        "",
+    )
 
 
 async def test_live_context_skips_existing_guests(mcp_api, monkeypatch):
@@ -363,3 +367,60 @@ async def test_mcp_publish_executes_validated_encrypted_publication(mcp_api, mon
     inserted = conn.execute.await_args_list[0].args
     assert inserted[7] == "mcp"
     assert inserted[8] == b"sealed-brief"
+
+
+@pytest.mark.parametrize("conflict", ["state_marker", "database_marker", "lost_owner"])
+async def test_live_private_context_refuses_sticky_owner_conflict(mcp_api, monkeypatch, conflict):
+    app, svc, conn, account, profile = mcp_api
+    sid = uuid4()
+    svc.valkey.hgetall.return_value = {
+        "user_id": str(profile.user_id),
+        "account_id": str(account.user_id),
+        "status": "active",
+        "mode": "interview",
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    if conflict == "state_marker":
+        svc.valkey.hgetall.return_value["private_context_account_id"] = str(uuid4())
+    conn.fetchval.side_effect = [None, None if conflict == "database_marker" else sid]
+    svc.valkey.eval.return_value = 0 if conflict == "lost_owner" else 1
+    monkeypatch.setattr(context, "latest_briefs", AsyncMock(return_value=[{"id": "secret"}]))
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/personal-ai/live-context", params={"session_id": str(sid)})
+    assert response.status_code in (404, 409)
+    assert "secret" not in response.text
+    if conflict != "lost_owner":
+        svc.valkey.eval.assert_not_awaited()
+
+
+async def test_private_claim_lua_never_overwrites_changed_or_missing_ownership():
+    from fakeredis import FakeAsyncValkey
+
+    from copilot_core import keys
+
+    client = FakeAsyncValkey()
+    sid, account, profile = str(uuid4()), str(uuid4()), str(uuid4())
+    key = keys.sess_state(sid)
+    args = (routes.CLAIM_PRIVATE, 1, key, account, profile, "", "")
+    assert await client.eval(*args) == 0
+    assert not await client.exists(key)
+    for replacement in (
+        {"account_id": "other"},
+        {"private_context_account_id": "other"},
+        {"status": "ended"},
+        {"job_id": "changed"},
+    ):
+        await client.delete(key)
+        await client.hset(
+            key,
+            mapping={"account_id": account, "user_id": profile, "status": "active", **replacement},
+        )
+        assert await client.eval(*args) == 0
+    await client.delete(key)
+    await client.hset(key, mapping={"account_id": account, "user_id": profile, "status": "active"})
+    assert await client.eval(*args) == 1
+    assert await client.hget(key, "private_context_account_id") == account.encode()
+    assert await client.hget(key, "sharing") == b"0"
+    await client.aclose()

@@ -33,6 +33,10 @@ async def live(svc: Services, account: Principal, user: Principal, sid: UUID) ->
         raise HTTPException(404, "No desktop call for this account and profile")
     if state.get("status") in (None, "ended"):
         raise HTTPException(409, "The desktop call has ended")
+    if state.get("platform") == "mobile_in_person" or state.get("client_version", "").startswith(
+        "mobile-"
+    ):
+        raise HTTPException(409, "Companion mode requires a desktop capture session")
     return state
 
 

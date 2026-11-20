@@ -206,3 +206,11 @@ async def test_profile_scope_check_restores_account_rls_even_on_missing_source(a
         str(profile.user_id),
         str(account.user_id),
     ]
+
+
+async def test_inactive_fact_cannot_reenter_practice_or_citation_context(ask_api):
+    _, svc, conn, profile = ask_api
+    conn.fetchrow.return_value = {"status": "superseded", "summary": "old sensitive fact"}
+    with pytest.raises(HTTPException) as failure:
+        await routes.resolve_source("fact", str(uuid4()), svc, profile, profile)
+    assert failure.value.status_code == 404

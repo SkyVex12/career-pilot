@@ -22,6 +22,20 @@ from copilot_core.valkey_client import text
 router = APIRouter(prefix="/personal-ai", tags=["personal-ai"])
 PROTOCOL_VERSION = "2025-11-25"
 MAX_MCP_BYTES = 65536
+# Compare ownership and context atomically; never recreate an expired session or replace
+# another account's sticky marker after a slow database/context lookup.
+CLAIM_PRIVATE = """
+local account = redis.call('HGET', KEYS[1], 'account_id')
+local profile = redis.call('HGET', KEYS[1], 'user_id')
+local status = redis.call('HGET', KEYS[1], 'status')
+local marker = redis.call('HGET', KEYS[1], 'private_context_account_id')
+if account ~= ARGV[1] or profile ~= ARGV[2] or not status or status == 'ended' then return 0 end
+if marker and marker ~= '' and marker ~= ARGV[1] then return 0 end
+if (redis.call('HGET', KEYS[1], 'employer_id') or '') ~= ARGV[3] then return 0 end
+if (redis.call('HGET', KEYS[1], 'job_id') or '') ~= ARGV[4] then return 0 end
+redis.call('HSET', KEYS[1], 'private_context_account_id', ARGV[1], 'sharing', '0')
+return 1
+"""
 
 
 class Refresh(context.StrictModel):
@@ -298,7 +312,8 @@ async def live_context(
     if (
         state.get("user_id") != str(user.user_id)
         or state.get("account_id") != str(account.user_id)
-        or state.get("status") == "ended"
+        or state.get("status") in (None, "ended")
+        or state.get("private_context_account_id") not in (None, "", str(account.user_id))
     ):
         raise HTTPException(404, "No such active session")
     # The caller cannot route another company's private context into this session.
@@ -335,14 +350,14 @@ async def live_context(
             "meeting",
         }:
             raise HTTPException(409, "Session is still starting; retry context retrieval")
-        await conn.execute(
+        marked = await conn.fetchval(
             "insert into app.sessions (id,user_id,mode,job_id,interview_id,platform,title,"
             "store_transcript,started_at,employer_id,spoken_language,private_context_account_id,"
             "agenda_enc,agenda_key_version) values "
             "($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
             "on conflict (id) do update set private_context_account_id=$12 "
             "where app.sessions.private_context_account_id is null "
-            "or app.sessions.private_context_account_id=$12",
+            "or app.sessions.private_context_account_id=$12 returning id",
             session_id,
             user.user_id,
             state["mode"],
@@ -358,9 +373,18 @@ async def live_context(
             agenda_enc,
             agenda_key,
         )
+        if marked is None:
+            raise HTTPException(409, "Session private context belongs to another account")
     # Never clear this marker on deletion/refresh: generated artifacts remain private.
-    await svc.valkey.hset(
+    claimed = await svc.valkey.eval(
+        CLAIM_PRIVATE,
+        1,
         keys.sess_state(session_id),
-        mapping={"private_context_account_id": str(account.user_id), "sharing": "0"},
+        str(account.user_id),
+        str(user.user_id),
+        str(employer_id or ""),
+        str(job_id or ""),
     )
+    if not claimed:
+        raise HTTPException(409, "Session ownership or context changed; retry")
     return {"briefs": briefs}

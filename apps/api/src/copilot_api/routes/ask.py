@@ -777,7 +777,7 @@ async def calendar_sources(
     async with svc.tx(account) as conn:
         rows = await conn.fetch(
             "select * from app.calendar_connections where profile_id=$1 "
-            "and token_enc is not null order by updated_at desc limit 2",
+            "and token_enc is not null and status='active' order by updated_at desc limit 2",
             user.user_id,
         )
         for row in rows:
@@ -932,6 +932,8 @@ async def resolve_source(
                         raise HTTPException(404, "source unavailable in this account")
                 if row:
                     if kind == "fact":
+                        if row["status"] != "active":
+                            raise HTTPException(404, "Fact removed or superseded")
                         return source(
                             kind,
                             source_id,

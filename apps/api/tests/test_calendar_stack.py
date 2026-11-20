@@ -109,6 +109,15 @@ async def test_calendar_consent_cache_rls_and_disconnect(api: Api, monkeypatch) 
     forbidden = await api.client.delete("/v1/calendars/google", headers=other)
     assert forbidden.status_code == 404
     assert (await api.client.get("/v1/meeting-preparation", headers=other)).json()["items"] == []
+    # Provider authorization failure cannot leave stale private events usable as evidence.
+    await api.admin.execute(
+        "update app.calendar_connections set status='reauth_required' where user_id=$1", owner
+    )
+    assert (await api.client.get("/v1/meeting-preparation", headers=headers)).json()["items"] == []
+    from copilot_core.auth import Principal
+
+    principal = Principal(owner, "Owner", None)
+    assert await ask.calendar_sources(api.svc, principal, principal, ask.ask.Scope()) == []
     throttled = await api.client.post("/v1/calendars/google/sync", headers=headers)
     assert throttled.status_code == 429
     deleted = await api.client.delete("/v1/calendars/google", headers=headers)
@@ -123,3 +132,33 @@ async def test_calendar_consent_cache_rls_and_disconnect(api: Api, monkeypatch) 
     assert (await api.client.get("/v1/meeting-preparation", headers=headers)).json()["items"] == []
     assert (await api.client.get(source_url, headers=headers)).status_code == 404
     assert not api.take("session.create")
+
+
+async def test_stale_calendar_failure_cannot_poison_new_authorization(api: Api):
+    from copilot_core.auth import Principal
+    from copilot_core.calendars import CalendarError
+
+    owner, headers = api.user()
+    assert (await api.client.get("/v1/me", headers=headers)).status_code == 200
+    cid = uuid4()
+    old = await api.admin.fetchval(
+        "insert into app.calendar_connections(id,user_id,profile_id,provider,status)"
+        " values($1,$2,$2,'google','active') returning updated_at",
+        cid,
+        owner,
+    )
+    await api.admin.execute(
+        "update app.calendar_connections set updated_at=updated_at+interval '1 second' where id=$1",
+        cid,
+    )
+    await calendar.mark_failed(
+        api.svc,
+        Principal(owner, "Owner", None),
+        cid,
+        CalendarError("Expired old consent", reauthorize=True),
+        expected_updated_at=old,
+    )
+    assert (
+        await api.admin.fetchval("select status from app.calendar_connections where id=$1", cid)
+        == "active"
+    )

@@ -96,15 +96,18 @@ async def mark_failed(
     error: CalendarError,
     *,
     nonce: str | None = None,
+    expected_updated_at: datetime | None = None,
 ) -> None:
     async with svc.tx(account) as conn:
         await conn.execute(
             "update app.calendar_connections set status=$2,last_error=$3,updated_at=now()"
-            " where id=$1 and ($4::text is null or oauth_nonce=$4)",
+            " where id=$1 and ($4::text is null or oauth_nonce=$4)"
+            " and ($5::timestamptz is null or updated_at=$5)",
             row_id,
             "reauth_required" if error.reauthorize else "error",
             str(error),
             nonce,
+            expected_updated_at,
         )
 
 
@@ -233,9 +236,11 @@ async def callback(
     if error or not code:
         async with user_tx(svc.pool, account_id) as conn:
             await conn.execute(
-                "update app.calendar_connections set oauth_nonce=null,last_error=$2 where id=$1",
+                "update app.calendar_connections set oauth_nonce=null,last_error=$2"
+                " where id=$1 and oauth_nonce=$3",
                 row_id,
                 "Calendar authorization was declined",
+                pending["nonce"],
             )
         raise HTTPException(400, "Calendar authorization was declined")
     try:
@@ -367,7 +372,9 @@ async def sync(
                 version,
             )
     except CalendarError as failure:
-        await mark_failed(svc, account, original["id"], failure)
+        await mark_failed(
+            svc, account, original["id"], failure, expected_updated_at=original["updated_at"]
+        )
         raise HTTPException(failure.status, str(failure)) from failure
     return {"event_count": len(events), "synced_at": now.isoformat()}
 
@@ -524,6 +531,8 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
                     "last_error": row["last_error"],
                 }
             )
+            if row["status"] != "active":
+                continue
             for event in cache.get("events", []):
                 meetings.append(
                     CalendarMeeting(
