@@ -92,7 +92,7 @@ export function HushedDetectionSettings({ preferences, defaultAdb = "", supporte
             <div className="ui-row-inline"><Button disabled={busy} onClick={() => void findDevices(true)}>{operation === "connecting" ? "Connecting..." : "Connect local emulator"}</Button></div>
           </div>
         </details>
-        <p className="ui-field-hint">Call suggestions must be on, unpaused, and enabled for LDPlayer under Applications. This mode uses Hushed notifications instead of LDPlayer microphone detection. It is experimental and has not been verified against your Hushed version.</p>
+        <p className="ui-field-hint">Call suggestions must be on, unpaused, and enabled for LDPlayer under Applications. This mode reads Android call state and supported Hushed notifications. Microphone activity is not required. It is experimental and has not been verified against your Hushed version.</p>
         <div className="ui-row-inline">
           <Button disabled={busy || !dirty} onClick={() => void save()}>{operation === "saving" ? "Saving..." : "Save Hushed detection"}</Button>
           {(operation === "finding" || operation === "connecting") && <Button onClick={() => { revision.current++; setOperation(null); setNotice("Stopped waiting for the emulator list. Detection settings are unchanged."); }}>Cancel</Button>}

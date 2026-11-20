@@ -14,7 +14,7 @@ it.each([
   ["notifications_suppressed", "System notification settings or Focus"], ["active_session", "already running a session"],
   ["suggestion_pending", "suggestion is waiting"], ["app_disabled", "application's call suggestions are disabled"],
   ["error", "native check failed"], ["unavailable", "unavailable on this system"],
-  ["watching_hushed", "Watching for Hushed call notifications. Microphone activity is not required."],
+  ["watching_hushed", "Watching for Hushed call activity. Microphone activity is not required."],
 ])("explains %s without starting capture", async (state, message) => {
   setup(state); render(<BackgroundSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Check detection" }));

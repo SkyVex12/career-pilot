@@ -1,4 +1,4 @@
-//! Opt-in, local Android notification metadata. Never captures audio or starts a call.
+//! Opt-in, local Android call-state metadata. Never captures audio or starts a call.
 //!
 //! AOSP's redacted dump can still contain action labels and object descriptions. Raw
 //! output is bounded, held only while parsing, and never returned in diagnostics.
@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+#[path = "hushed_telecom.rs"]
+mod telecom;
 
 const PACKAGE: &str = "com.hushed.release";
 const MAX_DEVICES: usize = 4;
@@ -88,6 +91,8 @@ pub(super) struct Sample {
     pub calls: Vec<Call>,
     pub retired: Vec<String>,
     pub forgotten: Vec<String>,
+    /// A connecting/disconnecting call is present without enough evidence to offer assistance.
+    pub block_end_review: bool,
     pub status: Status,
 }
 
@@ -106,11 +111,29 @@ struct Tracked {
     key: String,
     missing: u8,
     incoming: bool,
+    unconfirmed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Source {
+    Notification,
+    Telecom(String),
+}
+
+struct Device {
+    source: Source,
+    calls: BTreeMap<String, Tracked>,
+}
+
+enum DeviceObservation {
+    Notification(Observation),
+    Telecom { epoch: String, calls: Vec<telecom::Call> },
+    Unknown(Observation),
 }
 
 #[derive(Default)]
 pub(super) struct Sampler {
-    occurrences: BTreeMap<String, Tracked>,
+    occurrences: BTreeMap<String, Device>,
     sequence: u64,
     adb_path: String,
     installed: BTreeMap<String, (Instant, bool)>,
@@ -132,12 +155,12 @@ impl Sampler {
         }
         let mut forgotten = Vec::new();
         if self.adb_path != config.adb_path {
-            forgotten = std::mem::take(&mut self.occurrences).into_values().map(|value| value.key).collect();
+            forgotten = self.take_keys();
             self.installed.clear();
             self.adb_path.clone_from(&config.adb_path);
         }
         self.installed.retain(|serial, _| config.serials.contains(serial));
-        // At most two bounded commands per instance, concurrently across all four instances.
+        // Fixed, bounded commands; instances run concurrently. No raw dump escapes the probe.
         let observations = std::thread::scope(|scope| {
             let handles: Vec<_> = config
                 .serials
@@ -148,6 +171,10 @@ impl Sampler {
                         .get(serial)
                         .filter(|(time, _)| time.elapsed() < PACKAGE_CHECK_TTL)
                         .map(|(_, installed)| *installed);
+                    let prefer_telecom = self
+                        .occurrences
+                        .get(serial)
+                        .is_some_and(|device| matches!(device.source, Source::Telecom(_)));
                     scope.spawn(move || {
                         let installed = match cached {
                             Some(value) => Ok(Some(value)),
@@ -159,29 +186,22 @@ impl Sampler {
                         };
                         let installed = match installed {
                             Ok(Some(value)) => value,
-                            _ => return (serial.clone(), Observation::Unavailable, None),
+                            _ => {
+                                return (
+                                    serial.clone(),
+                                    DeviceObservation::Unknown(Observation::Unavailable),
+                                    None,
+                                );
+                            }
                         };
                         if !installed {
-                            return (serial.clone(), Observation::NotInstalled, Some(false));
+                            return (
+                                serial.clone(),
+                                DeviceObservation::Unknown(Observation::NotInstalled),
+                                Some(false),
+                            );
                         }
-                        let args = [
-                            "-s",
-                            serial.as_str(),
-                            "shell",
-                            "dumpsys",
-                            "notification",
-                            "--dump-priority",
-                            "CRITICAL",
-                            "--package",
-                            PACKAGE,
-                        ];
-                        let observation = match run_adb(&config.adb_path, &args) {
-                            Ok(bytes) => std::str::from_utf8(&bytes)
-                                .map(parse_notifications)
-                                .unwrap_or(Observation::Unsupported),
-                            Err(_) => Observation::Unavailable,
-                        };
-                        (serial.clone(), observation, Some(true))
+                        (serial.clone(), probe(&config.adb_path, serial, prefer_telecom), Some(true))
                     })
                 })
                 .collect();
@@ -189,7 +209,9 @@ impl Sampler {
                 .into_iter()
                 .zip(&config.serials)
                 .map(|(handle, serial)| {
-                    handle.join().unwrap_or_else(|_| (serial.clone(), Observation::Unavailable, None))
+                    handle.join().unwrap_or_else(|_| {
+                        (serial.clone(), DeviceObservation::Unknown(Observation::Unavailable), None)
+                    })
                 })
                 .collect::<Vec<_>>()
         });
@@ -209,13 +231,20 @@ impl Sampler {
             }
         }
         let states = observations.into_iter().map(|(serial, state, _)| (serial, state)).collect::<Vec<_>>();
-        let mut result = self.apply(&config.serials, &states);
+        let mut result = self.apply_devices(&config.serials, &states);
         result.forgotten.extend(forgotten);
         result
     }
 
+    fn take_keys(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.occurrences)
+            .into_values()
+            .flat_map(|device| device.calls.into_values().map(|call| call.key))
+            .collect()
+    }
+
     fn clear(&mut self, state: &str, message: &str) -> Sample {
-        let forgotten = std::mem::take(&mut self.occurrences).into_values().map(|v| v.key).collect();
+        let forgotten = self.take_keys();
         self.installed.clear();
         Sample {
             forgotten,
@@ -224,105 +253,279 @@ impl Sampler {
         }
     }
 
+    #[cfg(test)]
     fn apply(&mut self, selected: &[String], observations: &[(String, Observation)]) -> Sample {
+        let observations = observations
+            .iter()
+            .map(|(serial, state)| (serial.clone(), DeviceObservation::Notification(*state)))
+            .collect::<Vec<_>>();
+        self.apply_devices(selected, &observations)
+    }
+
+    fn apply_devices(&mut self, selected: &[String], observations: &[(String, DeviceObservation)]) -> Sample {
         let mut result = Sample::default();
-        self.occurrences.retain(|serial, tracked| {
+        self.occurrences.retain(|serial, device| {
             if selected.contains(serial) {
                 true
             } else {
-                result.forgotten.push(tracked.key.clone());
+                result.forgotten.extend(device.calls.values().map(|call| call.key.clone()));
                 false
             }
         });
-        let mut unsupported = 0;
-        let mut unavailable = 0;
-        let mut missing_package = 0;
+        let mut states = Vec::new();
         for (serial, observation) in observations {
-            match observation {
-                Observation::Incoming | Observation::Active => {
-                    // A fresh ring after an ongoing call represents a new incoming occurrence,
-                    // even if polling missed the short interval with no notification.
-                    if *observation == Observation::Incoming
-                        && self.occurrences.get(serial).is_some_and(|call| !call.incoming)
-                        && let Some(previous) = self.occurrences.remove(serial)
-                    {
-                        result.retired.push(previous.key);
-                    }
-                    if !self.occurrences.contains_key(serial) {
-                        self.sequence = self.sequence.wrapping_add(1);
-                        self.occurrences.insert(
-                            serial.clone(),
-                            Tracked {
-                                // No caller, notification tag/key, package data or emulator name.
-                                key: format!("android-{}:Hushed", self.sequence),
-                                missing: 0,
-                                incoming: *observation == Observation::Incoming,
-                            },
-                        );
-                    }
-                    let tracked = self.occurrences.get_mut(serial).expect("inserted occurrence");
-                    tracked.missing = 0;
-                    tracked.incoming = *observation == Observation::Incoming;
-                    result.calls.push(Call {
-                        key: tracked.key.clone(),
-                        incoming: *observation == Observation::Incoming,
-                    });
+            let (source, current, state) = match observation {
+                DeviceObservation::Unknown(state) => {
+                    self.break_absence(serial);
+                    states.push(*state);
+                    continue;
                 }
-                Observation::Idle => {
-                    if let Some(tracked) = self.occurrences.get_mut(serial) {
-                        tracked.missing += 1;
-                        if tracked.missing >= 2 {
-                            result.retired.push(tracked.key.clone());
-                            self.occurrences.remove(serial);
-                        }
+                DeviceObservation::Notification(state) => {
+                    if matches!(
+                        state,
+                        Observation::Unsupported | Observation::Unavailable | Observation::NotInstalled
+                    ) {
+                        self.break_absence(serial);
+                        states.push(*state);
+                        continue;
                     }
+                    let current = match state {
+                        Observation::Incoming => vec![("notification".into(), telecom::Phase::Incoming)],
+                        Observation::Active => vec![("notification".into(), telecom::Phase::Active)],
+                        _ => Vec::new(),
+                    };
+                    (Source::Notification, current, *state)
                 }
-                Observation::Unsupported | Observation::Unavailable | Observation::NotInstalled => {
-                    // Unknown is not proof of a call ending; it breaks consecutive absence.
-                    if let Some(tracked) = self.occurrences.get_mut(serial) {
-                        tracked.missing = 0;
-                    }
-                    if *observation == Observation::Unsupported {
-                        unsupported += 1;
-                    } else if *observation == Observation::Unavailable {
-                        unavailable += 1;
+                DeviceObservation::Telecom { epoch, calls } => {
+                    let current = calls
+                        .iter()
+                        .filter(|call| call.phase != telecom::Phase::Ended)
+                        .map(|call| (call.id.clone(), call.phase))
+                        .collect::<Vec<_>>();
+                    let state = if calls.iter().any(|call| call.phase == telecom::Phase::Incoming) {
+                        Observation::Incoming
+                    } else if calls.iter().any(|call| call.phase == telecom::Phase::Active) {
+                        Observation::Active
                     } else {
-                        missing_package += 1;
-                    }
+                        Observation::Idle
+                    };
+                    (Source::Telecom(epoch.clone()), current, state)
+                }
+            };
+            states.push(state);
+            let mut device = self
+                .occurrences
+                .remove(serial)
+                .unwrap_or_else(|| Device { source: Source::Notification, calls: BTreeMap::new() });
+            if device.source != source {
+                // Migrate a single notification to one unambiguous Telecom call without
+                // re-prompting a dismissed call. Process/boot changes never reuse old IDs.
+                let can_transfer = matches!(device.source, Source::Notification)
+                    && matches!(source, Source::Telecom(_))
+                    && device.calls.len() == 1
+                    && current.len() == 1
+                    && device
+                        .calls
+                        .values()
+                        .next()
+                        .is_some_and(|old| old.incoming || current[0].1 != telecom::Phase::Incoming);
+                if can_transfer {
+                    let old = std::mem::take(&mut device.calls).into_values().next().expect("one call");
+                    device.calls.insert(current[0].0.clone(), old);
+                } else if current.is_empty() && matches!(device.source, Source::Notification) {
+                    // Keep the legacy identity until two healthy samples confirm absence.
+                } else {
+                    result
+                        .forgotten
+                        .extend(std::mem::take(&mut device.calls).into_values().map(|call| call.key));
+                }
+                if !current.is_empty() || !matches!(device.source, Source::Notification) {
+                    device.source = source;
                 }
             }
+            for (id, phase) in &current {
+                if *phase == telecom::Phase::Transitional {
+                    let tracked = device.calls.entry(id.clone()).or_insert_with(|| {
+                        self.sequence = self.sequence.wrapping_add(1);
+                        Tracked {
+                            key: format!("android-{}:Hushed", self.sequence),
+                            unconfirmed: true,
+                            ..Default::default()
+                        }
+                    });
+                    tracked.missing = 0;
+                    continue;
+                }
+                let incoming = *phase == telecom::Phase::Incoming;
+                // Notifications have no safe stable call ID. Telecom IDs already
+                // distinguish consecutive calls, including calls with no idle poll.
+                if matches!(device.source, Source::Notification)
+                    && incoming
+                    && device.calls.get(id).is_some_and(|call| !call.incoming)
+                    && let Some(previous) = device.calls.remove(id)
+                {
+                    result.retired.push(previous.key);
+                }
+                let tracked = device.calls.entry(id.clone()).or_insert_with(|| {
+                    self.sequence = self.sequence.wrapping_add(1);
+                    Tracked {
+                        key: format!("android-{}:Hushed", self.sequence),
+                        missing: 0,
+                        incoming,
+                        unconfirmed: false,
+                    }
+                });
+                tracked.missing = 0;
+                tracked.incoming = incoming;
+                tracked.unconfirmed = false;
+                result.calls.push(Call { key: tracked.key.clone(), incoming });
+            }
+            device.calls.retain(|id, tracked| {
+                if current.iter().any(|(current_id, _)| current_id == id) {
+                    return true;
+                }
+                tracked.missing += 1;
+                if tracked.missing >= 2 {
+                    result.block_end_review |= tracked.unconfirmed;
+                    result.retired.push(tracked.key.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            // Once no lifecycle needs protecting, an unregistered provider can fall
+            // back to supported notification metadata again.
+            if !device.calls.is_empty() {
+                self.occurrences.insert(serial.clone(), device);
+            }
         }
-        let connected = observations.len().saturating_sub(unavailable);
+        result.block_end_review |=
+            self.occurrences.values().any(|device| device.calls.values().any(|call| call.unconfirmed));
+        let unsupported = states.iter().filter(|state| **state == Observation::Unsupported).count();
+        let unavailable = states.iter().filter(|state| **state == Observation::Unavailable).count();
+        let missing_package = states.iter().filter(|state| **state == Observation::NotInstalled).count();
+        let connected = states.len().saturating_sub(unavailable);
         let (state, message) = if unavailable + unsupported + missing_package > 0
             && connected > unsupported + missing_package
         {
-            (
-                "partial",
-                "Some emulators are unavailable, lack Hushed, or use an unsupported notification format.",
-            )
+            ("partial", "Some emulators are unavailable, lack Hushed, or expose unsupported call metadata.")
         } else if unsupported > 0 {
             (
                 "unsupported",
-                "Hushed notification format is not supported on this emulator. Start assistance manually.",
+                "Hushed call metadata is not supported on this emulator. Start assistance manually.",
             )
         } else if missing_package > 0 {
             ("not_installed", "Hushed is not installed on the selected local emulator.")
         } else if unavailable > 0 {
             ("unavailable", "Local emulator connection unavailable. Check ADB and the selected emulator.")
-        } else if result.calls.iter().any(|call| !call.incoming) {
-            ("active", "Hushed ongoing-call notification detected.")
+        } else if result.calls.iter().any(|call| call.incoming) {
+            ("incoming", "Hushed incoming call detected.")
         } else if !result.calls.is_empty() {
-            ("incoming", "Hushed incoming-call notification detected.")
+            ("active", "Hushed ongoing call detected.")
         } else {
             (
                 "idle",
-                "Monitoring local Hushed notifications. Real Hushed call behavior still needs verification.",
+                "Monitoring local Hushed call state. Real Hushed call behavior still needs verification.",
             )
         };
         result.status =
             Status { state: state.into(), message: message.into(), connected, monitored: selected.len() };
         result
     }
+
+    fn break_absence(&mut self, serial: &str) {
+        if let Some(device) = self.occurrences.get_mut(serial) {
+            for call in device.calls.values_mut() {
+                call.missing = 0;
+            }
+        }
+    }
+}
+
+fn telecom_pid(adb: &str, serial: &str) -> Option<String> {
+    // Ask Binder which process owns the service; emulator builds can host it in
+    // system_server rather than a process named com.android.server.telecom.
+    let bytes = run_adb(adb, &["-s", serial, "shell", "dumpsys", "--pid", "telecom"]).ok()?;
+    parse_pid(&bytes)
+}
+
+fn boot_id(adb: &str, serial: &str) -> Option<String> {
+    run_adb(adb, &["-s", serial, "shell", "cat", "/proc/sys/kernel/random/boot_id"])
+        .ok()
+        .and_then(|bytes| parse_boot_id(&bytes))
+}
+
+fn parse_pid(bytes: &[u8]) -> Option<String> {
+    let value = std::str::from_utf8(bytes).ok()?.trim();
+    if value.is_empty()
+        || value.len() > 10
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || value.parse::<u32>().ok()? == 0
+    {
+        return None;
+    }
+    Some(value.into())
+}
+
+fn parse_boot_id(bytes: &[u8]) -> Option<String> {
+    let value = std::str::from_utf8(bytes).ok()?.trim();
+    if value.len() != 36
+        || !value.bytes().enumerate().all(|(i, byte)| {
+            if [8, 13, 18, 23].contains(&i) { byte == b'-' } else { byte.is_ascii_hexdigit() }
+        })
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
+}
+
+fn probe(adb: &str, serial: &str, prefer_telecom: bool) -> DeviceObservation {
+    // Check process identity around the snapshot. Boot ID protects emulator reboots.
+    let boot_before = boot_id(adb, serial);
+    let pid_before = telecom_pid(adb, serial);
+    let snapshot = match run_adb(adb, &["-s", serial, "shell", "dumpsys", "telecom"]) {
+        Ok(bytes) => std::str::from_utf8(&bytes).map(telecom::parse).unwrap_or(telecom::Snapshot::Unknown),
+        Err(_) if prefer_telecom => return DeviceObservation::Unknown(Observation::Unavailable),
+        Err(_) => telecom::Snapshot::Unknown,
+    };
+    let calls = match snapshot {
+        telecom::Snapshot::Registered(calls) => Some(calls),
+        telecom::Snapshot::Unregistered if prefer_telecom => Some(Vec::new()),
+        telecom::Snapshot::Unknown if prefer_telecom => {
+            return DeviceObservation::Unknown(Observation::Unsupported);
+        }
+        _ => None,
+    };
+    if let Some(calls) = calls {
+        let pid_after = telecom_pid(adb, serial);
+        let boot_after = boot_id(adb, serial);
+        return match (boot_before, boot_after, pid_before, pid_after) {
+            (Some(first_boot), Some(last_boot), Some(before), Some(after))
+                if before == after && first_boot == last_boot =>
+            {
+                DeviceObservation::Telecom { epoch: format!("{last_boot}:{after}"), calls }
+            }
+            _ => DeviceObservation::Unknown(Observation::Unavailable),
+        };
+    }
+    let state = match run_adb(
+        adb,
+        &[
+            "-s",
+            serial,
+            "shell",
+            "dumpsys",
+            "notification",
+            "--dump-priority",
+            "CRITICAL",
+            "--package",
+            PACKAGE,
+        ],
+    ) {
+        Ok(bytes) => std::str::from_utf8(&bytes).map(parse_notifications).unwrap_or(Observation::Unsupported),
+        Err(_) => Observation::Unavailable,
+    };
+    DeviceObservation::Notification(state)
 }
 
 fn parse_package_list(bytes: &[u8]) -> Option<bool> {
@@ -939,6 +1142,145 @@ mod tests {
         let disabled = sampler.sample(&Config::default());
         assert_eq!(disabled.forgotten, vec![both.calls[1].key.clone()]);
         assert_eq!(disabled.status.state, "disabled");
+    }
+
+    fn observe_telecom(sampler: &mut Sampler, epoch: &str, calls: &[(&str, telecom::Phase)]) -> Sample {
+        sampler.apply_devices(
+            &["emulator-5554".into()],
+            &[(
+                "emulator-5554".into(),
+                DeviceObservation::Telecom {
+                    epoch: epoch.into(),
+                    calls: calls
+                        .iter()
+                        .map(|(id, phase)| telecom::Call { id: (*id).into(), phase: *phase })
+                        .collect(),
+                },
+            )],
+        )
+    }
+
+    #[test]
+    fn telecom_ring_answer_hold_and_transition_keep_one_occurrence() {
+        use telecom::Phase::*;
+        let mut sampler = Sampler::default();
+        let first = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Incoming)]);
+        for phase in [Active, Active, Transitional, Active] {
+            let next = observe_telecom(&mut sampler, "boot:11", &[("TC@1", phase)]);
+            assert!(next.retired.is_empty());
+            assert!(next.forgotten.is_empty());
+            if phase == Transitional {
+                assert!(next.calls.is_empty());
+            } else {
+                assert_eq!(first.calls[0].key, next.calls[0].key);
+            }
+        }
+        assert!(!first.calls[0].key.contains("TC@"));
+        assert!(!first.calls[0].key.contains("5554"));
+        assert!(!first.calls[0].key.contains("boot"));
+    }
+
+    #[test]
+    fn telecom_consecutive_and_simultaneous_calls_have_independent_keys() {
+        use telecom::Phase::*;
+        let mut sampler = Sampler::default();
+        let first = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Active)]);
+        let second = observe_telecom(&mut sampler, "boot:11", &[("TC@2", Active)]);
+        assert_ne!(first.calls[0].key, second.calls[0].key);
+        assert!(second.retired.is_empty());
+        let both = observe_telecom(&mut sampler, "boot:11", &[("TC@2", Active), ("TC@3", Incoming)]);
+        assert_eq!(both.calls[0].key, second.calls[0].key);
+        assert_ne!(both.calls[0].key, both.calls[1].key);
+        assert_eq!(both.retired, vec![first.calls[0].key.clone()]);
+        assert_eq!(both.status.state, "incoming");
+    }
+
+    #[test]
+    fn telecom_unknown_breaks_absence_and_ended_needs_two_healthy_samples() {
+        use telecom::Phase::*;
+        let mut sampler = Sampler::default();
+        let first = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Active)]);
+        assert!(observe_telecom(&mut sampler, "boot:11", &[]).retired.is_empty());
+        for state in [Observation::Unsupported, Observation::Unavailable, Observation::NotInstalled] {
+            let failed = sampler.apply_devices(
+                &["emulator-5554".into()],
+                &[("emulator-5554".into(), DeviceObservation::Unknown(state))],
+            );
+            assert!(failed.calls.is_empty());
+            assert!(failed.retired.is_empty());
+            assert!(observe_telecom(&mut sampler, "boot:11", &[("TC@1", Ended)]).retired.is_empty());
+        }
+        let ended = observe_telecom(&mut sampler, "boot:11", &[]);
+        assert_eq!(ended.retired, vec![first.calls[0].key.clone()]);
+        let next = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Incoming)]);
+        assert_ne!(next.calls[0].key, first.calls[0].key);
+    }
+
+    #[test]
+    fn telecom_restart_forgets_old_identity_without_claiming_call_end() {
+        use telecom::Phase::*;
+        let mut sampler = Sampler::default();
+        let first = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Active)]);
+        let restart = observe_telecom(&mut sampler, "boot:12", &[("TC@1", Active)]);
+        assert_eq!(restart.forgotten, vec![first.calls[0].key.clone()]);
+        assert!(restart.retired.is_empty());
+        assert_ne!(restart.calls[0].key, first.calls[0].key);
+        let reboot = observe_telecom(&mut sampler, "reboot:12", &[("TC@1", Active)]);
+        assert_eq!(reboot.forgotten, vec![restart.calls[0].key.clone()]);
+        let removed = sampler.apply_devices(&[], &[]);
+        assert_eq!(removed.forgotten, vec![reboot.calls[0].key.clone()]);
+    }
+
+    #[test]
+    fn notification_to_telecom_handoff_preserves_dismissal_identity_across_one_gap() {
+        use telecom::Phase::*;
+        let mut sampler = Sampler::default();
+        let first = observe(&mut sampler, &["emulator-5554"], &[Observation::Incoming]);
+        assert!(observe_telecom(&mut sampler, "boot:11", &[]).retired.is_empty());
+        let answered = observe_telecom(&mut sampler, "boot:11", &[("TC@1", Active)]);
+        assert_eq!(first.calls[0].key, answered.calls[0].key);
+        assert!(answered.forgotten.is_empty());
+        assert!(answered.retired.is_empty());
+        let disabled = sampler.sample(&Config::default());
+        assert_eq!(disabled.forgotten, vec![first.calls[0].key.clone()]);
+    }
+
+    #[test]
+    fn telecom_transition_without_supported_call_phase_never_prompts() {
+        let mut sampler = Sampler::default();
+        let pending = observe_telecom(&mut sampler, "boot:11", &[("TC@1", telecom::Phase::Transitional)]);
+        assert!(pending.calls.is_empty());
+        assert!(pending.retired.is_empty());
+        assert!(pending.block_end_review);
+        let unknown = sampler.apply_devices(
+            &["emulator-5554".into()],
+            &[("emulator-5554".into(), DeviceObservation::Unknown(Observation::Unavailable))],
+        );
+        assert!(unknown.block_end_review);
+        assert!(unknown.calls.is_empty());
+        let ended = observe_telecom(&mut sampler, "boot:11", &[("TC@1", telecom::Phase::Ended)]);
+        assert!(ended.calls.is_empty());
+        assert!(ended.retired.is_empty());
+        assert!(ended.block_end_review);
+        let retired = observe_telecom(&mut sampler, "boot:11", &[]);
+        assert_eq!(retired.retired.len(), 1);
+        assert!(retired.block_end_review);
+        assert!(!observe_telecom(&mut sampler, "boot:11", &[]).block_end_review);
+    }
+
+    #[test]
+    fn process_identity_accepts_only_one_pid_and_canonical_boot_shape() {
+        assert_eq!(parse_pid(b"123\r\n"), Some("123".into()));
+        for invalid in ["", "0", "-1", "1 2", "Permission Denial", "4294967296"] {
+            assert!(parse_pid(invalid.as_bytes()).is_none());
+        }
+        assert_eq!(
+            parse_boot_id(b"ABCDEF01-2345-6789-ABCD-0123456789AB\n"),
+            Some("abcdef01-2345-6789-abcd-0123456789ab".into())
+        );
+        for invalid in ["", "abcdef01-2345-6789-abcd-0123456789ag", "abcdef0123456789abcd0123456789abcd"] {
+            assert!(parse_boot_id(invalid.as_bytes()).is_none());
+        }
     }
 
     #[test]

@@ -147,6 +147,17 @@ impl Detector {
             }
         }
     }
+    /// A known connecting call must not trigger assistance yet, but it makes
+    /// ending an older accepted session premature, including across an ADB outage.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    pub fn defer_end_review(&mut self, now: u64) {
+        if self.pending.as_ref().is_some_and(|suggestion| suggestion.kind == "end") {
+            self.defer_pending();
+        }
+        for call in self.calls.values_mut().filter(|call| call.accepted) {
+            call.last = now;
+        }
+    }
     pub fn tick(&mut self, now: u64, evidence: &[Evidence], allowed: bool, active: bool) {
         if !allowed {
             self.defer_pending();
@@ -861,6 +872,51 @@ mod tests {
         d.tick(521, &[], true, true);
         assert_eq!(d.pending.as_ref().unwrap().id, end_id);
         assert_eq!(d.pending.as_ref().unwrap().kind, "end");
+    }
+
+    #[test]
+    fn connecting_call_withdraws_old_end_review_without_offering_a_start() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(std::slice::from_ref(&incoming.key), 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        for now in [122, 200, 400] {
+            // New CONNECTING call, continued transition, then confirmed retirement.
+            d.defer_end_review(now);
+            d.tick(now, &[], true, true);
+            assert!(d.pending.is_none());
+            assert!(d.respond(&end_id, true).is_none());
+        }
+        d.tick(519, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(520, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().id, end_id);
+        d.respond(&end_id, false).unwrap();
+        d.defer_end_review(521);
+        d.tick(1000, &[], true, true);
+        assert!(d.pending.is_none(), "explicit dismissal must remain dismissed");
+    }
+
+    #[test]
+    fn connecting_call_also_defers_a_generic_desktop_call_end_review() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        d.respond("42:Zoom", true).unwrap();
+        d.tick(125, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.defer_end_review(126);
+        d.tick(126, &[], true, true);
+        assert!(d.pending.is_none());
+        assert!(d.respond(&end_id, true).is_none());
+        d.tick(245, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(246, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().id, end_id);
     }
 
     #[test]

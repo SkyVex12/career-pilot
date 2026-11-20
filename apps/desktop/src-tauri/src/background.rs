@@ -1310,6 +1310,9 @@ fn start_detection(app: AppHandle) {
             if let Some(sample) = &hushed_sample {
                 detector.retire(&sample.retired, now, active);
                 detector.retire(&sample.forgotten, now, false);
+                if sample.block_end_review {
+                    detector.defer_end_review(now);
+                }
             }
             let mut can_present = false;
             let result = result.map(|native| merge_hushed_sample(native, hushed_sample.as_ref()));

@@ -25,7 +25,7 @@ function detectionMessage(value: DetectionStatus): string {
     waiting_microphone: "Waiting for microphone activity. Join the call and enable its microphone, then check again.",
     no_call_controls: "No supported call controls found. Keep the call window open, then check again.",
     watching: "Watching for a supported call. Checks run every five seconds.",
-    watching_hushed: "Watching for Hushed call notifications. Microphone activity is not required.",
+    watching_hushed: "Watching for Hushed call activity. Microphone activity is not required.",
   };
   return messages[value.state] || "Detection status is unavailable. Check again to retry.";
 }
