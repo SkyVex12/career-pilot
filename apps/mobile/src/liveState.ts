@@ -1,3 +1,9 @@
+import {
+  DEVELOPMENT_BUILD,
+  HTTP_TEST_BUILD,
+  transportURL,
+} from "./transport.ts";
+
 export type Event = {
   type: string;
   seq?: number;
@@ -30,9 +36,18 @@ export const emptyLive = (): LiveState => ({
   memory: "",
 });
 export function event(state: LiveState, message: Event): LiveState {
+  if (!message || typeof message !== "object" || typeof message.type !== "string") throw new Error("Invalid session event");
+  if (message.seq !== undefined && (!Number.isSafeInteger(message.seq) || message.seq < 0)) throw new Error("Invalid event sequence");
   if (message.type === "companion.snapshot") {
+    if (!Array.isArray(message.messages) || message.messages.length > 20000) throw new Error("Invalid session snapshot");
+    const messages = message.messages as Event[];
+    for (const item of messages) {
+      if (!item || typeof item !== "object" || item.type === "companion.snapshot" || (item.seq !== undefined && (!Number.isSafeInteger(item.seq) || item.seq < 0))) throw new Error("Invalid snapshot event");
+    }
     let next = emptyLive();
-    for (const item of (message.messages ?? []) as Event[])
+    // Server folds preserve insertion order while merged deltas acquire newer seq values.
+    // Restore the complete folded state in sequence order before applying live deduplication.
+    for (const item of [...messages].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)))
       next = event(next, item);
     return {
       ...next,
@@ -61,6 +76,7 @@ export function event(state: LiveState, message: Event): LiveState {
     next.memory = String(message.message ?? "");
   const id = message.question_id;
   if (!id) return next;
+  if (typeof id !== "string" || (message.text !== undefined && typeof message.text !== "string")) throw new Error("Invalid question event");
   let question = next.items.find((x) => x.id === id);
   if (message.type === "question.cancelled")
     return { ...next, items: next.items.filter((x) => x.id !== id) };
@@ -80,6 +96,7 @@ export function event(state: LiveState, message: Event): LiveState {
     else question.fast += message.text ?? "";
   }
   if (message.type === "answer.done") question.done = true;
+  if (message.type === "answer.error") { question.done = true; if (!question.fast && !question.deep) question.fast = "Guidance unavailable. Ask again when the connection is ready."; }
   return next;
 }
 export function command(
@@ -91,6 +108,7 @@ export function command(
 ) {
   if (kind === "end" && !confirmed)
     throw new Error("Confirm ending the desktop call first.");
+  if (kind === "followup" && text.trim().length > 4000) throw new Error("Keep follow-ups under 4000 characters.");
   if (kind === "followup" && !text.trim())
     throw new Error("Enter a follow-up.");
   return {
@@ -101,11 +119,10 @@ export function command(
     ...(kind === "end" ? { confirmed: true, summarize } : {}),
   };
 }
-export function gatewayURL(raw: string): string {
-  const u = new URL(raw);
-  if (u.protocol !== "wss:" || u.search || u.hash || u.username || u.password)
-    throw new Error(
-      "Use a secure WebSocket address without credentials or tokens.",
-    );
-  return u.toString();
+export function gatewayURL(
+  raw: string,
+  development = DEVELOPMENT_BUILD,
+  httpTest = HTTP_TEST_BUILD,
+): string {
+  return transportURL(raw, "websocket", development, httpTest).toString();
 }

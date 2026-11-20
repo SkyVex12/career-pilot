@@ -27,6 +27,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from copilot_core import jobs, keys
+from copilot_core.call_language_text import LABELS, METADATA
 from copilot_core.crypto import UserCrypto, segment_row_id
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7, uuid7_for
@@ -508,16 +509,8 @@ def metadata_summary(
     mode: str, minutes: int, types: Sequence[str], spoken_language: str | None = None
 ) -> str:
     """The only output without transcript consent: counts, never words."""
-    if spoken_language == "es":
-        return (
-            f"Llamada de unos {minutes} minutos. {len(types)} preguntas detectadas.\n\n"
-            "No se guardó la transcripción de esta sesión; no hay resumen escrito."
-        )
-    if spoken_language == "vi":
-        return (
-            f"Cuộc gọi khoảng {minutes} phút. Phát hiện {len(types)} câu hỏi.\n\n"
-            "Bản chép lời không được lưu cho phiên này nên không có bản tóm tắt."
-        )
+    if template := METADATA.get(spoken_language or "en"):
+        return template.format(minutes=minutes, questions=len(types))
     counts: dict[str, int] = {}
     for t in types:
         counts[t] = counts.get(t, 0) + 1
@@ -529,66 +522,24 @@ def metadata_summary(
     )
 
 
-def _bullets(items: object) -> str:
-    return "\n".join(f"- {i}" for i in as_list(items)) or "- (none)"
-
-
 def render_outputs(
     mode: str, data: dict[str, Any], spoken_language: str | None = None
 ) -> dict[str, str]:
     """Model output (already schema-checked) to the session_outputs kinds, as Markdown."""
-    labels = {
-        "es": (
-            "Fortalezas",
-            "Para mejorar",
-            "Cómo fue",
-            "Mejor respuesta",
-            "Asunto",
-            "Ayer",
-            "Hoy",
-            "Bloqueos",
-            "Compromisos",
-            "Decisiones",
-            "Acciones",
-            "vence",
-        ),
-        "vi": (
-            "Điểm mạnh",
-            "Cần cải thiện",
-            "Kết quả",
-            "Câu trả lời tốt hơn",
-            "Chủ đề",
-            "Hôm qua",
-            "Hôm nay",
-            "Trở ngại",
-            "Cam kết",
-            "Quyết định",
-            "Việc cần làm",
-            "hạn",
-        ),
-    }
-    english = (
-        "Strengths",
-        "To improve",
-        "How it went",
-        "Better",
-        "Subject",
-        "Yesterday",
-        "Today",
-        "Blockers",
-        "Commitments",
-        "Decisions",
-        "Action items",
-        "due",
-    )
-    names = dict(zip(english, labels.get(spoken_language or "en", english), strict=True))
+    english = LABELS["en"].split("|")
+    labels = LABELS.get(spoken_language or "en", LABELS["en"]).split("|")
+    names = dict(zip(english, labels, strict=True))
+
+    def bullets(items: object) -> str:
+        return "\n".join(f"- {i}" for i in as_list(items)) or f"- ({names['none']})"
+
     out: dict[str, str] = {"summary": str(data.get("summary", "")).strip()}
     if mode == "interview":
         parts: list[str] = [str(data.get("feedback", "")).strip()]
         if data.get("strengths"):
-            parts.append(f"**{names['Strengths']}**\n" + _bullets(data["strengths"]))
+            parts.append(f"**{names['Strengths']}**\n" + bullets(data["strengths"]))
         if data.get("improvements"):
-            parts.append(f"**{names['To improve']}**\n" + _bullets(data["improvements"]))
+            parts.append(f"**{names['To improve']}**\n" + bullets(data["improvements"]))
         for i, q in enumerate(map(as_dict, as_list(data.get("questions"))), 1):
             parts.append(
                 f"**Q{i} ({q.get('type', '')}): {q.get('question', '')}**\n"
@@ -608,17 +559,17 @@ def render_outputs(
         ]
         out["standup_report"] = "\n\n".join(
             [
-                f"**{names['Yesterday']}**\n" + _bullets(data.get("yesterday")),
-                f"**{names['Today']}**\n" + _bullets(data.get("today")),
-                f"**{names['Blockers']}**\n" + _bullets(data.get("blockers")),
-                f"**{names['Commitments']}**\n" + _bullets(commitments),
+                f"**{names['Yesterday']}**\n" + bullets(data.get("yesterday")),
+                f"**{names['Today']}**\n" + bullets(data.get("today")),
+                f"**{names['Blockers']}**\n" + bullets(data.get("blockers")),
+                f"**{names['Commitments']}**\n" + bullets(commitments),
             ]
         )
     else:
         if data.get("decisions"):
-            out["summary"] += f"\n\n**{names['Decisions']}**\n" + _bullets(data["decisions"])
+            out["summary"] += f"\n\n**{names['Decisions']}**\n" + bullets(data["decisions"])
         if data.get("action_items"):
-            out["summary"] += f"\n\n**{names['Action items']}**\n" + _bullets(data["action_items"])
+            out["summary"] += f"\n\n**{names['Action items']}**\n" + bullets(data["action_items"])
     return out
 
 

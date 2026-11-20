@@ -25,6 +25,7 @@ from copilot_api.routes import (
     calendar,
     career_os,
     career_os_auth,
+    client_capabilities,
     companion,
     documents,
     email_auth,
@@ -192,7 +193,17 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(personal_ai.mcp_router, prefix="/v1")
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
-    for module in (auth, email_auth, career_os_auth, me, profiles, career_os, calendar, companion):
+    for module in (
+        auth,
+        email_auth,
+        career_os_auth,
+        me,
+        profiles,
+        career_os,
+        calendar,
+        companion,
+        client_capabilities,
+    ):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
     for module in (

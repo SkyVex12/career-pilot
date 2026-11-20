@@ -2,15 +2,15 @@ import { Children, forwardRef, isValidElement, useEffect, useId, useLayoutEffect
 import { createPortal } from "react-dom";
 import { cx } from "./Button";
 
-type Option = { value: string; label: string; disabled: boolean; group?: string };
+type Option = { value: string; label: string; disabled: boolean; group?: string; direction?: string; language?: string };
 function text(node: ReactNode): string {
   return Children.toArray(node).map(child => isValidElement<{ children?: ReactNode }>(child) ? text(child.props.children) : String(child)).join("");
 }
 function optionsFrom(children: ReactNode, group?: string, disabled = false): Option[] {
   return Children.toArray(children).flatMap(child => {
-    if (!isValidElement<{ children?: ReactNode; value?: string; label?: string; disabled?: boolean }>(child)) return [];
+    if (!isValidElement<{ children?: ReactNode; value?: string; label?: string; disabled?: boolean; dir?: string; lang?: string }>(child)) return [];
     const props = child.props;
-    if (child.type === "option") return [{ value: String(props.value ?? text(props.children)), label: props.label ?? text(props.children), disabled: disabled || !!props.disabled, group }];
+    if (child.type === "option") return [{ value: String(props.value ?? text(props.children)), label: props.label ?? text(props.children), disabled: disabled || !!props.disabled, group, direction: props.dir, language: props.lang }];
     return optionsFrom(props.children, child.type === "optgroup" ? props.label : group, disabled || !!props.disabled);
   });
 }
@@ -122,7 +122,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
           const index = enabled.find(i => options[i].label.toLocaleLowerCase().startsWith(query));
           if (index != null) { if (open) setActive(index); else choose(index); }
         }
-      }}><span>{displayValue ?? options[selected]?.label ?? "Choose…"}</span></button>
+      }}><span><bdi dir={options[selected]?.direction ?? "auto"} lang={options[selected]?.language}>{displayValue ?? options[selected]?.label ?? "Choose…"}</bdi></span></button>
     {open && createPortal(<div ref={popup} id={listId} role="listbox" aria-label={props["aria-label"]}
       aria-labelledby={props["aria-label"] ? undefined : id} className="ui-select-menu" style={position}
       onPointerDown={e => { if ((e.target as Element).closest('[role="option"]')) e.preventDefault(); }}>
@@ -130,7 +130,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         {option.group && option.group !== options[index - 1]?.group && <div className="ui-select-group">{option.group}</div>}
         <div id={`${listId}-${index}`} role="option" aria-selected={index === selected} aria-disabled={option.disabled || undefined}
           className={cx("ui-select-option", active === index && "is-active")} onPointerMove={() => !option.disabled && setActive(index)}
-          onClick={() => choose(index)}><span>{option.label}</span><span aria-hidden="true">{index === selected ? "✓" : ""}</span></div>
+          onClick={() => choose(index)}><bdi dir={option.direction ?? "auto"} lang={option.language}>{option.label}</bdi><span aria-hidden="true">{index === selected ? "✓" : ""}</span></div>
       </div>)}
     </div>, trigger.current?.closest(".ui-dialog") ?? document.body)}
   </span>;

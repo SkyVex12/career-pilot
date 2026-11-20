@@ -17,7 +17,7 @@ from copilot_api.deps import AccountDep, SvcDep, UserDep
 from copilot_api.routes.career_os import PROVIDER, kind_of, obj, token_of, user_out
 from copilot_core import profiles
 from copilot_core.careeros import CareerOsError
-from copilot_core.languages import CALL_LANGUAGES, validate_language
+from copilot_core.languages import CALL_LANGUAGES, recognition_supported, validate_language
 
 router = APIRouter()
 
@@ -31,9 +31,15 @@ class CallPreference(BaseModel):
 async def call_languages(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     return {
         "items": [
-            {"id": code, "name": language.name}
+            {
+                "id": code,
+                "name": language.name,
+                "native_name": language.native_name,
+                "direction": language.direction,
+            }
             for code, language in CALL_LANGUAGES.items()
             if code in svc.settings.verified_call_languages
+            and recognition_supported(code, svc.settings.deepgram_model, svc.settings.stt_providers)
         ]
     }
 
@@ -51,6 +57,12 @@ async def call_preferences(svc: SvcDep, user: UserDep) -> dict[str, str]:
 async def save_call_preferences(body: CallPreference, svc: SvcDep, user: UserDep) -> dict[str, str]:
     try:
         validate_language(body.spoken_language, svc.settings.verified_call_languages)
+        if not recognition_supported(
+            body.spoken_language, svc.settings.deepgram_model, svc.settings.stt_providers
+        ):
+            raise ValueError(
+                "Selected language is unavailable on the configured recognition paths."
+            )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     async with svc.tx(user) as conn:

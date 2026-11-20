@@ -12,6 +12,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from copilot_core.languages import DEFAULT_CALL_LANGUAGES, validate_language
 from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
 
 LLMProviderName = Literal["bedrock", "anthropic", "openai"]
@@ -195,13 +196,33 @@ class CoreSettings(BaseSettings):
     # Deepgram: streaming STT in the gateway, one stream per channel.
     deepgram_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
     deepgram_model: str = "nova-3"
-    # Only enable additional languages after speech, grounding and device validation.
-    verified_call_languages: Annotated[tuple[str, ...], NoDecode] = ("en",)
+    # Capability allowlist; the legacy name remains a deployment-compatible alias.
+    # Availability is not a claim of representative accent/device certification.
+    verified_call_languages: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=DEFAULT_CALL_LANGUAGES,
+        validation_alias=AliasChoices("COPILOT_CALL_LANGUAGES", "COPILOT_VERIFIED_CALL_LANGUAGES"),
+    )
+    # Shared with API capability discovery so catalog and gateway enforce the same paths.
+    stt_providers: Annotated[list[Literal["deepgram", "assemblyai"]], NoDecode] = Field(
+        default_factory=lambda: ["deepgram"]
+    )
+
+    @field_validator("stt_providers", mode="before")
+    @classmethod
+    def _stt_providers(cls, value: object) -> object:
+        return split_list(value)
 
     @field_validator("verified_call_languages", mode="before")
     @classmethod
     def _call_languages(cls, value: object) -> object:
         return split_list(value)
+
+    @field_validator("verified_call_languages", mode="after")
+    @classmethod
+    def _known_languages(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for code in value:
+            validate_language(code)
+        return tuple(dict.fromkeys(value))
 
     # Valkey and the jobs queue.
     valkey_url: str = "redis://localhost:6379/0"

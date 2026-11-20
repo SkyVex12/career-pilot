@@ -14,6 +14,21 @@ pub(super) struct Evidence {
     pub app: String,
     pub audio: bool,
 }
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct DetectionDiagnostics {
+    pub microphone_active: Option<bool>,
+    pub microphone_apps: Vec<String>,
+    pub inspected_windows: u32,
+    pub matched_calls: Vec<String>,
+    pub inspection_limited: bool,
+    pub notifications_allowed: bool,
+}
+#[derive(Default)]
+pub(super) struct DetectionSample {
+    pub evidence: Vec<Evidence>,
+    pub notifications: bool,
+    pub diagnostics: DetectionDiagnostics,
+}
 #[derive(Default)]
 struct Tracked {
     first: u64,
@@ -43,9 +58,22 @@ impl Detector {
     pub fn tracking(&self) -> bool {
         !self.calls.is_empty()
     }
+    pub fn defer_pending(&mut self) {
+        if let Some(pending) = self.pending.take()
+            && let Some(call) = self.calls.get_mut(&pending.id)
+        {
+            // OS suppression or a temporary pause is not a dismissal. Only retry
+            // unanswered suggestions; a user-dismissed call stays suppressed.
+            if pending.kind == "start" {
+                call.offered = false;
+            } else {
+                call.end_offered = false;
+            }
+        }
+    }
     pub fn tick(&mut self, now: u64, evidence: &[Evidence], allowed: bool, active: bool) {
         if !allowed {
-            self.pending = None;
+            self.defer_pending();
         }
         for e in evidence {
             if !self.calls.contains_key(&e.key) && !e.audio {
@@ -141,15 +169,15 @@ pub(super) fn call_controls(app: &str, names: &BTreeSet<String>) -> bool {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-pub(super) fn sample_with_tracking(_tracking: bool) -> Result<(Vec<Evidence>, bool), String> {
-    Ok((vec![], false))
+pub(super) fn sample_with_tracking(_tracking: bool) -> Result<DetectionSample, String> {
+    Ok(DetectionSample::default())
 }
 
 #[cfg(windows)]
-pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, bool), String> {
+pub(super) fn sample_with_tracking(tracking: bool) -> Result<DetectionSample, String> {
     use windows::Win32::{
         Foundation::CloseHandle,
-        System::{Com::*, Threading::*},
+        System::{Com::*, Threading::*, Variant::VARIANT},
         UI::{Accessibility::*, Shell::*},
     };
     use windows_core::PWSTR;
@@ -167,8 +195,18 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, boo
     let audio = super::native_activity_snapshot()?;
     let input_pids: BTreeSet<u32> =
         audio.sessions.iter().filter(|s| s.input_active).map(|s| s.process_id).collect();
+    let notifications =
+        unsafe { SHQueryUserNotificationState().map(|s| s == QUNS_ACCEPTS_NOTIFICATIONS).unwrap_or(false) };
     if input_pids.is_empty() && !tracking {
-        return Ok((vec![], false));
+        return Ok(DetectionSample {
+            notifications,
+            diagnostics: DetectionDiagnostics {
+                microphone_active: Some(false),
+                notifications_allowed: notifications,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
     }
     let audio_apps: BTreeSet<String> = audio
         .sessions
@@ -188,18 +226,61 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, boo
         }
     }
     let _guard = Guard;
-    let result = (|| -> windows_core::Result<(Vec<Evidence>, bool)> {
+    let result = (|| -> windows_core::Result<DetectionSample> {
         unsafe {
-            let notifications =
-                SHQueryUserNotificationState().map(|s| s == QUNS_ACCEPTS_NOTIFICATIONS).unwrap_or(false);
-            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+            // The default provider timeout is 20 seconds. A stale background window
+            // must not delay a meeting prompt by an entire call-control scan.
+            let automation: IUIAutomation2 = CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+            automation.SetConnectionTimeout(500)?;
+            automation.SetTransactionTimeout(1000)?;
+            let started = std::time::Instant::now();
             let root = automation.GetRootElement()?;
-            let walker = automation.ControlViewWalker()?;
-            let windows = root.FindAll(TreeScope_Children, &automation.CreateTrueCondition()?)?;
+            let window_cache = automation.CreateCacheRequest()?;
+            window_cache.SetTreeScope(TreeScope_Element)?;
+            window_cache.AddProperty(UIA_ProcessIdPropertyId)?;
+            window_cache.AddProperty(UIA_IsOffscreenPropertyId)?;
+            // Enumerate the desktop's direct children only, never its entire subtree.
+            let windows = root.FindAllBuildCache(
+                TreeScope_Children,
+                &automation.CreateTrueCondition()?,
+                &window_cache,
+            )?;
+            let button_condition = automation.CreatePropertyCondition(
+                UIA_ControlTypePropertyId,
+                &VARIANT::from(UIA_ButtonControlTypeId.0),
+            )?;
+            let visible_condition =
+                automation.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false))?;
+            let controls = automation.CreateAndCondition(&button_condition, &visible_condition)?;
+            let button_cache = automation.CreateCacheRequest()?;
+            button_cache.SetTreeScope(TreeScope_Element)?;
+            button_cache.SetAutomationElementMode(AutomationElementMode_None)?;
+            button_cache.AddProperty(UIA_NamePropertyId)?;
             let mut evidence = Vec::new();
+            let mut diagnostics = DetectionDiagnostics {
+                microphone_active: Some(!input_pids.is_empty()),
+                microphone_apps: audio_apps
+                    .iter()
+                    .filter_map(|exe| app_name(exe).map(str::to_owned))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                notifications_allowed: notifications,
+                ..Default::default()
+            };
             for n in 0..windows.Length()?.min(128) {
-                let window = windows.GetElement(n)?;
-                let pid = window.CurrentProcessId()? as u32;
+                if started.elapsed() >= std::time::Duration::from_secs(3) {
+                    diagnostics.inspection_limited = true;
+                    break;
+                }
+                // A closing or inaccessible window must not discard evidence from
+                // other applications in this sample.
+                let Ok(window) = windows.GetElement(n) else { continue };
+                if window.CachedIsOffscreen().map(|v| v.as_bool()).unwrap_or(true) {
+                    continue;
+                }
+                let Ok(pid) = window.CachedProcessId() else { continue };
+                let pid = pid as u32;
                 if pid == std::process::id() || pid == 0 {
                     continue;
                 }
@@ -209,34 +290,43 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, boo
                 let Some(app) = app_name(&exe) else {
                     continue;
                 };
-                // Only names of visible button controls are inspected. Never read document text,
-                // URL bars, chat history, titles, screenshots, or invoke an accessibility action.
-                let mut names = BTreeSet::new();
-                let mut stack = vec![(window, 0)];
-                let mut seen = 0;
-                while let Some((element, depth)) = stack.pop() {
-                    seen += 1;
-                    if seen > 512 {
-                        break;
+                // Idle, unrelated applications cannot establish a new call. A tracked call
+                // remains inspectable after muting so that silence never ends assistance.
+                if !tracking && !audio_apps.contains(&exe) {
+                    continue;
+                }
+                diagnostics.inspected_windows += 1;
+                // Batch only visible button names, once per known app window. No document
+                // text, URL, title, chat, screenshot or accessibility action is read/invoked.
+                // Cached reads avoid hundreds of cross-process round trips and find deep
+                // browser controls without the old arbitrary 12-level cutoff.
+                let buttons = match window.FindAllBuildCache(TreeScope_Descendants, &controls, &button_cache)
+                {
+                    Ok(buttons) => buttons,
+                    Err(_) => {
+                        diagnostics.inspection_limited = true;
+                        continue;
                     }
-                    if element.CurrentControlType().ok() == Some(UIA_ButtonControlTypeId)
-                        && !element.CurrentIsOffscreen().map(|b| b.as_bool()).unwrap_or(true)
-                        && let Ok(name) = element.CurrentName()
+                };
+                let count = buttons.Length()?;
+                diagnostics.inspection_limited |= count > 512;
+                let mut names = BTreeSet::new();
+                for index in 0..count.min(512) {
+                    if let Ok(button) = buttons.GetElement(index)
+                        && let Ok(name) = button.CachedName()
                     {
                         names.insert(name.to_string().split(" (").next().unwrap_or("").trim().to_lowercase());
                     }
-                    if depth < 12
-                        && let Ok(child) = walker.GetFirstChildElement(&element)
-                    {
-                        stack.push((child, depth + 1));
-                    }
-                    if depth > 0
-                        && let Ok(next) = walker.GetNextSiblingElement(&element)
-                    {
-                        stack.push((next, depth));
-                    }
                 }
+                #[cfg(test)]
+                println!(
+                    "Candidate app={app}, controls={}, microphone={}, call_controls={}",
+                    names.len(),
+                    audio_apps.contains(&exe),
+                    call_controls(app, &names)
+                );
                 if call_controls(app, &names) {
+                    diagnostics.matched_calls.push(app.into());
                     evidence.push(Evidence {
                         key: format!("{pid}:{app}"),
                         app: app.into(),
@@ -248,7 +338,7 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, boo
                     });
                 }
             }
-            Ok((evidence, notifications))
+            Ok(DetectionSample { evidence, notifications, diagnostics })
         }
     })();
     result.map_err(|e| e.to_string())
@@ -311,6 +401,47 @@ mod tests {
         assert!(d.pending.is_none());
     }
     #[test]
+    fn transient_notification_suppression_defers_unanswered_suggestions() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        assert!(d.pending.is_some());
+        d.tick(6, &[e()], false, false);
+        assert!(d.pending.is_none());
+        d.tick(10, &[e()], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().kind, "start");
+        d.respond("42:Zoom", true);
+        d.tick(131, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().kind, "end");
+        d.tick(132, &[], false, true);
+        assert!(d.pending.is_none());
+        d.tick(133, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().kind, "end");
+    }
+    #[test]
+    fn pause_defers_only_unanswered_suggestions() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        d.defer_pending();
+        d.tick(10, &[e()], true, false);
+        assert!(d.pending.is_some());
+        d.respond("42:Zoom", false);
+        d.defer_pending();
+        d.tick(15, &[e()], true, false);
+        assert!(d.pending.is_none());
+    }
+    #[test]
+    fn notification_suppression_does_not_reset_user_dismissal() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        d.respond("42:Zoom", false);
+        d.tick(10, &[e()], false, false);
+        d.tick(15, &[e()], true, false);
+        assert!(d.pending.is_none());
+    }
+    #[test]
     fn dnd_active_session_and_no_audio_suppress_start() {
         let mut d = Detector::default();
         let mut silent = e();
@@ -331,12 +462,21 @@ mod host_diagnostics {
     #[test]
     #[ignore = "requires an interactive Windows desktop; diagnostic only, not call certification"]
     fn windows_accessibility_sample() {
-        let (evidence, allowed) = super::sample_with_tracking(true).unwrap();
-        println!("Native call evidence: {}; notifications allowed: {}", evidence.len(), allowed);
+        let started = std::time::Instant::now();
+        let sample = super::sample_with_tracking(true).unwrap();
+        println!("Native sample duration: {}ms", started.elapsed().as_millis());
+        println!("Native call diagnostic: {:?}", sample.diagnostics);
+        println!("Active microphone matches: {}", sample.evidence.iter().filter(|e| e.audio).count());
     }
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn sample_with_tracking(tracking: bool) -> Result<(Vec<Evidence>, bool), String> {
-    super::macos::sample(tracking)
+pub(super) fn sample_with_tracking(tracking: bool) -> Result<DetectionSample, String> {
+    let (evidence, notifications) = super::macos::sample(tracking)?;
+    let diagnostics = DetectionDiagnostics {
+        matched_calls: evidence.iter().map(|e| e.app.clone()).collect(),
+        notifications_allowed: notifications,
+        ..Default::default()
+    };
+    Ok(DetectionSample { evidence, notifications, diagnostics })
 }

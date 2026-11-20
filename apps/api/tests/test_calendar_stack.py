@@ -163,3 +163,118 @@ async def test_stale_calendar_failure_cannot_poison_new_authorization(api: Api):
         await api.admin.fetchval("select status from app.calendar_connections where id=$1", cid)
         == "active"
     )
+
+
+async def test_preparation_correction_saved_notes_and_completed_recurring_actions(api: Api):
+    import json
+
+    from copilot_core.auth import Principal
+
+    owner, headers = api.user()
+    other, other_headers = api.user()
+    await api.client.get("/v1/me", headers=headers)
+    await api.client.get("/v1/me", headers=other_headers)
+    app = await api.client.post(
+        "/v1/applications",
+        headers=headers,
+        json={"company": "Unmatched company", "role": "Engineer", "jd_text": "Build systems"},
+    )
+    assert app.status_code == 201, app.text
+    app_id = app.json()["id"]
+    foreign_app = await api.client.post(
+        "/v1/applications",
+        headers=other_headers,
+        json={"company": "Private other company", "role": "Engineer", "jd_text": "Other work"},
+    )
+    now = datetime.now(UTC)
+    sid, private_sid, live_sid = uuid4(), uuid4(), uuid4()
+    for session_id, ended, private in (
+        (sid, True, None),
+        (private_sid, True, other),
+        (live_sid, False, None),
+    ):
+        await api.admin.execute(
+            "insert into app.sessions(id,user_id,mode,store_transcript,started_at,ended_at,"
+            "title,private_context_account_id) values($1,$2,'meeting',false,$3,$4,$5,$6)",
+            session_id,
+            owner,
+            now - timedelta(hours=1),
+            now if ended else None,
+            "Design review" if session_id == sid else "Unavailable call",
+            private,
+        )
+    notes = await api.client.put(
+        f"/v1/sessions/{sid}/notes", headers=headers, json={"text": "Use the reviewed design."}
+    )
+    assert notes.status_code == 200, notes.text
+    connection_id = uuid4()
+    events = [
+        {
+            "calendar_id": "primary",
+            "instance_id": event,
+            "title": "Weekly check-in",
+            "start": (now + timedelta(minutes=5)).isoformat(),
+            "end": (now + timedelta(minutes=25)).isoformat(),
+            "all_day": False,
+            "series_id": "other-series" if event == "other" else "weekly",
+        }
+        for event in ("first", "second", "third", "other")
+    ]
+    async with api.svc.tx(Principal(owner, "Owner", None)) as conn:
+        sealed, version = await api.svc.crypto.encrypt(
+            conn,
+            owner,
+            "calendar_connections:cache",
+            str(connection_id),
+            json.dumps({"calendars": [{"id": "primary", "name": "Work"}], "events": events}),
+        )
+        await conn.execute(
+            "insert into app.calendar_connections(id,user_id,profile_id,provider,status,"
+            "selected_calendars,cache_enc,cache_key_version) "
+            "values($1,$2,$2,'google','active',array['primary'],$3,$4)",
+            connection_id,
+            owner,
+            sealed,
+            version,
+        )
+    path = "/v1/calendars/google/context"
+    original = {
+        "calendar_id": "primary",
+        "instance_id": "first",
+        "application_id": app_id,
+        "session_id": str(sid),
+        "unfinished_actions": ["Send the reviewed design"],
+    }
+    saved = await api.client.put(path, headers=headers, json=original)
+    assert saved.status_code == 200, saved.text
+    detail = (await api.client.get("/v1/meeting-preparation", headers=headers)).json()
+    assert [item["application_id"] for item in detail["applications"]] == [app_id]
+    assert [item["id"] for item in detail["saved_sessions"]] == [str(sid)]
+    first = next(item for item in detail["items"] if item["meeting"]["instance_id"] == "first")
+    assert first["selected_application_id"] == app_id
+    assert first["linked_session_id"] == str(sid)
+    assert any(item["notes"] == "Use the reviewed design." for item in first["previous"])
+    assert first["unfinished_actions"] == ["Send the reviewed design"]
+    # The latest explicit empty list closes actions, instead of merging old occurrences forever.
+    completed = {**original, "instance_id": "second", "session_id": None, "unfinished_actions": []}
+    assert (await api.client.put(path, headers=headers, json=completed)).status_code == 200
+    separate = {**completed, "instance_id": "other", "unfinished_actions": ["Separate action"]}
+    assert (await api.client.put(path, headers=headers, json=separate)).status_code == 200
+    detail = (await api.client.get("/v1/meeting-preparation", headers=headers)).json()
+    third = next(item for item in detail["items"] if item["meeting"]["instance_id"] == "third")
+    assert third["unfinished_actions"] == []
+    assert all(not item["unfinished_actions"] for item in third["previous"])
+    assert any(item["notes"] == "Use the reviewed design." for item in third["previous"])
+    for forbidden in (
+        {**original, "application_id": foreign_app.json()["id"]},
+        {**original, "session_id": str(private_sid)},
+        {**original, "session_id": str(live_sid)},
+    ):
+        assert (await api.client.put(path, headers=headers, json=forbidden)).status_code == 404
+    assert (await api.client.put(path, headers=other_headers, json=original)).status_code == 404
+    assert (await api.client.delete(f"/v1/sessions/{sid}", headers=headers)).status_code == 204
+    detail = (await api.client.get("/v1/meeting-preparation", headers=headers)).json()
+    assert detail["saved_sessions"] == []
+    assert all(item["linked_session_id"] is None for item in detail["items"])
+    assert all(not prior["notes"] for item in detail["items"] for prior in item["previous"])
+    assert not api.take("session.create")

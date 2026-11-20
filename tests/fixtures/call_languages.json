@@ -1,0 +1,146 @@
+[
+  {
+    "language": "en",
+    "question": "How did you improve PostgreSQL performance at Acme?",
+    "statement": "Thank you for your time today",
+    "evidence": "I reduced database latency from 200 ms to 120 ms."
+  },
+  {
+    "language": "es",
+    "question": "Cómo mejoraste el rendimiento de PostgreSQL en Acme",
+    "statement": "Muchas gracias por tu tiempo hoy",
+    "evidence": "Reduje la latencia de la base de datos de 200 ms a 120 ms."
+  },
+  {
+    "language": "vi",
+    "question": "Bạn đã cải thiện hiệu suất PostgreSQL tại Acme như thế nào",
+    "statement": "Cảm ơn bạn đã dành thời gian hôm nay",
+    "evidence": "Tôi giảm độ trễ cơ sở dữ liệu từ 200 ms xuống 120 ms."
+  },
+  {
+    "language": "zh",
+    "question": "你如何提升Acme的PostgreSQL性能？",
+    "statement": "感谢您今天抽出时间",
+    "evidence": "我将数据库延迟从200毫秒降低到120毫秒。"
+  },
+  {
+    "language": "hi",
+    "question": "आपने Acme में PostgreSQL का प्रदर्शन कैसे सुधारा",
+    "statement": "आज अपना समय देने के लिए धन्यवाद",
+    "evidence": "मैंने डेटाबेस विलंबता 200 ms से घटाकर 120 ms कर दी।"
+  },
+  {
+    "language": "ar",
+    "question": "كيف حسنت أداء PostgreSQL في Acme؟",
+    "statement": "شكرا لك على وقتك اليوم",
+    "evidence": "خفضت زمن استجابة قاعدة البيانات من 200 ms إلى 120 ms."
+  },
+  {
+    "language": "fr",
+    "question": "Comment avez-vous amélioré les performances de PostgreSQL chez Acme",
+    "statement": "Merci pour votre temps aujourd’hui",
+    "evidence": "J’ai réduit la latence de la base de données de 200 ms à 120 ms."
+  },
+  {
+    "language": "bn",
+    "question": "আপনি Acme তে PostgreSQL এর কর্মক্ষমতা কীভাবে উন্নত করেছেন",
+    "statement": "আজ সময় দেওয়ার জন্য আপনাকে ধন্যবাদ",
+    "evidence": "আমি ডেটাবেসের বিলম্ব 200 ms থেকে 120 ms করেছি।"
+  },
+  {
+    "language": "pt",
+    "question": "Como você melhorou o desempenho do PostgreSQL na Acme",
+    "statement": "Obrigado pelo seu tempo hoje",
+    "evidence": "Reduzi a latência do banco de dados de 200 ms para 120 ms."
+  },
+  {
+    "language": "ru",
+    "question": "Как вы улучшили производительность PostgreSQL в Acme",
+    "statement": "Спасибо за ваше время сегодня",
+    "evidence": "Я сократил задержку базы данных с 200 ms до 120 ms."
+  },
+  {
+    "language": "ur",
+    "question": "آپ نے Acme میں PostgreSQL کی کارکردگی کیسے بہتر کی",
+    "statement": "آج اپنا وقت دینے کا شکریہ",
+    "evidence": "میں نے ڈیٹابیس کی تاخیر 200 ms سے کم کر کے 120 ms کی۔"
+  },
+  {
+    "language": "id",
+    "question": "Bagaimana Anda meningkatkan kinerja PostgreSQL di Acme",
+    "statement": "Terima kasih atas waktu Anda hari ini",
+    "evidence": "Saya mengurangi latensi basis data dari 200 ms menjadi 120 ms."
+  },
+  {
+    "language": "de",
+    "question": "Wie haben Sie die Leistung von PostgreSQL bei Acme verbessert",
+    "statement": "Vielen Dank für Ihre Zeit heute",
+    "evidence": "Ich habe die Datenbanklatenz von 200 ms auf 120 ms reduziert."
+  },
+  {
+    "language": "ja",
+    "question": "AcmeでPostgreSQLの性能をどのように改善しましたか？",
+    "statement": "本日はお時間をいただきありがとうございます",
+    "evidence": "データベースの遅延を200ミリ秒から120ミリ秒に削減しました。"
+  },
+  {
+    "language": "tr",
+    "question": "Acme şirketinde PostgreSQL performansını nasıl iyileştirdiniz",
+    "statement": "Bugün zaman ayırdığınız için teşekkür ederim",
+    "evidence": "Veritabanı gecikmesini 200 ms değerinden 120 ms değerine düşürdüm."
+  },
+  {
+    "language": "ta",
+    "question": "Acme நிறுவனத்தில் PostgreSQL செயல்திறனை எப்படி மேம்படுத்தினீர்கள்",
+    "statement": "இன்று நேரம் ஒதுக்கியதற்கு நன்றி",
+    "evidence": "தரவுத்தள தாமதத்தை 200 ms இலிருந்து 120 ms ஆகக் குறைத்தேன்."
+  },
+  {
+    "language": "te",
+    "question": "Acme లో PostgreSQL పనితీరును మీరు ఎలా మెరుగుపరిచారు",
+    "statement": "ఈరోజు మీ సమయం ఇచ్చినందుకు ధన్యవాదాలు",
+    "evidence": "నేను డేటాబేస్ జాప్యాన్ని 200 ms నుండి 120 ms కు తగ్గించాను."
+  },
+  {
+    "language": "mr",
+    "question": "तुम्ही Acme मध्ये PostgreSQL ची कामगिरी कशी सुधारली",
+    "statement": "आज वेळ दिल्याबद्दल धन्यवाद",
+    "evidence": "मी डेटाबेसचा विलंब 200 ms वरून 120 ms पर्यंत कमी केला."
+  },
+  {
+    "language": "ko",
+    "question": "Acme에서 PostgreSQL 성능을 어떻게 개선했나요?",
+    "statement": "오늘 시간 내주셔서 감사합니다",
+    "evidence": "데이터베이스 지연 시간을 200 ms에서 120 ms로 줄였습니다."
+  },
+  {
+    "language": "it",
+    "question": "Come hai migliorato le prestazioni di PostgreSQL in Acme",
+    "statement": "Grazie per il tempo dedicato oggi",
+    "evidence": "Ho ridotto la latenza del database da 200 ms a 120 ms."
+  },
+  {
+    "language": "fa",
+    "question": "چگونه عملکرد PostgreSQL را در Acme بهبود دادید؟",
+    "statement": "از وقتی که امروز گذاشتید سپاسگزارم",
+    "evidence": "تأخیر پایگاه داده را از 200 ms به 120 ms کاهش دادم."
+  },
+  {
+    "language": "th",
+    "question": "คุณปรับปรุงประสิทธิภาพ PostgreSQL ที่ Acme อย่างไร",
+    "statement": "ขอบคุณที่สละเวลาในวันนี้",
+    "evidence": "ฉันลดความหน่วงของฐานข้อมูลจาก 200 ms เหลือ 120 ms"
+  },
+  {
+    "language": "sw",
+    "question": "Uliboresha vipi utendaji wa PostgreSQL katika Acme",
+    "statement": "Asante kwa muda wako leo",
+    "evidence": "Nilipunguza ucheleweshaji wa hifadhidata kutoka 200 ms hadi 120 ms."
+  },
+  {
+    "language": "pa",
+    "question": "ਤੁਸੀਂ Acme ਵਿੱਚ PostgreSQL ਦੀ ਕਾਰਗੁਜ਼ਾਰੀ ਕਿਵੇਂ ਸੁਧਾਰੀ",
+    "statement": "ਅੱਜ ਸਮਾਂ ਦੇਣ ਲਈ ਧੰਨਵਾਦ",
+    "evidence": "ਮੈਂ ਡੇਟਾਬੇਸ ਦੀ ਦੇਰੀ 200 ms ਤੋਂ ਘਟਾ ਕੇ 120 ms ਕਰ ਦਿੱਤੀ।"
+  }
+]

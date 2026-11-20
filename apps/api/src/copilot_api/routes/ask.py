@@ -1,7 +1,10 @@
 """Central Ask: private conversations, bounded retrieval, and cancellable generation."""
 
 import asyncio
+import contextlib
+import inspect
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
@@ -10,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep, require_link
-from copilot_core import ask, personal_ai
+from copilot_core import ask, embed, jobs, personal_ai
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.db import Conn
@@ -177,7 +180,10 @@ async def get_conversation(
     return {
         **conversation(row),
         "messages": messages,
-        "retrieval_notice": "Search uses bounded recent source windows. Narrow by dates or "
+        "retrieval_notice": "Older uploaded resumes may need background text preparation; "
+        "retry shortly. "
+        "Scanned or oversized files may have no extractable original text. "
+        "Search uses bounded recent source windows. Narrow by dates or "
         "call/document to find older information. Absence of evidence is not proof of absence.",
         "retention_notice": "Answers retain excerpts until this conversation is deleted. "
         "Deleting a source prevents new retrieval but does not erase earlier answers.",
@@ -349,6 +355,76 @@ def source(
     }
 
 
+async def rank_sources(
+    svc: Services, question: str, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    ranked = ask.rank(question, candidates)
+    # Strong lexical hits keep the zero-provider path. Weak/no overlap can mean the
+    # question and the evidence use different scripts/languages, not missing facts.
+    if not candidates or (
+        ranked and ask.lexical_score(question, ranked[0]) >= min(3, len(ask.terms(question)))
+    ):
+        return ranked
+    embedder = None
+    try:
+        embedder = embed.make_embedder(svc.settings, timeout_s=10)
+        if embedder is None:
+            return ranked
+        async with asyncio.timeout(12):
+            semantic = await ask.semantic_rank(
+                question, candidates, embedder, svc.settings.ask_semantic_min_similarity
+            )
+        seen = {(s["kind"], s["id"]) for s in semantic}
+        return (semantic + [s for s in ranked if (s["kind"], s["id"]) not in seen])[:12]
+    except Exception:
+        # Never log decrypted text or provider response bodies. Retrieval failure
+        # leaves bounded lexical evidence, not unrelated recent private records.
+        logging.getLogger(__name__).warning(
+            "Semantic retrieval unavailable; using lexical evidence"
+        )
+        return ranked
+    finally:
+        client = getattr(embedder, "client", None)
+        close = getattr(client, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                if inspect.iscoroutinefunction(close):
+                    await close()
+                else:
+                    result = await asyncio.to_thread(close)
+                    if inspect.isawaitable(result):
+                        await result
+
+
+async def private_brief_sources(
+    svc: Services, user: Principal, account: Principal, scope: ask.Scope
+) -> list[dict[str, Any]]:
+    if scope.kind not in ("auto", "all", "company", "application"):
+        return []
+    async with svc.tx(account) as conn:
+        briefs = await personal_ai.latest_briefs(
+            conn,
+            svc.crypto,
+            account.user_id,
+            user.user_id,
+            employer_id=scope.id if scope.kind == "company" else None,
+            job_id=scope.id if scope.kind == "application" else None,
+        )
+    return [
+        source(
+            "private_brief",
+            brief["id"],
+            brief["title"],
+            brief["content"],
+            brief["prepared_at"],
+            record_type="user-provided private brief",
+        )
+        for brief in briefs
+        if (not scope.from_date or str(brief["prepared_at"])[:10] >= str(scope.from_date))
+        and (not scope.to_date or str(brief["prepared_at"])[:10] <= str(scope.to_date))
+    ]
+
+
 async def retrieve(
     conn: Conn,
     svc: Services,
@@ -356,6 +432,8 @@ async def retrieve(
     scope: ask.Scope,
     question: str,
     account_id: UUID | None = None,
+    *,
+    rank_results: bool = True,
 ) -> list[dict[str, Any]]:
     """Decrypt a bounded candidate window, rank locally, send at most 12 excerpts.
 
@@ -403,6 +481,63 @@ async def retrieve(
                     row["updated_at"],
                     record_type="approved fact",
                     employer_id=str(row["employer_id"]) if row["employer_id"] else None,
+                )
+            )
+    if scope.kind in ("auto", "all", "application"):
+        backfills = 0
+        for row in await conn.fetch(
+            "select * from app.resume_versions where "
+            "($1::uuid is null or application_id=$1 or kind='base') "
+            "and ($2::date is null or updated_at::date >= $2) "
+            "and ($3::date is null or updated_at::date <= $3) order by updated_at desc limit 12",
+            application,
+            scope.from_date,
+            scope.to_date,
+        ):
+            original = row["text_enc"] is None
+            if original and row["original_content_sha256"] != row["content_sha256"]:
+                # Existing uploads are lazily backfilled in the worker, never parsed in Ask.
+                if backfills < 3:
+                    backfills += 1
+                    try:
+                        async with asyncio.timeout(2):
+                            await svc.queue.send(
+                                jobs.envelope(
+                                    "resume.original",
+                                    f"resume-original:{row['id']}:{row['content_sha256']}",
+                                    user.user_id,
+                                    {
+                                        "resume_version_id": str(row["id"]),
+                                        "content_sha256": row["content_sha256"],
+                                    },
+                                )
+                            )
+                    except Exception:
+                        logging.getLogger(__name__).warning("Resume text backfill unavailable")
+                continue
+            column, key_column = (
+                ("original_text_enc", "original_text_key_version")
+                if original
+                else ("text_enc", "key_version")
+            )
+            if row[column] is None:
+                continue
+            text = await svc.crypto.decrypt(
+                conn,
+                user.user_id,
+                "resume_versions:original" if original else "resume_versions",
+                str(row["id"]),
+                row[column],
+                row[key_column],
+            )
+            candidates.append(
+                source(
+                    "resume",
+                    row["id"],
+                    row["label"] or "Resume",
+                    text,
+                    row["updated_at"],
+                    record_type="original resume",
                 )
             )
     if scope.kind in ("auto", "all", "application"):
@@ -561,7 +696,9 @@ async def retrieve(
         candidates = [s for s in candidates if s["date"][:10] >= str(scope.from_date)]
     if scope.to_date:
         candidates = [s for s in candidates if s["date"][:10] <= str(scope.to_date)]
-    ranked = ask.rank(question, candidates)
+    if not rank_results:
+        return candidates
+    ranked = await rank_sources(svc, question, candidates)
     # An explicit item is useful even for follow-ups such as "summarize it".
     if not ranked and scope.kind in ("application", "document", "call"):
         ranked = candidates[:12]
@@ -653,17 +790,11 @@ async def generate(
             if history:
                 query = history[-1]["question"] + "\n" + query
         async with svc.tx(user) as conn:
-            sources = await retrieve(conn, svc, user, scope, query, account.user_id)
+            sources = await retrieve(
+                conn, svc, user, scope, query, account.user_id, rank_results=False
+            )
         if scope.kind in ("auto", "all", "company", "application"):
-            async with svc.tx(account) as conn:
-                briefs = await personal_ai.latest_briefs(
-                    conn,
-                    svc.crypto,
-                    account.user_id,
-                    user.user_id,
-                    employer_id=scope.id if scope.kind == "company" else None,
-                    job_id=scope.id if scope.kind == "application" else None,
-                )
+            brief_sources = await private_brief_sources(svc, user, account, scope)
             if scope.kind in ("auto", "all", "application"):
                 async with svc.tx(account) as conn:
                     rows = await conn.fetch(
@@ -703,25 +834,13 @@ async def generate(
                                     record_type="tentative practice response",
                                 )
                             )
-            for brief in briefs:
-                when = str(brief["prepared_at"])
-                if scope.from_date and when[:10] < str(scope.from_date):
-                    continue
-                if scope.to_date and when[:10] > str(scope.to_date):
-                    continue
-                sources.append(
-                    source(
-                        "private_brief",
-                        brief["id"],
-                        brief["title"],
-                        brief["content"],
-                        brief["prepared_at"],
-                        record_type="user-provided private brief",
-                    )
-                )
+            sources.extend(brief_sources)
             if scope.kind in ("auto", "all"):
                 sources.extend(await calendar_sources(svc, account, user, scope))
-            sources = ask.rank(query, sources) or sources[:12]
+        candidates = sources
+        sources = await rank_sources(svc, query, candidates)
+        if not sources and scope.kind in ("application", "document", "call"):
+            sources = candidates[:12]
 
         async def progress(text: str) -> None:
             async with svc.tx(account) as conn:
@@ -967,6 +1086,7 @@ async def resolve_source(
                     "document": "knowledge_chunks",
                     "work_log": "work_logs",
                     "summary": "session_outputs",
+                    "resume": "resume_versions",
                 }
                 if kind not in tables:
                     raise HTTPException(404, "source unavailable")
@@ -1002,6 +1122,34 @@ async def resolve_source(
                             row["jd_text"],
                             row["updated_at"],
                             href=f"/applications/{source_id}",
+                        )
+                    if kind == "resume":
+                        original = row["text_enc"] is None
+                        column, key_column = (
+                            ("original_text_enc", "original_text_key_version")
+                            if original
+                            else ("text_enc", "key_version")
+                        )
+                        if row[column] is None or (
+                            original and row["original_content_sha256"] != row["content_sha256"]
+                        ):
+                            raise HTTPException(404, "Resume text unavailable")
+                        text = await svc.crypto.decrypt(
+                            conn,
+                            user.user_id,
+                            "resume_versions:original" if original else "resume_versions",
+                            source_id,
+                            row[column],
+                            row[key_column],
+                        )
+                        return source(
+                            kind,
+                            source_id,
+                            row["label"] or "Resume",
+                            text,
+                            row["updated_at"],
+                            record_type="original resume",
+                            href="/prep",
                         )
                     column = {
                         "document": "body_enc",
