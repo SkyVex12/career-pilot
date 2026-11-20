@@ -317,3 +317,12 @@ def test_fixture_language_selector_uses_all_actual_catalog_labels_but_claims_no_
         assert response["fixture"] is True
         assert "Synthetic selector" in response["capability_notice"]
         assert "no speech or model provider" in response["capability_notice"]
+
+
+def test_setup_choices_can_recover_without_restarting_fixture():
+    with TestClient(fixture.create_app()) as c:
+        assert c.post("/__fixture", json={"mode": "setup_unavailable"}).status_code == 200
+        assert c.get("/v1/call-languages", headers=HEADERS).status_code == 503
+        assert c.get("/v1/ask/context-options", headers=HEADERS).status_code == 200
+        c.post("/__fixture", json={"mode": "normal"})
+        assert len(c.get("/v1/call-languages", headers=HEADERS).json()["items"]) == 24

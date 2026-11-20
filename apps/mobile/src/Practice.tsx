@@ -41,7 +41,7 @@ import {
 } from "./ui";
 import {
   cleanupPracticeMedia,
-  parsePracticeChoices,
+  loadPracticeSetup,
   parsePracticeContext,
   parsePracticeHistory,
   parsePracticeSession,
@@ -104,7 +104,10 @@ export function Practice({
     [language, setLanguage] = useState(""),
     [application, setApplication] = useState("");
   const [languages, setLanguages] = useState<Choice[]>([]),
-    [applications, setApplications] = useState<Choice[]>([]);
+    [applications, setApplications] = useState<Choice[]>([]),
+    [choicesLoading, setChoicesLoading] = useState(true),
+    [choicesError, setChoicesError] = useState(""),
+    [choicesAttempt, setChoicesAttempt] = useState(0);
   const [context, setContext] = useState<
       { label: string; excerpt: string }[] | null
     >(null),
@@ -137,6 +140,7 @@ export function Practice({
   const viewScope = useRef(new PracticeScope()),
     mediaScope = useRef(new PracticeScope()),
     resourceScope = useRef(new PracticeScope()),
+    choicesScope = useRef(new PracticeScope()),
     contextScope = useRef(new PracticeScope());
   const lock = useRef(new PracticeBusy()),
     files = useRef(new Set<string>()),
@@ -319,34 +323,6 @@ export function Practice({
     foreground.current =
       visibleRef.current && AppState.currentState === "active";
     void refresh();
-    const ticket = resourceScope.current.begin();
-    void Promise.allSettled([
-      request("/call-languages", undefined, "GET", ticket.signal),
-      request(
-        "/ask/context-options?kind=application",
-        undefined,
-        "GET",
-        ticket.signal,
-      ),
-    ])
-      .then((results) => {
-        if (!alive.current || !resourceScope.current.current(ticket)) return;
-        try {
-          if (results[0].status === "fulfilled")
-            setLanguages(parsePracticeChoices(results[0].value, "languages"));
-          if (results[1].status === "fulfilled")
-            setApplications(
-              parsePracticeChoices(results[1].value, "applications"),
-            );
-          if (results.some((r) => r.status === "rejected"))
-            setNotice(
-              "Some setup choices could not load. Reopen Interview prep to try again; profile defaults are still available.",
-            );
-        } catch (e) {
-          setError(message(e));
-        }
-      })
-      .finally(() => resourceScope.current.finish(ticket));
     const subscription = AppState.addEventListener("change", (state) => {
       updateVisibility(state === "active" && visibleRef.current);
     });
@@ -362,6 +338,33 @@ export function Practice({
       void pauseAway(current.current);
     };
   }, [api, profile]);
+  useEffect(() => {
+    const ticket = choicesScope.current.begin();
+    setChoicesLoading(true);
+    void loadPracticeSetup((path) =>
+      request(path, undefined, "GET", ticket.signal),
+    )
+      .then((result) => {
+        if (!alive.current || !choicesScope.current.current(ticket)) return;
+        if (result.languages !== null) setLanguages(result.languages);
+        if (result.applications !== null) setApplications(result.applications);
+        setChoicesError(
+          result.unavailable.length
+            ? `Could not load ${result.unavailable.join(" and ")}. Profile defaults are still available.`
+            : "",
+        );
+      })
+      .catch((e) => {
+        if (alive.current && choicesScope.current.current(ticket))
+          setChoicesError(message(e));
+      })
+      .finally(() => {
+        if (alive.current && choicesScope.current.current(ticket))
+          setChoicesLoading(false);
+        choicesScope.current.finish(ticket);
+      });
+    return () => choicesScope.current.invalidate();
+  }, [api, profile, choicesAttempt]);
   useEffect(() => {
     if (!imported || imported === lastImported.current) return;
     lastImported.current = imported;
@@ -877,6 +880,21 @@ export function Practice({
                     then practice follow-ups.
                   </Notice>
                 ) : null}
+                {choicesError ? (
+                  <Notice
+                    action={
+                      <Button
+                        label="Retry setup choices"
+                        secondary
+                        icon="refresh"
+                        loading={choicesLoading}
+                        onPress={() => setChoicesAttempt((value) => value + 1)}
+                      />
+                    }
+                  >
+                    {choicesError}
+                  </Notice>
+                ) : null}
                 <Card>
                   <View style={{ gap: 4 }}>
                     <Txt style={{ fontWeight: "700", fontSize: 19 }}>
@@ -926,7 +944,7 @@ export function Practice({
                       ...languages,
                     ]}
                     onChange={setLanguage}
-                    disabled={!!busy}
+                    disabled={!!busy || choicesLoading}
                   />
                   <Select
                     label="Application context"
@@ -936,7 +954,7 @@ export function Practice({
                       ...applications,
                     ]}
                     onChange={setApplication}
-                    disabled={!!busy}
+                    disabled={!!busy || choicesLoading}
                   />
                 </Card>
                 <Card subtle>

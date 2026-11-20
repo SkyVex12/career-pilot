@@ -245,6 +245,28 @@ export function parsePracticeChoices(
     },
   );
 }
+/** Load each setup resource independently so a failed endpoint cannot hide the other. */
+export async function loadPracticeSetup(
+  request: (path: string) => Promise<unknown>,
+) {
+  const results = await Promise.allSettled([
+    request("/call-languages").then((value) =>
+      parsePracticeChoices(value, "languages"),
+    ),
+    request("/ask/context-options?kind=application").then((value) =>
+      parsePracticeChoices(value, "applications"),
+    ),
+  ]);
+  return {
+    languages: results[0].status === "fulfilled" ? results[0].value : null,
+    applications: results[1].status === "fulfilled" ? results[1].value : null,
+    unavailable: results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [index === 0 ? "spoken languages" : "application context"]
+        : [],
+    ),
+  };
+}
 export function parsePracticeContext(
   value: unknown,
 ): { label: string; excerpt: string }[] {

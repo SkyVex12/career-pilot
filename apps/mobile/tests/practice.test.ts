@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   cleanupPracticeMedia,
+  loadPracticeSetup,
   parsePracticeChoices,
   parsePracticeContext,
   parsePracticeHistory,
@@ -245,4 +246,36 @@ test("practice polling never overlaps and cancellation stops late rescheduling",
   release();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(calls, 1);
+});
+
+test("failed setup resources can be retried independently without remounting or losing available choices", async () => {
+  let languagesAvailable = false;
+  const request = async (path: string) => {
+    if (path === "/call-languages") {
+      if (!languagesAvailable) throw new Error("temporary 503");
+      return { items: [{ id: "es", name: "Spanish" }] };
+    }
+    return { options: [{ id: "job1", label: "Product engineer" }] };
+  };
+  const first = await loadPracticeSetup(request);
+  assert.deepEqual(first.unavailable, ["spoken languages"]);
+  assert.equal(first.languages, null);
+  assert.deepEqual(first.applications, [
+    { value: "job1", label: "Product engineer" },
+  ]);
+  languagesAvailable = true;
+  const retry = await loadPracticeSetup(request);
+  assert.deepEqual(retry.unavailable, []);
+  assert.deepEqual(retry.languages, [{ value: "es", label: "Spanish" }]);
+  assert.deepEqual(retry.applications, first.applications);
+});
+test("malformed setup catalog does not discard independently valid application choices", async () => {
+  const result = await loadPracticeSetup(async (path) =>
+    path === "/call-languages"
+      ? { items: [{ id: "en", name: {} }] }
+      : { options: [{ id: "job1", label: "Engineer" }] },
+  );
+  assert.deepEqual(result.unavailable, ["spoken languages"]);
+  assert.equal(result.languages, null);
+  assert.deepEqual(result.applications, [{ value: "job1", label: "Engineer" }]);
 });

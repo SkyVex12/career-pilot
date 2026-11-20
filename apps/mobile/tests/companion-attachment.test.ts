@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Api, type Tokens } from "../src/api.ts";
 import {
   companionDeviceLabel,
+  CompanionAttachmentRetirements,
   createCompanionIdentityReader,
   findReusableCompanionAttachment,
 } from "../src/companionAttachment.ts";
@@ -296,4 +297,132 @@ test("disconnecting grants cannot be reused from stale server snapshots after ti
       ?.attachment_id,
     replacement.attachment_id,
   );
+});
+
+test("profile A to B to A excludes a retiring grant before delayed cleanup finishes", async () => {
+  let finishDelete!: (response: Response) => void;
+  const replacement = {
+    ...grant,
+    attachment_id: "55555555-5555-4555-8555-555555555555",
+  };
+  const calls: string[] = [];
+  const api = new Api(
+    "https://example.invalid",
+    { read: async () => null, write: async () => {} },
+    async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(`${init?.method} ${path}`);
+      if (init?.method === "DELETE") {
+        assert.equal(path, `/v1/companion/attachments/${attachment}`);
+        assert.equal(
+          (init.headers as Record<string, string>)["x-copilot-profile"],
+          profile,
+        );
+        return new Promise<Response>((resolve) => {
+          finishDelete = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ items: [grant] }));
+    },
+  );
+  await api.accept({
+    access_token: "a",
+    refresh_token: "r",
+    email: "a@example.test",
+    expires_in: 3600,
+  });
+  api.profile = profile;
+  api.attachments.add(attachment);
+  const oldMount = api.companionRetirements;
+  // Unmount retirement happens synchronously, before the cleanup request yields.
+  oldMount.retire(attachment);
+  const cleanup = api
+    .request(`/companion/attachments/${attachment}`, undefined, "DELETE")
+    .then(() => api.attachments.delete(attachment));
+  api.profile = "66666666-6666-4666-8666-666666666666";
+  api.profile = profile;
+  const newMount = api.companionRetirements;
+  assert.equal(newMount, oldMount);
+  const snapshot = await api.request("/companion/attachments");
+  assert.equal(
+    findReusableCompanionAttachment(
+      snapshot,
+      { ...expected, excludedIds: newMount },
+      now,
+    ),
+    null,
+  );
+  // The new screen creates G2 rather than adopting G from the still-live server snapshot.
+  api.attachments.add(replacement.attachment_id);
+  finishDelete(new Response(null, { status: 204 }));
+  await cleanup;
+  assert.equal(api.attachments.has(attachment), false);
+  assert.equal(api.attachments.has(replacement.attachment_id), true);
+  assert.equal(
+    findReusableCompanionAttachment(
+      { items: [grant, replacement] },
+      { ...expected, excludedIds: newMount },
+      now,
+    )?.attachment_id,
+    replacement.attachment_id,
+  );
+  assert.equal(calls.filter((path) => path.startsWith("DELETE")).length, 1);
+});
+
+test("retirement scope is bounded and stops reuse instead of forgetting a late revoke", () => {
+  const retired = new CompanionAttachmentRetirements();
+  for (let index = 0; index < 128; index++) retired.retire(`retired-${index}`);
+  assert.equal(retired.has("retired-0"), true);
+  assert.equal(retired.has(attachment), false);
+  retired.retire("retired-128");
+  assert.equal(retired.has("retired-0"), true);
+  assert.equal(
+    findReusableCompanionAttachment(
+      { items: [grant] },
+      { ...expected, excludedIds: retired },
+      now,
+    ),
+    null,
+  );
+});
+
+test("signout and a new account discard retirement state without changing captured old scopes", async () => {
+  const revoked: string[] = [];
+  const api = new Api(
+    "https://example.invalid",
+    { read: async () => null, write: async () => {} },
+    async (input, init) => {
+      if (init?.method === "DELETE") revoked.push(String(input));
+      return new Response(null, { status: 204 });
+    },
+  );
+  const tokens = {
+    access_token: "a",
+    refresh_token: "r",
+    email: "a@example.test",
+    expires_in: 3600,
+  };
+  await api.accept(tokens);
+  const oldMount = api.companionRetirements;
+  api.attachments.add(attachment);
+  assert.equal(await api.signout(), true);
+  assert.equal(oldMount.has(attachment), true);
+  assert.equal(api.companionRetirements.has(attachment), false);
+  assert.deepEqual(revoked, [
+    `https://example.invalid/v1/companion/attachments/${attachment}`,
+  ]);
+  await api.accept({ ...tokens, access_token: "b", email: "b@example.test" });
+  oldMount.retire("late-old-account-response");
+  assert.equal(
+    api.companionRetirements.has("late-old-account-response"),
+    false,
+  );
+  assert.equal(api.attachments.size, 0);
+  const beforeReplacement = api.companionRetirements;
+  beforeReplacement.retire(attachment);
+  api.attachments.add(attachment);
+  await api.accept({ ...tokens, access_token: "c", email: "c@example.test" });
+  assert.notEqual(api.companionRetirements, beforeReplacement);
+  assert.equal(api.companionRetirements.has(attachment), false);
+  assert.equal(api.attachments.size, 0);
 });

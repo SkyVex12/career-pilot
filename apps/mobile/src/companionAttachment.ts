@@ -63,8 +63,24 @@ export type CompanionAttachmentMatch = {
   deviceName: string;
   profileId: string;
   sessionId: string;
-  excludedIds?: ReadonlySet<string>;
+  excludedIds?: Pick<ReadonlySet<string>, "has">;
 };
+/** Kept for one authenticated API lifecycle, including profile/screen remounts.
+ * A revoke may finish after its local timeout, so retired grants cannot be reused.
+ * At the bound, disable reuse until the next login instead of forgetting a pending revoke.
+ */
+export class CompanionAttachmentRetirements {
+  private ids = new Set<string>();
+  private full = false;
+  retire(id: string): void {
+    if (this.full || this.ids.has(id)) return;
+    if (this.ids.size >= 128) this.full = true;
+    else this.ids.add(id);
+  }
+  has(id: string): boolean {
+    return this.full || this.ids.has(id);
+  }
+}
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }

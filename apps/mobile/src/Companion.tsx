@@ -68,8 +68,8 @@ export function Companion({
   attachedRef.current = attachment;
   const refreshScope = useRef(new RequestScope());
   const attachAbort = useRef<AbortController | null>(null);
-  // A timed-out revoke may still finish remotely; never reuse its grant again.
-  const retiringAttachments = useRef(new Set<string>());
+  // Retain the account's scope through profile remounts and late old-account cleanup.
+  const retiringAttachments = useRef(api.companionRetirements).current;
   const [reconnect, setReconnect] = useState(0);
   const mounted = useRef(true),
     attaching = useRef(false);
@@ -84,7 +84,8 @@ export function Companion({
       refreshScope.current.invalidate();
       attachAbort.current?.abort();
       const attached = attachedRef.current;
-      if (attached)
+      if (attached) {
+        retiringAttachments.retire(attached.attachment_id);
         void withDeadline(
           (signal) =>
             api.request(
@@ -103,6 +104,7 @@ export function Companion({
             if (e instanceof ApiError && e.status === 404)
               api.attachments.delete(attached.attachment_id);
           });
+      }
     };
   }, []);
   const c = useContext(Theme);
@@ -438,7 +440,7 @@ export function Companion({
             deviceName,
             profileId: s.profile_id,
             sessionId: s.session_id,
-            excludedIds: retiringAttachments.current,
+            excludedIds: retiringAttachments,
           });
           const token = await api.token();
           signal.throwIfAborted();
@@ -473,6 +475,13 @@ export function Companion({
               "Invalid attachment response. Refresh the session list.",
             );
           if (!mounted.current || signal.aborted || profile !== api.profile) {
+            // A timed-out POST body can settle after a newer attempt has adopted its grant.
+            if (
+              retiringAttachments === api.companionRetirements &&
+              api.attachments.has(a.attachment_id)
+            )
+              return;
+            retiringAttachments.retire(a.attachment_id);
             await withDeadline(
               (bounded) =>
                 fetch(
@@ -483,6 +492,10 @@ export function Companion({
             ).catch(() => {});
             return;
           }
+          if (existing && retiringAttachments.has(a.attachment_id))
+            throw new Error(
+              "This display was disconnected while connecting. Try connecting again.",
+            );
           api.attachments.add(a.attachment_id);
           sequence.current = 0;
           liveRef.current = emptyLive();
@@ -505,7 +518,7 @@ export function Companion({
   }
   async function detach() {
     const a = attachment;
-    if (a) retiringAttachments.current.add(a.attachment_id);
+    if (a) retiringAttachments.retire(a.attachment_id);
     setAttachment(null);
     liveRef.current = emptyLive();
     setLive(liveRef.current);

@@ -17,6 +17,7 @@ SESSION = "22222222-2222-4222-8222-222222222222"
 ATTACHMENT = "33333333-3333-4333-8333-333333333333"
 TOKEN = "fictional-native-fixture-access"
 MODES = {
+    "setup_unavailable",
     "normal",
     "slow_attach",
     "reject_attach",
@@ -198,6 +199,8 @@ def create_app():
     @app.get("/v1/call-languages")
     async def languages(request: Request):
         auth(request)
+        if state["mode"] == "setup_unavailable":
+            raise HTTPException(503, "Fictional setup outage")
         return {
             "items": [
                 {

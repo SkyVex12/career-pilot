@@ -1,5 +1,6 @@
 import { withDeadline } from "./requestScope.ts";
 import { HTTP_TEST_BUILD, transportURL } from "./transport.ts";
+import { CompanionAttachmentRetirements } from "./companionAttachment.ts";
 
 export interface Tokens {
   access_token: string;
@@ -42,6 +43,7 @@ export class Api {
   private writes: Promise<void> = Promise.resolve();
   profile = "";
   attachments = new Set<string>();
+  companionRetirements = new CompanionAttachmentRetirements();
   constructor(
     base: string,
     store: SecretStore,
@@ -72,6 +74,8 @@ export class Api {
   }
   async accept(t: Tokens) {
     const epoch = ++this.epoch;
+    this.attachments.clear();
+    this.companionRetirements = new CompanionAttachmentRetirements();
     this.tokens = { ...t, expires_at: Date.now() + t.expires_in * 1000 };
     await this.persist(this.tokens);
     this.assertEpoch(epoch);
@@ -135,7 +139,9 @@ export class Api {
     this.epoch++;
     this.tokens = null;
     this.profile = "";
+    for (const id of attachments) this.companionRetirements.retire(id);
     this.attachments.clear();
+    this.companionRetirements = new CompanionAttachmentRetirements();
     await this.persist(null);
     if (!previous) return true;
     try {
