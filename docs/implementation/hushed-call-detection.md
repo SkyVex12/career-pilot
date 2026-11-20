@@ -6,6 +6,8 @@ This is not yet a verified real-Hushed integration. Hushed explicitly does not s
 
 ## Set it up
 
+Use a desktop build containing the Hushed settings. For the local Windows preview, exit the existing Career Pilot process using its tray **Exit completely** action before running `.implementation/artifacts/windows/CareerPilot-hushed-detection-preview.exe`; closing the window can leave the older process running. The preview preserves existing settings and is unsigned. Build and test evidence: [Windows preview receipt](evidence/hushed-call-detection-2026-11-20.json).
+
 1. Start the LDPlayer instance containing Hushed and enable **local ADB** in LDPlayer. Identify the intended instance yourself; Career Pilot does not infer an instance from its display name.
 2. In Career Pilot desktop settings, open **Background**. Turn on **Suggest assistance for detected calls**, leave **Pause call suggestions** off, and enable **LDPlayer** under **Applications**.
 3. Expand **Hushed in LDPlayer**. Check the full **LDPlayer ADB executable** path. Use an existing `adb.exe` from LDPlayer or the Android SDK; a suggested path is only a starting value.
