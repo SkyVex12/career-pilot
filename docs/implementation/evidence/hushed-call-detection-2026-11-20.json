@@ -1,0 +1,81 @@
+{
+  "date": "2026-11-20",
+  "product_revision": "9985e5d841df2e508e08c60920803c5332003278",
+  "integrated_main": "fdf9523",
+  "branch": "codex/hushed-call-detection",
+  "validation": {
+    "desktop_vitest": {
+      "passed": 550,
+      "files": 54
+    },
+    "desktop_rust": {
+      "passed": 157,
+      "ignored": 6,
+      "failed": 0
+    },
+    "explicit_native_adb_diagnostic": {
+      "passed": 1,
+      "failed": 0
+    },
+    "release_script_tests": {
+      "passed": 10
+    },
+    "typescript": "passed",
+    "rustfmt": "passed",
+    "clippy_default_all_targets_deny_warnings": "passed",
+    "clippy_release_all_targets_deny_warnings": "passed",
+    "mac_adapter_metadata": {
+      "aarch64_apple_darwin": "passed",
+      "x86_64_apple_darwin": "passed",
+      "runtime_verified": false
+    },
+    "notes": "The full native suite was rerun after the final package-probe and configuration-race corrections. The separately invoked native diagnostic is ignored by default. Child subprocess fixture tests are also ignored by default but exercised through their parent timeout/output-limit tests. Vitest emitted existing act/TAURI callback warnings; all assertions passed."
+  },
+  "android_framework_fixture": {
+    "source_package": "app.careerpilot.callfixture",
+    "android_version": "14",
+    "emulator": "LDPlayer 14, CareerPilotValidation, index 1",
+    "serial": "emulator-5556",
+    "states": [
+      "incoming",
+      "ongoing",
+      "screening",
+      "message",
+      "missed",
+      "group_summary",
+      "empty"
+    ],
+    "production_package_filter_excludes_fixture": true,
+    "real_hushed_installed": false,
+    "native_absence_probe": "Production runner verified local discovery and not_installed status; filtered pm list packages succeeds empty for absence and parser requires the exact package name.",
+    "fixture_apk_sha256": "08693deebdf944eeccd57d5d8b7373d53fd35cde028e68851310aa832260c0cf",
+    "raw_notification_dumps_retained": false,
+    "retained_fixtures": "apps/desktop/src-tauri/tests/fixtures/hushed",
+    "cleanup": "Fictional fixture uninstalled and validation instance 1 stopped. User instance 0 left running and untouched."
+  },
+  "actual_hushed_acceptance": {
+    "verified": false,
+    "audio_routing_verified": false,
+    "vendor_support": "Hushed does not support emulators.",
+    "vendor_source": "https://support.hushed.com/hc/en-us/articles/360015505712-Compatible-Devices-What-devices-and-operating-systems-does-Hushed-work-on",
+    "limitations": [
+      "Actual Hushed releases may not expose the supported framework CallStyle metadata.",
+      "Polling can miss short calls or gaps between consecutive calls.",
+      "Call metadata does not establish microphone or speaker capture availability.",
+      "Real call popup, Focus/DND, permissions and routing acceptance still require a trial."
+    ]
+  },
+  "windows_preview": {
+    "built_at_utc": "2026-11-20T15:02:40.6426139+00:00",
+    "path": ".implementation/artifacts/windows/CareerPilot-hushed-detection-preview.exe",
+    "size_bytes": 51825152,
+    "sha256": "a745140d966aed8373d8bec82ba9b69a5119b6baedf37856cac3f7f17ac3d6e5",
+    "architecture": "Windows x86_64 (PE machine 0x8664)",
+    "build": "Tauri debug cloud preview, embedded frontend, unsigned, no bundle or updater",
+    "command": "pnpm --filter @copilot/desktop build:cloud",
+    "product_revision": "9985e5d841df2e508e08c60920803c5332003278",
+    "installed_or_launched": false,
+    "original_artifacts_preserved": true,
+    "product_source_unchanged_after_build": true
+  }
+}

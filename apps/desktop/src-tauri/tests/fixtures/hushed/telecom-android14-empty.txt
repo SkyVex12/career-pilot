@@ -1,0 +1,8 @@
+CallsManager:
+  mCalls:
+  mCallAudioManager:
+PhoneAccountRegistrar:
+  phoneAccounts:
+    [[X] PhoneAccount: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, ***FIXTURE***, UserHandle{0} Capabilities: CallProvider MultiUser PlaceEmerg SimSub  Audio Routes: BESW Schemes: tel voicemail  Extras: [REDACTED] GroupId: ***FIXTURE***]
+    test emergency PhoneAccount filter: null
+Analytics:

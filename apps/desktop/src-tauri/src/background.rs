@@ -6,6 +6,8 @@
 
 #[path = "call_detection.rs"]
 mod detection;
+#[path = "hushed_detection.rs"]
+mod hushed;
 #[cfg(target_os = "macos")]
 #[path = "call_detection_macos.rs"]
 mod macos;
@@ -37,6 +39,7 @@ pub(crate) struct BackgroundPreferences {
     pub suggestions_paused: bool,
     pub call_suggestions: bool,
     pub disabled_apps: Vec<String>,
+    hushed: hushed::Config,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -48,6 +51,8 @@ pub(crate) struct BackgroundStatus {
     pub login_entry_present: bool,
     pub call_detection_available: bool,
     pub accessibility_required: bool,
+    pub hushed_supported: bool,
+    pub hushed_adb_default: String,
     pub limitation: &'static str,
 }
 
@@ -219,8 +224,105 @@ pub(crate) fn background_status(app: AppHandle) -> Result<BackgroundStatus, Stri
         login_entry_present: login_entry_present(&app)?,
         call_detection_available: cfg!(any(windows, target_os = "macos")),
         accessibility_required: cfg!(target_os = "macos"),
+        hushed_supported: cfg!(windows),
+        hushed_adb_default: default_adb_path(),
         limitation: "Windows experimental detection checks accessible call controls and native microphone activity without recording. English control labels only; real app calls are not yet certified. macOS requires Accessibility and notification permission; system notifications respect Focus. macOS full app linking and device behavior are not yet verified. Login changes take effect at the next sign-in; OS policy may disable startup.",
     })
+}
+
+fn default_adb_path() -> String {
+    if !cfg!(windows) {
+        return String::new();
+    }
+    let mut candidates = Vec::new();
+    for variable in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
+        if let Some(root) = std::env::var_os(variable) {
+            candidates.push(PathBuf::from(root).join("platform-tools/adb.exe"));
+        }
+    }
+    if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(root).join("Android/Sdk/platform-tools/adb.exe"));
+    }
+    // Only known installation locations are inspected. No processes are launched
+    // and no emulator connection is opened by rendering Settings.
+    for root in ["C:/LDPlayer", "D:/LDPlayer", "C:/Program Files/LDPlayer"] {
+        for version in ["LDPlayer14", "LDPlayer9"] {
+            candidates.push(PathBuf::from(root).join(version).join("adb.exe"));
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        candidates
+            .extend(std::env::split_paths(&paths).filter(|p| p.is_absolute()).map(|p| p.join("adb.exe")));
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub(crate) async fn background_hushed_devices(adb_path: String) -> Result<Vec<String>, String> {
+    if !cfg!(windows) {
+        return Err("Hushed emulator detection is available on Windows only".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || hushed::devices(&adb_path))
+        .await
+        .map_err(|_| "Emulator discovery could not finish".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn background_hushed_connect(
+    adb_path: String,
+    serial: String,
+) -> Result<Vec<String>, String> {
+    if !cfg!(windows) {
+        return Err("Hushed emulator detection is available on Windows only".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || hushed::connect(&adb_path, &serial))
+        .await
+        .map_err(|_| "Emulator connection could not finish".to_string())?
+}
+
+fn disabled_detection_apps(prefs: &BackgroundPreferences) -> Vec<String> {
+    let mut disabled = prefs.disabled_apps.clone();
+    if !prefs.hushed.enabled || disabled.iter().any(|app| app == "LDPlayer") {
+        disabled.push("Hushed".into());
+    }
+    // Android notification identity cannot safely be matched to a Windows UIA
+    // process ID. Dedicated Hushed mode replaces generic LDPlayer inference,
+    // avoiding two offers for the same call without guessing the instance PID.
+    if prefs.hushed.enabled {
+        disabled.push("LDPlayer".into());
+    }
+    disabled
+}
+
+fn should_monitor_hushed(prefs: &BackgroundPreferences) -> bool {
+    cfg!(windows)
+        && prefs.call_suggestions
+        && !prefs.suggestions_paused
+        && prefs.hushed.enabled
+        && !prefs.disabled_apps.iter().any(|app| app == "LDPlayer" || app == "Hushed")
+}
+
+fn discard_stale_hushed_sample(
+    sample: &mut Option<hushed::Sample>,
+    scanned: &BackgroundPreferences,
+    current: &BackgroundPreferences,
+) -> Vec<String> {
+    let mut cleanup = Vec::new();
+    if (scanned.hushed != current.hushed || (scanned.hushed.enabled && !should_monitor_hushed(current)))
+        && let Some(stale) = sample.take()
+    {
+        // Sampler lifecycle already advanced. Preserve cleanup even though its
+        // old-device call evidence must not be offered after a settings change.
+        cleanup.extend(stale.retired);
+        cleanup.extend(stale.forgotten);
+        // Existing selected instances retain their dismissal/acceptance. The
+        // next sampler pass forgets only bindings actually removed or replaced.
+    }
+    cleanup
 }
 
 #[tauri::command]
@@ -228,9 +330,13 @@ pub(crate) fn background_set_preferences(
     app: AppHandle,
     preferences: BackgroundPreferences,
 ) -> Result<BackgroundStatus, String> {
+    if preferences.hushed.enabled && !cfg!(windows) {
+        return Err("Hushed emulator detection is available on Windows only".into());
+    }
     let state = app.state::<BackgroundState>();
     {
         let mut current = state.preferences.lock().map_err(|e| e.to_string())?;
+        validate_hushed_change(&current.hushed, &preferences.hushed)?;
         if current.launch_at_login != preferences.launch_at_login {
             set_launch_at_login(&app, preferences.launch_at_login)?;
         }
@@ -249,6 +355,12 @@ pub(crate) fn background_set_preferences(
     }
     let _ = app.emit(EVENT, ());
     background_status(app)
+}
+
+fn validate_hushed_change(previous: &hushed::Config, next: &hushed::Config) -> Result<(), String> {
+    // A removed/moved ADB executable must not prevent Pause or global opt-out.
+    // The sampler still validates every run; changed setup validates before save.
+    if previous != next { next.validate() } else { Ok(()) }
 }
 
 #[cfg(windows)]
@@ -385,6 +497,170 @@ mod tests {
     use super::*;
 
     #[test]
+    fn changed_emulator_during_scan_does_not_strand_a_previous_prompt() {
+        let mut detector = detection::Detector::default();
+        let old = detection::Evidence {
+            key: "old:Hushed".into(),
+            app: "Hushed".into(),
+            audio: false,
+            call_phase: Some(detection::CallPhase::Incoming),
+        };
+        detector.tick(0, &[old], true, false);
+        let stale_id = detector.pending.as_ref().unwrap().id.clone();
+        let mut scanned = BackgroundPreferences { call_suggestions: true, ..Default::default() };
+        scanned.hushed.enabled = true;
+        scanned.hushed.serials = vec!["emulator-5554".into()];
+        let mut current = scanned.clone();
+        current.hushed.serials = vec!["emulator-5556".into()];
+        let mut sample = Some(hushed::Sample {
+            retired: vec!["old:Hushed".into()],
+            calls: vec![hushed::Call { key: "discarded:Hushed".into(), incoming: true }],
+            ..Default::default()
+        });
+        let cleanup = discard_stale_hushed_sample(&mut sample, &scanned, &current);
+        assert!(sample.is_none());
+        detector.retire(&cleanup, 6, false);
+        assert!(detector.pending.is_none());
+        let fresh = detection::Evidence {
+            key: "new:Hushed".into(),
+            app: "Hushed".into(),
+            audio: false,
+            call_phase: Some(detection::CallPhase::Incoming),
+        };
+        detector.tick(10, &[fresh], true, false);
+        assert!(detector.pending.is_some());
+        assert!(detector.respond(&stale_id, true).is_none());
+    }
+
+    #[test]
+    fn missing_saved_adb_does_not_block_unrelated_pause_or_global_opt_out() {
+        let saved = hushed::Config {
+            enabled: true,
+            adb_path: "C:/not-installed/adb.exe".into(),
+            serials: vec!["emulator-5554".into()],
+        };
+        assert!(saved.validate().is_err());
+        assert!(validate_hushed_change(&saved, &saved).is_ok());
+        let mut disabled = saved.clone();
+        disabled.enabled = false;
+        assert!(validate_hushed_change(&saved, &disabled).is_ok());
+        assert!(validate_hushed_change(&disabled, &saved).is_err());
+    }
+
+    #[test]
+    fn adding_an_emulator_during_scan_preserves_existing_call_dismissal() {
+        let mut detector = detection::Detector::default();
+        let existing = detection::Evidence {
+            key: "A:Hushed".into(),
+            app: "Hushed".into(),
+            audio: false,
+            call_phase: Some(detection::CallPhase::Incoming),
+        };
+        detector.tick(0, std::slice::from_ref(&existing), true, false);
+        let id = detector.pending.as_ref().unwrap().id.clone();
+        detector.respond(&id, false).unwrap();
+        let mut scanned = BackgroundPreferences { call_suggestions: true, ..Default::default() };
+        scanned.hushed.enabled = true;
+        scanned.hushed.serials = vec!["emulator-5554".into()];
+        let mut current = scanned.clone();
+        current.hushed.serials.push("emulator-5556".into());
+        let mut sample = Some(hushed::Sample {
+            calls: vec![hushed::Call { key: existing.key.clone(), incoming: true }],
+            ..Default::default()
+        });
+        let cleanup = discard_stale_hushed_sample(&mut sample, &scanned, &current);
+        assert!(sample.is_none());
+        assert!(cleanup.is_empty());
+        detector.retire(&cleanup, 6, false);
+        detector.tick(10, &[existing], true, false);
+        assert!(detector.pending.is_none());
+    }
+
+    #[test]
+    fn hushed_suggestions_require_current_selection_policy_and_evidence() {
+        let mut prefs = BackgroundPreferences {
+            call_suggestions: true,
+            hushed: hushed::Config {
+                enabled: true,
+                adb_path: "C:/LDPlayer/adb.exe".into(),
+                serials: vec!["emulator-5554".into()],
+            },
+            ..Default::default()
+        };
+        let mut cache = DetectionCache {
+            diagnostics: Some(detection::DetectionDiagnostics {
+                microphone_active: Some(false),
+                notifications_allowed: true,
+                ..Default::default()
+            }),
+            hushed_pending_current: true,
+            hushed_configuration: Some(prefs.hushed.clone()),
+            ..Default::default()
+        };
+        let suggestion = detection::Suggestion {
+            id: "occurrence-1".into(),
+            platform: "Hushed".into(),
+            kind: "start",
+            phase: Some(detection::CallPhase::Incoming),
+        };
+        assert!(suggestion_allowed(&prefs, &cache, &suggestion, false));
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, true));
+        prefs.hushed.serials = vec!["emulator-5556".into()];
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, false));
+        cache.hushed_configuration = Some(prefs.hushed.clone());
+        cache.hushed_pending_current = false;
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, false));
+        cache.hushed_pending_current = true;
+        prefs.disabled_apps.push("LDPlayer".into());
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, false));
+        prefs.disabled_apps.clear();
+        prefs.suggestions_paused = true;
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, false));
+        prefs.suggestions_paused = false;
+        cache.diagnostics.as_mut().unwrap().notifications_allowed = false;
+        assert!(!suggestion_allowed(&prefs, &cache, &suggestion, false));
+    }
+
+    #[test]
+    fn android_evidence_never_claims_microphone_or_bypasses_notification_policy() {
+        let android = hushed::Sample {
+            calls: vec![hushed::Call { key: "android-1:Hushed".into(), incoming: true }],
+            ..Default::default()
+        };
+        let native = detection::DetectionSample {
+            diagnostics: detection::DetectionDiagnostics {
+                microphone_active: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let merged = merge_hushed_sample(Ok(native), Some(&android)).unwrap();
+        assert!(!merged.notifications);
+        assert_eq!(merged.diagnostics.microphone_active, Some(false));
+        assert_eq!(merged.evidence.len(), 1);
+        assert!(!merged.evidence[0].audio);
+        assert_eq!(merged.evidence[0].call_phase, Some(detection::CallPhase::Incoming));
+        assert_eq!(merged.diagnostics.matched_calls, ["Hushed"]);
+    }
+
+    #[test]
+    fn dedicated_hushed_mode_obeys_ldplayer_switch_and_excludes_generic_duplicate() {
+        let mut prefs = BackgroundPreferences { call_suggestions: true, ..Default::default() };
+        assert!(disabled_detection_apps(&prefs).contains(&"Hushed".into()));
+        assert!(!should_monitor_hushed(&prefs));
+        prefs.hushed.enabled = true;
+        assert!(disabled_detection_apps(&prefs).contains(&"LDPlayer".into()));
+        assert!(!disabled_detection_apps(&prefs).contains(&"Hushed".into()));
+        assert_eq!(should_monitor_hushed(&prefs), cfg!(windows));
+        prefs.disabled_apps.push("LDPlayer".into());
+        assert!(!should_monitor_hushed(&prefs));
+        assert!(disabled_detection_apps(&prefs).contains(&"Hushed".into()));
+        prefs.disabled_apps.clear();
+        prefs.suggestions_paused = true;
+        assert!(!should_monitor_hushed(&prefs));
+    }
+
+    #[test]
     fn detection_diagnostics_distinguish_policy_evidence_and_delivery() {
         let mut prefs = BackgroundPreferences { call_suggestions: true, ..Default::default() };
         let mut cache = DetectionCache::default();
@@ -422,6 +698,7 @@ mod tests {
             id: "call:Browser".into(),
             platform: "Browser".into(),
             kind: "start",
+            phase: None,
         });
         let timely = std::time::Duration::from_millis(100);
         assert!(presentation_attempt_current(&pending, &pending, timely));
@@ -670,6 +947,9 @@ struct DetectionCache {
     diagnostics: Option<detection::DetectionDiagnostics>,
     error: Option<String>,
     presentation_error: Option<String>,
+    hushed: Option<hushed::Status>,
+    hushed_pending_current: bool,
+    hushed_configuration: Option<hushed::Config>,
 }
 
 #[derive(Serialize)]
@@ -682,6 +962,7 @@ pub(crate) struct DetectionStatus {
     error: Option<String>,
     presentation_error: Option<String>,
     pending: Option<detection::Suggestion>,
+    hushed: Option<hushed::Status>,
 }
 
 fn active_session(app: &AppHandle) -> bool {
@@ -690,6 +971,26 @@ fn active_session(app: &AppHandle) -> bool {
             || s.engine.lock().map(|e| e.is_some()).unwrap_or(true)
             || s.seat.lock().map(|e| e.is_some()).unwrap_or(true)
     })
+}
+
+fn suggestion_allowed(
+    prefs: &BackgroundPreferences,
+    cache: &DetectionCache,
+    suggestion: &detection::Suggestion,
+    active: bool,
+) -> bool {
+    prefs.call_suggestions
+        && !prefs.suggestions_paused
+        && !disabled_detection_apps(prefs).contains(&suggestion.platform)
+        && match suggestion.kind {
+            "start" => !active,
+            "end" => active,
+            _ => false,
+        }
+        && cache.diagnostics.as_ref().is_some_and(|diagnostics| diagnostics.notifications_allowed)
+        && (suggestion.platform != "Hushed"
+            || suggestion.kind != "start"
+            || (cache.hushed_pending_current && cache.hushed_configuration.as_ref() == Some(&prefs.hushed)))
 }
 
 fn detection_state(
@@ -723,6 +1024,11 @@ fn detection_state(
     if pending {
         return "suggestion_pending";
     }
+    if prefs.hushed.enabled && !prefs.disabled_apps.iter().any(|app| app == "LDPlayer" || app == "Hushed") {
+        // Incoming Android call metadata does not require a live microphone.
+        // Its separate status explains unavailable/unsupported emulator signals.
+        return "watching_hushed";
+    }
     if !diagnostics.matched_calls.is_empty()
         && diagnostics.matched_calls.iter().all(|app| prefs.disabled_apps.contains(app))
     {
@@ -751,7 +1057,9 @@ pub(crate) fn background_detection_status(app: AppHandle) -> Result<DetectionSta
             &preferences,
             active_session,
             &cache,
-            pending.is_some(),
+            pending.as_ref().is_some_and(|pending| {
+                pending.platform != "Hushed" || pending.kind != "start" || cache.hushed_pending_current
+            }),
         ),
         preferences,
         active_session,
@@ -760,6 +1068,7 @@ pub(crate) fn background_detection_status(app: AppHandle) -> Result<DetectionSta
         diagnostics: cache.diagnostics,
         error: cache.error,
         presentation_error: cache.presentation_error,
+        hushed: cache.hushed,
     })
 }
 
@@ -830,12 +1139,10 @@ fn present_suggestion(
                 return Ok(());
             }
             let prefs = state.preferences.lock().map_err(|e| e.to_string())?.clone();
-            let allowed = prefs.call_suggestions
-                && !prefs.suggestions_paused
-                && pending.as_ref().is_some_and(|s| {
-                    !prefs.disabled_apps.contains(&s.platform)
-                        && (s.kind != "start" || !active_session(&handle))
-                });
+            let cache = state.detection_status.lock().map_err(|e| e.to_string())?.clone();
+            let allowed = pending.as_ref().is_some_and(|suggestion| {
+                suggestion_allowed(&prefs, &cache, suggestion, active_session(&handle))
+            });
             if !allowed {
                 window.hide().map_err(|e| format!("Could not hide call suggestion: {e}"))?;
                 return Ok(());
@@ -879,9 +1186,62 @@ fn present_suggestion(
         .map_err(|_| "Call suggestion window did not respond; retrying".to_string())?
 }
 
+fn merge_hushed_sample(
+    native: Result<detection::DetectionSample, String>,
+    android: Option<&hushed::Sample>,
+) -> Result<detection::DetectionSample, String> {
+    let mut sample = match native {
+        Ok(sample) => sample,
+        Err(error) => {
+            if android.is_none_or(|sample| sample.calls.is_empty()) {
+                return Err(error);
+            }
+            // An unrelated inaccessible window must not discard a strong Android
+            // signal. Still query Windows policy independently and fail closed.
+            #[cfg(windows)]
+            let notifications = unsafe {
+                use windows::Win32::UI::Shell::{QUNS_ACCEPTS_NOTIFICATIONS, SHQueryUserNotificationState};
+                SHQueryUserNotificationState()
+                    .map(|value| value == QUNS_ACCEPTS_NOTIFICATIONS)
+                    .unwrap_or(false)
+            };
+            #[cfg(not(windows))]
+            let notifications = false;
+            detection::DetectionSample {
+                notifications,
+                diagnostics: detection::DetectionDiagnostics {
+                    notifications_allowed: notifications,
+                    inspection_limited: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+    };
+    if let Some(android) = android {
+        for call in &android.calls {
+            sample.evidence.push(detection::Evidence {
+                key: call.key.clone(),
+                app: "Hushed".into(),
+                audio: false,
+                call_phase: Some(if call.incoming {
+                    detection::CallPhase::Incoming
+                } else {
+                    detection::CallPhase::Active
+                }),
+            });
+        }
+        if !android.calls.is_empty() {
+            sample.diagnostics.matched_calls.push("Hushed".into());
+        }
+    }
+    Ok(sample)
+}
+
 fn start_detection(app: AppHandle) {
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
+        let mut hushed_sampler = hushed::Sampler::default();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
             let state = app.state::<BackgroundState>();
@@ -895,13 +1255,27 @@ fn start_detection(app: AppHandle) {
             let enabled = cfg!(any(windows, target_os = "macos"))
                 && prefs.call_suggestions
                 && !prefs.suggestions_paused;
-            let result = if enabled {
-                Some(detection::sample_with_tracking(
-                    state.detector.lock().map(|d| d.tracking()).unwrap_or(false),
-                ))
-            } else {
-                None
+            let tracking = state.detector.lock().map(|d| d.tracking()).unwrap_or(false);
+            // ADB runs on the worker, concurrently with UIA, without a detector
+            // lock. It is opt-in and never starts an emulator, audio or backend.
+            let (mut result, mut hushed_sample) = std::thread::scope(|scope| {
+                let native = enabled.then(|| scope.spawn(|| detection::sample_with_tracking(tracking)));
+                let android = (should_monitor_hushed(&prefs) || !prefs.hushed.enabled)
+                    .then(|| hushed_sampler.sample(&prefs.hushed));
+                let native = native
+                    .map(|task| task.join().unwrap_or_else(|_| Err("Native call inspection failed".into())));
+                (native, android)
+            });
+            let current_preferences = match state.preferences.lock() {
+                Ok(prefs) => prefs.clone(),
+                Err(_) => continue,
             };
+            let discarded_cleanup =
+                discard_stale_hushed_sample(&mut hushed_sample, &prefs, &current_preferences);
+            let prefs = current_preferences;
+            if !prefs.call_suggestions || prefs.suggestions_paused {
+                result = None;
+            }
             let active = active_session(&app);
             let mut cache = DetectionCache {
                 last_checked_unix_ms: std::time::SystemTime::now()
@@ -910,23 +1284,53 @@ fn start_detection(app: AppHandle) {
                     .map(|t| t.as_millis() as u64),
                 ..Default::default()
             };
+            cache.hushed =
+                Some(hushed_sample.as_ref().map(|sample| sample.status.clone()).unwrap_or_else(|| {
+                    hushed::Status {
+                        state: "disabled".into(),
+                        message: if prefs.hushed.enabled {
+                            "Hushed monitoring is paused or disabled by call suggestion settings.".into()
+                        } else {
+                            "Hushed monitoring is off.".into()
+                        },
+                        monitored: prefs.hushed.serials.len(),
+                        ..Default::default()
+                    }
+                }));
+            cache.hushed_configuration = hushed_sample.as_ref().map(|_| prefs.hushed.clone());
             let mut detector = match state.detector.lock() {
                 Ok(d) => d,
                 Err(_) => continue,
             };
             let before = detector.pending.clone();
-            detector.suppress_apps(&prefs.disabled_apps);
+            let disabled = disabled_detection_apps(&prefs);
+            detector.suppress_apps(&disabled);
+            let now = started.elapsed().as_secs();
+            detector.retire(&discarded_cleanup, now, false);
+            if let Some(sample) = &hushed_sample {
+                detector.retire(&sample.retired, now, active);
+                detector.retire(&sample.forgotten, now, false);
+                if sample.block_end_review {
+                    detector.defer_end_review(now);
+                }
+            }
             let mut can_present = false;
+            let result = result.map(|native| merge_hushed_sample(native, hushed_sample.as_ref()));
             match result {
                 Some(Ok(mut sample)) => {
-                    sample.evidence.retain(|e| !prefs.disabled_apps.contains(&e.app));
+                    sample.evidence.retain(|e| !disabled.contains(&e.app));
                     can_present = sample.notifications;
-                    detector.tick(
-                        started.elapsed().as_secs(),
-                        &sample.evidence,
-                        sample.notifications,
-                        active,
-                    );
+                    detector.tick(now, &sample.evidence, sample.notifications, active);
+                    // Keep identity through outages, but don't leave an old
+                    // ringing prompt visible without a fresh Android signal.
+                    if detector
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.platform == "Hushed" && pending.kind == "start")
+                    {
+                        cache.hushed_pending_current = detector.pending_has_evidence(&sample.evidence);
+                        can_present &= cache.hushed_pending_current;
+                    }
                     cache.diagnostics = Some(sample.diagnostics);
                 }
                 Some(Err(error)) => {
@@ -941,6 +1345,11 @@ fn start_detection(app: AppHandle) {
             let next = detector.pending.clone();
             let changed = before != next;
             drop(detector);
+            // The popup reads status as soon as it mounts. Publish the evidence
+            // before showing/emitting so it cannot read the previous scan.
+            if let Ok(mut current) = state.detection_status.lock() {
+                *current = cache.clone();
+            }
             // Failed delivery retries next poll without resetting dismissal state.
             #[cfg(not(target_os = "macos"))]
             if let Err(error) =
@@ -967,15 +1376,31 @@ fn start_detection(app: AppHandle) {
 #[tauri::command]
 pub(crate) fn background_suggestion(app: AppHandle) -> Result<Option<detection::Suggestion>, String> {
     let state = app.state::<BackgroundState>();
+    let prefs = state.preferences.lock().map_err(|e| e.to_string())?.clone();
+    let cache = state.detection_status.lock().map_err(|e| e.to_string())?.clone();
     let result = state.detector.lock().map_err(|e| e.to_string())?.pending.clone();
-    Ok(result)
+    Ok(result.filter(|suggestion| suggestion_allowed(&prefs, &cache, suggestion, active_session(&app))))
 }
 
 #[tauri::command]
 pub(crate) fn background_respond(app: AppHandle, id: String, accept: bool) -> Result<(), String> {
     let state = app.state::<BackgroundState>();
-    let suggestion =
-        state.detector.lock().map_err(|e| e.to_string())?.respond(&id, accept).ok_or("Suggestion expired")?;
+    let suggestion = {
+        let prefs = state.preferences.lock().map_err(|e| e.to_string())?;
+        let cache = state.detection_status.lock().map_err(|e| e.to_string())?.clone();
+        let mut detector = state.detector.lock().map_err(|e| e.to_string())?;
+        if accept
+            && detector.pending.as_ref().is_none_or(|pending| {
+                pending.id != id || !suggestion_allowed(&prefs, &cache, pending, active_session(&app))
+            })
+        {
+            return Err(
+                "This call suggestion is no longer available. Check detection or start assistance manually."
+                    .into(),
+            );
+        }
+        detector.respond(&id, accept).ok_or("Suggestion expired")?
+    };
     if let Some(window) = app.get_webview_window("call-suggestion") {
         let _ = window.hide();
     }

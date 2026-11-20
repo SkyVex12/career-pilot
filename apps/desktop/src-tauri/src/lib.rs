@@ -2289,6 +2289,8 @@ pub fn run() {
             open_calendar_authorization,
             background::background_status,
             background::background_detection_status,
+            background::background_hushed_devices,
+            background::background_hushed_connect,
             background::background_suggestion,
             background::background_respond,
             background::background_take_accepted,

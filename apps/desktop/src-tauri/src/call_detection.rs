@@ -2,17 +2,28 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CallPhase {
+    Incoming,
+    Active,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Suggestion {
     pub id: String,
     pub platform: String,
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<CallPhase>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct Evidence {
     pub key: String,
     pub app: String,
     pub audio: bool,
+    /// Authoritative call-state metadata, independent of microphone/audio routing.
+    pub call_phase: Option<CallPhase>,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct DetectionDiagnostics {
@@ -31,25 +42,44 @@ pub(super) struct DetectionSample {
 }
 #[derive(Default)]
 struct Tracked {
+    id: String,
+    app: String,
+    phase: Option<CallPhase>,
     first: u64,
     last: u64,
     offered: bool,
     accepted: bool,
     end_offered: bool,
+    retired: bool,
+    suppressed: bool,
+}
+impl Tracked {
+    fn owns(&self, suggestion: &Suggestion) -> bool {
+        match suggestion.kind {
+            "start" => suggestion.id == self.id,
+            "end" => suggestion.id.strip_prefix("end:") == Some(self.id.as_str()),
+            _ => false,
+        }
+    }
 }
 #[derive(Default)]
 pub(super) struct Detector {
     calls: BTreeMap<String, Tracked>,
+    sequence: u64,
     pub pending: Option<Suggestion>,
 }
 impl Detector {
     pub fn suppress_apps(&mut self, disabled: &[String]) {
-        let excluded = |key: &str| disabled.iter().any(|app| key.ends_with(&format!(":{app}")));
-        if self.pending.as_ref().is_some_and(|s| excluded(&s.id)) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|s| self.calls.values().any(|call| call.owns(s) && disabled.contains(&call.app)))
+        {
             self.pending = None;
         }
-        for (key, call) in &mut self.calls {
-            if excluded(key) {
+        for call in self.calls.values_mut() {
+            call.suppressed = disabled.contains(&call.app);
+            if call.suppressed {
                 call.offered = true;
                 call.end_offered = true;
             }
@@ -58,9 +88,55 @@ impl Detector {
     pub fn tracking(&self) -> bool {
         !self.calls.is_empty()
     }
+    /// Delivery may hide an unanswered prompt during a failed or empty adapter
+    /// sample without changing its occurrence or the user's dismissal state.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    pub fn pending_has_evidence(&self, evidence: &[Evidence]) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            pending.kind == "end"
+                || self
+                    .calls
+                    .iter()
+                    .any(|(key, call)| call.id == pending.id && evidence.iter().any(|item| item.key == *key))
+        })
+    }
+    /// Only healthy idle metadata may retire a call; errors/unknown state must
+    /// not call this method. Pass active=false to forget a removed configuration
+    /// without an end review. A retired identity is immediately reusable, while
+    /// an accepted running session keeps its conservative end review.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    pub fn retire(&mut self, keys: &[String], now: u64, active: bool) {
+        let mut authoritative_ended = false;
+        for key in keys {
+            let Some(mut call) = self.calls.remove(key) else { continue };
+            authoritative_ended |= active && call.phase.is_some();
+            if self.pending.as_ref().is_some_and(|s| s.id == call.id && s.kind == "start") {
+                self.pending = None;
+            }
+            if call.accepted && active {
+                self.sequence = self.sequence.wrapping_add(1);
+                let retired_key = format!("retired:{}:{key}", self.sequence);
+                // Wait a full quiet interval after confirmed retirement. Never end
+                // assistance automatically, including for a rejected/missed call.
+                call.last = now;
+                call.retired = true;
+                self.calls.insert(retired_key, call);
+            } else if self.pending.as_ref().is_some_and(|s| call.owns(s)) {
+                self.pending = None;
+            }
+        }
+        if authoritative_ended {
+            // A subsequent call may have reused the existing Copilot session
+            // without accepting another start prompt. Review its end only after
+            // the last confirmed retirement has also had a full quiet interval.
+            for call in self.calls.values_mut().filter(|call| call.retired && call.accepted) {
+                call.last = now;
+            }
+        }
+    }
     pub fn defer_pending(&mut self) {
         if let Some(pending) = self.pending.take()
-            && let Some(call) = self.calls.get_mut(&pending.id)
+            && let Some(call) = self.calls.values_mut().find(|call| call.owns(&pending))
         {
             // OS suppression or a temporary pause is not a dismissal. Only retry
             // unanswered suggestions; a user-dismissed call stays suppressed.
@@ -71,48 +147,122 @@ impl Detector {
             }
         }
     }
+    /// A known connecting call must not trigger assistance yet, but it makes
+    /// ending an older accepted session premature, including across an ADB outage.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    pub fn defer_end_review(&mut self, now: u64) {
+        if self.pending.as_ref().is_some_and(|suggestion| suggestion.kind == "end") {
+            self.defer_pending();
+        }
+        for call in self.calls.values_mut().filter(|call| call.accepted) {
+            call.last = now;
+        }
+    }
     pub fn tick(&mut self, now: u64, evidence: &[Evidence], allowed: bool, active: bool) {
         if !allowed {
             self.defer_pending();
         }
         for e in evidence {
-            if !self.calls.contains_key(&e.key) && !e.audio {
+            if !self.calls.contains_key(&e.key) && !e.audio && e.call_phase.is_none() {
                 continue;
             }
+            if !self.calls.contains_key(&e.key) {
+                self.sequence = self.sequence.wrapping_add(1);
+            }
             let c = self.calls.entry(e.key.clone()).or_insert(Tracked {
+                // Notification IDs can be reused by the next call. Never let an
+                // old popup response target that new occurrence after retirement.
+                id: if e.call_phase.is_some() {
+                    format!("call:{}:{}", self.sequence, e.key)
+                } else {
+                    e.key.clone()
+                },
+                app: e.app.clone(),
+                phase: e.call_phase,
                 first: now,
                 last: now,
                 ..Default::default()
             });
             c.last = now;
+            // CallStyle can change from ringing to ongoing using the same key.
+            // Do not regress a confirmed active call on a delayed ringing sample.
+            if c.phase != Some(CallPhase::Active) && e.call_phase.is_some() {
+                c.phase = e.call_phase;
+            }
+            if let Some(pending) = self.pending.as_mut().filter(|s| s.id == c.id && s.kind == "start") {
+                pending.phase = c.phase;
+            }
             if active && !c.accepted {
                 c.offered = true;
             }
-            if allowed && !active && !c.offered && now.saturating_sub(c.first) >= 5 && self.pending.is_none()
+            if allowed
+                && !active
+                && !c.offered
+                && (c.phase == Some(CallPhase::Incoming) || now.saturating_sub(c.first) >= 5)
+                && self.pending.is_none()
             {
                 c.offered = true;
-                self.pending = Some(Suggestion { id: e.key.clone(), platform: e.app.clone(), kind: "start" });
+                self.pending = Some(Suggestion {
+                    id: c.id.clone(),
+                    platform: e.app.clone(),
+                    kind: "start",
+                    phase: c.phase,
+                });
             }
         }
-        for (id, c) in &mut self.calls {
+        // An ongoing/unknown authoritative occurrence can still be using the
+        // current Copilot session. It must not receive an old call's end prompt.
+        let authoritative_present =
+            self.calls.values().any(|c| c.phase.is_some() && !c.retired && !c.suppressed);
+        if authoritative_present {
+            if self.pending.as_ref().is_some_and(|s| s.kind == "end") {
+                self.defer_pending();
+            }
+            for call in self.calls.values_mut().filter(|call| call.accepted && call.retired) {
+                call.last = now;
+            }
+        }
+        for c in self.calls.values_mut() {
             if now.saturating_sub(c.last) >= 120
+                && !authoritative_present
+                && (c.phase.is_none() || c.retired)
                 && c.accepted
                 && active
+                && !c.suppressed
                 && !c.end_offered
                 && allowed
                 && self.pending.is_none()
             {
                 c.end_offered = true;
-                self.pending = Some(Suggestion { id: id.clone(), platform: "Call".into(), kind: "end" });
+                self.pending = Some(Suggestion {
+                    id: format!("end:{}", c.id),
+                    platform: c.app.clone(),
+                    kind: "end",
+                    phase: None,
+                });
             }
         }
         if self.pending.as_ref().is_some_and(|s| {
-            s.kind == "start"
-                && (active || self.calls.get(&s.id).is_none_or(|c| now.saturating_sub(c.last) >= 120))
+            (s.kind == "end" && !active)
+                || (s.kind == "start"
+                    && (active
+                        || self
+                            .calls
+                            .values()
+                            .find(|call| call.id == s.id)
+                            .is_none_or(|c| c.phase.is_none() && now.saturating_sub(c.last) >= 120)))
         }) {
             self.pending = None;
         }
-        self.calls.retain(|_, c| now.saturating_sub(c.last) < 300 || (c.accepted && active));
+        // An unavailable Android bridge is not evidence that a call finished.
+        // Its bounded adapter explicitly retires occurrences after healthy idle
+        // observations, preserving dismissals even across a prolonged outage.
+        self.calls.retain(|_, c| {
+            (!c.retired || active)
+                && ((c.phase.is_some() && !c.retired)
+                    || now.saturating_sub(c.last) < 300
+                    || (c.accepted && active))
+        });
     }
     pub fn respond(&mut self, id: &str, accept: bool) -> Option<Suggestion> {
         let s = self.pending.as_ref()?;
@@ -120,7 +270,7 @@ impl Detector {
             return None;
         }
         let s = self.pending.take()?;
-        if let Some(c) = self.calls.get_mut(id)
+        if let Some(c) = self.calls.values_mut().find(|call| call.owns(&s))
             && s.kind == "start"
         {
             c.accepted = accept;
@@ -330,6 +480,7 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<DetectionSample, St
                     evidence.push(Evidence {
                         key: format!("{pid}:{app}"),
                         app: app.into(),
+                        call_phase: None,
                         audio: if app == "Browser" {
                             audio_apps.contains(&exe)
                         } else {
@@ -348,7 +499,7 @@ pub(super) fn sample_with_tracking(tracking: bool) -> Result<DetectionSample, St
 mod tests {
     use super::*;
     fn e() -> Evidence {
-        Evidence { key: "42:Zoom".into(), app: "Zoom".into(), audio: true }
+        Evidence { key: "42:Zoom".into(), app: "Zoom".into(), audio: true, call_phase: None }
     }
     #[test]
     fn requires_specific_controls_not_identity_or_media() {
@@ -454,6 +605,408 @@ mod tests {
         d.tick(15, &[e()], true, true);
         d.tick(20, &[e()], true, false);
         assert!(d.pending.is_none());
+    }
+
+    fn hushed(phase: CallPhase) -> Evidence {
+        Evidence {
+            key: "emulator-5554:notification-42:Hushed".into(),
+            app: "Hushed".into(),
+            audio: false,
+            call_phase: Some(phase),
+        }
+    }
+
+    #[test]
+    fn incoming_metadata_prompts_immediately_without_claiming_audio() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        assert!(!incoming.audio);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let first = d.pending.clone().unwrap();
+        assert_eq!(first.platform, "Hushed");
+        assert_eq!(first.phase, Some(CallPhase::Incoming));
+        assert_eq!(first.kind, "start");
+        assert_ne!(first.id, incoming.key);
+        d.tick(1, std::slice::from_ref(&incoming), true, false);
+        assert_eq!(d.pending.as_ref(), Some(&first));
+        assert_eq!(d.calls.len(), 1);
+        let json = serde_json::to_value(&first).unwrap();
+        assert_eq!(json["phase"], "incoming");
+    }
+
+    #[test]
+    fn active_metadata_without_microphone_retains_debounce() {
+        let mut d = Detector::default();
+        d.tick(0, &[hushed(CallPhase::Active)], true, false);
+        assert!(d.pending.is_none());
+        d.tick(4, &[hushed(CallPhase::Active)], true, false);
+        assert!(d.pending.is_none());
+        d.tick(5, &[hushed(CallPhase::Active)], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().phase, Some(CallPhase::Active));
+    }
+
+    #[test]
+    fn ringing_to_active_updates_one_prompt_and_never_regresses() {
+        let mut d = Detector::default();
+        d.tick(0, &[hushed(CallPhase::Incoming)], true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.tick(1, &[hushed(CallPhase::Active)], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, id);
+        assert_eq!(d.pending.as_ref().unwrap().phase, Some(CallPhase::Active));
+        d.tick(2, &[hushed(CallPhase::Incoming)], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().phase, Some(CallPhase::Active));
+        d.respond(&id, false).unwrap();
+        d.tick(10, &[hushed(CallPhase::Active)], true, false);
+        d.tick(20, &[hushed(CallPhase::Active)], false, false);
+        d.tick(25, &[hushed(CallPhase::Active)], true, false);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn retirement_expires_ringing_and_rearms_reused_notification_with_new_action_id() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let old_id = d.pending.as_ref().unwrap().id.clone();
+        d.retire(std::slice::from_ref(&incoming.key), 2, false);
+        assert!(d.pending.is_none());
+        assert!(!d.tracking());
+        assert!(d.respond(&old_id, true).is_none());
+        d.tick(3, std::slice::from_ref(&incoming), true, false);
+        let new_id = d.pending.as_ref().unwrap().id.clone();
+        assert_ne!(old_id, new_id);
+        assert!(d.respond(&old_id, true).is_none());
+        assert_eq!(d.pending.as_ref().unwrap().id, new_id);
+        assert!(d.respond(&new_id, false).is_some());
+        d.retire(std::slice::from_ref(&incoming.key), 4, false);
+        d.tick(5, &[incoming], true, false);
+        assert!(d.pending.is_some());
+    }
+
+    #[test]
+    fn retired_accepted_call_only_offers_end_after_conservative_interval() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&id, true).unwrap();
+        d.tick(1, &[hushed(CallPhase::Active)], true, true);
+        d.retire(std::slice::from_ref(&incoming.key), 2, true);
+        assert!(d.tracking());
+        assert!(d.pending.is_none());
+        d.tick(121, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(122, &[], false, true);
+        assert!(d.pending.is_none());
+        d.tick(123, &[], true, true);
+        let end = d.pending.as_ref().unwrap().clone();
+        assert_ne!(end.id, id);
+        assert_eq!(end.kind, "end");
+        assert_eq!(end.platform, "Hushed");
+        assert_eq!(end.phase, None);
+        assert!(d.pending_has_evidence(&[]));
+        // A delayed Start response cannot act on the later end-review prompt.
+        assert!(d.respond(&id, true).is_none());
+        assert_eq!(d.pending.as_ref(), Some(&end));
+        d.respond(&end.id, false).unwrap();
+        d.tick(200, &[], true, true);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn retiring_accepted_call_without_a_running_session_does_not_offer_end() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&id, true).unwrap();
+        d.retire(&[incoming.key], 1, false);
+        d.tick(200, &[], true, true);
+        assert!(d.pending.is_none());
+        assert!(!d.tracking());
+    }
+
+    #[test]
+    fn incoming_respects_dnd_pause_and_existing_sessions() {
+        let mut d = Detector::default();
+        d.tick(0, &[hushed(CallPhase::Incoming)], false, false);
+        assert!(d.pending.is_none());
+        d.tick(1, &[hushed(CallPhase::Incoming)], true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.defer_pending();
+        assert!(d.pending.is_none());
+        d.tick(2, &[hushed(CallPhase::Incoming)], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, id);
+        d.tick(3, &[hushed(CallPhase::Incoming)], true, true);
+        assert!(d.pending.is_none());
+        d.tick(4, &[hushed(CallPhase::Incoming)], true, false);
+        assert!(d.pending.is_none());
+        let mut already_active = Detector::default();
+        already_active.tick(0, &[hushed(CallPhase::Incoming)], true, true);
+        already_active.tick(1, &[hushed(CallPhase::Active)], true, false);
+        assert!(already_active.pending.is_none());
+    }
+
+    #[test]
+    fn explicit_category_disables_hushed_even_without_key_suffix() {
+        let mut d = Detector::default();
+        let mut incoming = hushed(CallPhase::Incoming);
+        incoming.key = "opaque-android-call-key".into();
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        d.suppress_apps(&["Hushed".into()]);
+        assert!(d.pending.is_none());
+        d.tick(1, std::slice::from_ref(&incoming), true, false);
+        assert!(d.pending.is_none());
+
+        let mut accepted = Detector::default();
+        accepted.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = accepted.pending.as_ref().unwrap().id.clone();
+        accepted.respond(&id, true).unwrap();
+        accepted.retire(&[incoming.key], 1, true);
+        accepted.suppress_apps(&["Hushed".into()]);
+        accepted.tick(200, &[], true, true);
+        assert!(accepted.pending.is_none());
+    }
+
+    #[test]
+    fn missing_adapter_evidence_can_hide_delivery_without_resetting_occurrence() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        assert!(!d.pending_has_evidence(std::slice::from_ref(&incoming)));
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        assert!(d.pending_has_evidence(std::slice::from_ref(&incoming)));
+        assert!(!d.pending_has_evidence(&[e()]));
+        assert!(!d.pending_has_evidence(&[]));
+        // A failed adapter read does not tick or retire. Recovery uses the same
+        // action identity and a previous user dismissal remains authoritative.
+        d.tick(5, std::slice::from_ref(&incoming), true, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, id);
+        d.respond(&id, false).unwrap();
+        d.tick(6, std::slice::from_ref(&incoming), true, false);
+        assert!(!d.pending_has_evidence(&[incoming]));
+    }
+
+    #[test]
+    fn prolonged_unknown_metadata_preserves_pending_and_user_dismissal() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.tick(600, &[], true, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, id);
+        assert!(!d.pending_has_evidence(&[]));
+        d.tick(601, std::slice::from_ref(&incoming), true, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, id);
+        d.respond(&id, false).unwrap();
+        d.tick(1200, &[], true, false);
+        d.tick(1201, std::slice::from_ref(&incoming), true, false);
+        assert!(d.pending.is_none());
+        assert_eq!(d.calls.len(), 1);
+    }
+
+    #[test]
+    fn unavailable_metadata_does_not_claim_an_accepted_call_ended() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&id, true).unwrap();
+        d.tick(600, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(601, &[hushed(CallPhase::Active)], true, true);
+        assert!(d.pending.is_none());
+        d.retire(&[incoming.key], 602, true);
+        d.tick(721, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(722, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().kind, "end");
+    }
+
+    #[test]
+    fn another_authoritative_call_defers_end_until_every_occurrence_retires() {
+        let mut d = Detector::default();
+        let first = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&first), true, false);
+        let first_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&first_id, true).unwrap();
+        d.retire(std::slice::from_ref(&first.key), 1, true);
+        let second = hushed(CallPhase::Active);
+        let mut third = second.clone();
+        third.key = "emulator-5556:notification-42:Hushed".into();
+        d.tick(2, &[second.clone(), third.clone()], true, true);
+        // Neither later call requires another start acceptance while Copilot is
+        // active. Unknown adapter reads must not make either occurrence ended.
+        d.tick(600, &[], true, true);
+        assert!(d.pending.is_none());
+        d.retire(std::slice::from_ref(&second.key), 601, true);
+        d.tick(800, &[], true, true);
+        assert!(d.pending.is_none());
+        d.retire(&[third.key], 801, true);
+        d.tick(920, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(921, &[], true, true);
+        let end = d.pending.as_ref().unwrap();
+        assert_eq!(end.kind, "end");
+        assert_eq!(end.id, format!("end:{first_id}"));
+    }
+
+    #[test]
+    fn new_authoritative_call_withdraws_unanswered_end_review_then_rearms_it() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(std::slice::from_ref(&incoming.key), 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.tick(122, &[hushed(CallPhase::Active)], true, true);
+        assert!(d.pending.is_none());
+        assert!(d.respond(&end_id, true).is_none());
+        d.tick(400, &[], true, true);
+        assert!(d.pending.is_none());
+        d.retire(&[incoming.key], 401, true);
+        d.tick(520, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(521, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().id, end_id);
+        assert_eq!(d.pending.as_ref().unwrap().kind, "end");
+    }
+
+    #[test]
+    fn connecting_call_withdraws_old_end_review_without_offering_a_start() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(std::slice::from_ref(&incoming.key), 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        for now in [122, 200, 400] {
+            // New CONNECTING call, continued transition, then confirmed retirement.
+            d.defer_end_review(now);
+            d.tick(now, &[], true, true);
+            assert!(d.pending.is_none());
+            assert!(d.respond(&end_id, true).is_none());
+        }
+        d.tick(519, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(520, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().id, end_id);
+        d.respond(&end_id, false).unwrap();
+        d.defer_end_review(521);
+        d.tick(1000, &[], true, true);
+        assert!(d.pending.is_none(), "explicit dismissal must remain dismissed");
+    }
+
+    #[test]
+    fn connecting_call_also_defers_a_generic_desktop_call_end_review() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        d.respond("42:Zoom", true).unwrap();
+        d.tick(125, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.defer_end_review(126);
+        d.tick(126, &[], true, true);
+        assert!(d.pending.is_none());
+        assert!(d.respond(&end_id, true).is_none());
+        d.tick(245, &[], true, true);
+        assert!(d.pending.is_none());
+        d.tick(246, &[], true, true);
+        assert_eq!(d.pending.as_ref().unwrap().id, end_id);
+    }
+
+    #[test]
+    fn new_authoritative_call_does_not_reset_an_explicit_end_review_dismissal() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(std::slice::from_ref(&incoming.key), 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&end_id, false).unwrap();
+        d.tick(122, &[hushed(CallPhase::Active)], true, true);
+        d.retire(&[incoming.key], 123, true);
+        d.tick(500, &[], true, true);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn disabling_category_clears_a_pending_end_action_with_its_distinct_id() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(&[incoming.key], 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.suppress_apps(&["Hushed".into()]);
+        assert!(d.pending.is_none());
+        assert!(d.respond(&end_id, true).is_none());
+        d.tick(500, &[], true, true);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn stopping_copilot_retires_old_end_actions_before_an_unrelated_session_starts() {
+        let mut d = Detector::default();
+        let incoming = hushed(CallPhase::Incoming);
+        d.tick(0, std::slice::from_ref(&incoming), true, false);
+        let start_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&start_id, true).unwrap();
+        d.retire(&[incoming.key], 1, true);
+        d.tick(121, &[], true, true);
+        let end_id = d.pending.as_ref().unwrap().id.clone();
+        d.tick(122, &[], true, false);
+        assert!(d.pending.is_none());
+        assert!(!d.tracking());
+        assert!(d.respond(&end_id, true).is_none());
+        d.tick(123, &[], true, true);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn disabled_authoritative_app_does_not_block_another_app_end_review() {
+        let mut d = Detector::default();
+        d.tick(0, &[e()], true, false);
+        d.tick(5, &[e()], true, false);
+        d.respond("42:Zoom", true).unwrap();
+        d.tick(6, &[hushed(CallPhase::Active)], true, true);
+        d.tick(200, &[], true, true);
+        assert!(d.pending.is_none());
+        d.suppress_apps(&["Hushed".into()]);
+        d.tick(201, &[], true, true);
+        let end = d.pending.as_ref().unwrap();
+        assert_eq!(end.kind, "end");
+        assert_eq!(end.platform, "Zoom");
+        // Re-enabling metadata monitoring restores conservative deferral until
+        // healthy idle, without issuing another start for the same occurrence.
+        d.suppress_apps(&[]);
+        d.tick(202, &[hushed(CallPhase::Active)], true, true);
+        assert!(d.pending.is_none());
+    }
+
+    #[test]
+    fn separate_emulator_instances_have_independent_call_occurrences() {
+        let mut d = Detector::default();
+        let first = hushed(CallPhase::Incoming);
+        let mut second = first.clone();
+        second.key = "emulator-5556:notification-42:Hushed".into();
+        d.tick(0, &[first.clone(), second.clone()], true, false);
+        let first_id = d.pending.as_ref().unwrap().id.clone();
+        d.respond(&first_id, false).unwrap();
+        d.tick(1, &[first.clone(), second.clone()], true, false);
+        let second_id = d.pending.as_ref().unwrap().id.clone();
+        assert_ne!(first_id, second_id);
+        d.retire(&[first.key], 2, false);
+        assert_eq!(d.pending.as_ref().unwrap().id, second_id);
+        assert!(d.pending_has_evidence(&[second]));
     }
 }
 
