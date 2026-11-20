@@ -191,6 +191,18 @@ def mcp_api():
     svc.tx = tx
     app = FastAPI()
     app.include_router(routes.router)
+    app.include_router(routes.mcp_router)
+    from fastapi import Request
+
+    from copilot_api.routes.personal_ai_oauth import SCOPES, mcp_account
+
+    async def fixture_mcp_account(request: Request):
+        request.state.mcp_scopes = SCOPES
+        if current_account in app.dependency_overrides:
+            return app.dependency_overrides[current_account]()
+        return await current_account(svc, None)
+
+    app.dependency_overrides[mcp_account] = fixture_mcp_account
     app.dependency_overrides[services] = lambda: svc
     app.dependency_overrides[current_account] = lambda: account
     app.dependency_overrides[current_user] = lambda: profile

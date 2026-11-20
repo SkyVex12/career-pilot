@@ -14,12 +14,14 @@ from fastapi.responses import JSONResponse
 from pydantic import Field, ValidationError
 
 from copilot_api.deps import AccountDep, SvcDep, UserDep
+from copilot_api.routes.personal_ai_oauth import McpAccountDep, require_scope
 from copilot_core import keys, profiles
 from copilot_core import personal_ai as context
 from copilot_core.auth import Principal
 from copilot_core.valkey_client import text
 
 router = APIRouter(prefix="/personal-ai", tags=["personal-ai"])
+mcp_router = APIRouter(prefix="/personal-ai", tags=["personal-ai-mcp"])
 PROTOCOL_VERSION = "2025-11-25"
 MAX_MCP_BYTES = 65536
 # Compare ownership and context atomically; never recreate an expired session or replace
@@ -226,8 +228,8 @@ def rpc_error(request_id: object, code: int, message: str) -> JSONResponse:
     )
 
 
-@router.post("/mcp")
-async def mcp(request: Request, svc: SvcDep, account: AccountDep) -> Response:
+@mcp_router.post("/mcp")
+async def mcp(request: Request, svc: SvcDep, account: McpAccountDep) -> Response:
     # Browser-origin protection; normal native MCP clients do not send Origin.
     origin = request.headers.get("origin")
     if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
@@ -275,8 +277,20 @@ async def mcp(request: Request, svc: SvcDep, account: AccountDep) -> Response:
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": tools()}
+        result = {
+            "tools": [
+                tool
+                for tool in tools()
+                if ("context:read" if tool["name"] == "get_context_request" else "context:publish")
+                in request.state.mcp_scopes
+            ]
+        }
     elif method == "tools/call":
+        require_scope(
+            request,
+            svc,
+            "context:publish" if params.get("name") == "publish_context_brief" else "context:read",
+        )
         arguments = params.get("arguments", {})
         if not isinstance(arguments, dict) or not isinstance(params.get("name"), str):
             return rpc_error(request_id, -32602, "Tool name and object arguments are required")

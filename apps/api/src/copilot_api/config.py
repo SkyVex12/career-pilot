@@ -13,6 +13,10 @@ class ApiSettings(DataSettings):
         default="postgresql://app_api:app_api-local@localhost:5432/copilot",
         validation_alias="COPILOT_API_DATABASE_URL",
     )
+    # MCP-only OAuth AS. Empty issuer keeps OAuth discovery/authorization disabled.
+    personal_ai_oauth_issuer: str | None = None
+    personal_ai_oauth_clients: dict[str, list[str]] = Field(default_factory=dict)
+    personal_ai_oauth_token_ttl_s: int = Field(default=1200, ge=60, le=3600)
     practice_tts_models: dict[str, str] = Field(default_factory=lambda: {"en": "aura-2-thalia-en"})
     max_document_bytes: int = 10 * 1024 * 1024
     upload_url_ttl_s: int = 900

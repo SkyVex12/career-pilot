@@ -63,3 +63,48 @@ it("keeps the usable brief visible when preparing a refresh fails", async () => 
   expect(screen.getByLabelText("Brief item")).toHaveValue("Shipped queue");
   expect(screen.getByText(/Pasted from your AI/)).toBeVisible();
 });
+
+
+it("disconnects only the selected AI grant and preserves existing briefs", async () => {
+  const r = request(); let connected = true;
+  ipc.api("GET", /^\/personal-ai\/requests$/, () => ({ requests:[r] }));
+  ipc.api("GET", /^\/personal-ai\/oauth\/connections$/, () => ({ connections:connected ? [{id:"grant1",client_id:"Test AI",scope:"context:read",expires_at:1790000000}] : [] }));
+  ipc.api("DELETE", /^\/personal-ai\/oauth\/connections\/grant1$/, () => { connected=false; return {}; });
+  render(<PersonalAI />);
+  fireEvent.click(screen.getByText("Connected AI clients"));
+  fireEvent.click(await screen.findByRole("button", {name:"Disconnect Test AI"}));
+  await waitFor(() => expect(screen.queryByRole("button", {name:"Disconnect Test AI"})).not.toBeInTheDocument());
+  expect(screen.getByText("No active OAuth connections.")).toBeVisible();
+  expect(screen.getByRole("button", {name:"View"})).toBeVisible();
+});
+
+
+it("ignores an initial grant list that finishes after disconnect", async () => {
+  let finish!: (value: unknown) => void; let reads = 0; let connected = true;
+  const grant = {id:"g1",client_id:"Delayed AI",scope:"context:read",expires_at:1790000000};
+  ipc.api("GET", /^\/personal-ai\/requests$/, () => ({requests:[]}));
+  ipc.api("GET", /^\/personal-ai\/oauth\/connections$/, () => ++reads === 1 ? new Promise(resolve => {finish=resolve;}) : {connections:connected ? [grant] : []});
+  ipc.api("DELETE", /^\/personal-ai\/oauth\/connections\/g1$/, () => {connected=false; return {};});
+  render(<PersonalAI />); fireEvent.click(screen.getByText("Connected AI clients"));
+  fireEvent.click(screen.getByRole("button", {name:"Refresh AI connections"}));
+  const disconnect = await screen.findByRole("button", {name:"Disconnect Delayed AI"});
+  await waitFor(() => expect(disconnect).not.toBeDisabled()); fireEvent.click(disconnect);
+  await waitFor(() => expect(screen.queryByRole("button", {name:"Disconnect Delayed AI"})).not.toBeInTheDocument());
+  finish({connections:[grant]});
+  await waitFor(() => expect(screen.getByText("No active OAuth connections.")).toBeVisible());
+});
+
+it("closing a brief invalidates an in-flight detail refresh", async () => {
+  const r = request(); let finish!: (value: unknown) => void; let reads = 0;
+  ipc.api("GET", /^\/personal-ai\/requests$/, () => ({requests:[r]}));
+  ipc.api("GET", /^\/personal-ai\/oauth\/connections$/, () => ({connections:[]}));
+  ipc.api("GET", /^\/personal-ai\/requests\/r1$/, () => ++reads === 1 ? r : new Promise(resolve => {finish=resolve;}));
+  render(<PersonalAI />); fireEvent.click(await screen.findByRole("button", {name:"View"}));
+  await screen.findByRole("button", {name:"Close brief"});
+  await waitFor(() => expect(screen.getByRole("button", {name:"View"})).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", {name:"View"}));
+  fireEvent.click(screen.getByRole("button", {name:"Close brief"}));
+  finish(r);
+  await waitFor(() => expect(screen.getByRole("button", {name:"View"})).not.toBeDisabled());
+  expect(screen.queryByRole("button", {name:"Close brief"})).not.toBeInTheDocument();
+});

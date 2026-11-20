@@ -31,6 +31,7 @@ from copilot_api.routes import (
     employers,
     me,
     personal_ai,
+    personal_ai_oauth,
     practice,
     profiles,
     resumes,
@@ -185,6 +186,10 @@ def create_app(services: Services | None = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "service": SERVICE, "version": __version__}
+
+    app.add_exception_handler(personal_ai_oauth.OAuthError, personal_ai_oauth.oauth_exception)
+    app.include_router(personal_ai_oauth.router)
+    app.include_router(personal_ai.mcp_router, prefix="/v1")
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
     for module in (auth, email_auth, career_os_auth, me, profiles, career_os, calendar, companion):
