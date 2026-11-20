@@ -96,7 +96,7 @@ async def main():
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), 180)

@@ -72,7 +72,7 @@ async def main():
             node,
             str(ROOT / "scripts/validate_personal_ai_consent.mjs"),
             env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
