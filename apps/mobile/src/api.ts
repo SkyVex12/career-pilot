@@ -1,0 +1,231 @@
+export interface Tokens {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  email: string;
+  expires_at?: number;
+}
+export interface SecretStore {
+  read(): Promise<Tokens | null>;
+  write(tokens: Tokens | null): Promise<void>;
+}
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+export function secureBase(raw: string, development = false): string {
+  const u = new URL(raw);
+  if (u.username || u.password || u.search || u.hash)
+    throw new Error(
+      "Server address must not contain credentials, queries or fragments.",
+    );
+  if (
+    u.protocol !== "https:" &&
+    !(
+      development &&
+      u.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "10.0.2.2"].includes(u.hostname)
+    )
+  )
+    throw new Error("Use an HTTPS server address.");
+  return u.toString().replace(/\/$/, "");
+}
+export class Api {
+  readonly base: string;
+  private store: SecretStore;
+  private fetcher: typeof fetch;
+  private tokens: Tokens | null = null;
+  private refreshing: Promise<void> | null = null;
+  private epoch = 0;
+  private writes: Promise<void> = Promise.resolve();
+  profile = "";
+  attachments = new Set<string>();
+  constructor(
+    base: string,
+    store: SecretStore,
+    fetcher = fetch,
+    development = false,
+  ) {
+    this.base = secureBase(base, development);
+    this.store = store;
+    this.fetcher = fetcher;
+  }
+  private persist(tokens: Tokens | null): Promise<void> {
+    // Serialize keychain writes: a refresh already persisting must finish before logout clears it.
+    this.writes = this.writes
+      .catch(() => {})
+      .then(() => this.store.write(tokens));
+    return this.writes;
+  }
+  async restore() {
+    const epoch = this.epoch;
+    await this.writes;
+    const restored = await this.store.read();
+    this.assertEpoch(epoch);
+    this.tokens = restored;
+    return !!this.tokens;
+  }
+  async accept(t: Tokens) {
+    const epoch = ++this.epoch;
+    this.tokens = { ...t, expires_at: Date.now() + t.expires_in * 1000 };
+    await this.persist(this.tokens);
+    this.assertEpoch(epoch);
+  }
+  get email() {
+    return this.tokens?.email ?? "";
+  }
+  private assertEpoch(epoch: number) {
+    if (epoch !== this.epoch)
+      throw new ApiError(
+        401,
+        "Account changed. Retry from the current account.",
+      );
+  }
+  async token(force = false): Promise<string> {
+    const epoch = this.epoch;
+    if (!this.tokens) throw new ApiError(401, "Sign in to continue.");
+    if (force || (this.tokens.expires_at ?? 0) < Date.now() + 60000)
+      await this.refresh();
+    this.assertEpoch(epoch);
+    if (!this.tokens) throw new ApiError(401, "Sign in again.");
+    return this.tokens.access_token;
+  }
+  private async refresh() {
+    if (this.refreshing) return this.refreshing;
+    const epoch = this.epoch,
+      token = this.tokens?.refresh_token;
+    if (!token) throw new ApiError(401, "Sign in again.");
+    this.refreshing = (async () => {
+      try {
+        const data = await this.request<Tokens>(
+          "/auth/email/refresh",
+          { refresh_token: token },
+          "POST",
+          false,
+        );
+        if (epoch !== this.epoch) return;
+        this.tokens = {
+          ...data,
+          expires_at: Date.now() + data.expires_in * 1000,
+        };
+        await this.persist(this.tokens);
+      } catch (e) {
+        if (epoch === this.epoch && e instanceof ApiError && e.status === 401) {
+          this.tokens = null;
+          await this.persist(null);
+        }
+        throw e;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
+  }
+  async signout(): Promise<boolean> {
+    const previous = this.tokens,
+      attachments = [...this.attachments],
+      profile = this.profile;
+    this.epoch++;
+    this.tokens = null;
+    this.profile = "";
+    this.attachments.clear();
+    await this.persist(null);
+    if (!previous) return true;
+    const controller = new AbortController(),
+      timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${previous.access_token}`,
+      };
+      if (profile) headers["x-copilot-profile"] = profile;
+      const results = await Promise.all([
+        ...attachments.map((id) =>
+          this.fetcher(`${this.base}/v1/companion/attachments/${id}`, {
+            method: "DELETE",
+            headers,
+            signal: controller.signal,
+          }),
+        ),
+        this.fetcher(`${this.base}/v1/auth/email/signout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: previous.refresh_token }),
+          signal: controller.signal,
+        }),
+      ]);
+      return results.every((r) => r.ok || r.status === 404);
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async request<T = unknown>(
+    path: string,
+    body?: unknown,
+    method = "GET",
+    auth = true,
+    signal?: AbortSignal,
+    retry = true,
+    profile = this.profile,
+    epoch = this.epoch,
+  ): Promise<T> {
+    this.assertEpoch(epoch);
+    signal?.throwIfAborted();
+    if (!path.startsWith("/") || path.startsWith("//"))
+      throw new Error("Invalid API path");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (auth) {
+      headers.Authorization = `Bearer ${await this.token()}`;
+      this.assertEpoch(epoch);
+      if (profile) headers["x-copilot-profile"] = profile;
+    }
+    const response = await this.fetcher(`${this.base}/v1${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+    this.assertEpoch(epoch);
+    if (response.status === 401 && auth && retry) {
+      await this.token(true);
+      return this.request<T>(
+        path,
+        body,
+        method,
+        auth,
+        signal,
+        false,
+        profile,
+        epoch,
+      );
+    }
+    if (!response.ok) {
+      let message = `Request failed (${response.status})`;
+      try {
+        const data = (await response.json()) as {
+          detail?: string | { message?: string };
+        };
+        message =
+          typeof data.detail === "string"
+            ? data.detail
+            : (data.detail?.message ?? message);
+      } catch {
+        /* generic error */
+      }
+      throw new ApiError(response.status, message);
+    }
+    const data =
+      response.status === 204
+        ? (undefined as T)
+        : ((await response.json()) as T);
+    this.assertEpoch(epoch);
+    return data;
+  }
+}

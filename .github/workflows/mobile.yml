@@ -1,0 +1,133 @@
+name: mobile
+on:
+  pull_request:
+    paths: ["apps/mobile/**", ".github/workflows/mobile.yml"]
+  push:
+    branches: [main]
+    tags: ["mobile-v*"]
+    paths: ["apps/mobile/**", ".github/workflows/mobile.yml"]
+  workflow_dispatch:
+    inputs:
+      ios_simulator:
+        description: Compile an unsigned iOS simulator app on macOS (no store publishing)
+        type: boolean
+        default: false
+      native_apk:
+        description: Build an installable development-signed Android preview
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_NO_DOTENV: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run export
+  android-preview:
+    if: (github.event_name == 'workflow_dispatch' && inputs.native_apk) || startsWith(github.ref, 'refs/tags/mobile-v')
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_NO_DOTENV: "1"
+      NODE_ENV: production
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - run: npm ci --include=dev --no-audit --no-fund
+      - name: Install exact Android build prerequisites
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+      - name: Build bundled preview APK (development signing key)
+        run: cd android && bash ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: career-pilot-android-preview
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-simulator:
+    if: github.event_name == 'workflow_dispatch' && inputs.ios_simulator
+    needs: checks
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/mobile
+        shell: bash
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_NO_DOTENV: "1"
+      NODE_ENV: production
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - name: Verify native toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          pod --version
+      - run: npm ci --include=dev --no-audit --no-fund
+      - name: Install native pods
+        run: cd ios && pod install
+      - name: Compile bundled simulator application without signing
+        run: |
+          set -o pipefail
+          xcodebuild -workspace ios/CareerPilot.xcworkspace -scheme CareerPilot \
+            -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            build | tee ios-build.log
+          ditto -c -k --keepParent ios/build/Build/Products/Release-iphonesimulator/CareerPilot.app CareerPilot-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: career-pilot-ios-simulator
+          path: apps/mobile/CareerPilot-simulator.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: career-pilot-ios-build-evidence
+          path: |
+            apps/mobile/ios-build.log
+            apps/mobile/ios/Podfile.lock
+          retention-days: 14
