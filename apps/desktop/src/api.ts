@@ -234,6 +234,7 @@ export interface LiveStatus {
 }
 
 export interface StartRequest {
+  spoken_language?: string;
   mode: Mode;
   job_id: string | null;
   interview_id: string | null;

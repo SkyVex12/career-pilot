@@ -31,11 +31,29 @@ with the session id to Cloud Logging.
 
 Stage 0 is used by a small internal team (3 to 4 people) on Windows.
 
+## Career workflows
+
+Interview prep includes adaptive interview practice with microphone or text answers, feedback,
+retries and saved transcript questions. Work context includes Ask with saved conversations and
+source-linked answers, plus private context briefs published by a connected AI host. Settings
+includes optional background call suggestions and read-only calendar preparation. Calls retain
+one selected spoken language; unverified candidate languages remain disabled.
+
+The native [mobile app](apps/mobile/README.md) provides a desktop companion and standalone Ask,
+practice, preparation, history and foreground in-person microphone turns. Companion mode reuses
+the desktop capture session.
+
+See the [six-feature delivery guide](docs/implementation/six-feature-delivery.md) for development
+artifacts, setup and validation, and the [requirement ledger](docs/implementation/six-feature-progress.md)
+for exact implementation and external verification status. Builds do not certify real conferencing
+apps, phone routing, physical microphones or production OAuth/signing configuration.
+
 ## Built with
 
 | Part | Technology |
 | --- | --- |
 | Desktop app | Tauri 2 (Rust), React and TypeScript; WASAPI capture, echo cancellation, Silero VAD |
+| Mobile app | Expo / React Native; native Android and iOS projects |
 | Backend | Python 3.12, FastAPI (WebSocket gateway, REST API), queue workers |
 | Data | PostgreSQL 16 with pgvector and row-level security, Valkey, SQS (ElasticMQ locally), S3-compatible storage |
 | AI | OpenAI and Claude models for detection and answers, Deepgram Nova-3 speech recognition |
@@ -67,11 +85,12 @@ What is done, what comes next and the open questions are in [ROADMAP.md](ROADMAP
 
 ```
 apps/
-  desktop/      Tauri 2 app (Windows for now)               (pnpm, cargo)
+  desktop/      Tauri 2 app (Windows and macOS)               (pnpm, cargo)
     core/       copilot-client: capture, AEC, VAD, framing, gateway client
     src-tauri/  Tauri shell: windows, commands, hotkey, settings
     src/        React UI: overlay, session and post-call, documents, jobs, history,
                 settings, debug
+  mobile/       Native Expo / React Native companion       (npm, Gradle, Xcode)
   gateway/      FastAPI WebSocket service, port 8081         (uv)
   api/          FastAPI REST service, port 8080              (uv)
   worker/       SQS consumer, health check on port 8082;     (uv)

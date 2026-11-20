@@ -163,3 +163,19 @@ def test_failed_diff_runs_everything(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(cc, "changed", fail_diff)
     assert cc.main(["--base", "missing", "--github-output"]) == 0
     assert set(out.read_text(encoding="utf-8").splitlines()) == {f"{area}=true" for area in ALL}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/package-lock.json",
+        "apps/mobile/android/app/build.gradle",
+        "apps/desktop/native-checks/Cargo.toml",
+    ],
+)
+def test_isolated_native_projects_do_not_trigger_unrelated_jobs(path: str) -> None:
+    assert runs(path) == set()
+    assert runs(path, "apps/api/src/copilot_api/main.py") == {"python", "server"}
+    assert runs("apps/api/src/copilot_api/main.py", path) == {"python", "server"}
+    assert runs(path, "apps/new-client/main.ts") == ALL

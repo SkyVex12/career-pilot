@@ -1,3 +1,5 @@
+import { PersonalAI } from "./PersonalAI";
+import { Ask, openAsk, type AskEntry } from "./Ask";
 // Work: the companies the user works at (apart from the jobs they apply to), and per company a
 // daily work log, its engineering context (documents kept as searchable sections and facts,
 // with a box to test a question against them) and its facts.
@@ -33,7 +35,10 @@ import {
   useToast,
 } from "./ui";
 
-export function Work({ active = true }: { active?: boolean }) {
+export function Work({ active = true, askEntry }: { active?: boolean; askEntry?: AskEntry | null }) {
+  const [asking, setAsking] = useState(false);
+  const [askOpened, setAskOpened] = useState(false);
+  useEffect(() => { if (askEntry) { setAsking(true); setAskOpened(true); } }, [askEntry?.n]);
   const [employers, setEmployers] = useState<Employer[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,12 +107,13 @@ export function Work({ active = true }: { active?: boolean }) {
         title="Work context"
         actions={
           <>
-            {employers.length > 0 && (
+            <Button onClick={() => { setAsking(v => !v); setAskOpened(true); }}>{asking ? "Back to work context" : "Ask a question"}</Button>
+            {!asking && employers.length > 0 && (
               <Button variant="secondary" onClick={() => setForm("add")}>
                 + Add company
               </Button>
             )}
-            {employer && (
+            {!asking && employer && (
               <Menu
                 label="Company actions"
                 trigger="⋯"
@@ -122,6 +128,9 @@ export function Work({ active = true }: { active?: boolean }) {
           </>
         }
       />
+      {askOpened && <div hidden={!asking}><Ask active={active && asking} entry={askEntry} /></div>}
+      <div hidden={asking}>
+      <details className="work-personal-context"><summary>Context from my AI</summary><PersonalAI /></details>
       {employers.length === 0 ? (
         <EmptyState
           icon={<Icon name="work" size={28} />}
@@ -165,6 +174,7 @@ export function Work({ active = true }: { active?: boolean }) {
           )}
         </>
       )}
+      </div>
       <EmployerForm
         open={form !== null}
         employer={form === "edit" ? employer : null}
@@ -787,8 +797,9 @@ function TestQuestion({ employer, ready }: { employer: Employer; ready: boolean 
   return (
     <section className="ui-section" aria-labelledby="ask-title">
       <h2 className="ui-section-title" id="ask-title">
-        Test a question
+        Ask about this company
       </h2>
+      <Button onClick={() => openAsk({ kind: "company", id: employer.id })}>Open Ask</Button>
       <form
         className="ask-form"
         onSubmit={(e) => {

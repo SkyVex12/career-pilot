@@ -20,6 +20,7 @@ from copilot_core.jobs import SqsJobQueue
 from copilot_core.llm import ModelRouter
 from copilot_core.pricing import missing_prices
 from copilot_gateway.auth import make_verifier
+from copilot_gateway.companionrelay import CompanionRelay
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
 from copilot_gateway.seatrelay import SeatRelay
@@ -124,11 +125,13 @@ def create_app(services: Services | None = None) -> FastAPI:
         # Guests' connections (/v1/seat): apart from the hosts' sessions, sharing only the
         # auth checks (seatrelay.py).
         app.state.seats = SeatRelay(svc, app.state.manager)
+        app.state.companions = CompanionRelay(svc, app.state.manager)
         warm = asyncio.create_task(svc.router.warm())
         try:
             yield
         finally:
             warm.cancel()
+            await app.state.companions.shutdown()
             await app.state.seats.shutdown()
             await app.state.manager.shutdown()
             if owned_pool and svc.pool is not None:
@@ -148,6 +151,11 @@ def create_app(services: Services | None = None) -> FastAPI:
     @app.websocket("/v1/seat")
     async def seat(ws: WebSocket) -> None:  # pyright: ignore[reportUnusedFunction]
         relay: SeatRelay = ws.app.state.seats
+        await relay.handle(ws)
+
+    @app.websocket("/v1/companion")
+    async def companion(ws: WebSocket) -> None:  # pyright: ignore[reportUnusedFunction]
+        relay: CompanionRelay = ws.app.state.companions
         await relay.handle(ws)
 
     return app

@@ -23,10 +23,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from copilot_api.deps import Services, SvcDep, UserDep
+from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
 from copilot_core import keys
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
+from copilot_core.db import Conn
 from copilot_core.storage import me_audio_key
 from copilot_core.valkey_client import text
 
@@ -34,7 +35,7 @@ router = APIRouter()
 
 SESSION_COLUMNS = (
     "id, mode, title, platform, job_id, interview_id, store_transcript, started_at, ended_at,"
-    " billed_seconds, me_audio_status, outputs_ready_at, employer_id"
+    " billed_seconds, me_audio_status, outputs_ready_at, employer_id, spoken_language"
 )
 
 
@@ -54,6 +55,7 @@ def _session(row: Any) -> dict[str, Any]:
         "mode": row["mode"],
         "title": row["title"],
         "platform": row["platform"],
+        "spoken_language": row["spoken_language"],
         "job_id": str(row["job_id"]) if row["job_id"] else None,
         "interview_id": str(row["interview_id"]) if row["interview_id"] else None,
         "employer_id": str(row["employer_id"]) if row["employer_id"] else None,
@@ -68,19 +70,27 @@ def _session(row: Any) -> dict[str, Any]:
 
 @router.get("/sessions")
 async def list_sessions(
-    svc: SvcDep, user: UserDep, limit: int = 20, before: datetime | None = None
+    svc: SvcDep, user: UserDep, account: AccountDep, limit: int = 20, before: datetime | None = None
 ) -> dict[str, Any]:
     limit = max(1, min(limit, 100))
     async with svc.tx(user) as conn:
         rows = await conn.fetch(
             f"select {SESSION_COLUMNS} from app.sessions where user_id = $1"
             " and ($2::timestamptz is null or started_at < $2)"
+            " and (private_context_account_id is null or private_context_account_id=$4)"
             " order by started_at desc limit $3",
             user.user_id,
             before,
             limit,
+            account.user_id,
         )
-    items = [_session(r) for r in rows]
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            await _privacy(svc, user, account, row["id"])
+        except HTTPException:
+            continue
+        items.append(_session(row))
     return {
         "sessions": items,
         "next_before": items[-1]["started_at"] if len(items) == limit else None,
@@ -95,7 +105,7 @@ def _int(value: str | None, default: int = -1) -> int:
 
 
 @router.get("/sessions/live")
-async def live_sessions(svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def live_sessions(svc: SvcDep, user: UserDep, account: AccountDep) -> dict[str, Any]:
     """The running call of the profile asked for ("Me" or one profile), if any. `connected` is
     false while the gateway waits for a client to come back (it ends the call after the
     resume window)."""
@@ -105,13 +115,17 @@ async def live_sessions(svc: SvcDep, user: UserDep) -> dict[str, Any]:
         sid = text(sid)
         raw = await svc.valkey.hgetall(keys.sess_state(sid))
         state = {text(k): text(v) for k, v in raw.items()}
-        if state.get("user_id") == str(user.user_id) and state.get("status") not in (
+        if (
+            state.get("private_context_account_id") in (None, "", str(account.user_id))
+            and state.get("user_id") == str(user.user_id)
+        ) and state.get("status") not in (
             None,
             "ended",
         ):
             items.append({
                 "id": sid,
                 "mode": state.get("mode"),
+                "spoken_language": state.get("spoken_language"),
                 "title": state.get("title") or None,
                 "platform": state.get("platform") or None,
                 "started_at": state.get("started_at"),
@@ -133,9 +147,36 @@ async def _live_owner(svc: Services, user: Principal, sid: UUID) -> dict[str, st
     return state if state.get("user_id") == str(user.user_id) else None
 
 
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def _lock_private(conn: Conn, account: Principal, sid: UUID) -> None:
+    # Hold the row until response data is collected; a first private generation cannot race
+    # a previously authorized reader between its permission check and decrypt queries.
+    owner = await conn.fetchval(
+        "select private_context_account_id from app.sessions where id=$1 for share", sid
+    )
+    if owner is not None and owner != account.user_id:
+        raise HTTPException(404, "no such session")
+
+
+async def _privacy(svc: Services, user: Principal, account: Principal, sid: UUID) -> None:
+    """Check both durable history and not-yet-flushed live privacy markers before decryption."""
     async with svc.tx(user) as conn:
+        owner = await conn.fetchval(
+            "select private_context_account_id from app.sessions where id=$1", sid
+        )
+    if owner is not None and owner != account.user_id:
+        raise HTTPException(404, "no such session")
+    state = await _live_owner(svc, user, sid)
+    if state and state.get("private_context_account_id") not in (None, "", str(account.user_id)):
+        raise HTTPException(404, "no such session")
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(
+    session_id: UUID, svc: SvcDep, user: UserDep, account: AccountDep
+) -> dict[str, Any]:
+    await _privacy(svc, user, account, session_id)
+    async with svc.tx(user) as conn:
+        await _lock_private(conn, account, session_id)
         row = await conn.fetchrow(
             f"select {SESSION_COLUMNS}, notes_enc, notes_key_version"
             " from app.sessions where id = $1",
@@ -148,6 +189,7 @@ async def get_session(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str,
             return {
                 "id": str(session_id),
                 "mode": state.get("mode"),
+                "spoken_language": state.get("spoken_language"),
                 "status": "live",
                 "started_at": state.get("started_at"),
                 "outputs": {},
@@ -187,10 +229,12 @@ class SessionNotesIn(BaseModel):
 
 @router.put("/sessions/{session_id}/notes")
 async def put_session_notes(
-    session_id: UUID, body: SessionNotesIn, svc: SvcDep, user: UserDep
+    session_id: UUID, body: SessionNotesIn, svc: SvcDep, user: UserDep, account: AccountDep
 ) -> dict[str, str]:
     """Explicitly saved personal notes, encrypted under the active profile's data key."""
+    await _privacy(svc, user, account, session_id)
     async with svc.tx(user) as conn:
+        await _lock_private(conn, account, session_id)
         row = await conn.fetchrow(
             "select ended_at from app.sessions where id = $1 for update", session_id
         )
@@ -213,8 +257,12 @@ async def put_session_notes(
 
 
 @router.get("/sessions/{session_id}/transcript")
-async def get_transcript(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def get_transcript(
+    session_id: UUID, svc: SvcDep, user: UserDep, account: AccountDep
+) -> dict[str, Any]:
+    await _privacy(svc, user, account, session_id)
     async with svc.tx(user) as conn:
+        await _lock_private(conn, account, session_id)
         row = await conn.fetchrow(
             "select store_transcript from app.sessions where id = $1", session_id
         )
@@ -244,12 +292,15 @@ def _offset_ms(at: datetime | None, started_at: datetime | None) -> int:
 
 
 @router.get("/sessions/{session_id}/replay")
-async def get_replay(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def get_replay(
+    session_id: UUID, svc: SvcDep, user: UserDep, account: AccountDep
+) -> dict[str, Any]:
     """The call as the overlay showed it. Questions the gateway dropped (a speculative one it
     did not keep) are left out, as the overlay left them out. Without transcript consent no
     text was stored, so there is nothing but the questions' types."""
-    transcript = await get_transcript(session_id, svc, user)
+    transcript = await get_transcript(session_id, svc, user, account)
     async with svc.tx(user) as conn:
+        await _lock_private(conn, account, session_id)
         started_at = await conn.fetchval(
             "select started_at from app.sessions where id = $1", session_id
         )
@@ -324,12 +375,16 @@ async def get_replay(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, 
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: UUID, svc: SvcDep, user: UserDep) -> Response:
+async def delete_session(
+    session_id: UUID, svc: SvcDep, user: UserDep, account: AccountDep
+) -> Response:
     """The session and its whole log; facts already approved into memory stay."""
+    await _privacy(svc, user, account, session_id)
     state = await _live_owner(svc, user, session_id)
     if state is not None and state.get("status") != "ended":
         raise HTTPException(409, "the session is still live; end it first")
     async with svc.tx(user) as conn:
+        await _lock_private(conn, account, session_id)
         deleted = await conn.fetchval(
             "delete from app.sessions where id = $1 returning id", session_id
         )

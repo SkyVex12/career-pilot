@@ -1,0 +1,72 @@
+ M apps/api/src/copilot_api/routes/sessions.py
+ M apps/api/tests/test_api.py
+ M apps/api/tests/test_profiles.py
+ M apps/desktop/src-tauri/capabilities/default.json
+ M apps/desktop/src-tauri/src/compact_window.rs
+ M apps/desktop/src-tauri/src/lib.rs
+ M apps/desktop/src-tauri/tauri.conf.json
+ M apps/desktop/src/App.tsx
+ M apps/desktop/src/Applications.tsx
+ M apps/desktop/src/CallScreen.tsx
+ M apps/desktop/src/CodingBar.tsx
+ M apps/desktop/src/History.tsx
+ M apps/desktop/src/Overlay.tsx
+ M apps/desktop/src/Resumes.tsx
+ M apps/desktop/src/SessionDetail.tsx
+ M apps/desktop/src/SettingsScreen.tsx
+ M apps/desktop/src/Shell.tsx
+ M apps/desktop/src/Work.tsx
+ M apps/desktop/src/api.ts
+ M apps/desktop/src/compactMotion.ts
+ M apps/desktop/src/main.tsx
+ M apps/desktop/src/nativeScreen.tsx
+ M apps/desktop/src/overlay.css
+ M apps/desktop/src/screen.ts
+ M apps/desktop/src/screens.css
+ M apps/desktop/src/screenui.tsx
+ M apps/desktop/src/seats.tsx
+ M apps/desktop/src/ui/Icon.tsx
+ M apps/desktop/src/ui/Select.tsx
+ M apps/desktop/src/ui/tokens.css
+ M apps/desktop/src/voice.ts
+ M apps/desktop/src/windowMode.ts
+ M apps/desktop/src/windowMotion.ts
+ M apps/desktop/tests/cardWindow.test.tsx
+ M apps/desktop/tests/coding.test.tsx
+ M apps/desktop/tests/compactMotion.test.ts
+ M apps/desktop/tests/headerProfile.test.tsx
+ M apps/desktop/tests/history.test.tsx
+ M apps/desktop/tests/nativeNavigation.test.tsx
+ M apps/desktop/tests/overlay.test.tsx
+ M apps/desktop/tests/profileSession.test.tsx
+ M apps/desktop/tests/screen.test.tsx
+ M apps/desktop/tests/screens.test.tsx
+ M apps/desktop/tests/seats.test.tsx
+ M apps/desktop/tests/windowMotion.test.tsx
+ M apps/desktop/tests/workspaceMenus.test.tsx
+ M docs/design/harness/fixtures.ts
+ M docs/design/harness/mock.ts
+ M evals/README.md
+ M evals/src/copilot_evals/sensei_report.py
+?? .implementation/
+?? apps/api/tests/test_session_notes.py
+?? apps/desktop/src/GuestPicker.tsx
+?? apps/desktop/src/OverlayAudio.tsx
+?? apps/desktop/src/OverlayQuickSettings.tsx
+?? apps/desktop/src/callDesign.css
+?? apps/desktop/src/desktop.css
+?? apps/desktop/src/guestStorage.ts
+?? apps/desktop/src/overlayPopover.ts
+?? apps/desktop/src/prep.css
+?? apps/desktop/tests/callDesign.test.tsx
+?? apps/desktop/tests/interviewPrep.test.tsx
+?? apps/desktop/tests/overlayDesign.test.tsx
+?? docs/design/autonomous-six-feature-implementation-prompt.md
+?? docs/design/material-01-background-calls-and-calendar.md
+?? docs/design/material-02-practice-interviews.md
+?? docs/design/material-03-central-ask.md
+?? docs/design/material-04-mobile-companion.md
+?? docs/design/material-05-personal-ai-context.md
+?? docs/design/material-06-call-language-selection.md
+?? docs/design/six-feature-implementation-plan.md
+?? migrations/0018_session_notes.sql

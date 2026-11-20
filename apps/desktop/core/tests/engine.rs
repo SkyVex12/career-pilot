@@ -45,6 +45,7 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
     let config = ClientConfig::new(
         gw.url(),
         StartParams {
+            spoken_language: None,
             mode: Mode::Interview,
             job_id: None,
             interview_id: None,

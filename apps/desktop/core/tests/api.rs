@@ -96,6 +96,7 @@ async fn call(stack: &Stack, params: StartParams) -> Call {
 
 fn start_params(job_id: Option<Uuid>, interview_id: Option<Uuid>, store_transcript: bool) -> StartParams {
     StartParams {
+        spoken_language: None,
         mode: Mode::Interview,
         job_id,
         interview_id,

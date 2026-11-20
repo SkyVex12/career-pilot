@@ -1,0 +1,19 @@
+{
+  "results": [
+    {
+      "name": "Ask",
+      "violations": [],
+      "overflow": false
+    },
+    {
+      "name": "Practice",
+      "violations": [],
+      "overflow": false
+    },
+    {
+      "name": "Practice narrow",
+      "overflow": false
+    }
+  ],
+  "errors": []
+}

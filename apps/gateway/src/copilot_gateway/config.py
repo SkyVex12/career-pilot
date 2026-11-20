@@ -56,6 +56,8 @@ class Settings(CoreSettings):
     `CoreSettings`; these are the gateway's own."""
 
     # Live settings (ARCHITECTURE.md "Settings").
+    personal_ai_api_url: str | None = None
+    personal_ai_timeout_s: float = 0.35
     silence_timer_ms: int = 400
     speculative_start_ms: int = 300
     # Start the fast pass at the speech end, alongside the detector, holding its output on the

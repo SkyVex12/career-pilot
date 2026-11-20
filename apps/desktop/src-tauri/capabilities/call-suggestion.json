@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "call-suggestion",
+  "description": "Local call suggestion receives native evidence events without account or capture bootstrap",
+  "windows": ["call-suggestion"],
+  "permissions": ["core:event:default"]
+}

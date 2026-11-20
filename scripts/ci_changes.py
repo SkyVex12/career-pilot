@@ -117,6 +117,9 @@ AREAS: dict[str, tuple[str, ...]] = {
 
 # Never affect any job: docs, and files only people or other workflows read. (Markdown inside
 # a package, like a fixtures README, is documentation too.)
+# Isolated native projects use mobile.yml or the documented desktop native harness.
+# Narrow prefixes preserve fail-closed behavior for unknown neighboring applications.
+SEPARATELY_VALIDATED_PREFIXES = ("apps/mobile/", "apps/desktop/native-checks/")
 NOTHING = (".md", ".gitignore")
 NOTHING_PREFIXES = (
     "docs/",
@@ -133,7 +136,9 @@ def needs(paths: list[str]) -> dict[str, bool]:
             # These stdlib-only helpers and their tests do not need the backend stack.
             out["tooling"] = True
             continue
-        if path.endswith(NOTHING) or path.startswith(NOTHING_PREFIXES):
+        if path.endswith(NOTHING) or path.startswith(
+            (*NOTHING_PREFIXES, *SEPARATELY_VALIDATED_PREFIXES)
+        ):
             continue
         hit = [area for area, prefixes in AREAS.items() if path.startswith(prefixes)]
         if not hit:

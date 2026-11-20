@@ -109,7 +109,7 @@ CARRY_MAX_WORDS = 60
 FIRST = Detection("answer", "other")
 
 
-def likely_question(text: str, min_words: int = 3) -> bool:
+def likely_question(text: str, min_words: int = 3, spoken_language: str = "en") -> bool:
     """A cheap local check on the text, before any model call: is a held fast pass worth it?
 
     Too short (greetings, acknowledgements) is no; a "?" from the STT's punctuation, a question
@@ -120,6 +120,17 @@ def likely_question(text: str, min_words: int = 3) -> bool:
     words = re.sub(r"[^\w\s]", "", text.lower()).split()
     if len(words) < min_words:
         return False
+    local_words = {
+        "es": {"qué", "cómo", "cuál", "cuáles", "cuándo", "dónde", "quién", "puedes", "podrías"},
+        "vi": {"gì", "sao", "nào", "ai", "đâu"},
+    }
+    cues = {"es": ("háblame", "cuéntame", "explica"), "vi": ("hãy", "có thể", "bao nhiêu")}
+    if spoken_language != "en":
+        return (
+            "?" in text
+            or bool(local_words.get(spoken_language, set()).intersection(words))
+            or any(cue in " ".join(words) for cue in cues.get(spoken_language, ()))
+        )
     if "?" in text or QUESTION_WORDS.intersection(words):
         return True
     joined = " ".join(words)
@@ -504,8 +515,10 @@ class TurnDetector:
         first_show_min_words: int | None = None,
         keep_added_words: int | None = None,
         early_all_modes: bool = False,
+        spoken_language: str = "en",
     ) -> None:
         self.host = host
+        self.spoken_language = spoken_language
         self.silence_s = silence_timer_ms / 1000
         self.speculative_s = speculative_start_ms / 1000
         self.final_wait_s = final_wait_max_ms / 1000
@@ -772,7 +785,7 @@ class TurnDetector:
     def _should_hold(self, text: str) -> bool:
         if not self.hold:
             return False
-        if likely_question(text, self.hold_min_words):
+        if likely_question(text, self.hold_min_words, self.spoken_language):
             return True
         n = self.hold_any_min_words
         return n is not None and self.group_call() and len(_words(text)) >= n

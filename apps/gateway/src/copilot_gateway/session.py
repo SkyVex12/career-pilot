@@ -23,6 +23,7 @@ from typing import Any, cast, get_args
 from uuid import UUID
 
 import asyncpg
+import httpx2
 from pydantic import ValidationError
 from starlette.websockets import WebSocket, WebSocketState
 
@@ -30,7 +31,9 @@ from copilot_core import (
     careeros,
     jobs,
     knowledge,
+    languages,
     logs,
+    personal_ai,
     profiles,
     prompts,
     resumes,
@@ -67,6 +70,7 @@ from copilot_gateway.answer import (
     normalize_question,
 )
 from copilot_gateway.auth import AuthError, Principal, TokenVerifier, bearer_token
+from copilot_gateway.companionhost import CompanionDesk
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector, named_or_model
@@ -75,6 +79,7 @@ from copilot_gateway.router import decisions_route
 from copilot_gateway.seathost import SeatDesk
 from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
+from copilot_gateway.stt.deepgram import DeepgramSTT
 from copilot_gateway.turn import (
     Detection,
     TurnDetector,
@@ -152,6 +157,7 @@ class SessionInfo:
     answer_style: str = "bullets"
     # An online test with no call (coding mode): no audio, nothing transcribed.
     no_call: bool = False
+    spoken_language: str = "en"
 
 
 @dataclass
@@ -236,6 +242,13 @@ class Session:
         self.sid = sid
         self.principal = principal
         self.info = info
+        self.spoken_language = info.spoken_language
+        self.account_id: UUID | None = None
+        self.account_token: str | None = None
+        self.private_context_account_id: str | None = (restored or {}).get(
+            "private_context_account_id"
+        )
+        self.private_context_versions: tuple[str, ...] = ()
         self.digest = digest
         self.pack = pack
         restored = restored or {}
@@ -267,6 +280,7 @@ class Session:
             on_decision=self._log_detection,
             cost=self._cost,
             decisions=decisions_route(self.settings, svc.router),
+            spoken_language=self.spoken_language,
         )
         self.matcher = PreparedMatcher(
             svc.embedder,
@@ -281,6 +295,7 @@ class Session:
             final_wait_max_ms=self.settings.final_wait_max_ms,
             turn_model=svc.turn_model,
             hold=self.settings.speculative_hold,
+            spoken_language=self.spoken_language,
             hold_min_words=self.settings.speculative_min_words,
             group_call=lambda: self.info.mode in prompts.GROUP_MODES,
             hold_any_min_words=self.settings.group_hold_min_words,
@@ -374,6 +389,7 @@ class Session:
         self.lost = False
         # Guest seats: runs beside the call, never inside its task group (seathost.py).
         self.seatdesk = SeatDesk(self, dict(restored), resumed=bool(restored))
+        self.companiondesk = CompanionDesk(self, dict(restored))
         self.core_task: asyncio.Task[None] | None = None
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
@@ -400,6 +416,7 @@ class Session:
         data = message.model_dump_json(exclude_none=True, by_alias=True)
         self.ring.append((self.seq, data))
         self.seatdesk.observe(self.seq, data)
+        self.companiondesk.observe(self.seq, data)
         self.writer.event(self.seq, data)
         self.writer.set_state(last_seq=str(self.seq), updated_at=str(time.time()))
         if self.send_q is not None:
@@ -425,8 +442,23 @@ class Session:
         label: str = "",
     ) -> ResilientSTT:
         s = self.settings
+
+        def configured(factory: STTFactory) -> STTFactory:
+            def create(keyterms: Sequence[str]):
+                stream = factory(keyterms)
+                if isinstance(stream, DeepgramSTT):
+                    stream.set_language(self.spoken_language)
+                elif self.spoken_language != "en":
+                    raise ValueError("Recognition provider does not support this call language")
+                return stream
+
+            return create
+
         return ResilientSTT(
-            providers or self.svc.stt_providers,
+            [
+                (name, configured(factory))
+                for name, factory in (providers or self.svc.stt_providers)
+            ],
             on_result=on_result,
             on_status=self._on_stt_status,
             stall_s=s.stt_stall_s,
@@ -465,7 +497,7 @@ class Session:
         s = self.settings
         req = prompts.summary(
             self.principal.display_name, self.info.mode, previous, new_lines,
-            s.conversation_summary_tokens,
+            s.conversation_summary_tokens, self.spoken_language,
         )  # fmt: skip
         started = time.monotonic()
         text, done = await self.router.complete("summary", req)
@@ -506,6 +538,7 @@ class Session:
         at_work = employer is not None and employer.id == self.info.employer_id
         return prompts.PromptContext(
             user_name=self.principal.display_name,
+            spoken_language=self.spoken_language,
             mode=self.info.mode,
             digest_text=self.digest.text if self.digest else None,
             pack_text=render_pack(self.pack) if self.pack else None,
@@ -612,6 +645,62 @@ class Session:
 
     def _memory_on(self) -> bool:
         return self.company_memory is not None and self.info.mode in ("standup", "meeting")
+
+    async def private_memory(self) -> list[str]:
+        url = self.settings.personal_ai_api_url
+        if not url or not self.account_token or not self.account_id:
+            return []
+        requested_account = self.account_id
+        requested_profile = self.principal.user_id
+        requested_scope = (self.info.employer_id, self.info.job_id)
+        try:
+            async with httpx2.AsyncClient(timeout=self.settings.personal_ai_timeout_s) as client:
+                response = await client.get(
+                    url.rstrip("/") + "/v1/personal-ai/live-context",
+                    headers={
+                        "Authorization": "Bearer " + self.account_token,
+                        "x-copilot-profile": str(self.principal.user_id),
+                    },
+                    params={
+                        "session_id": str(self.sid),
+                        **(
+                            {"employer_id": str(self.info.employer_id)}
+                            if self.info.employer_id
+                            else {}
+                        ),
+                        **({"job_id": str(self.info.job_id)} if self.info.job_id else {}),
+                    },
+                )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+            briefs = cast(list[dict[str, Any]], data.get("briefs", []))
+            if not briefs:
+                return []
+            holder = await self.svc.store.lease_holder(self.sid)
+            # Account/profile can change during the HTTP await (shared-profile resume).
+            # Never attach the old account's response to the new capture owner.
+            if (
+                self.ending
+                or holder != self.svc.task_id
+                or self.account_id != requested_account
+                or self.principal.user_id != requested_profile
+                or (self.info.employer_id, self.info.job_id) != requested_scope
+                or self.private_context_account_id not in (None, str(requested_account))
+            ):
+                return []
+            self.private_context_account_id = str(requested_account)
+            self.writer.set_state(private_context_account_id=str(requested_account), sharing="0")
+            self.emit(models.Sharing, on=False)
+            versions = tuple(str(b["id"]) for b in briefs)
+            if versions != self.private_context_versions:
+                self.private_context_versions = versions
+                self.set_status(
+                    "memory", "ok", "Private AI context versions: " + ", ".join(versions)
+                )
+            return [personal_ai.context_text(briefs)]
+        except (httpx2.HTTPError, OSError, ValueError, KeyError, *UNAVAILABLE):
+            # The existing live path stays usable; no stale private brief cache is reused.
+            return []
 
     async def memory_lines(self, text: str, pass_: str) -> tuple[list[str], dict[str, int]]:
         """The `<memory>` block for a pass: what search found in the chosen company's memory
@@ -827,7 +916,9 @@ class Session:
         if self._memory_on() and self.company_memory is not None:
             # Memory search starts with the detector, on the same text.
             self.company_memory.lookup(utterance, self._vector(utterance))
-        if not self.matcher.enabled:
+        # Prepared answers have no language metadata; keep their evidence in the prompt,
+        # but generate localized output instead of displaying unverified verbatim text.
+        if self.spoken_language != "en" or not self.matcher.enabled:
             return None
         match = self.matcher.match(utterance, self.embedding(utterance))
         return asyncio.create_task(match)  # pyright: ignore[reportReturnType]
@@ -1372,12 +1463,20 @@ class Session:
             # takes the call over later (GET /sessions/live) needs to know.
             "me_audio": "1" if self.me_audio else "0",
             "no_call": "1" if self.info.no_call else "0",
+            "spoken_language": self.spoken_language,
+            "account_id": str(self.account_id) if self.account_id else "",
+            **(
+                {"private_context_account_id": self.private_context_account_id}
+                if self.private_context_account_id
+                else {}
+            ),
             "task_id": self.svc.task_id,
         }
 
     def start_core(self) -> None:
         self.core_task = asyncio.create_task(self._run_core())
         self.seatdesk.start()
+        self.companiondesk.start()
 
     async def _run_core(self) -> None:
         try:
@@ -1680,6 +1779,7 @@ class Session:
     async def _stop(self) -> None:
         self.manager.forget(self)
         await self.seatdesk.stop()
+        await self.companiondesk.stop()
         self.conv.close()
         for task in list(self._settling):
             task.cancel()
@@ -1884,6 +1984,11 @@ class Session:
                 self.writer.set_state(answer_style=message.answer_style)
                 self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
             case models.SharingSet():
+                if message.on and self.private_context_account_id:
+                    self.error(
+                        "unexpected_message", "Calls using private AI context cannot be shared"
+                    )
+                    return
                 # Guests see nothing from here until sharing is on again (seatview.py): the
                 # marker sits in the event stream, so replays and snapshots honour it too.
                 self.writer.set_state(sharing="1" if message.on else "0")
@@ -1906,6 +2011,14 @@ class Session:
             reason = str(e)
         else:
             reason = "token is for another user"
+            if (
+                self.private_context_account_id
+                and str(principal.user_id) != self.private_context_account_id
+            ):
+                self.error("unauthorized", "Private session belongs to another account", fatal=True)
+                if self.ws is not None:
+                    await close_ws(self.ws, CLOSE_UNAUTHORIZED, "unauthorized")
+                return
             if principal.user_id != self.principal.user_id:
                 # A session of a profile: the new token must be its account's.
                 principal = await self.manager.as_profile(principal, str(self.principal.user_id))
@@ -1917,6 +2030,7 @@ class Session:
                 await close_ws(ws, CLOSE_UNAUTHORIZED, "unauthorized")
             return
         self.principal = principal
+        self.account_token = token
         self.auth_warned = False
 
     @property
@@ -2361,6 +2475,7 @@ class SessionManager:
             # 4410: the app stops and does not reconnect; the error says why.
             await self.reject(ws, CLOSE_REPLACED, careeros.REQUIRED_CODE, careeros.REQUIRED_MESSAGE)
             return
+        account = principal
         profile = ws.query_params.get(profiles.QUERY)
         if profile or self.svc.pool is not None:
             # The session acts for one of the account's profiles, or for "Me", which for a
@@ -2388,9 +2503,9 @@ class SessionManager:
             if versions.is_outdated(first.client_version, s.min_client_version):
                 await self.reject_outdated(ws, first.client_version)
                 return
-            await self.start(ws, principal, first)
+            await self.start(ws, principal, first, account=account, account_token=token)
         elif isinstance(first, models.SessionResume):
-            await self.resume(ws, principal, first)
+            await self.resume(ws, principal, first, account=account, account_token=token)
         else:
             await self.reject(
                 ws,
@@ -2441,9 +2556,40 @@ class SessionManager:
         with contextlib.suppress(Exception):
             await self.svc.jobs.send(message)
 
-    async def start(self, ws: WebSocket, principal: Principal, msg: models.SessionStart) -> None:
+    def _validate_recognition_language(self, language: str) -> None:
+        if language == "en":
+            return
+        paths = list(self.svc.stt_providers) + list(self.svc.stt_me_providers or [])
+        if (
+            not paths
+            or self.svc.settings.deepgram_model != "nova-3"
+            or any(name != "deepgram" for name, _ in paths)
+            or any(name != "deepgram" for name in self.svc.settings.stt_providers)
+        ):
+            raise ValueError(
+                "Selected language is unavailable on the configured recognition paths."
+            )
+
+    async def start(
+        self,
+        ws: WebSocket,
+        principal: Principal,
+        msg: models.SessionStart,
+        *,
+        account: Principal | None = None,
+        account_token: str | None = None,
+    ) -> None:
         store = self.svc.store
         uid = principal.user_id
+        try:
+            spoken_language = languages.validate_language(
+                msg.spoken_language if msg.spoken_language is not None else "en",
+                self.svc.settings.verified_call_languages,
+            )
+            self._validate_recognition_language(spoken_language)
+        except ValueError as exc:
+            await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
+            return
         if self.live_for_user(uid) is not None:
             await self.reject(
                 ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
@@ -2526,8 +2672,11 @@ class SessionManager:
             resume_is_base=resume_is_base,
             answer_style=msg.answer_style or "bullets",
             no_call=bool(msg.no_call),
+            spoken_language=spoken_language,
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
+        session.account_id = (account or principal).user_id
+        session.account_token = account_token
         self.sessions[sid] = session
         with contextlib.suppress(*UNAVAILABLE):
             await store.take_lease(sid, self.svc.task_id)
@@ -2560,14 +2709,29 @@ class SessionManager:
             session.set_status("memory", "degraded", "No career digest loaded")
         await session.attach(ws, last_seq=0)
 
-    async def resume(self, ws: WebSocket, principal: Principal, msg: models.SessionResume) -> None:
+    async def resume(
+        self,
+        ws: WebSocket,
+        principal: Principal,
+        msg: models.SessionResume,
+        *,
+        account: Principal | None = None,
+        account_token: str | None = None,
+    ) -> None:
         store = self.svc.store
         uid = principal.user_id
         sid = msg.session_id
         logs.set_ids(session_id=sid)
         log.info("session resume from seq %d", msg.last_seq)
+        actor = (account or principal).user_id
         local = self.sessions.get(sid)
         if local is not None and local.principal.user_id == uid and not local.ending:
+            if local.private_context_account_id and local.private_context_account_id != str(actor):
+                await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
+                return
+            local.account_id = actor
+            local.writer.set_state(account_id=str(actor))
+            local.account_token = account_token
             local.principal = principal
             local.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
             await local.attach(ws, msg.last_seq)
@@ -2578,6 +2742,17 @@ class SessionManager:
                 await self.reject(
                     ws, CLOSE_NO_START, "session_not_found", "no resumable session with that id"
                 )
+                return
+            try:
+                languages.validate_language(
+                    state.get("spoken_language") or "en", self.svc.settings.verified_call_languages
+                )
+                self._validate_recognition_language(state.get("spoken_language") or "en")
+            except ValueError as exc:
+                await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
+                return
+            if state.get("private_context_account_id") not in (None, "", str(actor)):
+                await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
                 return
             other = await store.claim_active(uid, sid)
             if other is not None and other != str(sid):
@@ -2633,12 +2808,15 @@ class SessionManager:
             resume_is_base=state.get("resume_base") == "1",
             answer_style=state.get("answer_style") or "bullets",
             no_call=state.get("no_call") == "1",
+            spoken_language=state.get("spoken_language") or "en",
         )
         session = Session(
             self.svc, self, sid, principal, info, digest, pack, seq=seq, ring=replay, restored=state
         )
+        session.account_id = actor
+        session.account_token = account_token
         self.sessions[sid] = session
-        session.writer.set_state(status="active", task_id=self.svc.task_id)
+        session.writer.set_state(status="active", task_id=self.svc.task_id, account_id=str(actor))
         session.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
         session.start_core()
         await session.attach(ws, msg.last_seq, replay=replay)

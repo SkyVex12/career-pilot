@@ -20,13 +20,19 @@ from copilot_api.emailauth import EmailSignIn
 from copilot_api.mailer import make_mailer
 from copilot_api.routes import (
     applications,
+    ask,
     auth,
+    calendar,
     career_os,
     career_os_auth,
+    companion,
     documents,
     email_auth,
     employers,
     me,
+    personal_ai,
+    personal_ai_oauth,
+    practice,
     profiles,
     resumes,
     seats,
@@ -181,11 +187,25 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok", "service": SERVICE, "version": __version__}
 
+    app.add_exception_handler(personal_ai_oauth.OAuthError, personal_ai_oauth.oauth_exception)
+    app.include_router(personal_ai_oauth.router)
+    app.include_router(personal_ai.mcp_router, prefix="/v1")
+
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
-    for module in (auth, email_auth, career_os_auth, me, profiles, career_os):
+    for module in (auth, email_auth, career_os_auth, me, profiles, career_os, calendar, companion):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
-    for module in (documents, applications, resumes, sessions, seats, employers):
+    for module in (
+        documents,
+        applications,
+        resumes,
+        sessions,
+        seats,
+        employers,
+        ask,
+        personal_ai,
+        practice,
+    ):
         app.include_router(module.router, prefix="/v1", dependencies=[Depends(require_link)])
     return app
 

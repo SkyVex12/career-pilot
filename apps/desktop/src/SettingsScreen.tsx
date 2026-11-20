@@ -2,6 +2,7 @@
 // Advanced. Toggles, choices and devices save the moment they change, and a recorded hotkey
 // when it is valid; free-text fields (a development build's URLs and token) keep a Save button.
 import { useEffect, useState, type ComponentProps } from "react";
+import { BackgroundSettings } from "./BackgroundSettings";
 import { isMac } from "./platform";
 import { api, rest, type Settings, type SettingsView, type UpdateState } from "./api";
 import { cloudUrlsFor } from "./urls";
@@ -81,7 +82,7 @@ export function SettingsScreen({
           </ul>
         </nav>
         <div className="settings-body">
-          {section === "general" && <General view={view} save={save} update={update} check={check} />}
+          {section === "general" && <><General view={view} save={save} update={update} check={check} /><BackgroundSettings /></>}
           {section === "account" && <Account view={view} onSaved={onSaved} />}
           {section === "audio" && (
             <Card title="Audio">

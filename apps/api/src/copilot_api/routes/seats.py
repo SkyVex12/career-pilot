@@ -131,6 +131,8 @@ async def _hosts_live_call(svc: Services, user: Principal, sid: UUID) -> dict[st
     state = await _live_state(svc, sid)
     if state.get("user_id") != str(user.user_id):
         raise HTTPException(404, "no such call")
+    if state.get("private_context_account_id"):
+        raise HTTPException(409, "This call uses private AI context and cannot be shared")
     if state.get("status") in (None, "ended"):
         raise HTTPException(409, "the call is not live")
     return state
@@ -141,6 +143,9 @@ async def _publish(svc: Services, sid: UUID | str, record: seats.SeatRecord) -> 
     say so (503). Every host change can be sent again and writes the mirror again (an admit
     or a removal that is already done is not refused); until then the gateway keeps the last
     grant it saw, and a seat it never saw admitted cannot join."""
+    state = await _live_state(svc, UUID(str(sid)))
+    if state.get("private_context_account_id") and record.status == "admitted":
+        raise HTTPException(409, "This call uses private AI context and cannot be shared")
     try:
         await seats.publish(svc.valkey, sid, record, seats.MIRROR_TTL_S)
     except (OSError, ValkeyError) as e:
@@ -211,6 +216,13 @@ async def invite(
     if not await _invite_allowed(svc, account):
         raise HTTPException(429, "too many invites; wait a while")
     async with svc.tx(user) as conn:
+        await conn.execute(
+            "select pg_advisory_xact_lock(hashtextextended($1, 0))", "private:" + str(session_id)
+        )
+        if await conn.fetchval(
+            "select private_context_account_id from app.sessions where id=$1", session_id
+        ):
+            raise HTTPException(409, "This call uses private AI context and cannot be shared")
         open_count = await conn.fetchval(
             "select count(*) from app.session_seats where session_id = $1"
             " and status = any($2::text[]) and expires_at > now()",

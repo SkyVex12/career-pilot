@@ -1,3 +1,5 @@
+import { Practice, openPractice, type PracticeEntry } from "./Practice";
+import { openAsk } from "./Ask";
 // Applications: what the user applied to (company, role, stage, JD), each paired with a resume
 // version (ARCHITECTURE.md, "Resume versions"); added by hand or pulled from Career-OS. The
 // application workspace keeps each role, resume and interview context together.
@@ -95,11 +97,15 @@ export function filterApplications(list: ApplicationItem[], q: string): Applicat
 
 export function Applications({
   active = true,
+  practiceEntry,
+  running = false,
   focus,
   baseResumeRequest = 0,
   onStartInterview,
 }: {
   active?: boolean;
+  practiceEntry?: PracticeEntry | null;
+  running?: boolean;
   /** An application to show, selected from call setup. */
   focus?: { id: string; n: number } | null;
   /** Open the shared resume editor from call setup or onboarding. */
@@ -107,6 +113,10 @@ export function Applications({
   /** Start a call for an explicitly selected interview. */
   onStartInterview?: (interviewId: string) => void;
 }) {
+  const [practicing, setPracticing] = useState(false);
+  const [practiceOpened, setPracticeOpened] = useState(false);
+  useEffect(() => { if (practiceEntry) { setPracticing(true); setPracticeOpened(true); } }, [practiceEntry?.n]);
+  useEffect(() => { if (focus || baseResumeRequest) setPracticing(false); }, [focus?.n, baseResumeRequest]);
   const { applications, interviews, error, reload } = useCatalog();
   useOnShow(active, reload);
   const [selected, setSelected] = useState<string | null>(null);
@@ -122,12 +132,14 @@ export function Applications({
   const shown = useMemo(() => (applications ? filterApplications(applications, q) : null), [applications, q]);
 
   return (
-    <div className="apps prep-workspace">
+    <div className={`apps prep-workspace${practicing ? " is-practicing" : ""}`}>
       <PageHeader title="Interview prep" actions={<>
-        {conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
-        <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>
+        <Button onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
+        {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
+        {!practicing && <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>}
       </>} />
-      <div className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
+      {practiceOpened && <div hidden={!practicing} className="prep-practice"><Practice active={active && practicing} running={running} entry={practiceEntry} /></div>}
+      <div hidden={practicing} className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
         <section className="apps-list prep-sidebar" aria-label="Applications">
           <h2 className="prep-sidebar-heading">Applications <span>{applications?.length ?? ""}</span></h2>
           <Input type="search" aria-label="Search company or role" placeholder="Search applications" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -341,6 +353,8 @@ function ApplicationView({ id, stamp, interviews, onStartInterview, onBack, onCh
     {app ? <>
       <header className="app-view-head prep-document-head">
         <div className="app-view-title"><h2>{app.company}</h2><p>{app.role}</p></div>
+        <Button size="sm" onClick={() => openPractice({ application_id: app.id, topic: `Interview for ${app.role}` })}>Practice interview</Button>
+        <Button size="sm" onClick={() => openAsk({ kind: "application", id: app.id })}>Ask about this role</Button>
         <Button size="sm" onClick={() => setEditing(!editing)} aria-expanded={editing} aria-label="Edit application">Edit</Button>
         <Menu label="Application actions" trigger="⋯" items={[
           { label: "Schedule interview…", onSelect: () => setScheduling(true) }, "separator",

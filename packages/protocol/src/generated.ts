@@ -106,6 +106,10 @@ export type Capability =
 export interface SessionStart {
   type: "session.start";
   mode: Mode;
+  /**
+   * Spoken call language, fixed for the session. Omitted by older clients means English. Validated against the server's enabled catalog.
+   */
+  spoken_language?: string;
   job_id?: Uuid;
   /**
    * UUID (v7 for ids we generate), lowercase hex with dashes.

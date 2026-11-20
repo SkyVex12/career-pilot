@@ -38,10 +38,18 @@ GATEWAY_TABLES = {"users", "applications", "jobs", "interviews", "memory_nodes",
                   "identities", "knowledge_chunks", "session_seats"}  # fmt: skip
 # integrations: the Career-OS link's status only (a column grant), never the token.
 # Tables the gateway reads through a table-wide grant (the other two have column grants).
+GATEWAY_TABLES.add("companion_attachments")
 GATEWAY_TABLE_GRANTS = GATEWAY_TABLES - {"resume_versions", "integrations"}
 # Sign-in tables (migration 0014): the API's alone to write, and the workers get nothing.
 API_ONLY_TABLES = {"identities", "refresh_tokens"}
 # Tables without row-level security, on purpose (system table, workers only).
+PRIVATE_API_TABLES = {
+    "context_requests",
+    "context_brief_versions",
+    "calendar_connections",
+    "calendar_meeting_context",
+    "companion_attachments",
+}
 NO_RLS_TABLES = {"job_runs", "career_os_people"}
 
 
@@ -62,6 +70,11 @@ class World:
     company_document_id: uuid.UUID = field(default_factory=uuid.uuid4)
     resume_version_id: uuid.UUID = field(default_factory=uuid.uuid4)
     document_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    conversation_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    practice_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    context_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    context_version_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    calendar_id: uuid.UUID = field(default_factory=uuid.uuid4)
 
 
 NOW = datetime(2026, 10, 5, 15, 0, tzinfo=UTC)
@@ -270,6 +283,86 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "expires_at": NOW + timedelta(days=60),
     },
 }
+ROWS.update(
+    {
+        "ask_conversations": lambda w, n: {
+            "id": _id(w, n, w.conversation_id),
+            "user_id": w.user_id,
+            "profile_id": w.user_id,
+            "title": "Private Ask",
+        },
+        "ask_messages": lambda w, n: {
+            "id": uuid.uuid4(),
+            "user_id": w.user_id,
+            "conversation_id": w.conversation_id,
+            "request_id": uuid.uuid4(),
+            "scope": {},
+            "question_enc": b"ciphertext",
+            "key_version": 1,
+            "status": "done",
+        },
+        "practice_sessions": lambda w, n: {
+            "id": _id(w, n, w.practice_id),
+            "user_id": w.user_id,
+            "profile_id": w.user_id,
+            "request_id": uuid.uuid4(),
+            "request_hash": "hash",
+            "status": "answering",
+            "state_enc": b"ciphertext",
+            "key_version": 1,
+        },
+        "practice_operations": lambda w, n: {
+            "id": uuid.uuid4(),
+            "user_id": w.user_id,
+            "session_id": w.practice_id,
+            "kind": "answer",
+            "request_hash": "hash",
+            "status": "done",
+        },
+        "context_requests": lambda w, n: {
+            "id": _id(w, n, w.context_id),
+            "account_id": w.user_id,
+            "profile_id": w.user_id,
+            "body_enc": b"ciphertext",
+            "key_version": 1,
+        },
+        "context_brief_versions": lambda w, n: {
+            "id": _id(w, n, w.context_version_id),
+            "account_id": w.user_id,
+            "request_id": w.context_id,
+            "request_revision": 1,
+            "idempotency_key": str(uuid.uuid4()),
+            "input_hash": "hash",
+            "origin": "paste",
+            "body_enc": b"ciphertext",
+            "key_version": 1,
+        },
+        "calendar_connections": lambda w, n: {
+            "id": _id(w, n, w.calendar_id),
+            "user_id": w.user_id,
+            "profile_id": w.user_id,
+            "provider": "google",
+        },
+        "calendar_meeting_context": lambda w, n: {
+            "id": uuid.uuid4(),
+            "user_id": w.user_id,
+            "connection_id": w.calendar_id,
+            "calendar_id": "primary",
+            "instance_id": str(uuid.uuid4()),
+            "context_enc": b"ciphertext",
+            "key_version": 1,
+        },
+        "companion_attachments": lambda w, n: {
+            "id": uuid.uuid4(),
+            "user_id": w.user_id,
+            "profile_id": w.user_id,
+            "session_id": w.session_id,
+            "device_name": "Phone",
+            "expires_at": NOW + timedelta(days=365),
+        },
+    }
+)
+
 USER_TABLES = list(ROWS)
 # Views over user tables. They use security_invoker, so the base table's RLS applies;
 # their grants are their own (the gateway gets none).
@@ -277,18 +370,24 @@ VIEWS = ["commitments", "jobs"]
 
 
 def tenant_column(table: str) -> str:
-    return "id" if table == "users" else "user_id"
+    return (
+        "id"
+        if table == "users"
+        else (
+            "account_id" if table in {"context_requests", "context_brief_versions"} else "user_id"
+        )
+    )
 
 
 def can_read(role: str, table: str) -> bool:
     if role == "app_worker":
-        return table not in API_ONLY_TABLES
+        return table not in API_ONLY_TABLES | PRIVATE_API_TABLES
     return role != "app_gateway" or table in GATEWAY_TABLES
 
 
 def can_write(role: str, table: str | None = None) -> bool:
     if role == "app_worker":
-        return table not in API_ONLY_TABLES
+        return table not in API_ONLY_TABLES | PRIVATE_API_TABLES
     return role != "app_gateway"
 
 
@@ -461,12 +560,14 @@ async def test_every_user_table_has_forced_rls_and_is_tested(db: Db) -> None:
         """
         select c.relname, c.relrowsecurity, c.relforcerowsecurity,
                exists (select 1 from pg_policy p
-                       where p.polrelid = c.oid and p.polname = 'tenant_isolation') as has_policy
+                       where p.polrelid = c.oid
+                         and p.polname in ('tenant_isolation','private_account')) as has_policy
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'app' and c.relkind = 'r'
           and (c.relname = 'users' or exists (
                 select 1 from pg_attribute a
-                where a.attrelid = c.oid and a.attname = 'user_id' and not a.attisdropped))
+                where a.attrelid = c.oid and a.attname in ('user_id','account_id')
+                  and not a.attisdropped))
         """
     )
     found = {r["relname"] for r in rows} - NO_RLS_TABLES
@@ -540,6 +641,9 @@ CHECK_VIOLATION = "23514"
 
 # (child table, reference column, parent table) for every foreign key between user tables.
 REFERENCES = [
+    ("ask_messages", "conversation_id", "ask_conversations"),
+    ("practice_operations", "session_id", "practice_sessions"),
+    ("calendar_meeting_context", "connection_id", "calendar_connections"),
     ("interviews", "job_id", "applications"),
     ("memory_edges", "src", "memory_nodes"),
     ("memory_edges", "dst", "memory_nodes"),
@@ -572,6 +676,9 @@ WRITE_ROLES = [r for r in APP_ROLES if can_write(r)]
 
 def parent_id(w: World, parent: str) -> uuid.UUID:
     return {
+        "ask_conversations": w.conversation_id,
+        "practice_sessions": w.practice_id,
+        "calendar_connections": w.calendar_id,
         "applications": w.job_id,
         "resume_versions": w.resume_version_id,
         "documents": w.document_id,
@@ -603,6 +710,9 @@ async def test_cannot_insert_reference_to_another_users_row(
 ) -> None:
     own = ROWS[child](db.a, 3) | {column: parent_id(db.a, parent)}
     _, _, err = await as_user(db, role, db.a, insert_sql(child, own), *own.values())
+    if not can_write(role, child):
+        assert err == INSUFFICIENT_PRIVILEGE
+        return
     assert err is None, f"control insert into {child} failed ({err}); the test row is broken"
 
     other = ROWS[child](db.a, 3) | {column: parent_id(db.b, parent)}
@@ -628,6 +738,9 @@ async def test_cannot_repoint_reference_to_another_users_row(
              "knowledge_chunks": ", ord = ord + 1000"}.get(child, "")  # fmt: skip
     sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
     status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
+    if not can_write(role, child):
+        assert err == INSUFFICIENT_PRIVILEGE
+        return
     # A resume version never moves to another application: its trigger refuses first.
     expected = CHECK_VIOLATION if (child, column) == ("resume_versions", "application_id") else (
         FOREIGN_KEY_VIOLATION)  # fmt: skip
@@ -694,6 +807,21 @@ async def test_every_reference_between_user_tables_is_same_user(db: Db) -> None:
     found: set[tuple[str, str, str]] = set()
     for r in rows:
         cols, ref_cols = list(r["cols"]), list(r["ref_cols"])
+        special = {
+            ("context_requests", "employers"): (["employer_id", "profile_id"], ["id", "user_id"]),
+            ("context_requests", "applications"): (["job_id", "profile_id"], ["id", "user_id"]),
+            ("context_brief_versions", "context_requests"): (
+                ["request_id", "account_id"],
+                ["id", "account_id"],
+            ),
+            ("context_requests", "context_brief_versions"): (
+                ["active_version_id", "id", "account_id"],
+                ["id", "request_id", "account_id"],
+            ),
+        }.get((r["child"], r["parent"]))
+        if special:
+            assert (cols, ref_cols) == special
+            continue
         assert "user_id" in cols, f"{r['child']} -> {r['parent']}: foreign key lacks user_id"
         pairs = dict(zip(cols, ref_cols, strict=True))
         assert pairs.pop("user_id") == "user_id", f"{r['child']}: user_id not matched to user_id"
@@ -953,3 +1081,37 @@ async def test_career_os_identities_carry_no_email_and_one_per_account(db: Db) -
             assert rows == []
     finally:
         await db.conn.execute("delete from app.identities where provider = 'career_os'")
+
+
+async def test_private_brief_pointer_cannot_cross_account_or_request(db: Db) -> None:
+    async def repoint(other_request: bool) -> None:
+        async with db.conn.transaction():
+            await db.conn.execute("set constraints all immediate")
+            request_id = db.a.context_id
+            version_id = db.b.context_version_id
+            if other_request:
+                other = ROWS["context_requests"](db.a, 2)
+                await insert(db.conn, "context_requests", other)
+                request_id, version_id = other["id"], db.a.context_version_id
+            await db.conn.execute(
+                "update app.context_requests set active_version_id=$1 where id=$2",
+                version_id,
+                request_id,
+            )
+
+    for other_request in (False, True):
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
+            await repoint(other_request)
+
+
+@pytest.mark.parametrize(
+    ("column", "parent"), [("employer_id", "employers"), ("job_id", "applications")]
+)
+async def test_private_context_scope_is_bound_to_profile(db: Db, column: str, parent: str) -> None:
+    async with db.conn.transaction():
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
+            await db.conn.execute(
+                f"update app.context_requests set {column}=$1 where id=$2",
+                parent_id(db.b, parent),
+                db.a.context_id,
+            )

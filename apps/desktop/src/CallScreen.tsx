@@ -1,9 +1,13 @@
+import { CompanionDevices } from "./CompanionDevices";
+import { prepareForRealCall } from "./practiceAudio";
+import { MeetingPreparation } from "./MeetingPreparation";
 // The Call screen (docs/design/ui-proposal.md, "Call"): one screen in four states.
 // - setup: what a new user still needs (sign in, the Career-OS link when the stage requires it,
 //   a resume, an audio check), each step with its own action;
 // - ready: the next interview (or the company, for a standup or meeting) and Start call;
 // - live: the call running, its last question and levels, mode and answer style, End call;
 // - just ended: the call's summary as it is written (SessionDetail).
+import { CallLanguage } from "./CallLanguage";
 import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
@@ -219,6 +223,9 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   useWorkspaceCompactWindow((mode) => { void mini.change(mode ?? "toolbar"); }, () => mini.change("full"));
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
+  const [meetingTitle, setMeetingTitle] = useState<string | null>(null);
+  const [spokenLanguage, setSpokenLanguage] = useState("en");
+  const [languageReady, setLanguageReady] = useState(false);
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets");
   useEffect(() => {
     const changed = (event: StorageEvent) => { if (event.key === LAST_ANSWER_STYLE) setAnswerStyle(event.newValue === "paragraph" ? "paragraph" : "bullets"); };
@@ -302,6 +309,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const changeStyle = (value: AnswerStyle) => { setAnswerStyle(value); write(LAST_ANSWER_STYLE, value); if (running) api.setAnswerStyle(value).catch(() => undefined); };
   const start = async () => {
     if (busy || joining) return;
+    if (!languageReady) { setMessage("Load an available call language under Customize before starting."); return; }
     setBusy(true); setMessage(null); setPendingInvites(null);
     const planned = guests.map(g => ({ ...g }));
     const beforeId = session.sessionId;
@@ -310,8 +318,9 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
       const company = atWork && employerId ? employerId : null;
       if (company) write(LAST_COMPANY, company);
       if (mini.mode !== "full" && !await mini.change("full")) return;
-      await api.startSession({ mode, ...picked, meeting_title: null, employer_id: company, agenda: mode === "meeting" ? agenda.trim() || null : null,
-        material_ids: company ? materialIds : [], platform: testing ? "test" : "other", store_transcript: consent, answer_style: answerStyle, no_call: testing });
+      await prepareForRealCall();
+      await api.startSession({ mode, ...picked, meeting_title: meetingTitle, employer_id: company, agenda: mode === "meeting" ? agenda.trim() || null : null,
+        material_ids: company ? materialIds : [], platform: testing ? "test" : "other", store_transcript: consent, answer_style: answerStyle, spoken_language: spokenLanguage, no_call: testing });
       if (planned.length) setPendingInvites({ beforeId, scope, guests: planned });
       if (testing) { const value = await api.getSettings(); await api.setCodingPrefs("assessment", value.settings.coding_language ?? ""); }
     } catch (error) { setMessage(String(error)); }
@@ -374,6 +383,8 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             </>}
           </div>
           <div className="call-row call-answer-row"><span className="call-row-label">Answers</span><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div>
+          <MeetingPreparation onChoose={(title, applicationId) => { setMeetingTitle(title); setTarget(applicationId ? `job:${applicationId}` : ""); setMode(applicationId ? "interview" : "meeting"); }} />
+          <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled} />
           <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
           <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
           {testing ? <p className="ui-field-hint">Audio off. Type a question or capture your screen.</p> : settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
@@ -431,6 +442,7 @@ function Live({
   onMessage: (m: string | null) => void;
 }) {
   const [ending, setEnding] = useState(false);
+  useEffect(() => { const review = () => setEnding(true); window.addEventListener("copilot:review-end-call", review); return () => window.removeEventListener("copilot:review-end-call", review); }, []);
   const elapsed = useElapsed(session);
   const last = [...session.questions].reverse().find((q) => !q.cancelled);
   const levels = useLevels();
@@ -463,6 +475,7 @@ function Live({
           </>
         }
       />
+      <CompanionDevices sessionId={session.sessionId} />
       <Card>
         <div className="ui-stack">
           <div className="live-row">

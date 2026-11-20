@@ -1,0 +1,56 @@
+{
+  "status": "passed",
+  "host": "Codex CLI",
+  "authentication": "OAuth authorization-code S256 PKCE scoped token",
+  "publish": true,
+  "refresh": true,
+  "private_retrieval": true,
+  "remove": true,
+  "external_research": false,
+  "fixture_only": true,
+  "cli_version": "0.152.1",
+  "date_note": "Local validation date 2026-11-19 America/Chicago; UTC crossed midnight.",
+  "calls": [
+    {
+      "phase": "publish",
+      "server": "career_pilot",
+      "tool": "get_context_request",
+      "status": "completed",
+      "error": null,
+      "request_id": "01a1f694-f37b-74a6-8612-eb5f471bf890",
+      "request_revision": null,
+      "version_id": null
+    },
+    {
+      "phase": "publish",
+      "server": "career_pilot",
+      "tool": "publish_context_brief",
+      "status": "completed",
+      "error": null,
+      "request_id": "01a1f694-f37b-74a6-8612-eb5f471bf890",
+      "request_revision": 1,
+      "version_id": "01a1f695-20c0-7ae5-a87f-22065c25b3cd"
+    },
+    {
+      "phase": "refresh",
+      "server": "career_pilot",
+      "tool": "get_context_request",
+      "status": "completed",
+      "error": null,
+      "request_id": "01a1f694-f37b-74a6-8612-eb5f471bf890",
+      "request_revision": null,
+      "version_id": null
+    },
+    {
+      "phase": "refresh",
+      "server": "career_pilot",
+      "tool": "publish_context_brief",
+      "status": "completed",
+      "error": null,
+      "request_id": "01a1f694-f37b-74a6-8612-eb5f471bf890",
+      "request_revision": 2,
+      "version_id": "01a1f695-57e9-7c1d-918e-944879d2b6fe"
+    }
+  ],
+  "validation_date_local": "2026-11-19"
+}

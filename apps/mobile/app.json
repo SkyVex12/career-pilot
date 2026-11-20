@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Career Pilot",
+    "slug": "career-pilot-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "scheme": "careerpilot",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.careerpilot.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "app.careerpilot.mobile",
+      "permissions": ["RECORD_AUDIO"],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "allowBackup": false
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Record only when you explicitly start practice or an in-person microphone turn.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false,
+          "iosMicrophonePermission": "Record only when you explicitly start practice or an in-person microphone turn.",
+          "androidPermissions": [
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS"
+          ],
+          "androidForegroundService": false
+        }
+      ]
+    ],
+    "icon": "./assets/icon.png"
+  }
+}

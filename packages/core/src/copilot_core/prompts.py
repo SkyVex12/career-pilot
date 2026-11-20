@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
+from copilot_core.languages import language_instruction
 from copilot_core.llm import LLMRequest, SystemBlock
 
 QUESTION_TYPES = (
@@ -565,6 +566,7 @@ class PromptContext:
     role: str | None = None
     # That company's engineering digest (copilot_core.knowledge), its own cached block.
     company_digest: str | None = None
+    spoken_language: str = "en"
 
     @property
     def at_work(self) -> bool:
@@ -622,6 +624,7 @@ def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
         .replace("{no_match_rule}", p.no_match_rule)
     )
     text = rules.format(user_name=ctx.user_name, mode=mode)
+    text += language_instruction(ctx.spoken_language)
     if ctx.at_work:
         names = {"user_name": ctx.user_name, "company": ctx.company, "mode": mode}
         text += WORKPLACE_RULES.format(
@@ -792,6 +795,7 @@ def detector(
     max_tokens: int,
     mode: str = "interview",
     turns: str = "",
+    spoken_language: str = "en",
 ) -> LLMRequest:
     """`turns` is the `turn_taking` block, sent in group calls only."""
     blocks = [_data("transcript", transcript or "(empty)"), _data("utterance", utterance)]
@@ -799,6 +803,7 @@ def detector(
         blocks.insert(0, _data("turn_taking", turns))
     user = "\n\n".join(blocks)
     system = DETECTOR_SYSTEM.format(user_name=user_name, mode=MODE_PHRASES.get(mode, f"a {mode}"))
+    system += language_instruction(spoken_language)
     schema = DETECTOR_SCHEMA
     if mode in GROUP_MODES:
         schema = DETECTOR_WORK_SCHEMA
@@ -924,12 +929,17 @@ DECISION_DEPTH = {
 
 
 def detector_decision(
-    user_name: str, transcript: str, utterance: str, mode: str = "interview", turns: str = ""
+    user_name: str,
+    transcript: str,
+    utterance: str,
+    mode: str = "interview",
+    turns: str = "",
+    spoken_language: str = "en",
 ) -> DecisionRequest:
     """The detector as a Decisions API request: the same rules as `detector`, in a developer
     message, and three choice questions: `turn` (answer, wait or none), `type`, and `depth`
     (whether the detailed answer needs the deep model)."""
-    req = detector(user_name, transcript, utterance, 0, mode, turns)
+    req = detector(user_name, transcript, utterance, 0, mode, turns, spoken_language)
     rules, _, rest = req.system[0].text.partition("Return JSON only:\n")
     # The JSON line goes; the decision comes back as typed choices.
     rules += "Decide by these rules:\n" + rest.split("\n", 1)[1]
@@ -1006,7 +1016,12 @@ def read_decision(answers: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summary(
-    user_name: str, mode: str, previous: str, new_lines: str, max_tokens: int
+    user_name: str,
+    mode: str,
+    previous: str,
+    new_lines: str,
+    max_tokens: int,
+    spoken_language: str = "en",
 ) -> LLMRequest:
     """Fold `new_lines` (the lines leaving the verbatim window) into the call's summary."""
     system = SUMMARY_SYSTEM.format(
@@ -1016,6 +1031,7 @@ def summary(
         # with every call and the 7th of the 2026-10-27 standup ended at the cap, cut off.
         max_words=max(40, max_tokens * 9 // 20),
     )
+    system += language_instruction(spoken_language)
     parts = [_data("call_summary", previous or "(nothing yet)"), _data("new_lines", new_lines)]
     return LLMRequest(
         system=[SystemBlock(system)], content="\n\n".join(parts), max_tokens=max_tokens

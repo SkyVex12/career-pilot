@@ -211,3 +211,26 @@ it("opens the shared resume editor within Interview prep from an unpaired genera
   expect(screen.getByRole("heading", { name: "Default resume" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Resumes" })).not.toBeInTheDocument();
 });
+
+it("opens Ask inside Work and practice inside Interview prep without adding main tabs", async () => {
+  ipc.api("GET", /^\/personal-ai\/requests$/, () => ({ requests: [] }));
+  ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
+  ipc.api("GET", /^\/ask\/context-options/, () => ({ options: [] }));
+  ipc.api("GET", /^\/practice\/sessions$/, () => ({ sessions: [] }));
+  ipc.api("GET", /^\/practice\/context/, () => ({ sources: [], notice: "Current profile" }));
+  await setup();
+  const main = screen.getByRole("navigation", { name: "Main" });
+  await act(async () => { window.dispatchEvent(new CustomEvent("copilot:open-ask", { detail: { kind: "general" } })); });
+  expect(await screen.findByLabelText("Ask a question")).toBeVisible();
+  expect(within(main).getByRole("button", { name: "Work context" })).toHaveAttribute("aria-current", "page");
+  fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: "Keep this thought" } });
+  fireEvent.click(screen.getByRole("button", { name: "Back to work context" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Ask a question$/ }));
+  expect(screen.getByLabelText("Ask a question")).toHaveValue("Keep this thought");
+  await act(async () => { window.dispatchEvent(new CustomEvent("copilot:open-practice", { detail: { topic: "A saved interview question" } })); });
+  expect(await screen.findByLabelText("Role or topic")).toHaveValue("A saved interview question");
+  expect(within(main).getByRole("button", { name: "Interview prep" })).toHaveAttribute("aria-current", "page");
+  expect(within(main).queryByRole("button", { name: /^Ask$/ })).toBeNull();
+  expect(within(main).queryByRole("button", { name: /^Practice$/ })).toBeNull();
+  expect(ipc.calls.some(call => ["start_session", "open_session"].includes(call.cmd))).toBe(false);
+});

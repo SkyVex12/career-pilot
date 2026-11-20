@@ -9,6 +9,7 @@ which the offline fixtures use to recognize the job.
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from copilot_core.languages import language_instruction
 from copilot_core.llm import LLMRequest, SystemBlock
 from copilot_worker.llm import STR, STRS, data_block, obj
 
@@ -449,10 +450,13 @@ def postcall_request(
     transcript: str,
     session_log: str,
     open_commitments: str | None = None,
+    spoken_language: str | None = None,
 ) -> LLMRequest:
     """`open_commitments` (a standup at a company): the user's open commitments there, by
     short id, so the report can leave out what is already promised and close what is done."""
     system, schema = POSTCALL[mode]
+    if spoken_language is not None:
+        system += language_instruction(spoken_language)
     blocks = ["\n".join(context)]
     if open_commitments is not None:
         blocks.append(data_block("open_commitments", open_commitments or "(none)"))

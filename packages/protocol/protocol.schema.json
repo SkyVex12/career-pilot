@@ -177,6 +177,12 @@
       "properties": {
         "type": { "type": "string", "const": "session.start" },
         "mode": { "$ref": "#/$defs/Mode" },
+        "spoken_language": {
+          "description": "Spoken call language, fixed for the session. Omitted by older clients means English. Validated against the server's enabled catalog.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
         "job_id": { "$ref": "#/$defs/Uuid" },
         "interview_id": {
           "description": "The scheduled interview this call is; its session pack is loaded first. Send job_id too.",

@@ -233,8 +233,13 @@ fn dot_region(client: Bounds, scale: f64) -> Res<Bounds> {
     }
     let width = (68.0 * scale).round() as i32;
     let height = (48.0 * scale).round() as i32;
-    if width <= 0 || height <= 0 || client.width < width || client.height < height
-        || client.width > 65_536 || client.height > 65_536 {
+    if width <= 0
+        || height <= 0
+        || client.width < width
+        || client.height < height
+        || client.width > 65_536
+        || client.height > 65_536
+    {
         return Err("Invalid compact surface dimensions.".into());
     }
     let dx = (f64::from(client.width - width) / 2.0).round() as i32;
@@ -286,10 +291,14 @@ fn apply_shape(hwnd: windows::Win32::Foundation::HWND, shape: CompactShape, refr
                 },
                 f64::from(GetDpiForWindow(hwnd)) / 96.0,
             )?;
-            let handle =
-                CreateRoundRectRgn(region.x, region.y, region.x + region.width, region.y + region.height,
-                    (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32,
-                    (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32);
+            let handle = CreateRoundRectRgn(
+                region.x,
+                region.y,
+                region.x + region.width,
+                region.y + region.height,
+                (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32,
+                (20.0 * f64::from(GetDpiForWindow(hwnd)) / 96.0).round() as i32,
+            );
             if handle.is_invalid() {
                 return Err("Could not create the compact window region.".into());
             }
