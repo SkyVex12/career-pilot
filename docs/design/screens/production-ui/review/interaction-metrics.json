@@ -1,0 +1,49 @@
+{
+  "recordedAt": "2026-11-22T22:47:43.674Z",
+  "results": [
+    {
+      "scheme": "light",
+      "status": "passed",
+      "selectedLanguage": "ਪੰਜਾਬੀ · Punjabi",
+      "keyboard": [
+        "quick-settings Escape restores focus",
+        "24-language select End/Enter",
+        "application modal trap and Escape focus restoration",
+        "PageDown scrolls Past calls at 400x240"
+      ],
+      "minimumScroll": {
+        "scrollBefore": 0,
+        "scrollAfter": 150
+      },
+      "enlarged": {
+        "documentWidth": 1080,
+        "viewportWidth": 1080,
+        "controls": []
+      },
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "scheme": "dark",
+      "status": "passed",
+      "selectedLanguage": "ਪੰਜਾਬੀ · Punjabi",
+      "keyboard": [
+        "quick-settings Escape restores focus",
+        "24-language select End/Enter",
+        "application modal trap and Escape focus restoration",
+        "PageDown scrolls Past calls at 400x240"
+      ],
+      "minimumScroll": {
+        "scrollBefore": 0,
+        "scrollAfter": 150
+      },
+      "enlarged": {
+        "documentWidth": 1080,
+        "viewportWidth": 1080,
+        "controls": []
+      },
+      "errors": [],
+      "externalRequests": []
+    }
+  ]
+}

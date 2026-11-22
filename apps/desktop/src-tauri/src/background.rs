@@ -92,7 +92,7 @@ fn save(path: &Path, preferences: &BackgroundPreferences) -> Result<(), String> 
 
 pub(crate) fn open(app: &AppHandle) -> Result<(), String> {
     let main = app.get_webview_window("main").ok_or("Workspace window is unavailable")?;
-    main.show().map_err(|e| e.to_string())?;
+    crate::stealth::show(&main)?;
     main.unminimize().map_err(|e| e.to_string())?;
     main.set_focus().map_err(|e| e.to_string())?;
     if let Some(state) = app.try_state::<BackgroundState>() {
@@ -1173,8 +1173,8 @@ fn present_suggestion(
                 if !presentation_attempt_current(&pending, &current, queued.elapsed()) {
                     return Ok(());
                 }
+                crate::stealth::show(&window).map_err(|e| format!("Could not show call suggestion: {e}"))?;
                 window.unminimize().map_err(|e| e.to_string())?;
-                window.show().map_err(|e| format!("Could not show call suggestion: {e}"))?;
             }
             Ok(())
         })();

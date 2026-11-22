@@ -104,6 +104,21 @@ describe("History list", () => {
     await userEvent.click(screen.getByRole("button", { name: "← Past calls" }));
     expect(await screen.findByRole("list", { name: "Past calls" })).toBeInTheDocument();
   });
+
+  it("searches loaded calls and keeps older calls reachable with a filter", async () => {
+    routes([call("s1", "interview", "Northwind technical"), call("s2", "standup", null, "ready", "e1")], "cursor");
+    view();
+    await screen.findByRole("list", { name: "Past calls" });
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search past calls" }), "Fernhill");
+    expect(screen.queryByText("Interview · Northwind technical")).not.toBeInTheDocument();
+    expect(screen.getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Meetings"));
+    expect(screen.getByRole("heading", { name: "No matching calls" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load older calls" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    await userEvent.click(screen.getByRole("button", { name: "Load older calls" }));
+    expect(await screen.findByText("Meeting · Older one")).toBeInTheDocument();
+  });
 });
 
 describe("A call's detail", () => {

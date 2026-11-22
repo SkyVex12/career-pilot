@@ -53,6 +53,16 @@ def test_auth_and_profile_scope():
         assert token == fixture.TOKEN
         assert c.get("/v1/profiles").status_code == 401
         assert c.get("/v1/profiles", headers=HEADERS).json()["items"][0]["id"] == fixture.PROFILE
+        assert c.get("/v1/client-capabilities").status_code == 401
+        capabilities = c.get("/v1/client-capabilities", headers=HEADERS).json()
+        assert capabilities["schema_version"] == 1
+        assert capabilities["contracts"] == {
+            "companion": 1,
+            "ask": 1,
+            "practice": 1,
+            "preparation": 1,
+            "languages": 1,
+        }
         assert (
             c.get(
                 "/v1/companion/sessions", headers={**HEADERS, "x-copilot-profile": "other"}

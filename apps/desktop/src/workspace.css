@@ -77,7 +77,7 @@
 .points .bullets, .points .prose { line-height: 1.55; }
 .bullets li + li { margin-top: .45em; }
 .bullets li::marker { color: var(--ov-fast); }
-.card-tools { opacity: .7; }
+.card-tools { opacity: 1; }
 .card-tools .copy { min-height: 28px; }
 .ov-empty { line-height: 1.7; padding: 28px 18px; }
 .ov-ask { padding: 10px 12px; gap: 8px; }

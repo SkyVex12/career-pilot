@@ -14,8 +14,10 @@
 //! description, which `program_name` writes when that name is saved; it shows up after the next
 //! start. The executable file name stays `copilot-desktop.exe`.
 //!
-//! Affinity and the overlay's transparent DWM surface are updated on the same window thread.
-//! Hidden windows still receive OFF transitions so showing them cannot retain stale exclusion.
+//! Affinity and transparent DWM surfaces are updated on the same window thread. Hidden windows
+//! must not receive presentation or affinity changes: Windows can paint their dormant surface
+//! as a white rectangle. `show` reconciles the latest choice before making a window visible, so
+//! deferring those changes never restores stale capture exclusion.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -293,18 +295,10 @@ fn apply_latest(app: &AppHandle) {
             tracing::warn!("stealth mode: could not change Dock/app-switcher visibility: {error}");
         }
         for (label, window) in app.webview_windows() {
-            if label == "overlay" {
-                // Avoid changing a hidden transparent window's caption/taskbar. Its capture
-                // flag is still reconciled, including OFF, and transparency repaired together.
-                if window.is_visible().unwrap_or(false)
-                    && presentation_changed(&label, current.stealth, &current.display_name)
-                {
-                    let _ = window.set_title(&current.display_name);
-                }
-            } else if presentation_changed(&label, current.stealth, &current.display_name) {
+            if window.is_visible().unwrap_or(false) {
                 // Focus/readback must not rewrite native styles and disturb a resize or
                 // maximized window. Presentation changes only when its own inputs change.
-                present(&label, &window, current.stealth, &current.display_name);
+                present_latest(&label, &window, &current);
             }
             set_window(app, &label, &window);
         }
@@ -313,6 +307,42 @@ fn apply_latest(app: &AppHandle) {
         }
     }
     APPLYING.store(false, Ordering::Release);
+}
+
+fn present_latest(label: &str, window: &WebviewWindow, current: &CapturePolicy) {
+    if presentation_changed(label, current.stealth, &current.display_name) {
+        if label == "overlay" {
+            let _ = window.set_title(&current.display_name);
+        } else {
+            present(label, window, current.stealth, &current.display_name);
+        }
+    }
+}
+
+/// Every app-owned show path comes here, including call transitions, tray and keyboard actions.
+/// Keep reconciliation and showing in one window-thread operation. In particular, OFF saved
+/// while an overlay is hidden must clear its old exclusion before the first visible frame.
+pub(crate) fn show(window: &WebviewWindow) -> Result<(), String> {
+    let visible_window = window.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    window
+        .run_on_main_thread(move || {
+            let app = visible_window.app_handle();
+            let label = visible_window.label();
+            let current = policy().lock().unwrap().clone();
+            // Presenting a minimized main window may restore it. Reconcile first as well
+            // as after presentation so even that restore cannot expose a stale setting.
+            #[cfg(windows)]
+            apply_native_window(app, label, &visible_window, true);
+            present_latest(label, &visible_window, &current);
+            #[cfg(windows)]
+            apply_native_window(app, label, &visible_window, true);
+            #[cfg(not(windows))]
+            set_window(app, label, &visible_window);
+            let _ = sender.send(visible_window.show().map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    receiver.recv().map_err(|_| "The window show operation was interrupted.".to_string())?
 }
 
 /// A bounded screenshot temporarily excludes the overlay from its own capture. Once it
@@ -375,36 +405,9 @@ fn set_window(app: &AppHandle, label: &str, window: &WebviewWindow) {
     let handle = app.clone();
     let native_window = window.clone();
     let native_label = label.to_string();
-    // Affinity and the transparency repair must be ordered on the native window thread.
-    // No WebView parent changes, frame invalidation, or geometry changes are needed here.
+    // Recheck visibility on the window thread: an earlier call may have hidden it meanwhile.
     if let Err(error) = app.run_on_main_thread(move || {
-        let label = native_label;
-        let window = native_window;
-        let (requested, reason) = policy().lock().unwrap().request(&label);
-        let hwnd = match window.hwnd() {
-            Ok(hwnd) => hwnd.0,
-            Err(error) => {
-                report(
-                    &handle,
-                    &label,
-                    requested,
-                    reason,
-                    None,
-                    Some(format!("The window handle is unavailable: {error}")),
-                );
-                return;
-            }
-        };
-        let desired = affinity(requested);
-        let before = current_affinity(hwnd);
-        let error = if before != Some(desired) { set_affinity(hwnd, desired) } else { None };
-        let kept = current_affinity(hwnd);
-        if label == "overlay" && before != kept {
-            restore_overlay_transparency(&window);
-        }
-        let kept = current_affinity(hwnd);
-        let (effective, error) = verify_affinity(desired, kept, error);
-        report(&handle, &label, requested, reason, effective, error);
+        apply_native_window(&handle, &native_label, &native_window, false);
     }) {
         let (requested, reason) = policy().lock().unwrap().request(label);
         report(
@@ -416,6 +419,38 @@ fn set_window(app: &AppHandle, label: &str, window: &WebviewWindow) {
             Some(format!("The window thread is unavailable: {error}")),
         );
     }
+}
+
+#[cfg(windows)]
+fn apply_native_window(app: &AppHandle, label: &str, window: &WebviewWindow, showing: bool) {
+    let (requested, reason) = policy().lock().unwrap().request(label);
+    let result = match window.hwnd() {
+        Ok(hwnd) => reconcile_affinity(hwnd.0, label, requested, showing),
+        Err(error) => (None, Some(format!("The window handle is unavailable: {error}"))),
+    };
+    report(app, label, requested, reason, result.0, result.1);
+}
+
+#[cfg(windows)]
+fn reconcile_affinity(
+    hwnd: *mut std::ffi::c_void,
+    label: &str,
+    requested: bool,
+    showing: bool,
+) -> (Option<bool>, Option<String>) {
+    // Even a successful affinity call can materialize a hidden WebView2/DWM surface. Report
+    // the pending choice without claiming native verification until the window is shown.
+    if !showing && unsafe { IsWindowVisible(hwnd) } == 0 {
+        return (None, None);
+    }
+    let desired = affinity(requested);
+    let before = current_affinity(hwnd);
+    let error = if before != Some(desired) { set_affinity(hwnd, desired) } else { None };
+    let kept = current_affinity(hwnd);
+    if matches!(label, "main" | "overlay") && before != kept {
+        restore_transparency(hwnd);
+    }
+    verify_affinity(desired, current_affinity(hwnd), error)
 }
 
 #[cfg(windows)]
@@ -456,11 +491,10 @@ fn set_affinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> Option<u32> {
     unsafe { if SetWindowDisplayAffinity(hwnd, affinity) == 0 { Some(GetLastError()) } else { None } }
 }
 
-/// Capture affinity clears the blur region tao used to make the overlay transparent. Put that
-/// empty region back so a visible overlay does not turn into a solid white panel.
+/// Capture affinity clears the blur region Tao used to make a window transparent. Both the
+/// workspace and overlay use transparency, so repair either surface after an affinity change.
 #[cfg(windows)]
-fn restore_overlay_transparency(window: &WebviewWindow) {
-    let Ok(hwnd) = window.hwnd() else { return };
+fn restore_transparency(hwnd: *mut std::ffi::c_void) {
     unsafe {
         let region = CreateRectRgn(0, 0, -1, -1);
         if region.is_null() {
@@ -468,13 +502,13 @@ fn restore_overlay_transparency(window: &WebviewWindow) {
         }
         let blur =
             DwmBlurBehind { flags: DWM_BB_ENABLE | DWM_BB_BLURREGION, enable: 1, region, transition: 0 };
-        let _ = DwmEnableBlurBehindWindow(hwnd.0, &blur);
+        let _ = DwmEnableBlurBehindWindow(hwnd, &blur);
         let _ = DeleteObject(region);
         // Build 22000 paints the client area opaque white unless the glass frame covers it.
         // Later Windows already stays transparent from the blur region alone.
         if windows_build() < WINDOWS_11_22H2 {
             let margins = DwmMargins { left: -1, right: -1, top: -1, bottom: -1 };
-            let _ = DwmExtendFrameIntoClientArea(hwnd.0, &margins);
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
         }
     }
 }
@@ -538,6 +572,7 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
     fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
+    fn IsWindowVisible(hwnd: *mut std::ffi::c_void) -> i32;
 }
 
 #[cfg(windows)]
@@ -714,7 +749,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn hidden_native_window_accepts_on_then_off_without_reparenting() {
+    fn hidden_native_windows_defer_affinity_until_show_and_use_the_latest_choice() {
         use std::ffi::c_void;
         #[link(name = "user32")]
         unsafe extern "system" {
@@ -765,11 +800,22 @@ mod tests {
         assert!(!window.0.is_null());
         assert_ne!(unsafe { SetLayeredWindowAttributes(window.0, 0, 255, 2) }, 0);
         assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
-        assert_eq!(super::set_affinity(window.0, super::affinity(true)), None);
-        assert_eq!(super::current_affinity(window.0), Some(super::affinity(true)));
-        assert_eq!(super::set_affinity(window.0, super::affinity(false)), None);
-        assert_eq!(super::current_affinity(window.0), Some(super::affinity(false)));
-        assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+        for label in ["main", "overlay"] {
+            // A hidden ON window is not touched by OFF. It must become capturable before
+            // the subsequent show, without creating or reparenting a second native window.
+            assert_eq!(super::set_affinity(window.0, super::affinity(true)), None);
+            assert_eq!(super::reconcile_affinity(window.0, label, false, false), (None, None));
+            assert_eq!(super::current_affinity(window.0), Some(super::affinity(true)));
+            assert_eq!(super::reconcile_affinity(window.0, label, false, true), (Some(false), None));
+            assert_eq!(super::current_affinity(window.0), Some(super::affinity(false)));
+            assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+
+            // The reverse transition is equally deferred and applied before presentation.
+            assert_eq!(super::reconcile_affinity(window.0, label, true, false), (None, None));
+            assert_eq!(super::current_affinity(window.0), Some(super::affinity(false)));
+            assert_eq!(super::reconcile_affinity(window.0, label, true, true), (Some(true), None));
+            assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+        }
     }
 
     #[test]

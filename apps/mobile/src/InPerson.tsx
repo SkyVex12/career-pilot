@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, AppState, ScrollView, Switch, View } from "react-native";
+import { Alert, AppState, Switch, View } from "react-native";
 import type { AudioRecorder } from "react-native-audio-api";
 import { withDeadline } from "./requestScope";
 import { Api } from "./api";
@@ -14,11 +14,11 @@ import {
   Input,
   Notice,
   Row,
+  Screen,
   ScreenTitle,
   Select,
   Segments,
   Txt,
-  page,
 } from "./ui";
 const NativeWebSocket = WebSocket as unknown as {
   new (
@@ -506,13 +506,10 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     }
   }
   return (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={page}
-    >
+    <Screen>
       <ScreenTitle
         eyebrow="Phone microphone"
-        title="A little help in the room."
+        title="In-person assistance"
         subtitle="For an in-person conversation. Choose who is speaking, then record one turn at a time."
       />
       <Notice>
@@ -524,14 +521,26 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
       {live.memory ? <Txt muted>{live.memory}</Txt> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
       {!active && !sid.current ? (
-        <>
-          <Input
-            placeholder="Meeting title"
-            value={title}
-            onChangeText={setTitle}
-          />
-          <Row>
-            <Txt>Save transcript after the session</Txt>
+        <Card>
+          <Txt style={{ fontSize: 18, fontWeight: "700" }}>
+            Set up this conversation
+          </Txt>
+          <Field label="Meeting title">
+            <Input
+              placeholder="Meeting title"
+              value={title}
+              onChangeText={setTitle}
+            />
+          </Field>
+          <Row style={{ flexWrap: "nowrap", justifyContent: "space-between" }}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Txt style={{ fontSize: 14, fontWeight: "600" }}>
+                Save transcript
+              </Txt>
+              <Txt muted style={{ fontSize: 12 }}>
+                Review this conversation in History.
+              </Txt>
+            </View>
             <Switch
               value={retain}
               onValueChange={setRetain}
@@ -551,7 +560,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             icon="mic"
             onPress={() => void connect()}
           />
-        </>
+        </Card>
       ) : (
         <>
           <Field label="Who is speaking?">
@@ -601,6 +610,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
           <Button
             label="End in-person session"
             secondary
+            danger
             onPress={() =>
               Alert.alert(
                 "End this phone session?",
@@ -624,6 +634,6 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
           <Txt selectable>{q.deep || q.fast || "Preparing guidance…"}</Txt>
         </Card>
       ))}
-    </ScrollView>
+    </Screen>
   );
 }

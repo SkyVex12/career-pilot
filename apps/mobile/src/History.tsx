@@ -3,6 +3,7 @@ import { Alert, View } from "react-native";
 import { Api } from "./api";
 import { RequestScope } from "./requestScope";
 import {
+  ActionCard,
   Badge,
   Button,
   Card,
@@ -343,7 +344,11 @@ export function History({
             />
           ) : null}
           {filtered.map((c) => (
-            <Card key={c.id}>
+            <ActionCard
+              key={c.id}
+              label={`Read ${c.title || "untitled call"}`}
+              onPress={() => void open(c.id)}
+            >
               <Row style={{ justifyContent: "space-between" }}>
                 <Badge label={c.mode} />
                 <Badge
@@ -352,15 +357,10 @@ export function History({
                 />
               </Row>
               <Txt style={heading}>{c.title || "Untitled call"}</Txt>
-              <Txt muted>{when(c.started_at)}</Txt>
-              <Button
-                label="Read conversation"
-                icon="arrow"
-                secondary
-                compact
-                onPress={() => void open(c.id)}
-              />
-            </Card>
+              <Txt muted style={{ fontSize: 13 }}>
+                {when(c.started_at)}
+              </Txt>
+            </ActionCard>
           ))}
           {before ? (
             <Button
@@ -558,7 +558,11 @@ export function Preparation({
             />
           ) : null}
           {data?.items.map((i) => (
-            <Card key={meetingKey(i)}>
+            <ActionCard
+              key={meetingKey(i)}
+              label={`Prepare for ${i.meeting.title}`}
+              onPress={() => setSelected(meetingKey(i))}
+            >
               <Row>
                 <Badge label={when(i.meeting.start)} tone="ruby" />
                 {i.overlaps ? (
@@ -571,13 +575,7 @@ export function Preparation({
                   ? "Choose the application and saved call to use."
                   : "Review your context, notes, and open actions."}
               </Txt>
-              <Button
-                label="Prepare for meeting"
-                icon="arrow"
-                secondary
-                onPress={() => setSelected(meetingKey(i))}
-              />
-            </Card>
+            </ActionCard>
           ))}
         </>
       )}

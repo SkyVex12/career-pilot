@@ -86,3 +86,20 @@ it("preserves a failed send's request ID and draft for an idempotent retry", asy
   await waitFor(() => expect(ids).toHaveLength(2)); expect(ids[0]).toBe(ids[1]);
   expect(screen.getByLabelText("Ask a question")).toHaveValue("Explain queues");
 });
+
+it("keeps a draft safe while a saved conversation is loading", async () => {
+  let finish!: (value: unknown) => void;
+  const conversation = { id: "c", title: "Saved conversation", scope: { kind: "auto" }, messages: [] };
+  ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [conversation] }));
+  ipc.api("GET", /^\/ask\/conversations\/c$/, () => new Promise(resolve => { finish = resolve; }));
+  render(<Ask />);
+  await screen.findByText("Saved conversation", { selector: "option" });
+  fireEvent.change(screen.getByLabelText("Saved conversations", { selector: "select" }), { target: { value: "c" } });
+  fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: "Keep this draft" } });
+  expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+  fireEvent.keyDown(screen.getByLabelText("Ask a question"), { key: "Enter", ctrlKey: true });
+  expect(ipc.apiCalls("POST")).toHaveLength(0);
+  await act(async () => finish(conversation));
+  expect(screen.getByLabelText("Ask a question")).toHaveValue("Keep this draft");
+  expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled();
+});

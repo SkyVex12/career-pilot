@@ -1537,7 +1537,7 @@ async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoin
         }
     });
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.show();
+        let _ = stealth::show(&overlay);
         stealth::refresh(&app);
     }
     Ok(())
@@ -1692,7 +1692,7 @@ fn minimize_overlay(app: AppHandle) -> Res<()> {
 
 /// Show the overlay, restoring it if it was minimized, and focus it.
 fn bring_back_overlay(w: &WebviewWindow) {
-    let _ = w.show();
+    let _ = stealth::show(w);
     if matches!(w.is_minimized(), Ok(true)) {
         let _ = w.unminimize();
     }
@@ -2007,7 +2007,7 @@ fn set_overlay_on_top(app: AppHandle, on: bool) {
 #[tauri::command]
 fn open_main_settings(app: AppHandle) -> Res<()> {
     let w = app.get_webview_window("main").ok_or("no main window")?;
-    w.show().map_err(|e| e.to_string())?;
+    stealth::show(&w)?;
     let _ = w.unminimize();
     let _ = w.set_focus();
     let _ = app.emit_to("main", OPEN_SETTINGS_EVENT, ());

@@ -76,9 +76,9 @@ export function HushedDetectionSettings({ preferences, defaultAdb = "", supporte
   const busy = disabled || operation !== null;
   const available = [...new Set([...(devices ?? []), ...serials])];
   const dirty = enabled !== savedEnabled || adbPath.trim() !== savedAdb || JSON.stringify(serials) !== savedSerials;
-  return <details>
+  return <details className="ui-disclosure hushed-settings">
     <summary>Hushed in LDPlayer</summary>
-    <div className="ui-stack">
+    <div className="ui-disclosure-body ui-stack">
       {!supported ? <p className="ui-field-hint">Hushed detection in LDPlayer is available on Windows only.</p> : <>
         <Switch label="Detect Hushed calls" checked={enabled} disabled={busy} onChange={on => { setEnabled(on); clearFeedback(); }} />
         <p className="ui-field-hint">Enable local ADB in LDPlayer first. Select up to four emulators. Detection reads Hushed call-state metadata; no audio, caller details, or messages are saved.</p>

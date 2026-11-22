@@ -2,12 +2,28 @@
 .call-design { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; width: 100%; overflow: hidden; color: var(--text); }
 .call-design[hidden] { display: none; }
 .call-design-heading, .call-design-footer { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
-.call-design-heading { padding: 20px 24px; justify-content: space-between; overflow-y: hidden; scrollbar-gutter: stable; scrollbar-width: thin; }
+.call-design-heading { padding: 16px 24px; justify-content: space-between; }
+.call-design-description { margin:4px 0 0;color:var(--text-3);font-size:13px;line-height:20px; }
 .call-design-heading h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
-.call-design-body { display: flex; flex: 1; flex-direction: column; gap: 20px; min-width: 0; min-height: 0; padding: 0 24px 20px; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; overscroll-behavior: contain; }
+.call-design-body { display: flex; flex: 1; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; padding: 0 24px 16px; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; overscroll-behavior: contain; }
+.call-design-body > * { flex-shrink:0; }
 .call-design-body > .ui-segmented { width: 100%; }
 .call-design-body > .ui-segmented .ui-segment { flex: 1; min-width: 0; justify-content: center; text-align: center; }
 .call-setup-fields { display: flex; flex-direction: column; gap: 12px; }
+.call-optional-settings { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:12px; }
+.call-optional-settings:has(details[open]) { grid-template-columns:minmax(0,1fr); }
+.call-optional-settings .call-options { border:1px solid var(--border);margin:0;padding:0;border-radius:var(--radius-md); }
+.call-optional-settings .call-options > summary { display:flex;padding:12px 14px;color:var(--text); }
+.call-optional-settings .call-options > .ui-stack { margin:0;padding:16px; }
+.calendar-connections { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
+.calendar-connection .ui-card-head { flex-wrap:wrap;gap:8px; }
+.calendar-connection .ui-card-actions { margin-left:0; }
+.calendar-connection .ui-card-title { overflow-wrap:anywhere; }
+.calendar-connection p { margin:0; }
+.calendar-connection-actions { margin-top:12px; }
+.calendar-selection { display:grid;gap:8px;overflow-wrap:anywhere; }
+.calendar-empty { margin:0;padding:12px;border-radius:var(--radius-sm);background:var(--surface-2);color:var(--text-3);font-size:13px;line-height:20px; }
+.call-design-body .ui-field-hint { line-height:19px; }
 .call-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 64px; align-items: center; gap: 12px; min-width: 0; }
 .call-row > * { min-width: 0; }
 .call-row-label { color: var(--text-2); font-size: 13px; line-height: 18px; }
@@ -32,7 +48,7 @@
 .call-guest-chip button:hover { background: var(--surface-sunken); }
 .call-preferences { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .call-preferences .ui-field-hint { margin: 0; }
-.call-design-footer { padding: 12px 24px; border-top: 1px solid var(--border); overflow-y: hidden; scrollbar-gutter: stable; scrollbar-width: thin; }
+.call-design-footer { padding: 10px 24px; border-top: 1px solid var(--border); }
 .call-design-footer .session-start { min-width: 128px; }
 .call-design .call-notices { margin: 0; }
 .call-notices:empty { display: none; }
@@ -79,6 +95,7 @@
 .guest-leave { display: inline-flex; align-items: center; }
 .guest-leave .seat-error { max-width: 200px; font-size: 12px; }
 @media (max-width: 760px) {
+  .call-optional-settings,.calendar-connections { grid-template-columns:minmax(0,1fr); }
   .call-row { grid-template-columns: 104px minmax(0, 1fr) 64px; gap: 10px; }
   .call-row-hint { margin-left: 114px; margin-right: 0; }
   .call-focus { margin-left: 114px; }
@@ -110,3 +127,10 @@
   .call-guest-chip button { min-width: 32px; height: 32px; }
 }
 .session-commandbar[data-shape="dot"] > .call-compact-invites { display: grid; z-index: 3; }
+@media (max-height:400px) {
+  .call-design-heading { padding:8px 16px; }
+  .call-design-heading h1 { font-size:17px;line-height:24px; }
+  .call-design-description { display:none; }
+  .call-design-footer { padding:6px 16px; }
+  .call-design-body { padding-inline:16px;gap:12px; }
+}

@@ -4,16 +4,17 @@ import {
   KeyboardAvoidingView,
   Linking,
   Platform,
+  Pressable,
   ScrollView,
   View,
   useColorScheme,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Api, secureBase, type Tokens } from "./api";
+import { Api, type Tokens } from "./api";
 import { HTTP_TEST_BUILD } from "./transport";
 import { checkClientCapabilities } from "./clientCapabilities";
-import { gatewayURL } from "./liveState";
+import { gatewayOverride, resolveConnection } from "./connectionConfig";
 import { loadAuthConfig, type AuthConfig } from "./authConfig";
 import {
   beginCareerOs,
@@ -27,6 +28,7 @@ import {
   Button,
   Card,
   Field,
+  Icon,
   Input,
   Notice,
   Row,
@@ -46,7 +48,14 @@ export default function App() {
   const dark = useColorScheme() === "dark",
     c = colors(dark);
   const [server, setServer] = useState(process.env.EXPO_PUBLIC_API_URL ?? ""),
-    [gateway, setGateway] = useState(process.env.EXPO_PUBLIC_GATEWAY_URL ?? ""),
+    [gateway, setGateway] = useState(""),
+    [gatewayInput, setGatewayInput] = useState(() =>
+      gatewayOverride(
+        process.env.EXPO_PUBLIC_API_URL ?? "",
+        process.env.EXPO_PUBLIC_GATEWAY_URL ?? "",
+      ),
+    ),
+    [gatewayExpanded, setGatewayExpanded] = useState(!!gatewayInput),
     [api, setApi] = useState<Api | null>(null),
     [signed, setSigned] = useState(false),
     [email, setEmail] = useState(""),
@@ -130,10 +139,12 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const base = secureBase(preference?.api ?? server, __DEV__);
-      const live = gatewayURL(
-        (preference?.gateway ?? gateway).trim() ||
-          `${base.replace(/^http/, "ws")}/v1/companion`,
+      const { api: base, gateway: live } = resolveConnection(
+        preference?.api ?? server,
+        preference
+          ? gatewayOverride(preference.api, preference.gateway)
+          : gatewayInput,
+        __DEV__,
       );
       const client = new Api(base, await secretsFor(base), fetch, __DEV__);
       if (ticket !== authScope.current) return;
@@ -161,7 +172,9 @@ export default function App() {
     void readConnectionPreference().then((preference) => {
       if (active && preference) {
         setServer(preference.api);
-        setGateway(preference.gateway);
+        const override = gatewayOverride(preference.api, preference.gateway);
+        setGatewayInput(override);
+        setGatewayExpanded(!!override);
         void connect(preference);
       }
     });
@@ -311,44 +324,91 @@ export default function App() {
             {!signed || !api ? (
               <ScrollView
                 keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={
+                  Platform.OS === "ios" ? "interactive" : "on-drag"
+                }
                 contentContainerStyle={[
                   page,
                   {
                     flexGrow: 1,
                     justifyContent: "center",
                     maxWidth: 520,
-                    paddingVertical: 36,
+                    paddingVertical: 28,
                     gap: 24,
                   },
                 ]}
               >
-                <View style={{ gap: 26 }}>
+                <View style={{ gap: 24 }}>
                   <Brand />
                   <View style={{ gap: 10 }}>
-                    <Txt title style={{ fontSize: 34, lineHeight: 41 }}>
+                    <Txt title style={{ fontSize: 32, lineHeight: 39 }}>
                       {!api
-                        ? "Your next conversation,\nbetter prepared."
-                        : "Welcome back."}
+                        ? "Your workspace,\nwherever you are."
+                        : "Sign in to Career Pilot"}
                     </Txt>
                     <Txt muted>
                       {!api
-                        ? "Bring live guidance, interview practice and your career context with you."
+                        ? "Follow a live call, practice an interview, and keep your work context close."
                         : "Sign in to the same account you use on your computer."}
                     </Txt>
                   </View>
                 </View>
+                <Row style={{ flexWrap: "nowrap", gap: 12 }}>
+                  {["Workspace", "Sign in"].map((label, index) => (
+                    <Row
+                      key={label}
+                      style={{ flex: 1, flexWrap: "nowrap", gap: 8 }}
+                    >
+                      <View
+                        style={{
+                          width: 25,
+                          height: 25,
+                          borderRadius: 13,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          backgroundColor:
+                            (api ? 1 : 0) === index ? c.ruby : c.soft,
+                        }}
+                      >
+                        {api && index === 0 ? (
+                          <Icon name="check" size={14} color={c.success} />
+                        ) : (
+                          <Txt
+                            style={{
+                              fontSize: 12,
+                              fontWeight: "700",
+                              color:
+                                (api ? 1 : 0) === index ? c.onRuby : c.muted,
+                            }}
+                          >
+                            {index + 1}
+                          </Txt>
+                        )}
+                      </View>
+                      <Txt
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "600",
+                          color: (api ? 1 : 0) === index ? c.text : c.muted,
+                        }}
+                      >
+                        {label}
+                      </Txt>
+                    </Row>
+                  ))}
+                </Row>
                 <Card>
                   {!api ? (
                     <>
                       <Txt style={{ fontWeight: "700", fontSize: 18 }}>
-                        Connect your workspace
+                        Workspace connection
                       </Txt>
                       <Field
-                        label="API server"
+                        label="Workspace address"
                         hint={
                           HTTP_TEST_BUILD
-                            ? "This test build accepts HTTP or HTTPS."
-                            : "Use your workspace’s HTTPS address."
+                            ? "Use the server address from your computer. This test build also accepts HTTP."
+                            : "Enter the HTTPS API address for your workspace."
                         }
                       >
                         <Input
@@ -360,31 +420,90 @@ export default function App() {
                           autoCapitalize="none"
                           autoCorrect={false}
                           keyboardType="url"
+                          returnKeyType="go"
+                          onSubmitEditing={() => {
+                            if (server.trim() && !busy) void connect();
+                          }}
                           value={server}
                           editable={!busy}
-                          onChangeText={setServer}
+                          onChangeText={(value) => {
+                            setServer(value);
+                            if (gatewayInput.trim()) setGatewayExpanded(true);
+                          }}
                         />
                       </Field>
-                      <Field
-                        label="Live gateway"
-                        hint="Optional. Leave blank to use the same server."
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: gatewayExpanded }}
+                        onPress={() => setGatewayExpanded((value) => !value)}
+                        style={{
+                          minHeight: 44,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
                       >
-                        <Input
-                          placeholder="Automatic"
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          value={gateway}
-                          editable={!busy}
-                          onChangeText={setGateway}
-                        />
-                      </Field>
+                        <Icon name="settings" size={17} />
+                        <Txt muted style={{ fontSize: 13, flex: 1 }}>
+                          Advanced connection settings
+                        </Txt>
+                        <View
+                          style={{
+                            transform: [
+                              { rotate: gatewayExpanded ? "180deg" : "0deg" },
+                            ],
+                          }}
+                        >
+                          <Icon name="chevron" size={16} />
+                        </View>
+                      </Pressable>
+                      {gatewayExpanded ? (
+                        <Field
+                          label="Live gateway"
+                          hint={
+                            gatewayInput.trim()
+                              ? "Custom gateway for live calls. Clear this field to use the workspace address."
+                              : "Optional. Leave blank to use the workspace address."
+                          }
+                        >
+                          <Input
+                            placeholder="Automatic"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="url"
+                            value={gatewayInput}
+                            editable={!busy}
+                            onChangeText={setGatewayInput}
+                          />
+                        </Field>
+                      ) : null}
+                      {HTTP_TEST_BUILD &&
+                      /(?:127\.0\.0\.1|localhost)/i.test(server) ? (
+                        <Notice>
+                          On Android, localhost is this device. To reach your
+                          computer, use its network address.
+                        </Notice>
+                      ) : null}
                       <Button
-                        label={busy ? "Connecting…" : "Connect server"}
+                        label={busy ? "Connecting…" : "Connect workspace"}
                         icon="arrow"
                         loading={busy}
                         disabled={!server.trim()}
                         onPress={() => void connect()}
                       />
+                      {busy ? (
+                        <Button
+                          label="Cancel connection"
+                          secondary
+                          onPress={() => {
+                            authScope.current++;
+                            cancelBrowser();
+                            setBusy(false);
+                            setError("");
+                            setGatewayExpanded(!!gatewayInput.trim());
+                          }}
+                        />
+                      ) : null}
                     </>
                   ) : (
                     <>
@@ -530,6 +649,7 @@ export default function App() {
                             setCode("");
                             setApi(null);
                             setSent(false);
+                            setGatewayExpanded(!!gatewayInput.trim());
                           }}
                         />
                       </View>

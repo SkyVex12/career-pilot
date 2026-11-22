@@ -9,6 +9,7 @@ import { STAGES, isTextFile, pairingChoices, pairingValue, resumeStatusLabel } f
 import { upcoming } from "./catalog";
 import { BaseResumeUtility, RenameResume, statusTone } from "./Resumes";
 import "./prep.css";
+import "./feature-pages.css";
 import { PullDialog, useCareerOs } from "./CareerOs";
 import { ACCEPT, PackBadge, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
@@ -134,18 +135,19 @@ export function Applications({
   return (
     <div className={`apps prep-workspace${practicing ? " is-practicing" : ""}`}>
       <PageHeader title="Interview prep" actions={<>
-        <Button onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
+        <Button variant={practicing ? "ghost" : "secondary"} onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
         {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
         {!practicing && <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>}
       </>} />
+      {!practicing && error && !!applications?.length && <Banner tone="danger" title="Could not refresh applications" action={<Button size="sm" onClick={reload}>Retry</Button>}>{error}</Banner>}
       {practiceOpened && <div hidden={!practicing} className="prep-practice"><Practice active={active && practicing} running={running} entry={practiceEntry} /></div>}
       <div hidden={practicing} className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
         <section className="apps-list prep-sidebar" aria-label="Applications">
           <h2 className="prep-sidebar-heading">Applications <span>{applications?.length ?? ""}</span></h2>
           <Input type="search" aria-label="Search company or role" placeholder="Search applications" value={q} onChange={(e) => setQ(e.target.value)} />
           <ListState items={shown} error={error} onRetry={reload} loadingLabel="applications" empty={applications?.length ?
-            <EmptyState title="No applications match">Try another company or role.</EmptyState> :
-            <EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications yet" action={<Button onClick={() => setAdding(true)}>Add application</Button>} />
+            <EmptyState title="No applications match" action={<Button size="sm" onClick={() => setQ("")}>Clear search</Button>}>Try another company or role.</EmptyState> :
+            <EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications yet" action={<Button onClick={() => setAdding(true)}>Add application</Button>}>Keep the role, resume, and interview details together.</EmptyState>
           }>
             {(list) => <List label="All applications">{list.map((a) => <ListRow
               key={a.id} selected={a.id === selected} onClick={() => setSelected(a.id)} title={a.company}

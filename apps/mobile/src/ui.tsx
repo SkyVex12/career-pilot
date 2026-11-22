@@ -23,29 +23,31 @@ import Svg, { Path } from "react-native-svg";
 export function colors(dark: boolean) {
   return dark
     ? {
-        bg: "#141419",
-        card: "#202027",
-        soft: "#2b2932",
-        text: "#f7f5f7",
-        muted: "#aaa5b2",
-        line: "#35323e",
-        ruby: "#e66a8a",
-        onRuby: "#211118",
-        tint: "#3e2532",
+        bg: "#17191c",
+        card: "#202326",
+        soft: "#2b2e32",
+        text: "#f4f3f1",
+        muted: "#b2b5b9",
+        line: "#3b3e42",
+        ruby: "#ff9b82",
+        onRuby: "#2c160f",
+        tint: "#3d2a24",
+        brand: "#f05a3c",
         success: "#77cfac",
         warning: "#efc27b",
         danger: "#ff98a6",
       }
     : {
-        bg: "#f5f5f8",
+        bg: "#f6f5f2",
         card: "#ffffff",
-        soft: "#eeeef3",
-        text: "#232330",
-        muted: "#6d6c7e",
-        line: "#e5e4ec",
-        ruby: "#a52c52",
+        soft: "#eeede9",
+        text: "#222629",
+        muted: "#656a70",
+        line: "#dededa",
+        ruby: "#b53d29",
         onRuby: "#ffffff",
-        tint: "#faeaf0",
+        tint: "#fcece6",
+        brand: "#f05a3c",
         success: "#197b59",
         warning: "#8e5a12",
         danger: "#b52b43",
@@ -72,6 +74,8 @@ export type IconName =
   | "more"
   | "file"
   | "calendar"
+  | "info"
+  | "warning"
   | "stop";
 const paths: Record<IconName, string> = {
   call: "M4 9v6m4-10v14m4-12v10m4-14v18m4-12v6",
@@ -93,6 +97,8 @@ const paths: Record<IconName, string> = {
   more: "M5 12h.01M12 12h.01M19 12h.01",
   file: "M14 3H5v18h14V8l-5-5Zm0 0v6h5M8 13h8m-8 4h6",
   calendar: "M4 5h16v16H4V5Zm0 5h16M8 3v4m8-4v4m-8 7h3m2 0h3m-8 4h3",
+  info: "M12 16v-4m0-4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
+  warning: "M12 8v5m0 3h.01M12 3 2 21h20L12 3Z",
   stop: "M6 6h12v12H6V6Z",
 };
 export function Icon({
@@ -131,9 +137,9 @@ export function Txt({
       style={[
         {
           color: muted ? c.muted : c.text,
-          fontSize: title ? 27 : 15,
-          lineHeight: title ? 34 : 23,
-          ...(title ? { fontWeight: "700", letterSpacing: -0.65 } : {}),
+          fontSize: title ? 28 : 15,
+          lineHeight: title ? 36 : 23,
+          ...(title ? { fontWeight: "700", letterSpacing: -0.7 } : {}),
         },
         p.style,
       ]}
@@ -173,7 +179,7 @@ export function Button({
       style={({ pressed }) => [
         {
           minHeight: 48,
-          borderRadius: 14,
+          borderRadius: 12,
           paddingHorizontal: compact ? 12 : 18,
           paddingVertical: 11,
           flexDirection: "row",
@@ -183,7 +189,7 @@ export function Button({
           backgroundColor: secondary ? c.card : danger ? c.danger : c.ruby,
           borderWidth: secondary ? 1 : 0,
           borderColor: c.line,
-          opacity: disabled ? 0.48 : pressed ? 0.72 : 1,
+          opacity: disabled ? 0.5 : pressed ? 0.78 : 1,
         },
         style,
       ]}
@@ -242,19 +248,29 @@ export function IconButton({
 }
 export function Input(props: TextInputProps) {
   const c = useContext(Theme);
+  const [focused, setFocused] = useState(false);
   return (
     <TextInput
       {...props}
       accessibilityLabel={props.accessibilityLabel ?? props.placeholder}
       placeholderTextColor={c.muted}
+      selectionColor={c.ruby}
+      onFocus={(event) => {
+        setFocused(true);
+        props.onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        setFocused(false);
+        props.onBlur?.(event);
+      }}
       style={[
         {
           minHeight: 50,
           borderWidth: 1,
-          borderColor: c.line,
-          borderRadius: 14,
+          borderColor: focused ? c.ruby : c.line,
+          borderRadius: 12,
           color: c.text,
-          backgroundColor: c.card,
+          backgroundColor: props.editable === false ? c.soft : c.card,
           paddingHorizontal: 15,
           paddingVertical: 13,
           fontSize: 15,
@@ -303,8 +319,8 @@ export function Card({
           backgroundColor: subtle ? c.soft : c.card,
           borderWidth: 1,
           borderColor: c.line,
-          borderRadius: 20,
-          padding: 20,
+          borderRadius: 16,
+          padding: 18,
           gap: 14,
         },
         style,
@@ -337,6 +353,37 @@ export function Row({
     </View>
   );
 }
+export function ActionCard({
+  label,
+  onPress,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  children: React.ReactNode;
+}) {
+  const c = useContext(Theme);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        backgroundColor: pressed ? c.soft : c.card,
+        borderWidth: 1,
+        borderColor: c.line,
+        borderRadius: 16,
+        padding: 18,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+      })}
+    >
+      <View style={{ flex: 1, minWidth: 0, gap: 9 }}>{children}</View>
+      <Icon name="arrow" size={18} color={c.ruby} />
+    </Pressable>
+  );
+}
 export function Loading({ label = "Loading…" }: { label?: string }) {
   const c = useContext(Theme);
   return (
@@ -355,8 +402,8 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
   );
 }
 export const page: ViewStyle = {
-  padding: 22,
-  gap: 18,
+  padding: 20,
+  gap: 20,
   paddingBottom: 32,
   width: "100%",
   maxWidth: 860,
@@ -366,6 +413,7 @@ export function Screen({ children, ...props }: ScrollViewProps) {
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       {...props}
       contentContainerStyle={[page, props.contentContainerStyle]}
     >
@@ -386,33 +434,39 @@ export function ScreenTitle({
 }) {
   const c = useContext(Theme);
   return (
-    <View style={{ gap: 7, paddingVertical: 4 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <View style={{ flex: 1, gap: 5 }}>
-          {eyebrow ? (
-            <Txt
-              style={{
-                fontSize: 11,
-                letterSpacing: 1.4,
-                fontWeight: "700",
-                color: c.ruby,
-              }}
-            >
-              {eyebrow.toUpperCase()}
-            </Txt>
-          ) : null}
-          <Txt title>{title}</Txt>
+    <View style={{ gap: 8, paddingVertical: 4 }}>
+      {eyebrow || action ? (
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {eyebrow ? (
+              <Txt
+                style={{
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                  fontWeight: "700",
+                  color: c.ruby,
+                }}
+              >
+                {eyebrow}
+              </Txt>
+            ) : null}
+          </View>
+          {action}
         </View>
-        {action}
-      </View>
-      {subtitle ? <Txt muted>{subtitle}</Txt> : null}
+      ) : null}
+      <Txt title>{title}</Txt>
+      {subtitle ? (
+        <Txt muted style={{ maxWidth: 640 }}>
+          {subtitle}
+        </Txt>
+      ) : null}
     </View>
   );
 }
@@ -429,29 +483,46 @@ export function Notice({
   return (
     <View
       accessibilityRole={tone === "error" ? "alert" : undefined}
+      accessibilityLiveRegion="polite"
       style={{
-        backgroundColor: c.card,
+        backgroundColor: c.soft,
         borderColor: tone === "error" ? c.danger : c.line,
         borderWidth: 1,
-        borderRadius: 14,
+        borderRadius: 12,
         padding: 14,
         gap: 10,
       }}
     >
-      <Txt
-        style={{
-          fontSize: 13,
-          lineHeight: 20,
-          color:
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 9 }}>
+        <Icon
+          name={
+            tone === "error" ? "warning" : tone === "success" ? "check" : "info"
+          }
+          size={18}
+          color={
             tone === "error"
               ? c.danger
               : tone === "success"
                 ? c.success
-                : c.muted,
-        }}
-      >
-        {children}
-      </Txt>
+                : c.muted
+          }
+        />
+        <Txt
+          style={{
+            flex: 1,
+            fontSize: 13,
+            lineHeight: 20,
+            color:
+              tone === "error"
+                ? c.danger
+                : tone === "success"
+                  ? c.success
+                  : c.muted,
+          }}
+        >
+          {children}
+        </Txt>
+      </View>
       {action}
     </View>
   );
@@ -469,9 +540,9 @@ export function EmptyState({
 }) {
   const c = useContext(Theme);
   return (
-    <Card style={{ alignItems: "center", paddingVertical: 32 }}>
-      <View style={{ backgroundColor: c.tint, padding: 18, borderRadius: 24 }}>
-        <Icon name={icon} size={30} color={c.ruby} />
+    <Card style={{ alignItems: "center", paddingVertical: 28, gap: 12 }}>
+      <View style={{ backgroundColor: c.tint, padding: 14, borderRadius: 18 }}>
+        <Icon name={icon} size={26} color={c.ruby} />
       </View>
       <Txt style={{ fontSize: 19, fontWeight: "600", textAlign: "center" }}>
         {title}
@@ -479,7 +550,9 @@ export function EmptyState({
       <Txt muted style={{ maxWidth: 390, textAlign: "center" }}>
         {description}
       </Txt>
-      {action}
+      {action ? (
+        <View style={{ paddingTop: 4, maxWidth: "100%" }}>{action}</View>
+      ) : null}
     </Card>
   );
 }
@@ -496,15 +569,15 @@ export function Badge({
       style={{
         alignSelf: "flex-start",
         backgroundColor: tone === "ruby" ? c.tint : c.soft,
-        borderRadius: 7,
+        borderRadius: 6,
         paddingHorizontal: 8,
         paddingVertical: 3,
       }}
     >
       <Txt
         style={{
-          fontSize: 11,
-          lineHeight: 16,
+          fontSize: 12,
+          lineHeight: 18,
           fontWeight: "600",
           color:
             tone === "success"
@@ -598,6 +671,7 @@ export function Select({
           }}
         >
           <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Dismiss selection"
             onPress={() => setOpen(false)}
             style={{ flex: 1 }}
@@ -754,7 +828,7 @@ export function Segments({
             padding: 8,
             justifyContent: "center",
             backgroundColor: value === o.value ? c.card : "transparent",
-            opacity: pressed ? 0.7 : 1,
+            opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
           })}
         >
           <Txt

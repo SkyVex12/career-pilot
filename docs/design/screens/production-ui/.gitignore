@@ -1,0 +1,6 @@
+# Keep reproducible raw runs local; commit the curated review and its metrics only.
+/*
+!/.gitignore
+!/README.md
+!/review/
+!/mobile/

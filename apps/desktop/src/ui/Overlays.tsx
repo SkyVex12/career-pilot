@@ -187,7 +187,7 @@ export function useToast() {
 let nextToast = 1;
 const TOAST_MS = 5000;
 
-export function ToastProvider({ children }: { children: ReactNode }) {
+export function ToastProvider({ children, persistent }: { children: ReactNode; persistent?: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const push = useCallback((t: Omit<ToastItem, "id">) => {
     setItems((cur) => [...cur.slice(-2), { ...t, id: nextToast++ }]);
@@ -197,6 +197,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={push}>
       {children}
       <section className="ui-toast-viewport" aria-label="Notifications">
+        {persistent}
         <div aria-live="polite" className="ui-toast-region">
           {items
             .filter((t) => t.tone !== "error")
