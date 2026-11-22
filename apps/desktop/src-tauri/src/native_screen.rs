@@ -140,7 +140,7 @@ mod native {
     }
     pub fn sources() -> Result<Vec<Source>, String> {
         if !unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() } {
-            return Err("Allow Copilot Desktop in System Settings > Privacy & Security > Screen Recording, then reopen the app.".into());
+            return Err("Allow CoRuby in System Settings > Privacy & Security > Screen Recording, then reopen the app.".into());
         }
         let mut sources: Vec<Source> = crate::remote_macos::monitors()
             .into_iter()

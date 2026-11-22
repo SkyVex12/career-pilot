@@ -126,8 +126,8 @@ def sign_in_message(code: str, minutes: int) -> tuple[str, str]:
     """The sign-in mail: subject and plain text. The code is in the text only, so it does not
     show in a notification's subject line."""
     text = (
-        f"Your Copilot sign-in code is:\n\n    {code}\n\n"
+        f"Your CoRuby sign-in code is:\n\n    {code}\n\n"
         f"It works once and expires in {minutes} minutes.\n\n"
         "If you didn't ask for this code, ignore this email. Nobody can sign in without it.\n"
     )
-    return "Your Copilot sign-in code", text
+    return "Your CoRuby sign-in code", text

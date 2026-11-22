@@ -13,26 +13,26 @@ function careerText(e: unknown): string {
   const f = failureOf(e);
   switch (f.code) {
     case "career_os_unavailable":
-      return "Career-OS isn't answering. Google and email still work.";
+      return "HubRuby isn't answering. Google and email still work.";
     case "access_denied":
-      return "You cancelled sign-in on Career-OS.";
+      return "You cancelled sign-in on HubRuby.";
     case "account_disabled":
-      return "This Career-OS account is disabled.";
+      return "This HubRuby account is disabled.";
     case "linked_to_another":
-      return "That account is already linked to a different Career-OS account.";
+      return "That account is already linked to a different HubRuby account.";
     case "identity_elsewhere":
-      return "This Career-OS account already signs in to a different account here.";
+      return "This HubRuby account already signs in to a different account here.";
     case "wrong_account":
       return "That sign-in was for a different account than the one you chose.";
     case "proof_required":
       return "Sign in to that account with Google or email first, then try again.";
     case "ticket_expired":
-      return "That choice expired. Start Career-OS sign-in again.";
+      return "That choice expired. Start HubRuby sign-in again.";
     case "not_offered":
-      return "This server doesn't offer sign-in with Career-OS.";
+      return "This server doesn't offer sign-in with HubRuby.";
     case "invalid_grant":
     case "invalid_assertion":
-      return "Career-OS didn't accept that sign-in. Try again.";
+      return "HubRuby didn't accept that sign-in. Try again.";
     default:
       return failureText(f);
   }
@@ -40,7 +40,7 @@ function careerText(e: unknown): string {
 
 function methodNames(methods: string[]): string {
   return methods
-    .map((m) => (m === "google" ? "Google" : m === "email" ? "email code" : m === "career_os" ? "Career-OS" : m))
+    .map((m) => (m === "google" ? "Google" : m === "email" ? "email code" : m === "career_os" ? "HubRuby" : m))
     .join(", ");
 }
 
@@ -52,7 +52,7 @@ export function signInWays(
 ): string {
   const ways = ["your Google account"];
   if (email !== false) ways.push("a code we email you");
-  if (career !== false) ways.push("your Career-OS account");
+  if (career !== false) ways.push("your HubRuby account");
   if (ways.length === 1) return `With your Google account. ${ending}`;
   return `With ${ways.slice(0, -1).join(", ")} or ${ways[ways.length - 1]}. ${ending}`;
 }
@@ -277,7 +277,7 @@ export function SignIn({
     return (
       <div className="ui-stack-tight sign-in">
         <p className="ui-text-2">
-          This Career-OS account is linked to more than one account here. Choose one, then sign in to it with its own method. Nothing is merged.
+          This HubRuby account is linked to more than one account here. Choose one, then sign in to it with its own method. Nothing is merged.
         </p>
         {pending.accounts.map((account) => (
           <AccountRow
@@ -305,7 +305,7 @@ export function SignIn({
         <p className="ui-text-2">
           {shown
             ? `An account here uses ${shown}. Sign in to it to use it, or create a separate account. Nothing is merged.`
-            : "An account here uses this email. Career-OS has not verified it, so it is only a hint. Sign in to that account to use it, or create a separate account. Nothing is merged."}
+            : "An account here uses this email. HubRuby has not verified it, so it is only a hint. Sign in to that account to use it, or create a separate account. Nothing is merged."}
         </p>
         <div className="ui-row-inline">
           <Button variant="primary" disabled={busy !== null} onClick={() => { setChosenId(null); setProving(true); setError(null); setStep("prove"); }}>
@@ -324,7 +324,7 @@ export function SignIn({
   if (step === "prove") {
     return (
       <div className="ui-stack-tight sign-in">
-        <p className="ui-text-2">Sign in to that account with Google or email. That proves it is yours, and then Career-OS is added to it.</p>
+        <p className="ui-text-2">Sign in to that account with Google or email. That proves it is yours, and then HubRuby is added to it.</p>
         <div className="ui-row-inline">
           <Button variant="primary" loading={busy === "browser"} disabled={busy !== null} onClick={proveWithBrowser}>
             {busy === "browser" ? "Waiting for the browser…" : browserName ? `Continue with ${browserName}` : "Continue with your browser"}
@@ -352,7 +352,7 @@ export function SignIn({
         )}
         {careerOsOffered !== false && (
           <Button loading={busy === "career"} disabled={disabled || busy !== null} onClick={withCareerOs}>
-            {busy === "career" ? "Waiting for Career-OS…" : "Continue with Career-OS"}
+            {busy === "career" ? "Waiting for HubRuby…" : "Continue with HubRuby"}
           </Button>
         )}
         {disabled && disabledHint}

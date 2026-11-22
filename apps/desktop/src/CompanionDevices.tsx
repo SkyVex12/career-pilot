@@ -39,7 +39,7 @@ export function CompanionDevices({ sessionId }: { sessionId: string | null }) {
   return <details className="ui-disclosure companion-displays" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
     <summary><Icon name="monitor" size={18} /><span>Use your phone for guidance</span><span className="ui-disclosure-meta">Desktop audio · phone display</span></summary>
     <div className="ui-disclosure-body ui-stack">
-      <p className="ui-field-hint">Open Career Pilot Mobile, sign in with this account and choose this profile. On Call, connect to the active desktop call. Keep your headphones on this computer.</p>
+      <p className="ui-field-hint">Open CoRuby Mobile, sign in with this account and choose this profile. On Call, connect to the active desktop call. Keep your headphones on this computer.</p>
       <div className="ui-row-inline">
         <Button size="sm" onClick={() => void api.showOverlay(false).catch(e => setError(String(e)))}>Hide desktop overlay</Button>
         <Button size="sm" onClick={() => void api.showOverlay(true).catch(e => setError(String(e)))}>Restore desktop overlay</Button>

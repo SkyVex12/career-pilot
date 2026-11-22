@@ -2523,7 +2523,7 @@ class SessionManager:
             async with user_tx(self.svc.pool, account.user_id) as conn:
                 return await careeros.is_linked(conn)
         except (OSError, asyncpg.PostgresError) as e:
-            log.warning("could not check the Career-OS link: %s", e)
+            log.warning("could not check the HubRuby link: %s", e)
             return False
 
     async def as_profile(self, account: Principal, profile: str) -> Principal | None:

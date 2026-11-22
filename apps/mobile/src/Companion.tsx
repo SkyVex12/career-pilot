@@ -694,7 +694,7 @@ export function Companion({
           <EmptyState
             icon="screen"
             title="Ready when your call starts"
-            description="On your computer, open Career Pilot → Call and start a session using the same account and profile. Your call will appear here automatically."
+            description="On your computer, open CoRuby → Call and start a session using the same account and profile. Your call will appear here automatically."
             action={
               <Button
                 label="Refresh calls"

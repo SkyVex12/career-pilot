@@ -82,7 +82,7 @@ def outdated(client: str, minimum: str) -> dict[str, str]:
     return {
         "code": "client_outdated",
         "message": (
-            f"Copilot {version} is older than this server supports ({minimum} or newer). "
+            f"CoRuby {version} is older than this server supports ({minimum} or newer). "
             "The app updates itself now."
         ),
         "min_version": minimum,

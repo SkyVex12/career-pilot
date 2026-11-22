@@ -66,7 +66,7 @@ class CompleteBody(BaseModel):
 
 def feature(svc: Services) -> CareerOsSignIn:
     if svc.cos_sign_in is None:
-        raise HTTPException(404, "this server has no Career-OS sign-in")
+        raise HTTPException(404, "this server has no HubRuby sign-in")
     return svc.cos_sign_in
 
 

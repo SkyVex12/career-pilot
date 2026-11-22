@@ -31,7 +31,7 @@ function client() {
 function callback(attempt: { authorizeUrl: string }, code = "one-time") {
   return `${CAREER_OS_REDIRECT}?code=${code}&state=${new URL(attempt.authorizeUrl).searchParams.get("state")}`;
 }
-test("current stage configuration offers CareerOS and does not invent email availability", async () => {
+test("current stage configuration offers HubRuby and does not invent email availability", async () => {
   const config = parseAuthConfig({
     provider: "google",
     career_os: option,

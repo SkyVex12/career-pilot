@@ -437,13 +437,13 @@ class CopilotVerifier:
         if claims.get("idp") == CAREER_OS:
             subject = str(claims.get("idp_sub") or "")
             if not subject:
-                raise AuthError("the token names no Career-OS account")
+                raise AuthError("the token names no HubRuby account")
             # An allow-list is a list of verified addresses, and a Career-OS sign-in has none.
             if self.allowed:
-                raise AuthError("Career-OS sign-in is off while this server has an allow-list")
+                raise AuthError("HubRuby sign-in is off while this server has an allow-list")
             return Principal(
                 user_id=user_id,
-                display_name=str(claims.get("name") or "Career-OS account"),
+                display_name=str(claims.get("name") or "HubRuby account"),
                 expires_at=float(claims["exp"]),
                 provider=CAREER_OS,
                 subject=subject,

@@ -40,7 +40,7 @@ const featureNames: Record<ClientFeature, string> = {
   languages: "call languages",
 };
 const olderServer =
-  "This server needs an update for this app's latest features. Update the Career Pilot server, then reconnect.";
+  "This server needs an update for this app's latest features. Update the CoRuby server, then reconnect.";
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -60,7 +60,7 @@ export function parseClientCapabilities(value: unknown): ClientCapabilityCheck {
   if (value.schema_version !== 1) {
     return Number(value.schema_version) > 1
       ? unavailable(
-          "This server uses a newer app connection format. Update the Career Pilot mobile app, then reconnect.",
+          "This server uses a newer app connection format. Update the CoRuby mobile app, then reconnect.",
           "app_update_required",
         )
       : unavailable(olderServer, "upgrade_required");
@@ -87,7 +87,7 @@ export function parseClientCapabilities(value: unknown): ClientCapabilityCheck {
   const result: ClientCapabilityCheck = {
     state: missing.length ? "upgrade_required" : "compatible",
     notice: missing.length
-      ? `Update the Career Pilot server to use ${missing.map((feature) => featureNames[feature]).join(", ")} with this app, then reconnect.`
+      ? `Update the CoRuby server to use ${missing.map((feature) => featureNames[feature]).join(", ")} with this app, then reconnect.`
       : null,
     contracts,
   };
@@ -152,7 +152,7 @@ export async function checkClientCapabilities(
       );
     if (status === 426)
       return unavailable(
-        "This server requires a newer mobile app. Update Career Pilot, then reconnect.",
+        "This server requires a newer mobile app. Update CoRuby, then reconnect.",
         "app_update_required",
       );
     if (status === 403)

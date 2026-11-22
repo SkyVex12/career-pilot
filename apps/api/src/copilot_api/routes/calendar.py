@@ -288,7 +288,7 @@ async def callback(
         raise HTTPException(failure.status, str(failure)) from failure
     return HTMLResponse(
         "<!doctype html><title>Calendar connected</title><p>Calendar connected."
-        " Return to Ruby and choose calendars for Meeting preparation.</p>",
+        " Return to CoRuby and choose calendars for Meeting preparation.</p>",
         headers={
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",

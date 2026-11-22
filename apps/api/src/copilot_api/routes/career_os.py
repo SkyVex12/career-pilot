@@ -72,7 +72,7 @@ class PulledApplication(BaseModel):
 
 def client_of(svc: Services) -> CareerOsClient:
     if svc.career_os is None:
-        raise HTTPException(503, "Career-OS is not set up on this server")
+        raise HTTPException(503, "HubRuby is not set up on this server")
     return svc.career_os
 
 
@@ -82,9 +82,9 @@ async def token_of(svc: Services, conn: Conn, uid: UUID) -> str:
         PROVIDER,
     )
     if row is None:
-        raise HTTPException(409, "Career-OS is not connected")
+        raise HTTPException(409, "HubRuby is not connected")
     if row["status"] != "active":
-        raise HTTPException(409, "Career-OS no longer accepts this link; connect again")
+        raise HTTPException(409, "HubRuby no longer accepts this link; connect again")
     sealed = await svc.crypto.decrypt(
         conn, uid, "integrations", integration_row_id(uid), bytes(row["token_enc"]),
         int(row["key_version"]),
@@ -99,7 +99,7 @@ async def remote_failed(svc: Services, user: Principal, e: CareerOsError) -> HTT
             await conn.execute(
                 "update app.integrations set status = 'revoked' where provider = $1", PROVIDER
             )
-        return HTTPException(409, "Career-OS no longer accepts this link; connect again")
+        return HTTPException(409, "HubRuby no longer accepts this link; connect again")
     if e.status in (404, 429):
         return HTTPException(e.status, e.message)
     return HTTPException(502, e.message)
@@ -180,10 +180,10 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
             "select subject from app.identities where provider = $1", CAREER_OS
         )
     if current == "active":
-        raise HTTPException(409, "Career-OS is already connected; disconnect it first")
+        raise HTTPException(409, "HubRuby is already connected; disconnect it first")
     code = body.code.strip().upper().replace(" ", "")
     try:
-        linked = await client.link(code, f"Career Pilot ({email})")
+        linked = await client.link(code, f"CoRuby ({email})")
     except CareerOsError as e:
         if e.status in (400, 401, 404, 410):
             raise HTTPException(400, "that code is not valid or has expired; make a new one") from e
@@ -197,7 +197,7 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
         # a sign-in and a link that disagree. Disconnecting removes that sign-in first.
         await client.revoke(str(linked["token"]))
         raise HTTPException(
-            409, "this account signs in with a different Career-OS account; disconnect it first"
+            409, "this account signs in with a different HubRuby account; disconnect it first"
         )
     try:
         async with svc.tx(user) as conn:
@@ -230,7 +230,7 @@ async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
         if await CareerOsSignIn.only_method(conn, svc.settings.email_sign_in):
             raise HTTPException(409, {
                 "code": "only_sign_in_method",
-                "message": "Career-OS is the only way you sign in to this account. Add another "
+                "message": "HubRuby is the only way you sign in to this account. Add another "
                            "sign-in first (Settings, Account), then disconnect.",
             })  # fmt: skip
         exists = await conn.fetchval("select 1 from app.integrations where provider = $1", PROVIDER)
@@ -246,11 +246,11 @@ async def disconnect(svc: SvcDep, user: AccountDep) -> Response:
         try:
             await client_of(svc).revoke(token)
         except CareerOsError as e:
-            raise HTTPException(502, f"could not revoke the link on Career-OS: {e.message}") from e
+            raise HTTPException(502, f"could not revoke the link on HubRuby: {e.message}") from e
     async with svc.tx(user) as conn:
         await conn.execute("delete from app.integrations where provider = $1", PROVIDER)
         await CareerOsSignIn.forget(conn, uid)
-    log.info("career-os: user %s disconnected; its Career-OS sign-in went with the link", uid)
+    log.info("career-os: user %s disconnected; its HubRuby sign-in went with the link", uid)
     return Response(status_code=204)
 
 
@@ -423,7 +423,7 @@ def _check_id(cos_id: str) -> None:
     import re
 
     if not re.fullmatch(COS_ID, cos_id):
-        raise HTTPException(422, "not a Career-OS application id")
+        raise HTTPException(422, "not a HubRuby application id")
 
 
 @router.post("/career-os/applications/{cos_id}/pull")
@@ -442,7 +442,7 @@ async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
         try:
             app = PulledApplication.model_validate(detail.get("application") or {})
         except ValidationError as e:
-            raise CareerOsError(502, "Career-OS sent an application this app cannot store") from e
+            raise CareerOsError(502, "HubRuby sent an application this app cannot store") from e
         version = (
             detail.get("resume_version") if isinstance(detail.get("resume_version"), dict) else None
         )
@@ -455,7 +455,7 @@ async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
     except CareerOsError as e:
         raise await remote_failed(svc, account, e) from e
     if app.id != cos_id:
-        raise HTTPException(502, "Career-OS sent another application than the one asked for")
+        raise HTTPException(502, "HubRuby sent another application than the one asked for")
     homes = await Homes.load(svc, account)
     user = await homes.make(obj(detail.get("user")))
     uid = user.user_id
@@ -489,7 +489,7 @@ async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
         if version is not None:
             extract = await _pull_resume(
                 svc, conn, uid, app_id, "tailored", f"resume_version:{version.get('id')}",
-                _label("Career-OS resume", version.get("created_at")),
+                _label("HubRuby resume", version.get("created_at")),
                 str(version.get("text") or ""), file,
             )  # fmt: skip
         elif base is not None and str(base.get("text") or "").strip():
@@ -504,7 +504,7 @@ async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
             kind = "base" if mine is None or mine["career_os_ref"] == ref else "tailored"
             extract = await _pull_resume(
                 svc, conn, uid, app_id, kind, ref,
-                _label("Career-OS base resume", base.get("updated_at")),
+                _label("HubRuby base resume", base.get("updated_at")),
                 str(base["text"]), None,
             )  # fmt: skip
         await enqueue_packs(svc, conn, uid, app_id)

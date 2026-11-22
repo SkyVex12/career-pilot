@@ -264,10 +264,10 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
         <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => {
           if (running) { changeOpen(false, true); setQuitting(true); }
           else void run("quit", () => api.quitApp());
-        }}>Quit Career Pilot</Button>
+        }}>Quit CoRuby</Button>
       </div>
     </div>, document.body)}
-    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit Career Pilot" onConfirm={() => api.quitApp()}>
+    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit CoRuby" onConfirm={() => api.quitApp()}>
       The call stops here. It can be opened again from History while it is still running.
     </ConfirmDialog>
   </>;

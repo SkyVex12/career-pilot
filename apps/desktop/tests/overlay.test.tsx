@@ -274,9 +274,9 @@ describe("the overlay's frame", () => {
     expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
     expect(gear).toHaveFocus();
     await userEvent.click(gear);
-    await userEvent.click(screen.getByRole("button", { name: "Quit Ruby" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quit CoRuby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(false);
-    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit Ruby" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit CoRuby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(true);
   });
 
@@ -284,7 +284,7 @@ describe("the overlay's frame", () => {
     n = 0;
     start([], false);
     await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "Quit Ruby" }));
+    await userEvent.click(screen.getByRole("button", { name: "Quit CoRuby" }));
     expect(ipc.calls.some((c) => c.cmd === "quit_app")).toBe(true);
     expect(screen.getByText("No call running. Start one in the main window.")).toBeInTheDocument();
   });

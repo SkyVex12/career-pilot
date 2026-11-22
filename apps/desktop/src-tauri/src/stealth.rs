@@ -171,7 +171,7 @@ const WDA_NONE: u32 = 0x0000_0000;
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
 
 /// Shown in Task Manager for this app. Neutral, and the app's own name.
-pub const DEFAULT_DISPLAY_NAME: &str = "Copilot";
+pub const DEFAULT_DISPLAY_NAME: &str = "CoRuby";
 const MAX_DISPLAY_NAME: usize = 64;
 
 /// Windows' own process and Task Manager names. A display name must not use one of these.
@@ -212,7 +212,7 @@ const RESERVED: &[&str] = &[
 pub fn normalize_display_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
     if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME {
-        return Err("Enter a short name for this app, such as Copilot.".into());
+        return Err("Enter a short name for this app, such as CoRuby.".into());
     }
     if name
         .chars()
@@ -223,7 +223,7 @@ pub fn normalize_display_name(raw: &str) -> Result<String, String> {
     let key = name.to_ascii_lowercase();
     let key = key.strip_suffix(".exe").unwrap_or(&key).trim().trim_end_matches('.');
     if RESERVED.contains(&key) {
-        return Err("That name belongs to Windows. Use a plain name for this app, such as Copilot.".into());
+        return Err("That name belongs to Windows. Use a plain name for this app, such as CoRuby.".into());
     }
     Ok(name.to_string())
 }
@@ -667,14 +667,14 @@ mod tests {
     #[test]
     fn focus_and_capture_rechecks_do_not_rewrite_window_presentation() {
         let mut presentation = super::PresentationCache::default();
-        assert!(presentation.changed("main", false, "Ruby"));
-        assert!(!presentation.changed("main", false, "Ruby"));
-        assert!(presentation.changed("overlay", false, "Ruby"));
-        assert!(!presentation.changed("main", false, "Ruby"));
-        assert!(presentation.changed("main", true, "Ruby"));
-        assert!(!presentation.changed("main", true, "Ruby"));
-        assert!(presentation.changed("main", false, "Ruby"));
-        assert!(presentation.changed("main", false, "Ruby Preview"));
+        assert!(presentation.changed("main", false, "CoRuby"));
+        assert!(!presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("overlay", false, "CoRuby"));
+        assert!(!presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("main", true, "CoRuby"));
+        assert!(!presentation.changed("main", true, "CoRuby"));
+        assert!(presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("main", false, "CoRuby Preview"));
     }
 
     #[test]
@@ -820,7 +820,7 @@ mod tests {
 
     #[test]
     fn the_display_name_is_this_app_and_not_a_windows_component() {
-        assert_eq!(super::normalize_display_name("  Copilot  ").unwrap(), "Copilot");
+        assert_eq!(super::normalize_display_name("  CoRuby  ").unwrap(), "CoRuby");
         assert_eq!(super::normalize_display_name("Copilot Desktop").unwrap(), "Copilot Desktop");
         assert!(super::normalize_display_name("  ").is_err());
         assert!(super::normalize_display_name("svchost.exe").is_err());

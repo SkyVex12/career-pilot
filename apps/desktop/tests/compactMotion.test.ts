@@ -27,7 +27,7 @@ afterEach(() => {
 
 function surface() {
   const host = document.createElement("header");
-  host.innerHTML = '<span class="session-compact-outline"></span><button class="session-compact-ruby">Ruby</button><button>Start call</button>';
+  host.innerHTML = '<span class="session-compact-outline"></span><button class="session-compact-ruby">CoRuby</button><button>Start call</button>';
   document.body.append(host);
   const outline = host.children[0] as HTMLElement;
   const ruby = host.children[1] as HTMLElement;

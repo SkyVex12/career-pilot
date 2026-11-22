@@ -915,7 +915,7 @@ async fn career_os_sign_in(
     };
     state.keep_auth_config(&cfg);
     let Some(option) = cfg.career_os else {
-        return Err(CareerOsFailure::new("not_offered", "This server does not offer Career-OS sign-in."));
+        return Err(CareerOsFailure::new("not_offered", "This server does not offer HubRuby sign-in."));
     };
     let opener = app.clone();
     let pending = copilot_client::careerossignin::browser_code(&option, move |url| {
@@ -1046,7 +1046,7 @@ fn emit(app: &AppHandle, history: &Mutex<History>, event: &UiEvent) {
 }
 
 /// The server's message when the stage requires a Career-OS link (copilot_core.careeros).
-const CAREER_OS_REQUIRED: &str = "Please link your Career-OS account to use this app (Settings → Career-OS).";
+const CAREER_OS_REQUIRED: &str = "Please link your HubRuby account to use this app (Settings → HubRuby).";
 
 #[tauri::command]
 async fn start_session(app: AppHandle, state: State<'_, AppState>, request: StartRequest) -> Res<()> {
@@ -2226,7 +2226,7 @@ pub fn run() {
             // underneath (the panel paints its own translucent background in styles.css).
             let overlay =
                 WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html#overlay".into()))
-                    .title("Copilot overlay")
+                    .title("CoRuby overlay")
                     .inner_size(layout::DEFAULT_W as f64, layout::DEFAULT_H as f64)
                     .min_inner_size(320.0, 240.0)
                     .always_on_top(overlay_on_top)

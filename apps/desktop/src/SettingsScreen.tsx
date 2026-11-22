@@ -236,7 +236,7 @@ function Account({ view, onSaved, profileScope }: { view: SettingsView; onSaved:
                   {view.signed_in_with === "email"
                     ? ", with an emailed code"
                     : view.signed_in_with === "career_os"
-                      ? ", with Career-OS"
+                      ? ", with HubRuby"
                       : view.signed_in_with === "browser" && settings.oauth?.provider !== "cognito"
                         ? ", with Google"
                         : ""}
@@ -273,7 +273,7 @@ function Account({ view, onSaved, profileScope }: { view: SettingsView; onSaved:
           </p>
         )}
       </Card>
-      <Card title="Career-OS">
+      <Card title="HubRuby">
         <CareerOsSettings key={accountOf(view)} ready={view.ready} />
       </Card>
       {view.ready && <MeetingPreparation key={profileScope ?? `${accountOf(view)}/${view.settings.profile ?? "me"}`} />}
@@ -416,7 +416,7 @@ function Advanced({ view, save, onSaved }: { view: SettingsView; save: Save; onS
   );
 }
 
-const METHOD_NAME: Record<string, string> = { google: "Google", email: "Email code", career_os: "Career-OS" };
+const METHOD_NAME: Record<string, string> = { google: "Google", email: "Email code", career_os: "HubRuby" };
 
 /** The account's sign-in methods, and adding Career-OS while signed in another way. */
 function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChanged: () => void }) {
@@ -449,20 +449,20 @@ function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChan
             try {
               const out = await api.careerOsSignIn();
               if (out.status === "added" || out.status === "signed_in") {
-                toast({ tone: "success", text: "Career-OS sign-in added." });
+                toast({ tone: "success", text: "HubRuby sign-in added." });
                 reload();
                 onChanged();
               } else {
-                toast({ tone: "error", text: "Sign out and use Continue with Career-OS to choose an account." });
+                toast({ tone: "error", text: "Sign out and use Continue with HubRuby to choose an account." });
               }
             } catch (e) {
               const code = e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
               toast({
                 tone: "error",
                 text: code === "career_os_unavailable"
-                  ? "Career-OS isn't answering. Your current sign-in still works."
+                  ? "HubRuby isn't answering. Your current sign-in still works."
                   : code === "only_sign_in_method" || String(e).includes("only_sign_in_method")
-                    ? "Career-OS is the only way you sign in. Add another sign-in first."
+                    ? "HubRuby is the only way you sign in. Add another sign-in first."
                     : String(e),
               });
             } finally {
@@ -470,7 +470,7 @@ function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChan
             }
           }}
         >
-          Add Career-OS sign-in
+          Add HubRuby sign-in
         </Button>
       )}
     </div>

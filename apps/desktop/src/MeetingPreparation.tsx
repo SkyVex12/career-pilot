@@ -84,7 +84,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
             const removed = new Set(current.connections.filter(c => c.provider === provider).map(c => c.connection_id));
             return { ...current, connections: current.connections.filter(c => c.provider !== provider), items: current.items.filter(item => !removed.has(item.meeting.account_id)) };
           });
-          if (result.provider_consent_removal_required) setNotice("Calendar disconnected. To remove its authorization too, remove Career Pilot in your calendar account’s connected apps.");
+          if (result.provider_consent_removal_required) setNotice("Calendar disconnected. To remove its authorization too, remove CoRuby in your calendar account’s connected apps.");
           await reload();
         }
       }}>Cached calendar events will be removed. Your saved calls and notes will stay.</ConfirmDialog>

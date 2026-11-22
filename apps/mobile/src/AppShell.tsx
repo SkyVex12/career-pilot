@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Polygon } from "react-native-svg";
 import {
   Badge,
   Button,
@@ -56,30 +57,17 @@ function Brand({ compact = false }: { compact?: boolean }) {
   const c = useContext(Theme);
   return (
     <Row style={{ gap: 10 }}>
-      <View
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: 8,
-          backgroundColor: c.brand,
-          transform: [{ rotate: "-12deg" }],
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 10,
-            height: 10,
-            borderWidth: 1.5,
-            borderColor: "#ffffff",
-            transform: [{ rotate: "57deg" }],
-          }}
-        />
-      </View>
+      <Svg width={30} height={30} viewBox="0 0 32 32" fill="none" accessible={false}>
+        <Polygon fill="#f05a3c" points="9,3 23,3 15,11 1,11" />
+        <Polygon fill="#ff7a5c" points="9,3 15,11 1,11" />
+        <Polygon fill="#e44832" points="1,12.2 15,12.2 15,28.2" />
+        <Polygon fill="#cf3b2e" points="9,12.2 15,12.2 15,28.2" />
+        <Polygon fill="#bd352b" points="23.8485,3.8485 31,12 16.2,29.5 16.2,11.4971" />
+        <Polygon fill="#d84b35" points="23.8485,3.8485 31,12 16.2,11.4971" />
+      </Svg>
       {!compact ? (
         <Txt style={{ fontWeight: "700", fontSize: 17, letterSpacing: -0.3 }}>
-          Career Pilot
+          Co<Txt style={{ color: c.ruby, fontWeight: "700", fontSize: 17, letterSpacing: -0.3 }}>Ruby</Txt>
         </Txt>
       ) : null}
     </Row>
@@ -479,7 +467,7 @@ export function AppShell({
                 </>
               ) : (
                 <>
-                  <Txt>{email || "Signed in with Career-OS"}</Txt>
+                  <Txt>{email || "Signed in with HubRuby"}</Txt>
                   <Txt muted selectable style={{ fontSize: 13 }}>
                     {server}
                   </Txt>

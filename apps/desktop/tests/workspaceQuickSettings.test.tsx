@@ -101,14 +101,14 @@ it("confirms quit while a call runs, without quitting on Cancel", async () => {
   routes();
   render(<WorkspaceQuickSettings running />);
   await open();
-  await userEvent.click(screen.getByRole("button", { name: "Quit Career Pilot" }));
+  await userEvent.click(screen.getByRole("button", { name: "Quit CoRuby" }));
   const confirmation = screen.getByRole("alertdialog", { name: "Quit during a call?" });
   expect(ipc.calls.some(call => call.cmd === "quit_app")).toBe(false);
   await userEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
   expect(ipc.calls.some(call => call.cmd === "quit_app")).toBe(false);
   await open();
-  await userEvent.click(screen.getByRole("button", { name: "Quit Career Pilot" }));
-  await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit Career Pilot" }));
+  await userEvent.click(screen.getByRole("button", { name: "Quit CoRuby" }));
+  await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quit CoRuby" }));
   await waitFor(() => expect(ipc.calls.some(call => call.cmd === "quit_app")).toBe(true));
 });
 

@@ -1,4 +1,4 @@
-/* Brand palette from xruby.tech, with accessible text variants and a derived dark theme.
+/* CoRuby coral palette, with accessible text variants and a derived dark theme.
    See docs/design/2026-11-desktop-redesign.md. */
 
 :root,
@@ -16,6 +16,7 @@
   --text-2: #4b4c55;
   --text-3: #666771;
   --brand: #f05a3c;
+  --wordmark: var(--accent);
   --action: #be503a;
   --action-hover: #a74431;
   --on-action: #fafafa;
@@ -51,6 +52,7 @@
   --text-2: #d4d5d6;
   --text-3: #adafb1;
   --brand: #f05a3c;
+  --wordmark: #ff9b82;
   --action: #e9826c;
   --action-hover: #f19480;
   --on-action: #191a1b;

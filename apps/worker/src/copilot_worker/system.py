@@ -88,7 +88,7 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
         objects, valkey_keys = await _delete_data(ctx, who)
         removed, vk = removed + objects, vk + valkey_keys
     log.info(
-        "user %s deleted: sign-in %s, %d profiles, %d objects, %d Valkey keys, Career-OS link %s",
+        "user %s deleted: sign-in %s, %d profiles, %d objects, %d Valkey keys, HubRuby link %s",
         uid, signin, len(owned), removed, vk, career_os,
     )  # fmt: skip
 
@@ -137,7 +137,7 @@ async def revoke_career_os(ctx: Ctx, uid: UUID) -> str:
         if row is None:
             return "none"
         if ctx.career_os is None:
-            return "kept (Career-OS not configured)"
+            return "kept (HubRuby not configured)"
         secret = await ctx.crypto.decrypt(
             conn, uid, "integrations", f"{uid}:career_os", bytes(row["token_enc"]),
             int(row["key_version"]),
@@ -145,7 +145,7 @@ async def revoke_career_os(ctx: Ctx, uid: UUID) -> str:
     try:
         await ctx.career_os.revoke(str(json.loads(secret)["token"]))
     except CareerOsError as e:
-        log.warning("could not revoke the Career-OS link of %s: %s", uid, e.message)
+        log.warning("could not revoke the HubRuby link of %s: %s", uid, e.message)
         return "not revoked"
     return "revoked"
 

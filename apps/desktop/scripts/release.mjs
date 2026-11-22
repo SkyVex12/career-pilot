@@ -127,7 +127,7 @@ function writeManifest(a) {
   const manifest = {
     version: v,
     // --notes, or COPILOT_RELEASE_NOTES (release-desktop.yml: the merged pull requests' titles).
-    notes: typeof a.notes === "string" ? a.notes : process.env.COPILOT_RELEASE_NOTES?.trim() || `Copilot ${v}`,
+    notes: typeof a.notes === "string" ? a.notes : process.env.COPILOT_RELEASE_NOTES?.trim() || `CoRuby ${v}`,
     pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     platforms: Object.fromEntries(targets.map(key => [key, entry])),
   };

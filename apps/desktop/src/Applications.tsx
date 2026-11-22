@@ -1,7 +1,7 @@
 import { Practice, openPractice, type PracticeEntry } from "./Practice";
 import { openAsk } from "./Ask";
 // Applications: what the user applied to (company, role, stage, JD), each paired with a resume
-// version (ARCHITECTURE.md, "Resume versions"); added by hand or pulled from Career-OS. The
+// version (ARCHITECTURE.md, "Resume versions"); added by hand or pulled from HubRuby. The
 // application workspace keeps each role, resume and interview context together.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, rest, type ApplicationDetail, type ApplicationFields, type ApplicationItem, type InterviewItem, type Round, type Stage } from "./api";
@@ -136,7 +136,7 @@ export function Applications({
     <div className={`apps prep-workspace${practicing ? " is-practicing" : ""}`}>
       <PageHeader title="Interview prep" actions={<>
         <Button variant={practicing ? "ghost" : "secondary"} onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
-        {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
+        {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from HubRuby…</Button>}
         {!practicing && <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>}
       </>} />
       {!practicing && error && !!applications?.length && <Banner tone="danger" title="Could not refresh applications" action={<Button size="sm" onClick={reload}>Retry</Button>}>{error}</Banner>}

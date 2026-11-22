@@ -18,7 +18,7 @@ function detectionMessage(value: DetectionStatus): string {
     paused: "Call suggestions are paused. Resume them above to receive prompts.",
     checking: "Waiting for the next detection check...",
     error: `Detection could not complete: ${value.error || "native check failed"}. Check again to retry.`,
-    active_session: "Copilot is already running a session. A new-call prompt is suppressed.",
+    active_session: "CoRuby is already running a session. A new-call prompt is suppressed.",
     notifications_suppressed: "System notification settings or Focus are suppressing call prompts. Allow notifications, then check again.",
     suggestion_pending: `${value.pending?.platform || "A call"} detected. A suggestion is waiting for your response.`,
     app_disabled: "This application's call suggestions are disabled. Enable it under Applications.",

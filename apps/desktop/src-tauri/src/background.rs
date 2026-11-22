@@ -118,7 +118,7 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
         BackgroundPreferences::default()
     });
     let open_item =
-        MenuItem::with_id(app, OPEN, "Open Copilot", true, None::<&str>).map_err(|e| e.to_string())?;
+        MenuItem::with_id(app, OPEN, "Open CoRuby", true, None::<&str>).map_err(|e| e.to_string())?;
     let pause_item = CheckMenuItem::with_id(
         app,
         PAUSE,
@@ -131,7 +131,7 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
     let exit_item =
         MenuItem::with_id(app, EXIT, "Exit completely", true, None::<&str>).map_err(|e| e.to_string())?;
     let menu = Menu::with_items(app, &[&open_item, &pause_item, &exit_item]).map_err(|e| e.to_string())?;
-    let icon = app.default_window_icon().cloned().ok_or("Ruby app icon is unavailable")?;
+    let icon = app.default_window_icon().cloned().ok_or("CoRuby app icon is unavailable")?;
     // Register state only after native menu construction succeeds.
     app.manage(BackgroundState {
         preferences: Mutex::new(preferences),
@@ -145,7 +145,7 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
     });
     TrayIconBuilder::with_id("ruby-background")
         .icon(icon)
-        .tooltip("Ruby — Copilot")
+        .tooltip("CoRuby")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             OPEN => {

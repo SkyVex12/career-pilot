@@ -274,7 +274,7 @@ pub fn grab(own_pid: u32, _keep_out: &dyn Fn(bool)) -> Result<Shot, String> {
     }
     // SAFETY: these system functions take no pointers and query/request TCC permission.
     if !unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() } {
-        return Err("Allow Copilot Desktop in System Settings > Privacy & Security > Screen Recording, then reopen the app and try again.".into());
+        return Err("Allow CoRuby in System Settings > Privacy & Security > Screen Recording, then reopen the app and try again.".into());
     }
     let started = Instant::now();
     let windows = xcap::Window::all().map_err(|e| format!("could not list the windows: {e}"))?;

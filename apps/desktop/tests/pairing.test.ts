@@ -28,7 +28,7 @@ describe("resume pairing", () => {
   });
 });
 
-describe("Career-OS pull", () => {
+describe("HubRuby pull", () => {
   it("offers a pull, a pull again after a change, or nothing", () => {
     expect(pullState({ pulled: null })).toEqual({ label: "", action: "Pull" });
     const pulled = { application_id: "a", pulled_at: "2026-10-22T10:00:00Z", changed: false };
