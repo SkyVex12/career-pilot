@@ -1,0 +1,146 @@
+[
+  {
+    "id": "en",
+    "name": "English",
+    "native_name": "English",
+    "direction": "ltr"
+  },
+  {
+    "id": "es",
+    "name": "Spanish",
+    "native_name": "Español",
+    "direction": "ltr"
+  },
+  {
+    "id": "vi",
+    "name": "Vietnamese",
+    "native_name": "Tiếng Việt",
+    "direction": "ltr"
+  },
+  {
+    "id": "zh",
+    "name": "Chinese (Mandarin)",
+    "native_name": "中文（普通话）",
+    "direction": "ltr"
+  },
+  {
+    "id": "hi",
+    "name": "Hindi",
+    "native_name": "हिन्दी",
+    "direction": "ltr"
+  },
+  {
+    "id": "ar",
+    "name": "Arabic",
+    "native_name": "العربية",
+    "direction": "rtl"
+  },
+  {
+    "id": "fr",
+    "name": "French",
+    "native_name": "Français",
+    "direction": "ltr"
+  },
+  {
+    "id": "bn",
+    "name": "Bengali",
+    "native_name": "বাংলা",
+    "direction": "ltr"
+  },
+  {
+    "id": "pt",
+    "name": "Portuguese",
+    "native_name": "Português",
+    "direction": "ltr"
+  },
+  {
+    "id": "ru",
+    "name": "Russian",
+    "native_name": "Русский",
+    "direction": "ltr"
+  },
+  {
+    "id": "ur",
+    "name": "Urdu",
+    "native_name": "اردو",
+    "direction": "rtl"
+  },
+  {
+    "id": "id",
+    "name": "Indonesian",
+    "native_name": "Bahasa Indonesia",
+    "direction": "ltr"
+  },
+  {
+    "id": "de",
+    "name": "German",
+    "native_name": "Deutsch",
+    "direction": "ltr"
+  },
+  {
+    "id": "ja",
+    "name": "Japanese",
+    "native_name": "日本語",
+    "direction": "ltr"
+  },
+  {
+    "id": "tr",
+    "name": "Turkish",
+    "native_name": "Türkçe",
+    "direction": "ltr"
+  },
+  {
+    "id": "ta",
+    "name": "Tamil",
+    "native_name": "தமிழ்",
+    "direction": "ltr"
+  },
+  {
+    "id": "te",
+    "name": "Telugu",
+    "native_name": "తెలుగు",
+    "direction": "ltr"
+  },
+  {
+    "id": "mr",
+    "name": "Marathi",
+    "native_name": "मराठी",
+    "direction": "ltr"
+  },
+  {
+    "id": "ko",
+    "name": "Korean",
+    "native_name": "한국어",
+    "direction": "ltr"
+  },
+  {
+    "id": "it",
+    "name": "Italian",
+    "native_name": "Italiano",
+    "direction": "ltr"
+  },
+  {
+    "id": "fa",
+    "name": "Persian",
+    "native_name": "فارسی",
+    "direction": "rtl"
+  },
+  {
+    "id": "th",
+    "name": "Thai",
+    "native_name": "ไทย",
+    "direction": "ltr"
+  },
+  {
+    "id": "sw",
+    "name": "Swahili",
+    "native_name": "Kiswahili",
+    "direction": "ltr"
+  },
+  {
+    "id": "pa",
+    "name": "Punjabi",
+    "native_name": "ਪੰਜਾਬੀ",
+    "direction": "ltr"
+  }
+]

@@ -19,7 +19,7 @@ export default {
   root: here,
   plugins: [react()],
   resolve: {
-    alias: ["@tauri-apps/api", "react-dom", "react"].map((pkg) => ({
+    alias: ["@tauri-apps/api", "react-dom", "react", "livekit-client"].map((pkg) => ({
       find: new RegExp(`^${pkg}(?=/|$)`),
       replacement: `${desktop}node_modules/${pkg}`,
     })),

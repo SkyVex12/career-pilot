@@ -1,4 +1,5 @@
 import { featureRest } from "./features";
+import { productionCommand } from "./production";
 // The Rust core's commands and events, faked for the design harness (README.md). The URL picks
 // the state, for example /?data=empty, /?call=midcall&compact=1#overlay:
 //
@@ -12,7 +13,7 @@ import { featureRest } from "./features";
 // window.__harness.play() streams a new question's answers into a running call (call=stream).
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Numbered, SettingsView, UiEvent } from "../../../apps/desktop/src/api";
+import type { Numbered, ServerState, SettingsView, UiEvent, UpdateState } from "../../../apps/desktop/src/api";
 import type { ServerMessage } from "../../../packages/protocol/src/generated";
 import * as fx from "./fixtures";
 
@@ -119,7 +120,12 @@ async function play(wordMs = 45): Promise<void> {
   }
   await send(done("q4", "deep", []));
 }
-(window as unknown as { __harness: unknown }).__harness = { play, end: () => emit("copilot://event", ev({ kind: "stopped", reason: "ended" })) };
+(window as unknown as { __harness: unknown }).__harness = {
+  play,
+  end: () => emit("copilot://event", ev({ kind: "stopped", reason: "ended" })),
+  server: (state: ServerState) => emit("copilot://server", state),
+  update: (state: UpdateState) => emit("copilot://update", state),
+};
 
 // --- Settings and the REST API -----------------------------------------------------------------
 
@@ -229,6 +235,8 @@ const update = q.get("update");
 mockIPC(
   (cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
+    const production = productionCommand(cmd, a);
+    if (production !== undefined) return production;
     switch (cmd) {
       case "plugin:window|inner_size": return { width: 1080, height: 780 };
       case "plugin:window|is_decorated": return true;
