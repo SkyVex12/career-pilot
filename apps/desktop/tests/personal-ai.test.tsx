@@ -108,3 +108,12 @@ it("closing a brief invalidates an in-flight detail refresh", async () => {
   await waitFor(() => expect(screen.getByRole("button", {name:"View"})).not.toBeDisabled());
   expect(screen.queryByRole("button", {name:"Close brief"})).not.toBeInTheDocument();
 });
+
+it("does not report an unavailable connection service as an empty connection list", async () => {
+  ipc.api("GET", /^\/personal-ai\/requests$/, () => ({ requests: [] }));
+  ipc.api("GET", /^\/personal-ai\/oauth\/connections$/, () => { throw new Error("Service unavailable"); });
+  render(<PersonalAI />);
+  fireEvent.click(screen.getByText("Connected AI clients"));
+  expect(await screen.findByText("Connection status is unavailable. Try refreshing.")).toBeVisible();
+  expect(screen.queryByText("No active OAuth connections.")).not.toBeInTheDocument();
+});

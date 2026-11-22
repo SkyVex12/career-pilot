@@ -7,8 +7,9 @@ import { rest, type LiveSession, type SessionItem, type Usage } from "./api";
 import { useOnShow, when } from "./shared";
 import { SessionDetail } from "./SessionDetail";
 import { LiveNow, minutes, sessionTitle, statusBadge } from "./calls";
-import { Badge, Button, EmptyState, List, ListRow, ListState, PageHeader, SegmentedControl } from "./ui";
+import { Badge, Button, EmptyState, List, ListRow, ListState, PageHeader, SegmentedControl, Input } from "./ui";
 import { Icon } from "./ui/Icon";
+import "./feature-pages.css";
 
 export { MODE_LABEL, minutes, sessionTitle, statusBadge } from "./calls";
 
@@ -47,6 +48,7 @@ export function History({
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [loadingMore, setLoadingMore] = useState(false);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     if (!ready) return;
@@ -80,7 +82,10 @@ export function History({
     }
   };
 
-  const shown = useMemo(() => (sessions === null ? null : sessions.filter((s) => filter === "all" || s.mode === filter)), [sessions, filter]);
+  const shown = useMemo(() => {
+    const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    return sessions === null ? null : sessions.filter(s => (filter === "all" || s.mode === filter) && words.every(word => `${sessionTitle(s, companies)} ${s.platform} ${s.started_at ? when(s.started_at) : ""}`.toLocaleLowerCase().includes(word)));
+  }, [sessions, filter, query, companies]);
 
   if (!ready) {
     return (
@@ -108,7 +113,7 @@ export function History({
   }
 
   return (
-    <>
+    <div className="history-workspace feature-page">
       <PageHeader
         title="Past calls"
         meta={
@@ -124,15 +129,17 @@ export function History({
       {active && <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />}
       <div className="history-filters">
         <SegmentedControl label="Show" size="sm" value={filter} options={FILTERS} onChange={setFilter} />
+        <Input type="search" aria-label="Search past calls" placeholder="Search calls" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
+      {shown && sessions && sessions.length > 0 && <div className="history-list-meta"><span>{shown.length} {shown.length === 1 ? "call" : "calls"}{query.trim() ? " found" : " shown"}</span>{next && <span>Search covers loaded calls</span>}</div>}
       <ListState
         items={shown}
         error={error}
         onRetry={load}
         loadingLabel="calls"
         empty={
-          <EmptyState icon={<Icon name="history" size={28} />} title={filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`}>
-            {filter === "all" ? "Saved calls and their available summaries, transcripts and replays appear here." : "Calls of other kinds are under All."}
+          <EmptyState icon={<Icon name="history" size={28} />} title={query.trim() ? "No matching calls" : filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`} action={query.trim() ? <Button size="sm" onClick={() => setQuery("")}>Clear search</Button> : filter !== "all" ? <Button size="sm" onClick={() => setFilter("all")}>Show all calls</Button> : undefined}>
+            {query.trim() ? "Try a call title, company, or platform." : filter === "all" ? "Saved calls and their available summaries, transcripts and replays appear here." : "Calls of other kinds are under All."}
           </EmptyState>
         }
       >
@@ -166,13 +173,13 @@ export function History({
           {error}
         </p>
       )}
-      {next && filter === "all" && (
+      {next && (
         <div className="history-more">
           <Button onClick={more} loading={loadingMore}>
             Load older calls
           </Button>
         </div>
       )}
-    </>
+    </div>
   );
 }

@@ -1,0 +1,9 @@
+CallsManager:
+  mCalls:
+    [Call id=TC@1, state=ACTIVE, tpac=ComponentInfo{app.careerpilot.telecomfixture/app.careerpilot.telecomfixture.FixtureConnectionService}, ***SYNTHETIC***, UserHandle{0}, cmgr=null, handle=***SYNTHETIC***, vidst=A, childs(0), has_parent(false), cap=[], prop=[self_mng]], voip=true
+  mCallAudioManager:
+PhoneAccountRegistrar:
+  phoneAccounts:
+    [[X] PhoneAccount: ComponentInfo{app.careerpilot.telecomfixture/app.careerpilot.telecomfixture.FixtureConnectionService}, ***SYNTHETIC***, UserHandle{0} Capabilities: SelfManaged  Audio Routes: BESW Schemes: tel  Extras: null GroupId: ***SYNTHETIC***]
+    test emergency PhoneAccount filter: null
+Analytics:

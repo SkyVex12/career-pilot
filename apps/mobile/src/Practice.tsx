@@ -843,11 +843,11 @@ export function Practice({
       >
         <ScreenTitle
           eyebrow="Interview prep"
-          title={session ? "Your practice" : "Practice with purpose"}
+          title={session ? "Your practice" : "Interview practice"}
           subtitle={
             session
               ? session.setup.topic
-              : "Build confidence, one answer at a time."
+              : "Practice a focused interview and get feedback on your answers."
           }
           action={
             session ? (

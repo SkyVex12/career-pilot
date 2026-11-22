@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Banner, Button, Card, Checkbox, Field, Select, Textarea } from "./ui";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea } from "./ui";
+import { Icon } from "./ui/Icon";
 
 type Connection = { provider: "google" | "outlook"; available: boolean; connected: boolean; status: string; calendars: { id: string; name: string }[]; selected_calendars: string[]; last_sync_at?: string; last_error?: string };
 type Application = { application_id: string; company: string; job_title: string };
@@ -18,55 +19,81 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
   const [open, setOpen] = useState(false), [connections, setConnections] = useState<Connection[]>([]);
   const [preparation, setPreparation] = useState<PreparationResponse>({ items: [], connections: [] });
   const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false), [loaded, setLoaded] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [disconnect, setDisconnect] = useState<Connection | null>(null);
   const revision = useRef(0), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; revision.current++; }; }, []);
   const reload = async () => {
     const ticket = ++revision.current;
-    const [calendars, meetings] = await Promise.all([api<{ items: Connection[] }>("GET", "/calendars"), api<PreparationResponse>("GET", "/meeting-preparation")]);
-    if (!alive.current || ticket !== revision.current) return;
-    setConnections(calendars.items); setPreparation(meetings);
+    setLoading(true); setError(null);
+    try {
+      const [calendars, meetings] = await Promise.all([api<{ items: Connection[] }>("GET", "/calendars"), api<PreparationResponse>("GET", "/meeting-preparation")]);
+      if (!alive.current || ticket !== revision.current) return false;
+      setConnections(calendars.items); setPreparation(meetings); setLoaded(true);
+      return true;
+    } catch (e) { if (alive.current && ticket === revision.current) setError(String(e)); return false; }
+    finally { if (alive.current && ticket === revision.current) setLoading(false); }
   };
-  useEffect(() => { if (open) void reload().catch(e => { if (alive.current) setError(String(e)); }); }, [open]);
+  useEffect(() => { if (open) void reload(); }, [open]);
   const run = async (operation: () => Promise<void>) => {
-    setBusy(true); setError(null);
-    try { await operation(); await reload(); }
+    setBusy(true); setError(null); setNotice(null);
+    try { await operation(); if (alive.current) await reload(); }
     catch (e) { if (alive.current) setError(String(e)); }
     finally { if (alive.current) setBusy(false); }
   };
   const providers = Object.fromEntries(preparation.connections.map(c => [c.connection_id, c.provider]));
-  return <details open={open} onToggle={e => setOpen(e.currentTarget.open)}>
-    <summary>Meeting preparation</summary><div className="ui-stack">
-      {error && <Banner tone="danger">{error}</Banner>}
-      {connections.map(c => <Card key={c.provider} title={c.provider === "google" ? "Google Calendar" : "Outlook Calendar"}>
-        {!c.available ? <p className="ui-field-hint">Calendar connection is not configured on this deployment.</p> : !c.connected ?
-          <Button disabled={busy} onClick={() => void run(async () => {
+  const connected = connections.filter(c => c.connected && !["reauth_required", "error"].includes(c.status)).length;
+  return <details className="ui-disclosure meeting-preparation" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
+    <summary><Icon name="calendar" size={18} /><span>Meeting preparation</span><span className="ui-disclosure-meta">{connected ? `${connected} calendar${connected === 1 ? "" : "s"} connected` : "Optional calendar"}</span></summary><div className="ui-disclosure-body ui-stack">
+      <p className="ui-field-hint">Bring the next meeting and its notes into your call. Calendar access is read-only.</p>
+      {error && <Banner tone="danger" title="Calendar could not be loaded" action={<Button size="sm" disabled={busy || loading} onClick={() => void run(async () => {})}>Retry</Button>}>{error}</Banner>}
+      {notice && <Banner tone="info">{notice}</Banner>}
+      {loading && !loaded && <SkeletonList rows={2} label="Loading calendars" />}
+      {loaded && <div className="calendar-connections">{connections.map(c => <Card className="calendar-connection" key={c.provider} title={c.provider === "google" ? "Google Calendar" : "Outlook Calendar"} actions={<Badge tone={["reauth_required", "error"].includes(c.status) ? "warning" : c.connected ? "success" : "neutral"} icon={false}>{c.status === "reauth_required" ? "Reconnect needed" : c.status === "error" ? "Sync needs attention" : c.connected ? "Connected" : c.available ? "Not connected" : "Setup needed"}</Badge>}>
+        {!c.available ? <p className="ui-field-hint">Your server hasn’t enabled this calendar yet. You can choose your call context manually.</p> : !c.connected || c.status === "reauth_required" ? <div className="ui-stack-tight">
+          <p className="ui-field-hint">Choose which calendars to use after signing in.</p>
+          <div><Button size="sm" disabled={busy || loading} onClick={() => void run(async () => {
             const value = await api<{ authorization_url: string }>("POST", `/calendars/${c.provider}/connect`);
+            if (!alive.current) return;
             await invoke("open_calendar_authorization", { url: value.authorization_url });
-          })}>Connect read-only calendar</Button> : <>
-            <p>{c.status}{c.last_sync_at ? ` · Synced ${new Date(c.last_sync_at).toLocaleString()}` : ""}</p>
-            {c.last_error && <p role="alert">{c.last_error}</p>}
-            {c.calendars.map(calendar => <Checkbox key={calendar.id} label={calendar.name} checked={c.selected_calendars.includes(calendar.id)} disabled={busy}
+          })}>{c.status === "reauth_required" ? "Reconnect calendar" : "Connect read-only calendar"}</Button></div></div> : <div className="ui-stack-tight">
+            <p className="ui-field-hint">{c.last_sync_at ? `Last synced ${new Date(c.last_sync_at).toLocaleString()}` : "Choose calendars to prepare upcoming meetings."}</p>
+            {c.last_error && <Banner tone="warning" title="Calendar needs attention">{c.last_error}</Banner>}
+            <div className="calendar-selection">{c.calendars.map(calendar => <Checkbox key={calendar.id} label={calendar.name} checked={c.selected_calendars.includes(calendar.id)} disabled={busy || loading}
               onChange={on => void run(async () => { await api("PATCH", `/calendars/${c.provider}/selection`, { calendar_ids: on ? [...c.selected_calendars, calendar.id] : c.selected_calendars.filter(id => id !== calendar.id) }); })} />)}
-            <div className="ui-row-inline">
-              <Button disabled={busy} onClick={() => void run(async () => { await api("POST", `/calendars/${c.provider}/sync`); })}>Sync calendar</Button>
-              <Button disabled={busy} onClick={() => void run(async () => {
-                const result = await api<{ provider_consent_removal_required: boolean }>("DELETE", `/calendars/${c.provider}`);
-                if (result.provider_consent_removal_required && alive.current) setError("Disconnected and removed cached events. Remove CoRuby access in your calendar provider's account settings to revoke its consent too.");
-              })}>Disconnect</Button>
             </div>
-          </>}
-      </Card>)}
-      <Button disabled={busy} onClick={() => void run(async () => {})}>Refresh connection status</Button>
+          </div>}
+        {c.connected && <div className="ui-row-inline calendar-connection-actions">
+          {c.available && c.status !== "reauth_required" && <Button size="sm" disabled={busy || loading} onClick={() => void run(async () => { await api("POST", `/calendars/${c.provider}/sync`); })}>Sync calendar</Button>}
+          <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => setDisconnect(c)}>Disconnect</Button>
+        </div>}
+      </Card>)}</div>}
+      <div className="ui-row-inline"><Button size="sm" loading={loading && loaded} disabled={busy || loading} onClick={() => void run(async () => {})}>Refresh connection status</Button><span className="ui-field-hint">Refresh after connecting in your browser.</span></div>
       {preparation.items.map(item => <Meeting key={`${item.meeting.account_id}/${item.meeting.calendar_id}/${item.meeting.instance_id}`} item={item}
         provider={providers[item.meeting.account_id]} applications={preparation.applications ?? item.candidates} sessions={preparation.saved_sessions ?? []}
         onSaved={reload} onChoose={onChoose} />)}
-      {open && preparation.items.length === 0 && <p className="ui-field-hint">No meetings in the next 30 minutes in the selected calendars. Calls work without a calendar.</p>}
+      {loaded && !error && !loading && preparation.items.length === 0 && <p className="calendar-empty">{connected ? "No meetings in the next 30 minutes in your selected calendars." : "Calendar is optional. You can start a call whenever you’re ready."}</p>}
+      <ConfirmDialog open={disconnect !== null} onOpenChange={next => { if (!next) setDisconnect(null); }} title="Disconnect calendar?" confirmLabel="Disconnect" onConfirm={async () => {
+        if (!disconnect) return;
+        const result = await api<{ provider_consent_removal_required: boolean }>("DELETE", `/calendars/${disconnect.provider}`);
+        if (alive.current) {
+          const provider = disconnect.provider;
+          setConnections(current => current.map(c => c.provider === provider ? { ...c, connected: false, status: "disconnected", calendars: [], selected_calendars: [] } : c));
+          setPreparation(current => {
+            const removed = new Set(current.connections.filter(c => c.provider === provider).map(c => c.connection_id));
+            return { ...current, connections: current.connections.filter(c => c.provider !== provider), items: current.items.filter(item => !removed.has(item.meeting.account_id)) };
+          });
+          if (result.provider_consent_removal_required) setNotice("Calendar disconnected. To remove its authorization too, remove CoRuby in your calendar account’s connected apps.");
+          await reload();
+        }
+      }}>Cached calendar events will be removed. Your saved calls and notes will stay.</ConfirmDialog>
     </div>
   </details>;
 }
 
 function Meeting({ item, provider, applications, sessions, onSaved, onChoose }: {
-  item: Preparation; provider?: string; applications: Application[]; sessions: SavedSession[]; onSaved: () => Promise<void>;
+  item: Preparation; provider?: string; applications: Application[]; sessions: SavedSession[]; onSaved: () => Promise<boolean>;
   onChoose?: (title: string, applicationId: string | null) => void;
 }) {
   const effectiveActions = (item.unfinished_actions ?? item.previous.flatMap(p => p.unfinished_actions)).join("\n");
@@ -86,7 +113,11 @@ function Meeting({ item, provider, applications, sessions, onSaved, onChoose }: 
         application_id: application || null, session_id: session || null,
         unfinished_actions: [...new Set(actions.split("\n").map(value => value.trim()).filter(Boolean))],
       });
-      await onSaved(); setDirty(false); setSaved(true);
+      const refreshed = await onSaved();
+      // A successful save is still authoritative if the subsequent read fails. Keep the
+      // edited values until fresh props arrive instead of restoring the previous snapshot.
+      if (refreshed) setDirty(false);
+      setSaved(true);
     } catch (e) { setError(String(e)); }
     finally { setSaving(false); }
   };

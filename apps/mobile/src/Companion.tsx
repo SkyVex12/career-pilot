@@ -74,6 +74,7 @@ export function Companion({
   const mounted = useRef(true),
     attaching = useRef(false);
   const [attachBusy, setAttachBusy] = useState(false);
+  const [attachingSession, setAttachingSession] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(true),
     [displaySettings, setDisplaySettings] = useState(false);
   useEffect(() => {
@@ -419,6 +420,7 @@ export function Companion({
     if (attaching.current) return;
     attaching.current = true;
     setAttachBusy(true);
+    setAttachingSession(s.session_id);
     const profile = api.profile;
     const controller = new AbortController();
     attachAbort.current = controller;
@@ -513,7 +515,10 @@ export function Companion({
     } finally {
       attaching.current = false;
       if (attachAbort.current === controller) attachAbort.current = null;
-      if (mounted.current) setAttachBusy(false);
+      if (mounted.current) {
+        setAttachBusy(false);
+        setAttachingSession(null);
+      }
     }
   }
   async function detach() {
@@ -570,9 +575,9 @@ export function Companion({
     return (
       <ScrollView contentContainerStyle={page}>
         <ScreenTitle
-          eyebrow="Live assistance"
-          title="Your call. Your companion."
-          subtitle="Keep the call and headphones on your computer. Follow the conversation here."
+          eyebrow="Desktop companion"
+          title="Follow your live call"
+          subtitle="Read guidance on this phone while your computer handles the call audio."
           action={
             <IconButton
               label="Refresh active sessions"
@@ -582,26 +587,35 @@ export function Companion({
             />
           }
         />
-        <View
-          style={{
-            backgroundColor: c.tint,
-            borderRadius: 20,
-            padding: 20,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 16,
-          }}
-        >
-          <Icon name="headphones" size={32} color={c.ruby} />
-          <View style={{ flex: 1, gap: 4 }}>
-            <Txt style={{ fontWeight: "600" }}>
-              Audio stays on your computer
+        {sessions.length ? (
+          <Row style={{ flexWrap: "nowrap", gap: 10 }}>
+            <Icon name="headphones" size={20} color={c.ruby} />
+            <Txt muted style={{ fontSize: 13, flex: 1 }}>
+              Audio on your computer · phone microphone off
             </Txt>
-            <Txt muted style={{ fontSize: 13, lineHeight: 20 }}>
-              This phone displays guidance. Its microphone stays off.
-            </Txt>
+          </Row>
+        ) : (
+          <View
+            style={{
+              backgroundColor: c.tint,
+              borderRadius: 14,
+              padding: 16,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 16,
+            }}
+          >
+            <Icon name="headphones" size={26} color={c.ruby} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <Txt style={{ fontWeight: "600" }}>
+                Audio stays on your computer
+              </Txt>
+              <Txt muted style={{ fontSize: 13, lineHeight: 20 }}>
+                This phone displays guidance. Its microphone stays off.
+              </Txt>
+            </View>
           </View>
-        </View>
+        )}
         {error ? (
           <Notice
             tone="error"
@@ -619,8 +633,10 @@ export function Companion({
           </Notice>
         ) : null}
         <Row style={{ justifyContent: "space-between" }}>
-          <Txt style={{ fontSize: 13, fontWeight: "700" }}>ACTIVE CALLS</Txt>
-          <Badge label={`${sessions.length} available`} />
+          <Txt style={{ fontSize: 15, fontWeight: "700" }}>Available calls</Txt>
+          <Badge
+            label={refreshing ? "Updating…" : `${sessions.length} available`}
+          />
         </Row>
         {refreshing && !sessions.length ? (
           <Loading label="Finding desktop calls…" />
@@ -655,9 +671,14 @@ export function Companion({
               </Txt>
             </Row>
             <Button
-              label={attachBusy ? "Connecting phone…" : "Connect this phone"}
+              label={
+                attachingSession === s.session_id
+                  ? "Connecting phone…"
+                  : "Connect this phone"
+              }
               icon="arrow"
-              loading={attachBusy}
+              loading={attachingSession === s.session_id}
+              disabled={attachBusy}
               onPress={() => void attach(s)}
             />
           </Card>
@@ -673,7 +694,7 @@ export function Companion({
           <EmptyState
             icon="screen"
             title="Ready when your call starts"
-            description="Start a call in CoRuby on your computer using this profile. It will appear here automatically."
+            description="On your computer, open CoRuby → Call and start a session using the same account and profile. Your call will appear here automatically."
             action={
               <Button
                 label="Refresh calls"
@@ -724,11 +745,15 @@ export function Companion({
                     backgroundColor: usable ? c.success : c.warning,
                   }}
                 />
-                <Txt muted style={{ fontSize: 12 }}>
+                <Txt
+                  muted
+                  accessibilityLiveRegion="polite"
+                  style={{ fontSize: 12, flexShrink: 1 }}
+                >
                   {live.ended
                     ? "Call ended"
                     : usable
-                      ? "Live · audio from your computer"
+                      ? "Connected · audio from your computer"
                       : live.status}
                 </Txt>
                 {session?.spoken_language ? (
@@ -807,12 +832,12 @@ export function Companion({
               live.ended
                 ? "This call has ended"
                 : usable
-                  ? "Listening on your computer"
+                  ? "Ready for your conversation"
                   : "Connecting to live guidance"
             }
             description={
               usable
-                ? "Questions and answers will appear together here. You can also ask a follow-up below."
+                ? "Questions and answers will appear here when your computer hears the conversation. Check desktop audio if nothing appears, or type a question below."
                 : live.ended
                   ? "Disconnect this display to return to your active calls."
                   : "Your desktop call keeps running. This phone will show guidance when its connection is ready."

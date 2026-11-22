@@ -1,0 +1,11 @@
+  Notification List:
+    NotificationRecord(0x00000000: pkg=app.careerpilot.callfixture user=UserHandle{0} id=7 tag=null importance=4 key=0|app.careerpilot.callfixture|7|null|10000: Notification(channel=fixture-calls shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x2002 color=0x00000000 actions=2 vis=PRIVATE))
+      flags=0x2002
+      notification=
+              }
+            extras={
+                android.template=String (android.app.Notification$CallStyle)
+                android.callType=Integer (3)
+            }
+      publicNotification=
+            None

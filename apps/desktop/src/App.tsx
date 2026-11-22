@@ -5,8 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 // Ctrl+Shift+D). Signing in and the Career-OS link, when the stage requires one, come first:
 // the Call screen walks through them, and the other screens wait.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, inTauri, onOpenCall, onOpenSettings, onServer, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type ServerState, type SettingsView, type UpdateState } from "./api";
-import { bar } from "./updates";
+import { api, inTauri, onOpenCall, onOpenSettings, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type SettingsView, type UpdateState } from "./api";
+import { ServerNotification, UpdateNotification } from "./AppNotifications";
 import { Applications } from "./Applications";
 import { CallScreen } from "./CallScreen";
 import { useSession } from "./session";
@@ -14,7 +14,7 @@ import { startVoice } from "./voice";
 import { startScreenHost } from "./screen";
 import { Shell, type Tab, type WorkspaceWindowActions } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
-import { Banner, Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
+import { Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
 import { PageHeadingActive } from "./ui/Layout";
 import { CoRubyWordmark } from "./ui/RubyMark";
 import { Icon } from "./ui/Icon";
@@ -217,7 +217,7 @@ export default function App() {
     );
 
   return (
-    <ToastProvider>
+    <ToastProvider persistent={<><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
       <Shell
         tab={tab}
         onTab={setTab}
@@ -228,12 +228,6 @@ export default function App() {
         profileError={profileError}
         version={view?.version ?? null}
         showDebug={showDebug}
-        banner={
-          <>
-            <ServerBar />
-            <UpdateBar update={update} running={session.running} />
-          </>
-        }
       >
         {/* A profile switch or another account remounts every screen, so each one loads its data. */}
         <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
@@ -301,7 +295,7 @@ export default function App() {
         {tab === "settings" && view && (
           <div className="shell-content">
             <Suspense fallback={<SkeletonList rows={3} />}>
-              <SettingsScreen view={view} running={session.running} onSaved={reload} update={update} check={check} section={locked ? "account" : undefined} />
+              <SettingsScreen view={view} running={session.running} onSaved={reload} update={update} check={check} section={locked ? "account" : undefined} profileScope={contextKey.current} />
             </Suspense>
           </div>
         )}
@@ -376,91 +370,6 @@ function useCheckNow(update: UpdateState) {
     });
   };
   return { busy, error, start };
-}
-
-/** The on-demand server: the stage's VM stops when nobody uses it, and the app starts it again
- * (src-tauri, wake_server). While it starts, this bar says so; if it does not, it offers a retry. */
-function ServerBar() {
-  const [server, setServer] = useState<ServerState | null>(null);
-  useEffect(() => {
-    const off = onServer(setServer);
-    return () => {
-      off.then((f) => f());
-    };
-  }, []);
-  if (!server || server.state === "ready") return null;
-  const retry = () => {
-    setServer({ state: "starting", detail: null });
-    api.wakeServer().catch(() => {});
-  };
-  return (
-    <div className="update-bar" aria-live="polite">
-      {server.state === "starting" ? (
-        <Banner tone="info">
-          Starting the server; this takes a minute or two{server.detail ? ` (${server.detail})` : ""}.
-          <span className="update-track moving" role="progressbar">
-            <span className="update-fill" />
-          </span>
-        </Banner>
-      ) : (
-        <Banner
-          tone="danger"
-          action={
-            <Button size="sm" variant="primary" onClick={retry}>
-              Try again
-            </Button>
-          }
-        >
-          {server.detail}
-        </Banner>
-      )}
-    </div>
-  );
-}
-
-/** Release builds update themselves (src-tauri/src/release.rs). While an update downloads,
- * waits or installs, this bar above the page says what is happening, with its progress. */
-function UpdateBar({ update, running }: { update: UpdateState; running: boolean }) {
-  const [error, setError] = useState<string | null>(null);
-  // Dismissing hides this state only; the next step shows again.
-  const [dismissed, setDismissed] = useState<string | null>(null);
-  const key = JSON.stringify(update);
-  useEffect(() => setError(null), [update.state]);
-  const b = bar(update, running);
-  if (b.kind === "none" || dismissed === key) return null;
-  const install = () => {
-    setError(null);
-    api.installUpdate().catch((e) => setError(String(e)));
-  };
-  return (
-    <div className="update-bar" aria-live="polite">
-      <Banner
-        tone={b.tone === "error" ? "danger" : b.tone === "done" ? "success" : "info"}
-        action={
-          <span className="ui-row-inline">
-            {b.action && (
-              <Button size="sm" variant="primary" onClick={install} disabled={!b.action.enabled}>
-                {b.action.label}
-              </Button>
-            )}
-            {b.dismissible && (
-              <Button size="sm" variant="ghost" onClick={() => setDismissed(key)}>
-                OK
-              </Button>
-            )}
-          </span>
-        }
-      >
-        {b.text}
-        {error && <span className="ui-field-error"> {error}</span>}
-        {b.progress !== undefined && (
-          <span className={`update-track${b.progress === null ? " moving" : ""}`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={b.progress ?? undefined}>
-            <span className="update-fill" style={b.progress === null ? undefined : { width: `${b.progress}%` }} />
-          </span>
-        )}
-      </Banner>
-    </div>
-  );
 }
 
 /** The Career-OS link and whether the app is locked until one: the server says the stage

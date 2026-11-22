@@ -1,0 +1,1915 @@
+{
+  "recordedAt": "2026-11-22T22:46:44.103Z",
+  "results": [
+    {
+      "id": "notices-1080-light",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 722,
+          "left": 1,
+          "width": 1078,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 1078,
+          "height": 555
+        },
+        "scrollHeight": 555
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 684,
+          "top": 586,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 684,
+              "top": 586,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 684,
+          "top": 484,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 684,
+              "top": 484,
+              "right": 1064,
+              "bottom": 602
+            },
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 610,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 684,
+          "top": 562,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 684,
+              "top": 562,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 684,
+          "top": 422,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 684,
+              "top": 422,
+              "right": 1064,
+              "bottom": 564
+            },
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 572,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 684,
+          "top": 572,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 572,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-920-light",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 662,
+          "left": 1,
+          "width": 918,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 918,
+          "height": 495
+        },
+        "scrollHeight": 495
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 524,
+          "top": 526,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 524,
+              "top": 526,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 524,
+          "top": 424,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 524,
+              "top": 424,
+              "right": 904,
+              "bottom": 542
+            },
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 550,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 524,
+          "top": 502,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 524,
+              "top": 502,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 524,
+          "top": 362,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 524,
+              "top": 362,
+              "right": 904,
+              "bottom": 504
+            },
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 512,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 524,
+          "top": 512,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 512,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-720-light",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 462,
+          "left": 1,
+          "width": 718,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 718,
+          "height": 295
+        },
+        "scrollHeight": 557
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 324,
+          "top": 326,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 324,
+              "top": 326,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 324,
+          "top": 224,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 324,
+              "top": 224,
+              "right": 704,
+              "bottom": 342
+            },
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 350,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 324,
+          "top": 302,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 324,
+              "top": 302,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 324,
+          "top": 162,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 324,
+              "top": 162,
+              "right": 704,
+              "bottom": 304
+            },
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 312,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 324,
+          "top": 312,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 312,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-390-light",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 17,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 718,
+          "left": 1,
+          "width": 388,
+          "height": 61
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 388,
+          "height": 551
+        },
+        "scrollHeight": 649
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 16,
+          "top": 586,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 586,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 16,
+          "top": 484,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 484,
+              "right": 374,
+              "bottom": 602
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 610,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 16,
+          "top": 562,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 562,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 422,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 422,
+              "right": 374,
+              "bottom": 564
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 572,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 572,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 572,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-400-light",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 75,
+          "left": 17,
+          "width": 94.1875,
+          "height": 28
+        },
+        "footer": {
+          "top": 190,
+          "left": 1,
+          "width": 398,
+          "height": 49
+        },
+        "body": {
+          "top": 111,
+          "left": 1,
+          "width": 398,
+          "height": 79
+        },
+        "scrollHeight": 625
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 16,
+          "top": 46,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 46,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 16,
+          "top": 16,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 16,
+              "right": 384,
+              "bottom": 134
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 142,
+              "right": 384,
+              "bottom": 236
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 16,
+          "top": 22,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 22,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 16,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 16,
+              "right": 384,
+              "bottom": 158
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 166,
+              "right": 384,
+              "bottom": 298
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 32,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 32,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-1080-dark",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 722,
+          "left": 1,
+          "width": 1078,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 1078,
+          "height": 555
+        },
+        "scrollHeight": 555
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 684,
+          "top": 586,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 684,
+              "top": 586,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 684,
+          "top": 484,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 684,
+              "top": 484,
+              "right": 1064,
+              "bottom": 602
+            },
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 610,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 684,
+          "top": 562,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 684,
+              "top": 562,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 684,
+          "top": 422,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 684,
+              "top": 422,
+              "right": 1064,
+              "bottom": 564
+            },
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 572,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 684,
+          "top": 572,
+          "right": 1064,
+          "bottom": 704,
+          "width": 1080,
+          "height": 780,
+          "footerTop": 722,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 684,
+              "top": 572,
+              "right": 1064,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-920-dark",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 662,
+          "left": 1,
+          "width": 918,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 918,
+          "height": 495
+        },
+        "scrollHeight": 495
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 524,
+          "top": 526,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 524,
+              "top": 526,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 524,
+          "top": 424,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 524,
+              "top": 424,
+              "right": 904,
+              "bottom": 542
+            },
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 550,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 524,
+          "top": 502,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 524,
+              "top": 502,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 524,
+          "top": 362,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 524,
+              "top": 362,
+              "right": 904,
+              "bottom": 504
+            },
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 512,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 524,
+          "top": 512,
+          "right": 904,
+          "bottom": 644,
+          "width": 920,
+          "height": 720,
+          "footerTop": 662,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 524,
+              "top": 512,
+              "right": 904,
+              "bottom": 644
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-720-dark",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 25,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 462,
+          "left": 1,
+          "width": 718,
+          "height": 57
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 718,
+          "height": 295
+        },
+        "scrollHeight": 557
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 324,
+          "top": 326,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 324,
+              "top": 326,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 324,
+          "top": 224,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 324,
+              "top": 224,
+              "right": 704,
+              "bottom": 342
+            },
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 350,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 324,
+          "top": 302,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 324,
+              "top": 302,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 324,
+          "top": 162,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 324,
+              "top": 162,
+              "right": 704,
+              "bottom": 304
+            },
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 312,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 324,
+          "top": 312,
+          "right": 704,
+          "bottom": 444,
+          "width": 720,
+          "height": 520,
+          "footerTop": 462,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 324,
+              "top": 312,
+              "right": 704,
+              "bottom": 444
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-390-dark",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 99,
+          "left": 17,
+          "width": 306.46875,
+          "height": 28
+        },
+        "footer": {
+          "top": 718,
+          "left": 1,
+          "width": 388,
+          "height": 61
+        },
+        "body": {
+          "top": 167,
+          "left": 1,
+          "width": 388,
+          "height": 551
+        },
+        "scrollHeight": 649
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 16,
+          "top": 586,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 586,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 16,
+          "top": 484,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 484,
+              "right": 374,
+              "bottom": 602
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 610,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 16,
+          "top": 562,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 562,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 422,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 422,
+              "right": 374,
+              "bottom": 564
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 572,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 572,
+          "right": 374,
+          "bottom": 704,
+          "width": 390,
+          "height": 780,
+          "footerTop": 718,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 572,
+              "right": 374,
+              "bottom": 704
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    },
+    {
+      "id": "notices-400-dark",
+      "status": "passed",
+      "baseline": {
+        "heading": {
+          "top": 75,
+          "left": 17,
+          "width": 94.1875,
+          "height": 28
+        },
+        "footer": {
+          "top": 190,
+          "left": 1,
+          "width": 398,
+          "height": 49
+        },
+        "body": {
+          "top": 111,
+          "left": 1,
+          "width": 398,
+          "height": 79
+        },
+        "scrollHeight": 625
+      },
+      "layouts": [
+        {
+          "name": "server-starting",
+          "position": "fixed",
+          "left": 16,
+          "top": 46,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 46,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-and-update",
+          "position": "fixed",
+          "left": 16,
+          "top": 16,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Starting the server",
+              "left": 16,
+              "top": 16,
+              "right": 384,
+              "bottom": 134
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 142,
+              "right": 384,
+              "bottom": 236
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed",
+          "position": "fixed",
+          "left": 16,
+          "top": 22,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 22,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "server-failed-and-update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 16,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "Server unavailable",
+              "left": 16,
+              "top": 16,
+              "right": 384,
+              "bottom": 158
+            },
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 166,
+              "right": 384,
+              "bottom": 298
+            }
+          ],
+          "violations": []
+        },
+        {
+          "name": "update-ready",
+          "position": "fixed",
+          "left": 16,
+          "top": 32,
+          "right": 384,
+          "bottom": 164,
+          "width": 400,
+          "height": 240,
+          "footerTop": 190,
+          "footerActionUncovered": true,
+          "notifications": [
+            {
+              "name": "App update",
+              "left": 16,
+              "top": 32,
+              "right": 384,
+              "bottom": 164
+            }
+          ],
+          "violations": []
+        }
+      ],
+      "actionReachability": [
+        {
+          "state": "server-and-update",
+          "name": "Dismiss starting the server notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-and-update",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss server unavailable notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Try again",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Dismiss app update notification",
+          "focused": true,
+          "reachable": true
+        },
+        {
+          "state": "server-failed-and-update-ready",
+          "name": "Install and restart",
+          "focused": true,
+          "reachable": true
+        }
+      ],
+      "errors": [],
+      "externalRequests": []
+    }
+  ]
+}

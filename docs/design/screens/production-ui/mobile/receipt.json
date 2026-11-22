@@ -1,0 +1,171 @@
+{
+  "date": "2026-11-22",
+  "source_commit": "5767e6b419f07747914bdd9d70b87c1e9f77a75a",
+  "mobile_source_matches_commit": true,
+  "artifact": ".implementation/artifacts/android/CareerPilot-production-ui-preview.apk",
+  "artifact_bytes": 56087530,
+  "artifact_sha256": "65067c17d821ff21e45abb4d46eebd8bdbc4690ca012f3ee6373c616ade1d776",
+  "package": "app.careerpilot.mobile.httptest",
+  "version": "0.1.0-http-test",
+  "version_code": 1,
+  "minimum_android_sdk": 24,
+  "target_android_sdk": 36,
+  "architectures": [
+    "arm64-v8a",
+    "x86_64"
+  ],
+  "signing": "Android Debug; APK Signature Scheme v2 verified",
+  "signing_certificate_sha256": "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c",
+  "build": "assembleHttpTest; 661 tasks; BUILD SUCCESSFUL in 1m05s",
+  "tests": {
+    "typecheck": "passed",
+    "deterministic_mobile_tests": 77,
+    "fixture_tests": 11,
+    "git_diff_check": "passed"
+  },
+  "device": {
+    "emulator": "CareerPilotValidation",
+    "instance": 1,
+    "serial": "emulator-5556",
+    "android": "14",
+    "model": "V2242A",
+    "density": 320,
+    "viewports_dp": [
+      "390x844 portrait",
+      "844x390 landscape",
+      "960x600 tablet"
+    ]
+  },
+  "native_checks": [
+    "Fictional email sign-in and restored sign-in",
+    "Call discovery and connection",
+    "Live answer rendering and Return to latest",
+    "Work question entry and submission",
+    "Saved Ask conversation restored after app recreation",
+    "History list and details",
+    "Practice language selection and text answer submission",
+    "Expanded rubric feedback with exact answer evidence",
+    "Landscape/tablet navigation and primary controls",
+    "Changed saved workspace from http://127.0.0.1:8765 to http://localhost:8765; gateway remained Automatic; signed in and connected live guidance"
+  ],
+  "crash_buffer_bytes": 0,
+  "exit_info": "Only package-update and user-requested exits recorded; no crash or ANR exit in this run",
+  "screenshot_note": "Layout screenshots predate the final gateway-state-only fix. changed-workspace-* screenshots use the delivered APK. The remaining screen components did not change between those builds. Curated filenames use the actual visible theme.",
+  "limitations": [
+    "Fictional loopback fixture only; no production, speech, model, calendar provider or microphone certification",
+    "HTTP-enabled development-signed internal preview; not a store release",
+    "LDPlayer input focus and text entry exercised, but its IME did not render a standard on-screen keyboard; physical-device soft-keyboard layout remains unverified",
+    "No iOS device or physical Android device used",
+    "Viewport screenshots use emulator size overrides; native animation transitions were disabled for final captures"
+  ],
+  "source_sha256": [
+    {
+      "path": "apps/mobile/src/api.ts",
+      "sha256": "a4c7af30775ff51fe5cfd4654b026d31bfda5406861d1536289246bc49b7893d"
+    },
+    {
+      "path": "apps/mobile/src/App.tsx",
+      "sha256": "c15ec873c63f4939f4f30f5107585538cb590021fe94b0525552b7f59b4feee5"
+    },
+    {
+      "path": "apps/mobile/src/AppShell.tsx",
+      "sha256": "a67bf2b0c83bfeebb58a03cca055aff008b4bd62f316088789503b8f2144368a"
+    },
+    {
+      "path": "apps/mobile/src/Ask.tsx",
+      "sha256": "4b3281db7ec62859ee63d25cabacbc2661e3748d4a4196d9594c45613260b01e"
+    },
+    {
+      "path": "apps/mobile/src/askData.ts",
+      "sha256": "2c52d95edb06d400e12d5caa33c3c454682af5af1f1641a973d85fd606deb8f3"
+    },
+    {
+      "path": "apps/mobile/src/authConfig.ts",
+      "sha256": "0863d4ee474d62f2abe930f144a7299673bb3ab4b1025ba94b3287fb3e9f36e5"
+    },
+    {
+      "path": "apps/mobile/src/careerOs.ts",
+      "sha256": "07cc97b3b695f64da349e32f8e84cacf9b10753335d5caf9cd300eabacc7b2d0"
+    },
+    {
+      "path": "apps/mobile/src/clientCapabilities.ts",
+      "sha256": "2405201c440640c41a5837c9387d59ae3a09d6eeec4f95236e491086556ddaa3"
+    },
+    {
+      "path": "apps/mobile/src/Companion.tsx",
+      "sha256": "68ab55de6e59e83872ee756a36be29893888d54320fcf9947dddca31680e980d"
+    },
+    {
+      "path": "apps/mobile/src/companionAttachment.ts",
+      "sha256": "02a5507cc13cf42ec3cabd66c4a47911a9aa609320ee7febcaaa26a350212013"
+    },
+    {
+      "path": "apps/mobile/src/companionDevice.ts",
+      "sha256": "6cb14d5c34b8415031d002f065120bd8927e98facf12c814542888594193bc21"
+    },
+    {
+      "path": "apps/mobile/src/connectionConfig.ts",
+      "sha256": "c9fce5da27581400c4079a59e5086af308e206d60262415454b2fae97de74f6c"
+    },
+    {
+      "path": "apps/mobile/src/History.tsx",
+      "sha256": "39f184e0ba4181c4e1707b6146b66f8b55b0b875bfe90d7f6e92a0ab74b33847"
+    },
+    {
+      "path": "apps/mobile/src/historyData.ts",
+      "sha256": "d221174015f8e46ef1d8eee7a3ab51f9e83b087517e01bd43bc9abdc1f9f88d4"
+    },
+    {
+      "path": "apps/mobile/src/InPerson.tsx",
+      "sha256": "c318167bd7d8c7ea5539f2ad81f2d13eff885d8fbb4898fe8ad13a48b94dc008"
+    },
+    {
+      "path": "apps/mobile/src/liveState.ts",
+      "sha256": "5e42268e9608916158b5646bdb7dc954b0d42dd11cee2d34a237bb21079962f8"
+    },
+    {
+      "path": "apps/mobile/src/mediaEpoch.ts",
+      "sha256": "2bf6eba090d22a16078116ac7e26339ff81cbdb840ff8f38b03021dfbbe92a26"
+    },
+    {
+      "path": "apps/mobile/src/pcm.ts",
+      "sha256": "bcdadc33aab8cc0551cd7600ac314cd8637f11937b6ed8f476ad188368a10b49"
+    },
+    {
+      "path": "apps/mobile/src/Practice.tsx",
+      "sha256": "b28bf5d152907b3032f51fe3695f47a806ddcfccd373063f566cf068c7ba14b8"
+    },
+    {
+      "path": "apps/mobile/src/practiceState.ts",
+      "sha256": "42989b6d923ee4c1923c5ef7f786095573a4d190e7ec3a328582439c84d9b99d"
+    },
+    {
+      "path": "apps/mobile/src/preferences.ts",
+      "sha256": "b47744299b0e7a6ede4f86297e7b6a6b8f89cd234bcd0abbc000063e0e3a54c4"
+    },
+    {
+      "path": "apps/mobile/src/requestScope.ts",
+      "sha256": "7a133b90680a2d0d645f6b29ff22682e50120f5a0a3bbc5ccd67d0e24bfd22ca"
+    },
+    {
+      "path": "apps/mobile/src/ScreenBoundary.tsx",
+      "sha256": "e95c8b5cf5c22053580a0054c1f373f362a5cb2d1947765201729f91f1de44ae"
+    },
+    {
+      "path": "apps/mobile/src/secure.ts",
+      "sha256": "66eb61a9ee9197d5ba3f1492d70326db6d753d38ce6d971c6c77e0d9d04bea97"
+    },
+    {
+      "path": "apps/mobile/src/transport.ts",
+      "sha256": "5b13793b08dd24495401fab849f9d5e018c83e128bd8c726b2c22e744bc17b49"
+    },
+    {
+      "path": "apps/mobile/src/ui.tsx",
+      "sha256": "03be7e4a6f5a03c101a17505a78849522ba2eca86cd55b8b8d67dbdea836724a"
+    },
+    {
+      "path": "apps/mobile/src/Workspace.tsx",
+      "sha256": "850b15c49d96cc5a68c7c6668ba578c0671ef868a4c1cf417ccd0298627999b2"
+    }
+  ]
+}

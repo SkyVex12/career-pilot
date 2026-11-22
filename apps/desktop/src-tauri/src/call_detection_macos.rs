@@ -191,7 +191,12 @@ pub(super) fn sample(tracking: bool) -> Result<(Vec<Evidence>, bool), String> {
             }
         }
         if super::detection::call_controls(app, &names) {
-            evidence.push(Evidence { key: format!("{pid}:{app}"), app: app.into(), audio: microphone });
+            evidence.push(Evidence {
+                key: format!("{pid}:{app}"),
+                app: app.into(),
+                audio: microphone,
+                call_phase: None,
+            });
         }
     }
     // Notifications are delivered through UserNotifications, so macOS owns Focus/DND suppression.

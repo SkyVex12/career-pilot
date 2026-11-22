@@ -137,7 +137,6 @@ export function Shell({
   version,
   showDebug,
   pending,
-  banner,
   onWindowActionsChanged,
   children,
 }: {
@@ -151,8 +150,6 @@ export function Shell({
   showDebug: boolean;
   /** Facts waiting for review across companies (Work's count). */
   pending?: number;
-  /** The update bar, above the page. */
-  banner?: ReactNode;
   /** Native page navigation restores compact bounds through the mounted call screen. */
   onWindowActionsChanged?: (actions: WorkspaceWindowActions | null) => void;
   children: ReactNode;
@@ -237,9 +234,8 @@ export function Shell({
             </div>
             <div className="desktop-commandbar">{navigation}</div>
           </div>
-          <div className="workspace-card-body">
+          <div className="workspace-card-body" role="region" aria-label="Page content" tabIndex={tab === "start" ? undefined : 0}>
             {windowError && <p className="ui-field-error" role="alert">{windowError}</p>}
-            <div className="workspace-banners">{banner}</div>
             <ProfileSwitchContext.Provider value={{ state: profiles, running: live, onSwitch: onSwitchProfile, error: profileError }}>
               <CompactWindowRegistration.Provider value={registerCompactWindow}>
                 <CallBusyContext.Provider value={setCallBusy}>

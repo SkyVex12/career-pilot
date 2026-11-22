@@ -2,7 +2,9 @@
 
 CoRuby uses the coral gem in `apps/desktop/src/assets/xruby-icon.svg`. Its six polygon facets
 are the approved source geometry; the separate wordmark has a neutral Co prefix and coral
-Ruby suffix (`#BE503A` in light mode, `#FF9B82` in dark mode). The desktop
+Ruby suffix (`#B53D29` on desktop light surfaces, `#BE503A` on mobile white headers,
+and `#FF9B82` in dark mode). The desktop light variant maintains text contrast on the
+neutral header surface. The desktop
 already used this gem and the approved coral tokens. Mobile uses the same facets, including
 its native launcher and splash assets.
 

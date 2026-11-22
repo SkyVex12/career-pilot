@@ -1,0 +1,57 @@
+{
+  "recordedAt": "2026-11-22T22:54:06.530Z",
+  "results": [
+    {
+      "id": "overlay-760-light",
+      "viewport": {
+        "width": 760,
+        "height": 620
+      },
+      "scheme": "light",
+      "errors": [],
+      "externalRequests": [],
+      "violations": [],
+      "overflow": false,
+      "clippedControls": []
+    },
+    {
+      "id": "overlay-400-light",
+      "viewport": {
+        "width": 400,
+        "height": 520
+      },
+      "scheme": "light",
+      "errors": [],
+      "externalRequests": [],
+      "violations": [],
+      "overflow": false,
+      "clippedControls": []
+    },
+    {
+      "id": "overlay-760-dark",
+      "viewport": {
+        "width": 760,
+        "height": 620
+      },
+      "scheme": "dark",
+      "errors": [],
+      "externalRequests": [],
+      "violations": [],
+      "overflow": false,
+      "clippedControls": []
+    },
+    {
+      "id": "overlay-400-dark",
+      "viewport": {
+        "width": 400,
+        "height": 520
+      },
+      "scheme": "dark",
+      "errors": [],
+      "externalRequests": [],
+      "violations": [],
+      "overflow": false,
+      "clippedControls": []
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-22",
+  "desktop_source_commit": "09aca9b",
+  "branch": "codex/production-ui-polish",
+  "artifact": ".implementation/artifacts/windows/CareerPilot-production-ui-preview.exe",
+  "bytes": 51991040,
+  "sha256": "24985e0e71a845b13e60904a4e71fa32d70e452de1647c7110a47a9644e8c713",
+  "architecture": "PE x86_64",
+  "signature": "NotSigned",
+  "build": "pnpm --filter @copilot/desktop build:cloud",
+  "build_result": "passed",
+  "build_log": ".implementation/production-ui-desktop-final-build.txt",
+  "installed_or_launched": false,
+  "prior_artifacts_preserved": true,
+  "validation": {
+    "native_ignored": 6,
+    "interface_tests": 564,
+    "strict_typescript": "passed",
+    "rustfmt": "passed",
+    "native_passed": 183,
+    "clippy_default_and_release": "passed",
+    "interface_files": 55,
+    "release_checks": 10,
+    "browser_states": 232,
+    "overlay_cases": 4,
+    "notification_states": 50,
+    "notification_action_checks": 60
+  },
+  "limits": [
+    "Unsigned development preview, not a production installer.",
+    "Exact user white-window screen was not replayed; native HWND transition regressions passed.",
+    "External calendar, mobile distribution and real Hushed acceptance retain previous status."
+  ],
+  "build_head": "5767e6b",
+  "intermediate_artifact": ".implementation/artifacts/windows/CareerPilot-production-ui-6509af8.exe"
+}

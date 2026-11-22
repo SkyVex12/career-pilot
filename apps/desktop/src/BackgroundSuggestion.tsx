@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "./ui";
-export type CallSuggestion = { id:string; platform:string; kind:"start"|"end" };
+export type CallSuggestion = { id:string; platform:string; kind:"start"|"end"; phase?:"incoming"|"active"|null };
 /** Dedicated local window: deliberately has no account, API, audio or session hooks. */
 export function BackgroundSuggestion() {
   const [suggestion,setSuggestion]=useState<CallSuggestion|null>(null);
@@ -20,5 +20,6 @@ export function BackgroundSuggestion() {
     try{await invoke("background_respond",{id:suggestion.id,accept});setSuggestion(null);}
     catch(e){setError(String(e));}finally{setBusy(false);}
   };
-  return <main className="ui-stack" style={{padding:16}}>{suggestion && <><strong>{suggestion.kind==="end" ? "Call may have ended" : "Call detected"}</strong><p>{suggestion.kind==="end" ? "Review whether to end CoRuby." : "Start CoRuby for live assistance."}</p><div className="ui-row-inline"><Button disabled={busy} onClick={()=>void respond(true)}>{suggestion.kind==="end" ? "Review end call" : "Start CoRuby"}</Button><Button disabled={busy} onClick={()=>void respond(false)}>Not now</Button></div></>}{error && <p role="alert">{error}</p>}</main>;
+  const incoming = suggestion?.kind === "start" && suggestion.phase === "incoming";
+  return <main className="ui-stack" style={{padding:16}}>{suggestion && <><strong>{suggestion.kind==="end" ? "Call may have ended" : incoming ? `Incoming ${suggestion.platform} call` : "Call detected"}</strong><p>{suggestion.kind==="end" ? "Review whether to end CoRuby." : incoming ? "Start CoRuby for live assistance when you answer." : "Start CoRuby for live assistance."}</p><div className="ui-row-inline"><Button disabled={busy} onClick={()=>void respond(true)}>{suggestion.kind==="end" ? "Review end call" : "Start CoRuby"}</Button><Button disabled={busy} onClick={()=>void respond(false)}>Not now</Button></div></>}{error && <p role="alert">{error}</p>}</main>;
 }

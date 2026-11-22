@@ -14,6 +14,7 @@ it.each([
   ["notifications_suppressed", "System notification settings or Focus"], ["active_session", "already running a session"],
   ["suggestion_pending", "suggestion is waiting"], ["app_disabled", "application's call suggestions are disabled"],
   ["error", "native check failed"], ["unavailable", "unavailable on this system"],
+  ["watching_hushed", "Watching for Hushed call activity. Microphone activity is not required."],
 ])("explains %s without starting capture", async (state, message) => {
   setup(state); render(<BackgroundSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Check detection" }));
@@ -61,4 +62,19 @@ it.each(["disabled", "paused", "active_session"])("does not show a stale deliver
   setup(state, { presentation_error: "old window failure" });
   render(<BackgroundSettings />); fireEvent.click(await screen.findByRole("button", { name: "Check detection" }));
   expect(await screen.findByRole("status")).not.toHaveTextContent("old window failure");
+});
+
+it("discards a pending detection read after call suggestion policy changes", async () => {
+  setup("watching_hushed");
+  let finish!: (value: unknown) => void;
+  ipc.handle("background_detection_status", () => new Promise(resolve => { finish = resolve; }));
+  ipc.handle("background_set_preferences", args => ({ preferences: args.preferences, call_detection_available: true, launch_at_login_supported: true, limitation: "" }));
+  render(<BackgroundSettings />);
+  fireEvent.click(await screen.findByRole("button", { name: "Check detection" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Pause call suggestions" }));
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByRole("switch", { name: "Pause call suggestions" })).toBeChecked();
+  await act(async () => { finish({ state: "suggestion_pending", pending: { platform: "Hushed", kind: "start" }, hushed: { state: "incoming", message: "Old incoming call", connected: 1, monitored: 1 } }); });
+  expect(screen.queryByText(/Old incoming call|A suggestion is waiting/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

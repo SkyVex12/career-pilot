@@ -4,6 +4,7 @@ import {
   AppState,
   Modal,
   Pressable,
+  Platform,
   ScrollView,
   View,
 } from "react-native";
@@ -402,6 +403,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
       <ScrollView
         ref={scroll}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         contentContainerStyle={page}
         scrollEventThrottle={100}
         onScroll={(e) => {
@@ -418,11 +420,11 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
       >
         <ScreenTitle
           eyebrow="Work"
-          title={current?.title ?? "A little clarity. A next step."}
+          title={current?.title ?? "Ask your workspace"}
           subtitle={
             current
               ? undefined
-              : "Think through decisions, prepare a message, or ask about your career context."
+              : "Turn your experience, saved notes, and work context into a useful next step."
           }
           action={
             <Row>
@@ -459,7 +461,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
           <Loading label="Opening conversation…" />
         ) : !current?.messages?.length ? (
           <>
-            <View style={{ gap: 12, paddingVertical: 15 }}>
+            <View style={{ gap: 10, paddingVertical: 4 }}>
               <Txt style={{ fontSize: 17, fontWeight: "600" }}>
                 What would help today?
               </Txt>
@@ -473,8 +475,8 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
                   accessibilityRole="button"
                   onPress={() => setDraft(text)}
                   style={({ pressed }) => ({
-                    padding: 17,
-                    borderRadius: 16,
+                    padding: 16,
+                    borderRadius: 14,
                     borderWidth: 1,
                     borderColor: c.line,
                     backgroundColor: pressed ? c.soft : c.card,
@@ -483,7 +485,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
                     alignItems: "center",
                   })}
                 >
-                  <Txt style={{ flex: 1 }}>{text}</Txt>
+                  <Txt style={{ flex: 1, fontSize: 14 }}>{text}</Txt>
                   <Icon name="arrow" size={18} />
                 </Pressable>
               ))}
@@ -505,6 +507,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
                   padding: 16,
                   alignSelf: "flex-end",
                   maxWidth: "94%",
+                  borderBottomRightRadius: 5,
                 }}
               >
                 <Txt selectable style={{ fontWeight: "600" }}>
@@ -601,22 +604,29 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Context for next question: ${contextLabel}`}
+            accessibilityState={{ disabled: busy }}
             disabled={busy}
             onPress={() => setPanel("context")}
             style={{
               flexDirection: "row",
               alignItems: "center",
               gap: 7,
-              minHeight: 48,
+              minHeight: 44,
+              alignSelf: "flex-start",
+              maxWidth: "100%",
+              borderRadius: 10,
+              paddingHorizontal: 10,
+              backgroundColor: c.soft,
+              opacity: busy ? 0.5 : 1,
             }}
           >
             <Icon name="settings" size={16} />
             <Txt
               muted
               numberOfLines={1}
-              style={{ fontSize: 12, flexShrink: 1 }}
+              style={{ fontSize: 13, flexShrink: 1 }}
             >
-              {contextLabel}
+              Context · {contextLabel}
               {from || to ? " · date filter" : ""}
             </Txt>
             <Icon name="chevron" size={13} />

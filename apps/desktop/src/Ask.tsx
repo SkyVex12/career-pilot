@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { PageHeadingActive } from "./ui/Layout";
 import { invoke } from "@tauri-apps/api/core";
-import { Banner, Button, Card, ConfirmDialog, Field, Input, Select, Textarea } from "./ui";
+import { Banner, Button, Card, ConfirmDialog, Field, Input, Select, SkeletonList, Spinner, Textarea } from "./ui";
+import { Icon } from "./ui/Icon";
+import "./feature-pages.css";
 export type AskScope = { kind: "auto" | "all" | "general" | "company" | "application" | "document" | "call"; id?: string; from_date?: string; to_date?: string };
 export type AskEntry = { scope: AskScope; n: number };
 export function openAsk(scope: AskScope) { window.dispatchEvent(new CustomEvent("copilot:open-ask", { detail: scope })); }
@@ -11,6 +13,7 @@ type Conversation = { id: string; title: string; scope: AskScope; messages?: Mes
 const request = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 const base = "/ask/conversations";
 const SavedCall = lazy(() => import("./SessionDetail").then(m => ({ default: m.SessionDetail })));
+const scopeLabels: Record<AskScope["kind"], string> = { auto: "This profile", all: "All available context", general: "General knowledge", company: "Company", application: "Application", document: "Document", call: "Saved call" };
 export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEntry | null }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [current, setCurrent] = useState<Conversation | null>(null);
@@ -18,16 +21,19 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [loadingSource, setLoadingSource] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [source, setSource] = useState<(Source & { content: string }) | null>(null);
   const [showCall, setShowCall] = useState(false);
   const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
   const conversationElement = useRef<HTMLDivElement>(null);
+  const draftElement = useRef<HTMLTextAreaElement>(null);
   const scrollPosition = useRef<{ element: Element; top: number } | null>(null);
   const alive = useRef(true);
   const generation = useRef(0), sourceGeneration = useRef(0);
   const valid = (ticket: number) => alive.current && generation.current === ticket;
-  const invalidate = () => { generation.current++; sourceGeneration.current++; setBusy(false); setDeleting(false); };
+  const invalidate = () => { generation.current++; sourceGeneration.current++; setBusy(false); setDeleting(false); setLoadingConversation(false); setLoadingSource(false); };
   const currentRef = useRef(current); currentRef.current = current;
   const drafts = useRef(new Map<string, string>());
   const [pendingRequest, setPendingRequest] = useState<{ id: string; question: string } | null>(null);
@@ -53,10 +59,13 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
     drafts.current.set(current?.id ?? "new", draft); setSource(null); setError(null); setPendingRequest(null);
     setCurrent(null); setDraft("");
     if (!id) { setScope({ kind: "auto" }); setDraft(drafts.current.get("new") ?? ""); return; }
-    try { const value = await request<Conversation>("GET", `${base}/${id}`); if (!valid(ticket)) return; setCurrent(value); setScope(value.scope); setDraft(value => value || drafts.current.get(id) || ""); } catch (e) { if (valid(ticket)) setError(String(e)); }
+    setLoadingConversation(true);
+    try { const value = await request<Conversation>("GET", `${base}/${id}`); if (!valid(ticket)) return; setCurrent(value); setScope(value.scope); setDraft(value => value || drafts.current.get(id) || ""); } catch (e) { if (valid(ticket)) setError(String(e)); } finally { if (valid(ticket)) setLoadingConversation(false); }
   };
+  const needsContext = !["auto", "all", "general"].includes(scope.kind) && !scope.id;
+  const invalidDates = !!(scope.from_date && scope.to_date && scope.from_date > scope.to_date);
   const send = async () => {
-    if (busy || pending || !draft.trim()) return;
+    if (busy || pending || loadingConversation || needsContext || invalidDates || !draft.trim()) return;
     const ticket = generation.current;
     setBusy(true); setError(null);
     const attempt = pendingRequest?.question === draft ? pendingRequest : { id: crypto.randomUUID(), question: draft };
@@ -78,11 +87,12 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   };
   const inspect = async (item: Source) => {
     setShowCall(false);
+    setLoadingSource(true);
     const ticket = generation.current, sourceTicket = ++sourceGeneration.current;
     let element: Element | null = conversationElement.current;
     while (element && element.scrollHeight <= element.clientHeight) element = element.parentElement;
     if (element) scrollPosition.current = { element, top: element.scrollTop };
-    try { const value = await request<{ content: string; start_ms?: number }>("GET", `/ask/sources/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`); if (valid(ticket) && sourceTicket === sourceGeneration.current) setSource({ ...item, ...value, label: item.label }); } catch (e) { if (valid(ticket) && sourceTicket === sourceGeneration.current) setError(`Source unavailable: ${String(e)}`); }
+    try { const value = await request<{ content: string; start_ms?: number }>("GET", `/ask/sources/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`); if (valid(ticket) && sourceTicket === sourceGeneration.current) setSource({ ...item, ...value, label: item.label }); } catch (e) { if (valid(ticket) && sourceTicket === sourceGeneration.current) setError(`Source unavailable: ${String(e)}`); } finally { if (valid(ticket) && sourceTicket === sourceGeneration.current) setLoadingSource(false); }
   };
   const remove = async () => {
     const ticket = generation.current, id = current?.id;
@@ -90,16 +100,56 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   };
   const callId = source?.kind === "transcript" ? source.target_id ?? source.id.split(":")[0] : null;
   const sourceParts = source?.id.split(":") ?? [];
-  return <><div className="ask-workspace">
-    <header className="feature-heading"><div><span className="feature-eyebrow">ASK</span><h2>Ask about your work</h2><p>Find answers across your calls, documents, and experience.</p></div></header>
-    <div className="feature-toolbar"><Select aria-label="Saved conversations" value={current?.id ?? ""} onChange={e => void choose(e.target.value)}><option value="">New conversation</option>{conversations.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}</Select><Button onClick={() => void choose("")}>New</Button>{current && <Button onClick={() => setDeleting(true)}>Delete conversation</Button>}</div>
-    {error && <Banner tone="danger">{error}</Banner>}
-    {source && <Card title={source.label}><Button onClick={() => { sourceGeneration.current++; setSource(null); requestAnimationFrame(() => { const saved = scrollPosition.current; if (saved) saved.element.scrollTop = saved.top; }); }}>Back to conversation</Button>{source.start_ms !== undefined && <p>Transcript at {Math.floor(source.start_ms / 1000)} seconds</p>}<p style={{ whiteSpace: "pre-wrap" }}>{source.content}</p>{callId && !showCall && <Button onClick={() => setShowCall(true)}>Open saved call at this passage</Button>}{callId && showCall && <PageHeadingActive.Provider value={false}><Suspense fallback={<p>Loading saved call…</p>}><SavedCall sessionId={callId} transcriptFocus={{sessionId:callId,startMs:source.start_ms,channel:sourceParts[1] === "them" || sourceParts[1] === "me" ? sourceParts[1] : undefined,segId:Number(sourceParts[2])}} onClose={() => setShowCall(false)} onDeleted={() => { setShowCall(false); setSource(null); setError("The saved call was deleted. This citation is no longer available."); }} /></Suspense></PageHeadingActive.Provider>}</Card>}<div ref={conversationElement} hidden={source !== null}>
-      <details className="ask-context"><summary>Context: {scope.kind}{scope.id ? ` · ${options.find(o => o.id === scope.id)?.label ?? scope.id}` : ""}</summary><div className="ui-stack"><Field label="Context"><Select value={scope.kind} onChange={e => setScope({ ...scope, kind: e.target.value as AskScope["kind"], id: undefined })}>{["auto", "all", "general", "company", "application", "document", "call"].map(kind => <option key={kind} value={kind}>{kind === "auto" ? "Auto · this profile" : kind}</option>)}</Select></Field>{!["auto", "all", "general"].includes(scope.kind) && <Field label="Selected source"><Select value={scope.id ?? ""} onChange={e => setScope({ ...scope, id: e.target.value })}><option value="">Choose context</option>{scope.id && !options.some(o => o.id === scope.id) && <option value={scope.id}>{scope.id}</option>}{options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</Select></Field>}<Field label="From date"><Input type="date" value={scope.from_date ?? ""} onChange={e => setScope({ ...scope, from_date: e.target.value || undefined })} /></Field><Field label="To date"><Input type="date" value={scope.to_date ?? ""} onChange={e => setScope({ ...scope, to_date: e.target.value || undefined })} /></Field></div></details>
-      <div aria-live="polite" className="ask-messages">{!current?.messages?.length && <div className="ask-empty"><h3>What would you like to work through?</h3><p>Find a decision, prepare for a conversation, or reflect on your progress.</p><div className="ask-prompts">{["What did I decide in my last meeting?", "Help me prepare for my next interview", "Summarize my recent work"].map(prompt => <Button key={prompt} onClick={() => setDraft(prompt)}>{prompt}</Button>)}</div></div>}{current?.messages?.map(m => <Card key={m.id} title={m.question}><p style={{ whiteSpace: "pre-wrap" }}>{m.answer || (m.status === "pending" ? "Preparing an answer…" : m.error || m.status)}</p><div className="ui-row-inline">{m.sources.map(s => <Button size="sm" key={`${s.kind}/${s.id}`} onClick={() => void inspect(s)}>{s.label}{s.date ? ` · ${s.date.slice(0, 10)}` : ""}</Button>)}</div>{m.status === "pending" && <Button onClick={() => void action(m, "cancel")}>Cancel answer</Button>}{["failed", "cancelled"].includes(m.status) && <Button onClick={() => void action(m, "retry")}>Retry answer</Button>}</Card>)}</div>
-      <form className="ask-composer" onSubmit={e => { e.preventDefault(); void send(); }}><Field label="Ask a question"><Textarea value={draft} maxLength={8000} onChange={e => setDraft(e.target.value)} placeholder="Ask about your work…" rows={3} /></Field><Button type="submit" variant="primary" loading={busy} disabled={pending || !draft.trim() || (!["auto", "all", "general"].includes(scope.kind) && !scope.id)}>Ask</Button></form>
-      <p className="ui-field-hint">{current?.retrieval_notice ?? "Answers use available information in this profile. Public web search is not connected."}</p>{current?.retention_notice && <p className="ui-field-hint">{current.retention_notice}</p>}
+  return <div className="ask-workspace feature-page">
+    <header className="feature-heading">
+      <div><h2>Ask about your work</h2><p>Answers grounded in your calls, documents, and experience.</p></div>
+      <span className="feature-heading-icon" aria-hidden="true"><Icon name="work" size={20} /></span>
+    </header>
+    <div className="feature-toolbar ask-toolbar">
+      <Field label="Saved conversations"><Select aria-label="Saved conversations" value={current?.id ?? ""} onChange={e => void choose(e.target.value)}><option value="">New conversation</option>{conversations.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}</Select></Field>
+      <Button onClick={() => void choose("")}>New</Button>
+      {current && <Button variant="danger-ghost" size="sm" onClick={() => setDeleting(true)}>Delete conversation</Button>}
     </div>
-    <ConfirmDialog open={deleting} onOpenChange={setDeleting} title="Delete conversation?" confirmLabel="Delete" onConfirm={remove} />
-  </div></>;
+    {error && <Banner tone="danger" title="Could not complete your request">{error}</Banner>}
+    {loadingSource && <p className="feature-loading" role="status"><Spinner size="sm" label={null} /> Opening source…</p>}
+    {source && <Card className="ask-source" title={source.label} actions={<Button size="sm" onClick={() => { sourceGeneration.current++; setSource(null); requestAnimationFrame(() => { const saved = scrollPosition.current; if (saved) saved.element.scrollTop = saved.top; }); }}>Back to conversation</Button>}>
+      {source.start_ms !== undefined && <p className="ui-field-hint">Transcript at {Math.floor(source.start_ms / 1000)} seconds</p>}
+      <div className="feature-prose" dir="auto">{source.content}</div>
+      {callId && !showCall && <Button onClick={() => setShowCall(true)}>Open saved call at this passage</Button>}
+      {callId && showCall && <PageHeadingActive.Provider value={false}><Suspense fallback={<SkeletonList rows={2} label="Loading saved call" />}><SavedCall sessionId={callId} transcriptFocus={{sessionId:callId,startMs:source.start_ms,channel:sourceParts[1] === "them" || sourceParts[1] === "me" ? sourceParts[1] : undefined,segId:Number(sourceParts[2])}} onClose={() => setShowCall(false)} onDeleted={() => { setShowCall(false); setSource(null); setError("The saved call was deleted. This citation is no longer available."); }} /></Suspense></PageHeadingActive.Provider>}
+    </Card>}
+    <div ref={conversationElement} hidden={source !== null} className="ask-conversation">
+      <details className="ask-context feature-disclosure">
+        <summary><span>Context</span><span className="feature-summary-meta">{scopeLabels[scope.kind]}{scope.id ? ` · ${options.find(o => o.id === scope.id)?.label ?? "Selected source"}` : ""}</span></summary>
+        <div className="ui-stack">
+          <Field label="Context"><Select value={scope.kind} onChange={e => setScope({ ...scope, kind: e.target.value as AskScope["kind"], id: undefined })}>{Object.entries(scopeLabels).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</Select></Field>
+          {!["auto", "all", "general"].includes(scope.kind) && <Field label="Selected source" hint={options.length ? undefined : "No available sources in this category."}><Select value={scope.id ?? ""} onChange={e => setScope({ ...scope, id: e.target.value })}><option value="">Choose context</option>{scope.id && !options.some(o => o.id === scope.id) && <option value={scope.id}>Selected source</option>}{options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</Select></Field>}
+          <Field label="From date" optional><Input type="date" value={scope.from_date ?? ""} onChange={e => setScope({ ...scope, from_date: e.target.value || undefined })} /></Field>
+          <Field label="To date" optional error={invalidDates ? "Choose a date on or after the start date." : null}><Input type="date" min={scope.from_date} value={scope.to_date ?? ""} onChange={e => setScope({ ...scope, to_date: e.target.value || undefined })} /></Field>
+        </div>
+      </details>
+      {loadingConversation ? <SkeletonList rows={3} label="Loading conversation" /> : <div aria-live="polite" aria-relevant="additions text" className="ask-messages">
+        {!current?.messages?.length && <div className="ask-empty">
+          <h3>What would you like to work through?</h3><p>Start with a question, or choose one below.</p>
+          <div className="ask-prompts">{["What did I decide in my last meeting?", "Help me prepare for my next interview", "Summarize my recent work"].map(prompt => <Button key={prompt} onClick={() => { setDraft(prompt); draftElement.current?.focus(); }}>{prompt}<span aria-hidden="true">↗</span></Button>)}</div>
+        </div>}
+        {current?.messages?.map(m => <article key={m.id} className="ask-message">
+          <div className="ask-question"><span className="feature-eyebrow">You asked</span><h3 dir="auto">{m.question}</h3></div>
+          <div className="ask-response">
+            {m.answer ? <div className="feature-prose" dir="auto">{m.answer}</div> : m.status === "pending" ? <p className="feature-loading"><Spinner size="sm" label={null} /> Preparing an answer…</p> : <p className="ui-text-2">{m.error || (m.status === "cancelled" ? "Answer cancelled. Your question is saved." : "An answer could not be prepared. Try again.")}</p>}
+            {!!m.sources.length && <div className="ask-citations"><span className="feature-eyebrow">Sources</span><div className="ui-row-inline">{m.sources.map(s => <Button size="sm" key={`${s.kind}/${s.id}`} onClick={() => void inspect(s)}>{s.label}{s.date ? ` · ${s.date.slice(0, 10)}` : ""}</Button>)}</div></div>}
+            {m.status === "pending" && <Button size="sm" variant="ghost" onClick={() => void action(m, "cancel")}>Cancel answer</Button>}
+            {["failed", "cancelled"].includes(m.status) && <Button size="sm" onClick={() => void action(m, "retry")}>Retry answer</Button>}
+          </div>
+        </article>)}
+      </div>}
+      <form className="ask-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
+        <Field label="Ask a question"><Textarea ref={draftElement} dir="auto" value={draft} maxLength={8000} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} placeholder="Ask about your work…" rows={3} /></Field>
+        <div className="ask-composer-footer"><span className="ui-field-hint">{needsContext ? "Choose a source in Context to continue." : invalidDates ? "Check the date range in Context." : pending ? "Your answer is being prepared." : "Ctrl / ⌘ + Enter to ask"}</span><Button type="submit" variant="primary" loading={busy} disabled={pending || loadingConversation || !draft.trim() || needsContext || invalidDates}>Ask</Button></div>
+      </form>
+      <p className="feature-footnote">{current?.retrieval_notice ?? "Answers use available information in this profile. Public web search is not connected."}</p>
+      {current?.retention_notice && <p className="feature-footnote">{current.retention_notice}</p>}
+    </div>
+    <ConfirmDialog open={deleting} onOpenChange={setDeleting} title="Delete conversation?" confirmLabel="Delete" onConfirm={remove}>This removes the saved questions, answers, and citations in this conversation.</ConfirmDialog>
+  </div>;
 }

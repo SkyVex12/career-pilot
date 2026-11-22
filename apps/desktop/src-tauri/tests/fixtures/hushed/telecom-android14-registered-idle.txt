@@ -1,0 +1,9 @@
+CallsManager:
+  mCalls:
+  mCallAudioManager:
+PhoneAccountRegistrar:
+  phoneAccounts:
+    [[X] PhoneAccount: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, ***FIXTURE***, UserHandle{0} Capabilities: CallProvider MultiUser PlaceEmerg SimSub  Audio Routes: BESW Schemes: tel voicemail  Extras: [REDACTED] GroupId: ***FIXTURE***]
+    [[X] PhoneAccount: ComponentInfo{app.careerpilot.telecomfixture/app.careerpilot.telecomfixture.FixtureConnectionService}, ***FIXTURE***, UserHandle{0} Capabilities: SelfManaged  Audio Routes: BESW Schemes: tel  Extras: null GroupId: ***FIXTURE***]
+    test emergency PhoneAccount filter: null
+Analytics:

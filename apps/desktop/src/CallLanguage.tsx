@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button, Checkbox, Field, Select } from "./ui";
+import { Icon } from "./ui/Icon";
 
 type Preference = { spoken_language: string };
 type Language = { id: string; name: string; native_name?: string; direction?: "ltr" | "rtl" };
@@ -43,7 +44,8 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
       catch (e) { setError(`Could not save the profile default: ${String(e)}`); }
     }
   };
-  return <details className="call-options"><summary>Customize</summary><div className="ui-stack">
+  const selection = items.find(item => item.id === value);
+  return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span><span className="ui-disclosure-meta">{loading ? "Loading languages…" : error ? "Language needs attention" : `${selection?.name ?? value} · call language`}</span></summary><div className="ui-disclosure-body ui-stack">
     <Field label="Language" hint="Choose before starting. The language stays fixed during the call.">
       <Select aria-label="Language" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
         {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}

@@ -1,0 +1,114 @@
+{
+  "date": "2026-11-20",
+  "product_revision": "61684234c4798d323c56cfcf452788b281bde8e0",
+  "branch": "codex/hushed-call-detection",
+  "supersedes_for_detection": "hushed-call-detection-2026-11-20.json",
+  "validation": {
+    "desktop_rust": {
+      "passed": 183,
+      "failed": 0,
+      "ignored": 6
+    },
+    "telecom_parser_after_lint_refactor": {
+      "passed": 17,
+      "failed": 0
+    },
+    "affected_desktop_vitest": {
+      "passed": 34,
+      "files": 3,
+      "failed": 0
+    },
+    "release_script_tests": {
+      "passed": 10
+    },
+    "typescript": "passed",
+    "rustfmt": "passed",
+    "clippy_default_all_targets_deny_warnings": "passed",
+    "clippy_release_all_targets_deny_warnings": "passed",
+    "notes": "Native suite includes parser, sampler lifecycle, notification fallback, subprocess bounds and generic desktop behavior. Parser tests reran after a Clippy-only refactor. Existing TAURI callback warnings remain in the passing interface tests. Earlier full-interface and Mac-adapter results remain in the prior receipt and are not represented as newly run here."
+  },
+  "actual_hushed": {
+    "version": "5.38.1",
+    "android": "14",
+    "emulator": "LDPlayer 14, selected user instance 0",
+    "notification_only_trial": "User reported no detection; ringing interval was not captured.",
+    "post_call_notification_metadata": "No supported framework CallStyle/callType fields.",
+    "telecom_provider_registered": true,
+    "new_production_probe": {
+      "state": "idle",
+      "connected": 1,
+      "monitored": 1,
+      "calls": 0,
+      "elapsed_ms": 372
+    },
+    "compatibility_fixes": [
+      "Ignore unrelated tab-indented history after Analytics.",
+      "Resolve the Binder service process with dumpsys --pid telecom; a guessed Telecom process name is absent on this image."
+    ],
+    "incoming_active_end_verified": false,
+    "audio_routing_verified": false,
+    "listener": "Stopped immediately when user could not repeat the call.",
+    "raw_dumps_retained": false,
+    "caller_or_account_values_retained": false,
+    "settings_changed": false,
+    "limitation": "A registered idle provider does not prove that live Hushed calls use Android Telecom; a real incoming/answer/end trial is still required."
+  },
+  "android_telecom_fixture": {
+    "source_package": "app.careerpilot.telecomfixture",
+    "android": "14",
+    "emulator": "CareerPilotValidation, index 1, emulator-5556",
+    "native_states_verified": [
+      "registered idle",
+      "unregistered idle"
+    ],
+    "source_derived_only_states": [
+      "ringing",
+      "active",
+      "held",
+      "disconnected"
+    ],
+    "positive_native_lifecycle_verified": false,
+    "binding_observation": "The same exported protected service bound with no action or a fixture action, but binding with android.telecom.ConnectionService failed. Account registration and permission to add an incoming call were verified. No positive current-call row was captured; this does not establish how real Hushed behaves.",
+    "fixture_apk_sha256": "f1a32f129c0a1de4ef54054baa47309e3a1001cf3cafc66329145e371eb964c3",
+    "fixture_normalization": "Native framing, enabled flags, component and capability tokens retained; account/group IDs and extras replaced with documented placeholders. Synthetic lifecycle files are explicitly named and labeled.",
+    "raw_dumps_retained": false,
+    "real_calls_placed": false,
+    "audio_stream_started": false,
+    "cleanup": "Fixture removed, current calls empty, validation index 1 stopped. User instance 0 left running unchanged."
+  },
+  "operational_limits": {
+    "max_selected_instances": 4,
+    "parallel_instances": true,
+    "max_commands_per_instance": 6,
+    "command_timeout_ms": 1500,
+    "max_command_output_bytes": 262144,
+    "poll_wait_seconds": 5,
+    "package_cache_seconds": 30,
+    "absence_samples_before_retirement": 2,
+    "limitations": [
+      "Polling may miss brief calls.",
+      "Only the exact Hushed Telecom component or supported notification metadata is recognized.",
+      "Unknown or failed snapshots preserve lifecycle without presenting stale evidence.",
+      "Call-state detection does not establish audio capture routing."
+    ]
+  },
+  "remaining_requirements": [
+    "M01-017 actual Hushed acceptance",
+    "M01-021 actual Hushed acceptance/audio routing"
+  ],
+  "windows_preview": {
+    "built_at_utc": "2026-11-20T17:40:41.937993+00:00",
+    "path": ".implementation/artifacts/windows/CareerPilot-hushed-telecom-preview.exe",
+    "size_bytes": 51979264,
+    "sha256": "104bfaadee2532f6d9d94280a07b96422d2bd2b8bca9c2aade29d89ba453fa58",
+    "architecture": "Windows x86_64 (PE machine 0x8664)",
+    "build": "Tauri debug cloud preview, embedded frontend, unsigned, no bundle or updater",
+    "command": "pnpm --filter @copilot/desktop build:cloud",
+    "product_revision": "61684234c4798d323c56cfcf452788b281bde8e0",
+    "installed_or_launched": false,
+    "original_artifacts_preserved": true,
+    "product_source_unchanged_after_build": true,
+    "copy_hash_matches_build_output": true,
+    "authenticode_status": "NotSigned"
+  }
+}
