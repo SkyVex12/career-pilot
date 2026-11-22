@@ -2523,7 +2523,7 @@ class SessionManager:
             async with user_tx(self.svc.pool, account.user_id) as conn:
                 return await careeros.is_linked(conn)
         except (OSError, asyncpg.PostgresError) as e:
-            log.warning("could not check the Career-OS link: %s", e)
+            log.warning("could not check the HubRuby link: %s", e)
             return False
 
     async def as_profile(self, account: Principal, profile: str) -> Principal | None:
@@ -2562,7 +2562,9 @@ class SessionManager:
         paths = list(self.svc.stt_providers) + list(self.svc.stt_me_providers or [])
         if (
             not paths
-            or self.svc.settings.deepgram_model != "nova-3"
+            or not languages.recognition_supported(
+                language, self.svc.settings.deepgram_model, self.svc.settings.stt_providers
+            )
             or any(name != "deepgram" for name, _ in paths)
             or any(name != "deepgram" for name in self.svc.settings.stt_providers)
         ):

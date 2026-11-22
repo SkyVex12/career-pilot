@@ -28,7 +28,7 @@ Before returning private content, the API durably creates/marks the session with
 
 Deterministic tests exercise bounds, provenance/citation preservation, correction survival, idempotency, stale/conflicting publications, encryption owner, wrong-profile/account denial, MCP authentication/envelopes/discovery/successful publication, sticky live privacy, guest exclusion and historical privacy. The real-stack test `apps/api/tests/test_personal_ai_stack.py` covers the complete authenticated request/publish/refresh/correct/remove path against migrated PostgreSQL/RLS and encryption. It passed against the local Docker stack on 2026-11-19 after PostgreSQL/Valkey became available. The focused combined personal-AI unit, private live context, call language and worker session-log run passed 58 tests. Desktop `tests/personal-ai.test.tsx` passed three fallback/retry, correction/removal and failed-refresh flows; desktop typecheck passed. The real local Codex host run and scoped-token validation described below passed; remote ChatGPT onboarding remains unverified.
 
-Release verification still requires remote host browser consent and deployment reachability/sleep-wake checks, real permitted source gathering (the local host test deliberately uses fictional user reports only), and provider-specific confirmation/retention review. No host plan is claimed free or unlimited; host preparation and Career Pilot live usage remain separate costs.
+Release verification still requires remote host browser consent and deployment reachability/sleep-wake checks, private connector/source access and provider-specific confirmation/retention review. The local public-source→host→Ask check below is complete; it does not establish private connector access. No host plan is claimed free or unlimited; host preparation and Career Pilot live usage remain separate costs.
 
 
 ## OAuth deployment and client setup
@@ -77,3 +77,17 @@ The focused personal-AI/OAuth backend run passed 35 tests. Global Ruff and Pyrig
 `python scripts/validate_personal_ai_consent.py` serves the actual API and nonce-CSP consent page on loopback with a disposable migrated database and the existing `MemoryMailer`; no email leaves the process. Headless Edge drives the real email-code start/verify endpoints, rejects a bad code, signs in with the captured fictional code, and clicks Allow. It checks the browser's actual Origin and bearer headers plus the one-time consent handle, the callback state/issuer/code, successful PKCE exchange and both MCP tools. A second fictional account clicks Deny and receives `access_denied` with no code. The issued test token is revoked.
 
 The 2026-11-19 run passed with no page or nonce-CSP errors, no axe violations in three review views, and no horizontal overflow at 390 px. Screenshots were visually inspected. Evidence is [validation.json](../design/screens/personal-ai-consent/validation.json), [desktop review](../design/screens/personal-ai-consent/allow-review.png), and [narrow review](../design/screens/personal-ai-consent/deny-mobile.png). The only product adjustment from this browser pass was a semantic main landmark. The browser test uses a separate guarded fixture-only mail endpoint attached only inside the validation process, never in the shipped API. External provider email delivery and remote host browser integration remain deployment checks.
+
+## Sourced local host-to-Ask validation (2026-11-20)
+
+The optional `--sourced` mode of `scripts/validate_personal_ai_host.py` completes the actual gather→publish→use path. With the local Docker stack, configured answer provider and authenticated Codex CLI, run:
+
+```powershell
+.venv/Scripts/python.exe scripts/validate_personal_ai_host.py --sourced --output target/personal-ai-host/sourced/result.json
+```
+
+This opt-in check makes two real host runs and one genuine Ask generation. It supplies only a hash-pinned, 24-word public MCP specification excerpt through an ephemeral read-only source tool. The tool accepts no path, URL or other input; it is mounted only in the disposable validation process and is absent from the product API. The host explicitly retrieves the excerpt before using the existing `get_context_request` and `publish_context_brief` tools. The harness rejects non-loopback storage, keeps the child sandbox unchanged, redacts credentials, and drops its temporary database on exit. It does not inspect host credential files or persist MCP configuration.
+
+The real run passed: Ask retained the source URL and S1 citation in its 3,797 ms answer. Cross-account source/conversation access returned denial; refreshing the brief invalidated the old source; deletion removed future retrieval while the saved answer remained until its conversation was deleted. No approved facts or resumes were created. The grant was revoked and disposable storage cleaned. The [sanitized evidence receipt](evidence/personal-ai-sourced-host-2026-11-20.json) distinguishes actual results from the 56 focused deterministic checks and records the earlier private-payload rejection and blocked shell attempt. Neither blocked attempt is presented as successful source gathering.
+
+This establishes one local public-source integration. It does not certify private connectors, remote ChatGPT onboarding, production HTTPS sleep/wake, or general answer quality.

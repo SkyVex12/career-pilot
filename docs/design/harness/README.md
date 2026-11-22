@@ -24,3 +24,18 @@ PW_DIR=/some/dir node docs/design/harness/shoot.mjs docs/design/screens/before
 
 Main-window shots are 1080×780 (the window's default size), overlay shots 760×620 (its default),
 over a busy stand-in for a video call, since the overlay window is transparent.
+
+## Sharing and Windows regression scenarios
+
+Use the real React screens with local media fixtures:
+
+- `?call=assisting&screen=waiting`, `on`, `control`, `error`, or `denied` shows the assistant workspace states.
+- Add `#overlay` and open Shared screen to inspect the receiver in the overlay.
+- `?call=midcall&assistants=1#overlay` shows an admitted assistant, an invitation, access selectors, and the screen-source picker.
+- `?call=ended` must open Start call, without requesting the previous review.
+- `?call=midcall&summary=empty`, then `window.__harness.end()`, shows the unavailable-summary state.
+
+`assistance.ts` creates a labeled canvas desktop and mock room. It never reads a real screen,
+opens a microphone, connects to LiveKit, or sends remote input. These fixtures validate
+rendering and interaction only; native resizing, actual capture visibility and two-device
+media delivery require the desktop build.

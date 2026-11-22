@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Career Pilot",
+    "name": "CoRuby",
     "slug": "career-pilot-mobile",
     "version": "0.1.0",
     "orientation": "default",
@@ -24,6 +24,7 @@
       "allowBackup": false
     },
     "plugins": [
+      "./plugins/withHttpTest.cjs",
       "expo-secure-store",
       [
         "expo-audio",

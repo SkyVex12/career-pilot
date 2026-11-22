@@ -42,6 +42,7 @@ def api_settings(**over: Any) -> ApiSettings:
         "s3_secret_key": "local-secret",
         "valkey_url": VALKEY_URL,
         "max_document_bytes": 64 * 1024,
+        "embedder": "none",  # Stack fixtures must never create paid embedding requests.
     }
     base.update(over)
     return ApiSettings(_env_file=None, **base)  # pyright: ignore[reportCallIssue]

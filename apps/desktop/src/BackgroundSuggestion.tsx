@@ -20,5 +20,5 @@ export function BackgroundSuggestion() {
     try{await invoke("background_respond",{id:suggestion.id,accept});setSuggestion(null);}
     catch(e){setError(String(e));}finally{setBusy(false);}
   };
-  return <main className="ui-stack" style={{padding:16}}>{suggestion && <><strong>{suggestion.kind==="end" ? "Call may have ended" : "Call detected"}</strong><p>{suggestion.kind==="end" ? "Review whether to end Copilot." : "Start Copilot for live assistance."}</p><div className="ui-row-inline"><Button disabled={busy} onClick={()=>void respond(true)}>{suggestion.kind==="end" ? "Review end call" : "Start Copilot"}</Button><Button disabled={busy} onClick={()=>void respond(false)}>Not now</Button></div></>}{error && <p role="alert">{error}</p>}</main>;
+  return <main className="ui-stack" style={{padding:16}}>{suggestion && <><strong>{suggestion.kind==="end" ? "Call may have ended" : "Call detected"}</strong><p>{suggestion.kind==="end" ? "Review whether to end CoRuby." : "Start CoRuby for live assistance."}</p><div className="ui-row-inline"><Button disabled={busy} onClick={()=>void respond(true)}>{suggestion.kind==="end" ? "Review end call" : "Start CoRuby"}</Button><Button disabled={busy} onClick={()=>void respond(false)}>Not now</Button></div></>}{error && <p role="alert">{error}</p>}</main>;
 }

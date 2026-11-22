@@ -39,7 +39,7 @@ function fakeRoom() {
     emit(event: string, ...args: unknown[]) {
       for (const f of handlers.get(event) ?? []) f(...args);
     },
-    connect: vi.fn(async () => undefined),
+    connect: vi.fn(async (): Promise<void> => undefined),
     disconnect: vi.fn(async () => undefined),
     localParticipant: {
       publishTrack: vi.fn(async () => undefined),
@@ -579,5 +579,57 @@ describe("native Mac capture failures", () => {
     await t.h.share("session");
     expect(t.h.status.host).toBe("off");
     expect(t.h.status.error).toBe("Allow Screen Recording in System Settings.");
+  });
+});
+
+
+describe("sharing and viewing cancellation", () => {
+  it("stops a native capture that arrives after the call ended", async () => {
+    let resolve!: (tracks: never[]) => void;
+    const capture = vi.fn(() => new Promise<never[]>(done => { resolve = done; }));
+    const t = host({ capture });
+    const opening = t.h.share("s1"); await t.h.stop(null);
+    const late = fakeScreenTrack(); resolve([late as never]); await opening;
+    expect(late.stop).toHaveBeenCalled(); expect(t.deps.token).not.toHaveBeenCalled();
+    expect(t.h.status.host).toBe("off");
+  });
+
+  it("does not publish after stop during room connection", async () => {
+    const t = host(); let resolve!: () => void;
+    t.room.connect.mockImplementation(() => new Promise<void>(done => { resolve = done; }));
+    const opening = t.h.share("s1"); await vi.waitFor(() => expect(t.room.connect).toHaveBeenCalled());
+    await t.h.stop(null); resolve(); await opening;
+    expect(t.room.localParticipant.publishTrack).not.toHaveBeenCalled();
+    expect(t.track.stop).toHaveBeenCalled(); expect(t.h.status.host).toBe("off");
+  });
+
+  it("ignores stale subscriptions and control after a receiver is closed", async () => {
+    const t = guest({ token: vi.fn(async () => ({ url: "wss://lk", token: "t", control: true })) });
+    await t.g.open(); const room = t.rooms[0]; await t.g.close();
+    room.emit("trackSubscribed", { kind: "video" }, {}, { identity: "host" });
+    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    expect(t.g.track).toBeNull(); expect(t.g.state.controlling).toBe(false);
+  });
+
+  it("never connects when a revoked seat token arrives late", async () => {
+    let resolve!: (grant: { url: string; token: string }) => void;
+    const t = guest({ token: vi.fn(() => new Promise<{ url: string; token: string }>(done => { resolve = done; })) });
+    const opening = t.g.open(); await t.g.close(); resolve({ url: "wss://lk", token: "late" }); await opening;
+    expect(t.rooms).toHaveLength(0);
+  });
+
+  it("keeps the retained video after LiveKit reconnects without a new track event", async () => {
+    const t = guest(); await t.g.open(); const video = { kind: "video" };
+    t.rooms[0].emit("trackSubscribed", video, {}, { identity: "host" });
+    t.rooms[0].emit("reconnecting"); expect(t.g.state.state).toBe("connecting");
+    t.rooms[0].emit("reconnected"); expect(t.g.state.state).toBe("watching"); expect(t.g.track).toBe(video);
+  });
+
+  it("maps a Windows native capture by monitor device name instead of equal display dimensions", () => {
+    const video = fakeScreenTrack().mediaStreamTrack as unknown as MediaStreamTrack;
+    const twin = { ...MAIN, id: "display-twin", rect: { ...MAIN.rect, x: -2560 } };
+    nativeShares.set(video, { id: 7, kind: "monitor", title: "Laptop", monitor_id: twin.id });
+    expect(sharedMonitor([MAIN, twin], video)).toEqual(twin);
+    expect(sharedMonitor([MAIN], video)).toBeNull();
   });
 });

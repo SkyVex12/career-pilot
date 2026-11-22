@@ -5,27 +5,163 @@
 //! That flag omits the window. `WDA_MONITOR` (0x1) is never used: it paints a black rectangle
 //! in the capture. If the call is rejected (older Windows, a window the flag does not cover,
 //! or a capture path that ignores affinity), the window stays as it is and the failure is logged.
-//! Windows 11 21H2 (build 22000) rejects the flag with "not enough memory" while the window
-//! holds WebView2's content, a child window that msedgewebview2.exe owns. There the WebView
-//! moves to a hidden window while the flag is set, then moves back. That build also gets a
-//! frame refresh after the flag, and a transparent overlay stays white there unless the frame
-//! covers the whole client area.
+//! Some Windows 11 21H2 systems reject exclusion with ERROR_NOT_ENOUGH_MEMORY. Report the
+//! observed affinity instead of reparenting WebView2: destroying a temporary parent after a
+//! failed restore can destroy the live WebView, and reparenting during resize is unsafe.
 //!
 //! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
 //! window title is the configured display name. Task Manager's process name is the executable's
 //! description, which `program_name` writes when that name is saved; it shows up after the next
 //! start. The executable file name stays `copilot-desktop.exe`.
 //!
-//! The overlay is created hidden and transparent. Changing its title, taskbar tab, or capture
-//! affinity while it is hidden makes Windows paint an opaque white rectangle where the overlay
-//! sits, so those calls wait until the overlay is actually on screen.
+//! Affinity and the overlay's transparent DWM surface are updated on the same window thread.
+//! Hidden windows still receive OFF transitions so showing them cannot retain stale exclusion.
 
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use uuid::Uuid;
 
 /// Stops a focus event raised by applying stealth from applying it again.
 static APPLYING: AtomicBool = AtomicBool::new(false);
+
+/// A capture request and the state actually reported by the native platform. Windows readback
+/// verifies the flag, not whether a particular third-party capture client honors it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CaptureExclusionStatus {
+    pub window: String,
+    pub requested: bool,
+    pub effective: Option<bool>,
+    pub windows_build: u32,
+    pub error: Option<String>,
+    pub reason: &'static str,
+}
+
+#[derive(Clone)]
+struct CapturePolicy {
+    stealth: bool,
+    display_name: String,
+    screenshot_leases: HashSet<Uuid>,
+    revision: u64,
+}
+
+impl Default for CapturePolicy {
+    fn default() -> Self {
+        Self {
+            stealth: false,
+            display_name: DEFAULT_DISPLAY_NAME.into(),
+            screenshot_leases: HashSet::new(),
+            revision: 0,
+        }
+    }
+}
+
+impl CapturePolicy {
+    fn request(&self, label: &str) -> (bool, &'static str) {
+        if label == "overlay" && !self.screenshot_leases.is_empty() {
+            (true, "screenshot")
+        } else if self.stealth {
+            (true, "stealth")
+        } else {
+            (false, "off")
+        }
+    }
+
+    fn release(&mut self, token: Uuid) {
+        if self.screenshot_leases.remove(&token) {
+            self.revision += 1;
+        }
+    }
+}
+
+fn policy() -> &'static Mutex<CapturePolicy> {
+    static POLICY: OnceLock<Mutex<CapturePolicy>> = OnceLock::new();
+    POLICY.get_or_init(|| Mutex::new(CapturePolicy::default()))
+}
+
+#[derive(Default)]
+struct PresentationCache(BTreeMap<String, (bool, String)>);
+
+impl PresentationCache {
+    fn changed(&mut self, label: &str, on: bool, name: &str) -> bool {
+        if self.0.get(label).is_some_and(|(was_on, was_name)| *was_on == on && was_name == name) {
+            return false;
+        }
+        self.0.insert(label.into(), (on, name.into()));
+        true
+    }
+}
+
+fn presentation_changed(label: &str, on: bool, name: &str) -> bool {
+    static PRESENTATION: OnceLock<Mutex<PresentationCache>> = OnceLock::new();
+    PRESENTATION
+        .get_or_init(|| Mutex::new(PresentationCache::default()))
+        .lock()
+        .unwrap()
+        .changed(label, on, name)
+}
+
+fn statuses() -> &'static Mutex<BTreeMap<String, CaptureExclusionStatus>> {
+    static STATUS: OnceLock<Mutex<BTreeMap<String, CaptureExclusionStatus>>> = OnceLock::new();
+    STATUS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+#[tauri::command]
+pub fn capture_exclusion_status() -> Vec<CaptureExclusionStatus> {
+    statuses().lock().unwrap().values().cloned().collect()
+}
+
+fn report(
+    app: &AppHandle,
+    label: &str,
+    requested: bool,
+    reason: &'static str,
+    effective: Option<bool>,
+    error: Option<String>,
+) {
+    let status = CaptureExclusionStatus {
+        window: label.into(),
+        requested,
+        effective,
+        windows_build: build_number(),
+        error,
+        reason,
+    };
+    let changed = {
+        let mut statuses = statuses().lock().unwrap();
+        if statuses.get(label) == Some(&status) {
+            false
+        } else {
+            statuses.insert(label.into(), status.clone());
+            true
+        }
+    };
+    if changed {
+        if let Some(error) = &status.error {
+            tracing::warn!(
+                window = label,
+                requested,
+                ?effective,
+                reason,
+                windows_build = status.windows_build,
+                "capture exclusion: {error}"
+            );
+        } else {
+            tracing::info!(
+                window = label,
+                requested,
+                ?effective,
+                reason,
+                windows_build = status.windows_build,
+                "capture exclusion updated"
+            );
+        }
+        let _ = app.emit("capture-exclusion-status", &status);
+    }
+}
 
 /// `WDA_NONE`: capture includes the window again.
 const WDA_NONE: u32 = 0x0000_0000;
@@ -33,7 +169,7 @@ const WDA_NONE: u32 = 0x0000_0000;
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
 
 /// Shown in Task Manager for this app. Neutral, and the app's own name.
-pub const DEFAULT_DISPLAY_NAME: &str = "Copilot";
+pub const DEFAULT_DISPLAY_NAME: &str = "CoRuby";
 const MAX_DISPLAY_NAME: usize = 64;
 
 /// Windows' own process and Task Manager names. A display name must not use one of these.
@@ -74,7 +210,7 @@ const RESERVED: &[&str] = &[
 pub fn normalize_display_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
     if name.is_empty() || name.chars().count() > MAX_DISPLAY_NAME {
-        return Err("Enter a short name for this app, such as Copilot.".into());
+        return Err("Enter a short name for this app, such as CoRuby.".into());
     }
     if name
         .chars()
@@ -85,7 +221,7 @@ pub fn normalize_display_name(raw: &str) -> Result<String, String> {
     let key = name.to_ascii_lowercase();
     let key = key.strip_suffix(".exe").unwrap_or(&key).trim().trim_end_matches('.');
     if RESERVED.contains(&key) {
-        return Err("That name belongs to Windows. Use a plain name for this app, such as Copilot.".into());
+        return Err("That name belongs to Windows. Use a plain name for this app, such as CoRuby.".into());
     }
     Ok(name.to_string())
 }
@@ -99,7 +235,7 @@ pub(crate) fn affinity(exclude: bool) -> u32 {
 pub(crate) fn capture_needs_repeat() -> bool {
     #[cfg(windows)]
     {
-        windows_build() < WINDOWS_11_22H2
+        (22000..WINDOWS_11_22H2).contains(&windows_build())
     }
     #[cfg(not(windows))]
     {
@@ -107,64 +243,106 @@ pub(crate) fn capture_needs_repeat() -> bool {
     }
 }
 
-/// Apply capture exclusion, the taskbar button, and the window title. One window failing does
-/// not stop the others, and a failure does not hide or close anything.
+/// Apply the latest persisted choice. In particular, an older settings worker cannot enqueue
+/// its stale ON value after a newer worker has saved OFF.
 pub fn apply(app: &AppHandle, on: bool, display_name: &str) {
+    fn update_choice(on: bool, display_name: &str) {
+        let display_name =
+            normalize_display_name(display_name).unwrap_or_else(|_| DEFAULT_DISPLAY_NAME.into());
+        let mut policy = policy().lock().unwrap();
+        if policy.stealth != on || policy.display_name != display_name {
+            policy.stealth = on;
+            policy.display_name = display_name;
+            policy.revision += 1;
+        }
+    }
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        // Hold settings until its choice reaches the policy, so an older worker cannot
+        // overwrite a newer save between taking a snapshot and updating the request.
+        let settings = state.settings.lock().unwrap();
+        update_choice(settings.stealth, &settings.display_name);
+    } else {
+        update_choice(on, display_name);
+    }
+    refresh(app);
+}
+
+/// Reconcile on the window thread. Every native callback reads the current policy instead of
+/// capturing a bool that can become stale while the callback waits in the event queue.
+pub fn refresh(app: &AppHandle) {
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || apply_latest(&handle)) {
+        tracing::warn!("capture exclusion: could not reach the window thread: {error}");
+    }
+}
+
+fn apply_latest(app: &AppHandle) {
     if APPLYING.swap(true, Ordering::AcqRel) {
         return;
     }
-    #[cfg(target_os = "macos")]
-    if let Err(e) = app.set_activation_policy(if on {
-        tauri::ActivationPolicy::Accessory
-    } else {
-        tauri::ActivationPolicy::Regular
-    }) {
-        tracing::warn!("stealth mode: could not change Dock/app-switcher visibility: {e}");
-    }
-    let affinity = affinity(on);
-    for (label, window) in app.webview_windows() {
-        if label == "overlay" {
-            // A hidden transparent overlay paints an opaque white rectangle if its title,
-            // taskbar tab, or capture affinity changes. Leave it alone until it is shown.
-            // Mac can update hidden windows too, so turning stealth off also removes their masks.
-            // Once it is on screen, its title has to match the main window or Task Manager
-            // keeps a row under the old name.
-            if window.is_visible().unwrap_or(false) || cfg!(target_os = "macos") {
-                let _ = window.set_title(display_name);
-                set_window(&label, &window, affinity);
-                restore_overlay_transparency(&window);
-            }
-            continue;
+    loop {
+        let current = policy().lock().unwrap().clone();
+        #[cfg(target_os = "macos")]
+        if presentation_changed("app", current.stealth, &current.display_name)
+            && let Err(error) = app.set_activation_policy(if current.stealth {
+                tauri::ActivationPolicy::Accessory
+            } else {
+                tauri::ActivationPolicy::Regular
+            })
+        {
+            tracing::warn!("stealth mode: could not change Dock/app-switcher visibility: {error}");
         }
-        set_window(&label, &window, affinity);
-        present(&label, &window, on, display_name);
+        for (label, window) in app.webview_windows() {
+            if label == "overlay" {
+                // Avoid changing a hidden transparent window's caption/taskbar. Its capture
+                // flag is still reconciled, including OFF, and transparency repaired together.
+                if window.is_visible().unwrap_or(false)
+                    && presentation_changed(&label, current.stealth, &current.display_name)
+                {
+                    let _ = window.set_title(&current.display_name);
+                }
+            } else if presentation_changed(&label, current.stealth, &current.display_name) {
+                // Focus/readback must not rewrite native styles and disturb a resize or
+                // maximized window. Presentation changes only when its own inputs change.
+                present(&label, &window, current.stealth, &current.display_name);
+            }
+            set_window(app, &label, &window);
+        }
+        if policy().lock().unwrap().revision == current.revision {
+            break;
+        }
     }
     APPLYING.store(false, Ordering::Release);
 }
 
-/// Leave the overlay out of screen capture, or not, whatever the stealth setting: a guest
-/// following someone's call keeps that private call out of their own screen shares
-/// (ARCHITECTURE.md, "Guest seats"). Only while the overlay is on screen (see `apply`).
-pub fn exclude_overlay(app: &AppHandle, exclude: bool) {
-    let Some(window) = app.webview_windows().remove("overlay") else { return };
-    if window.is_visible().unwrap_or(false) || cfg!(target_os = "macos") {
-        set_window("overlay", &window, affinity(exclude));
-        restore_overlay_transparency(&window);
+/// A bounded screenshot temporarily excludes the overlay from its own capture. Once it
+/// finishes, the current Stealth choice applies again. Hosting or assisting never overrides it.
+pub struct ScreenshotProtection {
+    app: AppHandle,
+    token: Uuid,
+}
+
+impl Drop for ScreenshotProtection {
+    fn drop(&mut self) {
+        policy().lock().unwrap().release(self.token);
+        refresh_overlay(&self.app);
     }
 }
 
-/// Every visible window's caption. The hidden overlay is left alone so it does not paint white.
-/// Task Manager lists each visible window under the program name, so a window left as "Copilot"
-/// stays on screen as its own row.
-pub fn set_main_title(app: &AppHandle, display_name: &str) {
-    for (label, window) in app.webview_windows() {
-        if label == "overlay" && !window.is_visible().unwrap_or(false) {
-            continue;
-        }
-        let _ = window.set_title(display_name);
-        if label == "overlay" {
-            restore_overlay_transparency(&window);
-        }
+pub fn protect_screenshot_overlay(app: &AppHandle) -> ScreenshotProtection {
+    let token = Uuid::now_v7();
+    {
+        let mut policy = policy().lock().unwrap();
+        policy.screenshot_leases.insert(token);
+        policy.revision += 1;
+    }
+    refresh_overlay(app);
+    ScreenshotProtection { app: app.clone(), token }
+}
+
+fn refresh_overlay(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("overlay") {
+        set_window(app, "overlay", &window);
     }
 }
 
@@ -193,75 +371,50 @@ fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
 }
 
 #[cfg(windows)]
-fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
-    let hwnd = match window.hwnd() {
-        Ok(hwnd) => hwnd.0 as usize,
-        Err(e) => {
-            tracing::warn!("stealth mode: no window handle for {label}: {e}");
-            return;
+fn set_window(app: &AppHandle, label: &str, window: &WebviewWindow) {
+    let handle = app.clone();
+    let native_window = window.clone();
+    let native_label = label.to_string();
+    // Affinity and the transparency repair must be ordered on the native window thread.
+    // No WebView parent changes, frame invalidation, or geometry changes are needed here.
+    if let Err(error) = app.run_on_main_thread(move || {
+        let label = native_label;
+        let window = native_window;
+        let (requested, reason) = policy().lock().unwrap().request(&label);
+        let hwnd = match window.hwnd() {
+            Ok(hwnd) => hwnd.0,
+            Err(error) => {
+                report(
+                    &handle,
+                    &label,
+                    requested,
+                    reason,
+                    None,
+                    Some(format!("The window handle is unavailable: {error}")),
+                );
+                return;
+            }
+        };
+        let desired = affinity(requested);
+        let before = current_affinity(hwnd);
+        let error = if before != Some(desired) { set_affinity(hwnd, desired) } else { None };
+        let kept = current_affinity(hwnd);
+        if label == "overlay" && before != kept {
+            restore_overlay_transparency(&window);
         }
-    };
-    // Settings and overlay commands run on worker threads. `with_webview` runs on the thread
-    // that owns the window, and hands over the WebView2 controller that build 22000 needs.
-    let label = label.to_string();
-    let queued = window.with_webview(move |webview| {
-        set_window_now(&label, hwnd as *mut std::ffi::c_void, affinity, &webview.controller())
-    });
-    if let Err(e) = queued {
-        tracing::warn!("stealth mode: could not reach the window thread: {e}");
-    }
-}
-
-#[cfg(windows)]
-fn set_window_now(
-    label: &str,
-    hwnd: *mut std::ffi::c_void,
-    affinity: u32,
-    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
-) {
-    let build = windows_build();
-    // Already as asked: nothing to do. The focus repeat on 21H2 then costs nothing, and the
-    // WebView is not moved again on every focus.
-    if current_affinity(hwnd) == Some(affinity) {
-        return;
-    }
-    // Read the error before anything else can overwrite it.
-    let mut failed = set_affinity(hwnd, affinity);
-    // Build 22000 answers ERROR_NOT_ENOUGH_MEMORY (8) for a window that has a child window
-    // from another process (desktop.log, 2026-11-18: every call failed, at start and later,
-    // with pointer input off). WebView2's content is such a child: msedgewebview2.exe owns
-    // it. Move the WebView to a hidden window, set the flag, and move it back.
-    if failed == Some(ERROR_NOT_ENOUGH_MEMORY) && build < WINDOWS_11_22H2 {
-        log_foreign_children(label, hwnd);
-        failed = set_with_webview_parked(hwnd, affinity, controller);
-    }
-    if let Some(err) = failed {
-        tracing::warn!(
-            "stealth mode: {label} could not change capture exclusion on build {build} \
-             (SetWindowDisplayAffinity error {err}). The window stays visible to capture."
+        let kept = current_affinity(hwnd);
+        let (effective, error) = verify_affinity(desired, kept, error);
+        report(&handle, &label, requested, reason, effective, error);
+    }) {
+        let (requested, reason) = policy().lock().unwrap().request(label);
+        report(
+            app,
+            label,
+            requested,
+            reason,
+            None,
+            Some(format!("The window thread is unavailable: {error}")),
         );
-        return;
-    }
-    // Build 22000 applies the affinity only after DWM rebuilds the frame, and that rebuild
-    // can clear it. Set the flag again afterwards. Later builds already pick it up above.
-    if build < WINDOWS_11_22H2 {
-        refresh_frame(hwnd);
-        if let Some(err) = set_affinity(hwnd, affinity) {
-            tracing::warn!(
-                "stealth mode: {label} could not keep capture exclusion after the frame refresh (error {err})"
-            );
-        }
-    }
-    // Read back what Windows kept. A call that succeeds but does not stick shows no error
-    // code, so the log says which it was.
-    match current_affinity(hwnd) {
-        Some(kept) if kept == affinity => {
-            tracing::info!("stealth mode: {label} capture affinity {kept:#x} on build {build}")
-        }
-        Some(kept) => tracing::warn!(
-            "stealth mode: {label} asked for affinity {affinity:#x} on build {build}; Windows kept {kept:#x}"
-        ),
-        None => tracing::warn!("stealth mode: {label} affinity could not be read back on build {build}"),
     }
 }
 
@@ -271,86 +424,19 @@ fn current_affinity(hwnd: *mut std::ffi::c_void) -> Option<u32> {
     (unsafe { GetWindowDisplayAffinity(hwnd, &mut kept) } != 0).then_some(kept)
 }
 
-/// Set the affinity while the WebView's window sits under a hidden window of this process,
-/// then put the WebView back. `SetParentWindow` is WebView2's own way to move its content to
-/// another parent. The content is hidden from the screen for a moment while it is moved.
-/// Returns the affinity error, as `set_affinity` does.
-#[cfg(windows)]
-fn set_with_webview_parked(
-    hwnd: *mut std::ffi::c_void,
-    affinity: u32,
-    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
-) -> Option<u32> {
-    use windows::Win32::Foundation::HWND;
-    const WS_POPUP: u32 = 0x8000_0000;
-    const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
-    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
-    // A hidden window with no taskbar button. STATIC is a system class: nothing to register.
-    let park = unsafe {
-        CreateWindowExW(
-            WS_EX_TOOLWINDOW,
-            class.as_ptr(),
-            std::ptr::null(),
-            WS_POPUP,
-            0,
-            0,
-            0,
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
+#[cfg(any(windows, test))]
+fn verify_affinity(desired: u32, kept: Option<u32>, error: Option<u32>) -> (Option<bool>, Option<String>) {
+    let effective = kept.map(|value| value == WDA_EXCLUDEFROMCAPTURE);
+    let error = if kept == Some(desired) {
+        None
+    } else if let Some(error) = error {
+        Some(format!("Windows could not change capture visibility (error {error})."))
+    } else if let Some(kept) = kept {
+        Some(format!("Windows kept capture affinity {kept:#x} instead of {desired:#x}."))
+    } else {
+        Some("Windows could not verify capture visibility.".into())
     };
-    if park.is_null() {
-        let err = unsafe { GetLastError() };
-        tracing::warn!("stealth mode: no hidden window to hold the WebView (error {err})");
-        return Some(ERROR_NOT_ENOUGH_MEMORY);
-    }
-    let result = match unsafe { controller.SetParentWindow(HWND(park)) } {
-        Ok(()) => {
-            let result = set_affinity(hwnd, affinity);
-            if result.is_some() {
-                // Still refused with the WebView moved out: the log says what is left.
-                log_foreign_children("with the WebView moved out, the window", hwnd);
-            }
-            if let Err(e) = unsafe { controller.SetParentWindow(HWND(hwnd)) } {
-                tracing::warn!("stealth mode: the WebView could not move back to its window: {e}");
-            }
-            let _ = unsafe { controller.NotifyParentWindowPositionChanged() };
-            result
-        }
-        Err(e) => {
-            tracing::warn!("stealth mode: the WebView could not move to a hidden window: {e}");
-            Some(ERROR_NOT_ENOUGH_MEMORY)
-        }
-    };
-    unsafe { DestroyWindow(park) };
-    result
-}
-
-/// Log the child windows that another process owns, by class: the evidence for why build
-/// 22000 refuses the affinity.
-#[cfg(windows)]
-fn log_foreign_children(label: &str, hwnd: *mut std::ffi::c_void) {
-    unsafe extern "system" fn visit(child: *mut std::ffi::c_void, found: isize) -> i32 {
-        let found = unsafe { &mut *(found as *mut Vec<String>) };
-        let mut pid = 0u32;
-        unsafe { GetWindowThreadProcessId(child, &mut pid) };
-        if pid != unsafe { GetCurrentProcessId() } {
-            let mut name = [0u16; 128];
-            let len = unsafe { GetClassNameW(child, name.as_mut_ptr(), name.len() as i32) };
-            found.push(String::from_utf16_lossy(&name[..len.max(0) as usize]));
-        }
-        1
-    }
-    let mut found: Vec<String> = Vec::new();
-    unsafe { EnumChildWindows(hwnd, Some(visit), &mut found as *mut Vec<String> as isize) };
-    tracing::info!(
-        "stealth mode: {label} has {} child window(s) from another process: {}",
-        found.len(),
-        found.join(", ")
-    );
+    (effective, error)
 }
 
 /// The Windows build number for the log. 0 when it cannot be read, or off Windows.
@@ -393,31 +479,8 @@ fn restore_overlay_transparency(window: &WebviewWindow) {
     }
 }
 
-/// Ask DWM to rebuild the frame so display affinity takes effect on Windows 11 21H2.
-#[cfg(windows)]
-fn refresh_frame(hwnd: *mut std::ffi::c_void) {
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOMOVE: u32 = 0x0002;
-    const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const SWP_FRAMECHANGED: u32 = 0x0020;
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            std::ptr::null_mut(),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        );
-    }
-}
-
 #[cfg(windows)]
 const WINDOWS_11_22H2: u32 = 22621;
-#[cfg(windows)]
-const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 
 #[cfg(windows)]
 fn windows_build() -> u32 {
@@ -455,9 +518,6 @@ struct DwmMargins {
     bottom: i32,
 }
 
-#[cfg(not(windows))]
-fn restore_overlay_transparency(_window: &WebviewWindow) {}
-
 /// `DWM_BLURBEHIND`. Field order matches the Windows struct, including pointer alignment.
 #[cfg(windows)]
 #[repr(C)]
@@ -478,37 +538,6 @@ const DWM_BB_BLURREGION: u32 = 0x2;
 unsafe extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
     fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
-    fn CreateWindowExW(
-        ex_style: u32,
-        class: *const u16,
-        name: *const u16,
-        style: u32,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-        parent: *mut std::ffi::c_void,
-        menu: *mut std::ffi::c_void,
-        instance: *mut std::ffi::c_void,
-        param: *mut std::ffi::c_void,
-    ) -> *mut std::ffi::c_void;
-    fn DestroyWindow(hwnd: *mut std::ffi::c_void) -> i32;
-    fn EnumChildWindows(
-        parent: *mut std::ffi::c_void,
-        visit: Option<unsafe extern "system" fn(*mut std::ffi::c_void, isize) -> i32>,
-        param: isize,
-    ) -> i32;
-    fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, pid: *mut u32) -> u32;
-    fn GetClassNameW(hwnd: *mut std::ffi::c_void, name: *mut u16, len: i32) -> i32;
-    fn SetWindowPos(
-        hwnd: *mut std::ffi::c_void,
-        after: *mut std::ffi::c_void,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-        flags: u32,
-    ) -> i32;
 }
 
 #[cfg(windows)]
@@ -536,31 +565,37 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetLastError() -> u32;
-    fn GetCurrentProcessId() -> u32;
 }
 
 #[cfg(target_os = "macos")]
-fn set_window(label: &str, window: &WebviewWindow, affinity: u32) {
-    let enabled = affinity == WDA_EXCLUDEFROMCAPTURE;
-    // Retain the legacy flag for capture clients that honor it. The mask is a separate,
-    // experimental layer-based path; neither setting proves what a meeting receiver sees.
-    if let Err(e) = window.set_content_protected(enabled) {
-        tracing::warn!("stealth mode: content protection failed for {label}: {e}");
-    }
-    let mask_enabled = enabled && std::env::var("COPILOT_DISABLE_CAPTURE_MASK").as_deref() != Ok("1");
+fn set_window(app: &AppHandle, label: &str, window: &WebviewWindow) {
     let label = label.to_string();
+    let native_label = label.clone();
+    let native_window = window.clone();
+    let handle = app.clone();
     let queued = window.with_webview(move |webview| {
-        // The native controller belongs to NSWindow and is released with it. No raw handle
-        // escapes this main-thread callback, even when the caller is a settings worker.
+        let (enabled, reason) = policy().lock().unwrap().request(&native_label);
+        let legacy_error = native_window.set_content_protected(enabled).err();
+        let mask_enabled = enabled && std::env::var("COPILOT_DISABLE_CAPTURE_MASK").as_deref() != Ok("1");
         let result = unsafe { copilot_capture_mask_set(webview.ns_window(), u8::from(mask_enabled)) };
-        if result != 0 {
-            tracing::warn!("stealth mode: experimental capture mask failed for {label} ({result}); meeting capture exclusion is unverified");
+        let error = if result != 0 {
+            Some(format!("The experimental capture mask failed ({result})."))
         } else {
-            tracing::info!("stealth mode: experimental capture mask for {label}: {mask_enabled}; receiver-side verification required");
-        }
+            legacy_error.map(|error| format!("Content protection failed: {error}"))
+        };
+        // macOS has no API here that verifies what a meeting capture client sees.
+        report(&handle, &native_label, enabled, reason, None, error);
     });
-    if let Err(e) = queued {
-        tracing::warn!("stealth mode: could not reach the Mac window thread: {e}");
+    if let Err(error) = queued {
+        let (enabled, reason) = policy().lock().unwrap().request(&label);
+        report(
+            app,
+            &label,
+            enabled,
+            reason,
+            None,
+            Some(format!("The window thread is unavailable: {error}")),
+        );
     }
 }
 
@@ -570,12 +605,16 @@ unsafe extern "C" {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn set_window(label: &str, _window: &WebviewWindow, affinity: u32) {
-    if affinity == WDA_EXCLUDEFROMCAPTURE {
-        tracing::warn!(
-            "stealth mode: {label} stays visible to capture; this system has no display-affinity exclusion"
-        );
-    }
+fn set_window(app: &AppHandle, label: &str, _window: &WebviewWindow) {
+    let (enabled, reason) = policy().lock().unwrap().request(label);
+    report(
+        app,
+        label,
+        enabled,
+        reason,
+        Some(false),
+        enabled.then(|| "This system does not support capture exclusion.".into()),
+    );
 }
 
 #[cfg(test)]
@@ -591,8 +630,151 @@ mod tests {
     }
 
     #[test]
+    fn focus_and_capture_rechecks_do_not_rewrite_window_presentation() {
+        let mut presentation = super::PresentationCache::default();
+        assert!(presentation.changed("main", false, "CoRuby"));
+        assert!(!presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("overlay", false, "CoRuby"));
+        assert!(!presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("main", true, "CoRuby"));
+        assert!(!presentation.changed("main", true, "CoRuby"));
+        assert!(presentation.changed("main", false, "CoRuby"));
+        assert!(presentation.changed("main", false, "CoRuby Preview"));
+    }
+
+    #[test]
+    fn ending_a_screenshot_uses_the_latest_stealth_choice() {
+        let mut policy = super::CapturePolicy { stealth: true, ..Default::default() };
+        let capture = uuid::Uuid::from_u128(1);
+        policy.screenshot_leases.insert(capture);
+        policy.stealth = false;
+        assert_eq!(policy.request("overlay"), (true, "screenshot"));
+        policy.release(capture);
+        assert_eq!(policy.request("overlay"), (false, "off"));
+        assert_eq!(policy.request("main"), (false, "off"));
+        // The opposite order must keep a user's newly enabled choice too.
+        policy.screenshot_leases.insert(capture);
+        policy.stealth = true;
+        policy.release(capture);
+        assert_eq!(policy.request("overlay"), (true, "stealth"));
+    }
+
+    #[test]
+    fn stealth_off_is_authoritative_for_host_and_assistant_windows() {
+        // Both session roles use these same windows. There is deliberately no lasting
+        // role-based exclusion: joining, leaving, or reconnecting cannot override OFF.
+        let mut policy = super::CapturePolicy { stealth: true, ..Default::default() };
+        for window in ["main", "overlay"] {
+            assert_eq!(policy.request(window), (true, "stealth"));
+        }
+        policy.stealth = false;
+        for window in ["main", "overlay"] {
+            assert_eq!(policy.request(window), (false, "off"));
+        }
+        let capture = uuid::Uuid::from_u128(1);
+        policy.screenshot_leases.insert(capture);
+        assert_eq!(policy.request("overlay"), (true, "screenshot"));
+        policy.release(capture);
+        assert_eq!(policy.request("overlay"), (false, "off"));
+    }
+
+    #[test]
+    fn overlapping_screenshots_release_only_their_own_exclusion() {
+        let mut policy = super::CapturePolicy::default();
+        let first = uuid::Uuid::from_u128(1);
+        let second = uuid::Uuid::from_u128(2);
+        policy.screenshot_leases.extend([first, second]);
+        policy.release(first);
+        assert_eq!(policy.request("overlay"), (true, "screenshot"));
+        assert_eq!(policy.request("main"), (false, "off"));
+        policy.release(first);
+        assert_eq!(policy.request("overlay"), (true, "screenshot"));
+        policy.release(second);
+        assert_eq!(policy.request("overlay"), (false, "off"));
+    }
+
+    #[test]
+    fn failed_off_reports_retained_exclusion_instead_of_claiming_it_cleared() {
+        let (effective, error) = super::verify_affinity(0, Some(0x11), Some(8));
+        assert_eq!(effective, Some(true));
+        assert!(error.unwrap().contains("error 8"));
+        let (effective, error) = super::verify_affinity(0x11, Some(0), Some(8));
+        assert_eq!(effective, Some(false));
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn successful_call_without_matching_readback_is_not_reported_as_success() {
+        assert!(super::verify_affinity(0x11, Some(0), None).1.is_some());
+        assert!(super::verify_affinity(0, Some(0x11), None).1.is_some());
+        assert_eq!(super::verify_affinity(0, Some(0), None), (Some(false), None));
+        assert_eq!(super::verify_affinity(0x11, Some(0x11), None), (Some(true), None));
+        assert!(super::verify_affinity(0, None, None).1.is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hidden_native_window_accepts_on_then_off_without_reparenting() {
+        use std::ffi::c_void;
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn CreateWindowExW(
+                ex: u32,
+                class: *const u16,
+                name: *const u16,
+                style: u32,
+                x: i32,
+                y: i32,
+                width: i32,
+                height: i32,
+                parent: *mut c_void,
+                menu: *mut c_void,
+                instance: *mut c_void,
+                param: *mut c_void,
+            ) -> *mut c_void;
+            fn DestroyWindow(window: *mut c_void) -> i32;
+            fn IsWindowVisible(window: *mut c_void) -> i32;
+            fn SetLayeredWindowAttributes(window: *mut c_void, color: u32, alpha: u8, flags: u32) -> i32;
+        }
+        struct HiddenWindow(*mut c_void);
+        impl Drop for HiddenWindow {
+            fn drop(&mut self) {
+                unsafe {
+                    DestroyWindow(self.0);
+                }
+            }
+        }
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let null = std::ptr::null_mut();
+        let window = HiddenWindow(unsafe {
+            CreateWindowExW(
+                0x0008_0080,
+                class.as_ptr(),
+                std::ptr::null(),
+                0x8000_0000,
+                0,
+                0,
+                16,
+                16,
+                null,
+                null,
+                null,
+                null,
+            )
+        });
+        assert!(!window.0.is_null());
+        assert_ne!(unsafe { SetLayeredWindowAttributes(window.0, 0, 255, 2) }, 0);
+        assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+        assert_eq!(super::set_affinity(window.0, super::affinity(true)), None);
+        assert_eq!(super::current_affinity(window.0), Some(super::affinity(true)));
+        assert_eq!(super::set_affinity(window.0, super::affinity(false)), None);
+        assert_eq!(super::current_affinity(window.0), Some(super::affinity(false)));
+        assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+    }
+
+    #[test]
     fn the_display_name_is_this_app_and_not_a_windows_component() {
-        assert_eq!(super::normalize_display_name("  Copilot  ").unwrap(), "Copilot");
+        assert_eq!(super::normalize_display_name("  CoRuby  ").unwrap(), "CoRuby");
         assert_eq!(super::normalize_display_name("Copilot Desktop").unwrap(), "Copilot Desktop");
         assert!(super::normalize_display_name("  ").is_err());
         assert!(super::normalize_display_name("svchost.exe").is_err());

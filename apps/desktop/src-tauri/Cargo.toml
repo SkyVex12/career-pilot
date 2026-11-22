@@ -44,9 +44,8 @@ base64 = "0.22"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
-# HWND for moving the WebView while stealth mode sets capture exclusion on Windows 11 21H2
-# (stealth.rs); the monitors and SendInput for guest seats' remote input (remote.rs). The
-# version webview2-com itself uses.
+# Native capture exclusion, window move/resize handling, monitor identity, and remote input.
+# Keep the Windows bindings aligned with the version used by webview2-com.
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Media_Audio",

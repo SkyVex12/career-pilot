@@ -37,7 +37,7 @@ export function CareerOsConnect({ conn, onConnected }: { conn: CareerOsConnectio
   const [error, setError] = useState<string | null>(null);
   const connect = async () => {
     if (code.trim().length < 6) {
-      setError("Paste the whole code from Career-OS (at least 6 characters).");
+      setError("Paste the whole code from HubRuby (at least 6 characters).");
       return;
     }
     setBusy(true);
@@ -61,12 +61,12 @@ export function CareerOsConnect({ conn, onConnected }: { conn: CareerOsConnectio
         connect();
       }}
     >
-      {conn.status === "revoked" && <Banner tone="warning">Career-OS no longer accepts the link. Make a new code to connect again.</Banner>}
+      {conn.status === "revoked" && <Banner tone="warning">HubRuby no longer accepts the link. Make a new code to connect again.</Banner>}
       <div className="career-code">
         <Field
           label="One-time code"
           error={error}
-          hint="In Career-OS, open your profile and make a Career Pilot code (valid 10 minutes). Career Pilot can then read your applications (an admin: their users'), their job descriptions and resumes, read-only, and only when you pull one."
+          hint="In HubRuby, open your profile and make a CoRuby code (valid 10 minutes). CoRuby can then read your applications (an admin: their users'), their job descriptions and resumes, read-only, and only when you pull one."
         >
           <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste the code" autoComplete="off" spellCheck={false} />
         </Field>
@@ -86,13 +86,13 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
   if (!ready) return null;
   if (error && !conn) {
     return (
-      <Banner tone="danger" title="Could not load the Career-OS link" action={<Button size="sm" onClick={reload}>Retry</Button>}>
+      <Banner tone="danger" title="Could not load the HubRuby link" action={<Button size="sm" onClick={reload}>Retry</Button>}>
         {error}
       </Banner>
     );
   }
-  if (!conn) return <Spinner label="Loading the Career-OS link" />;
-  if (!conn.available) return <p className="ui-field-hint">Career-OS is not set up on this server.</p>;
+  if (!conn) return <Spinner label="Loading the HubRuby link" />;
+  if (!conn.available) return <p className="ui-field-hint">HubRuby is not set up on this server.</p>;
   if (!conn.connected) {
     return (
       <CareerOsConnect
@@ -118,19 +118,19 @@ export function CareerOsSettings({ ready }: { ready: boolean }) {
       <ConfirmDialog
         open={disconnecting}
         onOpenChange={setDisconnecting}
-        title="Disconnect Career-OS?"
+        title="Disconnect HubRuby?"
         confirmLabel="Disconnect"
         onConfirm={async () => {
           try {
             await rest.disconnectCareerOs();
             setConn(await rest.careerOs());
-            toast({ tone: "success", text: "Disconnected; the link is revoked in Career-OS too." });
+            toast({ tone: "success", text: "Disconnected; the link is revoked in HubRuby too." });
           } catch (e) {
             const text = String(e);
             toast({
               tone: "error",
               text: text.includes("only_sign_in_method")
-                ? "Career-OS is the only way you sign in to this account. Add another sign-in first, then disconnect."
+                ? "HubRuby is the only way you sign in to this account. Add another sign-in first, then disconnect."
                 : text,
             });
           }
@@ -214,8 +214,8 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
       open={open}
       onOpenChange={onOpenChange}
       size="lg"
-      title="Pull from Career-OS"
-      description="Copies the application, its job description and its resume into its Career-OS user's profile. Nothing else is imported, and nothing syncs by itself."
+      title="Pull from HubRuby"
+      description="Copies the application, its job description and its resume into its HubRuby user's profile. Nothing else is imported, and nothing syncs by itself."
       footer={<Button onClick={() => onOpenChange(false)}>Done</Button>}
     >
       <div className="pull-search">
@@ -236,11 +236,11 @@ export function PullDialog({ open, onOpenChange, onPulled }: { open: boolean; on
         items={items}
         error={error}
         onRetry={search}
-        loadingLabel="Career-OS applications"
+        loadingLabel="HubRuby applications"
         empty={<EmptyState icon={<Icon name="briefcase" size={28} />} title="No applications match">Try another company or role, or any stage.</EmptyState>}
       >
         {(list) => (
-          <List label="Career-OS applications">
+          <List label="HubRuby applications">
             {list.map((i) => {
               const state = pullState(i);
               const title = `${i.company} · ${i.role}`;

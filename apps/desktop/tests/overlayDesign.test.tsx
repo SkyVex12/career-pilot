@@ -100,8 +100,8 @@ describe("the approved overlay interactions", () => {
     expect(within(panel).getByRole("combobox", { name: "Layout" })).toBeVisible();
     expect(within(panel).queryByText("Call options")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "All settings…" })).not.toBeInTheDocument();
-    await userEvent.click(within(panel).getByRole("button", { name: "Quit Ruby" }));
-    expect(screen.getByRole("alertdialog", { name: "Stop assisting and quit Ruby?" })).toBeVisible();
+    await userEvent.click(within(panel).getByRole("button", { name: "Quit CoRuby" }));
+    expect(screen.getByRole("alertdialog", { name: "Stop assisting and quit CoRuby?" })).toBeVisible();
     expect(screen.getByText("You’ll stop assisting. The other person’s call will continue.")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Stop assisting & quit" }));
     await waitFor(() => expect(ipc.calls.some(c => c.cmd === "quit_app")).toBe(true));

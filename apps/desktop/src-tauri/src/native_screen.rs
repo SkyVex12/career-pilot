@@ -1,4 +1,4 @@
-//! Native Mac screen video, bridged to a canvas MediaStream for the existing LiveKit room.
+//! Native desktop screen video, bridged to a canvas MediaStream for the LiveKit room.
 //! Only the newest frame is retained; stopped/reloaded webviews cannot leave capture running.
 use serde::Serialize;
 #[derive(Serialize)]
@@ -6,6 +6,8 @@ pub struct Source {
     id: u32,
     kind: &'static str,
     title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    monitor_id: Option<String>,
 }
 #[derive(Serialize)]
 pub struct Frame {
@@ -18,21 +20,21 @@ pub struct Frame {
 
 #[tauri::command]
 pub async fn native_screen_sources() -> Result<Vec<Source>, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     return tauri::async_runtime::spawn_blocking(native::sources).await.map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "macos"))]
-    Err("Native screen capture is only used on macOS.".into())
+    #[cfg(not(any(windows, target_os = "macos")))]
+    Err("Native screen capture is unavailable on this platform.".into())
 }
 #[tauri::command]
 pub async fn native_screen_start(window: tauri::WebviewWindow, id: u32, kind: String) -> Result<u64, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     return tauri::async_runtime::spawn_blocking(move || native::start(window.label().to_owned(), id, kind))
         .await
         .map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (window, id, kind);
-        Err("Native screen capture is only used on macOS.".into())
+        Err("Native screen capture is unavailable on this platform.".into())
     }
 }
 #[tauri::command]
@@ -41,26 +43,30 @@ pub fn native_screen_frame(
     token: u64,
     after: u64,
 ) -> Result<Option<Frame>, String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     return native::frame(window.label(), token, after);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (window, token, after);
-        Err("Native screen capture is only used on macOS.".into())
+        Err("Native screen capture is unavailable on this platform.".into())
     }
 }
 #[tauri::command]
 pub async fn native_screen_stop(window: tauri::WebviewWindow, token: u64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     return tauri::async_runtime::spawn_blocking(move || native::stop(Some(window.label()), token))
         .await
         .map_err(|e| e.to_string())?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (window, token);
         Ok(())
     }
 }
+
+#[cfg(windows)]
+#[path = "native_screen_windows.rs"]
+mod native;
 
 #[cfg(target_os = "macos")]
 mod native {
@@ -134,7 +140,7 @@ mod native {
     }
     pub fn sources() -> Result<Vec<Source>, String> {
         if !unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() } {
-            return Err("Allow Copilot Desktop in System Settings > Privacy & Security > Screen Recording, then reopen the app.".into());
+            return Err("Allow CoRuby in System Settings > Privacy & Security > Screen Recording, then reopen the app.".into());
         }
         let mut sources: Vec<Source> = crate::remote_macos::monitors()
             .into_iter()
@@ -142,6 +148,7 @@ mod native {
                 Some(Source {
                     id: m.id.parse().ok()?,
                     kind: "monitor",
+                    monitor_id: Some(m.id.clone()),
                     title: format!(
                         "{}display ({} x {})",
                         if m.primary { "Main " } else { "External " },
@@ -157,7 +164,7 @@ mod native {
             }
             if let (Ok(id), Ok(title)) = (w.id(), w.title()) {
                 if !title.is_empty() {
-                    sources.push(Source { id, kind: "window", title });
+                    sources.push(Source { id, kind: "window", title, monitor_id: None });
                 }
             }
         }

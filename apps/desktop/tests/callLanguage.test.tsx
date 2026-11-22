@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CallLanguage } from "../src/CallLanguage";
 import { ipc } from "./ipc";
+import corpus from "../../../tests/fixtures/call_languages.json";
 
 describe("profile call language", () => {
   it("loads the profile default, offers only enabled languages and saves explicitly", async () => {
@@ -39,6 +40,45 @@ describe("profile call language", () => {
 
 it("keeps call start unavailable when a server returns malformed language settings", async () => {
   ipc.api("GET", /^\/call-languages$/, () => ({}));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
+  const ready = vi.fn(); render(<CallLanguage value="en" onChange={() => {}} onReady={ready} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("invalid language settings");
+  expect(ready).not.toHaveBeenCalledWith(true);
+});
+
+it("renders all 24 configured languages with native labels and isolated right-to-left text", async () => {
+  const items = corpus.map(item => ({ id: item.language, name: item.language === "ar" ? "Arabic" : item.language,
+    native_name: item.language === "ar" ? "العربية" : item.language, direction: ["ar", "fa", "ur"].includes(item.language) ? "rtl" : "ltr" }));
+  ipc.api("GET", /^\/call-languages$/, () => ({ items }));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "ar" }));
+  const { container } = render(<CallLanguage value="ar" onChange={() => {}} />);
+  await waitFor(() => expect(container.querySelector("select")!.options).toHaveLength(24));
+  fireEvent.click(screen.getByText("Customize"));
+  const picker = screen.getByRole("combobox", { name: "Language" });
+  expect(picker).toHaveTextContent("العربية · Arabic");
+  expect(picker.querySelector("bdi")).toHaveAttribute("dir", "rtl");
+  expect(picker.querySelector("bdi")).toHaveAttribute("lang", "ar");
+  fireEvent.click(picker);
+  const option = screen.getByRole("option", { name: "العربية · Arabic" });
+  expect(option.querySelector("bdi")).toHaveAttribute("dir", "rtl");
+  expect(option.querySelector("bdi")).toHaveAttribute("lang", "ar");
+});
+
+it("explains legacy English compatibility without blocking older-server calls or saving unsupported settings", async () => {
+  const change = vi.fn(), ready = vi.fn();
+  render(<CallLanguage value="en" onChange={change} onReady={ready} />);
+  expect(await screen.findByText(/Using English compatibility mode/)).toHaveTextContent("Update the CoRuby server");
+  expect(change).toHaveBeenLastCalledWith("en");
+  expect(ready).toHaveBeenLastCalledWith(true);
+  expect(screen.getByLabelText("Save selection as this profile’s default")).toBeDisabled();
+  expect(ipc.apiCalls("PATCH")).toHaveLength(0);
+});
+
+it.each([
+  [null], [{ id: "en", name: {} }], [{ id: "en", name: "English", direction: "vertical" }],
+  [{ id: "ar", name: "Arabic", native_name: {} }], [{ id: "en", name: "English" }, { id: "en", name: "Duplicate" }],
+])("rejects malformed language entries before publishing them: %j", async (...items) => {
+  ipc.api("GET", /^\/call-languages$/, () => ({ items }));
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
   const ready = vi.fn(); render(<CallLanguage value="en" onChange={() => {}} onReady={ready} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("invalid language settings");

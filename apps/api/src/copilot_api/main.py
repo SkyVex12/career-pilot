@@ -25,6 +25,7 @@ from copilot_api.routes import (
     calendar,
     career_os,
     career_os_auth,
+    client_capabilities,
     companion,
     documents,
     email_auth,
@@ -160,7 +161,7 @@ def career_os_sign_in(
     if client is None or tokens is None:
         raise RuntimeError("COPILOT_CAREER_OS_SIGN_IN needs COPILOT_CAREER_OS_URL")
     if settings.google_allowed_emails:
-        log.warning("Career-OS sign-in is off: this stage has an allow-list of emails")
+        log.warning("HubRuby sign-in is off: this stage has an allow-list of emails")
         return None
     return CareerOsSignIn(settings, pool, valkey, client, crypto, tokens)
 
@@ -179,7 +180,7 @@ def create_app(services: Services | None = None) -> FastAPI:
                 await app.state.services.pool.close()
                 await app.state.services.valkey.aclose()
 
-    app = FastAPI(title="Copilot API", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="CoRuby API", version=__version__, lifespan=lifespan)
     app.add_middleware(VersionGuard)
     app.add_middleware(RequestLog)
 
@@ -192,7 +193,17 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(personal_ai.mcp_router, prefix="/v1")
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
-    for module in (auth, email_auth, career_os_auth, me, profiles, career_os, calendar, companion):
+    for module in (
+        auth,
+        email_auth,
+        career_os_auth,
+        me,
+        profiles,
+        career_os,
+        calendar,
+        companion,
+        client_capabilities,
+    ):
         app.include_router(module.router, prefix="/v1")
     # The work itself needs the link when the stage requires one (`require_link`).
     for module in (

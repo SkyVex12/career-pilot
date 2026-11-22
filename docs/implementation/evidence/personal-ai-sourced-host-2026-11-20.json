@@ -1,0 +1,148 @@
+{
+  "status": "passed",
+  "at": "2026-11-20T06:45:41.894943+00:00",
+  "host": "Codex CLI",
+  "authentication": "OAuth authorization-code S256 PKCE scoped token",
+  "publish": true,
+  "refresh": true,
+  "private_retrieval": true,
+  "remove": true,
+  "external_research": false,
+  "fixture_only": false,
+  "storage": "Disposable loopback database and local Valkey; no production writes",
+  "source": {
+    "path": "tests/fixtures/public_mcp_tools_excerpt.md",
+    "sha256": "db486eaef36eb428700237a579f7ffff3a00de9139e70895d1d4a8ed4e998d95",
+    "url": "https://modelcontextprotocol.io/specification/2025-11-25/server/tools",
+    "provenance": "24 words from official public MCP 2025-11-25 tools specification",
+    "verified_at": "2026-11-20"
+  },
+  "source_gathering": "Real host retrieval from test-only immutable public-source MCP provider",
+  "account": "Fictional disposable validation account; no private user records",
+  "approval_boundary": {
+    "private_repository_payload": "Rejected by automatic approval review; not executed",
+    "adjustment": "Pinned public specification excerpt only; no private design sent",
+    "public_file_shell_read": "Child sandbox blocked shell before source read/publication",
+    "final_transport": "Read-only public MCP provider; unchanged child sandbox, no shell",
+    "prior_attempts": {
+      "private_source_execution": false,
+      "public_shell_host_runs": 1,
+      "public_shell_source_reads": 0,
+      "public_shell_publications": 0,
+      "public_shell_ask_requests": 0,
+      "public_source_mcp_alternative_approved": true
+    }
+  },
+  "checks": {
+    "publish": {
+      "public_source_reads": 1,
+      "mcp_tools": [
+        "get_context_request",
+        "publish_context_brief"
+      ],
+      "source_ids": [
+        "mcp-tools"
+      ],
+      "sourced_items": [
+        {
+          "id": "identity",
+          "kind": "term",
+          "provenance": "sourced",
+          "source_ids": [
+            "mcp-tools"
+          ],
+          "text_sha256": "54937f6ab6ea7907ec792c5fee1aa49e9de048065ff0217427af1081109aef41"
+        },
+        {
+          "id": "capability",
+          "kind": "term",
+          "provenance": "sourced",
+          "source_ids": [
+            "mcp-tools"
+          ],
+          "text_sha256": "ccd549f2a46385f66d6c6676dfa07caf1eee4fb9b1747af92fc93bbc61b49253"
+        }
+      ]
+    },
+    "ask": {
+      "question": "According to the supplied public MCP tools specification excerpt, how are tools identified, what metadata do they include, and what capability must servers declare?",
+      "status": "done",
+      "citation": "S1",
+      "source_kind": "private_brief",
+      "original_public_source_url_retained": true,
+      "source_resolves": true,
+      "other_account_source_and_conversation_denied": true,
+      "no_approved_facts_or_resumes_written": true,
+      "elapsed_ms": 3797,
+      "answer_sha256": "63f594bf46d1959a934192d56d2383cc3cb0451c34f08239b670f247b17e4b2f",
+      "answer_character_count": 298,
+      "answer_checks": {
+        "required_terms_present": [
+          "name",
+          "schema",
+          "tools"
+        ],
+        "retained_citation": "S1"
+      },
+      "manual_answer_review": "Observed answer accurately explains all three public excerpt requirements with S1 citations; one example only."
+    },
+    "refresh": {
+      "public_source_reads": 1,
+      "mcp_tools": [
+        "get_context_request",
+        "publish_context_brief"
+      ],
+      "source_ids": [
+        "mcp-tools"
+      ],
+      "sourced_items": [
+        {
+          "id": "identity",
+          "kind": "term",
+          "provenance": "sourced",
+          "source_ids": [
+            "mcp-tools"
+          ],
+          "text_sha256": "54937f6ab6ea7907ec792c5fee1aa49e9de048065ff0217427af1081109aef41"
+        },
+        {
+          "id": "capability",
+          "kind": "term",
+          "provenance": "sourced",
+          "source_ids": [
+            "mcp-tools"
+          ],
+          "text_sha256": "ccd549f2a46385f66d6c6676dfa07caf1eee4fb9b1747af92fc93bbc61b49253"
+        }
+      ]
+    },
+    "removal": {
+      "replaced_source_unavailable": true,
+      "deleted_source_unavailable": true,
+      "future_private_retrieval_empty": true,
+      "answer_snapshot_retained_until_deleted": true,
+      "ask_conversation_deleted": true
+    }
+  },
+  "answer_provider": "openai",
+  "answer_model": "gpt-6.1-sol",
+  "requests": {
+    "host_runs": 2,
+    "ask_answers": 1,
+    "embeddings": 0
+  },
+  "elapsed_ms": 43844,
+  "limitations": [
+    "Local Codex CLI; no remote ChatGPT/HTTPS sleep-wake certification.",
+    "Real API grant consent; remote browser onboarding was not exercised.",
+    "One public excerpt and one real answer; not a quality benchmark.",
+    "Production connectors, calls and physical devices remain unverified."
+  ],
+  "validation": {
+    "focused_tests_passed": 56,
+    "command": ".venv/Scripts/python.exe -m pytest apps/api/tests/test_personal_ai_unit.py apps/api/tests/test_ask_unit.py tests/test_personal_ai_host_validation.py -q",
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "disposable_database_cleanup": "completed; harness exited 0"
+  }
+}

@@ -288,7 +288,7 @@ async def callback(
         raise HTTPException(failure.status, str(failure)) from failure
     return HTMLResponse(
         "<!doctype html><title>Calendar connected</title><p>Calendar connected."
-        " Return to Ruby and choose calendars for Meeting preparation.</p>",
+        " Return to CoRuby and choose calendars for Meeting preparation.</p>",
         headers={
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
@@ -428,7 +428,7 @@ async def save_context(
         ):
             raise HTTPException(404, "Application does not belong to this profile")
         if body.session_id and not await conn.fetchval(
-            "select id from app.sessions where id=$1 and"
+            "select id from app.sessions where id=$1 and ended_at is not null and"
             " (private_context_account_id is null or private_context_account_id=$2)",
             body.session_id,
             account.user_id,
@@ -487,6 +487,8 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
     selected: set[tuple[str, str]] = set()
     states: list[dict[str, Any]] = []
     contexts: list[dict[str, Any]] = []
+    current_contexts: dict[tuple[str, str, str], dict[str, Any]] = {}
+    latest_actions: dict[tuple[str, str, str], list[str]] = {}
     async with svc.tx(account) as conn:
         rows = await conn.fetch(
             "select * from app.calendar_connections where profile_id=$1", user.user_id
@@ -510,11 +512,22 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
                     )
                 )
                 event_context[(context_row["calendar_id"], context_row["instance_id"])] = content
+                current_contexts[
+                    (str(row["id"]), context_row["calendar_id"], context_row["instance_id"])
+                ] = content
+                if context_row["series_id"]:
+                    # Rows are newest-first. An explicitly saved empty list is authoritative:
+                    # completed actions must not be resurrected from older occurrences.
+                    latest_actions.setdefault(
+                        (str(row["id"]), context_row["calendar_id"], context_row["series_id"]),
+                        content.get("unfinished_actions", []),
+                    )
                 contexts.append(
                     {
                         **content,
                         "connection_id": str(row["id"]),
                         "series_id": context_row["series_id"],
+                        "instance_id": context_row["instance_id"],
                     }
                 )
             cache = await cache_of(svc, conn, account.user_id, row)
@@ -555,6 +568,15 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
             " from app.applications order by updated_at desc limit 500"
         )
     history: list[PreviousMeeting] = []
+    # Existing ended calls only; selecting an association must never create a session.
+    async with svc.tx(user) as conn:
+        saved_sessions = await conn.fetch(
+            "select id,title,started_at from app.sessions where ended_at is not null "
+            "and (private_context_account_id is null or private_context_account_id=$1) "
+            "order by started_at desc limit 200",
+            account.user_id,
+        )
+    authorized_sessions = {str(row["id"]) for row in saved_sessions}
     async with svc.tx(user) as conn:
         for context in contexts:
             if not context.get("series_id"):
@@ -576,8 +598,8 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
                         bytes(session["notes_enc"]),
                         session["notes_key_version"],
                     )
-            actions = tuple(context.get("unfinished_actions", []))
-            if notes or actions:
+            # Historical notes remain inspectable, while action state is supplied once below.
+            if notes:
                 history.append(
                     PreviousMeeting(
                         str(user.user_id),
@@ -585,9 +607,16 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
                         context["calendar_id"],
                         context["series_id"],
                         notes,
-                        actions,
+                        (),
                     )
                 )
+    for (connection_id, calendar_id, series_id), actions in latest_actions.items():
+        if actions:
+            history.append(
+                PreviousMeeting(
+                    str(user.user_id), connection_id, calendar_id, series_id, "", tuple(actions)
+                )
+            )
     candidates = [
         ApplicationContext(
             str(app["id"]),
@@ -607,4 +636,45 @@ async def preparation(svc: SvcDep, account: AccountDep, user: UserDep) -> dict[s
         applications=candidates,
         previous=history,
     )
-    return {"items": [asdict(item) for item in items], "connections": states}
+    prepared: list[dict[str, Any]] = []
+    for item in items:
+        meeting = item.meeting
+        selected_context = current_contexts.get(
+            (meeting.account_id, meeting.calendar_id, meeting.instance_id), {}
+        )
+        linked_session = selected_context.get("session_id")
+        # A removed/revoked source must not remain an apparently selectable link.
+        if linked_session and linked_session not in authorized_sessions:
+            async with svc.tx(user) as conn:
+                linked = await conn.fetchrow(
+                    "select id,title,started_at from app.sessions where id=$1 "
+                    "and ended_at is not null "
+                    "and (private_context_account_id is null or private_context_account_id=$2)",
+                    UUID(linked_session),
+                    account.user_id,
+                )
+            if linked:
+                saved_sessions.append(linked)
+                authorized_sessions.add(str(linked["id"]))
+            linked_session = str(linked["id"]) if linked else None
+        actions = (
+            latest_actions.get((meeting.account_id, meeting.calendar_id, meeting.series_id), [])
+            if meeting.series_id
+            else selected_context.get("unfinished_actions", [])
+        )
+        prepared.append(
+            {**asdict(item), "linked_session_id": linked_session, "unfinished_actions": actions}
+        )
+    return {
+        "items": prepared,
+        "connections": states,
+        "applications": [asdict(candidate) for candidate in candidates],
+        "saved_sessions": [
+            {
+                "id": str(row["id"]),
+                "title": row["title"] or "Saved call",
+                "started_at": row["started_at"],
+            }
+            for row in saved_sessions
+        ],
+    }

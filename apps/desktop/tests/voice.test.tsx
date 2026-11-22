@@ -2,7 +2,7 @@
 // selected for the call, routed before anything plays; a guest's microphone opens
 // only while they talk. LiveKit and the audio elements are faked.
 import { describe, expect, it, vi } from "vitest";
-import { VoiceController, windowsName, type VoiceCmd, type VoiceDeps, type VoiceStatus } from "../src/voice";
+import { VoiceController, startVoice, voiceCommand, windowsName, type VoiceCmd, type VoiceDeps, type VoiceStatus } from "../src/voice";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -26,6 +26,7 @@ function fakeRoom() {
 function fakeAudio(log: string[], routable = true) {
   const el = {
     muted: false,
+    volume: 1,
     src: "",
     srcObject: null as unknown,
     play: vi.fn(async () => {
@@ -289,5 +290,116 @@ describe("the guest's voice", () => {
     const t = setup();
     await t.c.handle({ cmd: "guest_talk", on: true });
     expect(t.c.status.error).toBe("Voice is not connected.");
+  });
+});
+
+
+// Simulate the real SDK: attaching an audio track unmutes the element, while setVolume
+// persists across attachment/restarts. A mock attach that does nothing hides this regression.
+function sdkAudioTrack() {
+  let attached: HTMLAudioElement | null = null;
+  let volume = 1;
+  return {
+    kind: "audio",
+    attach: vi.fn((el: HTMLAudioElement) => { attached = el; el.muted = false; el.volume = volume; }),
+    detach: vi.fn(() => { attached = null; return []; }),
+    setVolume: vi.fn((value: number) => { volume = value; if (attached) attached.volume = value; }),
+    publisherUnmutes: () => { if (attached) attached.muted = false; },
+  };
+}
+
+describe("durable assistant playout mute", () => {
+  it("silences a track that arrives after mute, even when LiveKit attach unmutes its element", async () => {
+    const t = setup();
+    await t.c.handle(host);
+    await t.c.handle({ cmd: "host_mute", on: true });
+    const a = sdkAudioTrack();
+    t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    await flush();
+    const audio = t.audios[t.audios.length - 1];
+    expect(audio.muted).toBe(true);
+    expect(audio.volume).toBe(0);
+    a.publisherUnmutes();
+    expect(audio.volume).toBe(0);
+    await t.c.handle({ cmd: "host_mute", on: false });
+    expect(audio.muted).toBe(false);
+    expect(audio.volume).toBe(1);
+  });
+
+  it("mutes every track for a participant and retiring one never orphans the replacement", async () => {
+    const t = setup(); await t.c.handle(host);
+    const a = sdkAudioTrack(), replacement = sdkAudioTrack();
+    t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    t.room.emit("trackSubscribed", replacement, {}, { identity: "seat:a" });
+    await flush();
+    const [oldAudio, currentAudio] = t.audios.slice(-2);
+    t.room.emit("trackUnsubscribed", a, {}, { identity: "seat:a" });
+    expect(oldAudio.pause).toHaveBeenCalled();
+    await t.c.handle({ cmd: "host_mute", on: true });
+    expect(currentAudio.volume).toBe(0);
+    await t.c.handle({ cmd: "host_off" });
+    expect(currentAudio.pause).toHaveBeenCalled();
+    expect(replacement.detach).toHaveBeenCalled();
+  });
+
+  it("retains mute after reconnecting to the same call and resets it for a new call", async () => {
+    const rooms: ReturnType<typeof fakeRoom>[] = [];
+    const t = setup({ newRoom: () => { const room = fakeRoom(); rooms.push(room); return room as never; } });
+    await t.c.handle(host); await t.c.handle({ cmd: "host_mute", on: true });
+    rooms[0].emit("disconnected"); await flush();
+    await t.c.handle(host);
+    const a = sdkAudioTrack(); rooms[1].emit("trackSubscribed", a, {}, { identity: "seat:a" }); await flush();
+    expect(t.c.status.hostMuted).toBe(true); expect(t.audios[t.audios.length - 1].volume).toBe(0);
+    // A delayed event from the first room cannot stop/revive the second room.
+    rooms[0].emit("disconnected"); rooms[0].emit("trackSubscribed", sdkAudioTrack(), {}, { identity: "seat:a" }); await flush();
+    expect(t.c.status.host).toBe("on"); expect(rooms[1].disconnect).not.toHaveBeenCalled();
+    await t.c.handle({ cmd: "host_off" }); await t.c.handle({ ...host, sessionId: "next-call" });
+    expect(t.c.status.hostMuted).toBe(false);
+  });
+
+  it("never attaches a track unsubscribed while output routing is pending", async () => {
+    const t = setup(); await t.c.handle(host);
+    let resolve!: () => void;
+    const audio = fakeAudio([]);
+    audio.setSinkId = vi.fn(() => new Promise<void>(done => { resolve = done; }));
+    t.deps.newAudio = () => audio as never;
+    const a = sdkAudioTrack(); t.room.emit("trackSubscribed", a, {}, { identity: "seat:a" });
+    await vi.waitFor(() => expect(audio.setSinkId).toHaveBeenCalled());
+    t.room.emit("trackUnsubscribed", a, {}, { identity: "seat:a" });
+    resolve(); await flush();
+    expect(a.attach).not.toHaveBeenCalled(); expect(audio.play).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("voice lifecycle cancellation", () => {
+  it("a stale rejected token cannot stop the new room", async () => {
+    let reject!: (error: Error) => void;
+    const token = vi.fn<VoiceDeps["hostToken"]>().mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; })).mockResolvedValue({ url: "wss://lk", token: "current" });
+    const t = setup({ hostToken: token });
+    const pending = t.c.handle(host); await vi.waitFor(() => expect(token).toHaveBeenCalledOnce());
+    await t.c.handle({ cmd: "host_off" }); await t.c.handle({ ...host, sessionId: "next" });
+    reject(new Error("Old token request failed")); await pending;
+    expect(t.c.status.host).toBe("on"); expect(t.room.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("stop is processed while the voice token request is pending", async () => {
+    let resolve!: (grant: { url: string; token: string }) => void;
+    const t = setup({ hostToken: vi.fn(() => new Promise<{ url: string; token: string }>(done => { resolve = done; })) });
+    const dispose = startVoice(t.deps);
+    await flush(); await voiceCommand(host);
+    await vi.waitFor(() => expect(t.deps.hostToken).toHaveBeenCalledOnce());
+    await voiceCommand({ cmd: "host_off" }); await flush();
+    resolve({ url: "wss://lk", token: "late" }); await flush();
+    expect(t.room.connect).not.toHaveBeenCalled(); dispose();
+  });
+
+  it("unmount discards queued startup commands and late token completion", async () => {
+    let resolve!: (grant: { url: string; token: string }) => void;
+    const t = setup({ hostToken: vi.fn(() => new Promise<{ url: string; token: string }>(done => { resolve = done; })) });
+    const dispose = startVoice(t.deps); await flush(); await voiceCommand(host);
+    await vi.waitFor(() => expect(t.deps.hostToken).toHaveBeenCalledOnce());
+    dispose(); await voiceCommand(host); resolve({ url: "wss://lk", token: "late" }); await flush();
+    expect(t.room.connect).not.toHaveBeenCalled(); expect(t.deps.hostToken).toHaveBeenCalledOnce();
   });
 });

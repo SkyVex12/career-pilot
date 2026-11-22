@@ -42,6 +42,7 @@ VISIBILITY: dict[str, int] = {
     "session.postcall": 900,
     "memory.extract": 900,
     "resume.extract": 900,
+    "resume.original": 60,
     "pack.build": 600,
     "digest.rebuild": 600,
     "usage.report": 900,

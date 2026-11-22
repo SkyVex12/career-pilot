@@ -252,7 +252,7 @@ async def test_without_transcript_consent_no_text_is_stored(stack: Stack) -> Non
     texts = await decrypt_all(stack, uid, log.sid)
     assert texts["segments"] == texts["questions"] == texts["answers"] == []
     [summary] = texts["outputs"]
-    assert summary.startswith("summary: Interview of about 2 minutes. 1 questions detected")
+    assert summary.startswith("summary: Interview of about 2 minutes. 1 question detected")
     assert "Private" not in summary
 
 

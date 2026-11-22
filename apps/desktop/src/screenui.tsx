@@ -35,6 +35,8 @@ import {
 import type { SessionView } from "./session";
 import { Button, cx } from "./ui";
 import { Icon } from "./ui/Icon";
+import { useScreenViewer, type ViewerWindow } from "./screenViewer";
+import "./sharing.css";
 
 /** The key that ends a guest's control anywhere (src-tauri hotkeys.rs, STOP_CONTROL). */
 export const STOP_CONTROL_KEY = "Ctrl+Alt+End";
@@ -43,14 +45,13 @@ export const STOP_CONTROL_KEY = "Ctrl+Alt+End";
 export function useScreenStatus(active: boolean): ScreenStatus {
   const [status, setStatus] = useState<ScreenStatus>(SCREEN_OFF);
   useEffect(() => {
-    if (!active || !inTauri) return;
+    if (!active || !inTauri) { setStatus(SCREEN_OFF); return; }
     let disposed = false;
     let off: (() => void) | undefined;
-    onScreenStatus(setStatus).then((f) => {
+    onScreenStatus(value => { if (!disposed) setStatus(value); }).then((f) => {
       if (disposed) f();
-      else off = f;
+      else { off = f; void askScreenStatus(); }
     });
-    void askScreenStatus();
     return () => {
       disposed = true;
       off?.();
@@ -77,61 +78,31 @@ export function HostScreenSection({ s }: { s: SessionView }) {
   const viewers = screenViewers(s);
   const controllers = screenControllersOf(s);
   const status = useScreenStatus(s.running);
-  if (!s.sessionId || (viewers.length === 0 && status.host === "off")) return null;
+  const [error, setError] = useState<string | null>(null);
+  if (!s.sessionId) return null;
   const sid = s.sessionId;
   const on = status.host === "on";
   const whole = status.surface === "monitor";
-  const names = (people: { name: string }[]) => people.map((p) => p.name).join(" and ");
-  const asking = status.asking.find((a) => a.identity !== status.controller?.identity);
-  return (
-    <section className="seat-section seat-screen" aria-label="Your screen">
-      {on ? (
-        <>
-          <div className="seat-invite">
-            <span className="seat-hint seat-grow">Sharing {whole ? "your screen" : "a window"}{viewers.length > 0 ? ` with ${viewers.join(" and ")}` : ""}.</span>
-            <Button size="sm" variant="ghost" onClick={() => void stopScreen()}>
-              Stop sharing
-            </Button>
-          </div>
-          {status.controller ? (
-            <div className="seat-invite seat-control">
-              <span className="seat-hint seat-grow">
-                {status.controller.name} controls it. {STOP_CONTROL_KEY} stops it anywhere.
-              </span>
-              <Button size="sm" variant="danger" onClick={() => void endControl()}>
-                Stop control
-              </Button>
-            </div>
-          ) : (
-            controllers.length > 0 && !whole && <span className="seat-hint">A window is view only. Share your whole screen to give {names(controllers)} control.</span>
-          )}
-          {asking && (
-            <div className="seat-invite">
-              <span className="seat-hint seat-grow">{asking.name} asks to take over.</span>
-              <Button size="sm" onClick={() => void allowControl(asking)}>
-                Let {asking.name} control
-              </Button>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="seat-invite">
-          <span className="seat-hint seat-grow">
-            {controllers.length > 0 ? `Pick your whole screen so ${names(controllers)} can control it.` : `${viewers.join(" and ")} will see it. The overlay is never shown.`}
-          </span>
-          {/* The picker must open from this click (screen.ts). */}
-          <Button size="sm" disabled={status.host === "starting"} onClick={() => void shareScreen(sid)}>
-            {status.host === "starting" ? "Choosing…" : "Share screen"}
-          </Button>
-        </div>
-      )}
-      {status.error && (
-        <p className="seat-error" role="alert">
-          {status.error}
-        </p>
-      )}
-    </section>
-  );
+  const asking = status.asking.find(a => a.identity !== status.controller?.identity);
+  const action = async (run: () => Promise<void>) => {
+    setError(null);
+    try { await run(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  return <section className="seat-section host-screen" aria-label="Your screen">
+    <div className="host-screen-heading">
+      <Icon name="monitor" size={17} />
+      <div><strong>{on ? "Screen sharing on" : "Your screen"}</strong><span>{on ? (whole ? "Entire display" : "One window") : "Share only when you’re ready"}</span></div>
+      <Button size="sm" variant={on ? "danger" : "secondary"} disabled={status.host === "starting" || (!on && viewers.length === 0)} onClick={() => void action(on ? stopScreen : () => shareScreen(sid))}>
+        {on ? "Stop sharing" : status.host === "starting" ? "Choosing…" : "Share screen"}
+      </Button>
+    </div>
+    {!on && viewers.length === 0 && <p className="host-screen-detail">Give an assistant screen access to share.</p>}
+    {viewers.length > 0 && <p className="host-screen-detail">{on ? "Visible to" : "Screen access"}: {viewers.join(", ")}</p>}
+    {status.controller && <div className="host-control-status"><Icon name="mouse" size={15} /><span><strong>{status.controller.name} has control</strong><small>{STOP_CONTROL_KEY} to stop anytime</small></span><Button size="sm" variant="danger" onClick={() => void action(endControl)}>Stop control</Button></div>}
+    {on && controllers.length > 0 && !whole && <p className="host-screen-detail">Remote control needs an entire display. Stop sharing to choose a display.</p>}
+    {asking && <div className="host-control-status"><span>{asking.name} requests control</span><Button size="sm" onClick={() => void action(() => allowControl(asking))}>Allow control</Button></div>}
+    {(status.error || error) && <p className="seat-error" role="alert">{error || status.error}</p>}
+  </section>;
 }
 
 /** The overlay header's chips while the screen is shared: always in sight, one click stops
@@ -193,32 +164,34 @@ export function ScreenChip({ s }: { s: SessionView }) {
  * let go. */
 function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTMLVideoElement | null>) {
   const held = useRef(new Set<string>());
-  const send = useCallback(
-    (events: InputEvent[]) => {
-      if (on && guest && events.length > 0) void guest.send(events).catch(() => undefined);
-    },
-    [on, guest],
-  );
+  const buttons = useRef(new Set<number>());
+  const lastSpot = useRef({ x: 0, y: 0 });
+  const send = useCallback((events: InputEvent[]) => {
+    if (on && guest && events.length) void guest.send(events).catch(() => undefined);
+  }, [on, guest]);
   const push = useCallback((e: InputEvent) => send([e]), [send]);
   const spot = (e: { clientX: number; clientY: number }) => {
     const el = video.current;
-    if (!el) return null;
-    return pictureSpot(e.clientX, e.clientY, el.getBoundingClientRect(), el.videoWidth, el.videoHeight);
+    return el ? pictureSpot(e.clientX, e.clientY, el.getBoundingClientRect(), el.videoWidth, el.videoHeight) : null;
   };
   const letGo = useCallback(() => {
-    send([...held.current].map((code): InputEvent => ({ t: "key_up", code })));
-    held.current.clear();
+    send([
+      ...[...held.current].map((code): InputEvent => ({ t: "key_up", code })),
+      ...[...buttons.current].map((button): InputEvent => ({ t: "up", button, ...lastSpot.current })),
+    ]);
+    held.current.clear(); buttons.current.clear();
   }, [send]);
   useEffect(() => {
-    if (!on) held.current.clear();
-  }, [on]);
-  // The wheel needs a listener that may stop the page from scrolling (React's is passive).
+    window.addEventListener("blur", letGo);
+    const hidden = () => { if (document.hidden) letGo(); };
+    document.addEventListener("visibilitychange", hidden);
+    return () => { letGo(); window.removeEventListener("blur", letGo); document.removeEventListener("visibilitychange", hidden); };
+  }, [letGo]);
   useEffect(() => {
     const el = video.current?.parentElement;
     if (!el || !on) return;
     const wheel = (e: WheelEvent) => {
-      e.preventDefault();
-      push({ t: "wheel", dx: e.deltaX, dy: e.deltaY });
+      e.preventDefault(); push({ t: "wheel", dx: e.deltaX, dy: e.deltaY });
     };
     el.addEventListener("wheel", wheel, { passive: false });
     return () => el.removeEventListener("wheel", wheel);
@@ -228,30 +201,33 @@ function useControl(guest: GuestScreen | null, on: boolean, video: RefObject<HTM
     tabIndex: 0,
     onPointerMove: (e: PointerEvent) => {
       const p = spot(e);
-      if (p) push({ t: "move", ...p });
+      if (p) { lastSpot.current = p; push({ t: "move", ...p }); }
     },
     onPointerDown: (e: PointerEvent<HTMLDivElement>) => {
       const p = spot(e);
       if (!p) return;
-      e.preventDefault();
-      e.currentTarget.focus();
-      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault(); e.currentTarget.focus(); e.currentTarget.setPointerCapture(e.pointerId);
+      buttons.current.add(e.button); lastSpot.current = p;
       push({ t: "down", button: e.button, ...p });
     },
     onPointerUp: (e: PointerEvent) => {
-      const p = spot(e) ?? { x: 0, y: 0 };
-      push({ t: "up", button: e.button, x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) });
+      if (!buttons.current.delete(e.button)) return;
+      const p = spot(e) ?? lastSpot.current;
+      push({ t: "up", button: e.button, ...p });
     },
+    onPointerCancel: letGo,
     onContextMenu: (e: MouseEvent) => e.preventDefault(),
     onKeyDown: (e: KeyboardEvent) => {
-      e.preventDefault();
-      held.current.add(e.code);
-      push({ t: "key_down", code: e.code });
+      if (e.code === "End" && e.ctrlKey && e.altKey) {
+        e.preventDefault(); e.stopPropagation(); letGo(); void guest?.release().catch(() => undefined); return;
+      }
+      // Escape must still leave full screen. Other keys are sent only while the picture is focused.
+      if (e.code === "Escape" && document.fullscreenElement) { letGo(); return; }
+      e.preventDefault(); e.stopPropagation(); held.current.add(e.code); push({ t: "key_down", code: e.code });
     },
     onKeyUp: (e: KeyboardEvent) => {
-      e.preventDefault();
-      held.current.delete(e.code);
-      push({ t: "key_up", code: e.code });
+      if (!held.current.delete(e.code)) return;
+      e.preventDefault(); e.stopPropagation(); push({ t: "key_up", code: e.code });
     },
     onBlur: letGo,
   };
@@ -298,92 +274,79 @@ export function statsLine(s: ViewStats & { inputMs: number | null }): string {
   return parts.join(" · ");
 }
 
-/** The host's screen, for a guest who may see it (main window, while watching). */
-export function GuestScreenView({ s, active = true }: { s: SessionView; active?: boolean }) {
+/** The remote desktop is a first-class workspace, including when access has not yet been granted. */
+export function GuestScreenView({ s, active = true, window: viewerWindow = "main" }: { s: SessionView; active?: boolean; window?: ViewerWindow }) {
   const seat = s.seat;
-  const seatId = active && seat && s.running && seat.capabilities.includes("device.view") ? seat.seatId : null;
-  // The grants it was opened with: a change reopens it (the API took it out of the room).
+  const allowed = seat?.capabilities.includes("device.view") ?? false;
+  const seatId = seat && s.running && allowed ? seat.seatId : null;
   const control = seat?.capabilities.includes("device.control") ?? false;
+  const viewer = useScreenViewer(seatId, active, viewerWindow);
   const [state, setState] = useState<GuestScreenState>(GUEST_OFF);
   const [track, setTrack] = useState<RemoteTrack | null>(null);
   const [guest, setGuest] = useState<GuestScreen | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [full, setFull] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
-  const frame = useRef<HTMLDivElement>(null);
+  const desktop = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!seatId || !inTauri) return;
+    if (!seatId || !viewer.owns || !inTauri) return;
+    let live = true;
     const g = new GuestScreen(guestDeps, seatId, (st, t) => {
-      setState(st);
-      setTrack(t);
+      if (live) { setState(st); setTrack(t); }
     });
-    setGuest(g);
+    setGuest(g); setError(null);
     void g.open();
     return () => {
-      void g.close();
-      setGuest(null);
-      setTrack(null);
-      setState(GUEST_OFF);
+      live = false; void g.close(); setGuest(null); setTrack(null); setState(GUEST_OFF);
     };
-  }, [seatId, control]);
+  }, [seatId, control, viewer.owns, attempt]);
   useEffect(() => {
     const el = video.current;
     if (!track || !el) return;
     track.attach(el);
-    return () => {
-      track.detach(el);
-    };
+    return () => { track.detach(el); };
   }, [track]);
-  const controlling = state.controlling && state.state === "watching";
+  useEffect(() => {
+    const changed = () => setFull(document.fullscreenElement === desktop.current);
+    document.addEventListener("fullscreenchange", changed);
+    return () => { document.removeEventListener("fullscreenchange", changed); };
+  }, []);
+  const watching = !!seatId && viewer.owns && state.state === "watching";
+  const controlling = watching && control && state.controlling;
   const handlers = useControl(guest, controlling, video);
-  const stats = useViewStats(guest, state.state === "watching" ? track : null, controlling);
-  if (!seatId || !seat) return null;
+  const stats = useViewStats(guest, watching ? track : null, controlling);
+  if (!seat || !s.running) return null;
   const host = seat.hostName;
-  const watching = state.state === "watching";
-  return (
-    <section className="screen-view" aria-label={`${host}'s screen`}>
-      <div className="screen-view-head">
-        <strong>{host}'s screen</strong>
-        <span className="screen-view-actions">
-          {watching && state.control && !state.controlling && (
-            <Button size="sm" disabled={state.asked} onClick={() => void guest?.ask()}>
-              {state.asked ? `Waiting for ${host}…` : "Take control"}
-            </Button>
-          )}
-          {controlling && (
-            <Button size="sm" variant="ghost" onClick={() => void guest?.release()}>
-              Stop controlling
-            </Button>
-          )}
-          {watching && (
-            <Button size="sm" variant="ghost" onClick={() => void frame.current?.requestFullscreen()}>
-              Full screen
-            </Button>
-          )}
-        </span>
+  const action = async (run: () => Promise<unknown> | undefined) => {
+    setError(null);
+    try { await run(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  const fullscreen = () => action(async () => {
+    if (document.fullscreenElement === desktop.current) await document.exitFullscreen();
+    else if (desktop.current?.requestFullscreen) await desktop.current.requestFullscreen();
+    else throw new Error("Full screen is unavailable. Maximize the CoRuby window to enlarge the shared screen.");
+  });
+  const status = !allowed ? "No screen access" : viewer.elsewhere ? "Open in another window" : controlling ? "You have control" : watching ? "Viewing" : state.state === "off" && state.error ? "Disconnected" : state.state === "connecting" || !viewer.owns ? "Connecting" : "Waiting for screen";
+  return <section ref={desktop} className={cx("screen-view remote-desktop", controlling && "is-controlling")} aria-label={`${host}'s screen`}>
+    <header className="remote-toolbar">
+      <div className="remote-title"><Icon name="monitor" size={17} /><strong>{host}’s screen</strong><span className={cx("remote-status", watching && "is-live", controlling && "is-control")}>{status}</span></div>
+      <div className="remote-actions">
+        {watching && state.control && control && !controlling && <Button size="sm" disabled={state.asked} onClick={() => void action(() => guest?.ask())}><Icon name="mouse" size={14} />{state.asked ? "Control requested" : "Take control"}</Button>}
+        {controlling && <Button size="sm" variant="danger" onClick={() => void action(() => guest?.release())}>Release control</Button>}
+        {(watching || full) && <Button size="sm" variant="ghost" onClick={() => void fullscreen()}><Icon name={full ? "compact" : "expand"} size={14} />{full ? "Exit full screen" : "Full screen"}</Button>}
       </div>
-      {controlling && <p className="screen-view-hint">You control {host}'s screen. Click the picture to type there; click outside it to stop typing.</p>}
-      <div
-        ref={frame}
-        className={cx("screen-view-frame", !watching && "is-empty", controlling && "is-control")}
-        aria-label={controlling ? `${host}'s screen: your mouse and keys go there` : undefined}
-        {...handlers}
-      >
-        <video ref={video} className="screen-view-video" autoPlay playsInline muted hidden={!watching} />
-        {state.state === "connecting" && <span className="screen-view-note">Connecting…</span>}
-        {state.state === "waiting" && <span className="screen-view-note">{host} isn't sharing their screen right now.</span>}
-        {state.state === "off" && state.error && (
-          <span className="screen-view-note" role="alert">
-            {state.error}
-          </span>
-        )}
-      </div>
-      {state.state === "watching" && stats && statsLine(stats) && (
-        <p
-          className="screen-view-stats"
-          title="Your input: a ping to the host's computer and back. Network: to the media server and back. Decode and Buffer: per frame on this computer."
-        >
-          {statsLine(stats)}
-        </p>
-      )}
-    </section>
-  );
+    </header>
+    <div className={cx("remote-stage", controlling && "is-control")} aria-label={controlling ? `${host}'s screen: your mouse and keys go there` : undefined} {...handlers}>
+      <video ref={video} className="remote-video" autoPlay playsInline muted hidden={!watching} />
+      {!watching && <div className="remote-empty" role="status"><Icon name={allowed ? "monitor" : "shield"} size={32} />
+        <strong>{!allowed ? "Screen access is off" : viewer.elsewhere ? `Screen is open in the ${viewer.elsewhere === "overlay" ? "overlay" : "main window"}` : state.error ? "Screen disconnected" : state.state === "connecting" || !viewer.owns ? "Connecting to shared screen…" : `Waiting for ${host} to share`}</strong>
+        <p>{!allowed ? `${host} can enable screen access in Assistants.` : viewer.elsewhere ? "Open it here to view and control from this window." : state.error || (state.state === "waiting" ? "Their shared display will appear here automatically." : "Establishing a secure screen connection.")}</p>
+        {viewer.elsewhere && <Button size="sm" onClick={viewer.takeHere}>Open shared screen here</Button>}
+        {viewer.owns && state.error && <Button size="sm" onClick={() => setAttempt(value => value + 1)}>Reconnect screen</Button>}
+      </div>}
+    </div>
+    <footer className="remote-footer"><span>{controlling ? `Click the screen to use mouse and keyboard · ${STOP_CONTROL_KEY} releases control` : watching ? (control ? "Remote control is available" : "View only · the host controls screen access") : "Your notes and voice remain available below"}</span>{watching && stats && <span className="remote-quality" title={statsLine(stats)}>{stats.fps !== null ? `${stats.fps} fps` : "Connected"}{stats.networkMs !== null ? ` · ${stats.networkMs} ms` : ""}</span>}</footer>
+    {error && <p className="remote-error" role="alert">{error}</p>}
+  </section>;
 }

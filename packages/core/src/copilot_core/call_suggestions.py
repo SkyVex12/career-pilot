@@ -31,7 +31,7 @@ class CallObservation:
 class Suggestion:
     key: tuple[str, str, str]
     title: str
-    message: str = "Start Copilot for live assistance."
+    message: str = "Start CoRuby for live assistance."
 
 
 @dataclass

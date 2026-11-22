@@ -104,15 +104,26 @@ export interface CallProps {
 export function CallScreen(props: CallProps) {
   const { session, tokenSet, locked } = props;
   const [postCall, setPostCall] = useState<string | null>(null);
-  // The post-call view for the call that just ended.
+  // Only a call observed live in this workspace may open its review automatically.
+  // Restored event history is useful to History, but must not become the startup page.
+  const activeCall = useRef<string | null>(session.running && !session.seat ? session.sessionId : null);
   useEffect(() => {
-    if (session.running) setPostCall(null);
-    else {
+    if (session.running) {
+      activeCall.current = session.seat ? null : session.sessionId;
+      setPostCall(null);
+    } else {
       const ended = postCallFor(session);
-      if (ended) setPostCall(ended);
+      if (ended && activeCall.current === ended) setPostCall(ended);
+      // Native stop emits connection.stopped before the separate stopped event.
+      // Keep this live call eligible until its final reason reaches the reducer.
+      const awaitingStoppedEvent = session.stopped === null
+        && session.connection?.state === "stopped"
+        && session.connection.reason === "ended"
+        && !session.seat
+        && activeCall.current === session.sessionId;
+      if (!awaitingStoppedEvent) activeCall.current = null;
     }
   }, [session]);
-
   if (!tokenSet || locked) return <Setup {...props} />;
   if (postCall && !session.running) {
     return (
@@ -167,7 +178,7 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
             done={Boolean(careerOs?.connected)}
             title={
               <>
-                Link Career-OS {careerOs?.required ? <Badge tone="warning">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
+                Link HubRuby {careerOs?.required ? <Badge tone="warning">Required</Badge> : <Badge tone="neutral">Optional</Badge>}
               </>
             }
             doneText={careerOs?.user ? `Linked as ${careerOs.user.name || careerOs.user.id}` : "Linked"}
@@ -192,7 +203,7 @@ function Setup({ tokenSet, environment, release, signedInAs, settings, careerOs,
         <Button variant="primary" size="lg" disabled>
           Start call
         </Button>
-        <span className="ui-field-hint">{!tokenSet ? "Sign in first." : "Link Career-OS first."}</span>
+        <span className="ui-field-hint">{!tokenSet ? "Sign in first." : "Link HubRuby first."}</span>
       </div>
     </>
   );
@@ -331,7 +342,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const forWhat = atWork ? employer?.name ?? "No company" : application ? `${application.company} · ${application.role}` : "Base resume";
   const stopped = session.stopped && session.stopped !== "ended" && session.stopped !== "left" && !running ? session.stopped : null;
   const watchedEnded = session.seat && !running && session.stopped === "ended" ? session.seat.hostName : null;
-  if (session.seat && running) return <><PageHeader title="Call" /><Watching s={session} dispatch={dispatch ?? (() => undefined)} /></>;
+  if (session.seat && running) return <Watching s={session} dispatch={dispatch ?? (() => undefined)} />;
   if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
   const disabled = busy || joining;
   const manageApplication = () => onApplications ? onApplications(application?.id) : setAddingApplication(true);

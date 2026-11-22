@@ -30,6 +30,7 @@ import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
 import { OverlayAudio } from "./OverlayAudio";
 import { OverlayQuickSettings } from "./OverlayQuickSettings";
+import { startWindowResize } from "./windowDrag";
 
 const COMPACT_KEY = "overlay.compact";
 
@@ -193,7 +194,7 @@ export default function Overlay() {
   return (
     <div className={cx("ov", compact && "is-compact", guest && "is-guest")} style={{ "--ov-alpha": opacity } as CSSProperties}>
       <header className="ov-head" data-native-drag-region>
-        <span className="ov-brand" data-native-drag-region><RubyMark /></span>
+        <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
         {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
         <span className="ov-spacer" data-native-drag-region />
         <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
@@ -234,7 +235,7 @@ export default function Overlay() {
       {!guest && <div id="ov-screen-panel" className="ov-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}>
         <CodingBar running={s.running} onActivity={() => setTab("screen")} />
       </div>}
-      {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} /></div>}
+      {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} window="overlay" /></div>}
       <div id="ov-conversation-panel" className="ov-conversation-workarea" role="tabpanel" aria-labelledby={compact ? undefined : "ov-conversation-tab"} hidden={guest && screenOpen}>
       <ConversationView
         s={s}
@@ -267,7 +268,7 @@ export default function Overlay() {
           <AskBox disabled={!s.running} />
         </>
       )}
-      <span className="ov-grip" aria-hidden="true" onMouseDown={() => inTauri && getCurrentWindow().startResizeDragging("SouthEast")} />
+      <span className="ov-grip" aria-hidden="true" onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.stopPropagation(); void startWindowResize("SouthEast").catch(error => console.warn("Could not resize overlay:", error)); }} />
     </div>
   );
 }

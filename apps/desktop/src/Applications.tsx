@@ -135,7 +135,7 @@ export function Applications({
     <div className={`apps prep-workspace${practicing ? " is-practicing" : ""}`}>
       <PageHeader title="Interview prep" actions={<>
         <Button onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
-        {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from Career-OS…</Button>}
+        {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from HubRuby…</Button>}
         {!practicing && <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>}
       </>} />
       {practiceOpened && <div hidden={!practicing} className="prep-practice"><Practice active={active && practicing} running={running} entry={practiceEntry} /></div>}

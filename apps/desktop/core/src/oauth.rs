@@ -281,10 +281,10 @@ fn callback_query(request_line: &str) -> Option<Vec<(String, String)>> {
     )
 }
 
-const PAGE_DONE: &str = "<!doctype html><meta charset=utf-8><title>Copilot</title>\
-<body style=\"font-family:system-ui;margin:3em\"><h2>Signed in to Copilot</h2><p>You can close this tab.</p>";
-const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>Copilot</title>\
-<body style=\"font-family:system-ui;margin:3em\"><h2>Sign-in did not finish</h2><p>Go back to Copilot and try again.</p>";
+const PAGE_DONE: &str = "<!doctype html><meta charset=utf-8><title>CoRuby</title>\
+<body style=\"font-family:system-ui;margin:3em\"><h2>Signed in to CoRuby</h2><p>You can close this tab.</p>";
+const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>CoRuby</title>\
+<body style=\"font-family:system-ui;margin:3em\"><h2>Sign-in did not finish</h2><p>Go back to CoRuby and try again.</p>";
 
 async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     let response = format!(

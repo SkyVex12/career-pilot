@@ -3,7 +3,7 @@
 import { useCardWindow } from "./cardWindow";
 import { inTauri } from "./api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { RubyMark } from "./ui/RubyMark";
+import { CoRubyWordmark, RubyMark } from "./ui/RubyMark";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Menu, Select, Tooltip } from "./ui";
 import type { ProfileState } from "./profiles";
@@ -217,7 +217,7 @@ export function Shell({
         <div className="workspace-card desktop-workspace">
           <div className="workspace-card-header" data-native-drag-region="header">
             <div className="desktop-titlebar" data-native-drag-region="header" onDoubleClick={e => { if (!(e.target as Element).closest("button")) void windowAction("maximize"); }}>
-              <span className="desktop-brand" title={version ? `Ruby ${version}` : "Ruby"}><RubyMark /><span>Ruby</span></span>
+              <span className="desktop-brand" title={version ? `CoRuby ${version}` : "CoRuby"}><RubyMark /><CoRubyWordmark /></span>
               <div className="desktop-title-actions">
                 <div className="desktop-command-tools">
                   <Menu label="Window size" trigger={<span>Full</span>} items={[

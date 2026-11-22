@@ -15,6 +15,7 @@ use tauri_plugin_global_shortcut::Shortcut;
 pub enum Action {
     ForceQuestion,
     ToggleOverlay,
+    ToggleStealth,
     ClickThrough,
     ClickThroughOff,
     OpacityUp,
@@ -40,6 +41,7 @@ pub fn bindings(s: &Settings) -> Vec<(Action, String)> {
     vec![
         (Action::ForceQuestion, s.hotkey.trim().to_string()),
         (Action::ToggleOverlay, s.toggle_overlay_hotkey.trim().to_string()),
+        (Action::ToggleStealth, s.toggle_stealth_hotkey.trim().to_string()),
         (Action::ClickThrough, s.click_through_hotkey.trim().to_string()),
         (Action::ClickThroughOff, click_through_off(s)),
         (Action::OpacityUp, s.opacity_up_hotkey.trim().to_string()),
@@ -168,6 +170,31 @@ mod tests {
     }
 
     #[test]
+    fn stealth_shortcut_is_registered_rebindable_and_clearable() {
+        let mut settings = settings();
+        let default = parse("CommandOrControl+Shift+S").unwrap();
+        assert!(to_register(&settings).contains(&(default, Action::ToggleStealth)));
+        settings.toggle_stealth_hotkey = "Alt+F9".into();
+        assert!(to_register(&settings).contains(&(parse("Alt+F9").unwrap(), Action::ToggleStealth)));
+        assert!(!to_register(&settings).iter().any(|(key, _)| *key == default));
+        settings.toggle_stealth_hotkey.clear();
+        assert!(!to_register(&settings).iter().any(|(_, action)| *action == Action::ToggleStealth));
+    }
+
+    #[test]
+    fn stealth_shortcut_conflict_is_reported_without_losing_click_through_recovery() {
+        let mut settings = settings();
+        settings.toggle_stealth_hotkey = CLICK_THROUGH_OFF_FALLBACK.into();
+        let conflicts = review(&settings).conflicts;
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].actions.contains(&Action::ToggleStealth));
+        assert!(conflicts[0].actions.contains(&Action::ClickThroughOff));
+        let recovery = parse(CLICK_THROUGH_OFF_FALLBACK).unwrap();
+        assert!(to_register(&settings).contains(&(recovery, Action::ClickThroughOff)));
+        assert!(!to_register(&settings).iter().any(|(_, action)| *action == Action::ToggleStealth));
+    }
+
+    #[test]
     fn a_shared_key_is_reported_as_one_conflict() {
         let mut s = settings();
         s.toggle_overlay_hotkey = "CommandOrControl+Shift+Space".into(); // same as force_question
@@ -214,6 +241,7 @@ mod tests {
         let same = "CommandOrControl+Shift+Space";
         s.hotkey = same.into();
         s.toggle_overlay_hotkey = same.into();
+        s.toggle_stealth_hotkey = same.into();
         s.click_through_hotkey = same.into();
         s.click_through_off_hotkey = same.into();
         s.opacity_up_hotkey = same.into();

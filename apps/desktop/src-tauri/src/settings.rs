@@ -57,6 +57,8 @@ pub struct Settings {
     pub hotkey: String,
     /// Hide or show the overlay without ending the session.
     pub toggle_overlay_hotkey: String,
+    /// Toggle capture exclusion without opening a window or ending the session.
+    pub toggle_stealth_hotkey: String,
     /// Let clicks pass through the overlay to the window underneath, and turn that off again.
     /// The off switch always keeps a working key (hotkeys::click_through_off).
     pub click_through_hotkey: String,
@@ -114,6 +116,7 @@ impl Default for Settings {
             echo_cancellation: true,
             hotkey: "CommandOrControl+Shift+Space".into(),
             toggle_overlay_hotkey: "CommandOrControl+Shift+H".into(),
+            toggle_stealth_hotkey: "CommandOrControl+Shift+S".into(),
             click_through_hotkey: "CommandOrControl+Shift+T".into(),
             click_through_off_hotkey: hotkeys::CLICK_THROUGH_OFF_FALLBACK.into(),
             opacity_up_hotkey: "CommandOrControl+Shift+Up".into(),
@@ -351,6 +354,7 @@ mod tests {
         let s: Settings = serde_json::from_str(old).unwrap();
         assert_eq!(s.hotkey, "F9");
         assert_eq!(s.toggle_overlay_hotkey, "CommandOrControl+Shift+H");
+        assert_eq!(s.toggle_stealth_hotkey, "CommandOrControl+Shift+S");
         assert_eq!(s.click_through_off_hotkey, crate::hotkeys::CLICK_THROUGH_OFF_FALLBACK);
         assert!(s.layouts.is_empty());
         assert!(s.overlay_monitor.is_none());

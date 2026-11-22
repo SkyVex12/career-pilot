@@ -7,7 +7,8 @@
   role and text), or fills the JD of the application it was uploaded for; then that
   application's session packs are built.
 
-Claude reads PDFs directly, so there is no document parser. The object's SHA-256 must match
+Claude reads PDFs directly for fact extraction. A separate bounded parser retains original file
+text for source citations. The object's SHA-256 must match
 what the client declared when it asked for the upload URL.
 """
 
@@ -22,6 +23,7 @@ from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import complete_json
 from copilot_worker.memory import memory_version, replace_resume_nodes
+from copilot_worker.resume_text import original_text
 from copilot_worker.runtime import Job, handler
 
 log = logging.getLogger(__name__)
@@ -119,6 +121,57 @@ async def version_content(ctx: Ctx, uid: UUID, row: Any) -> dict[str, Any] | Non
     return document_block(body, row["content_type"] or "text/plain", label)
 
 
+async def persist_original(
+    ctx: Ctx, uid: UUID, version_id: UUID, sha: str, block: dict[str, Any]
+) -> None:
+    text = await original_text(block)
+    async with ctx.user(uid) as conn:
+        current = await conn.fetchrow(
+            "select content_sha256,text_enc from app.resume_versions where id=$1 for update",
+            version_id,
+        )
+        if current is None or current["content_sha256"] != sha or current["text_enc"] is not None:
+            return
+        sealed, key = (None, None)
+        if text:
+            sealed, key = await ctx.crypto.encrypt(
+                conn, uid, "resume_versions:original", str(version_id), text
+            )
+        await conn.execute(
+            "update app.resume_versions set original_text_enc=$2,original_text_key_version=$3,"
+            "original_content_sha256=$4 where id=$1",
+            version_id,
+            sealed,
+            key,
+            sha,
+        )
+
+
+@handler("resume.original")
+async def backfill_original(job: Job, ctx: Ctx) -> None:
+    uid, version_id, sha = (
+        job.uid,
+        UUID(job.payload["resume_version_id"]),
+        str(job.payload["content_sha256"]),
+    )
+    async with ctx.user(uid) as conn:
+        row = await conn.fetchrow(
+            "select v.*,d.s3_key,d.sha256 as doc_sha,d.content_type from app.resume_versions v "
+            "left join app.documents d on d.id=v.document_id where v.id=$1",
+            version_id,
+        )
+    if (
+        row is None
+        or row["content_sha256"] != sha
+        or row["text_enc"] is not None
+        or row["original_content_sha256"] == sha
+    ):
+        return
+    block = await version_content(ctx, uid, row)
+    if block is not None:
+        await persist_original(ctx, uid, version_id, sha, block)
+
+
 async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> None:
     """One version's content into its own memory nodes, then its digest. Content that has
     been replaced since the job was sent is skipped (the newer content has its own job)."""
@@ -126,6 +179,7 @@ async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> No
         row = await conn.fetchrow(
             "select v.id, v.label, v.text_enc, v.key_version, v.content_sha256,"
             " v.extracted_sha256, v.status, v.document_id, v.file_s3_key, v.file_content_type,"
+            " v.original_content_sha256,"
             " d.s3_key, d.sha256 as doc_sha,"
             " d.content_type from app.resume_versions v"
             " left join app.documents d on d.id = v.document_id where v.id = $1",
@@ -133,7 +187,9 @@ async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> No
         )
     if row is None or row["content_sha256"] != sha:
         return
-    if row["status"] == "extracted" and row["extracted_sha256"] == sha:
+    already_extracted = row["status"] == "extracted" and row["extracted_sha256"] == sha
+    original_missing = row["text_enc"] is None and dict(row).get("original_content_sha256") != sha
+    if already_extracted and not original_missing:
         return
     block = await version_content(ctx, uid, row)
     if block is None:
@@ -148,6 +204,10 @@ async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> No
                 await conn.execute(
                     "update app.documents set status = 'failed' where id = $1", row["document_id"]
                 )
+        return
+    if original_missing:
+        await persist_original(ctx, uid, version_id, sha, block)
+    if already_extracted:
         return
     data = await complete_json(ctx.router, "extract", prompts.resume_request(block))
     async with ctx.user(uid) as conn:

@@ -10,7 +10,7 @@ The module adds optional close-to-tray behavior, the existing Ruby app icon in t
 - During setup call `background::setup(app.handle(), remote::end)?`.
 - Before existing window event handling call `background::on_window_event(window, event)` and return when it consumes the close.
 - The existing single-instance callback calls `background::second_instance(app, &args)`. A second `--background` launch never restores/focuses the workspace; a normal second launch does.
-- Register `background_status`, `background_set_preferences`, `background_detection_status`, and optional `background_native_activity` commands.
+- Register `background_status`, `background_set_preferences`, and optional `background_native_activity` commands.
 - Skip startup backend wake/auth fetching when `background::background_start_requested()` is true. The frontend must obtain `background_status` before its startup API/device discovery work and remain idle while `background_start` is true. Listen for `copilot://background`; Open Copilot clears the flag and emits this event. Recheck status after installing the event listener to avoid a lost startup event.
 - Background preference changes emit the same event. Future detection adapters must honor `suggestions_paused` before presenting suggestions.
 - The native module itself has no backend/API, audio capture, transcription, screen capture, or network loop. Opt-in detection uses a five-second bounded local metadata sample; no UI tree is inspected while idle without microphone activity or an already tracked call. The surrounding app must retain that invariant for hidden startup.
@@ -33,7 +33,7 @@ The diagnostic response itself still has `call_evidence: false`. Windows opt-in 
 
 Preferences add `call_suggestions` (false by default) and `disabled_apps`. Windows shell notification state suppresses prompts when Windows reports notifications inappropriate; this is not certification of every Focus Assist/DND policy version. Pause, per-app disabling and existing sessions suppress new prompts. Accepting opens setup, not capture. A separate nonfocused window has Start Copilot/Not now; end offers invoke existing confirmation. Accepted actions are retained locally until the main frontend consumes them, including background cold startup.
 
-[Microsoft UI Automation guidance](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationelement-findall) informs worker-thread queries and top-level-only desktop enumeration. Windows queries cache only visible button names within known application windows, avoiding individual remote calls and the former 12-level depth cutoff. UIA provider connection/transaction timeouts are 500/1000 ms; a three-second budget is checked between windows and at most 512 button names are processed per window. No document text, title, URLs, screenshots, or accessibility actions are read or invoked. The budget is cooperative between provider calls, not a hard wall-clock guarantee. [Windows notification state](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shqueryusernotificationstate) gates suggestion display. Native event subscriptions could reduce fallback polling further; they are not implemented.
+[Microsoft UI Automation guidance](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationelement-findall) informs worker-thread queries and top-level-only desktop enumeration. Traversal is bounded per known application; only button names are inspected transiently, never document text, title, URLs, screenshots, or accessibility actions. [Windows notification state](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shqueryusernotificationstate) gates suggestion display. Native event subscriptions could reduce fallback polling further; they are not implemented.
 
 | Target | Implemented evidence adapter | Incoming | Actual active calls | Audio access |
 | --- | --- | --- | --- | --- |
@@ -41,7 +41,7 @@ Preferences add `call_suggestions` (false by default) and `disabled_apps`. Windo
 | Chrome/Edge/Firefox/Brave web calls | English leave/hang-up + microphone controls + browser microphone process | Unverified | Unverified; generic call only | Unverified |
 | BlueStacks/LDPlayer, Phone Link | Accessible English call controls + exact-PID microphone activity | Unverified | Unverified; no Android app/caller inference | Phone-side audio not assumed |
 | macOS 13+ / FaceTime / iPhone relay | NSWorkspace bundle identity + Accessibility call controls + CoreAudio default-input running state | Unverified | Source implemented; real calls unverified | Global device activity does not establish per-app audio routing |
-| Samsung Flow, AirDroid, Smart Connect | No validated adapter; disabled | Unavailable | Unavailable | Unverified |
+| Samsung Flow, AirDroid, Smart Connect | Official-capability evaluation complete below; no validated adapter, disabled | Vendor notifications vary; Career Pilot unverified | Career Pilot unverified | Route-specific; see evaluation |
 
 Localization, inaccessible/minimized controls, privileged application windows and process-separated native apps may prevent detection. No app is certified supported solely by these adapters. Real app calls, DND, device changes, audio routing, all macOS architectures and incoming-call behavior require device validation.
 
@@ -67,7 +67,25 @@ Official references checked during implementation: [Apple Accessibility API](htt
 
 The small checked-in harness is `apps/desktop/native-checks/macos-call-adapter`. Reproduce with `cargo check --manifest-path apps/desktop/native-checks/macos-call-adapter/Cargo.toml --target aarch64-apple-darwin --offline` and the same command with `--target x86_64-apple-darwin` after installing the Rust standard-library targets. It imports the production modules directly; it does not claim full native app compilation.
 
-## Post-merge notification follow-up (2026-11-19)
+
+## Additional phone-link evaluation (M01-019, 2026-11-19)
+
+This completes the locally feasible provider-capability evaluation. It does not enable adapters based on process names or imply that third-party notifications are Career Pilot detection. No supported public call-state or call-audio integration API for these products was established by the reviewed documentation.
+
+| Product | Vendor-documented behavior | Career Pilot integration decision |
+| --- | --- | --- |
+| Samsung Flow | Notification synchronization and Smart View phone-screen control are documented. Smart View lets users choose phone or PC speakers for phone sounds. The documentation does not establish cellular/VoIP microphone routing or a stable incoming/active-call event interface. | Keep automatic call detection disabled. Mirroring or media playback is insufficient evidence of an active call. A Galaxy phone/Windows PC trial must separately establish incoming controls, active-call controls and both audio directions. |
+| AirDroid Personal | Mirrored notifications include phone-call notifications. Current call-management guidance places the headset on the phone; its PC-microphone support article explicitly says conversation audio still uses the phone. | Notification/call-control capability is not desktop capture support. Keep the adapter disabled. Do not suggest a desktop capture session based only on an AirDroid notification; use Career Pilot manual/companion paths with a separately verified audio source. |
+| Lenovo/Motorola Smart Connect | Motorola/Lenovo app streaming can receive calls; output-device selection and Mobile Desktop call-volume/audio-device controls are documented. Some apps cannot stream protected audio. Features vary by hardware; Lenovo lists a restricted iPhone feature set. | Candidate for a future route-specific adapter, not universal support. Validate accessible call controls and actual WASAPI input/output on a paired supported Motorola/Lenovo device. Screen streaming alone cannot identify who is speaking or prove call-audio access. |
+
+Sources inspected directly: [Samsung Flow overview](https://www.samsung.com/uk/support/mobile-devices/what-is-samsung-flow-and-how-do-i-use-it/) and [Smart View controls](https://www.samsung.com/us/support/answer/ANS10001406/); [AirDroid call notification setup](https://help.airdroid.com/hc/en-us/articles/360004159593-How-to-receive-phone-s-notifications-on-a-computer-with-AirDroid-Personal), [current call-management page](https://www.airdroid.com/personal/sms-notification-call-on-pc/) and [PC microphone limitation](https://help.airdroid.com/hc/en-us/articles/360007483153-Can-I-Make-a-Phone-Call-with-Computer-s-Mic-and-Speakers); [Motorola Android app streaming](https://en-gb.support.motorola.com/app/answers/detail/a_id/182078/p/30%2C), [Mobile Desktop controls](https://help.motorola.com/hc/apps/smartconnect/sc90/en-us/CG0707793606.html) and [Lenovo compatibility](https://support.lenovo.com/sg/en/solutions/ht517758).
+
+The AirDroid microphone support article has an older publication date; its limitation is consistent with the current call-management page's phone-headset instructions. No broad claim is made about separate AirDroid Cast/Remote Support products. Samsung Flow is likewise distinct from Samsung Phone and Microsoft Phone Link.
+
+A future physical trial must record product/OS/device versions, pairing method, incoming and active-control accessibility, mute/device/reconnect behavior, actual PC microphone and speaker routes, duplicate suppression and permission/DND behavior. Test notification mirroring and ordinary media as negative controls. Only enable the specific adapter/route proven by that trial. No accounts, downloads, paired devices, calls or permissions were changed for this evaluation.
+
+
+### Post-merge notification follow-up (2026-11-19)
 
 The user reported no prompt during a Google Meet call. Installed desktop 0.3.5 had call suggestions enabled, unpaused, and no applications excluded. A native probe on that host saw Browser microphone activity plus call controls and Windows allowed notifications. One probe took 20.96 seconds, consistent with the documented default UIA provider timeout. The installed application's exact failure path could not be recovered because the old implementation discarded inspection and presentation errors.
 
@@ -75,6 +93,6 @@ The follow-up batches/caches visible-button queries and bounds provider waits. P
 
 Settings > Background > Check detection reports the last local sample: waiting for microphone, missing call controls, disabled application, notification policy, active Copilot session, pending suggestion, or native/presentation error. It does not scan twice, record audio, wake the backend, or start a session. Only known app categories, counts and booleans are cached; button text is transient.
 
-After batching, a host probe took 546 ms and found no microphone/call (the call had ended by then); this is not a same-call latency benchmark or a verified popup. Native 102 tests passed (3 diagnostics/capture tests excluded by default), strict Clippy and both Mac adapter metadata checks passed. Full desktop regression and preview build results are recorded in the progress ledger. Real-call popup acceptance/focus/mute/DND behavior still requires a trial with the patched executable.
+After batching, a host probe took 546 ms and found no microphone/call (the call had ended by then); this is not a same-call latency benchmark or a verified popup. Original native 102 tests passed (3 diagnostics/capture tests excluded by default), strict Clippy and both Mac adapter metadata checks passed. The current integrated branch additionally passes the focused checks recorded above. Real-call popup acceptance/focus/mute/DND behavior still requires a trial with the patched executable.
 
 References: [UIA caching](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-cachingforclients), [FindAllBuildCache](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationelement-findallbuildcache), [provider transaction timeout](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation2-put_transactiontimeout).

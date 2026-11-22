@@ -35,7 +35,7 @@ from copilot_core.db import Conn
 PREFIX = "/v1/career-pilot"
 PROVIDER = "career_os"  # app.integrations.provider
 REQUIRED_CODE = "career_os_required"
-REQUIRED_MESSAGE = "Please link your Career-OS account to use this app (Settings → Career-OS)."
+REQUIRED_MESSAGE = "Please link your HubRuby account to use this app (Settings → HubRuby)."
 
 
 async def is_linked(conn: Conn) -> bool:
@@ -128,7 +128,7 @@ class CareerOsClient:
             ) as client:
                 response = await client.request(method, PREFIX + path, headers=headers, **kwargs)
         except httpx2.HTTPError as e:
-            raise CareerOsError(502, f"Career-OS could not be reached ({type(e).__name__})") from e
+            raise CareerOsError(502, f"HubRuby could not be reached ({type(e).__name__})") from e
         if response.status_code >= 400:
             raise CareerOsError(response.status_code, _detail(response))
         return response
@@ -139,9 +139,9 @@ class CareerOsClient:
         try:
             data = response.json()
         except ValueError as e:
-            raise CareerOsError(502, "Career-OS answered with something that is not JSON") from e
+            raise CareerOsError(502, "HubRuby answered with something that is not JSON") from e
         if not isinstance(data, dict):
-            raise CareerOsError(502, "Career-OS answered with something unexpected")
+            raise CareerOsError(502, "HubRuby answered with something unexpected")
         return data  # pyright: ignore[reportUnknownVariableType]
 
     async def link(self, code: str, client_label: str) -> dict[str, Any]:
@@ -149,7 +149,7 @@ class CareerOsClient:
         `user` is the linked account: the admin, for an admin link."""
         data = await self._json("POST", "/link", json={"code": code, "client_label": client_label})
         if not isinstance(data.get("token"), str) or not isinstance(data.get("user"), dict):
-            raise CareerOsError(502, "Career-OS answered the link without a token")
+            raise CareerOsError(502, "HubRuby answered the link without a token")
         return data
 
     async def sign_in_token(
@@ -163,7 +163,7 @@ class CareerOsClient:
             "redirect_uri": redirect_uri, "client_id": SIGN_IN_CLIENT_ID,
         })  # fmt: skip
         if not isinstance(data.get("assertion"), str) or not isinstance(data.get("link_code"), str):
-            raise CareerOsError(502, "Career-OS answered the sign-in without an assertion")
+            raise CareerOsError(502, "HubRuby answered the sign-in without an assertion")
         return data
 
     async def sign_in_keys(self) -> dict[str, Any]:
@@ -203,7 +203,7 @@ class CareerOsClient:
                 return None
             raise
         if len(response.content) > MAX_FILE_BYTES:
-            raise CareerOsError(502, "the resume file from Career-OS is too large")
+            raise CareerOsError(502, "the resume file from HubRuby is too large")
         disposition = response.headers.get("content-disposition", "")
         filename = (
             disposition.split("filename=", 1)[-1].strip('"; ')
@@ -226,7 +226,7 @@ def _detail(response: httpx2.Response) -> str:
         detail = None
     if isinstance(detail, str) and detail:
         return detail[:300]
-    return f"Career-OS answered {response.status_code}"
+    return f"HubRuby answered {response.status_code}"
 
 
 class AssertionVerifier:

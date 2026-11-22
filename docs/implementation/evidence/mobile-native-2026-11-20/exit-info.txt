@@ -1,0 +1,36 @@
+ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)
+Last Timestamp of Persistence Into Persistent Storage: 2026-11-20 00:42:15.892
+  package: app.careerpilot.mobile.httptest
+    Historical Process Exit for uid=10074
+        ApplicationExitInfo #0:
+          timestamp=2026-11-20 00:46:52.121 pid=8644 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=79MB rss=169MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #1:
+          timestamp=2026-11-20 00:33:17.402 pid=8314 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=96MB rss=180MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #2:
+          timestamp=2026-11-20 00:28:06.495 pid=5826 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=105MB rss=202MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #3:
+          timestamp=2026-11-20 00:15:40.064 pid=5353 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=124MB rss=216MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #4:
+          timestamp=2026-11-20 00:13:11.396 pid=5095 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=10 (USER REQUESTED) subreason=21 (FORCE STOP) status=0
+          importance=100 pss=96MB rss=179MB description=stop app.careerpilot.mobile.httptest due to from pid 5343 state=empty trace=null
+        ApplicationExitInfo #5:
+          timestamp=2026-11-20 00:12:15.885 pid=4618 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=89MB rss=175MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #6:
+          timestamp=2026-11-20 00:00:30.375 pid=4066 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=90MB rss=177MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null
+        ApplicationExitInfo #7:
+          timestamp=2026-11-19 23:57:28.543 pid=3549 realUid=10074 packageUid=10074 definingUid=10074 user=0
+          process=app.careerpilot.mobile.httptest reason=16 (PACKAGE UPDATED) subreason=0 (UNKNOWN) status=0
+          importance=100 pss=89MB rss=197MB description=stop app.careerpilot.mobile.httptest due to installPackageLI state=empty trace=null

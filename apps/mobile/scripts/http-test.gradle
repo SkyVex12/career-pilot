@@ -1,0 +1,38 @@
+// A separate, bundled APK for explicitly testing an HTTP/WS deployment.
+android {
+    defaultConfig {
+        manifestPlaceholders += [careerPilotScheme: "careerpilot", careerPilotExpoScheme: "exp+career-pilot-mobile"]
+    }
+    buildTypes {
+        httpTest {
+            initWith release
+            matchingFallbacks = ['release']
+            applicationIdSuffix '.httptest'
+            versionNameSuffix '-http-test'
+            manifestPlaceholders += [careerPilotScheme: 'careerpilot-httptest', careerPilotExpoScheme: 'exp+career-pilot-mobile-httptest']
+            debuggable false
+            // Internal testing does not need R8; keep native packaging memory bounded.
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+// Environment changes must invalidate Metro/Hermes output in a reused checkout.
+tasks.configureEach { task ->
+    if (task.name.startsWith('createBundle') && task.name.endsWith('JsAndAssets')) {
+        task.nodeExecutableAndArgs.set(['node', file('../../scripts/native-bundle.cjs').absolutePath, task.name.contains('HttpTest') ? 'http-test' : 'secure'])
+        task.inputs.file(file('../../scripts/native-bundle.cjs'))
+        task.inputs.files(fileTree('../..') { include '.env', '.env.*' })
+        ['EXPO_PUBLIC_MOBILE_HTTP_TEST', 'EXPO_PUBLIC_API_URL', 'EXPO_PUBLIC_GATEWAY_URL'].each { key ->
+            task.inputs.property(key, providers.environmentVariable(key).orElse(''))
+        }
+        task.doFirst {
+            def httpTest = providers.environmentVariable('EXPO_PUBLIC_MOBILE_HTTP_TEST').orElse('').get() == 'true'
+            if (httpTest != task.name.contains('HttpTest')) {
+                throw new GradleException('HTTP test flag and native variant disagree. Build the test APK with npm run android:http-test; unset EXPO_PUBLIC_MOBILE_HTTP_TEST for other variants.')
+            }
+        }
+    }
+}
