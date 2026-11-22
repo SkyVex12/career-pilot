@@ -360,7 +360,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     </header>
     <section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
-        <header className="call-design-heading"><h1>Start a call</h1><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></header>
+        <header className="call-design-heading"><div><h1>Start a call</h1><p className="call-design-description">Choose your context. Get guidance when you need it.</p></div><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></header>
         <div className="call-design-body">
           <SegmentedControl label="Session type" value={testing ? "test" : mode} options={[["interview", "Interview"], ["standup", "Standup"], ["meeting", "Meeting"], ["test", "Online test"]] as const} disabled={disabled} onChange={value => { setNoCall(value === "test"); changeMode(value === "test" ? "interview" : value); }} />
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
@@ -370,7 +370,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             {stopped && <Banner tone={stopped === "outdated" ? "info" : "warning"} title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
             {message && <Banner tone="danger">{message}</Banner>}
           </div>
-          <div className="call-setup-fields">
+          <div className="call-setup-fields" aria-label="Call context">
             {atWork ? <>
               <div className="call-row"><label className="call-row-label" htmlFor="call-company">Company</label><Select id="call-company" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
               {work.error && <p className="ui-field-error" role="alert">{work.error}</p>}
@@ -394,8 +394,10 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             </>}
           </div>
           <div className="call-row call-answer-row"><span className="call-row-label">Answers</span><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div>
-          <MeetingPreparation onChoose={(title, applicationId) => { setMeetingTitle(title); setTarget(applicationId ? `job:${applicationId}` : ""); setMode(applicationId ? "interview" : "meeting"); }} />
-          <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled} />
+          <div className="call-optional-settings">
+            <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled} />
+            <MeetingPreparation onChoose={(title, applicationId) => { setMeetingTitle(title); setTarget(applicationId ? `job:${applicationId}` : ""); setMode(applicationId ? "interview" : "meeting"); }} />
+          </div>
           <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
           <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
           {testing ? <p className="ui-field-hint">Audio off. Type a question or capture your screen.</p> : settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}

@@ -1,3 +1,4 @@
+import "./feature-pages.css";
 import { PersonalAI } from "./PersonalAI";
 import { Ask, openAsk, type AskEntry } from "./Ask";
 // Work: the companies the user works at (apart from the jobs they apply to), and per company a
@@ -102,12 +103,12 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
     );
   }
   return (
-    <>
+    <div className="work-workspace feature-page">
       <PageHeader
         title="Work context"
         actions={
           <>
-            <Button onClick={() => { setAsking(v => !v); setAskOpened(true); }}>{asking ? "Back to work context" : "Ask a question"}</Button>
+            <Button variant={asking ? "ghost" : "primary"} onClick={() => { setAsking(v => !v); setAskOpened(true); }}>{asking ? "Back to work context" : "Ask a question"}</Button>
             {!asking && employers.length > 0 && (
               <Button variant="secondary" onClick={() => setForm("add")}>
                 + Add company
@@ -130,7 +131,8 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
       />
       {askOpened && <div hidden={!asking}><Ask active={active && asking} entry={askEntry} /></div>}
       <div hidden={asking}>
-      <details className="work-personal-context"><summary>Context from my AI</summary><PersonalAI /></details>
+      {error && <Banner tone="danger" title="Could not refresh your companies" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
+      <details className="work-personal-context feature-disclosure"><summary><span>Context from my AI</span><span className="work-personal-caption">Bring a private brief into your work</span></summary><PersonalAI /></details>
       {employers.length === 0 ? (
         <EmptyState
           icon={<Icon name="work" size={28} />}
@@ -201,7 +203,7 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
           Its work logs and attachments, documents, facts, and its standup and meeting calls with their transcripts. This cannot be undone.
         </ConfirmDialog>
       )}
-    </>
+    </div>
   );
 }
 
@@ -367,7 +369,7 @@ function LogTab({ employer }: { employer: Employer }) {
   };
 
   return (
-    <div className="work-log">
+    <div className="work-log feature-work-log">
       <div className="work-log-main">
         <div className="work-day">
           <IconButton label="Previous day" icon="‹" variant="subtle" onClick={() => go(shiftDay(day, -1))} />
@@ -379,7 +381,7 @@ function LogTab({ employer }: { employer: Employer }) {
             </Button>
           )}
           <span className="ui-spacer" />
-          {entry && <LogStatus log={entry} />}
+          {dirty ? <span className="work-unsaved" role="status">Unsaved changes</span> : entry && <LogStatus log={entry} />}
         </div>
         <div className="form-actions work-log-toolbar">
           <input
@@ -409,6 +411,7 @@ function LogTab({ employer }: { employer: Employer }) {
         <Field label="What you worked on" hint="Tasks, decisions, blockers and next steps." hintMode="tooltip">
           <Textarea
             rows={10}
+            placeholder="What moved forward today? Add decisions, blockers, and what comes next."
             value={text}
             onChange={(e) => {
               setText(e.target.value);
@@ -435,7 +438,7 @@ function LogTab({ employer }: { employer: Employer }) {
       </div>
       <aside className="work-log-past" aria-label="Past entries">
         <h2 className="ui-section-title">Past entries</h2>
-        <ListState items={entries} error={error} onRetry={load} loadingLabel="the work log" empty={<p className="ui-field-hint">No entries yet.</p>}>
+        <ListState items={entries} error={error} onRetry={load} loadingLabel="the work log" empty={<p className="work-past-empty">Your saved daily logs will appear here. Start with today’s progress.</p>}>
           {(list) => (
             <List label="Past entries">
               {list.map((e) => (

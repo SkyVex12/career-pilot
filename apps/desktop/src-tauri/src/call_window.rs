@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{AppState, OPEN_CALL_EVENT, Res, apply_click_through, workspace_window};
+use crate::{AppState, OPEN_CALL_EVENT, Res, apply_click_through, stealth, workspace_window};
 
 trait Windows {
     fn show_overlay(&self) -> Res<()>;
@@ -35,7 +35,7 @@ impl Windows for DesktopWindows<'_> {
         let window = self.0.get_webview_window("overlay").ok_or("no overlay window")?;
         window.set_ignore_cursor_events(false).map_err(|error| error.to_string())?;
         self.0.state::<AppState>().overlay.click_through.store(false, Ordering::SeqCst);
-        window.show().map_err(|error| error.to_string())?;
+        stealth::show(&window)?;
         if window.is_minimized().map_err(|error| error.to_string())? {
             window.unminimize().map_err(|error| error.to_string())?;
         }
@@ -60,7 +60,7 @@ impl Windows for DesktopWindows<'_> {
         let window = self.0.get_webview_window("main").ok_or("no main window")?;
         workspace_window::clear_click_through(self.0)?;
         let _ = self.0.emit_to("main", OPEN_CALL_EVENT, ());
-        window.show().map_err(|error| error.to_string())?;
+        stealth::show(&window)?;
         if window.is_minimized().map_err(|error| error.to_string())? {
             window.unminimize().map_err(|error| error.to_string())?;
         }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Banner, Button, Card, ConfirmDialog, Field, Input, Select, Textarea } from "./ui";
+import { Badge, Banner, Button, Card, ConfirmDialog, Field, Input, Select, SkeletonList, Spinner, Textarea } from "./ui";
+import "./feature-pages.css";
 import { PracticeAudio, audioBase64, registerPracticePause } from "./practiceAudio";
 export type PracticeEntry = { application_id?: string; source_question?: { session_id: string; channel: "them" | "me"; seg_id: number }; topic?: string; n: number };
 export const openPractice = (entry: Omit<PracticeEntry, "n">) => window.dispatchEvent(new CustomEvent("copilot:open-practice", { detail: entry }));
@@ -10,6 +11,7 @@ type Session = { id: string; status: string; setup: { topic: string; application
 const request = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 const base = "/practice/sessions";
 export function Practice({ active, running, entry }: { active: boolean; running: boolean; entry?: PracticeEntry | null }) {
+  const [loadingSession, setLoadingSession] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]), [current, setCurrent] = useState<Session | null>(null);
   const voiceAvailable = current?.voice_available === true, speechAvailable = current?.speech_available === true;
   const [topic, setTopic] = useState("General interview preparation"), [application, setApplication] = useState(""), [kind, setKind] = useState("behavioral"), [duration, setDuration] = useState(15);
@@ -26,7 +28,7 @@ export function Practice({ active, running, entry }: { active: boolean; running:
   const availability = useRef({ active, running }); availability.current = { active, running };
   const generation = useRef(0), sourceGeneration = useRef(0);
   const valid = (ticket: number) => alive.current && generation.current === ticket;
-  const invalidate = () => { generation.current++; sourceGeneration.current++; setBusy(false); setDeleting(false); };
+  const invalidate = () => { generation.current++; sourceGeneration.current++; setBusy(false); setDeleting(false); setLoadingSession(false); };
   const pending = useRef<{ payload: string; id: string } | null>(null);
   const recordingRetry = useRef<{ request_id: string; content_type: string; audio_base64: string } | null>(null);
   const stop = () => { mediaGeneration.current++; audio.current.stop(); setRecording(false); setSpeaking(false); };
@@ -76,7 +78,7 @@ export function Practice({ active, running, entry }: { active: boolean; running:
     return () => { cancelled = true; };
   }, [active, application, current?.id]);
   const start = async () => {
-    if (!consent || running || busy) return; stop(); const ticket = generation.current; setBusy(true); setError(null);
+    if (!consent || running || busy || loadingSession || !topic.trim() || !Number.isFinite(duration) || duration < 3 || duration > 60) return; stop(); const ticket = generation.current; setBusy(true); setError(null);
     const setup = { topic, application_id: application || null, interview_type: kind, duration_minutes: duration, retain_audio: false, ...(sourceQuestion ? { source_question: sourceQuestion } : {}) };
     const payload = JSON.stringify(setup); if (pending.current?.payload !== payload) pending.current = { payload, id: crypto.randomUUID() };
     try {
@@ -117,7 +119,8 @@ export function Practice({ active, running, entry }: { active: boolean; running:
     if (!valid(ticket)) return;
     setDraft(""); setReview(null); setOriginalSource(null); recordingRetry.current = null; pending.current = null; setCurrent(null);
     if (!id) { setSourceQuestion(undefined); return; }
-    try { const value = await request<Session>("GET", `${base}/${id}`); if (valid(ticket)) setCurrent(value); } catch (e) { if (valid(ticket)) setError(String(e)); }
+    setLoadingSession(true);
+    try { const value = await request<Session>("GET", `${base}/${id}`); if (valid(ticket)) setCurrent(value); } catch (e) { if (valid(ticket)) setError(String(e)); } finally { if (valid(ticket)) setLoadingSession(false); }
   };
   const inspect = async (source: NonNullable<Question["source"]>) => {
     const ticket = generation.current, sourceTicket = ++sourceGeneration.current;
@@ -129,43 +132,62 @@ export function Practice({ active, running, entry }: { active: boolean; running:
     try { if (id) await request("DELETE", `${base}/${id}`); if (!valid(ticket)) return; invalidate(); setCurrent(null); setDraft(""); void loadList(); }
     catch (e) { if (valid(ticket)) setError(String(e)); }
   };
-  return <><div className="practice-workspace">
-    {!current && <header className="feature-heading"><div><span className="feature-eyebrow">INTERVIEW PRACTICE</span><h2>Prepare for your next conversation</h2><p>Choose a focus, rehearse your answers, and review feedback.</p></div></header>}
+  const statusLabel = recording ? "Listening" : speaking ? "Speaking" : ({ answering: "Your turn", preparing: "Preparing a question", processing: "Reviewing your answer", paused: "Paused", finished: "Practice complete", failed: "Needs attention" }[current?.status ?? ""] ?? current?.status);
+  return <><div className="practice-workspace feature-page">
+    {!current && <header className="feature-heading"><div><h2>Interview practice</h2><p>Rehearse a focused conversation and get feedback on each answer.</p></div></header>}
     {running && <Banner tone="warning">Finish the real call before starting or resuming practice.</Banner>}
     {error && <Banner tone="warning">{error}</Banner>}
-    <div className="feature-toolbar"><Select aria-label="Practice history" value={current?.id ?? ""} onChange={e => void choose(e.target.value)}><option value="">New practice</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.setup.topic} — {s.status}</option>)}</Select></div>
-    {!current ? <div className="practice-setup"><div className="practice-setup-main"><div className="feature-form-grid">
+    <div className="feature-toolbar practice-toolbar"><Field label="Practice history"><Select aria-label="Practice history" value={current?.id ?? ""} onChange={e => void choose(e.target.value)}><option value="">New practice</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.setup.topic} — {s.status.replace(/_/g, " ")}</option>)}</Select></Field>{current && <Button onClick={() => void choose("")}>New practice</Button>}</div>
+    {loadingSession ? <SkeletonList rows={3} label="Loading practice" /> : !current ? <div className="practice-setup"><div className="practice-setup-main"><div className="feature-form-grid">
       <Field label="Application"><Select value={application} onChange={e => setApplication(e.target.value)}><option value="">Current profile only</option>{applications.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</Select></Field>
       <Field label="Role or topic"><Input value={topic} onChange={e => setTopic(e.target.value)} maxLength={500} /></Field>
       <Field label="Interview type"><Select value={kind} onChange={e => setKind(e.target.value)}><option value="recruiter">Recruiter screen</option><option value="behavioral">Behavioral</option><option value="technical">Technical discussion</option><option value="system_design">System design</option></Select></Field>
-      <Field label="Practice length (minutes)"><Input type="number" min={3} max={60} value={duration} onChange={e => setDuration(Number(e.target.value))} /></Field>
+      <Field label="Practice length (minutes)" hint="Between 3 and 60 minutes."><Input type="number" min={3} max={60} value={duration} onChange={e => setDuration(Number(e.target.value))} /></Field>
       </div><label className="feature-check"><input type="checkbox" checked={voice} onChange={e => setVoice(e.target.checked)} /> Read interviewer questions aloud when speech is available</label>
 
-      </div><aside className="practice-setup-aside"><h3>Your practice space</h3><p>Questions use your profile and the selected application’s resume and job description.</p><p>Use your microphone or type. Your saved call language applies.</p><p>Practice stays separate from your resume and real calls.</p>
+      </div><aside className="practice-setup-aside"><h3>What to expect</h3><ol className="practice-steps"><li><strong>A question at a time</strong><span>Based on your profile and selected application.</span></li><li><strong>Room to rehearse</strong><span>Type your answer, or use your microphone when available.</span></li><li><strong>Useful feedback</strong><span>Review what worked and try the question again.</span></li></ol><p className="ui-field-hint">Your saved call language applies. Practice stays separate from your resume and real calls.</p>
       {context && <details><summary>Review context ({context.sources.length} sources)</summary><p>{context.notice}</p>{context.sources.map(s => <section key={s.id}><strong>{s.label}</strong><p>{s.excerpt}</p></section>)}</details>}
       </aside><footer className="practice-setup-footer"><label className="feature-check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> Save practice transcripts and feedback until I delete them. Raw microphone audio is never retained.</label>
-      <Button variant="primary" disabled={!consent || busy || running || !topic.trim() || duration < 3 || duration > 60} onClick={() => void start()}>Start practice</Button>
+      <Button variant="primary" loading={busy} disabled={!consent || running || !topic.trim() || !Number.isFinite(duration) || duration < 3 || duration > 60} onClick={() => void start()}>Start practice</Button>
     </footer></div> : <>
-      <div className="ui-row-inline"><strong role="status">{recording ? "Listening" : speaking ? "Speaking" : current.status === "answering" ? "Your turn" : current.status}</strong><span className="ui-text-2">{Math.floor(current.elapsed_seconds / 60)} min · {current.spoken_language}{!voiceAvailable ? " · Text practice" : ""}</span><Button onClick={() => setDeleting(true)}>Delete practice</Button></div>
-      <details><summary>Context and scoring</summary>{current.sources.map(s => <p key={s.id}>{s.label}</p>)}{Object.entries(current.rubric ?? {}).map(([k,v]) => <p key={k}>{k}: {v}</p>)}<p>{Object.entries(current.score_scale ?? {}).map(([k,v]) => `${k}: ${v}`).join(" · ")}. Scores describe this answer, not hiring prospects.</p></details>
+      <div className="practice-session-head"><div><h2>{current.setup.topic}</h2><p>{Math.floor(current.elapsed_seconds / 60)} min practiced · {current.spoken_language}{!voiceAvailable ? " · Text practice" : ""}</p></div><Badge tone={current.status === "finished" ? "success" : current.status === "paused" ? "neutral" : "info"}><span role="status">{statusLabel}</span></Badge><Button size="sm" variant="danger-ghost" onClick={() => setDeleting(true)}>Delete practice</Button></div>
+      {["preparing", "processing"].includes(current.status) && <div className="practice-progress" role="status"><Spinner size="sm" label={null} /><div><strong>{current.status === "preparing" ? "Preparing your next question" : "Reviewing your answer"}</strong><p>{current.status === "preparing" ? "Your question will appear here when it is ready." : "Your answer is saved. Feedback will appear here when it is ready."}</p></div></div>}
+      {current.status === "paused" && <Banner tone="info">Your progress is saved. Resume when you are ready to continue.</Banner>}
+      {current.status === "finished" && <Banner tone="success">Your practice is saved. Review your answers below, or start a new practice.</Banner>}
+      <details className="feature-disclosure"><summary>Context and scoring</summary>{current.sources.map(s => <p key={s.id}>{s.label}</p>)}{Object.entries(current.rubric ?? {}).map(([k,v]) => <p key={k}>{k}: {v}</p>)}<p>{Object.entries(current.score_scale ?? {}).map(([k,v]) => `${k}: ${v}`).join(" · ")}. Scores describe this answer, not hiring prospects.</p></details>
       {current.error && <Banner tone="warning">{current.error}<Button onClick={() => act("retry_generation")}>Retry generation</Button></Banner>}
-      {latestFeedback && latestFeedback.question.id !== question?.id && <details><summary>Feedback on your last answer</summary><p>{latestFeedback.attempt.feedback?.strengths.join(" · ")}</p><p>{latestFeedback.attempt.feedback?.improvements.join(" · ")}</p><Button onClick={() => { stop(); setReview(latestFeedback.question.id); }}>Review the attempt</Button></details>}
-      {question && <Card className="practice-question"><div className="ui-stack"><p className="feature-eyebrow">{question.kind === "original" ? "Original saved question" : "Generated interviewer question"}{question.source?.label ? ` · ${question.source.label}` : ""}</p><h2 dir="auto" lang={current.spoken_language}>{question.text}</h2>{question.source && <Button onClick={() => void inspect(question.source!)}>View original transcript</Button>}{originalSource && <div><p>Original transcript{originalSource.start_ms !== undefined ? ` at ${Math.floor(originalSource.start_ms / 1000)} seconds` : ""}</p><blockquote dir="auto">{originalSource.content}</blockquote><Button onClick={() => { sourceGeneration.current++; setOriginalSource(null); }}>Close source</Button></div>}
+      {latestFeedback && latestFeedback.question.id !== question?.id && <details className="feature-disclosure"><summary>Feedback on your last answer</summary><p>{latestFeedback.attempt.feedback?.strengths.join(" · ")}</p><p>{latestFeedback.attempt.feedback?.improvements.join(" · ")}</p><Button onClick={() => { stop(); setReview(latestFeedback.question.id); }}>Review the attempt</Button></details>}
+      {question && <Card className="practice-question"><div className="ui-stack"><p className="feature-eyebrow">Question {current.questions.indexOf(question) + 1} · {question.kind === "original" ? "Original saved question" : "Generated interviewer question"}{question.source?.label ? ` · ${question.source.label}` : ""}</p><h2 dir="auto" lang={current.spoken_language}>{question.text}</h2>{question.source && <Button onClick={() => void inspect(question.source!)}>View original transcript</Button>}{originalSource && <div><p>Original transcript{originalSource.start_ms !== undefined ? ` at ${Math.floor(originalSource.start_ms / 1000)} seconds` : ""}</p><blockquote dir="auto">{originalSource.content}</blockquote><Button onClick={() => { sourceGeneration.current++; setOriginalSource(null); }}>Close source</Button></div>}
         <div className="ui-row-inline">{speechAvailable && <Button disabled={busy || recording || running} onClick={() => void speak()}>Read / repeat aloud</Button>}{(recording || speaking) && <Button onClick={stop}>Stop audio</Button>}<Button disabled={busy} onClick={() => act("save", question.id)}>{question.saved_for_later ? "Saved for later" : "Save question"}</Button></div>
 
         {current.status === "answering" && !review && <>
           <div className="ui-row-inline">{voiceAvailable && <Button disabled={busy || running} onClick={() => { if (recording) void doneRecording(); else { stop(); const ticket = mediaGeneration.current; void audio.current.start().then(ok => { if (alive.current && ticket === mediaGeneration.current) setRecording(ok); }).catch(e => { if (alive.current && ticket === mediaGeneration.current) setError(String(e)); }); } }}>{recording ? "I'm done recording" : "Answer with microphone"}</Button>}{voiceAvailable && recordingRetry.current && <Button disabled={busy} onClick={() => void transcribe()}>Retry transcription</Button>}</div>
-          <Field label="Your answer — review the transcript before submitting"><Textarea dir="auto" lang={current.spoken_language} value={draft} onChange={e => setDraft(e.target.value)} maxLength={16000} rows={5} /></Field>
-          <div className="ui-row-inline"><Button variant="primary" disabled={busy || recording || running || !draft.trim()} onClick={() => act("answer", question.id, draft)}>I'm done — submit answer</Button><Button disabled={busy || running} onClick={() => act("skip", question.id)}>Skip</Button><Button disabled={busy || running} onClick={() => act("hint", question.id)}>Hint</Button><Button disabled={busy || running} onClick={() => act("sample", question.id)}>Show sample answer</Button></div>
-          {question.hint && <p>Hint: {question.hint}</p>}{question.sample && <p>Sample: {question.sample}</p>}
+          <Field label="Your answer — review the transcript before submitting" hint={recording ? "Microphone is recording. Finish recording to review your transcript." : "Your response stays editable until you submit it."}><Textarea dir="auto" lang={current.spoken_language} value={draft} onChange={e => setDraft(e.target.value)} maxLength={16000} rows={5} /></Field>
+          <div className="ui-row-inline practice-answer-actions"><Button variant="primary" loading={busy} disabled={recording || running || !draft.trim()} onClick={() => act("answer", question.id, draft)}>I'm done — submit answer</Button><Button disabled={busy || running} onClick={() => act("skip", question.id)}>Skip</Button><Button disabled={busy || running} onClick={() => act("hint", question.id)}>Hint</Button><Button disabled={busy || running} onClick={() => act("sample", question.id)}>Show sample answer</Button></div>
+          {question.hint && <div className="practice-guidance"><strong>Hint</strong><p>{question.hint}</p></div>}{question.sample && <div className="practice-guidance"><strong>Sample answer</strong><p dir="auto">{question.sample}</p></div>}
         </>}
-        {question.attempts.map((a, i) => <details key={a.id} open={i === question.attempts.length - 1}><summary>Attempt {i + 1} · {a.assistance.length ? "Coached" : "Independent"}</summary><p>{a.answer}</p>{a.feedback ? <><p>Rubric: {a.feedback.rubric_version}</p>{Object.entries(a.feedback.dimensions).map(([k,v]) => <p key={k}>{k}: {typeof v === "number" ? v : `${v.score} — ${v.reason ?? ""}`}</p>)}<p>{a.feedback.strengths.join(" · ")}</p><p>{a.feedback.improvements.join(" · ")}</p>{a.feedback.excerpts.map((x,j) => <blockquote key={j}>{x}</blockquote>)}<p>{a.feedback.uncertainty.join(" · ")}</p><p>{a.feedback.suggested_wording}</p></> : <p>Feedback pending</p>}{a.comparison && <div className="practice-comparison"><h3>Progress since your last attempt</h3><p>{a.comparison.summary ?? a.comparison.note}</p><p className="ui-field-hint">{a.comparison.note}</p>{!!a.comparison.improvements?.length && <><h4>What improved</h4><ul>{a.comparison.improvements.map((text,index) => <li key={index}>{text}</li>)}</ul></>}{!!a.comparison.remaining_gaps?.length && <><h4>What to work on next</h4><ul>{a.comparison.remaining_gaps.map((text,index) => <li key={index}>{text}</li>)}</ul></>}{!!a.comparison.recurring_gaps?.length && <p>Still recurring: {a.comparison.recurring_gaps.join(" · ")}</p>}{a.comparison.evidence && <details><summary>Compare supporting excerpts</summary><p>Previous answer</p>{a.comparison.evidence.previous.map((text,index) => <blockquote key={index}>{text}</blockquote>)}<p>This answer</p>{a.comparison.evidence.current.map((text,index) => <blockquote key={index}>{text}</blockquote>)}</details>}{Object.entries(a.comparison.dimensions).map(([k,v]) => <p key={k}>{k}: {v.previous} → {v.current}</p>)}</div>}</details>)}
+        {question.attempts.map((a, i) => <details className="practice-attempt feature-disclosure" key={a.id} open={i === question.attempts.length - 1}><summary>Attempt {i + 1} · {a.assistance.length ? "Coached" : "Independent"}</summary><div className="practice-submitted-answer"><span className="feature-eyebrow">Your answer</span><p dir="auto">{a.answer}</p></div>{a.feedback ? <PracticeFeedback feedback={a.feedback} /> : <p className="feature-loading"><Spinner size="sm" label={null} /> Feedback pending</p>}{a.comparison && <div className="practice-comparison"><h3>Progress since your last attempt</h3><p>{a.comparison.summary ?? a.comparison.note}</p><p className="ui-field-hint">{a.comparison.note}</p>{!!a.comparison.improvements?.length && <><h4>What improved</h4><ul>{a.comparison.improvements.map((text,index) => <li key={index}>{text}</li>)}</ul></>}{!!a.comparison.remaining_gaps?.length && <><h4>What to work on next</h4><ul>{a.comparison.remaining_gaps.map((text,index) => <li key={index}>{text}</li>)}</ul></>}{!!a.comparison.recurring_gaps?.length && <p>Still recurring: {a.comparison.recurring_gaps.join(" · ")}</p>}{a.comparison.evidence && <details><summary>Compare supporting excerpts</summary><p>Previous answer</p>{a.comparison.evidence.previous.map((text,index) => <blockquote key={index}>{text}</blockquote>)}<p>This answer</p>{a.comparison.evidence.current.map((text,index) => <blockquote key={index}>{text}</blockquote>)}</details>}{Object.entries(a.comparison.dimensions).map(([k,v]) => <p key={k}>{k}: {v.previous} → {v.current}</p>)}</div>}</details>)}
         {question.comparison != null && <p>Attempt comparison: {typeof question.comparison === "string" ? question.comparison : JSON.stringify(question.comparison)}</p>}
         {question.attempts.length > 0 && <Button disabled={busy || running} onClick={() => act("retry", question.id)}>Retry this question</Button>}
       </div></Card>}
-      <div className="ui-row-inline">{current.status !== "finished" && <><Button disabled={busy || running} onClick={() => act(current.status === "paused" ? "resume" : "pause")}>{current.status === "paused" ? "Resume" : "Pause"}</Button><Button disabled={busy} onClick={() => act("finish")}>Finish practice</Button></>}<Button onClick={() => { setReview(null); setDraft(""); }}>Current question</Button></div>
-      <details><summary>Questions and previous attempts</summary>{current.questions.map(q => <p key={q.id}><Button onClick={() => { stop(); setReview(q.id); }}>{q.text}{q.saved_for_later ? " · Saved" : ""} · {q.attempts.length} attempts</Button></p>)}</details>
-      <p className="muted">{current.retention_notice}</p>
+      <div className="ui-row-inline practice-session-actions">{current.status !== "finished" && <><Button disabled={busy || running} onClick={() => act(current.status === "paused" ? "resume" : "pause")}>{current.status === "paused" ? "Resume" : "Pause"}</Button><Button disabled={busy} onClick={() => act("finish")}>Finish practice</Button></>}<Button onClick={() => { setReview(null); setDraft(""); }}>Current question</Button></div>
+      <details className="feature-disclosure practice-question-history"><summary>Questions and previous attempts</summary>{current.questions.map(q => <p key={q.id}><Button onClick={() => { stop(); setReview(q.id); }}>{q.text}{q.saved_for_later ? " · Saved" : ""} · {q.attempts.length} attempts</Button></p>)}</details>
+      <p className="feature-footnote">{current.retention_notice}</p>
     </>}
   </div><ConfirmDialog open={deleting} title="Delete practice?" confirmLabel="Delete" onOpenChange={setDeleting} onConfirm={remove}>Deletes questions, answers, feedback, and cached generated speech.</ConfirmDialog></>;
+}
+
+function PracticeFeedback({ feedback }: { feedback: Feedback }) {
+  return <div className="practice-feedback">
+    <h3>Feedback on your answer</h3>
+    {!!Object.keys(feedback.dimensions).length && <dl className="practice-scores">{Object.entries(feedback.dimensions).map(([key, value]) => <div key={key}><dt>{key.replace(/_/g, " ")}</dt><dd><strong>{typeof value === "number" ? value : value.score}</strong>{typeof value !== "number" && value.reason && <span>{value.reason}</span>}</dd></div>)}</dl>}
+    <div className="practice-feedback-columns">
+      {!!feedback.strengths.length && <section><h4>What worked well</h4><ul>{feedback.strengths.map((text, index) => <li key={index}>{text}</li>)}</ul></section>}
+      {!!feedback.improvements.length && <section><h4>What to improve</h4><ul>{feedback.improvements.map((text, index) => <li key={index}>{text}</li>)}</ul></section>}
+    </div>
+    {!!feedback.excerpts.length && <details><summary>Supporting excerpts</summary>{feedback.excerpts.map((text,index) => <blockquote key={index} dir="auto">{text}</blockquote>)}</details>}
+    {!!feedback.uncertainty.length && <p className="ui-field-hint">{feedback.uncertainty.join(" · ")}</p>}
+    {feedback.suggested_wording && <details className="practice-wording"><summary>Suggested wording</summary><p dir="auto">{feedback.suggested_wording}</p></details>}
+    <p className="feature-footnote">Scores describe this answer, not hiring prospects. Rubric: {feedback.rubric_version}</p>
+  </div>;
 }

@@ -25,7 +25,7 @@ export function soon(seconds: number): string {
   return "a few seconds";
 }
 
-/** The status bar under the tabs. Only while an update is under way, waiting, or just done;
+/** The floating update notice. Only while an update is under way, waiting, or just done;
  * checks show in the settings. */
 export function bar(update: UpdateState, running: boolean): Bar {
   switch (update.state) {

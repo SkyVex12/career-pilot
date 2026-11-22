@@ -30,6 +30,23 @@ body {
   border: 0;
 }
 
+/* Optional setup sections use the same disclosure treatment across product screens. */
+.ui-disclosure { min-width:0;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface); }
+.ui-disclosure > summary { display:flex;align-items:center;gap:10px;min-height:48px;padding:12px 14px;list-style:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);border-radius:inherit; }
+.ui-disclosure > summary::-webkit-details-marker { display:none; }
+.ui-disclosure > summary::after { content:"";width:7px;height:7px;flex:none;margin-left:auto;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg) translateY(-2px); }
+.ui-disclosure[open] > summary::after { transform:rotate(225deg) translate(-2px,-1px); }
+.ui-disclosure > summary:hover { background:var(--surface-2); }
+.ui-disclosure[open] > summary { border-bottom:1px solid var(--border);border-radius:var(--radius-md) var(--radius-md) 0 0; }
+.ui-disclosure-body { padding:16px;min-width:0; }
+.ui-disclosure-meta { margin-left:auto;font-size:12px;font-weight:400;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.ui-disclosure > summary:has(.ui-disclosure-meta)::after { margin-left:4px; }
+.ui-disclosure-body > p:first-child { margin-top:0; }
+@media(max-width:520px) {
+  .ui-disclosure-body { padding:12px; }
+  .ui-disclosure-meta { max-width:45%; }
+}
+
 /* --- Button ------------------------------------------------------------------------------- */
 
 .ui-btn {

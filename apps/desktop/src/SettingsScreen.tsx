@@ -3,6 +3,7 @@
 // when it is valid; free-text fields (a development build's URLs and token) keep a Save button.
 import { useEffect, useState, type ComponentProps } from "react";
 import { BackgroundSettings } from "./BackgroundSettings";
+import { MeetingPreparation } from "./MeetingPreparation";
 import { isMac } from "./platform";
 import { api, rest, type Settings, type SettingsView, type UpdateState } from "./api";
 import { cloudUrlsFor } from "./urls";
@@ -22,11 +23,12 @@ function Switch(props: ComponentProps<typeof BaseSwitch>) {
   return <BaseSwitch {...props} hintMode="tooltip" />;
 }
 
-type Section = "general" | "account" | "audio" | "overlay" | "advanced";
+type Section = "general" | "account" | "audio" | "background" | "overlay" | "advanced";
 const SECTIONS: [Section, string][] = [
   ["general", "General"],
   ["account", "Account"],
   ["audio", "Audio"],
+  ["background", "Background"],
   ["overlay", "Shortcuts"],
   ["advanced", "Advanced"],
 ];
@@ -38,6 +40,7 @@ export function SettingsScreen({
   update,
   check,
   section: initial,
+  profileScope,
 }: {
   view: SettingsView;
   running: boolean;
@@ -46,6 +49,8 @@ export function SettingsScreen({
   check: { busy: boolean; error: string | null; start: () => void };
   /** The section to open on (the Career-OS lock opens Account). */
   section?: Section;
+  /** Remount private settings data when the active account or profile changes. */
+  profileScope?: string;
 }) {
   const [section, setSection] = useState<Section>(initial ?? "general");
   useEffect(() => {
@@ -68,7 +73,7 @@ export function SettingsScreen({
 
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader title="Settings" meta="Your workspace, connected accounts and call preferences." />
       <div className="settings">
         <nav className="settings-nav" aria-label="Settings sections">
           <ul>
@@ -82,8 +87,9 @@ export function SettingsScreen({
           </ul>
         </nav>
         <div className="settings-body">
-          {section === "general" && <><General view={view} save={save} update={update} check={check} /><BackgroundSettings /></>}
-          {section === "account" && <Account view={view} onSaved={onSaved} />}
+          {section === "general" && <General view={view} save={save} update={update} check={check} />}
+          {section === "background" && <BackgroundSettings />}
+          {section === "account" && <Account view={view} onSaved={onSaved} profileScope={profileScope} />}
           {section === "audio" && (
             <Card title="Audio">
               <div className="ui-stack">
@@ -201,7 +207,7 @@ function General({ view, save, update, check }: { view: SettingsView; save: Save
   );
 }
 
-function Account({ view, onSaved }: { view: SettingsView; onSaved: () => void }) {
+function Account({ view, onSaved, profileScope }: { view: SettingsView; onSaved: () => void; profileScope?: string }) {
   const toast = useToast();
   const settings = view.settings;
   const browser = Boolean(view.release) || settings.environment === "cloud";
@@ -270,6 +276,7 @@ function Account({ view, onSaved }: { view: SettingsView; onSaved: () => void })
       <Card title="Career-OS">
         <CareerOsSettings key={accountOf(view)} ready={view.ready} />
       </Card>
+      {view.ready && <MeetingPreparation key={profileScope ?? `${accountOf(view)}/${view.settings.profile ?? "me"}`} />}
       {view.ready && <DeleteAccount />}
     </>
   );
