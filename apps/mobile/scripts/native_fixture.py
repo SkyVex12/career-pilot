@@ -118,6 +118,21 @@ def create_app():
         auth(request)
         return {"items": [{"id": PROFILE, "name": "Fictional test profile", "me": True}]}
 
+    @app.get("/v1/client-capabilities")
+    async def client_capabilities(request: Request):
+        auth(request)
+        return {
+            "schema_version": 1,
+            "server_version": "fictional-native-fixture",
+            "contracts": {
+                "companion": 1,
+                "ask": 1,
+                "practice": 1,
+                "preparation": 1,
+                "languages": 1,
+            },
+        }
+
     @app.get("/v1/companion/sessions")
     async def sessions(request: Request):
         auth(request)

@@ -1,5 +1,6 @@
-import React, { useContext, useState } from "react";
+import React, { useContext, useEffect, useState } from "react";
 import {
+  Keyboard,
   Modal,
   Pressable,
   ScrollView,
@@ -37,7 +38,7 @@ const navigation: {
   },
   {
     label: "Interview prep",
-    short: "Prep",
+    short: "Interview prep",
     tab: "Practice",
     icon: "practice",
     group: ["Practice", "Preparation"],
@@ -60,7 +61,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
           width: 26,
           height: 26,
           borderRadius: 8,
-          backgroundColor: c.ruby,
+          backgroundColor: c.brand,
           transform: [{ rotate: "-12deg" }],
           alignItems: "center",
           justifyContent: "center",
@@ -71,7 +72,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
             width: 10,
             height: 10,
             borderWidth: 1.5,
-            borderColor: c.onRuby,
+            borderColor: "#ffffff",
             transform: [{ rotate: "57deg" }],
           }}
         />
@@ -126,6 +127,20 @@ export function AppShell({
         ]
       : null;
   const [sheet, setSheet] = useState<"profiles" | "account" | null>(null);
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
   const current = profiles.find((p) => (p.me ? "" : p.id) === profile);
   const name = current?.name || (profile ? "Selected profile" : "My profile");
   function nav(rail: boolean) {
@@ -157,7 +172,8 @@ export function AppShell({
               style={({ pressed }) => ({
                 ...(rail ? { width: shortLandscape ? 64 : 68 } : { flex: 1 }),
                 minHeight: shortLandscape ? 48 : 62,
-                borderRadius: 16,
+                borderRadius: 12,
+                paddingHorizontal: 4,
                 paddingVertical: shortLandscape ? 4 : 9,
                 alignItems: "center",
                 justifyContent: "center",
@@ -180,6 +196,7 @@ export function AppShell({
                   lineHeight: 16,
                   fontWeight: selected ? "700" : "500",
                   color: selected ? c.ruby : c.muted,
+                  textAlign: "center",
                 }}
               >
                 {item.short}
@@ -219,9 +236,9 @@ export function AppShell({
       <View style={{ flex: 1, minWidth: 0 }}>
         <View
           style={{
-            minHeight: shortLandscape ? 56 : 72,
+            minHeight: shortLandscape ? 56 : 66,
             paddingHorizontal: shortLandscape ? 12 : wide ? 26 : 18,
-            paddingVertical: shortLandscape ? 4 : 11,
+            paddingVertical: shortLandscape ? 4 : 8,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
@@ -251,14 +268,26 @@ export function AppShell({
               ) : null}
             </View>
           ) : (
-            <Brand compact={width < 400 || fontScale > 1.2} />
+            <Row style={{ flex: 1, flexWrap: "nowrap", gap: 10 }}>
+              <Brand compact />
+              <Txt
+                numberOfLines={1}
+                style={{ fontSize: 16, fontWeight: "700", flexShrink: 1 }}
+              >
+                {navigation.find((i) => i.group.includes(tab))?.label}
+              </Txt>
+            </Row>
           )}
           <View
             style={{
               flexDirection: "row",
               alignItems: "center",
               gap: 3,
-              maxWidth: wide ? 280 : "54%",
+              maxWidth: wide
+                ? 280
+                : width < 400 || fontScale > 1.2
+                  ? 100
+                  : "54%",
             }}
           >
             <Pressable
@@ -294,7 +323,8 @@ export function AppShell({
                     .join("")}
                 </Txt>
               </View>
-              {!shortLandscape ? (
+              {!shortLandscape &&
+              (wide || (width >= 400 && fontScale <= 1.2)) ? (
                 <Txt
                   numberOfLines={1}
                   style={{
@@ -322,21 +352,37 @@ export function AppShell({
             <Notice tone="error">{error}</Notice>
           </View>
         ) : null}
+        {serverNotice && serverNotice !== dismissedNotice ? (
+          <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+            >
+              <View style={{ flex: 1 }}>
+                <Notice>{serverNotice}</Notice>
+              </View>
+              <IconButton
+                label="Dismiss server notice"
+                icon="close"
+                onPress={() => setDismissedNotice(serverNotice)}
+              />
+            </View>
+          </View>
+        ) : null}
         {secondaryOptions && !shortLandscape ? (
           <View
             style={{
               width: "100%",
               maxWidth: 860,
               alignSelf: "center",
-              paddingHorizontal: 22,
-              paddingTop: 18,
+              paddingHorizontal: 20,
+              paddingTop: 14,
             }}
           >
             <Segments value={tab} options={secondaryOptions} onChange={onTab} />
           </View>
         ) : null}
         <View style={{ flex: 1, minHeight: 0 }}>{children}</View>
-        {!wide ? nav(false) : null}
+        {!wide && !keyboardVisible ? nav(false) : null}
       </View>
       <Modal
         visible={sheet !== null}
@@ -352,6 +398,7 @@ export function AppShell({
           }}
         >
           <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Close account panel"
             onPress={() => setSheet(null)}
             style={{ flex: 1 }}
