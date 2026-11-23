@@ -404,10 +404,12 @@ WORKPLACE_MODE_RULES = {
         " <company_digest> and <memory>, not with what was done yesterday."
     ),
     "meeting": (
-        "In a work meeting the talk is technical and open, not a status report: answer as an"
-        " experienced engineer at {company} would, using {company}'s systems, stack, decisions"
-        " and terms where they apply, and general knowledge for the rest, phrased as"
-        " {user_name}'s view. Give status only when asked."
+        "Work meetings include daily updates and technical discussion. When asked for"
+        " {user_name}'s update, plan or blockers, use the standup section of <session_pack>:"
+        " yesterday's work, today's plan, blockers and commitments coming due, exactly as"
+        " logged. An open hand-off to {user_name} asks for that update. For technical questions,"
+        " use {company}'s systems, stack, decisions and terms where they apply, and general"
+        " knowledge for the rest, phrased as {user_name}'s view. Give status only when asked."
     ),
 }
 
@@ -730,7 +732,8 @@ DETECTOR_GROUP_RULE = """
   being addressed.
 - A check about {user_name}'s own work or plan ("you're still on the migration, right?",
   "so the rest goes to review?", "is anything left on it before I test?") needs a reply:
-  standup_status in a standup, else respond. So does an open hand-off to {user_name}
+  standup_status for their whole update or plan in either work mode, status_follow_up for
+  one work item, or respond for a reply unrelated to status. So does an open hand-off to {user_name}
   ("anything from your side?", "anything you want to bring up?"): it is their turn to give
   their update.
 - At work the answer may also be one of four more types. Use them instead of technical,

@@ -225,9 +225,10 @@ def standup_pack(
     standup gets Friday's log), today's items plus the plans of that day are "today"."""
     sids = short_ids([n["id"] for n in nodes], SHORT_PREFIX)
     items = [n for n in nodes if n["kind"] in ("work_item", "decision") and _day(n) is not None]
-    days = sorted({d for n in items if (d := _day(n)) is not None and d < today})
-    last = days[-1] if days else None
     since = today - timedelta(days=RECENT_DAYS)
+    # A long gap in logging is not yesterday's work; older entries remain searchable.
+    days = sorted({d for n in items if (d := _day(n)) is not None and since <= d < today})
+    last = days[-1] if days else None
 
     yesterday = [n for n in items if _day(n) == last and _state(n) != "planned"]
     yesterday = [n for n in yesterday if not (n["kind"] == "work_item" and _state(n) == "blocked")]
@@ -373,8 +374,8 @@ def meeting_pack(
     version: str,
     built_at: datetime | None = None,
 ) -> SessionPack:
-    """The meeting brief: projects, systems and stack, people, recent decisions, terms, the
-    last two weeks of work and open commitments. Live search covers the rest."""
+    """Work calls combine the daily status brief with projects, systems, people, decisions,
+    terms and the last two weeks of work. Live search covers the rest."""
     sids = short_ids([n["id"] for n in nodes], SHORT_PREFIX)
     by_kind: dict[str, list[Row]] = {}
     for n in nodes:
@@ -411,10 +412,10 @@ def meeting_pack(
             out.append(item)
         if out:
             sections[key] = out
-    data = _pack("meeting", emp, version, built_at)
-    data["user_id"] = str(user_id)
-    pack = SessionPack.model_validate(
-        {**data, "workplace": WorkplaceBrief(sections=sections).model_dump(mode="json")}
+    # The single For work choice also covers daily updates. Keep the same dated brief,
+    # citations and prepared status answers that legacy standup calls use.
+    pack = standup_pack(user_id, emp, nodes, today, version, built_at).model_copy(
+        update={"mode": "meeting", "workplace": WorkplaceBrief(sections=sections)}
     )
     pack.token_count = len(render_pack(pack)) // 4
     return pack

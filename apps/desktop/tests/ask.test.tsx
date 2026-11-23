@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { Work } from "../src/Work";
+import { ToastProvider } from "../src/ui";
 import { Ask } from "../src/Ask";
 import { ipc } from "./ipc";
 
@@ -102,4 +104,82 @@ it("keeps a draft safe while a saved conversation is loading", async () => {
   await act(async () => finish(conversation));
   expect(screen.getByLabelText("Ask a question")).toHaveValue("Keep this draft");
   expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled();
+});
+
+
+it("shows an accepted question and reconnects after the first answer read fails", async () => {
+  const conversation = { id: "receipt", title: "DNS", scope: { kind: "general" } };
+  const message = { id: "m", request_id: "r", status: "pending", question: "Explain DNS", answer: "", sources: [] };
+  let reads = 0;
+  ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
+  ipc.api("POST", /^\/ask\/conversations$/, () => conversation);
+  ipc.api("POST", /^\/ask\/conversations\/receipt\/messages$/, () => message);
+  ipc.api("GET", /^\/ask\/conversations\/receipt$/, () => {
+    if (++reads === 1) throw new Error("Temporary outage");
+    return { ...conversation, messages: [{ ...message, status: "done", answer: "DNS maps names to addresses." }] };
+  });
+  render(<Ask />);
+  fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: message.question } });
+  fireEvent.keyDown(screen.getByLabelText("Ask a question"), { key: "Enter", ctrlKey: true });
+  expect(await screen.findByText(message.question, { selector: "h3" })).toBeVisible();
+  expect(await screen.findByText("Answer connection interrupted")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+  expect(await screen.findByText("DNS maps names to addresses.", {}, { timeout: 3000 })).toBeVisible();
+  expect(screen.queryByText("Answer connection interrupted")).not.toBeInTheDocument();
+  expect(ipc.apiCalls("POST").filter(call => call.path.endsWith("/messages"))).toHaveLength(1);
+});
+
+it("never overlaps pending answer reads when the server is slow", async () => {
+  vi.useFakeTimers();
+  try {
+    const conversation = { id: "slow", title: "Slow", scope: { kind: "auto" } };
+    const message = { id: "m", request_id: "r", status: "pending", question: "Explain DNS", answer: "", sources: [] };
+    let resolveRead!: (value: unknown) => void;
+    ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
+    ipc.api("POST", /^\/ask\/conversations$/, () => conversation);
+    ipc.api("POST", /^\/ask\/conversations\/slow\/messages$/, () => message);
+    ipc.api("GET", /^\/ask\/conversations\/slow$/, () => new Promise(resolve => { resolveRead = resolve; }));
+    const view = render(<Ask />);
+    fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: message.question } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Ask" })));
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(ipc.apiCalls("GET").filter(call => call.path === "/ask/conversations/slow")).toHaveLength(1);
+    await act(async () => resolveRead({ ...conversation, messages: [{ ...message, status: "done", answer: "Complete answer" }] }));
+    expect(screen.getByText("Complete answer")).toBeVisible();
+    view.unmount();
+  } finally { vi.useRealTimers(); }
+});
+
+it("starts a distinct request when the retry context changes", async () => {
+  const ids: string[] = [];
+  const conversation = { id: "scoped", title: "Draft", scope: { kind: "auto" } };
+  ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
+  ipc.api("POST", /^\/ask\/conversations$/, () => conversation);
+  ipc.api("POST", /^\/ask\/conversations\/scoped\/messages$/, (_path, value) => {
+    const body = value as { request_id: string; scope: { kind: string } };
+    ids.push(body.request_id);
+    if (ids.length === 1) throw new Error("Context temporarily unavailable");
+    expect(body.scope.kind).toBe("general");
+    return { id: "done", request_id: body.request_id, question: "Explain DNS", answer: "A general answer", status: "done", sources: [] };
+  });
+  render(<Ask />);
+  fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: "Explain DNS" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await screen.findByText(/Context temporarily unavailable/);
+  fireEvent.click(screen.getByText("Context", { selector: "summary span" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Context" }));
+  fireEvent.click(screen.getByRole("option", { name: "General knowledge" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  expect(await screen.findByText("A general answer")).toBeVisible();
+  expect(ids).toHaveLength(2);
+  expect(ids[0]).not.toBe(ids[1]);
+});
+
+it("opens general Ask when loading company records fails", async () => {
+  ipc.api("GET", /^\/employers$/, () => { throw new Error("Company lookup unavailable"); });
+  ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
+  render(<ToastProvider><Work /></ToastProvider>);
+  await screen.findByText("Could not load your companies");
+  fireEvent.click(screen.getByRole("button", { name: "Ask a question" }));
+  expect(await screen.findByLabelText("Ask a question", { selector: "textarea" })).toBeVisible();
 });

@@ -94,3 +94,10 @@
   .remote-empty { padding:20px; }
   .assistant-communication-head { gap:5px; }
 }
+
+.remote-actions { flex-wrap:wrap; justify-content:flex-end; }
+.remote-resolution { display:flex; gap:6px; align-items:center; color:var(--text-3); font-size:11px; }
+.remote-resolution .ui-select { min-height:28px; font-size:11px; padding-block:3px; }
+.remote-stage.is-actual { display:block; overflow:auto; }
+.remote-stage.is-actual .remote-video { position:relative; inset:auto; max-width:none; object-fit:fill; }
+@media(max-width:600px) { .remote-quality { display:inline; white-space:normal; } .remote-footer { flex-wrap:wrap; gap:4px; } }

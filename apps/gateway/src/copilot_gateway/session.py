@@ -1283,7 +1283,7 @@ class Session:
         log.info("following the user after %d words (no question shown)", len(said.split()))
 
     def _maybe_update(self, text: str, start_ms: int) -> None:
-        """A standup's update card: when the user opens their own update ("so for my
+        """A work call's update card: when the user opens their own update ("so for my
         updates, yesterday I...") and nothing answered the other side's last turn, the pack's
         prepared update shows at once, with no model call for the short answer. The hand-off
         is often a pause, not a question: in three of eight real standups the user gave
@@ -1292,7 +1292,7 @@ class Session:
         if (
             self.spoken_language != "en"
             or self._update_shown
-            or self.info.mode != "standup"
+            or self.info.mode not in prompts.GROUP_MODES
             or self.pack is None
         ):
             return
@@ -2431,10 +2431,10 @@ class SessionManager:
                         current = (
                             stored is not None
                             and stored.memory_version == version
-                            and (
-                                mode != "standup"
-                                or (stored.standup is not None and stored.standup.day == str(today))
-                            )
+                            # Both work modes include a dated daily brief. This also refreshes
+                            # older meeting packs built before daily status was included.
+                            and stored.standup is not None
+                            and stored.standup.day == str(today)
                         )
                         if not current:
                             pack = await workplace.render_employer_pack(

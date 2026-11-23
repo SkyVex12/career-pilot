@@ -20,6 +20,16 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
+class UploadBody {
+  readonly data: string | ArrayBuffer;
+  readonly contentType: string;
+  readonly filename: string;
+  constructor(data: string | ArrayBuffer, contentType: string, filename: string) {
+    this.data = data;
+    this.contentType = contentType;
+    this.filename = filename;
+  }
+}
 export function secureBase(
   raw: string,
   development = false,
@@ -188,14 +198,28 @@ export class Api {
   ): Promise<T> {
     return withDeadline(bounded => this.performRequest<T>(path, body, method, auth, bounded, retry, profile, epoch), this.requestTimeoutMs, signal);
   }
+  /** Files use the same account/profile fence, refresh and deadline as JSON requests. */
+  async upload<T = unknown>(path: string, data: Uint8Array | string, contentType: string, filename: string, signal?: AbortSignal, profile = this.profile): Promise<T> {
+    if (!["text/plain", "text/markdown", "application/pdf"].includes(contentType))
+      throw new Error("Choose a text, Markdown or PDF file.");
+    const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    if (!bytes.byteLength || bytes.byteLength > 10 * 1024 * 1024)
+      throw new Error("Choose a nonempty file of at most 10 MB.");
+    const name = filename.trim();
+    if (!name || name.length > 255 || /[\x00-\x1f\x7f]/.test(name))
+      throw new Error("Use a file name of 1–255 characters without control characters.");
+    const payload = new UploadBody(typeof data === "string" ? data : new Uint8Array(data).buffer, contentType, name);
+    return this.request<T>(path, payload, "POST", true, signal, true, profile);
+  }
   private async performRequest<T>(path: string, body: unknown, method: string, auth: boolean, signal: AbortSignal, retry: boolean, profile: string, epoch: number): Promise<T> {
     this.assertEpoch(epoch);
     signal.throwIfAborted();
     if (!path.startsWith("/") || path.startsWith("//"))
       throw new Error("Invalid API path");
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
+      "Content-Type": body instanceof UploadBody ? body.contentType : "application/json",
     };
+    if (body instanceof UploadBody) headers["x-file-name"] = encodeURIComponent(body.filename);
     if (auth) {
       headers.Authorization = `Bearer ${await this.token()}`;
       this.assertEpoch(epoch);
@@ -205,7 +229,7 @@ export class Api {
     const response = await this.fetcher(`${this.base}/v1${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body instanceof UploadBody ? body.data : body === undefined ? undefined : JSON.stringify(body),
       signal,
     });
     this.assertEpoch(epoch);

@@ -95,9 +95,10 @@ class Command(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["companion.command"]
     command_id: UUID
-    kind: Literal["answer", "followup", "end", "set_language"]
+    kind: Literal["answer", "followup", "end", "set_language", "set_sharing"]
     text: str | None = Field(default=None, max_length=4000)
     spoken_language: str | None = Field(default=None, min_length=2, max_length=35)
+    sharing: bool | None = Field(default=None, strict=True)
     confirmed: bool = False
     summarize: bool = True
 
@@ -113,6 +114,10 @@ class Command(BaseModel):
             raise ValueError("A language change needs a spoken language")
         if self.kind != "set_language" and self.spoken_language is not None:
             raise ValueError("Only a language change accepts a spoken language")
+        if self.kind == "set_sharing" and self.sharing is None:
+            raise ValueError("A sharing change requires a boolean sharing value")
+        if self.kind != "set_sharing" and self.sharing is not None:
+            raise ValueError("Only a sharing change accepts sharing")
         return self
 
     def digest(self) -> str:

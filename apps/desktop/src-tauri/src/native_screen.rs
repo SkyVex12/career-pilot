@@ -64,6 +64,26 @@ pub async fn native_screen_stop(window: tauri::WebviewWindow, token: u64) -> Res
     }
 }
 
+#[tauri::command]
+pub async fn native_screen_quality(
+    window: tauri::WebviewWindow,
+    token: u64,
+    height: u32,
+) -> Result<(), String> {
+    if ![720, 1080, 1440, 2160].contains(&height) {
+        return Err("Unsupported screen resolution.".into());
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    return tauri::async_runtime::spawn_blocking(move || native::quality(window.label(), token, height))
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (window, token);
+        Err("Native screen capture is unavailable on this platform.".into())
+    }
+}
+
 #[cfg(windows)]
 #[path = "native_screen_windows.rs"]
 mod native;
@@ -89,6 +109,7 @@ mod native {
             error: extern "C" fn(u64, *const c_char),
         ) -> *mut c_void;
         fn copilot_screen_stop(handle: *mut c_void);
+        fn copilot_screen_quality(handle: *mut c_void, height: u32) -> bool;
     }
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
@@ -228,6 +249,18 @@ mod native {
             data: base64::engine::general_purpose::STANDARD.encode(&value.data),
             error: value.error.clone(),
         }))
+    }
+    pub fn quality(owner: &str, token: u64, height: u32) -> Result<(), String> {
+        let running = RUNNING.lock().map_err(|_| "Screen capture state is unavailable.")?;
+        let active = running
+            .as_ref()
+            .filter(|v| v.token == token && v.owner == owner)
+            .ok_or("Screen sharing has stopped.")?;
+        if unsafe { copilot_screen_quality(active.handle as *mut c_void, height) } {
+            Ok(())
+        } else {
+            Err("Could not change screen capture resolution.".into())
+        }
     }
     pub fn stop(owner: Option<&str>, token: u64) -> Result<(), String> {
         let mut running = RUNNING.lock().unwrap();

@@ -253,3 +253,54 @@ async def test_answer_stream_reports_provisional_text_and_closes_provider(ask_ap
     assert result == "First part [S1] and the rest."
     progress.assert_awaited_once_with("First part ")
     provider.client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("failure", "stage", "guidance"),
+    [
+        (HTTPException(404, "private source"), "retrieval", "Choose another context"),
+        (TimeoutError("private response"), "answer", "timed out"),
+        (RuntimeError("private record"), "retrieval", "General knowledge"),
+    ],
+)
+def test_generation_failures_give_recovery_guidance_without_private_details(
+    failure, stage, guidance
+):
+    message = routes.generation_error(failure, stage)
+    assert guidance in message
+    assert "private" not in message
+
+
+async def test_context_removed_after_acceptance_fails_visibly_without_model_request(
+    ask_api, monkeypatch, caplog
+):
+    _, svc, conn, profile = ask_api
+    mid = uuid4()
+    conn.fetchrow.return_value = {
+        "scope": {"kind": "call", "id": str(uuid4())},
+        "created_at": datetime.now(UTC),
+    }
+    monkeypatch.setattr(routes, "message", AsyncMock(return_value={"question": "Private question"}))
+    monkeypatch.setattr(
+        routes, "retrieve", AsyncMock(side_effect=HTTPException(404, "Private source details"))
+    )
+    model = AsyncMock()
+    monkeypatch.setattr(routes, "answer", model)
+    await routes.generate(svc, profile, profile, uuid4(), mid, 1)
+    model.assert_not_awaited()
+    update = conn.execute.await_args
+    assert "status='failed'" in update.args[0]
+    assert update.args[1:3] == (mid, 1)
+    assert "Choose another context" in update.args[3]
+    assert "exception=HTTPException" in caplog.text
+    assert "Private" not in caplog.text
+
+
+async def test_no_model_provider_has_actionable_configuration_guidance(ask_api, monkeypatch):
+    from copilot_core.llm import AllRoutesFailedError
+
+    _, svc, _, _ = ask_api
+    monkeypatch.setattr(routes, "make_providers", lambda *args, **kwargs: [])
+    with pytest.raises(AllRoutesFailedError) as failure:
+        await routes.answer(svc, "Explain DNS", [], [])
+    assert "model configuration" in routes.generation_error(failure.value, "answer")

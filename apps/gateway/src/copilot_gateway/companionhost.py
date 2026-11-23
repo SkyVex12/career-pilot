@@ -127,6 +127,9 @@ class CompanionDesk:
                 await self.s.handle(
                     models.SessionEnd(type="session.end", summarize=command.summarize)
                 )
+            elif command.kind == "set_sharing":
+                assert command.sharing is not None
+                await self.s.handle(models.SharingSet(type="sharing.set", on=command.sharing))
             elif command.kind == "set_language":
                 assert command.spoken_language is not None
                 await self.s.handle(
@@ -138,10 +141,16 @@ class CompanionDesk:
                 )
             else:
                 await self.s.handle(models.QuestionForce(type="question.force", text=command.text))
-            result = "executed"
+            result = "sharing_unavailable" if command.kind == "set_sharing" else "executed"
             for seq, data in self.s.ring:
                 if seq > before:
                     message = json.loads(data)
+                    if (
+                        command.kind == "set_sharing"
+                        and message.get("type") == "sharing"
+                        and message.get("on") is command.sharing
+                    ):
+                        result = "executed"
                     if message.get("code") in {"rate_limited", "nothing_to_answer"}:
                         result = message["code"]
                     if (

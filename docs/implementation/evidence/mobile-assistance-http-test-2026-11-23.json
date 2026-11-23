@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-11-23T18:03:55.290627+00:00",
+  "status": "passed",
+  "scope": "Static inspection of the downloaded HTTP test APK only; no install, device operation or provider request.",
+  "provenance": {
+    "source_commit": "6fc13b98d213f99cd2e4a5f61a2c34992ab66179",
+    "workflow_run": "https://github.com/SkyVex12/career-pilot/actions/runs/45231385584",
+    "artifact_id": 14848087100,
+    "artifact_name": "career-pilot-android-http-test",
+    "github_archive_sha256": "ffa493faa9ecdff3d91933d7bde24494a66ada34f6b0fc07551a6c9de6aa30e0",
+    "archive_checksum_recomputed": true,
+    "apk_matches_archive_member": true,
+    "verification_basis": "Existing verified download receipt plus independently recomputed archive/member/file hashes; not a reproducible-build attestation."
+  },
+  "apk": {
+    "name": "CoRuby-Assistance-HTTP-Test-6fc13b9.apk",
+    "download_path": "C:\\Users\\A\\Downloads\\CoRuby-Assistance-HTTP-Test-6fc13b9.apk",
+    "bytes": 86839562,
+    "sha256": "71ade339cfe712bb6054db2a3437041769dbc3d0792f3402b306147b0a5adab8",
+    "repository_copy_matches": true
+  },
+  "package": {
+    "name": "app.careerpilot.mobile.httptest",
+    "versionCode": "1",
+    "versionName": "0.1.0-http-test",
+    "platformBuildVersionName": "17",
+    "platformBuildVersionCode": "37",
+    "compileSdkVersion": "37",
+    "compileSdkVersionCodename": "17"
+  },
+  "static_checks": {
+    "expected_apk_sha256": {
+      "passed": true,
+      "observed": "71ade339cfe712bb6054db2a3437041769dbc3d0792f3402b306147b0a5adab8"
+    },
+    "zipalign_4_byte": {
+      "passed": true,
+      "observed": "zipalign -c -v 4 exited 0"
+    },
+    "zipalign_16k": {
+      "passed": true,
+      "observed": "zipalign -c -v -P 16 4 exited 0; static packaging alignment only"
+    },
+    "package_id": {
+      "passed": true,
+      "observed": "app.careerpilot.mobile.httptest"
+    },
+    "version_name": {
+      "passed": true,
+      "observed": "0.1.0-http-test"
+    },
+    "application_label": {
+      "passed": true,
+      "observed": "Career Pilot HTTP Test"
+    },
+    "nondebuggable": {
+      "passed": true,
+      "observed": {
+        "effective_value": false,
+        "raw": null,
+        "absent_defaults_to_false": true
+      }
+    },
+    "backup_disabled": {
+      "passed": true,
+      "observed": "(type 0x12)0x0"
+    },
+    "cleartext_enabled": {
+      "passed": true,
+      "observed": "(type 0x12)0xffffffff"
+    },
+    "no_network_security_config_override": {
+      "passed": true,
+      "observed": null
+    },
+    "distinct_http_test_deep_links": {
+      "passed": true,
+      "observed": [
+        {
+          "component": "app.careerpilot.mobile.MainActivity",
+          "exported": true,
+          "default_category": true,
+          "schemes": [
+            "careerpilot-httptest",
+            "exp+career-pilot-mobile-httptest"
+          ]
+        }
+      ]
+    },
+    "apk_signature_v2": {
+      "passed": true,
+      "observed": "apksigner verify exit 0 plus explicit v2 verification line"
+    },
+    "repository_debug_signer": {
+      "passed": true,
+      "observed": {
+        "apk_certificate_sha256": [
+          "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c"
+        ],
+        "signer_count": 1,
+        "repository_debug_certificate_sha256": "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c",
+        "method": "SHA-256 of DER public certificate exported read-only with the known public Android debug password; no private key exported"
+      }
+    },
+    "unique_zip_entries": {
+      "passed": true,
+      "observed": {
+        "entries": 741,
+        "unique_entries": 741
+      }
+    },
+    "arm64_and_x86_64_elf_libraries": {
+      "passed": true,
+      "observed": {
+        "abis": [
+          "arm64-v8a",
+          "x86_64"
+        ],
+        "library_count": 44,
+        "invalid_elf": []
+      }
+    },
+    "essential_native_libraries_both_abis": {
+      "passed": true,
+      "observed": {
+        "required_per_abi": [
+          "libappmodules.so",
+          "libhermesvm.so",
+          "liblkjingle_peerconnection_so.so",
+          "libreact-native-audio-api.so",
+          "libreact_codegen_rnsvg.so"
+        ],
+        "missing": []
+      }
+    },
+    "elf_load_segments_16k": {
+      "passed": true,
+      "observed": {
+        "libraries_checked": 44,
+        "invalid": []
+      }
+    },
+    "elf_relro_16k_tail_layout": {
+      "passed": true,
+      "observed": {
+        "libraries_checked": 44,
+        "invalid": []
+      }
+    },
+    "uncompressed_native_zip_offsets_16k": {
+      "passed": true,
+      "observed": {
+        "invalid": []
+      }
+    },
+    "hermes_bytecode": {
+      "passed": true,
+      "observed": {
+        "magic_hex": "c61fbc03c103191f",
+        "bytecode_version": 99
+      }
+    },
+    "current_live_language_markers": {
+      "passed": true,
+      "observed": {
+        "session.set_language": true,
+        "session.language": true,
+        "language_switching": true,
+        "set_language": true,
+        "Language unchanged": true,
+        "Call language changed": true,
+        "Choose an available language on a server that supports live language changes.": true,
+        "This server does not support changing the language during a call.": true,
+        "Pause speaking briefly when switching. New speech and answers use the new language.": true,
+        "Finish the recorded turn before switching languages. New speech and answers use the new language.": true,
+        "The language change was not confirmed. Check the current language and retry when connected.": true
+      }
+    },
+    "assistance_and_permission_markers": {
+      "passed": true,
+      "observed": {
+        "expected_capabilities": true,
+        "Assist a call": true,
+        "For interviews": true,
+        "For work": true
+      }
+    },
+    "http_test_bundle_marker": {
+      "passed": true,
+      "observed": "ASCII byte substring: HTTP test"
+    },
+    "apk_unchanged_during_inspection": {
+      "passed": true,
+      "observed": "Whole-file SHA-256 recomputed after all inspections"
+    }
+  },
+  "signature": {
+    "kind": "repository Android debug certificate; HTTP test preview",
+    "certificate_sha256": "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c",
+    "v2_verified": true,
+    "signers": 1
+  },
+  "native_libraries": {
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "count": 44,
+    "required_per_abi": [
+      "libappmodules.so",
+      "libhermesvm.so",
+      "liblkjingle_peerconnection_so.so",
+      "libreact-native-audio-api.so",
+      "libreact_codegen_rnsvg.so"
+    ],
+    "all_load_segments_at_least_16k": true,
+    "relro_tail_layout_16k_checked": true,
+    "uncompressed_zip_data_offsets_16k_checked": true
+  },
+  "hermes": {
+    "path": "assets/index.android.bundle",
+    "bytes": 3863832,
+    "sha256": "a03f4dde8f047d65ccb561afcf4aa4c9cddb091cd6e116abd97b77b75fce84a2",
+    "bytecode_version": 99,
+    "marker_method": "Exact ASCII byte-substring search in the extracted bundle; presence does not prove reachable code or runtime behavior"
+  },
+  "verifier": {
+    "path": ".implementation/verify-assistance-apk.py",
+    "sha256": "0c5f646c98787a13c7b638ca1ca551b0cb3fa3fd1b0b3885378b240d554112ce",
+    "detailed_receipt": ".implementation/artifacts/mobile/assistance-6fc13b9/verification.receipt.json"
+  },
+  "limits": [
+    "Static bytecode markers do not prove reachable runtime behavior.",
+    "No installation or launch of this final APK was performed by this verifier.",
+    "16 KiB static ELF/ZIP checks do not replace testing on a 16 KiB Android device.",
+    "HTTP traffic and the repository debug signature make this a test preview, not a production store release.",
+    "Live screen, voice, consent and provider acceptance are tracked separately."
+  ],
+  "reference": "https://developer.android.com/guide/practices/page-sizes"
+}

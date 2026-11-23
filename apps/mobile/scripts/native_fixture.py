@@ -3,7 +3,9 @@
 import argparse
 import asyncio
 import copy
+import importlib.util
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -131,7 +133,19 @@ def create_app():
     @app.get("/v1/profiles")
     async def profiles(request: Request):
         auth(request)
-        return {"items": [{"id": PROFILE, "name": "Fictional test profile", "me": True}]}
+        workspace = app.state.fixture_workspace
+        linked = workspace["hub"]["connected"] and not workspace["hub"]["revoked"]
+        return {
+            "items": [
+                {
+                    "id": PROFILE,
+                    "name": "Fictional test profile",
+                    "me": True,
+                    "career_os_user_id": workspace["source_user"]["id"] if linked else None,
+                }
+            ],
+            "career_os": "user" if linked else None,
+        }
 
     @app.get("/v1/client-capabilities")
     async def client_capabilities(request: Request):
@@ -340,9 +354,15 @@ def create_app():
     async def options(request: Request, kind: str = "application"):
         auth(request)
         choices = {
-            "application": [{"id": application_id, "label": "Fictional Acme · Product engineer"}],
+            "application": [
+                {"id": item["id"], "label": f"{item['company']} · {item['role']}"}
+                for item in app.state.fixture_workspace["applications"].values()
+            ],
             "call": [] if history_deleted else [{"id": history_id, "label": saved_call["title"]}],
-            "company": [],
+            "company": [
+                {"id": item["id"], "label": item["name"]}
+                for item in app.state.fixture_workspace["companies"].values()
+            ],
             "document": [],
         }
         return {"options": choices.get(kind, [])}
@@ -598,6 +618,8 @@ def create_app():
     @app.get("/v1/meeting-preparation")
     async def preparation(request: Request):
         auth(request)
+        workspace = app.state.fixture_workspace
+        calendar = workspace["calendars"]["google"]
         return {
             "items": [
                 {
@@ -622,16 +644,20 @@ def create_app():
                         }
                     ],
                 }
-            ],
+            ]
+            if workspace["calendar_events_visible"] and calendar["connected"]
+            else [],
             "connections": [
                 {
                     "connection_id": connection_id,
                     "provider": "google",
-                    "status": "active",
-                    "last_sync_at": stamp,
-                    "last_error": None,
+                    "status": calendar["status"],
+                    "last_sync_at": calendar["last_sync_at"],
+                    "last_error": calendar["last_error"],
                 }
-            ],
+            ]
+            if calendar["connected"]
+            else [],
             "applications": [application],
             "saved_sessions": []
             if history_deleted
@@ -829,6 +855,18 @@ def create_app():
         except (TimeoutError, WebSocketDisconnect):
             pass
 
+    workspace_spec = importlib.util.spec_from_file_location(
+        "native_workspace_fixture", Path(__file__).with_name("native_workspace_fixture.py")
+    )
+    workspace_module = importlib.util.module_from_spec(workspace_spec)
+    workspace_spec.loader.exec_module(workspace_module)
+    workspace_module.install(app, auth)
+    personal_ai_spec = importlib.util.spec_from_file_location(
+        "native_personal_ai_fixture", Path(__file__).with_name("native_personal_ai_fixture.py")
+    )
+    personal_ai_module = importlib.util.module_from_spec(personal_ai_spec)
+    personal_ai_spec.loader.exec_module(personal_ai_module)
+    personal_ai_module.install(app, auth, PROFILE)
     return app
 
 

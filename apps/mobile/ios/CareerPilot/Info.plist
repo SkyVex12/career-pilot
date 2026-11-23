@@ -62,7 +62,7 @@
     <key>NSLocalNetworkUsageDescription</key>
     <string>Expo Dev Launcher uses the local network to discover and connect to development servers running on your computer.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Record only when you explicitly start practice or an in-person microphone turn.</string>
+    <string>Record only when you explicitly start practice, an in-person turn, or Talk to host.</string>
     <key>RCTMetroPort</key>
     <string>$(RCT_METRO_PORT)</string>
     <key>UIApplicationSceneManifest</key>

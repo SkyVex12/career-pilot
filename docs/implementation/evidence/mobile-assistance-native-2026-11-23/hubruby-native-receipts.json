@@ -1,0 +1,99 @@
+{
+  "connection": {
+    "available": true,
+    "connected": true,
+    "required": false,
+    "status": "active",
+    "account_type": "user",
+    "user": {
+      "id": "fictional-hubruby-user",
+      "name": "Fictional test profile"
+    },
+    "connected_at": "2026-11-23T12:09:57.47564-06:00",
+    "last_pull_at": "2026-11-23T12:10:48.081614-06:00"
+  },
+  "applications": {
+    "applications": [
+      {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "company": "Fictional Acme",
+        "role": "Product engineer",
+        "stage": "interview",
+        "url": null,
+        "source_site": null,
+        "note": "Fictional test application",
+        "jd_text": "Build accessible software and explain technical decisions.",
+        "resume": null,
+        "versions": [],
+        "pack": {
+          "available": true
+        }
+      },
+      {
+        "id": "818cadf0-f88e-4fe1-bd39-016b547eb60e",
+        "company": "Fictional HubRuby Labs",
+        "role": "Mobile engineer",
+        "stage": "interview",
+        "source_site": "HubRuby",
+        "url": null,
+        "note": "Fictional imported application",
+        "jd_text": "Build readable mobile interfaces. Fictional revision 1.",
+        "pack": {
+          "available": true
+        },
+        "career_os": {
+          "application_id": "fictional-hubruby-application",
+          "pulled_at": "2026-11-23T12:10:48.081614-06:00",
+          "content_hash": "fixture-revision-1"
+        },
+        "resume": {
+          "version_id": "a73e18be-ed62-4c25-8c4f-3bb533ef03cc",
+          "kind": "tailored",
+          "label": "Fictional HubRuby resume",
+          "status": "extracted",
+          "manual": false
+        }
+      }
+    ]
+  },
+  "resumes": {
+    "base": {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "kind": "base",
+      "label": "Fictional base resume",
+      "status": "extracted",
+      "source": "text",
+      "text": "Fictional engineer. Built a pilot and improved the release checklist.",
+      "used_by": [
+        "44444444-4444-4444-8444-444444444444"
+      ],
+      "application": null,
+      "file": null,
+      "digest": {
+        "facts": 2
+      }
+    },
+    "versions": [
+      {
+        "id": "a73e18be-ed62-4c25-8c4f-3bb533ef03cc",
+        "kind": "tailored",
+        "label": "Fictional HubRuby resume",
+        "status": "extracted",
+        "source": "career_os",
+        "text": "Fictional mobile engineer, revision 1.",
+        "used_by": [
+          "818cadf0-f88e-4fe1-bd39-016b547eb60e"
+        ],
+        "application": {
+          "id": "818cadf0-f88e-4fe1-bd39-016b547eb60e",
+          "company": "Fictional HubRuby Labs",
+          "role": "Mobile engineer"
+        },
+        "file": null,
+        "digest": {
+          "facts": 1
+        }
+      }
+    ]
+  }
+}

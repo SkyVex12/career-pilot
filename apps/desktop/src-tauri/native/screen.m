@@ -14,6 +14,9 @@ typedef void (*ErrorFn)(uint64_t, const char *);
 @property uint64_t token;
 @property FrameFn frame;
 @property ErrorFn error;
+@property CGFloat sourceWidth;
+@property CGFloat sourceHeight;
+@property (strong) SCStreamConfiguration *configuration;
 @end
 @implementation CopilotScreen
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
@@ -32,7 +35,7 @@ typedef void (*ErrorFn)(uint64_t, const char *);
     @autoreleasepool {
         CIImage *image = [CIImage imageWithCVPixelBuffer:buffer];
         CGColorSpaceRef color = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        NSData *jpeg = [self.context JPEGRepresentationOfImage:image colorSpace:color options:@{(__bridge NSString *)kCGImageDestinationLossyCompressionQuality: @0.85}];
+        NSData *jpeg = [self.context JPEGRepresentationOfImage:image colorSpace:color options:@{(__bridge NSString *)kCGImageDestinationLossyCompressionQuality: @0.95}];
         CGColorSpaceRelease(color);
         if (jpeg) self.frame(self.token, jpeg.bytes, jpeg.length, (uint32_t)CVPixelBufferGetWidth(buffer), (uint32_t)CVPixelBufferGetHeight(buffer));
     }
@@ -65,7 +68,7 @@ void *copilot_screen_start(uint32_t identifier, bool window, uint64_t token, Fra
             for (SCDisplay *display in content.displays) {
                 if (display.displayID == identifier) {
                     filter = [[SCContentFilter alloc] initWithDisplay:display excludingApplications:excluded exceptingWindows:@[]];
-                    width = display.width; height = display.height; break;
+                    width = CGDisplayPixelsWide(display.displayID); height = CGDisplayPixelsHigh(display.displayID); break;
                 }
             }
         }
@@ -81,6 +84,7 @@ void *copilot_screen_start(uint32_t identifier, bool window, uint64_t token, Fra
         config.pixelFormat = kCVPixelFormatType_32BGRA;
         CopilotScreen *owner = [CopilotScreen new];
         owner.token = token; owner.frame = frame; owner.error = error;
+        owner.sourceWidth = width; owner.sourceHeight = height; owner.configuration = config;
         owner.context = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer: @NO}];
         owner.queue = dispatch_queue_create("com.copilot.screen.frames", DISPATCH_QUEUE_SERIAL);
         owner.stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:owner];
@@ -91,6 +95,25 @@ void *copilot_screen_start(uint32_t identifier, bool window, uint64_t token, Fra
         dispatch_semaphore_wait(ready, DISPATCH_TIME_FOREVER);
         if (failure) { error(token, failure.localizedDescription.UTF8String); return NULL; }
         return (__bridge_retained void *)owner;
+    }
+}
+// Called on a Rust worker with its capture lease held. Changing quality keeps the selected source.
+bool copilot_screen_quality(void *handle, uint32_t height) {
+    @autoreleasepool {
+        CopilotScreen *owner = (__bridge CopilotScreen *)handle;
+        CGFloat scale = MIN(1.0, MIN((height * 16.0 / 9.0) / owner.sourceWidth, height / owner.sourceHeight));
+        SCStreamConfiguration *config = owner.configuration;
+        NSUInteger oldWidth = config.width, oldHeight = config.height;
+        config.width = MAX(2, ((NSUInteger)(owner.sourceWidth * scale) / 2) * 2);
+        config.height = MAX(2, ((NSUInteger)(owner.sourceHeight * scale) / 2) * 2);
+        dispatch_semaphore_t ready = dispatch_semaphore_create(0);
+        __block BOOL success = NO;
+        [owner.stream updateConfiguration:config completionHandler:^(NSError *err) {
+            success = err == nil; dispatch_semaphore_signal(ready);
+        }];
+        dispatch_semaphore_wait(ready, DISPATCH_TIME_FOREVER);
+        if (!success) { config.width = oldWidth; config.height = oldHeight; }
+        return success;
     }
 }
 void copilot_screen_stop(void *handle) {

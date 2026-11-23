@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { captureNativeScreen, nativeShares } from "../src/nativeScreen";
+import { captureNativeScreen, nativeShares, NATIVE_SCREEN_SIZE } from "../src/nativeScreen";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("livekit-client", () => ({
@@ -55,7 +55,9 @@ describe("native screen stream ownership", () => {
     const capture = captureNativeScreen();
     fireEvent.click(await screen.findByRole("button", { name: "Main display View and remote control" }));
     const [local] = await capture;
-    expect(nativeShares.get(local.mediaStreamTrack)).toEqual(source);
+    expect(nativeShares.get(local.mediaStreamTrack)).toMatchObject(source);
+    await nativeShares.get(local.mediaStreamTrack)?.setQuality?.(2160);
+    expect(invoke).toHaveBeenCalledWith("native_screen_quality", { token: 42, height: 2160 });
     local.stop();
     window.dispatchEvent(new Event("pagehide"));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("native_screen_stop", { token: 42 }));
@@ -137,4 +139,30 @@ it("stops the video track on a later native frame failure even without an ended 
   await waitFor(() => expect(track.stop).toHaveBeenCalledTimes(1));
   expect(nativeShares.get(local.mediaStreamTrack)?.error).toBe("Display disconnected");
   expect(invoke).toHaveBeenCalledWith("native_screen_stop", { token: 42 });
+});
+
+it("publishes dimensions only after the resized native frame has been decoded and drawn", async () => {
+  let latest = frame;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "native_screen_sources") return [source];
+    if (command === "native_screen_start") return 42;
+    if (command === "native_screen_frame") return (args as { after: number }).after < latest.sequence ? latest : null;
+    return undefined;
+  });
+  const capture = captureNativeScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Main display View and remote control" }));
+  const [local] = await capture;
+  const resize = vi.fn();
+  track.addEventListener(NATIVE_SCREEN_SIZE, resize);
+  try {
+    await nativeShares.get(track)?.setQuality?.(2160);
+    expect(resize).not.toHaveBeenCalled();
+    expect(nativeShares.get(track)?.dimensions).toEqual({ width: 1920, height: 1080 });
+    latest = { ...frame, sequence: 2, width: 3840, height: 2160 };
+    await waitFor(() => expect(resize).toHaveBeenCalledTimes(1));
+    expect(nativeShares.get(track)?.dimensions).toEqual({ width: 3840, height: 2160 });
+    latest = { ...latest, sequence: 3 };
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("native_screen_frame", { token: 42, after: 3 }));
+    expect(resize).toHaveBeenCalledTimes(1);
+  } finally { local.stop(); }
 });

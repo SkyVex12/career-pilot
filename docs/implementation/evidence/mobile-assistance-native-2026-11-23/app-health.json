@@ -1,0 +1,9 @@
+{
+  "package": "app.careerpilot.mobile.assistantsmoke",
+  "pid": "2865",
+  "fatal_or_unhandled_lines": 0,
+  "crash_buffer_lines": 0,
+  "package_anr_crash_events": 0,
+  "exit_info": "ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)\nLast Timestamp of Persistence Into Persistent Storage: 2026-11-23 12:04:33.480\n",
+  "scope": "Retained Android log buffers for this process/package; not proof of lifetime stability."
+}

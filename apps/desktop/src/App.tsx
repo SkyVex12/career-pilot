@@ -12,6 +12,7 @@ import { CallScreen } from "./CallScreen";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
 import { startScreenHost } from "./screen";
+import { HostControlRequests } from "./screenui";
 import { Shell, type Tab, type WorkspaceWindowActions } from "./Shell";
 import { ProfileContext, accountOf, isLocked, useProfiles } from "./profiles";
 import { Button, EmptyState, SkeletonList, ToastProvider } from "./ui";
@@ -218,6 +219,7 @@ export default function App() {
 
   return (
     <ToastProvider persistent={<><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
+      <HostControlRequests s={session} />
       <Shell
         tab={tab}
         onTab={setTab}

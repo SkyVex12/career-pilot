@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><title>
+    Fictional native assistant media fixture
+  </title>
+  <style>
+    body {
+      background: #17191c;
+      color: #eee;
+      font: 16px sans-serif;
+    }
+    canvas {
+      width: 960px;
+      max-width: 100%;
+    }
+  </style>
+  <h1>Fictional host · local smoke test</h1>
+  <canvas id="screen" width="1920" height="1080"></canvas>
+  <pre id="status"></pre>
+  <script src="/__assistant/livekit.js"></script>
+  <script>
+    const { Room, RoomEvent, LocalVideoTrack, Track } = LivekitClient;
+    const canvas = document.querySelector("canvas"),
+      ctx = canvas.getContext("2d");
+    const observation = {
+      screenConnected: false,
+      voiceConnected: false,
+      voiceTracks: 0,
+      quality: "1080p",
+      control: false,
+      request: null,
+      inputs: [],
+    };
+    const encoder = new TextEncoder(),
+      decoder = new TextDecoder();
+    let screenRoom,
+      voiceRoom,
+      pending = null;
+    function draw() {
+      ctx.fillStyle = "#172233";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 50px sans-serif";
+      ctx.fillText("FICTIONAL RELEASE CHECKLIST", 70, 110);
+      ctx.font = "32px sans-serif";
+      [
+        "1. Pilot users confirmed the workflow.",
+        "2. The release is ready for review.",
+        "3. Every line must stay readable on mobile.",
+        `Resolution: ${canvas.width} x ${canvas.height}`,
+        `Control: ${observation.control ? "approved" : "not approved"}`,
+      ].forEach((line, i) => ctx.fillText(line, 70, 210 + i * 80));
+      ctx.font = "20px monospace";
+      ctx.fillText(
+        "Small text: ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789",
+        70,
+        700,
+      );
+      ctx.fillText(new Date().toISOString(), 70, 760);
+    }
+    async function report() {
+      document.querySelector("#status").textContent = JSON.stringify(
+        observation,
+        null,
+        2,
+      );
+      await fetch("/__assistant/media", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(observation),
+      });
+    }
+    async function send(topic, data) {
+      await screenRoom.localParticipant.publishData(
+        encoder.encode(JSON.stringify(data)),
+        { topic, reliable: true },
+      );
+    }
+    async function main() {
+      const screenGrant = await fetch("/__assistant/host/screen").then((r) =>
+        r.json(),
+      );
+      screenRoom = new Room();
+      screenRoom.on(
+        RoomEvent.DataReceived,
+        async (bytes, sender, kind, topic) => {
+          let data;
+          try {
+            data = JSON.parse(decoder.decode(bytes));
+          } catch {
+            return;
+          }
+          if (!sender?.identity.startsWith("seat:")) return;
+          if (topic === "screen_quality") {
+            const sizes = {
+              "720p": [1280, 720],
+              "1080p": [1920, 1080],
+              "1440p": [2560, 1440],
+              "2160p": [3840, 2160],
+            };
+            if (!sizes[data.quality]) return;
+            [canvas.width, canvas.height] = sizes[data.quality];
+            observation.quality = data.quality;
+            draw();
+            await send("screen_quality_status", {
+              quality: data.quality,
+              width: canvas.width,
+              height: canvas.height,
+            });
+          }
+          if (topic === "ask") {
+            pending = data.requestId;
+            observation.request = pending;
+          }
+          if (topic === "release") {
+            pending = null;
+            observation.control = false;
+            await send("control", { on: false });
+          }
+          if (topic === "input" && observation.control)
+            observation.inputs.push(...data.events);
+          await report();
+        },
+      );
+      await screenRoom.connect(screenGrant.url, screenGrant.token);
+      observation.screenConnected = true;
+      draw();
+      setInterval(draw, 500);
+      const track = new LocalVideoTrack(
+        canvas.captureStream(5).getVideoTracks()[0],
+      );
+      await screenRoom.localParticipant.publishTrack(track, {
+        source: Track.Source.ScreenShare,
+        videoCodec: "vp8",
+        simulcast: false,
+        videoEncoding: { maxBitrate: 8000000, maxFramerate: 5 },
+      });
+      const voiceGrant = await fetch("/__assistant/host/voice").then((r) =>
+        r.json(),
+      );
+      voiceRoom = new Room();
+      voiceRoom.on(RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind === Track.Kind.Audio) {
+          observation.voiceTracks++;
+          report();
+        }
+      });
+      voiceRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
+        if (track.kind === Track.Kind.Audio) {
+          observation.voiceTracks--;
+          report();
+        }
+      });
+      await voiceRoom.connect(voiceGrant.url, voiceGrant.token);
+      observation.voiceConnected = true;
+      setInterval(async () => {
+        const state = await fetch("/__assistant").then((r) => r.json());
+        if (pending && state.approve) {
+          observation.control = true;
+          await send("control", { on: true, requestId: pending });
+          pending = null;
+          await fetch("/__assistant", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ approve: false }),
+          });
+          await report();
+        }
+      }, 300);
+      await report();
+    }
+    main().catch((e) => {
+      observation.error = String(e);
+      report();
+    });
+  </script>
+</html>

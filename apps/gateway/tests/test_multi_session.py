@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+import pytest
+
 from copilot_core import keys, prompts, workplace
 from copilot_core.llm import LLMRequest
 from copilot_core.packs import EmployerRef
@@ -198,7 +200,7 @@ async def test_no_follow_card_when_the_user_is_the_one_asking(env) -> None:
         await c.wait_type("question.detected", timeout=3.0)
 
 
-async def seed_standup_pack(env: Any) -> None:
+async def seed_standup_pack(env: Any, mode: str = "standup") -> None:
     today = datetime.now(UTC).date()
     employer = EmployerRef(id=uuid4(), name="Fernhill Logistics", title="Backend engineer")
 
@@ -212,21 +214,23 @@ async def seed_standup_pack(env: Any) -> None:
         node("Label retry logging", "Fixed the missing log line for the second retry.", "done"),
         node("Carrier status report export", "Add CSV and PDF export.", "planned"),
     ]
-    pack = workplace.standup_pack(env.user_a, employer, nodes, today, "test")
+    build = workplace.standup_pack if mode == "standup" else workplace.meeting_pack
+    pack = build(env.user_a, employer, nodes, today, "test")
     vk = env.client()
     await vk.set(keys.pack(env.user_a, pack.pack_id), pack.model_dump_json(by_alias=True))
-    await vk.hset(keys.pack_index(env.user_a), "mode:standup", str(pack.pack_id))
+    await vk.hset(keys.pack_index(env.user_a), f"mode:{mode}", str(pack.pack_id))
 
 
-async def test_a_standup_update_gets_the_prepared_card_as_the_user_starts(env) -> None:
+@pytest.mark.parametrize("mode", ["standup", "meeting"])
+async def test_a_work_update_gets_the_prepared_card_as_the_user_starts(env, mode: str) -> None:
     # In 3 of 8 real standups the hand-off was a pause, the user gave yesterday and today
     # with nothing on screen, and a follow card came 5 to 9 s later on the teammate's topic.
     provider = ScriptedProvider("anthropic")
     env.providers = [provider]
-    await seed_standup_pack(env)
+    await seed_standup_pack(env, mode)
     async with GatewayServer(env.services()) as gw:
         c = ProtocolClient(gw.url)
-        await c.start(mode="standup")
+        await c.start(mode=mode)
         await c.say("So that is it from my side.", capture_ms=0)
         await c.wait_type("transcript.final")
         await decided(gw)
@@ -256,12 +260,13 @@ async def test_a_standup_update_gets_the_prepared_card_as_the_user_starts(env) -
         assert len(c.of_type("question.detected")) == 1
 
 
-async def test_no_update_card_in_an_interview_or_over_a_card_already_shown(env) -> None:
+@pytest.mark.parametrize("mode", ["standup", "meeting"])
+async def test_no_update_card_over_a_card_already_shown(env, mode: str) -> None:
     env.providers = [ScriptedProvider("anthropic")]
-    await seed_standup_pack(env)
+    await seed_standup_pack(env, mode)
     async with GatewayServer(env.services()) as gw:
         c = ProtocolClient(gw.url)
-        await c.start(mode="standup")
+        await c.start(mode=mode)
         # The teammate asked, and that question has its card: the update card stays away.
         await c.say("What is your update on the retry work?", capture_ms=0)
         q1 = await c.wait_type("question.detected", speculative=False)

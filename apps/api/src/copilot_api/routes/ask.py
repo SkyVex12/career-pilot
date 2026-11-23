@@ -17,7 +17,7 @@ from copilot_core import ask, embed, jobs, personal_ai
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.db import Conn
-from copilot_core.llm import ModelRouter, RefusedError, Route
+from copilot_core.llm import AllRoutesFailedError, ModelRouter, RefusedError, Route
 from copilot_core.providers import make_providers, openai_params
 
 router = APIRouter(prefix="/ask", tags=["ask"], dependencies=[Depends(require_link)])
@@ -754,6 +754,23 @@ async def answer(
                 await client.close()
 
 
+def generation_error(exc: Exception, stage: str) -> str:
+    """Safe recovery guidance; provider bodies and decrypted records stay private."""
+    if isinstance(exc, HTTPException) and exc.status_code in (403, 404):
+        return "The selected context is no longer available. Choose another context and ask again."
+    if isinstance(exc, RefusedError) or (isinstance(exc, AllRoutesFailedError) and exc.refused):
+        return "The model could not answer this question. Edit your question and try again."
+    if isinstance(exc, TimeoutError):
+        return "The answer timed out. Retry the answer when your server is available."
+    if isinstance(exc, AllRoutesFailedError):
+        return (
+            "The answer service is unavailable. Retry, or check the server's model configuration."
+        )
+    if stage == "retrieval":
+        return "Could not load your saved context. Retry, or choose General knowledge to continue."
+    return "Could not generate an answer. Retry, or check the server's model configuration."
+
+
 async def generate(
     svc: Services, user: Principal, account: Principal, cid: UUID, mid: UUID, attempt: int
 ) -> None:
@@ -761,6 +778,7 @@ async def generate(
     if current is not None:
         _running[mid] = current
     model_task: asyncio.Task[str] | None = None
+    stage = "retrieval"
     try:
         async with svc.tx(account) as conn:
             row = await conn.fetchrow(
@@ -864,6 +882,7 @@ async def generate(
                     version,
                 )
 
+        stage = "answer"
         model_task = asyncio.create_task(
             answer(svc, original["question"], history, sources, progress)
         )
@@ -917,17 +936,20 @@ async def generate(
     except asyncio.CancelledError:
         if model_task:
             model_task.cancel()
-    except Exception:
+    except Exception as exc:
         if model_task:
             model_task.cancel()
+        logging.getLogger(__name__).warning(
+            "Ask generation failed: stage=%s exception=%s", stage, type(exc).__name__
+        )
         async with svc.tx(account) as conn:
             await conn.execute(
                 "update app.ask_messages set status='failed',answer_enc=null,"
-                "answer_key_version=null,error="
-                "'Could not generate an answer. Check model configuration or retry.',"
+                "answer_key_version=null,error=$3,"
                 "updated_at=now() where id=$1 and status='pending' and attempt=$2",
                 mid,
                 attempt,
+                generation_error(exc, stage),
             )
     finally:
         if _running.get(mid) is current:

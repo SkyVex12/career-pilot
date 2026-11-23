@@ -118,7 +118,7 @@ function parseSource(value: unknown): Source {
     ...(typeof start === "number" ? { start_ms: start } : {}),
   };
 }
-function parseMessage(value: unknown): Message {
+export function parseMessage(value: unknown): Message {
   const v = object(value),
     status = string(v.status);
   if (!["pending", "done", "failed", "cancelled"].includes(status))
@@ -130,6 +130,15 @@ function parseMessage(value: unknown): Message {
     status: status as Message["status"],
     error: optional(v.error),
     sources: list(v.sources).map(parseSource),
+  };
+}
+export function withMessage(conversation: Conversation, message: Message): Conversation {
+  const messages = conversation.messages ?? [];
+  return {
+    ...conversation,
+    messages: messages.some((item) => item.id === message.id)
+      ? messages.map((item) => (item.id === message.id ? message : item))
+      : [...messages, message],
   };
 }
 export function parseConversation(

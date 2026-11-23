@@ -35,16 +35,22 @@ const navigation: {
     short: "Call",
     tab: "Companion",
     icon: "call",
-    group: ["Companion", "In-person"],
+    group: ["Companion", "Assist", "In-person"],
   },
   {
     label: "Interview prep",
     short: "Interview prep",
     tab: "Practice",
     icon: "practice",
-    group: ["Practice", "Preparation"],
+    group: ["Practice", "Preparation", "Applications"],
   },
-  { label: "Work", short: "Work", tab: "Ask", icon: "work", group: ["Ask"] },
+  {
+    label: "Work",
+    short: "Work",
+    tab: "Ask",
+    icon: "work",
+    group: ["Ask", "WorkContext", "PersonalAI"],
+  },
   {
     label: "History",
     short: "History",
@@ -57,17 +63,36 @@ function Brand({ compact = false }: { compact?: boolean }) {
   const c = useContext(Theme);
   return (
     <Row style={{ gap: 10 }}>
-      <Svg width={30} height={30} viewBox="0 0 32 32" fill="none" accessible={false}>
+      <Svg
+        width={30}
+        height={30}
+        viewBox="0 0 32 32"
+        fill="none"
+        accessible={false}
+      >
         <Polygon fill="#f05a3c" points="9,3 23,3 15,11 1,11" />
         <Polygon fill="#ff7a5c" points="9,3 15,11 1,11" />
         <Polygon fill="#e44832" points="1,12.2 15,12.2 15,28.2" />
         <Polygon fill="#cf3b2e" points="9,12.2 15,12.2 15,28.2" />
-        <Polygon fill="#bd352b" points="23.8485,3.8485 31,12 16.2,29.5 16.2,11.4971" />
+        <Polygon
+          fill="#bd352b"
+          points="23.8485,3.8485 31,12 16.2,29.5 16.2,11.4971"
+        />
         <Polygon fill="#d84b35" points="23.8485,3.8485 31,12 16.2,11.4971" />
       </Svg>
       {!compact ? (
         <Txt style={{ fontWeight: "700", fontSize: 17, letterSpacing: -0.3 }}>
-          Co<Txt style={{ color: c.ruby, fontWeight: "700", fontSize: 17, letterSpacing: -0.3 }}>Ruby</Txt>
+          Co
+          <Txt
+            style={{
+              color: c.ruby,
+              fontWeight: "700",
+              fontSize: 17,
+              letterSpacing: -0.3,
+            }}
+          >
+            Ruby
+          </Txt>
         </Txt>
       ) : null}
     </Row>
@@ -103,17 +128,25 @@ export function AppShell({
     { width, height, fontScale } = useWindowDimensions();
   const shortLandscape = width >= 600 && height < 500 && width > height * 1.2;
   const wide = shortLandscape || (width >= 850 && height >= 460);
-  const secondaryOptions = ["Companion", "In-person"].includes(tab)
+  const secondaryOptions = ["Companion", "Assist", "In-person"].includes(tab)
     ? [
         { value: "Companion", label: "Desktop companion" },
+        { value: "Assist", label: "Assist a call" },
         { value: "In-person", label: "In person" },
       ]
-    : ["Practice", "Preparation"].includes(tab)
+    : ["Practice", "Preparation", "Applications"].includes(tab)
       ? [
           { value: "Practice", label: "Practice" },
           { value: "Preparation", label: "Meetings" },
+          { value: "Applications", label: "Applications" },
         ]
-      : null;
+      : ["Ask", "WorkContext", "PersonalAI"].includes(tab)
+        ? [
+            { value: "Ask", label: "Ask" },
+            { value: "WorkContext", label: "Companies" },
+            { value: "PersonalAI", label: "Personal AI" },
+          ]
+        : null;
   const [sheet, setSheet] = useState<"profiles" | "account" | null>(null);
   const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);

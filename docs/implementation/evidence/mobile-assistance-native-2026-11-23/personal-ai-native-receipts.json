@@ -1,0 +1,439 @@
+{
+  "connections": {
+    "connections": []
+  },
+  "requests": {
+    "requests": [
+      {
+        "id": "079ea47f-8e13-4bda-bf96-0750182e4238",
+        "request_id": "079ea47f-8e13-4bda-bf96-0750182e4238",
+        "profile_id": "11111111-1111-4111-8111-111111111111",
+        "request_revision": 1,
+        "scope": {
+          "title": "Fictional Android brief",
+          "purpose": "ask",
+          "employer_id": null,
+          "job_id": null,
+          "questions": [
+            "Summarize recent progress, decisions, blockers and next steps with sources and coverage gaps."
+          ],
+          "date_from": "2026-11-23",
+          "date_to": "2026-11-23"
+        },
+        "expected_brief_format": {
+          "$defs": {
+            "BriefItem": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                  "title": "Id",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "progress",
+                    "decision",
+                    "blocker",
+                    "next_step",
+                    "commitment",
+                    "term",
+                    "example"
+                  ],
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "text": {
+                  "maxLength": 1200,
+                  "minLength": 1,
+                  "title": "Text",
+                  "type": "string"
+                },
+                "provenance": {
+                  "enum": [
+                    "sourced",
+                    "user_report",
+                    "inference"
+                  ],
+                  "title": "Provenance",
+                  "type": "string"
+                },
+                "source_ids": {
+                  "items": {
+                    "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "title": "Source Ids",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "text",
+                "provenance"
+              ],
+              "title": "BriefItem",
+              "type": "object"
+            },
+            "Source": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                  "title": "Id",
+                  "type": "string"
+                },
+                "title": {
+                  "maxLength": 250,
+                  "minLength": 1,
+                  "title": "Title",
+                  "type": "string"
+                },
+                "url": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "maxLength": 2083,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Url"
+                },
+                "attribution": {
+                  "maxLength": 300,
+                  "minLength": 1,
+                  "title": "Attribution",
+                  "type": "string"
+                },
+                "source_date": {
+                  "anyOf": [
+                    {
+                      "format": "date",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Source Date"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "attribution"
+              ],
+              "title": "Source",
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "prepared_at": {
+              "format": "date-time",
+              "title": "Prepared At",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/BriefItem"
+              },
+              "maxItems": 40,
+              "title": "Items",
+              "type": "array"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 30,
+              "title": "Sources",
+              "type": "array"
+            },
+            "coverage_gaps": {
+              "items": {
+                "maxLength": 1200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Coverage Gaps",
+              "type": "array"
+            }
+          },
+          "required": [
+            "title",
+            "prepared_at"
+          ],
+          "title": "Brief",
+          "type": "object"
+        },
+        "active_version_id": "33b24d6b-6fd0-4870-84c3-df22b3e6e3bf",
+        "instructions": "Fictional local fixture. Prepare only from permitted sources; mark unknowns and preserve stable item IDs. No AI provider is called.",
+        "active_brief": {
+          "id": "33b24d6b-6fd0-4870-84c3-df22b3e6e3bf",
+          "request_id": "079ea47f-8e13-4bda-bf96-0750182e4238",
+          "title": "Fictional pilot brief",
+          "prepared_at": "2026-11-23T12:04:32.843318-06:00",
+          "origin": "paste",
+          "brief": {
+            "title": "Fictional pilot brief",
+            "prepared_at": "2026-11-23T18:04:32.843318Z",
+            "items": [
+              {
+                "id": "pilot_decision",
+                "kind": "decision",
+                "text": "The fictional pilot led to a shorter launch checklist.",
+                "provenance": "sourced",
+                "source_ids": [
+                  "pilot_notes"
+                ]
+              }
+            ],
+            "sources": [
+              {
+                "id": "pilot_notes",
+                "title": "Fictional pilot notes",
+                "url": null,
+                "attribution": "Synthetic native acceptance fixture",
+                "source_date": "2026-11-23"
+              }
+            ],
+            "coverage_gaps": [
+              "Synthetic data only; no private chats or model provider were read."
+            ]
+          },
+          "content": "Fictional pilot brief (prepared 2026-11-23T18:04:32.843318+00:00)\n[sourced] The fictional pilot led to a shorter launch checklist. Sources: Fictional pilot notes: Synthetic native acceptance fixture\nCoverage gap: Synthetic data only; no private chats or model provider were read."
+        }
+      },
+      {
+        "id": "20bc89b3-4194-4aaa-85a9-38106f2b3b30",
+        "request_id": "20bc89b3-4194-4aaa-85a9-38106f2b3b30",
+        "profile_id": "11111111-1111-4111-8111-111111111111",
+        "request_revision": 2,
+        "scope": {
+          "title": "Fictional pilot preparation",
+          "purpose": "call",
+          "employer_id": null,
+          "job_id": null,
+          "questions": [
+            "What did the fictional pilot change, and what should happen next?"
+          ],
+          "date_from": "2026-11-23",
+          "date_to": "2026-11-23"
+        },
+        "expected_brief_format": {
+          "$defs": {
+            "BriefItem": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                  "title": "Id",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "progress",
+                    "decision",
+                    "blocker",
+                    "next_step",
+                    "commitment",
+                    "term",
+                    "example"
+                  ],
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "text": {
+                  "maxLength": 1200,
+                  "minLength": 1,
+                  "title": "Text",
+                  "type": "string"
+                },
+                "provenance": {
+                  "enum": [
+                    "sourced",
+                    "user_report",
+                    "inference"
+                  ],
+                  "title": "Provenance",
+                  "type": "string"
+                },
+                "source_ids": {
+                  "items": {
+                    "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "title": "Source Ids",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "text",
+                "provenance"
+              ],
+              "title": "BriefItem",
+              "type": "object"
+            },
+            "Source": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^[A-Za-z0-9_-]{1,60}$",
+                  "title": "Id",
+                  "type": "string"
+                },
+                "title": {
+                  "maxLength": 250,
+                  "minLength": 1,
+                  "title": "Title",
+                  "type": "string"
+                },
+                "url": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "maxLength": 2083,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Url"
+                },
+                "attribution": {
+                  "maxLength": 300,
+                  "minLength": 1,
+                  "title": "Attribution",
+                  "type": "string"
+                },
+                "source_date": {
+                  "anyOf": [
+                    {
+                      "format": "date",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Source Date"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "attribution"
+              ],
+              "title": "Source",
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "prepared_at": {
+              "format": "date-time",
+              "title": "Prepared At",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/BriefItem"
+              },
+              "maxItems": 40,
+              "title": "Items",
+              "type": "array"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 30,
+              "title": "Sources",
+              "type": "array"
+            },
+            "coverage_gaps": {
+              "items": {
+                "maxLength": 1200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Coverage Gaps",
+              "type": "array"
+            }
+          },
+          "required": [
+            "title",
+            "prepared_at"
+          ],
+          "title": "Brief",
+          "type": "object"
+        },
+        "active_version_id": "58c08f9c-caca-4ed9-bcd8-1c89b36d1386",
+        "instructions": "Fictional local fixture. Prepare only from permitted sources; mark unknowns and preserve stable item IDs. No AI provider is called.",
+        "active_brief": {
+          "id": "58c08f9c-caca-4ed9-bcd8-1c89b36d1386",
+          "request_id": "20bc89b3-4194-4aaa-85a9-38106f2b3b30",
+          "title": "Fictional pilot brief",
+          "prepared_at": "2026-11-23T12:04:32.843318-06:00",
+          "origin": "correction",
+          "brief": {
+            "title": "Fictional pilot brief",
+            "prepared_at": "2026-11-23T18:04:32.843318Z",
+            "items": [
+              {
+                "id": "pilot_decision",
+                "kind": "decision",
+                "text": "The fictional pilot shortened the checklist after Android acceptance.",
+                "provenance": "user_report",
+                "source_ids": []
+              }
+            ],
+            "sources": [
+              {
+                "id": "pilot_notes",
+                "title": "Fictional pilot notes",
+                "url": null,
+                "attribution": "Synthetic native acceptance fixture",
+                "source_date": "2026-11-23"
+              }
+            ],
+            "coverage_gaps": [
+              "Synthetic data only; no private chats or model provider were read."
+            ]
+          },
+          "content": "Fictional pilot brief (prepared 2026-11-23T18:04:32.843318+00:00)\n[user_report] The fictional pilot shortened the checklist after Android acceptance.\nCoverage gap: Synthetic data only; no private chats or model provider were read."
+        }
+      }
+    ]
+  }
+}

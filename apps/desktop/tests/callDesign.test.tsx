@@ -175,7 +175,7 @@ describe("the Call setup design", () => {
     ipc.api("POST", /^\/employers\/e1\/packs$/, () => ({ status: "ready" }));
     ipc.api("GET", /^\/employers\/e1\/documents$/, () => ({ documents: [{ id: "d1", name: "Architecture", status: "ingested", approved_proposals: 3 }] }));
     render(tree());
-    await userEvent.click(screen.getByRole("radio", { name: "Meeting" }));
+    await userEvent.click(screen.getByRole("radio", { name: "For work" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Discuss routing decisions");
     await userEvent.click(screen.getByText("Focus on documents"));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));
@@ -305,5 +305,46 @@ describe("workspace startup after a call", () => {
     render(tree({ session: ended }));
     expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
     expect(screen.queryByText("The call is complete.")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("call status notifications", () => {
+  const seat = { sessionId: "guest-call", seatId: "guest-seat", hostName: "Dana", mode: "meeting" as const, title: null, capabilities: [], hostConnected: true, sharing: false };
+  const ended = { ...initial, sessionId: seat.sessionId, stopped: "ended" as const, seat };
+  it("does not redisplay an ended guest snapshot on startup", async () => {
+    routes();
+    render(tree({ session: ended }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeVisible();
+    expect(screen.queryByText("Dana's call ended")).not.toBeInTheDocument();
+  });
+  it("floats a new guest-ended notice once, supports dismissal, and resets for the next call", async () => {
+    routes();
+    const view = render(tree());
+    view.rerender(tree({ session: ended }));
+    const notice = await screen.findByText("Dana's call ended");
+    expect(notice.closest(".ui-toast-viewport")).not.toBeNull();
+    expect(notice.closest(".session-window")).toBeNull();
+    fireEvent.click(within(notice.closest(".ui-toast") as HTMLElement).getByRole("button", { name: "Dismiss" }));
+    view.rerender(tree({ session: { ...ended }, active: false }));
+    view.rerender(tree({ session: { ...ended }, active: true }));
+    expect(screen.queryByText("Dana's call ended")).not.toBeInTheDocument();
+    view.rerender(tree({ session: initial }));
+    view.rerender(tree({ session: { ...ended, sessionId: "next", seat: { ...seat, sessionId: "next", seatId: "next-seat" } } }));
+    expect(await screen.findByText("Dana's call ended")).toBeVisible();
+  });
+  it("expires informational stop notices and suppresses a stale event on profile changes", async () => {
+    vi.useFakeTimers();
+    try {
+      routes();
+      const view = render(tree());
+      view.rerender(tree({ session: ended }));
+      expect(screen.getByText("Dana's call ended")).toBeVisible();
+      await act(async () => vi.advanceTimersByTimeAsync(5100));
+      expect(screen.queryByText("Dana's call ended")).not.toBeInTheDocument();
+      view.rerender(tree({ session: ended, settings: { ...SETTINGS, profile: "other-profile" } }));
+      expect(screen.queryByText("Dana's call ended")).not.toBeInTheDocument();
+      view.unmount();
+    } finally { vi.useRealTimers(); }
   });
 });

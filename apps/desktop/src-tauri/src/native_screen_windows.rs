@@ -4,7 +4,7 @@ use super::{Frame, Source};
 use base64::Engine;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,7 @@ struct Running {
     last_frame: Arc<Mutex<Instant>>,
     cancel: Arc<AtomicBool>,
     latest: Arc<Mutex<Latest>>,
+    height: Arc<AtomicU32>,
 }
 #[derive(Default)]
 struct Latest {
@@ -130,15 +131,16 @@ impl Capture {
     }
 }
 
-fn encode(image: image::RgbaImage) -> Result<(Vec<u8>, u32, u32), String> {
+fn encode(image: image::RgbaImage, height: u32) -> Result<(Vec<u8>, u32, u32), String> {
     let mut image = image::DynamicImage::ImageRgba8(image);
-    if image.width() > 1920 || image.height() > 1080 {
-        image = image.thumbnail(1920, 1080);
+    let width = height * 16 / 9;
+    if image.width() > width || image.height() > height {
+        image = image.resize(width, height, image::imageops::FilterType::Triangle);
     }
     let rgb = image.to_rgb8();
     let (width, height) = rgb.dimensions();
     let mut bytes = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 82)
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95)
         .encode(rgb.as_raw(), width, height, image::ExtendedColorType::Rgb8)
         .map_err(|e| e.to_string())?;
     Ok((bytes, width, height))
@@ -155,6 +157,7 @@ pub fn start(owner: String, id: u32, kind: String) -> Result<u64, String> {
     let cancel = Arc::new(AtomicBool::new(false));
     let latest = Arc::new(Mutex::new(Latest::default()));
     let last_frame = Arc::new(Mutex::new(Instant::now()));
+    let height = Arc::new(AtomicU32::new(1080));
     *running = Some(Running {
         token,
         owner,
@@ -162,6 +165,7 @@ pub fn start(owner: String, id: u32, kind: String) -> Result<u64, String> {
         last_frame: last_frame.clone(),
         cancel: cancel.clone(),
         latest: latest.clone(),
+        height: height.clone(),
     });
     let started = std::thread::Builder::new().name("ruby-screen-capture".into()).spawn(move || {
         let capture = Capture::find(id, &kind);
@@ -187,7 +191,7 @@ pub fn start(owner: String, id: u32, kind: String) -> Result<u64, String> {
             }
             let started = Instant::now();
             if let Ok(capture) = &capture {
-                let result = capture.image().and_then(encode);
+                let result = capture.image().and_then(|image| encode(image, height.load(Ordering::Acquire)));
                 if cancel.load(Ordering::Acquire) {
                     return;
                 }
@@ -259,6 +263,13 @@ pub fn stop(owner: Option<&str>, token: u64) -> Result<(), String> {
     Ok(())
 }
 
+pub fn quality(owner: &str, token: u64, height: u32) -> Result<(), String> {
+    let active = RUNNING.lock().map_err(|_| "Screen capture state is unavailable.")?;
+    let running = active.as_ref().filter(|v| v.owns(owner, token)).ok_or("Screen sharing has stopped.")?;
+    running.height.store(height, Ordering::Release);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +283,7 @@ mod tests {
             last_frame: Arc::new(Mutex::new(now)),
             cancel: Arc::new(AtomicBool::new(false)),
             latest: Arc::new(Mutex::new(Latest::default())),
+            height: Arc::new(AtomicU32::new(1080)),
         };
         assert!(active.owns("overlay", 8));
         assert!(!active.owns("main", 8));
@@ -291,6 +303,7 @@ mod tests {
             last_frame: Arc::new(Mutex::new(now)),
             cancel: cancel.clone(),
             latest: latest.clone(),
+            height: Arc::new(AtomicU32::new(1080)),
         });
         // A blocked capture/publisher must not prevent the independent lease from
         // freeing the slot. In particular, expiry must not wait for this mutex.
@@ -310,6 +323,7 @@ mod tests {
             last_frame: Arc::new(Mutex::new(now)),
             cancel: cancel.clone(),
             latest: Arc::new(Mutex::new(Latest::default())),
+            height: Arc::new(AtomicU32::new(1080)),
         });
         assert!(!expire_current(&mut active, 8, now + LEASE + Duration::from_secs(2)));
         assert!(!cancel.load(Ordering::Acquire));
@@ -330,6 +344,7 @@ mod tests {
             last_frame: Arc::new(Mutex::new(now)),
             cancel: cancel.clone(),
             latest: Arc::new(Mutex::new(Latest::default())),
+            height: Arc::new(AtomicU32::new(1080)),
         });
         assert!(expire_current(&mut active, 10, now + LEASE + Duration::from_millis(1)));
         assert!(active.is_none());
@@ -338,8 +353,8 @@ mod tests {
     #[test]
     fn frames_are_valid_bounded_jpegs_with_the_original_aspect_ratio() {
         let pixels = image::RgbaImage::from_pixel(3840, 2160, image::Rgba([20, 40, 60, 255]));
-        let (bytes, width, height) = encode(pixels).unwrap();
-        assert_eq!((width, height), (1920, 1080));
+        let (bytes, width, height) = encode(pixels, 2160).unwrap();
+        assert_eq!((width, height), (3840, 2160));
         let decoded = image::load_from_memory(&bytes).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (width, height));
     }

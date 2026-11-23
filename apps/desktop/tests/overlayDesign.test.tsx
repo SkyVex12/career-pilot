@@ -115,8 +115,10 @@ describe("the approved overlay interactions", () => {
     render(<ScreenChip s={{ ...initial, running: true, sessionId: "s1" }} />);
     await act(() => emit("screen:status", { ...SCREEN_OFF, host: "on", surface: "monitor", controller: { identity: "seat:1", name: "Dana" }, asking: [{ identity: "seat:2", name: "Jordan" }] }));
     expect(await screen.findByRole("button", { name: "Dana controls · Stop" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Let Jordan control" }));
-    expect(commands).toContainEqual({ cmd: "control", person: { identity: "seat:2", name: "Jordan" } });
+    expect(screen.getByText("Jordan requests control")).toBeVisible();
+    // Consent is presented by the main workspace, never a second competing overlay action.
+    expect(screen.queryByRole("button", { name: /Let Jordan control|Approve control/ })).not.toBeInTheDocument();
+    expect(commands).not.toContainEqual(expect.objectContaining({ cmd: "control" }));
     expect(screen.getByRole("button", { name: "Sharing · Stop" })).toBeVisible();
     off();
   });

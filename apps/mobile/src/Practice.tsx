@@ -83,10 +83,12 @@ const message = (error: unknown) =>
 export function Practice({
   api,
   imported,
+  applicationEntry,
   visible = true,
 }: {
   api: Api;
   imported?: ImportedQuestion;
+  applicationEntry?: { id: string; n: number } | null;
   visible?: boolean;
 }) {
   const colors = useContext(Theme),
@@ -98,6 +100,7 @@ export function Practice({
     [historyLoading, setHistoryLoading] = useState(true),
     [useImported, setUseImported] = useState(!!imported);
   const lastImported = useRef(imported);
+  const lastApplicationEntry = useRef<typeof applicationEntry>(null);
   const [topic, setTopic] = useState(""),
     [type, setType] = useState("behavioral"),
     [minutes, setMinutes] = useState("15"),
@@ -378,6 +381,17 @@ export function Practice({
     });
   }, [imported]);
   useEffect(() => {
+    if (!visible || busy || !applicationEntry || applicationEntry === lastApplicationEntry.current) return;
+    lastApplicationEntry.current = applicationEntry;
+    void choose().then(opened => {
+      if (!opened || !alive.current || lastApplicationEntry.current !== applicationEntry) return;
+      setSection("new");
+      setApplication(applicationEntry.id);
+      setUseImported(false);
+      setConsent(false);
+    });
+  }, [applicationEntry, visible, busy]);
+  useEffect(() => {
     if (session || !visible) return;
     contextScope.current.invalidate();
     const ticket = contextScope.current.begin();
@@ -470,6 +484,7 @@ export function Practice({
         operation.current = null;
         void refresh();
       }
+      return true;
     } catch (e) {
       if (alive.current && viewScope.current.current(ticket))
         setError(message(e));

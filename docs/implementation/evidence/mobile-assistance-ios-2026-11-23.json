@@ -1,0 +1,323 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-11-23T18:13:13.686224+00:00",
+  "status": "passed",
+  "scope": "iOS simulator compile and static artifact inspection only, without distribution signing; no iPhone installation or runtime verification.",
+  "provenance": {
+    "source_commit": "6fc13b98d213f99cd2e4a5f61a2c34992ab66179",
+    "workflow_run": "https://github.com/SkyVex12/career-pilot/actions/runs/45231385584",
+    "ios_job_id": 137892602174,
+    "artifact_id": 14849370690,
+    "artifact_name": "career-pilot-ios-simulator",
+    "github_archive_sha256": "3f5f90bc0daaa887569e3fffd2cf166f55d380fea5644d06fcfa8bda6c5e5ba3",
+    "archive_checksum_recomputed": true,
+    "verification_basis": "Verified download receipt plus independently recomputed archive hashes and inspected nested app; not a reproducible-build attestation."
+  },
+  "simulator_archive": {
+    "name": "CareerPilot-simulator.zip",
+    "bytes": 17589576,
+    "sha256": "0440354d881fdb41ffd9e22f0a880a5f781205a201f0cf46b4c7cc0ca3fe56c8"
+  },
+  "bundle": {
+    "CFBundleIdentifier": "app.careerpilot.mobile",
+    "CFBundleDisplayName": "CoRuby",
+    "CFBundleShortVersionString": "0.1.0",
+    "CFBundleVersion": "1",
+    "MinimumOSVersion": "16.4",
+    "DTPlatformName": "iphonesimulator",
+    "DTSDKName": "iphonesimulator26.4",
+    "CFBundleSupportedPlatforms": [
+      "iPhoneSimulator"
+    ],
+    "NSMicrophoneUsageDescription": "Record only when you explicitly start practice, an in-person turn, or Talk to host.",
+    "NSAppTransportSecurity": {
+      "NSAllowsArbitraryLoads": false,
+      "NSAllowsLocalNetworking": true
+    }
+  },
+  "executable": {
+    "path": "CareerPilot.app/CareerPilot",
+    "bytes": 8141064,
+    "sha256": "2acf3132c17d2cdd8811a09c89163312c143f87abf1233b613322d43702b4e0f",
+    "architecture": "arm64",
+    "minimum_os": "16.4.0",
+    "mach_o_platform_id": 7,
+    "mach_o_platform": "iOS Simulator",
+    "code_signature_load_command": true,
+    "embedded_signature_header": {
+      "slot_types": [
+        0
+      ],
+      "code_directory_flags": [
+        131074
+      ],
+      "cms_signature_slot_present": false
+    },
+    "signature_kind": "linker ad-hoc CodeDirectory, flags 0x20002; no CMS identity signature",
+    "app_signature_directory": false,
+    "embedded_provisioning_profile": false
+  },
+  "frameworks": {
+    "LiveKitWebRTC": {
+      "path": "CareerPilot.app/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC",
+      "bytes": 12542624,
+      "sha256": "b15d565f19f0eb577cc0078000e92ba9aa39ef9acc40b53cda7dbc46be9ac91a",
+      "bundle_identifier": "io.livekit.LiveKitWebRTC",
+      "architectures": [
+        {
+          "architecture": "arm64",
+          "build_versions": [
+            {
+              "platform_id": 7,
+              "minimum_os": "14.0.0",
+              "sdk": "26.0.0"
+            }
+          ],
+          "code_signature_load_command": true
+        }
+      ]
+    },
+    "hermesvm": {
+      "path": "CareerPilot.app/Frameworks/hermesvm.framework/hermesvm",
+      "bytes": 6414872,
+      "sha256": "989dc24d674198fb2fccfa36569e501567532b94bcf522f0c2c05a2ee4da18e1",
+      "bundle_identifier": "dev.hermesengine.iphonesimulator",
+      "architectures": [
+        {
+          "architecture": "arm64",
+          "build_versions": [
+            {
+              "platform_id": 7,
+              "minimum_os": "15.1.0",
+              "sdk": "18.5.0"
+            }
+          ],
+          "code_signature_load_command": true
+        }
+      ]
+    }
+  },
+  "hermes": {
+    "path": "CareerPilot.app/main.jsbundle",
+    "bytes": 4767962,
+    "sha256": "fc662785e778c5562eee5e27bc5431f4e4ea6662d764fd6d5328f049513e0361",
+    "bytecode_version": 99,
+    "markers": {
+      "expected_capabilities": true,
+      "Assist a call": true,
+      "For interviews": true,
+      "For work": true,
+      "screen_quality_status": true,
+      "can_request_control": true
+    },
+    "marker_method": "Exact ASCII byte-substring search; presence does not establish reachable code or runtime behavior."
+  },
+  "build_evidence": {
+    "artifact_id": 14849011736,
+    "artifact_name": "career-pilot-ios-build-evidence",
+    "github_archive_sha256": "da4f886503e7954280d3bc53ab92ddc79e71be3469b46d0257ac6d21709a4910",
+    "build_log_sha256": "30413d7e4306b2528f575ea001a8bc8184a1330c8127e291427362c7f45c9396",
+    "podfile_lock_sha256": "48aebc7b5e18abbfd10c1cb5e5f57d5f671e6f259b6decc096399a306af1e6e4",
+    "build_flags": {
+      "** BUILD SUCCEEDED **": true,
+      "CODE_SIGNING_ALLOWED=NO": true,
+      "ARCHS=arm64": true,
+      "iphonesimulator": true
+    },
+    "pods": {
+      "hermes-engine": "260318099.0.5",
+      "livekit-react-native": "3.2.0",
+      "livekit-react-native-webrtc": "150.2.0",
+      "LiveKitWebRTC": "150.7871.04"
+    }
+  },
+  "static_checks": {
+    "ios-simulator_download_provenance": {
+      "passed": true,
+      "observed": null
+    },
+    "ios-simulator_archive_sha256": {
+      "passed": true,
+      "observed": "3f5f90bc0daaa887569e3fffd2cf166f55d380fea5644d06fcfa8bda6c5e5ba3"
+    },
+    "ios-build-evidence_download_provenance": {
+      "passed": true,
+      "observed": null
+    },
+    "ios-build-evidence_archive_sha256": {
+      "passed": true,
+      "observed": "da4f886503e7954280d3bc53ab92ddc79e71be3469b46d0257ac6d21709a4910"
+    },
+    "outer_archive_integrity": {
+      "passed": true,
+      "observed": null
+    },
+    "expected_simulator_archive_member": {
+      "passed": true,
+      "observed": [
+        "CareerPilot-simulator.zip"
+      ]
+    },
+    "build_evidence_archive_integrity": {
+      "passed": true,
+      "observed": null
+    },
+    "simulator_build_success_and_flags": {
+      "passed": true,
+      "observed": {
+        "** BUILD SUCCEEDED **": true,
+        "CODE_SIGNING_ALLOWED=NO": true,
+        "ARCHS=arm64": true,
+        "iphonesimulator": true
+      }
+    },
+    "no_build_error_lines": {
+      "passed": true,
+      "observed": null
+    },
+    "linked_pod_hermes-engine": {
+      "passed": true,
+      "observed": null
+    },
+    "linked_pod_livekit-react-native": {
+      "passed": true,
+      "observed": null
+    },
+    "linked_pod_livekit-react-native-webrtc": {
+      "passed": true,
+      "observed": null
+    },
+    "linked_pod_LiveKitWebRTC": {
+      "passed": true,
+      "observed": null
+    },
+    "bundle_archive_integrity": {
+      "passed": true,
+      "observed": null
+    },
+    "unique_bundle_members": {
+      "passed": true,
+      "observed": 247
+    },
+    "bounded_bundle_paths": {
+      "passed": true,
+      "observed": []
+    },
+    "expected_bundle_identity": {
+      "passed": true,
+      "observed": {
+        "CFBundleIdentifier": "app.careerpilot.mobile",
+        "CFBundleDisplayName": "CoRuby"
+      }
+    },
+    "simulator_platform": {
+      "passed": true,
+      "observed": [
+        "iPhoneSimulator"
+      ]
+    },
+    "minimum_ios_16_4": {
+      "passed": true,
+      "observed": "16.4"
+    },
+    "explicit_microphone_usage": {
+      "passed": true,
+      "observed": "Record only when you explicitly start practice, an in-person turn, or Talk to host."
+    },
+    "no_arbitrary_cleartext_transport": {
+      "passed": true,
+      "observed": {
+        "NSAllowsArbitraryLoads": false,
+        "NSAllowsLocalNetworking": true
+      }
+    },
+    "simulator_linker_ad_hoc_signature_only": {
+      "passed": true,
+      "observed": {
+        "app_signature_directory_or_profile": [],
+        "embedded_signature_header": {
+          "slot_types": [
+            0
+          ],
+          "code_directory_flags": [
+            131074
+          ],
+          "cms_signature_slot_present": false
+        }
+      }
+    },
+    "LiveKitWebRTC_arm64_simulator_framework": {
+      "passed": true,
+      "observed": [
+        {
+          "architecture": "arm64",
+          "file_type": 6,
+          "build_versions": [
+            {
+              "platform_id": 7,
+              "minimum_os": "14.0.0",
+              "sdk": "26.0.0"
+            }
+          ]
+        }
+      ]
+    },
+    "LiveKitWebRTC_linked_by_main_executable": {
+      "passed": true,
+      "observed": "@rpath/LiveKitWebRTC.framework/LiveKitWebRTC"
+    },
+    "hermesvm_arm64_simulator_framework": {
+      "passed": true,
+      "observed": [
+        {
+          "architecture": "arm64",
+          "file_type": 6,
+          "build_versions": [
+            {
+              "platform_id": 7,
+              "minimum_os": "15.1.0",
+              "sdk": "18.5.0"
+            }
+          ]
+        }
+      ]
+    },
+    "hermesvm_linked_by_main_executable": {
+      "passed": true,
+      "observed": "@rpath/hermesvm.framework/hermesvm"
+    },
+    "hermes_bytecode": {
+      "passed": true,
+      "observed": {
+        "magic_hex": "c61fbc03c103191f",
+        "version": 99
+      }
+    },
+    "current_permission_mode_and_assistance_markers": {
+      "passed": true,
+      "observed": {
+        "expected_capabilities": true,
+        "Assist a call": true,
+        "For interviews": true,
+        "For work": true,
+        "screen_quality_status": true,
+        "can_request_control": true
+      }
+    },
+    "original_archives_unchanged": {
+      "passed": true,
+      "observed": null
+    }
+  },
+  "verifier": {
+    "path": ".implementation/verify-assistance-ios.py",
+    "sha256": "42e5dc8aedb534762f8428d4879021d28f62fa08458c9a518f520cebff95db16"
+  },
+  "limits": [
+    "The arm64 simulator app cannot be installed on an iPhone; a signed device build and provisioning are still required.",
+    "No simulator launch, physical iPhone run, microphone, screen, voice or remote-control acceptance was performed by this verifier.",
+    "CODE_SIGNING_ALLOWED=NO was verified. The arm64 executable contains a linker ad-hoc CodeDirectory, not a distribution identity signature; no cryptographic signature verification was performed.",
+    "Prebuilt nested frameworks may carry signatures that were not cryptographically validated here.",
+    "Bytecode markers and linked LiveKit/Hermes libraries are packaging evidence, not live media or provider-service verification."
+  ]
+}

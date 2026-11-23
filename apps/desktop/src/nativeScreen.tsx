@@ -7,7 +7,8 @@ import "./capture.css";
 
 type Source = { id: number; kind: "monitor" | "window"; title: string; monitor_id?: string };
 type Frame = { sequence: number; width: number; height: number; data: string; error: string | null };
-export const nativeShares = new WeakMap<MediaStreamTrack, Source & { error?: string }>();
+export const NATIVE_SCREEN_SIZE = "coruby:native-screen-size";
+export const nativeShares = new WeakMap<MediaStreamTrack, Source & { error?: string; dimensions?: { width: number; height: number }; setQuality?: (height: number) => Promise<void> }>();
 const cancelled = () => new DOMException("Share cancelled", "AbortError");
 
 function choose(sources: Source[], signal?: AbortSignal): Promise<Source> {
@@ -74,11 +75,19 @@ export async function captureNativeScreen(signal?: AbortSignal): Promise<LocalVi
     image.src = `data:image/jpeg;base64,${frame.data}`;
     await image.decode();
     if (stopped) return false;
-    if (canvas.width !== frame.width || canvas.height !== frame.height) {
+    const resized = canvas.width !== frame.width || canvas.height !== frame.height;
+    if (resized) {
       canvas.width = frame.width; canvas.height = frame.height;
     }
     context!.drawImage(image, 0, 0);
     sequence = frame.sequence;
+    // The native quality command changes a future frame. Canvas track settings
+    // may lag its resize, so report the dimensions actually drawn to the stream.
+    const shared = video && nativeShares.get(video);
+    if (resized && video && shared) {
+      shared.dimensions = { width: frame.width, height: frame.height };
+      video.dispatchEvent(new Event(NATIVE_SCREEN_SIZE));
+    }
     return true;
   }
   try {
@@ -94,7 +103,11 @@ export async function captureNativeScreen(signal?: AbortSignal): Promise<LocalVi
     }
     video = canvas.captureStream(30).getVideoTracks()[0];
     if (!video) throw new Error("Could not create the screen video track.");
-    nativeShares.set(video, source);
+    video.contentHint = "detail";
+    nativeShares.set(video, { ...source, dimensions: { width: canvas.width, height: canvas.height }, setQuality: (height) => {
+      if (stopped) return Promise.reject(new Error("Screen sharing has stopped."));
+      return invoke<void>("native_screen_quality", { token, height });
+    } });
     local = new LocalVideoTrack(video, undefined, true);
     local.source = Track.Source.ScreenShare;
     const originalStop = local.stop.bind(local);

@@ -1,9 +1,11 @@
+import { assistantAudio } from "./assistantAudio";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, AppState, Switch, View } from "react-native";
 import type { AudioRecorder } from "react-native-audio-api";
 import { randomUUID } from "expo-crypto";
 import { withDeadline } from "./requestScope";
 import { Api } from "./api";
+import { HostAssistants } from "./HostAssistants";
 import { MediaEpoch } from "./mediaEpoch";
 import { pcmFrame, sessionURL } from "./pcm";
 import {
@@ -12,6 +14,7 @@ import {
   languageAcknowledgement,
   type Event,
 } from "./liveState";
+import { parsePracticeChoices } from "./practiceState";
 import { loadCallLanguages } from "./callLanguages";
 import type { Choice } from "./choiceState";
 import {
@@ -36,7 +39,15 @@ const NativeWebSocket = WebSocket as unknown as {
   ): WebSocket;
 };
 /** Foreground, user-started in-person mic only; never joins a desktop capture session. */
-export function InPerson({ api, url }: { api: Api; url: string }) {
+export function InPerson({
+  api,
+  url,
+  initialInterviewId,
+}: {
+  api: Api;
+  url: string;
+  initialInterviewId?: string;
+}) {
   const [status, setStatus] = useState("Microphone off"),
     [error, setError] = useState(""),
     [live, setLive] = useState(emptyLive),
@@ -47,6 +58,19 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     [channel, setChannel] = useState<0 | 1>(0),
     [retain, setRetain] = useState(false),
     [title, setTitle] = useState("In-person meeting"),
+    [mode, setMode] = useState<"interview" | "meeting">("meeting"),
+    [application, setApplication] = useState(""),
+    [interviewId, setInterviewId] = useState(""),
+    [interviewLoading, setInterviewLoading] = useState(false),
+    [interviewError, setInterviewError] = useState(""),
+    [interviewRevision, setInterviewRevision] = useState(0),
+    [company, setCompany] = useState(""),
+    [agenda, setAgenda] = useState(""),
+    [answerStyle, setAnswerStyle] = useState("bullets"),
+    [applications, setApplications] = useState<Choice[]>([]),
+    [companies, setCompanies] = useState<Choice[]>([]),
+    [contextError, setContextError] = useState(""),
+    [contextRevision, setContextRevision] = useState(0),
     [draft, setDraft] = useState(""),
     [language, setLanguage] = useState(""),
     [languages, setLanguages] = useState<Choice[]>([]),
@@ -77,6 +101,107 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     timer: ReturnType<typeof setTimeout>;
   } | null>(null);
   const lastLanguageRequestId = useRef<string | null>(null);
+  const scheduledApplication = useRef<Choice | null>(null);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setContextError("");
+    void Promise.allSettled(
+      ["application", "company"].map((kind) =>
+        api
+          .request(
+            `/ask/context-options?kind=${kind}`,
+            undefined,
+            "GET",
+            true,
+            controller.signal,
+          )
+          .then((value) => parsePracticeChoices(value, "applications")),
+      ),
+    ).then((results) => {
+      if (!active) return;
+      if (results[0].status === "fulfilled") {
+        const choices = results[0].value,
+          selected = scheduledApplication.current;
+        setApplications(
+          selected && !choices.some((choice) => choice.value === selected.value)
+            ? [...choices, selected]
+            : choices,
+        );
+      }
+      if (results[1].status === "fulfilled") setCompanies(results[1].value);
+      if (results.some((result) => result.status === "rejected"))
+        setContextError(
+          "Some call context could not be loaded. You can still start with your profile context.",
+        );
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [api, contextRevision]);
+  useEffect(() => {
+    if (!initialInterviewId || sid.current || starting.current) return;
+    let current = true;
+    const controller = new AbortController();
+    setInterviewLoading(true);
+    setInterviewError("");
+    setMode("interview");
+    setInterviewId("");
+    scheduledApplication.current = null;
+    void withDeadline(
+      (signal) =>
+        api.request<{ interviews: unknown[] }>(
+          "/interviews",
+          undefined,
+          "GET",
+          true,
+          signal,
+        ),
+      15000,
+      controller.signal,
+    )
+      .then((value) => {
+        if (!current) return;
+        const selected = Array.isArray(value.interviews)
+          ? (value.interviews.find((i: any) => i?.id === initialInterviewId) as
+              Record<string, unknown> | undefined)
+          : undefined;
+        if (!selected || typeof selected.job_id !== "string")
+          throw new Error(
+            "This scheduled interview is no longer available. Refresh Applications or choose a general interview.",
+          );
+        setInterviewId(initialInterviewId);
+        setApplication(selected.job_id);
+        const label = [selected.company, selected.title]
+          .filter((v): v is string => typeof v === "string" && !!v.trim())
+          .join(" · ");
+        setTitle(label || "Scheduled interview");
+        scheduledApplication.current = {
+          value: selected.job_id,
+          label: label || "Scheduled interview application",
+        };
+        setApplications((choices) =>
+          choices.some((c) => c.value === selected.job_id)
+            ? choices
+            : [
+                ...choices,
+                scheduledApplication.current!,
+              ],
+        );
+      })
+      .catch((e) => {
+        if (current)
+          setInterviewError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (current) setInterviewLoading(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [api, initialInterviewId, interviewRevision]);
   function finishLanguageChange() {
     if (languageRequest.current) clearTimeout(languageRequest.current.timer);
     languageRequest.current = null;
@@ -291,6 +416,14 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
         AppState.currentState !== "active"
       )
         return;
+      // Finish any assistant playback teardown before taking ownership for capture.
+      await assistantAudio.quiesce();
+      if (
+        !media.current.current(ticket) ||
+        !alive.current ||
+        AppState.currentState !== "active"
+      )
+        return;
       AudioManager.setSystemOptions({
         ios: { category: "record", mode: "default", options: [] },
       });
@@ -403,7 +536,8 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     if (starting.current) return;
     if (
       !resume &&
-      (languagesLoading ||
+      (interviewLoading ||
+        languagesLoading ||
         !languages.some((choice) => choice.value === language))
     ) {
       setLanguageError("Choose a supported spoken language before starting.");
@@ -462,8 +596,21 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             socket.send(
               JSON.stringify({
                 type: "session.start",
-                mode: "meeting",
+                mode,
                 meeting_title: title,
+                ...(mode === "interview" && interviewId
+                  ? { interview_id: interviewId }
+                  : {}),
+                ...(mode === "interview" && application
+                  ? { job_id: application }
+                  : {}),
+                ...(mode === "meeting" && company
+                  ? { employer_id: company }
+                  : {}),
+                ...(mode === "meeting" && agenda.trim()
+                  ? { agenda: agenda.trim() }
+                  : {}),
+                answer_style: answerStyle,
                 platform: "mobile_in_person",
                 client_version: "mobile-0.1.0",
                 spoken_language: language,
@@ -613,7 +760,98 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
           <Txt style={{ fontSize: 18, fontWeight: "700" }}>
             Set up this conversation
           </Txt>
-          <Field label="Meeting title">
+          <Segments
+            value={mode}
+            options={[
+              { value: "interview", label: "For interviews" },
+              { value: "meeting", label: "For work" },
+            ]}
+            disabled={connecting}
+            onChange={(value) => {
+              setMode(value as "interview" | "meeting");
+              setInterviewId("");
+            }}
+          />
+          <Select
+            label={mode === "interview" ? "Application" : "Company"}
+            value={mode === "interview" ? application : company}
+            options={[
+              {
+                value: "",
+                label:
+                  mode === "interview"
+                    ? "General interview · profile context"
+                    : "General meeting",
+              },
+              ...(mode === "interview" ? applications : companies),
+            ]}
+            disabled={connecting}
+            onChange={(value) => {
+              if (mode === "interview") {
+                setApplication(value);
+                setInterviewId("");
+              } else setCompany(value);
+            }}
+          />
+          {interviewLoading ? (
+            <Txt muted>Loading scheduled interview·</Txt>
+          ) : null}
+          {interviewId ? (
+            <Notice>
+              Scheduled interview selected. Review the settings, then start when
+              ready.
+            </Notice>
+          ) : null}
+          {interviewError ? (
+            <Notice
+              tone="error"
+              action={
+                <Button
+                  label="Retry interview"
+                  secondary
+                  onPress={() => setInterviewRevision((value) => value + 1)}
+                />
+              }
+            >
+              {interviewError}
+            </Notice>
+          ) : null}
+          {contextError ? (
+            <Notice
+              action={
+                <Button
+                  label="Retry context"
+                  secondary
+                  onPress={() => setContextRevision((value) => value + 1)}
+                />
+              }
+            >
+              {contextError}
+            </Notice>
+          ) : null}
+          {mode === "meeting" ? (
+            <Field label="Agenda (optional)">
+              <Input
+                multiline
+                maxLength={2000}
+                value={agenda}
+                onChangeText={setAgenda}
+                placeholder="What will you discuss?"
+              />
+            </Field>
+          ) : null}
+          <Segments
+            value={answerStyle}
+            options={[
+              { value: "bullets", label: "Bullet points" },
+              { value: "paragraph", label: "Paragraphs" },
+            ]}
+            onChange={setAnswerStyle}
+            disabled={connecting}
+          />
+          <Field
+            label={mode === "interview" ? "Interview title" : "Meeting title"}
+          >
             <Input
               placeholder="Meeting title"
               value={title}
@@ -671,6 +909,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             label="Start in-person session"
             loading={connecting}
             disabled={
+              interviewLoading ||
               languagesLoading ||
               !languages.some((choice) => choice.value === language)
             }
@@ -767,6 +1006,20 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
           />
         </>
       )}
+      {active && sid.current ? (
+        <HostAssistants
+          api={api}
+          sessionId={sid.current}
+          connected={ws.current?.readyState === 1}
+          sharing={live.assistantSharing}
+          canShare
+          recording={recording || micBusy}
+          onSharing={(on) => {
+            if (!send({ type: "sharing.set", on }))
+              setError("Reconnect before changing sharing.");
+          }}
+        />
+      ) : null}
       {live.items.map((q) => (
         <Card key={q.id}>
           <Txt style={{ fontWeight: "700" }}>{q.question}</Txt>

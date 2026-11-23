@@ -256,3 +256,17 @@ def test_a_standup_answer_is_never_told_about_the_suggestion_marker() -> None:
             assert "[~]" not in str(deep.content).split("Style:")[1]
     interview = prompts.deep_pass(ctx("interview"), "", "q", "technical", 800)
     assert "[~]" in str(interview.content)
+
+
+def test_work_meeting_can_request_daily_status_without_losing_technical_shapes() -> None:
+    meeting = ctx("meeting")
+    rules = prompts.fast_pass(meeting, "", "What are your plans?", "standup_status", 200)
+    assert "use the standup section of <session_pack>" in rules.system[0].text
+    assert "today's plan, blockers and commitments" in rules.system[0].text
+    detector = prompts.detector("Alex Rivera", "", "What's your update?", 20, "meeting")
+    assert "whole update or plan in either work mode" in detector.system[0].text
+    assert "standup_status in a standup, else respond" not in detector.system[0].text
+    daily = prompts.deep_pass(meeting, "", "What's your update?", "standup_status", 800)
+    assert "From the standup section only" in str(daily.content)
+    technical = prompts.deep_pass(meeting, "", "Why did we choose SQS?", "decision", 800)
+    assert "what was rejected and why not" in str(technical.content)

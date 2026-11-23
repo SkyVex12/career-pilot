@@ -33,6 +33,9 @@ import {
   type Segment,
 } from "./historyData";
 import type { ImportedQuestion } from "./Practice";
+import { CalendarConnections } from "./CalendarConnections";
+import { clearCalendarPreparation, type CalendarChange } from "./calendarData";
+import { FloatingNotice } from "./FloatingNotice";
 const when = (date: string) =>
   new Date(date).toLocaleString(undefined, {
     month: "short",
@@ -45,9 +48,11 @@ const heading = { fontSize: 17, lineHeight: 24, fontWeight: "600" as const };
 export function History({
   api,
   practice,
+  onAsk,
 }: {
   api: Api;
   practice: (q: ImportedQuestion) => void;
+  onAsk?: (sessionId: string) => void;
 }) {
   const [calls, setCalls] = useState<Call[]>([]),
     [call, setCall] = useState<Call | null>(null),
@@ -243,6 +248,15 @@ export function History({
                 label={call.status}
                 tone={call.status === "ready" ? "success" : "neutral"}
               />
+              {onAsk ? (
+                <Button
+                  label="Ask about this call"
+                  icon="work"
+                  secondary
+                  disabled={deleting}
+                  onPress={() => onAsk(call.id)}
+                />
+              ) : null}
               {Object.entries(call.outputs ?? {}).map(([kind, text]) => (
                 <Card key={kind}>
                   <Txt style={heading}>{kind.replace(/_/g, " ")}</Txt>
@@ -390,6 +404,10 @@ export function Preparation({
     [version, setVersion] = useState(0),
     [saved, setSaved] = useState(false),
     [editorState, setEditorState] = useState({ dirty: false, saving: false });
+  const [calendarOpen, setCalendarOpen] = useState(false),
+    [calendarVisited, setCalendarVisited] = useState(false),
+    [calendarBusy, setCalendarBusy] = useState(false),
+    [calendarNotice, setCalendarNotice] = useState("");
   const listing = useRef(new RequestScope()),
     revision = useRef(0),
     preparationAlive = useRef(true),
@@ -460,126 +478,194 @@ export function Preparation({
       ],
     );
   }
+  function calendarChanged(change: CalendarChange) {
+    // Clear old provider events immediately after selection, reauthorization or
+    // disconnect, even if the subsequent preparation read cannot reach the API.
+    if (change.kind !== "sync") {
+      revision.current++;
+      listing.current.invalidate();
+      setData((previous) => {
+        if (!previous) return previous;
+        return clearCalendarPreparation(
+          previous,
+          change.provider,
+          change.kind === "disconnected",
+        );
+      });
+    }
+    reloadPending.current = true;
+    if (!selected) void refresh();
+  }
   const item = data?.items.find((i) => meetingKey(i) === selected);
   return (
-    <Screen key={selected ?? "meetings"}>
-      {selected ? (
-        <Button
-          label="Back to meetings"
-          secondary
-          compact
-          disabled={editorState.saving}
-          onPress={backToMeetings}
-        />
-      ) : null}
-      <ScreenTitle
-        eyebrow="Before your next call"
-        title={item ? item.meeting.title : "Meeting preparation"}
-        subtitle={
-          item
-            ? `${when(item.meeting.start)} – ${new Date(item.meeting.end).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
-            : "Review the right context before the conversation begins."
-        }
-        action={
-          !selected ? (
-            <IconButton
-              label="Refresh meetings"
-              icon="refresh"
-              disabled={loading}
-              onPress={() => void refresh()}
-            />
-          ) : undefined
-        }
-      />
-      {error ? (
-        <Notice
-          tone="error"
-          action={
-            <Button
-              label="Try again"
-              secondary
-              onPress={() => void refresh()}
-            />
+    <View style={{ flex: 1 }}>
+      <Screen>
+        {selected ? (
+          <Button
+            label="Back to meetings"
+            secondary
+            compact
+            disabled={editorState.saving}
+            onPress={backToMeetings}
+          />
+        ) : null}
+        <ScreenTitle
+          eyebrow="Before your next call"
+          title={item ? item.meeting.title : "Meeting preparation"}
+          subtitle={
+            item
+              ? `${when(item.meeting.start)} – ${new Date(item.meeting.end).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+              : "Review the right context before the conversation begins."
           }
-        >
-          {error}
-        </Notice>
-      ) : null}
-      {loading ? <Loading label="Refreshing preparation..." /> : null}
-      {saved ? <Notice tone="success">Meeting context saved.</Notice> : null}
-      {item && data ? (
-        <MeetingEditor
-          key={`${selected}:${version}`}
-          api={api}
-          item={item}
-          data={data}
-          visible={visible}
-          onStateChange={setEditorState}
-          onSaved={async () => {
-            await refresh();
-            if (preparationAlive.current) setSaved(true);
-          }}
+          action={
+            !selected ? (
+              <IconButton
+                label="Refresh meetings"
+                icon="refresh"
+                disabled={loading}
+                onPress={() => void refresh()}
+              />
+            ) : undefined
+          }
         />
-      ) : selected && !loading ? (
-        <Notice>
-          This meeting is no longer in the preparation window. Return to the
-          meeting list.
-        </Notice>
-      ) : (
-        <>
-          {data?.connections.map((c) => (
-            <Card key={c.connection_id} subtle>
-              <Row>
-                <Txt style={{ fontWeight: "600", flex: 1 }}>
-                  {c.provider === "google"
-                    ? "Google Calendar"
-                    : c.provider === "outlook"
-                      ? "Outlook"
-                      : c.provider}
-                </Txt>
-                <Badge
-                  label={c.status}
-                  tone={c.status === "active" ? "success" : "warning"}
-                />
-              </Row>
-              {c.last_sync_at ? (
-                <Txt muted>Last synced {when(c.last_sync_at)}</Txt>
-              ) : null}
-              {c.last_error ? (
-                <Notice tone="error">{c.last_error}</Notice>
-              ) : null}
-            </Card>
-          ))}
-          {data && !data.items.length && !error && !loading ? (
-            <EmptyState
+        <View
+          style={{ display: selected ? "none" : "flex", gap: 12 }}
+          accessibilityElementsHidden={!!selected}
+          importantForAccessibility={selected ? "no-hide-descendants" : "auto"}
+        >
+          <Row style={{ justifyContent: "space-between" }}>
+            <Txt muted>
+              {data?.connections.length
+                ? `${data.connections.length} calendar connection${data.connections.length === 1 ? "" : "s"}`
+                : "Optional read-only calendars"}
+            </Txt>
+            <Button
+              label={calendarOpen ? "Hide calendars" : "Manage calendars"}
               icon="calendar"
-              title="Nothing to prepare just yet"
-              description="Upcoming meetings from your selected calendars appear here. Connect and select calendars in the desktop app."
+              secondary
+              compact
+              disabled={calendarBusy}
+              onPress={() => {
+                setCalendarVisited(true);
+                setCalendarOpen((value) => !value);
+              }}
             />
-          ) : null}
-          {data?.items.map((i) => (
-            <ActionCard
-              key={meetingKey(i)}
-              label={`Prepare for ${i.meeting.title}`}
-              onPress={() => setSelected(meetingKey(i))}
+          </Row>
+          {calendarVisited ? (
+            <View
+              style={{ display: calendarOpen ? "flex" : "none" }}
+              accessibilityElementsHidden={!calendarOpen}
+              importantForAccessibility={
+                calendarOpen ? "auto" : "no-hide-descendants"
+              }
             >
-              <Row>
-                <Badge label={when(i.meeting.start)} tone="ruby" />
-                {i.overlaps ? (
-                  <Badge label="Overlapping meeting" tone="warning" />
-                ) : null}
-              </Row>
-              <Txt style={heading}>{i.meeting.title}</Txt>
-              <Txt muted>
-                {i.requires_confirmation
-                  ? "Choose the application and saved call to use."
-                  : "Review your context, notes, and open actions."}
-              </Txt>
-            </ActionCard>
-          ))}
-        </>
-      )}
-    </Screen>
+              <CalendarConnections
+                api={api}
+                visible={visible && !selected && calendarOpen}
+                onChanged={calendarChanged}
+                onNotice={setCalendarNotice}
+                onBusy={setCalendarBusy}
+              />
+            </View>
+          ) : null}
+        </View>
+        {error ? (
+          <Notice
+            tone="error"
+            action={
+              <Button
+                label="Try again"
+                secondary
+                onPress={() => void refresh()}
+              />
+            }
+          >
+            {error}
+          </Notice>
+        ) : null}
+        {loading ? <Loading label="Refreshing preparation..." /> : null}
+        {saved ? <Notice tone="success">Meeting context saved.</Notice> : null}
+        {item && data ? (
+          <MeetingEditor
+            key={`${selected}:${version}`}
+            api={api}
+            item={item}
+            data={data}
+            visible={visible}
+            onStateChange={setEditorState}
+            onSaved={async () => {
+              await refresh();
+              if (preparationAlive.current) setSaved(true);
+            }}
+          />
+        ) : selected && !loading ? (
+          <Notice>
+            This meeting is no longer in the preparation window. Return to the
+            meeting list.
+          </Notice>
+        ) : (
+          <>
+            {!calendarOpen &&
+              data?.connections.map((c) => (
+                <Card key={c.connection_id} subtle>
+                  <Row>
+                    <Txt style={{ fontWeight: "600", flex: 1 }}>
+                      {c.provider === "google"
+                        ? "Google Calendar"
+                        : c.provider === "outlook"
+                          ? "Outlook"
+                          : c.provider}
+                    </Txt>
+                    <Badge
+                      label={c.status}
+                      tone={c.status === "active" ? "success" : "warning"}
+                    />
+                  </Row>
+                  {c.last_sync_at ? (
+                    <Txt muted>Last synced {when(c.last_sync_at)}</Txt>
+                  ) : null}
+                  {c.last_error ? (
+                    <Notice tone="error">{c.last_error}</Notice>
+                  ) : null}
+                </Card>
+              ))}
+            {data && !data.items.length && !error && !loading ? (
+              <EmptyState
+                icon="calendar"
+                title="Nothing to prepare just yet"
+                description="Upcoming meetings from your selected calendars appear here. Use Manage calendars to connect, select and sync them."
+              />
+            ) : null}
+            {data?.items.map((i) => (
+              <ActionCard
+                key={meetingKey(i)}
+                label={`Prepare for ${i.meeting.title}`}
+                onPress={() => {
+                  if (!calendarBusy) setSelected(meetingKey(i));
+                }}
+              >
+                <Row>
+                  <Badge label={when(i.meeting.start)} tone="ruby" />
+                  {i.overlaps ? (
+                    <Badge label="Overlapping meeting" tone="warning" />
+                  ) : null}
+                </Row>
+                <Txt style={heading}>{i.meeting.title}</Txt>
+                <Txt muted>
+                  {i.requires_confirmation
+                    ? "Choose the application and saved call to use."
+                    : "Review your context, notes, and open actions."}
+                </Txt>
+              </ActionCard>
+            ))}
+          </>
+        )}
+      </Screen>
+      <FloatingNotice
+        message={calendarNotice}
+        onDismiss={() => setCalendarNotice("")}
+      />
+    </View>
   );
 }
 
@@ -820,7 +906,8 @@ function MeetingEditor({
         </Field>
         {!provider ? (
           <Notice>
-            Reconnect this calendar on desktop before changing meeting context.
+            Return to the meeting list and reconnect this calendar under Manage
+            calendars before changing context.
           </Notice>
         ) : (
           <Button

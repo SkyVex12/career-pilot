@@ -22,7 +22,7 @@ import {
 } from "../src/screen";
 import { withCapability } from "../src/seats";
 import { statsLine } from "../src/screenui";
-import { nativeShares } from "../src/nativeScreen";
+import { nativeShares, NATIVE_SCREEN_SIZE } from "../src/nativeScreen";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -51,15 +51,17 @@ function fakeRoom() {
 }
 
 function fakeScreenTrack(surface = "monitor", width = 1920, height = 1080, label = "") {
-  const ended: (() => void)[] = [];
+  const handlers = new Map<string, (() => void)[]>();
+  const dispatch = (name: string) => handlers.get(name)?.forEach(f => f());
   return {
     kind: "video",
     stop: vi.fn(),
-    ended: () => ended.forEach((f) => f()),
+    ended: () => dispatch("ended"),
+    dispatch,
     mediaStreamTrack: {
       label,
       getSettings: () => ({ displaySurface: surface, width, height }),
-      addEventListener: (_: string, f: () => void) => ended.push(f),
+      addEventListener: (name: string, f: () => void) => handlers.set(name, [...(handlers.get(name) ?? []), f]),
     },
   };
 }
@@ -101,6 +103,23 @@ function host(over: Partial<HostDeps> = {}, track = fakeScreenTrack()) {
 const PAVLO = { identity: "seat:p", name: "Pavlo" };
 const BLAIR = { identity: "seat:b", name: "Blair" };
 const data = (body: unknown) => new TextEncoder().encode(JSON.stringify(body));
+let requestSequence = 0;
+function requestControl(t: ReturnType<typeof host>, person = PAVLO) {
+  const requestId = `request-${++requestSequence}`;
+  t.room.emit("dataReceived", data({ requestId }), { identity: person.identity }, 0, TOPIC.ask);
+  return t.h.status.asking.find(p => p.requestId === requestId)!;
+}
+async function approve(t: ReturnType<typeof host>, person = PAVLO) {
+  const request = requestControl(t, person);
+  expect(request).toBeDefined();
+  await t.h.allow(request);
+}
+async function permitGuest(g: GuestScreen, room: ReturnType<typeof fakeRoom>) {
+  await g.ask();
+  const body = [...room.sent].reverse().find(p => p.topic === TOPIC.ask)?.body as { requestId: string };
+  room.emit("dataReceived", data({ on: true, requestId: body.requestId }), { identity: "host" }, 0, TOPIC.control);
+}
+
 
 describe("the host's screen", () => {
   it("opens the picker first, then joins and shares that track, with no audio", async () => {
@@ -142,11 +161,12 @@ describe("the host's screen", () => {
 });
 
 describe("control of the host's screen", () => {
-  // Pavlo has Control, and controls as soon as a whole screen is shared: no ask, no let.
+  // Eligibility alone never starts remote input: a matching host decision is required.
   async function controlling() {
     const t = host({}, fakeScreenTrack("monitor", 1920, 1080)); // 16:9: the main monitor
     t.h.setAllowed([PAVLO, BLAIR]);
     await t.h.share("s1");
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     return t;
   }
@@ -155,7 +175,7 @@ describe("control of the host's screen", () => {
     const t = await controlling();
     expect(t.log).toEqual(["begin 0,0 2560x1440"]);
     expect(t.h.status.controller).toEqual(PAVLO);
-    expect(t.room.sent).toEqual([{ topic: TOPIC.control, to: ["seat:p"], body: { on: true } }]);
+    expect(t.room.sent).toContainEqual({ topic: TOPIC.control, to: ["seat:p"], body: { on: true, requestId: expect.any(String) } });
   });
 
   it("carries out only the controlling guest's events", async () => {
@@ -232,89 +252,63 @@ describe("control of the host's screen", () => {
       }),
     );
     t.h.setAllowed([PAVLO]);
+    await approve(t);
     await vi.waitFor(() => expect(params).toMatchObject({ encodings: [{ maxFramerate: 60, maxBitrate: ENCODING.control.maxBitrate }], degradationPreference: "balanced" }));
     await t.h.endControl(null, "host");
     expect(params).toMatchObject({ encodings: [{ maxFramerate: 30, maxBitrate: ENCODING.watch.maxBitrate }], degradationPreference: "maintain-resolution" });
   });
 
-  it("when the grant goes, control ends with everything let go, and passes to the next guest who may", async () => {
+  it("revocation releases held input without passing control to another eligible guest", async () => {
     const t = await controlling();
     t.h.setAllowed([BLAIR]);
-    await vi.waitFor(() => expect(t.h.status.controller).toEqual(BLAIR));
-    expect(t.log).toEqual(["begin 0,0 2560x1440", "end", "begin 0,0 2560x1440"]);
-    expect(t.room.sent.slice(-2)).toEqual([
-      { topic: TOPIC.control, to: ["seat:p"], body: { on: false } },
-      { topic: TOPIC.control, to: ["seat:b"], body: { on: true } },
-    ]);
-    // The share stopping ends it.
+    await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
+    expect(t.log).toEqual(["begin 0,0 2560x1440", "end"]);
+    await approve(t, BLAIR);
+    expect(t.h.status.controller).toEqual(BLAIR);
     await t.h.stop(null);
     expect(t.log[t.log.length - 1]).toBe("end");
   });
 
-  it("the host's Stop holds for everyone until their Control is given again, and names them to take it away", async () => {
+  it("does not auto-control on capability changes, release, or a new participant", async () => {
     const t = await controlling();
     await t.h.endControl(null, "host");
+    t.h.setAllowed([]); t.h.setAllowed([PAVLO]);
+    t.room.emit("participantConnected", { identity: PAVLO.identity });
     expect(t.h.status.controller).toBeNull();
-    expect(t.h.status.stopped).toEqual([PAVLO, BLAIR]);
-    expect(t.log[t.log.length - 1]).toBe("end"); // no one took over
-    // Asking does not get it back.
-    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(t.h.status.controller).toBeNull();
-    // The UI takes Control away (the list empties), then the host gives it again: it works again.
-    t.h.setAllowed([]);
-    expect(t.h.status.stopped).toEqual([]);
-    t.h.setAllowed([PAVLO]);
+    await approve(t);
+    t.room.emit("dataReceived", data({}), { identity: PAVLO.identity }, 0, TOPIC.release);
+    await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
+    expect(t.deps.begin).toHaveBeenCalledTimes(2);
+  });
+
+  it("a view-only guest requests once; no input runs before the host grants and approves", async () => {
+    const t = host(); t.h.setAllowed([], [PAVLO]); await t.h.share("s1");
+    const request = requestControl(t);
+    t.room.emit("dataReceived", data({ requestId: "flood-attempt" }), { identity: PAVLO.identity }, 0, TOPIC.ask);
+    t.room.emit("dataReceived", data({ events: [{ t: "key_down", code: "KeyA" }] }), { identity: PAVLO.identity }, 0, TOPIC.input);
+    expect(t.h.status.asking).toEqual([request]); expect(t.deps.input).not.toHaveBeenCalled();
+    await t.h.allow(request); expect(t.deps.begin).not.toHaveBeenCalled();
+    t.h.setAllowed([PAVLO], [PAVLO]);
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+    await t.h.stop(null);
   });
 
-  it("a guest who gives control back takes it again with Take control; meanwhile another guest may", async () => {
-    const t = await controlling();
-    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
-    await vi.waitFor(() => expect(t.h.status.controller).toEqual(BLAIR)); // Pavlo held back, Blair next
-    t.room.emit("dataReceived", data({}), { identity: "seat:b" }, 0, TOPIC.release);
-    await vi.waitFor(() => expect(t.h.status.controller).toBeNull()); // both held back now
-    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
-    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
+  it("declines and expires requests and rejects stale approval after disconnection", async () => {
+    const t = host(); t.h.setAllowed([PAVLO]); await t.h.share("s1");
+    const first = requestControl(t); await t.h.decline(first); await t.h.allow(first);
+    expect(t.deps.begin).not.toHaveBeenCalled(); expect(t.h.status.asking).toEqual([]);
+    t.tick(10_001); const expired = requestControl(t); t.tick(60_001); await t.h.allow(expired);
+    expect(t.deps.begin).not.toHaveBeenCalled();
+    t.room.emit("participantDisconnected", { identity: PAVLO.identity });
+    expect(t.h.status.asking).toEqual([]); await t.h.allow(expired);
+    expect(t.deps.begin).not.toHaveBeenCalled();
   });
 
-  it("while someone controls, another guest's Take control shows to the host, from a guest who may only", async () => {
-    const t = await controlling();
-    t.room.emit("dataReceived", data({}), { identity: "seat:x" }, 0, TOPIC.ask);
-    t.room.emit("dataReceived", data({}), { identity: "seat:b" }, 0, TOPIC.ask);
-    await vi.waitFor(() => expect(t.h.status.asking).toEqual([BLAIR]));
-    await t.h.allow(BLAIR);
-    expect(t.h.status.controller).toEqual(BLAIR);
-    expect(t.h.status.asking).toEqual([]);
-  });
-
-  it("waits for a guest to be in the room, and tells one who joins late", async () => {
-    const t = host({}, fakeScreenTrack("monitor", 1920, 1080));
-    const there = new Map<string, unknown>();
-    Object.assign(t.room, { remoteParticipants: there });
-    t.h.setAllowed([PAVLO]);
-    await t.h.share("s1");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(t.h.status.controller).toBeNull();
-    there.set("seat:p", {});
-    t.room.emit("participantConnected", { identity: "seat:p" });
-    await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
-    expect(t.room.sent).toEqual([{ topic: TOPIC.control, to: ["seat:p"], body: { on: true } }]);
-  });
-
-  it("is refused for a window share, for a guest without the grant, and before sharing", async () => {
-    const t = host({}, fakeScreenTrack("window"));
-    await t.h.allow(PAVLO);
-    expect(t.h.status.error).toBe("Share your screen first.");
-    await t.h.share("s1");
-    t.h.setAllowed([PAVLO]);
-    await t.h.allow(PAVLO);
-    expect(t.h.status.error).toBe("Share a whole screen to let an assistant control it.");
-    const u = host();
-    await u.h.share("s1");
-    await u.h.allow(PAVLO);
-    expect(u.h.status.error).toBe("Pavlo may not control your screen.");
-    expect(u.deps.begin).not.toHaveBeenCalled();
+  it("only authenticated current viewers can ask and window shares reject control", async () => {
+    const t = host({}, fakeScreenTrack("window")); t.h.setAllowed([PAVLO]); await t.h.share("s1");
+    requestControl(t); requestControl(t, BLAIR);
+    expect(t.h.status.asking).toEqual([]); expect(t.deps.begin).not.toHaveBeenCalled();
+    expect(t.room.sent).toContainEqual(expect.objectContaining({ to: [PAVLO.identity], body: expect.objectContaining({ on: false, reason: expect.stringMatching(/entire display/) }) }));
   });
 
   it("uses the shared display identity even when two monitors have identical dimensions", async () => {
@@ -322,12 +316,13 @@ describe("control of the host's screen", () => {
     const t = host({ monitors: vi.fn(async () => [{ ...MAIN, capture_id: 2 }, twin]) }, fakeScreenTrack("monitor", 1920, 1080, "screen:7:0"));
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     expect(t.log).toEqual(["begin -2560,0 2560x1440"]);
     // Given back and taken again: the same screen, without asking.
     t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.release);
     await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
-    t.room.emit("dataReceived", data({}), { identity: "seat:p" }, 0, TOPIC.ask);
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     expect(t.log[t.log.length - 1]).toBe("begin -2560,0 2560x1440");
   });
@@ -337,6 +332,7 @@ describe("control of the host's screen", () => {
     const t = host({ monitors: vi.fn(async () => [MAIN, twin]) });
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.error).toMatch(/shared display could not be identified/));
     expect(t.h.status.host).toBe("on");
     expect(t.deps.begin).not.toHaveBeenCalled();
@@ -347,6 +343,7 @@ describe("control of the host's screen", () => {
     await t.h.share("s1");
     vi.mocked(t.deps.monitors).mockResolvedValue([{ ...MAIN, rect: { ...MAIN.rect, x: -2560 } }, SIDE]);
     t.h.setAllowed([PAVLO]);
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.error).toMatch(/shared display could not be identified/));
     expect(t.deps.begin).not.toHaveBeenCalled();
   });
@@ -356,6 +353,7 @@ describe("control of the host's screen", () => {
     const t = host({ begin: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })) });
     await t.h.share("s1");
     t.h.setAllowed([PAVLO]);
+    void approve(t);
     await vi.waitFor(() => expect(t.deps.begin).toHaveBeenCalled());
     await t.h.stop(null);
     finish();
@@ -363,6 +361,132 @@ describe("control of the host's screen", () => {
     expect(t.h.status.host).toBe("off");
     expect(t.h.status.controller).toBeNull();
     expect(t.room.sent).not.toContainEqual(expect.objectContaining({ body: { on: true } }));
+  });
+});
+
+describe("screen resolution and consent races", () => {
+  it("binds approvals and permission updates to the exact shared call", async () => {
+    const t = host(); t.h.setAllowed([PAVLO], [PAVLO], "s1"); await t.h.share("s1");
+    const request = requestControl(t);
+    await t.h.allow({ ...request, sessionId: "old-call" });
+    expect(t.deps.begin).not.toHaveBeenCalled();
+    t.h.setAllowed([], [], "old-call");
+    await t.h.allow(request);
+    expect(t.h.status.controller).toEqual(PAVLO);
+    t.h.setAllowed([], [], "s1");
+    expect(t.h.status.controller).toBeNull();
+    await t.h.stop(null);
+  });
+
+  it("never trusts an extended deadline supplied by an old approval UI", async () => {
+    const t = host(); t.h.setAllowed([PAVLO]); await t.h.share("s1"); const request = requestControl(t);
+    t.tick(60_001);
+    await t.h.allow({ ...request, expiresAt: 9_999_999 });
+    expect(t.deps.begin).not.toHaveBeenCalled();
+    await t.h.stop(null);
+  });
+
+  it("an old controller's late input rejection cannot stop a newly approved controller", async () => {
+    let rejectInput!: (error: Error) => void;
+    const t = host({ input: vi.fn(() => new Promise<void>((_resolve, reject) => { rejectInput = reject; })) });
+    t.h.setAllowed([PAVLO, BLAIR]); await t.h.share("s1"); await approve(t, PAVLO);
+    t.room.emit("dataReceived", data({ events: [{ t: "key_down", code: "KeyA" }] }), { identity: PAVLO.identity }, 0, TOPIC.input);
+    await vi.waitFor(() => expect(rejectInput).toBeDefined());
+    const handoff = approve(t, BLAIR);
+    await vi.waitFor(() => expect(t.h.status.controller).toBeNull());
+    expect(t.deps.begin).toHaveBeenCalledTimes(1);
+    rejectInput(new Error("The previous input grant ended"));
+    await handoff;
+    expect(t.h.status.controller).toEqual(BLAIR);
+    expect(t.h.status.stopped).toEqual([]);
+    await t.h.stop(null);
+  });
+
+  it("updates native capture and encoder bitrate for a viewer, but never executes their input", async () => {
+    const track = fakeScreenTrack();
+    const setQuality = vi.fn(async () => undefined);
+    nativeShares.set(track.mediaStreamTrack as unknown as MediaStreamTrack, { id: 7, kind: "monitor", title: "Display", monitor_id: MAIN.id, setQuality });
+    const sender = { getParameters: () => ({ encodings: [{}] }), setParameters: vi.fn(async () => undefined) };
+    const t = host({}, Object.assign(track, { sender }));
+    t.h.setAllowed([], [PAVLO]); await t.h.share("s1");
+    t.room.emit("dataReceived", data({ quality: "2160p" }), { identity: "seat:other" }, 0, TOPIC.quality);
+    expect(setQuality).not.toHaveBeenCalled();
+    t.room.emit("dataReceived", data({ quality: "2160p" }), { identity: PAVLO.identity }, 0, TOPIC.quality);
+    await vi.waitFor(() => expect(setQuality).toHaveBeenCalledWith(2160));
+    await vi.waitFor(() => expect(sender.setParameters).toHaveBeenCalledWith(expect.objectContaining({ encodings: [expect.objectContaining({ maxBitrate: 18_000_000 })] })));
+    expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus, body: expect.objectContaining({ quality: "2160p" }) }));
+    expect(t.deps.begin).not.toHaveBeenCalled(); expect(t.deps.input).not.toHaveBeenCalled();
+    t.tick(1001);
+    t.room.emit("dataReceived", data({ quality: "720p" }), { identity: PAVLO.identity }, 0, TOPIC.quality);
+    await vi.waitFor(() => expect(setQuality).toHaveBeenLastCalledWith(720));
+    expect(sender.setParameters).toHaveBeenLastCalledWith(expect.objectContaining({ encodings: [expect.objectContaining({ maxBitrate: 3_000_000 })] }));
+    await t.h.stop(null);
+  });
+
+  it("reports actual native frame dimensions after a deferred resize and ignores a retired capture", async () => {
+    const track = fakeScreenTrack();
+    const native = { id: 7, kind: "monitor" as const, title: "Display", monitor_id: MAIN.id,
+      dimensions: { width: 1920, height: 1080 }, setQuality: vi.fn(async () => undefined) };
+    nativeShares.set(track.mediaStreamTrack as unknown as MediaStreamTrack, native);
+    const t = host({}, track); t.h.setAllowed([], [PAVLO]); await t.h.share("s1");
+    t.room.emit("dataReceived", data({ quality: "2160p" }), { identity: PAVLO.identity }, 0, TOPIC.quality);
+    await vi.waitFor(() => expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus,
+      body: { quality: "2160p", width: 1920, height: 1080 } })));
+    // The first resized frame can be source-limited or portrait: report its
+    // exact size, never a preset and never stale canvas getSettings().
+    native.dimensions = { width: 1440, height: 2160 };
+    track.dispatch(NATIVE_SCREEN_SIZE);
+    await vi.waitFor(() => expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus,
+      body: { quality: "2160p", width: 1440, height: 2160 } })));
+    await t.h.stop(null);
+    const count = t.room.sent.length;
+    native.dimensions = { width: 3840, height: 2160 };
+    track.dispatch(NATIVE_SCREEN_SIZE);
+    await Promise.resolve();
+    expect(t.room.sent).toHaveLength(count);
+  });
+
+  it("reports capture quality failures without claiming the requested resolution succeeded", async () => {
+    const track = fakeScreenTrack();
+    nativeShares.set(track.mediaStreamTrack as unknown as MediaStreamTrack, { id: 7, kind: "monitor", title: "Display", monitor_id: MAIN.id,
+      setQuality: async () => { throw new Error("Capture unavailable"); } });
+    const t = host({}, track); t.h.setAllowed([], [PAVLO]); await t.h.share("s1");
+    t.room.emit("dataReceived", data({ quality: "2160p" }), { identity: PAVLO.identity }, 0, TOPIC.quality);
+    await vi.waitFor(() => expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus,
+      to: [PAVLO.identity], body: expect.objectContaining({ quality: "1080p", error: "Capture unavailable" }) })));
+    await t.h.stop(null);
+  });
+
+  it("declining during native begin prevents control and releases native input", async () => {
+    let finish!: () => void;
+    const t = host({ begin: vi.fn(() => new Promise<void>(done => { finish = done; })) });
+    t.h.setAllowed([PAVLO]); await t.h.share("s1"); const request = requestControl(t);
+    const allowing = t.h.allow(request); await vi.waitFor(() => expect(finish).toBeDefined());
+    await t.h.decline(request); finish(); await allowing;
+    expect(t.h.status.controller).toBeNull(); expect(t.deps.end).toHaveBeenCalled();
+    expect(t.room.sent.some(item => (item.body as { on?: boolean }).on === true)).toBe(false);
+    await t.h.stop(null);
+  });
+
+  it("a revoked and re-added capability cannot revive an approval in flight", async () => {
+    let finish!: () => void;
+    const t = host({ begin: vi.fn(() => new Promise<void>(done => { finish = done; })) });
+    t.h.setAllowed([PAVLO]); await t.h.share("s1"); const request = requestControl(t);
+    const allowing = t.h.allow(request); await vi.waitFor(() => expect(finish).toBeDefined());
+    t.h.setAllowed([], [PAVLO]); t.h.setAllowed([PAVLO]); finish(); await allowing;
+    expect(t.h.status.controller).toBeNull(); expect(t.deps.end).toHaveBeenCalled();
+    await t.h.stop(null);
+  });
+
+  it("expires unanswered requests and ignores approval after the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = host(); t.h.setAllowed([PAVLO]); await t.h.share("s1"); const request = requestControl(t);
+      t.tick(60_001); await vi.advanceTimersByTimeAsync(60_001); await t.h.allow(request);
+      expect(t.h.status.asking).toEqual([]); expect(t.deps.begin).not.toHaveBeenCalled();
+      expect(t.room.sent).toContainEqual(expect.objectContaining({ body: expect.objectContaining({ on: false, reason: "Request expired" }) }));
+      await t.h.stop(null);
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -458,11 +582,11 @@ describe("the guest's view", () => {
     await t.g.send([{ t: "move", x: 0.1, y: 0.1 }]);
     expect(room.sent).toEqual([]); // not controlling: nothing goes out
     await t.g.ask();
-    expect(room.sent).toEqual([{ topic: TOPIC.ask, to: ["host"], body: {} }]);
+    expect(room.sent).toEqual([{ topic: TOPIC.ask, to: ["host"], body: { requestId: expect.any(String) } }]);
     expect(t.g.state.asked).toBe(true);
     room.emit("dataReceived", data({ on: true }), { identity: "seat:other" }, 0, TOPIC.control);
     expect(t.g.state.controlling).toBe(false); // only the host's word counts
-    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    await permitGuest(t.g, room);
     expect(t.g.state).toMatchObject({ controlling: true, asked: false });
     await t.g.send([{ t: "key_down", code: "KeyA" }]);
     expect(room.sent[room.sent.length - 1]).toEqual({ topic: TOPIC.input, to: ["host"], body: { events: [{ t: "key_down", code: "KeyA" }] } });
@@ -477,12 +601,12 @@ describe("the guest's view", () => {
     const video = { kind: "video", setPlayoutDelay: vi.fn() };
     room.emit("trackSubscribed", video, {}, { identity: "host" });
     expect(video.setPlayoutDelay).toHaveBeenCalledWith(0);
-    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    await permitGuest(t.g, room);
     await t.g.send([{ t: "move", x: 0.1, y: 0.1 }]);
     await t.g.send([{ t: "down", button: 0, x: 0.1, y: 0.1 }]);
     await t.g.send([{ t: "key_down", code: "KeyA" }]);
     const reliable = vi.mocked(room.localParticipant.publishData).mock.calls.map((c) => (c[1] as unknown as { reliable: boolean }).reliable);
-    expect(reliable).toEqual([false, true, true]);
+    expect(reliable.slice(-3)).toEqual([false, true, true]);
   });
 
   it("without control, cannot even ask", async () => {
@@ -491,6 +615,20 @@ describe("the guest's view", () => {
     await t.g.ask();
     expect(t.rooms[0].sent).toEqual([]);
   });
+});
+
+it("a view-only viewer can request, but stale, unsolicited, and post-reconnect approvals never enable input", async () => {
+  const t = guest({ token: vi.fn(async () => ({ url: "wss://lk", token: "t", control: false, can_request_control: true })) });
+  await t.g.open(); const room = t.rooms[0];
+  room.emit("dataReceived", data({ on: true, requestId: "unsolicited" }), { identity: "host" }, 0, TOPIC.control);
+  expect(t.g.state.controlling).toBe(false);
+  await t.g.ask(); const pending = room.sent[0].body as { requestId: string };
+  room.emit("dataReceived", data({ on: true, requestId: "different-id" }), { identity: "host" }, 0, TOPIC.control);
+  expect(t.g.state.controlling).toBe(false);
+  room.emit("reconnecting");
+  room.emit("dataReceived", data({ on: true, requestId: pending.requestId }), { identity: "host" }, 0, TOPIC.control);
+  expect(t.g.state.controlling).toBe(false);
+  await t.g.close();
 });
 
 describe("how fast the guest sees the screen", () => {
@@ -529,6 +667,7 @@ describe("how fast the guest sees the screen", () => {
     const t = host({}, fakeScreenTrack("monitor", 1920, 1080));
     t.h.setAllowed([PAVLO, BLAIR]);
     await t.h.share("s1");
+    await approve(t);
     await vi.waitFor(() => expect(t.h.status.controller).toEqual(PAVLO));
     t.room.sent.length = 0;
     t.room.emit("dataReceived", data({ t: 5 }), { identity: "seat:b" }, 0, TOPIC.ping); // may, but does not control
@@ -551,7 +690,7 @@ describe("how fast the guest sees the screen", () => {
     const room = rooms[0];
     await g.ping();
     expect(room.sent).toEqual([]);
-    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    await permitGuest(g, room); room.sent.length = 0;
     await g.ping();
     expect(room.sent).toEqual([{ topic: TOPIC.ping, to: ["host"], body: { t: 1000 } }]);
     now = 1055;
@@ -607,7 +746,7 @@ describe("sharing and viewing cancellation", () => {
     const t = guest({ token: vi.fn(async () => ({ url: "wss://lk", token: "t", control: true })) });
     await t.g.open(); const room = t.rooms[0]; await t.g.close();
     room.emit("trackSubscribed", { kind: "video" }, {}, { identity: "host" });
-    room.emit("dataReceived", data({ on: true }), { identity: "host" }, 0, TOPIC.control);
+    room.emit("dataReceived", data({ on: true, requestId: "stale-request" }), { identity: "host" }, 0, TOPIC.control);
     expect(t.g.track).toBeNull(); expect(t.g.state.controlling).toBe(false);
   });
 
