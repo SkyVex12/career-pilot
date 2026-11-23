@@ -158,7 +158,7 @@ async def test_meeting_renders_the_companys_pack_and_searches_it(env: Env, db: D
     [fast] = cap.of("fast")
     system = fast.system[0].text
     assert "At work: Alex is in a meeting at Fernhill Logistics" in system
-    assert "In a work meeting the talk is technical and open" in system
+    assert "Work meetings include daily updates and technical discussion" in system
     pack = fast.system[2].text
     assert "## This meeting" in pack
     assert "Agenda: Should the dispatch queue move to Kafka?" in pack
@@ -331,21 +331,22 @@ async def test_a_company_that_is_not_the_users_is_ignored(env: Env, db: Db) -> N
     assert state[b"employer_id"] == b""
 
 
-async def test_a_current_stored_pack_is_used_as_it_is(env: Env, db: Db) -> None:
+@pytest.mark.parametrize("mode", ["standup", "meeting"])
+async def test_a_current_stored_pack_is_used_as_it_is(env: Env, db: Db, mode: str) -> None:
     async with db.pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
-        pack = await render_employer_pack(conn, USER_A, db.fernhill, "standup", local_today({}))
+        pack = await render_employer_pack(conn, USER_A, db.fernhill, mode, local_today({}))
     assert pack is not None
     vk: Any = env.client()
     await vk.set(keys.pack(USER_A, pack.pack_id), pack.model_dump_json(by_alias=True))
     await vk.hset(
         keys.pack_index(USER_A),
-        mapping={keys.employer_pack_field(db.fernhill, "standup"): str(pack.pack_id)},
+        mapping={keys.employer_pack_field(db.fernhill, mode): str(pack.pack_id)},
     )
     cap = Capture()
     async with GatewayServer(services(env, db, cap)) as server:
         c = ProtocolClient(server.url)
-        await c.start("standup", employer_id=str(db.fernhill))
+        await c.start(mode, employer_id=str(db.fernhill))
         await c.send({"type": "question.force", "text": "What's your update?"})
         await c.wait_type("answer.done", pass_="fast")
         await c.send({"type": "session.end"})
@@ -355,7 +356,7 @@ async def test_a_current_stored_pack_is_used_as_it_is(env: Env, db: Db) -> None:
     assert not [j for j in env.jobs.sent if j["type"] == "pack.build"]
     [fast] = cap.of("fast")
     assert "## Standup on" in fast.system[2].text
-    assert "In a standup, give Alex's update" in fast.system[0].text
+    assert "standup section of <session_pack>" in fast.system[0].text
 
 
 async def test_without_a_database_the_stored_pack_still_loads(env: Env, db: Db) -> None:
@@ -481,3 +482,48 @@ async def test_a_standup_answers_from_the_companys_documents(env: Env, db: Db) -
     # The citation is a source the app can show: the file and its section.
     [ref] = fast_done["memory_refs"]
     assert (ref["node_id"], ref["label"]) == (str(limits.id), "dispatch.md > Dispatch > Limits")
+
+
+@pytest.mark.parametrize("legacy_without_daily_brief", [False, True])
+async def test_meeting_refreshes_daily_brief_without_memory_changes(
+    env: Env,
+    db: Db,
+    legacy_without_daily_brief: bool,
+) -> None:
+    today = local_today({})
+    async with db.pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
+        pack = await render_employer_pack(
+            conn,
+            USER_A,
+            db.fernhill,
+            "meeting",
+            today - timedelta(days=1),
+        )
+    assert pack is not None
+    if legacy_without_daily_brief:
+        pack.standup = None
+        pack.prepared_answers = []
+    vk: Any = env.client()
+    await vk.set(keys.pack(USER_A, pack.pack_id), pack.model_dump_json(by_alias=True))
+    await vk.hset(
+        keys.pack_index(USER_A),
+        mapping={keys.employer_pack_field(db.fernhill, "meeting"): str(pack.pack_id)},
+    )
+    cap = Capture()
+    async with GatewayServer(services(env, db, cap)) as server:
+        c = ProtocolClient(server.url)
+        await c.start("meeting", employer_id=str(db.fernhill))
+        await c.send({"type": "question.force", "text": "What's your update?"})
+        await c.wait_type("answer.done", pass_="fast")
+        await c.send({"type": "session.end"})
+        await c.closed()
+    state = await vk.hgetall(keys.sess_state(c.session_id))
+    assert state[b"pack_id"].decode() != str(pack.pack_id)
+    [fast] = cap.of("fast")
+    assert f"## Standup on {today}" in fast.system[2].text
+    assert "Label service" in fast.system[2].text
+    builds = [j for j in env.jobs.sent if j["type"] == "pack.build"]
+    assert len(builds) == 1
+    assert builds[0]["payload"]["mode"] == "meeting"
+    assert builds[0]["payload"]["day"] == str(today)

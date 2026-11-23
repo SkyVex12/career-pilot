@@ -318,6 +318,8 @@ async def test_refresh_embeds_nodes_and_packs_render_one_company(stack: Stack) -
     text_ = render_pack(standup)
     assert "Yesterday (2026-10-19):" in text_
     assert "Secret merger" not in text_ + render_pack(meeting)
+    assert meeting.standup == brief
+    assert meeting.prepared_answers == standup.prepared_answers
     assert meeting.workplace is not None
     systems = [i.text for i in meeting.workplace.sections["systems"]]
     assert any(s.startswith("Label service") for s in systems)

@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 
 from copilot_core.packs import render_pack
-from copilot_core.workplace import Hit, latest_only, local_today, standup_pack
+from copilot_core.workplace import Hit, latest_only, local_today, meeting_pack, standup_pack
 
 
 def hit(kind: str, text: str, day: str | None) -> Hit:
@@ -80,3 +80,83 @@ def test_prepared_standup_points_are_short_names_not_summaries() -> None:
             assert len(p.split()) <= 18, p
     assert pack.standup is not None
     assert long in pack.standup.yesterday[0].text  # the deep pass keeps the full item
+
+
+def test_work_meeting_keeps_daily_status_and_technical_context() -> None:
+    from copilot_core.packs import EmployerRef, ref_map
+
+    friday, monday = date(2026, 11, 20), date(2026, 11, 23)
+
+    def node(kind: str, title: str, day: date, **body: object) -> dict[str, object]:
+        return {"id": uuid.uuid4(), "kind": kind, "title": title, "summary": title,
+                "body": body, "valid_from": day}  # fmt: skip
+
+    shipped = node("work_item", "Shipped retry fix", friday, state="done")
+    planned = node("work_item", "Start backfill", friday, state="planned")
+    today = node("work_item", "Check rollout", monday, state="in_progress")
+    blocked = node("work_item", "Waiting for sandbox access", friday, state="blocked")
+    commitment = node(
+        "commitment", "Post rollout notes", friday, state="open", due_date=monday.isoformat()
+    )
+    system = node("system", "Retry worker", friday, stack=["Go", "SQS"])
+    decision = node(
+        "decision",
+        "Keep SQS",
+        friday,
+        why="Ordering per account",
+        alternatives=["Kafka: more operations"],
+    )
+    nodes = [shipped, planned, today, blocked, commitment, system, decision]
+    pack = meeting_pack(
+        uuid.uuid4(), EmployerRef(id=uuid.uuid4(), name="Larkspur"), nodes, monday, "v1"
+    )
+    assert pack.mode == "meeting"
+    assert pack.standup is not None
+    assert pack.standup.day == monday.isoformat()
+    assert pack.standup.yesterday_day == friday.isoformat()
+    assert shipped["id"] in {i.node_id for i in pack.standup.yesterday}
+    assert planned["id"] not in {i.node_id for i in pack.standup.yesterday}
+    assert {i.node_id for i in pack.standup.today} == {planned["id"], today["id"]}
+    assert [i.node_id for i in pack.standup.blockers] == [blocked["id"]]
+    assert [i.due_date for i in pack.standup.open_commitments] == [monday.isoformat()]
+    assert pack.workplace is not None
+    assert [i.node_id for i in pack.workplace.sections["systems"]] == [system["id"]]
+    assert [i.node_id for i in pack.workplace.sections["decisions"]] == [decision["id"]]
+    answers = {a.question: a for a in pack.prepared_answers}
+    assert answers["What are you working on today?"].node_ids == [today["id"], planned["id"]]
+    assert answers["Is anything blocking you?"].node_ids == [blocked["id"]]
+    text = render_pack(pack)
+    for phrase in (
+        "Yesterday (2026-11-20)",
+        "Start backfill",
+        "Waiting for sandbox access",
+        "due 2026-11-23",
+        "Retry worker",
+        "Go, SQS",
+        "Ordering per account",
+    ):
+        assert phrase in text
+    assert pack.token_count == len(text) // 4
+    refs = ref_map(None, pack)
+    assert {r.node_id for r in refs.values()} == {n["id"] for n in nodes}
+
+
+def test_work_meeting_does_not_present_old_logs_as_yesterday() -> None:
+    from copilot_core.packs import EmployerRef
+
+    old = {
+        "id": uuid.uuid4(),
+        "kind": "work_item",
+        "title": "Old rollout",
+        "summary": "Old rollout",
+        "body": {"state": "planned"},
+        "valid_from": date(2026, 10, 1),
+    }
+    pack = meeting_pack(
+        uuid.uuid4(), EmployerRef(id=uuid.uuid4(), name="Larkspur"), [old], date(2026, 11, 23), "v1"
+    )
+    assert pack.standup is not None
+    assert pack.standup.yesterday_day is None
+    assert not pack.standup.today
+    assert "Old rollout" not in render_pack(pack)
+    assert not pack.prepared_answers
