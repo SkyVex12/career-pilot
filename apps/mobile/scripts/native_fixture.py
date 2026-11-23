@@ -861,6 +861,12 @@ def create_app():
     workspace_module = importlib.util.module_from_spec(workspace_spec)
     workspace_spec.loader.exec_module(workspace_module)
     workspace_module.install(app, auth)
+    personal_ai_spec = importlib.util.spec_from_file_location(
+        "native_personal_ai_fixture", Path(__file__).with_name("native_personal_ai_fixture.py")
+    )
+    personal_ai_module = importlib.util.module_from_spec(personal_ai_spec)
+    personal_ai_spec.loader.exec_module(personal_ai_module)
+    personal_ai_module.install(app, auth, PROFILE)
     return app
 
 
