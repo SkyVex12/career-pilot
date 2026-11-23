@@ -403,3 +403,29 @@ test("starting in-person capture drains assistant playback before acquiring its 
   await audio.stop(owner);
   assert.deepEqual(log, ["listen", "stop", "record"]);
 });
+
+test("a stale request-specific decline cannot erase a later control request or grant", () => {
+  const pending = { requestId: "new-request", controlling: false };
+  const declined = controlReply(pending, "host", {
+    on: false,
+    requestId: "old-request",
+  });
+  assert.equal(declined, pending);
+  const granted = controlReply(declined, "host", {
+    on: true,
+    requestId: "new-request",
+  });
+  assert.equal(granted.controlling, true);
+  assert.equal(
+    controlReply(granted, "host", { on: false, requestId: "old-request" }),
+    granted,
+  );
+  assert.deepEqual(
+    controlReply(pending, "host", { on: false, requestId: "new-request" }),
+    { requestId: null, controlling: false },
+  );
+  assert.deepEqual(controlReply(granted, "host", { on: false }), {
+    requestId: null,
+    controlling: false,
+  });
+});

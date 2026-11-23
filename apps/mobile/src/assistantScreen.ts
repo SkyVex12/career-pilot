@@ -13,7 +13,13 @@ export function controlReply(
 ): ScreenConsent {
   if (sender !== "host" || !value || typeof value !== "object") return state;
   const message = value as { on?: unknown; requestId?: unknown };
-  if (message.on === false) return { requestId: null, controlling: false };
+  if (message.on === false) {
+    // Request-specific denials may arrive after the viewer has asked again.
+    // A host stop without a request id always revokes the active grant.
+    if (message.requestId && message.requestId !== state.requestId)
+      return state;
+    return { requestId: null, controlling: false };
+  }
   if (
     message.on === true &&
     state.requestId !== null &&

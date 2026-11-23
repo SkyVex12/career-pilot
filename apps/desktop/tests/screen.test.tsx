@@ -22,7 +22,7 @@ import {
 } from "../src/screen";
 import { withCapability } from "../src/seats";
 import { statsLine } from "../src/screenui";
-import { nativeShares } from "../src/nativeScreen";
+import { nativeShares, NATIVE_SCREEN_SIZE } from "../src/nativeScreen";
 
 type Handler = (...args: unknown[]) => void;
 
@@ -51,15 +51,17 @@ function fakeRoom() {
 }
 
 function fakeScreenTrack(surface = "monitor", width = 1920, height = 1080, label = "") {
-  const ended: (() => void)[] = [];
+  const handlers = new Map<string, (() => void)[]>();
+  const dispatch = (name: string) => handlers.get(name)?.forEach(f => f());
   return {
     kind: "video",
     stop: vi.fn(),
-    ended: () => ended.forEach((f) => f()),
+    ended: () => dispatch("ended"),
+    dispatch,
     mediaStreamTrack: {
       label,
       getSettings: () => ({ displaySurface: surface, width, height }),
-      addEventListener: (_: string, f: () => void) => ended.push(f),
+      addEventListener: (name: string, f: () => void) => handlers.set(name, [...(handlers.get(name) ?? []), f]),
     },
   };
 }
@@ -419,6 +421,29 @@ describe("screen resolution and consent races", () => {
     await vi.waitFor(() => expect(setQuality).toHaveBeenLastCalledWith(720));
     expect(sender.setParameters).toHaveBeenLastCalledWith(expect.objectContaining({ encodings: [expect.objectContaining({ maxBitrate: 3_000_000 })] }));
     await t.h.stop(null);
+  });
+
+  it("reports actual native frame dimensions after a deferred resize and ignores a retired capture", async () => {
+    const track = fakeScreenTrack();
+    const native = { id: 7, kind: "monitor" as const, title: "Display", monitor_id: MAIN.id,
+      dimensions: { width: 1920, height: 1080 }, setQuality: vi.fn(async () => undefined) };
+    nativeShares.set(track.mediaStreamTrack as unknown as MediaStreamTrack, native);
+    const t = host({}, track); t.h.setAllowed([], [PAVLO]); await t.h.share("s1");
+    t.room.emit("dataReceived", data({ quality: "2160p" }), { identity: PAVLO.identity }, 0, TOPIC.quality);
+    await vi.waitFor(() => expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus,
+      body: { quality: "2160p", width: 1920, height: 1080 } })));
+    // The first resized frame can be source-limited or portrait: report its
+    // exact size, never a preset and never stale canvas getSettings().
+    native.dimensions = { width: 1440, height: 2160 };
+    track.dispatch(NATIVE_SCREEN_SIZE);
+    await vi.waitFor(() => expect(t.room.sent).toContainEqual(expect.objectContaining({ topic: TOPIC.qualityStatus,
+      body: { quality: "2160p", width: 1440, height: 2160 } })));
+    await t.h.stop(null);
+    const count = t.room.sent.length;
+    native.dimensions = { width: 3840, height: 2160 };
+    track.dispatch(NATIVE_SCREEN_SIZE);
+    await Promise.resolve();
+    expect(t.room.sent).toHaveLength(count);
   });
 
   it("reports capture quality failures without claiming the requested resolution succeeded", async () => {

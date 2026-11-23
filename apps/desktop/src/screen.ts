@@ -33,7 +33,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { rest } from "./api";
 import { isMac } from "./platform";
-import { captureNativeScreen, nativeShares } from "./nativeScreen";
+import { captureNativeScreen, nativeShares, NATIVE_SCREEN_SIZE } from "./nativeScreen";
 
 export const HOST = "host";
 
@@ -300,6 +300,9 @@ export class HostScreen {
         if (!ownsRoom()) return;
         void this.qualityStatus(who.identity);
       });
+      if (nativeShares.has(video.mediaStreamTrack)) video.mediaStreamTrack.addEventListener(NATIVE_SCREEN_SIZE, () => {
+        if (ownsRoom()) void this.qualityStatus();
+      });
       video.mediaStreamTrack.addEventListener("ended", () => {
         if (ownsRoom()) void this.stop(nativeShares.get(video.mediaStreamTrack)?.error ?? null);
       });
@@ -489,7 +492,8 @@ export class HostScreen {
   }
 
   private async qualityStatus(identity?: string, error?: string): Promise<void> {
-    const settings = this.tracks.find(t => t.kind === Track.Kind.Video)?.mediaStreamTrack.getSettings();
+    const track = this.tracks.find(t => t.kind === Track.Kind.Video)?.mediaStreamTrack;
+    const settings = track ? nativeShares.get(track)?.dimensions ?? track.getSettings() : undefined;
     await this.room?.localParticipant.publishData(encoder.encode(JSON.stringify({ quality: this.quality,
       width: settings?.width, height: settings?.height, ...(error ? { error } : {}) })), {
       reliable: true, ...(identity ? { destinationIdentities: [identity] } : {}), topic: TOPIC.qualityStatus,
