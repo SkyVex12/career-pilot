@@ -25,6 +25,9 @@ MODES = {
     "silent_gateway",
     "drop_once",
     "malformed_snapshot",
+    "language_rejected",
+    "language_ack_first",
+    "language_legacy",
 }
 
 
@@ -40,6 +43,8 @@ def create_app():
         "attachments": {},
         "ended": False,
         "events": [],
+        "spoken_language": "en",
+        "language_results": {},
     }
     app.state.fixture = state
 
@@ -67,7 +72,16 @@ def create_app():
         mode = data.get("mode", "normal")
         if mode not in MODES:
             raise HTTPException(400, "Unknown fixture mode")
-        state.update(mode=mode, joins=0, commands={}, ended=False, seq=12, events=[])
+        state.update(
+            mode=mode,
+            joins=0,
+            commands={},
+            ended=False,
+            seq=12,
+            events=[],
+            spoken_language="en",
+            language_results={},
+        )
         return {"mode": mode}
 
     @app.get("/__fixture")
@@ -79,6 +93,7 @@ def create_app():
             "attachment_creations": state["attachment_creations"],
             "attached": state["attached"],
             "ended": state["ended"],
+            "spoken_language": state["spoken_language"],
         }
 
     @app.get("/v1/auth/config")
@@ -149,6 +164,7 @@ def create_app():
                     "capture_connected": True,
                     "status": "active",
                     "platform": "google_meet",
+                    "spoken_language": state["spoken_language"],
                 }
             ]
         }
@@ -193,7 +209,7 @@ def create_app():
             "account_id": PROFILE,
             "expires_at": datetime.fromisoformat(grant["expires_at"]).timestamp(),
             "audio_source": "desktop",
-            "spoken_language": "en",
+            "spoken_language": state["spoken_language"],
         }
 
     @app.get("/v1/companion/attachments")
@@ -210,6 +226,11 @@ def create_app():
         grant["revoked"] = True
         state["attached"] = any(active_attachment(item) for item in state["attachments"].values())
         return {"ok": True}
+
+    @app.get("/v1/profile/call-preferences")
+    async def call_preferences(request: Request):
+        auth(request)
+        return {"spoken_language": "en"}
 
     @app.get("/v1/call-languages")
     async def languages(request: Request):
@@ -656,7 +677,14 @@ def create_app():
             if state["mode"] == "silent_gateway":
                 await asyncio.sleep(30)
                 return
-            await ws.send_json({"type": "companion.ready", "session_id": SESSION})
+            await ws.send_json(
+                {
+                    "type": "companion.ready",
+                    "session_id": SESSION,
+                    "spoken_language": state["spoken_language"],
+                    "language_switching": state["mode"] != "language_legacy",
+                }
+            )
             if state["mode"] == "malformed_snapshot":
                 await ws.send_json(
                     {
@@ -728,6 +756,42 @@ def create_app():
                     continue
                 if key in state["commands"]:
                     await ws.send_json(state["commands"][key])
+                    if key in state["language_results"]:
+                        await ws.send_json(state["language_results"][key])
+                    continue
+                if message.get("kind") == "set_language":
+                    requested = message.get("spoken_language")
+                    rejected = (
+                        state["mode"] == "language_rejected" or requested not in CALL_LANGUAGES
+                    )
+                    if not rejected:
+                        state["spoken_language"] = requested
+                    state["seq"] += 1
+                    acknowledgement = {
+                        "type": "session.language",
+                        "seq": state["seq"],
+                        "request_id": key,
+                        "spoken_language": state["spoken_language"],
+                    }
+                    if rejected:
+                        acknowledgement["error"] = (
+                            "Fictional language change rejected. Try another language."
+                        )
+                    response = {
+                        "type": "companion.command.result",
+                        "command_id": key,
+                        "result": "executed",
+                    }
+                    state["commands"][key] = response
+                    state["language_results"][key] = acknowledgement
+                    state["events"].append(acknowledgement)
+                    frames = (
+                        [acknowledgement, response]
+                        if state["mode"] == "language_ack_first"
+                        else [response, acknowledgement]
+                    )
+                    for frame in frames:
+                        await ws.send_json(frame)
                     continue
                 result = "executed"
                 if message.get("kind") == "end" and not message.get("confirmed"):

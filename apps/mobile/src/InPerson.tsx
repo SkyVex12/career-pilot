@@ -1,11 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, AppState, Switch, View } from "react-native";
 import type { AudioRecorder } from "react-native-audio-api";
+import { randomUUID } from "expo-crypto";
 import { withDeadline } from "./requestScope";
 import { Api } from "./api";
 import { MediaEpoch } from "./mediaEpoch";
 import { pcmFrame, sessionURL } from "./pcm";
-import { emptyLive, event, type Event } from "./liveState";
+import {
+  emptyLive,
+  event,
+  languageAcknowledgement,
+  type Event,
+} from "./liveState";
+import { loadCallLanguages } from "./callLanguages";
+import type { Choice } from "./choiceState";
 import {
   Badge,
   Button,
@@ -40,8 +48,12 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     [retain, setRetain] = useState(false),
     [title, setTitle] = useState("In-person meeting"),
     [draft, setDraft] = useState(""),
-    [language, setLanguage] = useState("en"),
-    [languages, setLanguages] = useState<{ id: string; name: string }[]>([]);
+    [language, setLanguage] = useState(""),
+    [languages, setLanguages] = useState<Choice[]>([]),
+    [languagesLoading, setLanguagesLoading] = useState(true),
+    [languageChanging, setLanguageChanging] = useState(false),
+    [languageError, setLanguageError] = useState(""),
+    [languageRevision, setLanguageRevision] = useState(0);
   const liveRef = useRef(emptyLive());
   const ws = useRef<WebSocket | null>(null),
     recorder = useRef<AudioRecorder | null>(null),
@@ -60,6 +72,53 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     capturing = useRef(false),
     connectionEpoch = useRef(0),
     handshake = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const languageRequest = useRef<{
+    id: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const lastLanguageRequestId = useRef<string | null>(null);
+  function finishLanguageChange() {
+    if (languageRequest.current) clearTimeout(languageRequest.current.timer);
+    languageRequest.current = null;
+    if (alive.current) setLanguageChanging(false);
+  }
+  function changeLiveLanguage(value: string) {
+    if (
+      !liveRef.current.languageSwitching ||
+      recording ||
+      micBusy ||
+      languageRequest.current ||
+      !languages.some((choice) => choice.value === value) ||
+      !sid.current ||
+      value === language
+    )
+      return;
+    const id = randomUUID();
+    if (
+      !send({
+        type: "session.set_language",
+        spoken_language: value,
+        request_id: id,
+      })
+    ) {
+      setError("Reconnect this session before changing its language.");
+      return;
+    }
+    setLanguageChanging(true);
+    lastLanguageRequestId.current = id;
+    setError("");
+    languageRequest.current = {
+      id,
+      timer: setTimeout(() => {
+        if (languageRequest.current?.id !== id) return;
+        finishLanguageChange();
+        if (alive.current)
+          setError(
+            "The language change was not confirmed. Check the current language and retry when connected.",
+          );
+      }, 15000),
+    };
+  }
   function send(value: object): boolean {
     try {
       if (ws.current?.readyState === 1) {
@@ -127,6 +186,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     return operation;
   }
   async function end(summarize = true) {
+    finishLanguageChange();
     connectionEpoch.current++;
     starting.current = false;
     if (alive.current) setConnecting(false);
@@ -141,32 +201,32 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     socket?.close();
   }
   useEffect(() => {
-    alive.current = true;
-    void api
-      .request<{ items: { id: string; name: string }[] }>("/call-languages")
-      .then((d) => {
-        if (!alive.current) return;
-        if (
-          !Array.isArray(d.items) ||
-          d.items.some(
-            (l) => !l || typeof l.id !== "string" || typeof l.name !== "string",
-          )
-        )
-          throw new Error(
-            "The server returned an invalid language list. Update the server before starting.",
-          );
-        setLanguages(d.items);
-        setLanguage((previous) =>
-          d.items.some((l) => l.id === previous)
-            ? previous
-            : (d.items[0]?.id ?? ""),
-        );
+    let current = true;
+    const profile = api.profile;
+    setLanguagesLoading(true);
+    setLanguageError("");
+    void loadCallLanguages((path) => api.request(path))
+      .then((result) => {
+        if (!current || profile !== api.profile) return;
+        setLanguages(result.choices);
+        setLanguage(result.selected);
+        setLanguageError(result.warning);
       })
       .catch((e) => {
-        if (alive.current) setError(String(e));
+        if (current && profile === api.profile) setLanguageError(String(e));
+      })
+      .finally(() => {
+        if (current && profile === api.profile) setLanguagesLoading(false);
       });
+    return () => {
+      current = false;
+    };
+  }, [api, languageRevision]);
+  useEffect(() => {
+    alive.current = true;
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") {
+        finishLanguageChange();
         connectionEpoch.current++;
         starting.current = false;
         if (alive.current) setConnecting(false);
@@ -182,6 +242,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
     });
     return () => {
       alive.current = false;
+      finishLanguageChange();
       connectionEpoch.current++;
       starting.current = false;
       if (alive.current) setConnecting(false);
@@ -340,6 +401,14 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
   }
   async function connect(resume = false) {
     if (starting.current) return;
+    if (
+      !resume &&
+      (languagesLoading ||
+        !languages.some((choice) => choice.value === language))
+    ) {
+      setLanguageError("Choose a supported spoken language before starting.");
+      return;
+    }
     starting.current = true;
     setConnecting(true);
     setError("");
@@ -421,8 +490,12 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
               seq.current = [0, 0];
               last.current = 0;
               liveRef.current = emptyLive();
-              setLive(liveRef.current);
             }
+            liveRef.current = event(liveRef.current, m);
+            last.current = liveRef.current.seq;
+            if (liveRef.current.spokenLanguage)
+              setLanguage(liveRef.current.spokenLanguage);
+            setLive(liveRef.current);
             meAudio.current = m.me_audio === true;
             setActive(true);
             setStatus("In-person session ready · microphone off");
@@ -452,6 +525,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             return;
           }
           if (m.type === "session.ended") {
+            finishLanguageChange();
             void stopMic();
             sid.current = null;
             setActive(false);
@@ -463,6 +537,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             return;
           }
           if (m.type === "error") {
+            finishLanguageChange();
             setError(String(m.message));
             if (m.fatal) {
               void stopMic();
@@ -475,6 +550,18 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             return;
           }
           const next = event(liveRef.current, m);
+          if (m.type === "session.language") {
+            if (next.spokenLanguage) setLanguage(next.spokenLanguage);
+            const languageResult = languageAcknowledgement(
+              m,
+              lastLanguageRequestId.current,
+            );
+            if (languageResult) {
+              finishLanguageChange();
+              lastLanguageRequestId.current = null;
+              setError(languageResult.error ?? "");
+            }
+          }
           last.current = next.seq;
           liveRef.current = next;
           setLive(next);
@@ -488,6 +575,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
       };
       socket.onclose = () => {
         if (ws.current !== socket) return;
+        finishLanguageChange();
         ws.current = null;
         if (handshake.current) clearTimeout(handshake.current);
         starting.current = false;
@@ -550,19 +638,70 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
           <Select
             label="Spoken language"
             value={language}
-            options={languages.map((l) => ({ value: l.id, label: l.name }))}
-            onChange={setLanguage}
+            options={languages}
+            placeholder={
+              languagesLoading ? "Loading languages…" : "Choose a language"
+            }
+            onChange={(value) => {
+              setLanguage(value);
+              setLanguageError("");
+            }}
+            disabled={connecting || languagesLoading}
           />
+          <Txt muted style={{ fontSize: 12 }}>
+            Choose the spoken language for this conversation.
+          </Txt>
+          {languageError ? (
+            <Notice
+              tone="error"
+              action={
+                <Button
+                  secondary
+                  compact
+                  label="Retry language settings"
+                  disabled={connecting || languagesLoading}
+                  onPress={() => setLanguageRevision((value) => value + 1)}
+                />
+              }
+            >
+              {languageError}
+            </Notice>
+          ) : null}
           <Button
             label="Start in-person session"
             loading={connecting}
-            disabled={!languages.some((l) => l.id === language)}
+            disabled={
+              languagesLoading ||
+              !languages.some((choice) => choice.value === language)
+            }
             icon="mic"
             onPress={() => void connect()}
           />
         </Card>
       ) : (
         <>
+          <Select
+            label="Spoken language"
+            value={language}
+            options={languages}
+            disabled={
+              !live.languageSwitching ||
+              !active ||
+              recording ||
+              micBusy ||
+              connecting ||
+              languageChanging ||
+              ws.current?.readyState !== 1
+            }
+            onChange={changeLiveLanguage}
+          />
+          <Txt muted accessibilityLiveRegion="polite" style={{ fontSize: 12 }}>
+            {languageChanging
+              ? "Changing the call language…"
+              : !live.languageSwitching
+                ? "This server does not support changing the language during a call."
+                : "Finish the recorded turn before switching languages. New speech and answers use the new language."}
+          </Txt>
           <Field label="Who is speaking?">
             <Segments
               value={String(channel)}
@@ -580,7 +719,7 @@ export function InPerson({ api, url }: { api: Api; url: string }) {
             label={
               recording ? "Finish this spoken turn" : "Record this speaker"
             }
-            disabled={ws.current?.readyState !== 1}
+            disabled={languageChanging || ws.current?.readyState !== 1}
             loading={micBusy}
             icon="mic"
             onPress={() => void (recording ? stopMic() : capture())}

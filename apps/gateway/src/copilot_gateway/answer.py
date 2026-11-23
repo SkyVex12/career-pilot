@@ -156,6 +156,7 @@ class Question:
     expanded_at: float | None = None  # monotonic time of the expand tap
     was_speculative: bool = False
     tasks: dict[str, "asyncio.Task[None]"] = field(default_factory=dict[str, "asyncio.Task[None]"])
+    started_passes: set[str] = field(default_factory=set[str])
     superseded: bool = False
     cancelled: bool = False
     # Timings that come late (the client's latency.report), per pass, merged into the
@@ -496,6 +497,43 @@ class AnswerEngine:
         for q in self.questions.values():
             self._cancel_tasks(q)
 
+    async def change_language(self) -> None:
+        """Keep completed cards while stopping language-dependent pending generation."""
+        matches: list[asyncio.Task[object]] = []
+        unstarted: list[tuple[Question, str]] = []
+        for q in self.questions.values():
+            unstarted.extend(
+                (q, pass_)
+                for pass_, task in q.tasks.items()
+                if not task.done() and pass_ not in q.started_passes
+            )
+            if any(not task.done() for task in q.tasks.values()):
+                # Send cancellation for unfinished visible passes so their UI spinners stop.
+                q.superseded = True
+            if q.match is not None:
+                q.match.cancel()
+                matches.append(q.match)
+                q.match = None
+        self.cancel_all()
+        # A task cancelled before its first coroutine step cannot run its error handler.
+        for q, pass_ in unstarted:
+            self.host.emit(
+                models.AnswerError, question_id=q.qid, **{"pass": pass_}, code="cancelled"
+            )
+            self.host.log_entry(
+                {
+                    "kind": "answer_error",
+                    "question_id": str(q.qid),
+                    "pass": pass_,
+                    "code": "cancelled",
+                }
+            )
+        background = list(self._background)
+        for task in background:
+            task.cancel()
+        await self.wait_idle()
+        await asyncio.gather(*background, *matches, return_exceptions=True)
+
     def _cost(self, done: LLMDone | None) -> float | None:
         """The answer's cost in USD for `answers.cost_usd`; None without a model call or a
         price for the model."""
@@ -526,7 +564,9 @@ class AnswerEngine:
     # One pass.
 
     async def _run_pass(self, q: Question, pass_: str) -> None:
+        q.started_passes.add(pass_)
         host = self.host
+        cache_version = host.cache_version()
         started = time.monotonic()
         state: dict[str, Any] = {
             "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
@@ -677,7 +717,7 @@ class AnswerEngine:
             # A paragraph deep answer is cached apart from a bulleted one.
             style = host.answer_style()
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
-            cached = await self._cached(qhash, slot) if reuse else None
+            cached = await self._cached(qhash, slot, cache_version) if reuse else None
             if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -766,7 +806,7 @@ class AnswerEngine:
             refs = cited_refs(text, host.refs()) if q.screen is None else []
             done("model", refs, done_info, done_info.first_token_ms)
             if not q.cancelled and not q.superseded and host.store_text() and reuse:
-                task = asyncio.create_task(self._cache_put(qhash, slot, text, refs))
+                task = asyncio.create_task(self._cache_put(qhash, slot, text, refs, cache_version))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
         except AllRoutesFailedError as e:
@@ -781,6 +821,7 @@ class AnswerEngine:
             state["stopped"] = True
             if (model_task := state.get("model")) is not None:
                 model_task.cancel()
+                await asyncio.gather(model_task, return_exceptions=True)
             if q.superseded:
                 error("cancelled")
             self._log_cancelled(q, pass_, state)
@@ -1003,12 +1044,14 @@ class AnswerEngine:
         by_id = {r.node_id: r for r in self.host.refs().values()}
         return [by_id.get(n) or NodeRef(node_id=n, label=answer.question) for n in answer.node_ids]
 
-    async def _cached(self, qhash: str, pass_: str) -> dict[str, Any] | None:
+    async def _cached(
+        self, qhash: str, pass_: str, version: str | None = None
+    ) -> dict[str, Any] | None:
         try:
             value = await asyncio.wait_for(self.host.qa_get(qhash), CACHE_READ_TIMEOUT_S)
         except Exception:
             return None
-        if not value or value.get("v") != self.host.cache_version():
+        if not value or value.get("v") != (version or self.host.cache_version()):
             return None
         entry: Any = value.get(pass_)
         if not isinstance(entry, dict):
@@ -1016,9 +1059,11 @@ class AnswerEngine:
         found = cast(dict[str, Any], entry)
         return found if found.get("text") else None
 
-    async def _cache_put(self, qhash: str, pass_: str, text: str, refs: list[NodeRef]) -> None:
+    async def _cache_put(
+        self, qhash: str, pass_: str, text: str, refs: list[NodeRef], version: str | None = None
+    ) -> None:
         with contextlib.suppress(Exception):
-            version = self.host.cache_version()
+            version = version or self.host.cache_version()
             current: dict[str, Any] = await self.host.qa_get(qhash) or {}
             if current.get("v") != version:
                 current = {"v": version, **self.host.cache_extra()}

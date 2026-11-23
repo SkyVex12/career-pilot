@@ -12,13 +12,16 @@ class CallLanguage:
     name: str
     native_name: str
     deepgram_code: str
-    question_cues: tuple[str, ...]
+    question_cues: tuple[str, ...] = ()
     direction: str = "ltr"
     unspaced: bool = False
 
 
-# Product coverage, not a population ranking. Nova-3 monolingual mappings verified
-# against the provider catalog on 2026-11-20. Do not silently route to English.
+# Product coverage, not a population ranking. Provider mappings were checked on
+# 2026-11-23 against their streaming language tables:
+# https://developers.deepgram.com/docs/models-languages-overview
+# Each entry is one spoken language, not another region/script of an existing one.
+# Unsupported provider/model paths must never silently route to English.
 CALL_LANGUAGES = {
     "en": CallLanguage("English", "English", "en", ("what", "how", "tell me")),
     "es": CallLanguage(
@@ -157,10 +160,88 @@ CALL_LANGUAGES = {
         ("nini", "vipi", "kwa nini", "lini", "wapi", "eleza", "fafanua"),
     ),
     "pa": CallLanguage("Punjabi", "ਪੰਜਾਬੀ", "pa", ("ਕਿਵੇਂ", "ਕੀ", "ਕਿਉਂ", "ਕਦੋਂ", "ਕਿੱਥੇ", "ਦੱਸੋ", "ਸਮਝਾਓ")),
+    "ab": CallLanguage("Abkhazian", "Аҧсуа", "ab"),
+    "ady": CallLanguage("Adyghe", "Адыгабзэ", "ady"),
+    "af": CallLanguage("Afrikaans", "Afrikaans", "af", ("wat", "hoe", "waarom", "vertel")),
+    "ak": CallLanguage("Akan", "Akan", "ak"),
+    "sq": CallLanguage("Albanian", "Shqip", "sq", ("çfarë", "si", "pse", "shpjegoni")),
+    "am": CallLanguage("Amharic", "አማርኛ", "am"),
+    "hy": CallLanguage("Armenian", "Հայերեն", "hy", ("ինչ", "ինչպես", "ինչու")),
+    "as": CallLanguage("Assamese", "অসমীয়া", "as"),
+    "az": CallLanguage("Azerbaijani", "Azərbaycanca", "az", ("necə", "niyə", "nə")),
+    "eu": CallLanguage("Basque", "Euskara", "eu", ("nola", "zergatik", "zer")),
+    "be": CallLanguage("Belarusian", "Беларуская", "be", ("як", "чаму", "што")),
+    "brx": CallLanguage("Bodo", "बड़ो", "brx"),
+    "bs": CallLanguage("Bosnian", "Bosanski", "bs", ("kako", "zašto", "šta", "objasnite")),
+    "bg": CallLanguage("Bulgarian", "Български", "bg", ("как", "защо", "какво", "обяснете")),
+    "ca": CallLanguage("Catalan", "Català", "ca", ("com", "què", "per què", "explica")),
+    "ckb": CallLanguage("Kurdish (Sorani)", "کوردیی ناوەندی", "ckb", direction="rtl"),
+    "zh-HK": CallLanguage(
+        "Chinese (Cantonese)",
+        "粵語",
+        "zh-HK",
+        ("乜", "點解", "點樣", "邊個", "可唔可以"),
+        unspaced=True,
+    ),
+    "hr": CallLanguage("Croatian", "Hrvatski", "hr", ("kako", "zašto", "što", "objasnite")),
+    "cs": CallLanguage("Czech", "Čeština", "cs", ("jak", "proč", "co", "vysvětlete")),
+    "da": CallLanguage("Danish", "Dansk", "da", ("hvordan", "hvorfor", "hvad", "forklar")),
+    "dv": CallLanguage("Divehi", "ދިވެހި", "dv", direction="rtl"),
+    "nl": CallLanguage("Dutch", "Nederlands", "nl", ("hoe", "waarom", "wat", "vertel", "leg uit")),
+    "mhr": CallLanguage("Eastern Mari", "Олык марий", "mhr"),
+    "et": CallLanguage("Estonian", "Eesti", "et", ("kuidas", "miks", "mis", "selgitage")),
+    "fi": CallLanguage("Finnish", "Suomi", "fi", ("miten", "miksi", "mikä", "kerro")),
+    "gl": CallLanguage("Galician", "Galego", "gl", ("como", "que", "por que", "explica")),
+    "ka": CallLanguage("Georgian", "ქართული", "ka", ("როგორ", "რატომ", "რა")),
+    "el": CallLanguage("Greek", "Ελληνικά", "el", ("πώς", "γιατί", "τι", "εξηγήστε")),
+    "gu": CallLanguage("Gujarati", "ગુજરાતી", "gu", ("કેવી રીતે", "શા માટે", "શું")),
+    "ha": CallLanguage("Hausa", "Hausa", "ha", ("yaya", "me ya sa", "menene")),
+    "he": CallLanguage("Hebrew", "עברית", "he", ("איך", "למה", "מה", "הסבר"), direction="rtl"),
+    "hu": CallLanguage("Hungarian", "Magyar", "hu", ("hogyan", "miért", "mi", "magyarázza")),
+    "is": CallLanguage("Icelandic", "Íslenska", "is", ("hvernig", "hvers vegna", "hvað")),
+    "kbd": CallLanguage("Kabardian", "Адыгэбзэ", "kbd"),
+    "kab": CallLanguage("Kabyle", "Taqbaylit", "kab"),
+    "kln": CallLanguage("Kalenjin", "Kalenjin", "kln"),
+    "kn": CallLanguage("Kannada", "ಕನ್ನಡ", "kn", ("ಹೇಗೆ", "ಏಕೆ", "ಏನು")),
+    "ks": CallLanguage("Kashmiri", "کٲشُر", "ks", direction="rtl"),
+    "kk": CallLanguage("Kazakh", "Қазақша", "kk", ("қалай", "неге", "қандай")),
+    "rw": CallLanguage("Kinyarwanda", "Ikinyarwanda", "rw"),
+    "kok": CallLanguage("Konkani", "कोंकणी", "kok"),
+    "ky": CallLanguage("Kyrgyz", "Кыргызча", "ky", ("кантип", "эмне үчүн", "эмне")),
+    "lv": CallLanguage("Latvian", "Latviešu", "lv", ("kā", "kāpēc", "kas", "paskaidrojiet")),
+    "lt": CallLanguage("Lithuanian", "Lietuvių", "lt", ("kaip", "kodėl", "kas", "paaiškinkite")),
+    "lg": CallLanguage("Luganda", "Luganda", "lg"),
+    "luo": CallLanguage("Luo", "Dholuo", "luo"),
+    "mk": CallLanguage("Macedonian", "Македонски", "mk", ("како", "зошто", "што")),
+    "ms": CallLanguage("Malay", "Bahasa Melayu", "ms", ("bagaimana", "mengapa", "apa", "jelaskan")),
+    "ml": CallLanguage("Malayalam", "മലയാളം", "ml", ("എങ്ങനെ", "എന്തുകൊണ്ട്", "എന്ത്")),
+    "mn": CallLanguage("Mongolian", "Монгол", "mn", ("хэрхэн", "яагаад", "юу")),
+    "ne": CallLanguage("Nepali", "नेपाली", "ne", ("कसरी", "किन", "के", "बताउनुहोस्")),
+    "kmr": CallLanguage("Kurdish (Kurmanji)", "Kurmancî", "kmr"),
+    "no": CallLanguage("Norwegian", "Norsk", "no", ("hvordan", "hvorfor", "hva", "forklar")),
+    "ps": CallLanguage("Pashto", "پښتو", "ps", ("څنګه", "ولې", "څه"), direction="rtl"),
+    "pl": CallLanguage("Polish", "Polski", "pl", ("jak", "dlaczego", "co", "wyjaśnij")),
+    "ro": CallLanguage("Romanian", "Română", "ro", ("cum", "de ce", "ce", "explică")),
+    "sr": CallLanguage("Serbian", "Српски", "sr", ("како", "зашто", "шта", "kako", "zašto", "šta")),
+    "sd": CallLanguage("Sindhi", "سنڌي", "sd", direction="rtl"),
+    "si": CallLanguage("Sinhala", "සිංහල", "si", ("කොහොමද", "ඇයි", "කුමක්")),
+    "sk": CallLanguage("Slovak", "Slovenčina", "sk", ("ako", "prečo", "čo", "vysvetlite")),
+    "sl": CallLanguage("Slovenian", "Slovenščina", "sl", ("kako", "zakaj", "kaj", "pojasnite")),
+    "sv": CallLanguage("Swedish", "Svenska", "sv", ("hur", "varför", "vad", "förklara")),
+    "tl": CallLanguage("Tagalog", "Tagalog", "tl", ("paano", "bakit", "ano", "ipaliwanag")),
+    "dav": CallLanguage("Taita", "Kidawida", "dav"),
+    "tn": CallLanguage("Tswana", "Setswana", "tn"),
+    "uk": CallLanguage("Ukrainian", "Українська", "uk", ("як", "чому", "що", "поясніть")),
+    "ug": CallLanguage("Uyghur", "ئۇيغۇرچە", "ug", direction="rtl"),
+    "uz": CallLanguage("Uzbek", "Oʻzbekcha", "uz", ("qanday", "nega", "nima")),
+    "ve": CallLanguage("Venda", "Tshivenḓa", "ve"),
+    "cy": CallLanguage("Welsh", "Cymraeg", "cy", ("sut", "pam", "beth", "esboniwch")),
+    "yo": CallLanguage("Yoruba", "Yorùbá", "yo"),
+    "zu": CallLanguage("Zulu", "IsiZulu", "zu"),
 }
 DEFAULT_CALL_LANGUAGES = tuple(CALL_LANGUAGES)
 
-# Aura only supplies these six of the 24 selected call languages. Microphone input
+# Aura only supplies these six of the selected call languages. Microphone input
 # and text practice are independent of generated interviewer audio.
 DEFAULT_PRACTICE_VOICES = {
     "en": "aura-2-thalia-en",
@@ -189,17 +270,21 @@ def validate_language(value: str, enabled: Iterable[str] = DEFAULT_CALL_LANGUAGE
     return value
 
 
+def provider_supports(language: str, model: str, provider: str) -> bool:
+    """Check one explicit provider/model route before constructing a speech stream."""
+    item = CALL_LANGUAGES.get(language)
+    if item is None:
+        return False
+    if provider == "deepgram":
+        return language == "en" or model in {"nova-3", "nova-3-general"}
+    # The existing AssemblyAI adapter only configures its English streaming model.
+    return provider == "assemblyai" and language == "en"
+
+
 def recognition_supported(language: str, model: str, providers: Iterable[str]) -> bool:
-    """The multilingual contract requires every configured fallback to support it."""
+    """Every configured fallback must support the selected spoken language."""
     paths = tuple(providers)
-    return (
-        language in CALL_LANGUAGES
-        and bool(paths)
-        and (
-            language == "en"
-            or (model in {"nova-3", "nova-3-general"} and all(p == "deepgram" for p in paths))
-        )
-    )
+    return bool(paths) and all(provider_supports(language, model, provider) for provider in paths)
 
 
 def speech_units(text: str, language: str) -> int:
@@ -210,6 +295,7 @@ def speech_units(text: str, language: str) -> int:
 
 
 def has_question_cue(text: str, language: str) -> bool:
+    """Optional speculative-answer hint; the model detector handles uncued languages too."""
     normalized = unicodedata.normalize("NFC", text).casefold()
     item = CALL_LANGUAGES[language]
     for cue in item.question_cues:

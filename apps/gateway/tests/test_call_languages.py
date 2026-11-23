@@ -87,7 +87,9 @@ async def test_snapshot_reused_for_every_recognition_factory(env, language):
             for _ in range(2):  # original connection, reconnect and each failover
                 dg = make(["Acme"])
                 assert isinstance(dg, DeepgramSTT)
-                assert parse_qs(urlsplit(dg.url).query)["language"] == [language]
+                assert parse_qs(urlsplit(dg.url).query)["language"] == [
+                    CALL_LANGUAGES[language].deepgram_code
+                ]
                 assert parse_qs(urlsplit(dg.url).query)["keyterm"] == ["Acme"]
 
 

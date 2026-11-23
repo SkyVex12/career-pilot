@@ -34,7 +34,7 @@ def test_default_catalog_and_legacy_operator_allowlist(monkeypatch):
     monkeypatch.delenv("COPILOT_CALL_LANGUAGES", raising=False)
     monkeypatch.delenv("COPILOT_VERIFIED_CALL_LANGUAGES", raising=False)
     settings = core_settings()
-    assert len(settings.verified_call_languages) == 24
+    assert len(settings.verified_call_languages) == 96
     monkeypatch.setenv("COPILOT_VERIFIED_CALL_LANGUAGES", "en,vi")
     assert core_settings().verified_call_languages == ("en", "vi")
     monkeypatch.setenv("COPILOT_CALL_LANGUAGES", "en,ja,ja,ar")
@@ -56,7 +56,7 @@ def test_model_fallback_compatibility(language):
 async def test_catalog_uses_provider_capability_and_retains_native_names():
     svc: Any = SimpleNamespace(settings=api_settings(stt_providers=["deepgram"]))
     result = await profiles.call_languages(svc, Principal(uuid4(), "Fixture", None))
-    assert len(result["items"]) == 24
+    assert len(result["items"]) == 96
     assert next(i for i in result["items"] if i["id"] == "ar")["direction"] == "rtl"
     svc.settings.stt_providers = ["deepgram", "assemblyai"]
     assert [

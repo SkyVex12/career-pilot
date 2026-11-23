@@ -93,6 +93,10 @@ export interface SessionView {
   timeline: TimelineRef[];
   /** Question types whose deep answer starts on its own (session.ready), if the gateway said. */
   deepAuto: QuestionType[] | null;
+  /** Only server acknowledgements change the live language; a draft is never authoritative. */
+  spokenLanguage: string | null;
+  languageSwitching: boolean;
+  languageResult: { requestId: string | null; error: string | null; seq: number } | null;
   latency: Record<string, QuestionLatency>;
   log: string[];
   speaking: { them: boolean; me: boolean };
@@ -121,6 +125,9 @@ export const initial: SessionView = {
   transcript: [],
   timeline: [],
   deepAuto: null,
+  spokenLanguage: null,
+  languageSwitching: false,
+  languageResult: null,
   latency: {},
   log: [],
   speaking: { them: false, me: false },
@@ -246,7 +253,9 @@ export function reduce(s: SessionView, a: Action): SessionView {
     case "error":
       return log(s, `gateway error ${m.code}${m.fatal ? " (fatal)" : ""}: ${m.message}`);
     case "session.ready":
-      return log({ ...s, deepAuto: m.deep_auto_types ?? null }, `session ready, ${m.limits.max_minutes} min limit${m.me_audio ? ", your words live" : ""}`);
+      return log({ ...s, deepAuto: m.deep_auto_types ?? null, spokenLanguage: m.spoken_language ?? s.spokenLanguage, languageSwitching: m.language_switching === true, languageResult: null }, `session ready, ${m.limits.max_minutes} min limit${m.me_audio ? ", your words live" : ""}`);
+    case "session.language":
+      return { ...s, spokenLanguage: m.spoken_language, languageResult: { requestId: m.request_id ?? null, error: m.error ?? null, seq: m.seq } };
     // Guest seats, the host's side.
     case "seats.update":
       return { ...s, seats: m.seats };

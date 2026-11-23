@@ -14,7 +14,16 @@ import { Api, ApiError } from "./api";
 import { companionDeviceName } from "./companionDevice";
 import { findReusableCompanionAttachment } from "./companionAttachment";
 import { RequestScope, ConnectionGate, withDeadline } from "./requestScope";
-import { event, emptyLive, command, gatewayURL, type Event } from "./liveState";
+import {
+  event,
+  emptyLive,
+  command,
+  gatewayURL,
+  languageAcknowledgement,
+  type Event,
+} from "./liveState";
+import { parseCallLanguages } from "./callLanguages";
+import type { Choice } from "./choiceState";
 import {
   Badge,
   Button,
@@ -27,6 +36,7 @@ import {
   Notice,
   Row,
   ScreenTitle,
+  Select,
   Txt,
   page,
   Theme,
@@ -59,6 +69,15 @@ export function Companion({
     [size, setSize] = useState(18),
     [latest, setLatest] = useState(true),
     [commandStatus, setCommandStatus] = useState("");
+  const [languages, setLanguages] = useState<Choice[]>([]),
+    [languageError, setLanguageError] = useState(""),
+    [languageAttempt, setLanguageAttempt] = useState(0);
+  const languageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLanguageCommandId = useRef<string | null>(null);
+  function clearLanguageTimer() {
+    if (languageTimer.current) clearTimeout(languageTimer.current);
+    languageTimer.current = null;
+  }
   const socket = useRef<WebSocket | null>(null),
     sequence = useRef(0),
     scroll = useRef<React.ComponentRef<typeof ScrollView>>(null),
@@ -78,10 +97,31 @@ export function Companion({
   const [refreshing, setRefreshing] = useState(true),
     [displaySettings, setDisplaySettings] = useState(false);
   useEffect(() => {
+    let current = true;
+    const profile = api.profile;
+    const controller = new AbortController();
+    setLanguageError("");
+    void api
+      .request("/call-languages", undefined, "GET", true, controller.signal)
+      .then(parseCallLanguages)
+      .then((choices) => {
+        if (current && api.profile === profile) setLanguages(choices);
+      })
+      .catch(() => {
+        if (current && api.profile === profile)
+          setLanguageError("Could not load available languages.");
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [api, languageAttempt]);
+  useEffect(() => {
     mounted.current = true;
     const originalProfile = api.profile;
     return () => {
       mounted.current = false;
+      clearLanguageTimer();
       refreshScope.current.invalidate();
       attachAbort.current?.abort();
       const attached = attachedRef.current;
@@ -296,6 +336,8 @@ export function Companion({
               // Companion relay checks expiry but does not send auth.expiring.
               renewal = setInterval(() => void transmitToken(), 30000);
               attempt = 0;
+              liveRef.current = event(liveRef.current, m);
+              setLive(liveRef.current);
               setError("");
               setCommandStatus(
                 pending.current
@@ -312,14 +354,43 @@ export function Companion({
                   ? "Command queued - awaiting desktop execution"
                   : `Desktop: ${status}`,
               );
-              if (status !== "queued") pending.current = null;
+              if (
+                status !== "queued" &&
+                !(
+                  pending.current?.kind === "set_language" &&
+                  status === "executed"
+                )
+              ) {
+                pending.current = null;
+                clearLanguageTimer();
+              }
               return;
             }
             if (m.type === "companion.error" || m.type === "error") {
+              if (pending.current?.kind === "set_language") {
+                pending.current = null;
+                clearLanguageTimer();
+              }
               setError(String(m.message ?? m.code ?? "Connection unavailable"));
               return;
             }
             const next = event(liveRef.current, m);
+            const languageResult = languageAcknowledgement(
+              m,
+              lastLanguageCommandId.current,
+            );
+            if (languageResult) {
+              if (pending.current?.command_id === m.request_id)
+                pending.current = null;
+              lastLanguageCommandId.current = null;
+              clearLanguageTimer();
+              setCommandStatus(
+                languageResult.error !== null
+                  ? "Language unchanged"
+                  : "Call language changed",
+              );
+              setError(languageResult.error ?? "");
+            }
             liveRef.current = next;
             sequence.current = next.seq;
             setLive(next);
@@ -327,6 +398,7 @@ export function Companion({
               terminal = true;
               stopTimers();
               pending.current = null;
+              clearLanguageTimer();
               ws.close();
             }
           } catch {
@@ -503,6 +575,7 @@ export function Companion({
           liveRef.current = emptyLive();
           setLive(liveRef.current);
           pending.current = null;
+          clearLanguageTimer();
           setCommandStatus("");
           setError("");
           setAttachment(a);
@@ -529,6 +602,7 @@ export function Companion({
     setLive(liveRef.current);
     sequence.current = 0;
     pending.current = null;
+    clearLanguageTimer();
     if (a)
       try {
         await withDeadline(
@@ -551,9 +625,10 @@ export function Companion({
       }
   }
   function send(
-    kind: "answer" | "followup" | "end",
+    kind: "answer" | "followup" | "end" | "set_language",
     confirmed = false,
     summarize = true,
+    spokenLanguage = "",
   ) {
     if (pending.current)
       return setError(
@@ -561,11 +636,35 @@ export function Companion({
       );
     if (socket.current?.readyState !== 1 || !live.connected)
       return setError("Desktop audio must reconnect before sending a command.");
+    if (
+      kind === "set_language" &&
+      (!live.languageSwitching ||
+        !languages.some((choice) => choice.value === spokenLanguage))
+    )
+      return setError(
+        "Choose an available language on a server that supports live language changes.",
+      );
     try {
-      const cmd = command(randomUUID(), kind, draft, confirmed, summarize);
+      const cmd = command(
+        randomUUID(),
+        kind,
+        kind === "set_language" ? spokenLanguage : draft,
+        confirmed,
+        summarize,
+      );
       pending.current = cmd;
       socket.current.send(JSON.stringify(cmd));
       setCommandStatus("Waiting for acknowledgment");
+      if (kind === "set_language") {
+        lastLanguageCommandId.current = cmd.command_id;
+        clearLanguageTimer();
+        languageTimer.current = setTimeout(() => {
+          if (mounted.current && pending.current?.command_id === cmd.command_id)
+            setCommandStatus(
+              "Language change not confirmed. Retry the pending command when connected.",
+            );
+        }, 15000);
+      }
       if (kind === "followup") setDraft("");
     } catch (e) {
       setError(String(e));
@@ -708,6 +807,7 @@ export function Companion({
       </ScrollView>
     );
   const session = sessions.find((s) => s.session_id === attachment.session_id);
+  const spokenLanguage = live.spokenLanguage ?? session?.spoken_language;
   const usable = live.connected && !live.ended;
   return (
     <View style={{ flex: 1 }}>
@@ -756,8 +856,8 @@ export function Companion({
                       ? "Connected · audio from your computer"
                       : live.status}
                 </Txt>
-                {session?.spoken_language ? (
-                  <Badge label={session.spoken_language.toUpperCase()} />
+                {spokenLanguage ? (
+                  <Badge label={spokenLanguage.toUpperCase()} />
                 ) : null}
               </Row>
             </View>
@@ -774,6 +874,41 @@ export function Companion({
           </Row>
           {displaySettings ? (
             <Card subtle>
+              <Select
+                label="Spoken language"
+                value={spokenLanguage ?? ""}
+                options={languages}
+                disabled={
+                  !usable ||
+                  !live.languageSwitching ||
+                  !!pending.current ||
+                  !languages.length
+                }
+                onChange={(value) => {
+                  if (value !== spokenLanguage)
+                    send("set_language", false, true, value);
+                }}
+              />
+              <Txt muted style={{ fontSize: 12 }}>
+                {live.languageSwitching
+                  ? "Pause speaking briefly when switching. New speech and answers use the new language."
+                  : "This server does not support changing the language during a call."}
+              </Txt>
+              {languageError ? (
+                <Notice
+                  tone="error"
+                  action={
+                    <Button
+                      compact
+                      secondary
+                      label="Retry languages"
+                      onPress={() => setLanguageAttempt((value) => value + 1)}
+                    />
+                  }
+                >
+                  {languageError}
+                </Notice>
+              ) : null}
               <Row style={{ justifyContent: "space-between" }}>
                 <Txt style={{ fontSize: 13 }}>Reading size</Txt>
                 <Row>

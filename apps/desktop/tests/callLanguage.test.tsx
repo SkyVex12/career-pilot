@@ -1,4 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { CallLanguage } from "../src/CallLanguage";
 import { ipc } from "./ipc";
@@ -46,15 +48,15 @@ it("keeps call start unavailable when a server returns malformed language settin
   expect(ready).not.toHaveBeenCalledWith(true);
 });
 
-it("renders all 24 configured languages with native labels and isolated right-to-left text", async () => {
+it("renders the configured languages with native labels and isolated right-to-left text", async () => {
   const items = corpus.map(item => ({ id: item.language, name: item.language === "ar" ? "Arabic" : item.language,
     native_name: item.language === "ar" ? "العربية" : item.language, direction: ["ar", "fa", "ur"].includes(item.language) ? "rtl" : "ltr" }));
   ipc.api("GET", /^\/call-languages$/, () => ({ items }));
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "ar" }));
   const { container } = render(<CallLanguage value="ar" onChange={() => {}} />);
-  await waitFor(() => expect(container.querySelector("select")!.options).toHaveLength(24));
+  await waitFor(() => expect(container.querySelector("select")!.options).toHaveLength(corpus.length));
   fireEvent.click(screen.getByText("Customize"));
-  const picker = screen.getByRole("combobox", { name: "Language" });
+  const picker = screen.getByRole("button", { name: "Language" });
   expect(picker).toHaveTextContent("العربية · Arabic");
   expect(picker.querySelector("bdi")).toHaveAttribute("dir", "rtl");
   expect(picker.querySelector("bdi")).toHaveAttribute("lang", "ar");
@@ -62,6 +64,89 @@ it("renders all 24 configured languages with native labels and isolated right-to
   const option = screen.getByRole("option", { name: "العربية · Arabic" });
   expect(option.querySelector("bdi")).toHaveAttribute("dir", "rtl");
   expect(option.querySelector("bdi")).toHaveAttribute("lang", "ar");
+});
+
+it("searches a large catalog by English, native name and code, and saves only the chosen language", async () => {
+  const items = [
+    { id: "en", name: "English" },
+    { id: "vi", name: "Vietnamese", native_name: "Tiếng Việt" },
+    { id: "ar", name: "Arabic", native_name: "العربية", direction: "rtl" },
+    ...Array.from({ length: 110 }, (_, index) => ({ id: `q${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + index % 26)}`, name: `Fixture language ${index}` })),
+  ];
+  ipc.api("GET", /^\/call-languages$/, () => ({ items }));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
+  ipc.api("PATCH", /^\/profile\/call-preferences$/, (_p, body) => body);
+  function Picker() {
+    const [value, setValue] = useState("en");
+    return <CallLanguage value={value} onChange={setValue} />;
+  }
+  render(<Picker />);
+  await userEvent.click(screen.getByText("Customize"));
+  const picker = screen.getByRole("button", { name: "Language" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  await userEvent.click(screen.getByLabelText("Save selection as this profile’s default"));
+  await waitFor(() => expect(ipc.apiCalls("PATCH")).toHaveLength(1));
+  await userEvent.click(picker);
+  const search = screen.getByRole("combobox", { name: "Search languages" });
+  expect(search).toHaveFocus();
+  expect(screen.getAllByRole("option")).toHaveLength(113);
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(search).toHaveFocus();
+  expect(ipc.apiCalls("PATCH")).toHaveLength(1);
+  await userEvent.type(search, "vietnam");
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  expect(screen.getByRole("option")).toHaveTextContent("Tiếng Việt · Vietnamese");
+  await userEvent.clear(search);
+  await userEvent.type(search, "tieng viet");
+  expect(screen.getByRole("option")).toHaveTextContent("Tiếng Việt · Vietnamese");
+  await userEvent.clear(search);
+  await userEvent.type(search, "العربية");
+  expect(screen.getByRole("option")).toHaveTextContent("العربية · Arabic");
+  await userEvent.clear(search);
+  await userEvent.type(search, "qef");
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  expect(ipc.apiCalls("PATCH")).toHaveLength(1);
+  expect(picker).toHaveTextContent("English");
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(ipc.apiCalls("PATCH")[1].body).toEqual({ spoken_language: "qef" }));
+  expect(picker).toHaveFocus();
+  expect(picker).toHaveTextContent("Fixture language 109");
+  expect(screen.queryByRole("dialog", { name: "Language" })).not.toBeInTheDocument();
+});
+
+it("leaves the selection unchanged for an empty search and cancels cleanly with Escape", async () => {
+  ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }, { id: "es", name: "Español · Spanish" }] }));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
+  const change = vi.fn();
+  render(<CallLanguage value="en" onChange={change} />);
+  await userEvent.click(screen.getByText("Customize"));
+  const picker = screen.getByRole("button", { name: "Language" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  await userEvent.click(picker);
+  await userEvent.type(screen.getByRole("combobox", { name: "Search languages" }), "not a language");
+  expect(screen.getByRole("status")).toHaveTextContent("No matches");
+  expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Search languages" })).not.toHaveAttribute("aria-activedescendant");
+  await userEvent.keyboard("{Enter}{Escape}");
+  expect(change).toHaveBeenCalledTimes(1);
+  expect(picker).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}");
+  expect(screen.getByRole("combobox", { name: "Search languages" })).toHaveValue("");
+  await userEvent.keyboard("{ArrowDown}{Enter}");
+  expect(change).toHaveBeenLastCalledWith("es");
+});
+
+it("closes the searchable popup and continues to the next field with Tab", async () => {
+  ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
+  ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
+  render(<CallLanguage value="en" onChange={() => {}} />);
+  await userEvent.click(screen.getByText("Customize"));
+  const picker = screen.getByRole("button", { name: "Language" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  await userEvent.click(picker);
+  await userEvent.tab();
+  expect(screen.queryByRole("dialog", { name: "Language" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Save selection as this profile’s default")).toHaveFocus();
 });
 
 it("explains legacy English compatibility without blocking older-server calls or saving unsupported settings", async () => {

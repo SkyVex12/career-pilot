@@ -20,6 +20,7 @@ class DeepgramSTT:
         self, api_key: str, *, url: str, model: str, keyterms: list[str] | None = None
     ) -> None:
         self.api_key = api_key
+        self.model = model
         params: list[tuple[str, str]] = [
             ("model", model),
             ("encoding", "linear16"),
@@ -35,13 +36,17 @@ class DeepgramSTT:
         self.ws: ClientConnection | None = None
 
     def set_language(self, language: str) -> None:
-        from copilot_core.languages import CALL_LANGUAGES
+        from copilot_core.languages import CALL_LANGUAGES, provider_supports
 
         if self.ws is not None:
             raise RuntimeError("Call language cannot change after recognition starts")
+        if not provider_supports(language, self.model, self.name):
+            raise ValueError("Selected language is unavailable on this Deepgram model")
         parts = urlsplit(self.url)
         params = [(k, v) for k, v in parse_qsl(parts.query) if k != "language"]
-        params.append(("language", CALL_LANGUAGES[language].deepgram_code))
+        code = CALL_LANGUAGES[language].deepgram_code
+        assert code is not None
+        params.append(("language", code))
         self.url = urlunsplit(parts._replace(query=urlencode(params)))
 
     async def connect(self) -> None:

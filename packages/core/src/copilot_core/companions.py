@@ -95,8 +95,9 @@ class Command(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["companion.command"]
     command_id: UUID
-    kind: Literal["answer", "followup", "end"]
+    kind: Literal["answer", "followup", "end", "set_language"]
     text: str | None = Field(default=None, max_length=4000)
+    spoken_language: str | None = Field(default=None, min_length=2, max_length=35)
     confirmed: bool = False
     summarize: bool = True
 
@@ -108,6 +109,10 @@ class Command(BaseModel):
             raise ValueError("End call requires explicit confirmation")
         if self.kind != "followup" and self.text is not None:
             raise ValueError("Only follow-up accepts text")
+        if self.kind == "set_language" and not self.spoken_language:
+            raise ValueError("A language change needs a spoken language")
+        if self.kind != "set_language" and self.spoken_language is not None:
+            raise ValueError("Only a language change accepts a spoken language")
         return self
 
     def digest(self) -> str:

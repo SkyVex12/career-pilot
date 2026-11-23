@@ -31,6 +31,7 @@ from copilot_core.call_language_text import LABELS, METADATA
 from copilot_core.crypto import UserCrypto, segment_row_id
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7, uuid7_for
+from copilot_core.languages import CALL_LANGUAGES
 from copilot_core.storage import me_audio_key
 from copilot_core.valkey_client import text
 from copilot_core.workplace import local_today, memory_version
@@ -238,6 +239,13 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
                 await conn.execute(
                     "update app.sessions set mode = $2 where id = $1", sid, e.data["mode"]
                 )
+            elif kind == "language" and e.data.get("spoken_language") in CALL_LANGUAGES:
+                await conn.execute(
+                    "update app.sessions set spoken_language = $2 where id = $1",
+                    sid,
+                    e.data["spoken_language"],
+                )
+                counts["language"] = counts.get("language", 0) + 1
         # Timings that came after their pass was logged (the client's first word, or the
         # confirmation of a speculative question), once every answer in the batch is written.
         # A report whose answer was deferred waits with it.

@@ -358,6 +358,43 @@ class AnswerStyleSet(BaseModel):
     """
 
 
+class SessionSetLanguage(BaseModel):
+    """
+    Change the spoken language of an active call. The server acknowledges the effective language before clients update their selection.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["session.set_language"]
+    spoken_language: Annotated[str, Field(max_length=16, min_length=2)]
+    request_id: UUID
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+
+
+class SessionLanguage(BaseModel):
+    """
+    Authoritative current call language. A correlated error retains the previous language; an absent error confirms the switch. Historical transcript and answers retain their original text.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    type: Literal["session.language"]
+    seq: Annotated[int, Field(ge=1)]
+    """
+    Per-session server message counter. Starts at 1 and increases by one per message; the client sends the last one it processed on resume (0 if none).
+    """
+    spoken_language: Annotated[str, Field(max_length=16, min_length=2)]
+    request_id: UUID | None = None
+    """
+    UUID (v7 for ids we generate), lowercase hex with dashes.
+    """
+    error: Annotated[str | None, Field(max_length=500)] = None
+
+
 class SessionEnd(BaseModel):
     """
     User ends the session.
@@ -392,6 +429,11 @@ class SessionReady(BaseModel):
     """
     server_time: AwareDatetime
     limits: SessionLimits
+    spoken_language: Annotated[str | None, Field(max_length=16, min_length=2)] = None
+    language_switching: bool | None = None
+    """
+    True when this gateway accepts session.set_language. Absent means live switching is unavailable.
+    """
     me_audio: bool | None = None
     """
     true: the gateway transcribes the user's own speech live, so the client sends speech audio on the me channel (after echo cancellation and VAD, never silence). Absent or false: me frames carry speech flags only, as before.
@@ -972,6 +1014,7 @@ class AudioFrameHeader(BaseModel):
 class ServerMessage(
     RootModel[
         SessionReady
+        | SessionLanguage
         | TranscriptPartial
         | TranscriptFinal
         | QuestionDetected
@@ -994,6 +1037,7 @@ class ServerMessage(
 ):
     root: Annotated[
         SessionReady
+        | SessionLanguage
         | TranscriptPartial
         | TranscriptFinal
         | QuestionDetected
@@ -1059,6 +1103,7 @@ class ClientMessage(
         | LatencyReport
         | ModeSet
         | AnswerStyleSet
+        | SessionSetLanguage
         | SessionEnd
         | SharingSet
         | SeatJoin
@@ -1076,6 +1121,7 @@ class ClientMessage(
         | LatencyReport
         | ModeSet
         | AnswerStyleSet
+        | SessionSetLanguage
         | SessionEnd
         | SharingSet
         | SeatJoin

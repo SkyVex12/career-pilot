@@ -1,0 +1,40 @@
+{
+  "at": "2026-11-23T13:58:02.822012+00:00",
+  "provider": "Deepgram",
+  "model": "nova-3",
+  "catalog_source": "https://developers.deepgram.com/docs/models-languages-overview/",
+  "distinct_catalog_languages": 96,
+  "synthetic_only": true,
+  "new_provider_or_infrastructure": false,
+  "attempts": [
+    {
+      "language": "zh-HK",
+      "websocket_accepted": true,
+      "events": [
+        "Results",
+        "Metadata"
+      ],
+      "elapsed_ms": 4859
+    },
+    {
+      "language": "cy",
+      "websocket_accepted": false,
+      "error_type": "TimeoutError"
+    },
+    {
+      "language": "cy",
+      "websocket_accepted": true,
+      "events": [
+        "Results",
+        "Metadata"
+      ],
+      "elapsed_ms": 4390
+    }
+  ],
+  "limitations": [
+    "Checks sent synthetic silence only; no user audio or private data.",
+    "A successful handshake and Results/Metadata validate the streaming route, not recognition accuracy.",
+    "Welsh first timed out and succeeded on one bounded retry.",
+    "No all-language, accent or physical-device speech quality certification."
+  ]
+}

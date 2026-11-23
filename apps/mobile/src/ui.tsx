@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Pressable,
   Text as NativeText,
@@ -19,6 +25,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
+import { filterChoices, type Choice } from "./choiceState";
+export type { Choice } from "./choiceState";
 
 export function colors(dark: boolean) {
   return dark
@@ -596,7 +604,6 @@ export function Badge({
     </View>
   );
 }
-export type Choice = { value: string; label: string; description?: string };
 export function Select({
   label,
   value,
@@ -618,13 +625,11 @@ export function Select({
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState("");
   const selected = options.find((o) => o.value === value);
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
   const filtered = useMemo(
-    () =>
-      options.filter((o) =>
-        `${o.label} ${o.description ?? ""}`
-          .toLocaleLowerCase()
-          .includes(query.toLocaleLowerCase()),
-      ),
+    () => filterChoices(options, query),
     [options, query],
   );
   return (
@@ -632,7 +637,7 @@ export function Select({
       <Field label={label}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${label}: ${selected?.label ?? placeholder}`}
+          accessibilityLabel={`${label}: ${selected?.label ?? placeholder}${selected?.nativeLabel ? `, ${selected.nativeLabel}` : ""}`}
           accessibilityState={{ disabled, expanded: open }}
           disabled={disabled}
           onPress={() => {
@@ -652,9 +657,21 @@ export function Select({
             opacity: disabled ? 0.5 : 1,
           })}
         >
-          <Txt style={{ flex: 1 }} numberOfLines={2}>
-            {selected?.label ?? placeholder}
-          </Txt>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt numberOfLines={2}>{selected?.label ?? placeholder}</Txt>
+            {selected?.nativeLabel ? (
+              <Txt
+                muted
+                numberOfLines={1}
+                style={{
+                  fontSize: 12,
+                  writingDirection: selected.nativeDirection,
+                }}
+              >
+                {selected.nativeLabel}
+              </Txt>
+            ) : null}
+          </View>
           <Icon name="chevron" size={18} />
         </Pressable>
       </Field>
@@ -713,22 +730,27 @@ export function Select({
                 />
               </Row>
             </View>
+            {options.length > 7 ? (
+              <View
+                style={{
+                  paddingHorizontal: 20,
+                  paddingBottom: compact ? 6 : 12,
+                }}
+              >
+                <Input
+                  placeholder={`Search ${label.toLowerCase()}`}
+                  value={query}
+                  onChangeText={setQuery}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+              </View>
+            ) : null}
             <FlatList
               style={{ minHeight: 0, flexShrink: 1 }}
               keyboardDismissMode={
                 Platform.OS === "ios" ? "interactive" : "on-drag"
-              }
-              ListHeaderComponent={
-                options.length > 7 ? (
-                  <View style={{ paddingBottom: compact ? 6 : 12 }}>
-                    <Input
-                      placeholder={`Search ${label.toLowerCase()}`}
-                      value={query}
-                      onChangeText={setQuery}
-                      autoCorrect={false}
-                    />
-                  </View>
-                ) : undefined
               }
               data={filtered}
               keyExtractor={(item) => item.value}
@@ -775,6 +797,17 @@ export function Select({
                     >
                       {item.label}
                     </Txt>
+                    {item.nativeLabel ? (
+                      <Txt
+                        muted
+                        style={{
+                          fontSize: 13,
+                          writingDirection: item.nativeDirection,
+                        }}
+                      >
+                        {item.nativeLabel}
+                      </Txt>
+                    ) : null}
                     {item.description ? (
                       <Txt muted style={{ fontSize: 12 }}>
                         {item.description}

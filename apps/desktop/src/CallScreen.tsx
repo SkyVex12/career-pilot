@@ -8,6 +8,7 @@ import { MeetingPreparation } from "./MeetingPreparation";
 // - live: the call running, its last question and levels, mode and answer style, End call;
 // - just ended: the call's summary as it is written (SessionDetail).
 import { CallLanguage } from "./CallLanguage";
+import { LiveCallLanguage } from "./LiveCallLanguage";
 import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
@@ -521,6 +522,7 @@ function Live({
             <SegmentedControl label="Detailed answer" value={answerStyle} options={ANSWER_STYLES} onChange={onAnswerStyle} />
           </Field>
         </div>
+        <LiveCallLanguage key={session.sessionId} session={session} />
       </Card>
       <Card title="Assistants">
         <GuestPanel s={session} />

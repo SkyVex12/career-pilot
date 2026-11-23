@@ -48,4 +48,10 @@ State is local to this process. Restarting resets these fictional journeys; chan
 
 ### Setup catalog recovery
 
-Set fixture mode `setup_unavailable` before opening Interview prep. The language endpoint returns503 while application choices remain available. The page must offer **Retry setup choices**. Set mode back to `normal` and tap Retry without leaving/restarting the page: the error disappears and the24-language selector opens with selectable entries. Existing topic/application drafts and consent must not be reset by this retry. This scenario uses only fictional local data.
+Set fixture mode `setup_unavailable` before opening Interview prep. The language endpoint returns 503 while application choices remain available. The page must offer **Retry setup choices**. Set mode back to `normal` and tap Retry without leaving/restarting the page: the error disappears and the 96-language selector opens with selectable entries. Search by English/native name and language code; Arabic native labels must retain RTL text direction. Existing topic/application drafts and consent must not be reset by this retry. This scenario uses only fictional local data.
+
+### Live language switching
+
+In `normal` mode connect the fictional companion and open **Display settings**. Change the call language to Arabic or Welsh. The authoritative `session.language` event must update the selected value without disconnecting the display or replacing its guidance. Reconnect and confirm the new language persists. The fixture emits the terminal relay command receipt before its authoritative language event; that receipt alone must not release the pending language request.
+
+Disconnect, select `language_ack_first`, and reconnect to exercise the reverse frame order. With `language_rejected`, a language request must retain the old language and show the fictional rejection reason even though the terminal command receipt arrives first. `language_legacy` advertises no switching support; the active selector must stay disabled with the older-gateway explanation. Repeat requests using the same UUID must not execute another change. These are client-contract simulations, not real transcription validation.

@@ -29,6 +29,7 @@ import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, saveP
 import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
 import { OverlayAudio } from "./OverlayAudio";
+import { LiveCallLanguage } from "./LiveCallLanguage";
 import { OverlayQuickSettings } from "./OverlayQuickSettings";
 import { startWindowResize } from "./windowDrag";
 
@@ -228,9 +229,9 @@ export default function Overlay() {
           <button type="button" role="tab" id="ov-conversation-tab" aria-controls="ov-conversation-panel" aria-selected={!screenOpen} onClick={() => setTab("conversation")}>Conversation</button>
           {canViewScreen && <button type="button" role="tab" id="ov-screen-tab" aria-controls="ov-screen-panel" aria-selected={screenOpen} onClick={() => setTab("screen")}><Icon name="monitor" size={14} />{guest ? "Shared screen" : "Screen tools"}</button>}
         </div>
-        {!guest && <div className="ov-toolbar-actions"><GuestsButton s={s} /><OverlayAudio s={s} /></div>}
+        {!guest && <div className="ov-toolbar-actions">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
       </div>}
-      {!guest && compact && <div className="ov-compact-tools"><GuestsButton s={s} /><OverlayAudio s={s} /></div>}
+      {!guest && compact && <div className="ov-compact-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
       {/* Keep capture subscriptions and the conversation mounted when switching tools. */}
       {!guest && <div id="ov-screen-panel" className="ov-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}>
         <CodingBar running={s.running} onActivity={() => setTab("screen")} />

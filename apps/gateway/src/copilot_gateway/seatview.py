@@ -29,6 +29,7 @@ FORWARDED = frozenset(
         "answer.done",
         "answer.error",
         "status",
+        "session.language",
     }
 )
 SHARING = "sharing"
@@ -49,6 +50,8 @@ def guest_view(message: dict[str, Any]) -> dict[str, Any] | None:
     kind = message.get("type")
     if kind not in FORWARDED:
         return None
+    if kind == "session.language":
+        return {key: message[key] for key in ("type", "seq", "spoken_language")}
     if kind == "answer.done":
         return {
             "type": "answer.done",
@@ -66,7 +69,7 @@ def guest_message(data: str) -> str | None:
     message = parse(data)
     if message is None or message.get("type") not in FORWARDED:
         return None
-    if message.get("type") != "answer.done":
+    if message.get("type") not in ("answer.done", "session.language"):
         return data
     view = guest_view(message)
     return None if view is None else json.dumps(view, separators=(",", ":"))
@@ -156,6 +159,9 @@ class ViewFold:
                 prev["seq"] = m.get("seq", prev.get("seq"))
         elif kind in ("answer.done", "answer.error"):
             self.items[("ad", m.get("question_id"), m.get("pass"), kind)] = m
+        elif kind == "session.language":
+            # Requests/errors are transient, not state to replay when another display joins.
+            self.items[("language",)] = {key: m[key] for key in ("type", "seq", "spoken_language")}
         elif kind == "status":
             key = ("s", m.get("component"))
             self.items.pop(key, None)

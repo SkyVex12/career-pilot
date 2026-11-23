@@ -1473,6 +1473,13 @@ async fn set_mode(state: State<'_, AppState>, mode: Mode) -> Res<()> {
     Ok(())
 }
 
+/// Change a live call's language without replacing the capture session.
+#[tauri::command]
+async fn set_spoken_language(state: State<'_, AppState>, language: String, request_id: Uuid) -> Res<()> {
+    state.engine()?.set_spoken_language(language, request_id).await;
+    Ok(())
+}
+
 /// The Session tab's detailed-answer style, changed during a call.
 #[tauri::command]
 async fn set_answer_style(state: State<'_, AppState>, style: AnswerStyle) -> Res<()> {
@@ -2339,6 +2346,7 @@ pub fn run() {
             send_feedback,
             set_mode,
             set_answer_style,
+            set_spoken_language,
             snapshot,
             live_status,
             seat_join,

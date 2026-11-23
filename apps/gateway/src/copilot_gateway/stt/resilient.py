@@ -108,6 +108,7 @@ class ResilientSTT:
         self.switches = 0
         self.degraded = False
         self.stream: STTStream | None = None
+        self._prepared: STTStream | None = None
         self.timeline = _Timeline()
         # Audio not yet covered by a final: (capture_ms, pcm), replayed after a reconnect.
         self.pending: deque[tuple[int, bytes]] = deque()
@@ -166,6 +167,27 @@ class ResilientSTT:
 
     # The supervisor task.
 
+    async def prepare(self) -> None:
+        """Open a replacement before acknowledging a live language change.
+
+        The supervisor adopts this exact connection in run(); it never opens a second
+        paid stream for the preflight. No old-language buffered audio is carried over.
+        """
+        if self.stream is not None or self._prepared is not None:
+            raise RuntimeError("Transcription is already connected")
+        stream = self.providers[self.index][1](self.keyterms)
+        try:
+            await asyncio.wait_for(stream.connect(), timeout=8.0)
+        except BaseException:
+            await _close_quietly(stream)
+            raise
+        self._prepared = stream
+
+    async def discard_prepared(self) -> None:
+        stream, self._prepared = self._prepared, None
+        if stream is not None:
+            await _close_quietly(stream)
+
     async def run(self) -> None:
         try:
             while True:
@@ -174,17 +196,28 @@ class ResilientSTT:
             stream, self.stream = self.stream, None
             if stream is not None:
                 await _close_quietly(stream)
-            for task in list(self._closing):
-                task.cancel()
+            await self.discard_prepared()
+            # A language boundary waits for the old connections to close before opening
+            # replacements; cancelling these close tasks could leave paid streams alive.
+            await asyncio.gather(*self._closing, return_exceptions=True)
 
     async def _run_once(self) -> None:
         name, factory = self.providers[self.index]
-        stream = factory(self.keyterms)
-        try:
-            await stream.connect()
-        except Exception as e:
-            await self._failed(f"{name} connect failed: {e}")
-            return
+        stream, self._prepared = self._prepared, None
+        if stream is None:
+            stream = factory(self.keyterms)
+            try:
+                await stream.connect()
+            except asyncio.CancelledError:
+                await _close_quietly(stream)
+                raise
+            except Exception as e:
+                await _close_quietly(stream)
+                await self._failed(f"{name} connect failed: {e}")
+                return
+        # Own the opened connection before the first adoption/replay await. Cancelling
+        # while the lock or a buffered send is pending must still close this paid stream.
+        self.stream = stream
         async with self._lock:
             self.timeline = _Timeline()
             self.finalized_at = (None, None)  # a new stream answers only the replayed Finalize
@@ -193,7 +226,6 @@ class ResilientSTT:
                 await self._send(stream, stream.send_audio(pcm))
             if self.flush_pending:
                 await self._send(stream, stream.finalize())
-            self.stream = stream
             self.connected_at = time.monotonic()
             self.awaiting_since = self.connected_at if self.pending else None
         tasks = [

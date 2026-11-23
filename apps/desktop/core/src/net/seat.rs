@@ -82,6 +82,7 @@ pub fn is_host_message(m: &ServerMessage) -> bool {
             | ServerMessage::AnswerDone(_)
             | ServerMessage::AnswerError(_)
             | ServerMessage::Status(_)
+            | ServerMessage::SessionLanguage(_)
     )
 }
 

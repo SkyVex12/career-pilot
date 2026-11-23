@@ -18,6 +18,7 @@ export type ClientMessage =
   | LatencyReport
   | ModeSet
   | AnswerStyleSet
+  | SessionSetLanguage
   | SessionEnd
   | SharingSet
   | SeatJoin
@@ -43,6 +44,7 @@ export type AnswerStyle = "bullets" | "paragraph";
  */
 export type ServerMessage =
   | SessionReady
+  | SessionLanguage
   | TranscriptPartial
   | TranscriptFinal
   | QuestionDetected
@@ -286,6 +288,14 @@ export interface AnswerStyleSet {
   answer_style: AnswerStyle;
 }
 /**
+ * Change the spoken language of an active call. The server acknowledges the effective language before clients update their selection.
+ */
+export interface SessionSetLanguage {
+  type: "session.set_language";
+  spoken_language: string;
+  request_id: Uuid;
+}
+/**
  * User ends the session.
  */
 export interface SessionEnd {
@@ -330,6 +340,11 @@ export interface SessionReady {
   session_id: Uuid;
   server_time: string;
   limits: SessionLimits;
+  spoken_language?: string;
+  /**
+   * True when this gateway accepts session.set_language. Absent means live switching is unavailable.
+   */
+  language_switching?: boolean;
   /**
    * true: the gateway transcribes the user's own speech live, so the client sends speech audio on the me channel (after echo cancellation and VAD, never silence). Absent or false: me frames carry speech flags only, as before.
    */
@@ -344,6 +359,16 @@ export interface SessionLimits {
    * Minutes this session may run under the user's plan.
    */
   max_minutes: number;
+}
+/**
+ * Authoritative current call language. A correlated error retains the previous language; an absent error confirms the switch. Historical transcript and answers retain their original text.
+ */
+export interface SessionLanguage {
+  type: "session.language";
+  seq: Seq;
+  spoken_language: string;
+  request_id?: Uuid;
+  error?: string;
 }
 /**
  * Interim STT text, replaced by later partials for the same segment.

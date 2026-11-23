@@ -75,6 +75,26 @@ describe("session reducer", () => {
     ]);
     expect(s.transcript).toEqual([{ key: "them:0", channel: "them", text: "Tell me about a time.", final: true, startMs: 0, endMs: 900 }]);
   });
+
+  it("uses acknowledged live languages, keeps prior text, and recovers the current language on resume", () => {
+    const ready = { type: "session.ready", session_id: QID, limits: { max_minutes: 60 }, spoken_language: "en", language_switching: true };
+    let s = run([live, server(ready), server({ type: "transcript.final", channel: "them", seg_id: 1, text: "Tell me about a time.", start_ms: 0, end_ms: 900 }), detected(QID)]);
+    expect(s.spokenLanguage).toBe("en"); expect(s.languageSwitching).toBe(true);
+    s = run([server({ type: "session.language", spoken_language: "ar", request_id: QID2 })], s);
+    expect(s.spokenLanguage).toBe("ar");
+    expect(s.languageResult).toMatchObject({ requestId: QID2, error: null });
+    expect(s.transcript[0].text).toBe("Tell me about a time."); expect(s.questions).toHaveLength(1);
+    s = run([server({ type: "session.language", spoken_language: "ar", request_id: QID, error: "Recognition could not connect." })], s);
+    expect(s.spokenLanguage).toBe("ar"); expect(s.languageResult?.error).toBe("Recognition could not connect.");
+    s = run([server({ ...ready, spoken_language: "vi" })], s);
+    expect(s.spokenLanguage).toBe("vi"); expect(s.languageResult).toBeNull();
+    expect(reduce(s, { type: "event", event: { kind: "context_reset" } }).spokenLanguage).toBeNull();
+  });
+
+  it("does not offer live switching when an older gateway omits the capability", () => {
+    const s = run([live, server({ type: "session.ready", session_id: QID, limits: { max_minutes: 60 }, spoken_language: "en" })]);
+    expect(s.languageSwitching).toBe(false);
+  });
 });
 
 describe("session id", () => {

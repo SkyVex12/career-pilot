@@ -322,7 +322,7 @@ def test_fixture_language_selector_uses_all_actual_catalog_labels_but_claims_no_
             }
             for code, language in fixture.CALL_LANGUAGES.items()
         ]
-        assert len(response["items"]) == 24
+        assert len(response["items"]) == 96
         assert response["items"] == expected
         assert response["fixture"] is True
         assert "Synthetic selector" in response["capability_notice"]
@@ -335,4 +335,40 @@ def test_setup_choices_can_recover_without_restarting_fixture():
         assert c.get("/v1/call-languages", headers=HEADERS).status_code == 503
         assert c.get("/v1/ask/context-options", headers=HEADERS).status_code == 200
         c.post("/__fixture", json={"mode": "normal"})
-        assert len(c.get("/v1/call-languages", headers=HEADERS).json()["items"]) == 24
+        assert len(c.get("/v1/call-languages", headers=HEADERS).json()["items"]) == 96
+
+
+def test_live_language_acknowledgement_order_rejection_and_reconnect():
+    for mode in ("normal", "language_ack_first", "language_rejected"):
+        with TestClient(fixture.create_app()) as c:
+            c.post("/__fixture", json={"mode": mode})
+            attach(c)
+            with c.websocket_connect("/v1/companion") as ws:
+                join(ws)
+                command = {
+                    "type": "companion.command",
+                    "command_id": "language-command",
+                    "kind": "set_language",
+                    "spoken_language": "ar",
+                }
+                ws.send_json(command)
+                frames = [ws.receive_json(), ws.receive_json()]
+                expected_first = (
+                    "session.language"
+                    if mode == "language_ack_first"
+                    else "companion.command.result"
+                )
+                assert frames[0]["type"] == expected_first
+                ack = next(frame for frame in frames if frame["type"] == "session.language")
+                assert ack["request_id"] == command["command_id"]
+                assert ack["spoken_language"] == ("en" if mode == "language_rejected" else "ar")
+                assert bool(ack.get("error")) == (mode == "language_rejected")
+                ws.send_json(command)
+                assert ws.receive_json()["type"] == "companion.command.result"
+                assert ws.receive_json() == ack
+                observed = c.get("/__fixture").json()
+                assert observed["command_count"] == 1
+                assert observed["spoken_language"] == ack["spoken_language"]
+            with c.websocket_connect("/v1/companion") as ws:
+                snapshot = join(ws)
+                assert ack in snapshot["messages"]
