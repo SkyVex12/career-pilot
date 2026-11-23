@@ -798,11 +798,13 @@ function TestQuestion({ employer, ready }: { employer: Employer; ready: boolean 
   };
 
   return (
-    <section className="ui-section" aria-labelledby="ask-title">
-      <h2 className="ui-section-title" id="ask-title">
-        Ask about this company
-      </h2>
-      <Button onClick={() => openAsk({ kind: "company", id: employer.id })}>Open Ask</Button>
+    <section className="ui-section work-company-question" aria-labelledby="ask-title">
+      <div className="work-company-question-header">
+        <h2 className="ui-section-title" id="ask-title">
+          Ask about this company
+        </h2>
+        <Button size="sm" variant="secondary" onClick={() => openAsk({ kind: "company", id: employer.id })}>Open Ask</Button>
+      </div>
       <form
         className="ask-form"
         onSubmit={(e) => {

@@ -11,7 +11,7 @@ export function GuestPicker({ scope, selected, onChange, disabled }: { scope: st
   const [recents, setRecents] = useState(() => recentGuests(scope));
   const button = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  const position = useOverlayPopover(open, close, button, panel);
+  const position = useOverlayPopover(open, close, button, panel, "start");
   useEffect(() => {
     const update = () => setRecents(recentGuests(scope));
     update(); window.addEventListener("storage", update); window.addEventListener(GUESTS_CHANGED, update);

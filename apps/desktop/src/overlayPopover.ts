@@ -7,6 +7,7 @@ export function useOverlayPopover(
   close: () => void,
   trigger: RefObject<HTMLElement | null>,
   panel: RefObject<HTMLElement | null>,
+  align: "start" | "end" = "end",
 ): CSSProperties {
   const [position, setPosition] = useState<CSSProperties>({ position: "fixed", visibility: "hidden" });
   useLayoutEffect(() => {
@@ -22,7 +23,7 @@ export function useOverlayPopover(
       const maxHeight = Math.max(80, up ? above : below);
       const height = Math.min(content.scrollHeight, maxHeight);
       setPosition({ position: "fixed", visibility: "visible", width, maxWidth: "calc(100vw - 16px)", maxHeight,
-        left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)),
+        left: Math.max(edge, Math.min(align === "start" ? anchor.left : anchor.right - width, window.innerWidth - width - edge)),
         top: up ? Math.max(edge, anchor.top - gap - height) : anchor.bottom + gap,
       });
     };
@@ -32,7 +33,7 @@ export function useOverlayPopover(
     if (trigger.current) observer?.observe(trigger.current);
     window.addEventListener("resize", fit);
     return () => { observer?.disconnect(); window.removeEventListener("resize", fit); };
-  }, [open, trigger, panel]);
+  }, [open, trigger, panel, align]);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
