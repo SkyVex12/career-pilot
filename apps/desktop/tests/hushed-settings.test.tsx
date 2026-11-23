@@ -103,23 +103,42 @@ it("does not report success after a rejected preference save", async () => {
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
-it("retains unsaved Hushed edits when unrelated background preferences are saved", async () => {
+it.each(["immediate", "deferred"])("retains unsaved Hushed edits when unrelated background preferences are saved (%s response)", async response => {
   const background = {
     preferences: { launch_at_login: false, keep_running: true, suggestions_paused: false, call_suggestions: true, hushed: preferences },
     call_detection_available: true, hushed_supported: true, hushed_adb_default: adb, limitation: "",
   };
   ipc.handle("background_status", () => background);
-  ipc.handle("background_set_preferences", args => ({ ...background, preferences: JSON.parse(JSON.stringify(args.preferences)) }));
-  render(<BackgroundSettings />);
-  fireEvent.click(await screen.findByText("Hushed in LDPlayer"));
-  fireEvent.click(screen.getByRole("switch", { name: "Detect Hushed calls" }));
-  fireEvent.change(screen.getByLabelText("LDPlayer ADB executable"), { target: { value: "D:\\LDPlayer\\adb.exe" } });
-  fireEvent.click(screen.getByRole("switch", { name: "Pause call suggestions" }));
-  await act(async () => { await Promise.resolve(); });
-  expect(screen.getByRole("switch", { name: "Pause call suggestions" })).toBeChecked();
-  expect(screen.getByRole("switch", { name: "Detect Hushed calls" })).toBeChecked();
-  expect(screen.getByLabelText("LDPlayer ADB executable")).toHaveValue("D:\\LDPlayer\\adb.exe");
+  let finishSave!: () => void;
+  ipc.handle("background_set_preferences", args => {
+    const next = { ...background, preferences: JSON.parse(JSON.stringify(args.preferences)) };
+    if (response === "immediate") return next;
+    return new Promise(resolve => { finishSave = () => resolve(next); });
+  });
+  // Settle the asynchronous status load and draft initialization before editing.
+  await act(async () => { render(<BackgroundSettings />); });
+  fireEvent.click(screen.getByText("Hushed in LDPlayer"));
+  const detect = screen.getByRole("switch", { name: "Detect Hushed calls" });
+  const executable = screen.getByLabelText("LDPlayer ADB executable");
+  const pause = screen.getByRole("switch", { name: "Pause call suggestions" });
+  fireEvent.click(detect);
+  expect(detect).toBeChecked();
+  fireEvent.change(executable, { target: { value: "D:\\LDPlayer\\adb.exe" } });
+  expect(executable).toHaveValue("D:\\LDPlayer\\adb.exe");
+  fireEvent.click(pause);
+  expect(detect).toBeChecked();
+  expect(executable).toHaveValue("D:\\LDPlayer\\adb.exe");
+  if (response === "deferred") {
+    expect(pause).toBeDisabled();
+    expect(detect).toBeDisabled();
+  }
   expect(ipc.calls.find(call => call.cmd === "background_set_preferences")?.args).toEqual({ preferences: { ...background.preferences, suggestions_paused: true } });
+  await act(async () => { if (response === "deferred") finishSave(); });
+  expect(screen.getByRole("switch", { name: "Pause call suggestions" })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Pause call suggestions" })).toBeEnabled();
+  expect(screen.getByRole("switch", { name: "Detect Hushed calls" })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Detect Hushed calls" })).toBeEnabled();
+  expect(screen.getByLabelText("LDPlayer ADB executable")).toHaveValue("D:\\LDPlayer\\adb.exe");
 });
 
 it("explains Windows support and shows separate Hushed detection diagnostics", () => {
