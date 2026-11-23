@@ -1,0 +1,256 @@
+{
+  "recorded_at": "2026-11-23T12:13:01.926918-06:00",
+  "status": "Native UI/API acceptance passed; real-time media acceptance incomplete",
+  "source": {
+    "checkout_at_bundle": "6fc13b98d213f99cd2e4a5f61a2c34992ab66179",
+    "mobile_product_commit": "a4015983c93615a077a92b57ece859bf27b0078b",
+    "android_bundle_modules": 1154,
+    "android_bundle_sha256": "c82f740257f80561362b1b9e41d962b34a16a79c16023dc52abf4ead7807b565",
+    "permission_race_guard_included": true,
+    "guard_source_sha256": "377804cfb4230103f7d86c594f5401e8e4dd4d34bffd137e14535619b92834c4"
+  },
+  "artifact": {
+    "path": "apps/mobile/android/app/build/outputs/apk/httpTest/app-httpTest.apk",
+    "size_bytes": 53103253,
+    "sha256": "4e762ce6ed137c0a8b9f44204a06299bd3535490e79612c0e84a067097859d3d",
+    "package": "app.careerpilot.mobile.assistantsmoke",
+    "abi": [
+      "x86_64"
+    ],
+    "version": "0.1.0-http-test",
+    "build_type": "httpTest, isolated app ID for acceptance only",
+    "min_sdk": 24,
+    "target_sdk": 36,
+    "compile_sdk": 37
+  },
+  "environment": {
+    "platform": "Android emulator, LDPlayer dedicated CareerPilotValidation instance",
+    "adb_serial": "127.0.0.1:5557",
+    "viewport": "780x1688",
+    "backend": "http://127.0.0.1:8876, fictional local API via adb reverse",
+    "account": "tester@example.test",
+    "profile": "Fictional test profile",
+    "real_provider_calls": false,
+    "actual_microphone_recording": false,
+    "user_app_changed": false
+  },
+  "validation": {
+    "typescript": "passed",
+    "mobile_tests": {
+      "passed": 160,
+      "failed": 0,
+      "skipped": 0
+    },
+    "assemble_http_test": "passed, 13m40s including lintVital",
+    "secure_release_r8": "Separate compile-only evidence: mobile-assistance-secure-r8-2026-11-23.json",
+    "fixture_contract_tests": "21 passed after Personal AI fixture extension"
+  },
+  "native_passes": [
+    "Sign in with fictional email/code and navigate all four workspace tabs.",
+    "Discover another fictional user invitation, accept, join authorized assistant seat; render real-time guidance and transcript.",
+    "Send one private note; UI acknowledged Delivered privately; server stored one idempotent command.",
+    "Background/foreground rejoined assistant websocket without duplicating the note.",
+    "Talk to host requested native microphone permission; denial left microphone off and app responsive.",
+    "Host sharing pause cleared guidance; seat revocation cleared private content and removed assistant controls; leaving returned to invitation list.",
+    "Save company work log and pasted document, observe authoritative saved/indexed fixture receipts.",
+    "Save tailored resume; schedule technical interview; Start Technical call navigated to For interviews and selected application without starting a microphone/session.",
+    "Open meeting preparation and save edited unfinished action/context.",
+    "Ask completed fictional streaming answer; S1 opened matching transcript source with time.",
+    "Personal AI created Ask-scoped preparation request; pasted and reviewed 2 facts, excluded 1 before importing, and saved 1 fact.",
+    "Personal AI corrected a saved fact, permanently excluded another, and prepared Revision 2 preserving reviewed brief.",
+    "Personal AI disconnected a fictional client while saved briefs remained.",
+    "HubRuby accepted fictional one-time code, searched, imported application/JD/resume after destination confirmation, checked updates, refreshed import after confirmation, then disconnected while imports remained.",
+    "Signed out of isolated account; app returned to sign-in without private workspace content."
+  ],
+  "native_media": {
+    "status": "blocked by local fixture/emulator ICE connectivity; not certified",
+    "observed": "Seat websocket and LiveKit signaling/native ontrack ran. Screen stayed unavailable/connecting and exposed Reconnect. Quality/control remained unavailable; app navigation recovered.",
+    "diagnostic": "Instrumented Android-to-ADB-to-loopback UDP relay received more than 150 valid STUN Binding requests, type 0001, cookie 2112a442, length 116 bytes, forwarded to local LiveKit at 127.0.0.1:7882 and received zero UDP replies. Relevant native/browser ICE logs had no nominated pair. No firewall or persistent security change was made.",
+    "not_verified": [
+      "Decoded shared-screen frames/readable text",
+      "Live resolution change and measured dimensions",
+      "Host consent prompt through live native media data channel",
+      "Remote input delivery to a host desktop",
+      "Live assistant voice/RTP transport"
+    ],
+    "important": "Fixture media_observed.screenConnected/voiceConnected in raw receipts are signaling flags only; they do not certify delivered media."
+  },
+  "health": {
+    "package": "app.careerpilot.mobile.assistantsmoke",
+    "pid": "2865",
+    "fatal_or_unhandled_lines": 0,
+    "crash_buffer_lines": 0,
+    "package_anr_crash_events": 0,
+    "exit_info": "ACTIVITY MANAGER PROCESS EXIT INFO (dumpsys activity exit-info)\nLast Timestamp of Persistence Into Persistent Storage: 2026-11-23 12:04:33.480\n",
+    "scope": "Retained Android log buffers for this process/package; not proof of lifetime stability."
+  },
+  "cleanup": {
+    "signed_out": true,
+    "owned_api_processes_stopped": [
+      34760,
+      39020
+    ],
+    "owned_publisher_tree_stopped": 27324,
+    "owned_livekit_stopped": 34388,
+    "owned_relay_processes_stopped": [
+      16236,
+      9232
+    ],
+    "android_bridge_stopped": 5009,
+    "adb_reverse_removed": [
+      "tcp:8876",
+      "tcp:7880",
+      "tcp:7881",
+      "tcp:7883"
+    ],
+    "remaining_adb_reverses": [],
+    "microphone": "Native permission remained denied; isolated package RECORD_AUDIO app-op reset to default. Android UID mode remains ignore from denied permission. No audio was recorded.",
+    "isolated_app": "Left installed at sign-in; user app/data untouched."
+  },
+  "limits": [
+    "Stateful fixtures validate native navigation and request/receipt handling; indexed/extracted/model/calendar/HubRuby/OAuth results are synthetic, not production-provider certification.",
+    "Live screen, consent/control and voice require a separate working LiveKit/device/provider acceptance run; unit/backend protocol tests do not replace it.",
+    "This run used x86_64 emulator only. Physical Android and iOS simulator/device runtime checks are not covered here.",
+    "In-person host assistant voice listening requires pausing the phone microphone so private help is not transcribed.",
+    "App-scoped log buffers contained zero crash/ANR/fatal/unhandled matches; this is bounded smoke evidence, not a guarantee of lifetime stability."
+  ],
+  "evidence_directory": "docs/implementation/evidence/mobile-assistance-native-2026-11-23",
+  "files": [
+    {
+      "name": "app-health.json",
+      "bytes": 432,
+      "sha256": "1382c8cabdb9e4286e7932c80d4efc60cf05bdb1ad1e5de8c19a233354d7adba"
+    },
+    {
+      "name": "applications-resume-saved.png",
+      "bytes": 137055,
+      "sha256": "c758b31289463dd24653a63269eb9b422e9a69db9d1b4cb3248d48ec47992475"
+    },
+    {
+      "name": "ask-answer-native.png",
+      "bytes": 115301,
+      "sha256": "e115ee0c24fb9dde494c7537c44d8581282fbcacf6414ad60e0c948b3e9a95e1"
+    },
+    {
+      "name": "ask-source-native.png",
+      "bytes": 44097,
+      "sha256": "6dc014d5235ea5af3e56cc295f3871f175563cb26c9d365d2635008d31098315"
+    },
+    {
+      "name": "assistant-guidance.png",
+      "bytes": 99080,
+      "sha256": "b4d014bff6e4aff8c9dae8ffb22ffb133e79e7a45903a7aedf333bb278f99739"
+    },
+    {
+      "name": "assistant-invitation.png",
+      "bytes": 100880,
+      "sha256": "bbb7154cbb5150eb8593c1591f8e0cb63bc95148c84e932d2a628fa9cb62ada8"
+    },
+    {
+      "name": "assistant-note-delivered.png",
+      "bytes": 105273,
+      "sha256": "e43c7b5f910b636a4b98c30ca19a8d559b3be5bf0c87647755d98f8e3140dea2"
+    },
+    {
+      "name": "assistant-revoked.png",
+      "bytes": 75798,
+      "sha256": "aacf2c06f2673b72e4b1ac3c73c7d24b1e0baeb2b7b1739f1c6d5e2cc7231a81"
+    },
+    {
+      "name": "assistant-screen-native.png",
+      "bytes": 106444,
+      "sha256": "c9879a71ebd68f38812f82fd8241a98de8209f28721fd7a5b01fbb9b4001656e"
+    },
+    {
+      "name": "assistant-screen-unavailable.png",
+      "bytes": 103156,
+      "sha256": "2151fd9adb5b6d01668b361019576151c6aecbdbdeb8bb704a1e444394a81f44"
+    },
+    {
+      "name": "assistant-sharing-paused.png",
+      "bytes": 99298,
+      "sha256": "14d1c866365b30524626439731ce1088f59dbe610a2c49e3ac5003b4c6e0918a"
+    },
+    {
+      "name": "calendar-meeting-prep.png",
+      "bytes": 125988,
+      "sha256": "9d0f1fb6cb9229196e2e0a0af9aad4479d8af0dd902f54fa2ab6cabf6e6a2008"
+    },
+    {
+      "name": "hubruby-imported.png",
+      "bytes": 138795,
+      "sha256": "7684bccfefcfada060aba13fa6c235418e3582cabab7a19a004ace9365b78703"
+    },
+    {
+      "name": "hubruby-native-receipts.json",
+      "bytes": 2792,
+      "sha256": "a849caa80fc95e121e0e45417623667b22c553837b5733596a7f48ca3b5660fb"
+    },
+    {
+      "name": "hubruby-refreshed.png",
+      "bytes": 135059,
+      "sha256": "b4ebb384d6c30954a79a4c335bdd9d2894b1cfbb33c52dce319d726b24414a3c"
+    },
+    {
+      "name": "native-fixture-receipts.json",
+      "bytes": 6073,
+      "sha256": "31112b587f74cac78b35dfb82c586f5fb66ca77e69cc7af72b80625554e870ba"
+    },
+    {
+      "name": "personal-ai-client-disconnected.png",
+      "bytes": 118309,
+      "sha256": "2e787406cd909a09de8235a0445ae5a9b78db55b10476dbd4966d60a51c9c7d3"
+    },
+    {
+      "name": "personal-ai-correction.png",
+      "bytes": 121811,
+      "sha256": "4966fdcb45bce79b86cb210d351f88f681e35198cdf6a44a5c905c1e164a01b3"
+    },
+    {
+      "name": "personal-ai-exclusion.png",
+      "bytes": 128511,
+      "sha256": "838988d4100b8c678aa8bcf6248b324f259f0e13b714b020ea69231e06ebf97a"
+    },
+    {
+      "name": "personal-ai-imported.png",
+      "bytes": 122189,
+      "sha256": "4e6561ddd818945978e0c9937d411f008d433cd41510b43922f791906396d692"
+    },
+    {
+      "name": "personal-ai-native-receipts.json",
+      "bytes": 14050,
+      "sha256": "65afd60fef31f72e38ba17289dc5cde841f5cd980773542af1b764d58ad92213"
+    },
+    {
+      "name": "personal-ai-review.png",
+      "bytes": 138197,
+      "sha256": "a332dffcc4a813e0e52ea950ffc6569583ab34c1f04a51e21a940c574846bbad"
+    },
+    {
+      "name": "scheduled-interview-context.png",
+      "bytes": 131916,
+      "sha256": "58fe5bb2403caae6bd7cd8d17f2d5894888993bf72526aef3fccc7ba9099fcd9"
+    },
+    {
+      "name": "signed-out-cleanup.png",
+      "bytes": 108611,
+      "sha256": "6152c9173dc787126d98a257bc0830b6eccf9b1b1f6eccaddb64f4eb75e31819"
+    },
+    {
+      "name": "workspace-document-saved.png",
+      "bytes": 107175,
+      "sha256": "2a4b715087d148def5a74ead07e39978b5d18b9fdaf9853a9662b593ac26eea4"
+    },
+    {
+      "name": "workspace-log-saved.png",
+      "bytes": 117288,
+      "sha256": "f0860f5305f43cbe55d6fb8cf9f625092e3ab75ccdc5b00530f50d86a31bdbd0"
+    },
+    {
+      "name": "README.md",
+      "bytes": 3914,
+      "sha256": "3cd6d901ab46b8a0b214c609b2195a7da13f1677fb679c18766926f579e54119"
+    }
+  ],
+  "evidence_file_hash_convention": "Repository bytes: JSON snapshots use UTF-8 with LF line endings. Normalize CRLF to LF before checking these JSON sizes/hashes after a Windows checkout. PNG and APK hashes use unchanged binary bytes."
+}

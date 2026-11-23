@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-11-23T18:03:55.423207+00:00",
+  "status": "checksum_verified",
+  "scope": "Read-only Windows verification of the downloaded macOS CI artifact and receipt. No DMG mounting or macOS runtime test.",
+  "provenance": {
+    "source_commit": "eca3894230d7cc01040c70349bf107b6d2523a8f",
+    "workflow_run": "https://github.com/SkyVex12/career-pilot/actions/runs/45228367898",
+    "artifact_id": 14848405221,
+    "artifact_name": "desktop-macos-preview-universal",
+    "github_archive_sha256": "84e6c21004ae05545c605037a0a993f8365e626f5d6b1d54b89895e7de5beff4",
+    "archive_checksum_recomputed": true,
+    "dmg_matches_archive_member": true,
+    "verification_json_matches_archive": true
+  },
+  "dmg": {
+    "name": "CoRuby-Assistance-Mac-universal-eca3894.dmg",
+    "path": "C:\\Users\\A\\WorkSpace\\career-pilot\\.implementation\\artifacts\\macos\\eca3894\\CoRuby-Assistance-Mac-universal-eca3894.dmg",
+    "bytes": 27722658,
+    "sha256": "824d8396a6cf2755aac0243df07fc33b81ccae2ea57abfff3ba42131e0fc385f",
+    "udif_footer_magic": "koly"
+  },
+  "ci_reported_binary_validation": {
+    "minimum_macos": "13.0",
+    "architectures": [
+      "aarch64",
+      "x86_64"
+    ],
+    "executable": "copilot-desktop",
+    "mach_o_slices": [
+      {
+        "path": "Contents/MacOS/copilot-desktop",
+        "slices": [
+          {
+            "arch": "x86_64",
+            "minimum": "13.0.0",
+            "dependency_count": 27
+          },
+          {
+            "arch": "aarch64",
+            "minimum": "13.0.0",
+            "dependency_count": 27
+          }
+        ]
+      }
+    ],
+    "basis": "verification.json supplied inside checksum-verified GitHub CI archive; architecture/dependency checks were performed by the macOS CI job, not rerun on Windows."
+  },
+  "limits": [
+    "No claim of Apple notarization or Developer ID signing is made by this receipt.",
+    "No native macOS launch, ScreenCaptureKit, notification, accessibility or remote-control runtime acceptance was performed here.",
+    "macOS source revision eca3894 is distinct from Android revision 6fc13b9."
+  ]
+}

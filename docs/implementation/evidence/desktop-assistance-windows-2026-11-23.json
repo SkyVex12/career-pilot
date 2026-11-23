@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-23",
+  "artifact": ".implementation/artifacts/CoRuby-desktop-cloud-eca3894.exe",
+  "downloaded_copy": "C:/Users/A/Downloads/CoRuby-Assistance-Desktop-eca3894.exe",
+  "size_bytes": 52054016,
+  "sha256": "95e133febfee24e5850aeef1c15ac616fc433cb79ddc1a165afcccc0bf26708a",
+  "architecture": "Windows x86_64 (PE machine 0x8664)",
+  "source_commit": "eca3894230d7cc01040c70349bf107b6d2523a8f",
+  "desktop_inputs_unchanged_through": "6fc13b98d213f99cd2e4a5f61a2c34992ab66179",
+  "recipe": "pnpm --filter @copilot/desktop build:cloud",
+  "distribution": "Tauri debug cloud preview with embedded frontend and existing GCP configuration; no updater, bundled installer, signing, installation or production launch",
+  "validation": {
+    "frontend_tests_passed": 602,
+    "frontend_test_files": 57,
+    "release_checks_passed": 10,
+    "protocol_typescript_tests_passed": 92,
+    "native_desktop_tests_passed": 186,
+    "native_ignored": 6,
+    "typescript_and_vite": "passed",
+    "rust_format_and_strict_clippy": "passed",
+    "artifact_and_download_hashes": "matched",
+    "hosted_frontend_job": "https://github.com/SkyVex12/career-pilot/actions/runs/45228483404/job/137881409522",
+    "hosted_run_scope": "Frontend/Windows/Linux/workflow jobs passed in the baseline run; its backend timing-test failure is retained as historical evidence",
+    "subsequent_product_source_ci": "https://github.com/SkyVex12/career-pilot/actions/runs/45229680852",
+    "subsequent_product_source_ci_result": "All required jobs passed, including 2613 backend tests and one skipped",
+    "timing_test_repair": "5d0efad replaces the wall-clock overlap assertion with explicit provider synchronization; 24 turn tests and a serial-execution negative control validated the test-only change"
+  },
+  "limits": [
+    "Development preview, not a signed production installer",
+    "Actual Windows remote-input consent and physical capture behavior still require real-device acceptance",
+    "Matching backend changes are required for new server-side capabilities"
+  ]
+}

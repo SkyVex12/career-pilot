@@ -1,0 +1,21 @@
+{
+  "artifact": "C:\\Users\\A\\WorkSpace\\career-pilot\\.implementation\\artifacts\\CoRuby-android-secure-r8-x86_64-5d0efad.apk",
+  "sha256": "a2fc148bc697ce8acb1c869843d6cf2c7126a8e90c5640857ce654bf52d83894",
+  "bytes": 46747120,
+  "source_commit_at_verification": "5d0efade51405ec8b77170126efb8ec0a5225cdf",
+  "variant": "release",
+  "application_id": "app.careerpilot.mobile",
+  "label": "CoRuby",
+  "abi": [
+    "x86_64"
+  ],
+  "min_sdk": 24,
+  "target_sdk": 36,
+  "uses_cleartext_traffic": false,
+  "r8_executed": true,
+  "r8_mapping": "apps/mobile/android/app/build/outputs/mapping/release/mapping.txt",
+  "build_result": "BUILD SUCCESSFUL in 4m 42s; 812 actionable tasks: 137 executed, 675 up-to-date",
+  "validation_scope": "Compile-only secure Release/R8 validation; APK not installed or launched; existing debug signing key is used by repository release configuration.",
+  "build_log": ".implementation/mobile-secure-release-r8.log",
+  "recipe": "gradlew.bat -p apps/mobile/android assembleRelease --info --no-daemon --max-workers=2 -PreactNativeArchitectures=x86_64 -I .implementation/mobile-toolchain/short-cmake.init.gradle -I .implementation/mobile-assistance-smoke/verified-maven.init.gradle"
+}

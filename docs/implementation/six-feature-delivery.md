@@ -1,5 +1,7 @@
 # Six-feature completion delivery
 
+Historical November 20 checkpoint. For the November 23 assistance/workspace changes and current preview downloads, use [the assistance delivery guide](mobile-assistance-delivery.md). Language support subsequently expanded to the provider-backed catalog in [language setup](call-languages.md); the 24-language references below describe this earlier checkpoint.
+
 Completion review: [PR #100](https://github.com/SkyVex12/career-pilot/pull/100), final product source `ed4ef21` (hosted packaging revision `d8b9048` has identical mobile inputs). This guide supersedes the earlier PR #98 preview delivery. Source, development binaries and local validation are available; no production deployment, store publication or production signing is claimed.
 
 ## Interface and scope
