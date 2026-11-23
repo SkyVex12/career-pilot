@@ -772,16 +772,30 @@ describe("Call", () => {
     expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: null, job_id: "a1", store_transcript: true });
   });
 
-  it("an online test starts with no call, and switches coding answers to Test", async () => {
+  it("offers only For interviews and For work and ignores old coding setup preferences", async () => {
     callRoutes();
-    ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_language: "C" } }));
+    ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_mode: "assessment", coding_language: "C" } }));
     wrap(<CallScreen {...callProps()} />);
     await screen.findByRole("option", { name: /Northwind · Backend/, hidden: true });
-    await userEvent.click(screen.getByRole("radio", { name: "Online test" }));
-    await userEvent.click(screen.getByRole("button", { name: "Start test" }));
-    const start = ipc.calls.find((c) => c.cmd === "start_session");
-    expect(start?.args.request).toMatchObject({ mode: "interview", no_call: true, platform: "test", job_id: "a1" });
-    await waitFor(() => expect(ipc.calls.find((c) => c.cmd === "set_coding_prefs")?.args).toEqual({ mode: "assessment", language: "C" }));
+    const types = screen.getByRole("radiogroup", { name: "Session type" });
+    expect(within(types).getAllByRole("radio")).toHaveLength(2);
+    expect(within(types).getByRole("radio", { name: "For interviews" })).toBeChecked();
+    expect(within(types).getByRole("radio", { name: "For work" })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Start call" }));
+    expect(ipc.calls.find((c) => c.cmd === "start_session")?.args.request).toMatchObject({ mode: "interview", no_call: false, platform: "other", job_id: "a1" });
+    expect(ipc.calls.find((c) => c.cmd === "set_coding_prefs")).toBeUndefined();
+  });
+
+  it("keeps the live purpose picker to two choices and sends meeting only after an explicit change", async () => {
+    callRoutes();
+    const live: SessionView = { ...initial, running: true, sessionId: "s1", connection: { state: "live", session_id: "s1", resumed: false } };
+    wrap(<CallScreen {...callProps({ session: live })} />);
+    const modes = await screen.findByRole("radiogroup", { name: "Mode" });
+    expect(within(modes).getAllByRole("radio")).toHaveLength(2);
+    expect(within(modes).getByRole("radio", { name: "For interviews" })).toBeChecked();
+    expect(ipc.calls.some(call => call.cmd === "set_mode")).toBe(false);
+    await userEvent.click(within(modes).getByRole("radio", { name: "For work" }));
+    expect(ipc.calls.find(call => call.cmd === "set_mode")?.args).toEqual({ mode: "meeting" });
   });
 
   it("shown again: an application pulled meanwhile appears in Call for without a restart", async () => {

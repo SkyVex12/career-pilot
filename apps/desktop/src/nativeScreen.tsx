@@ -7,7 +7,7 @@ import "./capture.css";
 
 type Source = { id: number; kind: "monitor" | "window"; title: string; monitor_id?: string };
 type Frame = { sequence: number; width: number; height: number; data: string; error: string | null };
-export const nativeShares = new WeakMap<MediaStreamTrack, Source & { error?: string }>();
+export const nativeShares = new WeakMap<MediaStreamTrack, Source & { error?: string; setQuality?: (height: number) => Promise<void> }>();
 const cancelled = () => new DOMException("Share cancelled", "AbortError");
 
 function choose(sources: Source[], signal?: AbortSignal): Promise<Source> {
@@ -94,7 +94,11 @@ export async function captureNativeScreen(signal?: AbortSignal): Promise<LocalVi
     }
     video = canvas.captureStream(30).getVideoTracks()[0];
     if (!video) throw new Error("Could not create the screen video track.");
-    nativeShares.set(video, source);
+    video.contentHint = "detail";
+    nativeShares.set(video, { ...source, setQuality: (height) => {
+      if (stopped) return Promise.reject(new Error("Screen sharing has stopped."));
+      return invoke<void>("native_screen_quality", { token, height });
+    } });
     local = new LocalVideoTrack(video, undefined, true);
     local.source = Track.Source.ScreenShare;
     const originalStop = local.stop.bind(local);

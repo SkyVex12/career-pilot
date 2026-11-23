@@ -189,6 +189,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         <div id={listId} role="listbox" aria-label={props["aria-label"]} aria-labelledby={props["aria-label"] ? undefined : id} className="ui-select-results">{optionRows}</div>
         <p className="ui-select-result-count" role="status">{visible.length ? `${visible.length} ${visible.length === 1 ? "result" : "results"}` : "No matches. Try another name or language code."}</p>
       </> : optionRows}
-    </div>, trigger.current?.closest(".ui-dialog") ?? document.body)}
+    </div>, trigger.current?.closest(".ui-dialog") ?? document.fullscreenElement ?? document.body)}
   </span>;
 });

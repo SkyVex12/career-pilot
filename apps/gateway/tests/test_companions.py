@@ -185,9 +185,132 @@ async def test_relay_replays_controls_and_revoke_preserves_capture(env, monkeypa
         await asyncio.sleep(0.6)
         assert len(host.of_type("question.detected")) == before
         assert host.close_code is None
+        for sharing in (False, True):
+            sharing_id = str(uuid4())
+            await phone.send(
+                {
+                    "type": "companion.command",
+                    "command_id": sharing_id,
+                    "kind": "set_sharing",
+                    "sharing": sharing,
+                }
+            )
+            await phone.wait_type(
+                "companion.command.result", command_id=sharing_id, result="executed"
+            )
+            await phone.wait_type("sharing", on=sharing)
+            await host.wait_type("sharing", on=sharing)
         await env.client().hdel(companions.records_key(sid), grant.attachment_id)
         await phone.wait_type("companion.error")
         assert host.close_code is None
         await host.send({"type": "session.end"})
         assert await host.closed() == 1000
         await phone.close()
+
+
+@pytest.mark.parametrize("sharing", [False, True])
+async def test_companion_sharing_is_owner_authorized_acknowledged_and_idempotent(sharing):
+    client: Any = FakeAsyncValkey()
+    r = record()
+    await companions.publish(client, r)
+    command = companions.Command(
+        type="companion.command", command_id=uuid4(), kind="set_sharing", sharing=sharing
+    )
+    await companions.enqueue(client, r, command)
+    entries = await client.xrange(keys.sess_ctl(r.session_id))
+    raw = entries[0][1][b"d"].decode()
+    store = SimpleNamespace(
+        client=client,
+        load_state=AsyncMock(return_value=state(r)),
+        lease_holder=AsyncMock(return_value="task"),
+        put_result=AsyncMock(),
+    )
+    session = SimpleNamespace(
+        svc=SimpleNamespace(store=store, task_id="task"),
+        ending=False,
+        account_id=r.account_id,
+        private_context_account_id=None,
+        sid=r.session_id,
+        seq=0,
+        ring=[],
+    )
+
+    async def handle(message):
+        assert message.type == "sharing.set"
+        assert message.on is sharing
+        session.seq += 1
+        session.ring.append(
+            (session.seq, json.dumps({"type": "sharing", "seq": session.seq, "on": sharing}))
+        )
+
+    session.handle = AsyncMock(side_effect=handle)
+    desk = CompanionDesk(cast(Any, session), {})
+    await desk.command(raw)
+    await desk.command(raw)
+    assert session.handle.await_count == 1
+    assert await companions.enqueue(client, r, command) == "executed"
+    await client.aclose()
+
+
+async def test_companion_sharing_needs_authoritative_ack_and_cannot_cross_owner_or_revocation():
+    client: Any = FakeAsyncValkey()
+    r = record()
+    await companions.publish(client, r)
+    store = SimpleNamespace(
+        client=client,
+        load_state=AsyncMock(return_value=state(r)),
+        lease_holder=AsyncMock(return_value="task"),
+        put_result=AsyncMock(),
+    )
+    session = SimpleNamespace(
+        svc=SimpleNamespace(store=store, task_id="task"),
+        ending=False,
+        account_id=r.account_id,
+        private_context_account_id=None,
+        sid=r.session_id,
+        seq=0,
+        ring=[],
+        handle=AsyncMock(),
+    )
+    desk = CompanionDesk(cast(Any, session), {})
+    for case in ["no_ack", "other_account", "revoked"]:
+        command = companions.Command(
+            type="companion.command", command_id=uuid4(), kind="set_sharing", sharing=True
+        )
+        body = {
+            "command": command.model_dump(mode="json"),
+            "attachment_id": r.attachment_id,
+            "account_id": "someone-else" if case == "other_account" else r.account_id,
+            "expires_at": time.time() + 60,
+        }
+        if case == "revoked":
+            await client.hdel(companions.records_key(r.session_id), r.attachment_id)
+        await companions.enqueue(client, r, command)
+        await desk.command(json.dumps(body))
+        assert await companions.enqueue(client, r, command) == (
+            "sharing_unavailable" if case == "no_ack" else "denied"
+        )
+    assert session.handle.await_count == 1
+    await client.aclose()
+
+
+def test_companion_sharing_boolean_is_required_and_exclusive():
+    for extra in [{}, {"sharing": "true"}, {"sharing": 1}]:
+        with pytest.raises(ValidationError):
+            companions.Command.model_validate(
+                {
+                    "type": "companion.command",
+                    "command_id": str(uuid4()),
+                    "kind": "set_sharing",
+                    **extra,
+                }
+            )
+    with pytest.raises(ValidationError):
+        companions.Command.model_validate(
+            {
+                "type": "companion.command",
+                "command_id": str(uuid4()),
+                "kind": "answer",
+                "sharing": True,
+            }
+        )

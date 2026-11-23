@@ -31,7 +31,7 @@ import { clock } from "./postcall";
 import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
 import { plural, useShowCount } from "./shared";
-import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, type Tone } from "./ui";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, useToast, type Tone } from "./ui";
 
 import { GuestPicker } from "./GuestPicker";
 import { guestScope, invitePlannedGuests, type PlannedGuest } from "./guestStorage";
@@ -41,9 +41,8 @@ import "./callDesign.css";
 const SessionDetail = lazy(() => import("./SessionDetail").then((m) => ({ default: m.SessionDetail })));
 
 const MODES = [
-  ["interview", "Interview"],
-  ["standup", "Standup"],
-  ["meeting", "Meeting"],
+  ["interview", "For interviews"],
+  ["meeting", "For work"],
 ] as const;
 
 const ANSWER_STYLES = [
@@ -104,6 +103,20 @@ export interface CallProps {
 
 export function CallScreen(props: CallProps) {
   const { session, tokenSet, locked } = props;
+  const toast = useToast();
+  const noticeScope = guestScope(props.settings, props.signedInAs, props.environment);
+  const terminalKey = session.running || !session.stopped ? null : `${session.sessionId ?? ""}/${session.seat?.seatId ?? ""}/${session.stopped}`;
+  // A restored stopped snapshot is history, not a new event. Keeping the receipt in
+  // the mounted screen also prevents tab changes from replaying dismissed notices.
+  const terminalNotice = useRef({ scope: noticeScope, key: terminalKey });
+  useEffect(() => {
+    const previous = terminalNotice.current;
+    terminalNotice.current = { scope: noticeScope, key: terminalKey };
+    if (previous.scope !== noticeScope || !terminalKey || previous.key === terminalKey) return;
+    const reason = session.stopped;
+    if (reason === "ended" && session.seat) toast({ tone: "info", text: `${session.seat.hostName}'s call ended` });
+    else if (reason && ["left", "seat_removed", "seat_closed", "replaced", "outdated"].includes(reason)) toast({ tone: "info", text: STOPPED[reason] });
+  }, [noticeScope, terminalKey, session.stopped, session.seat?.hostName, toast]);
   const [postCall, setPostCall] = useState<string | null>(null);
   // Only a call observed live in this workspace may open its review automatically.
   // Restored event history is useful to History, but must not become the startup page.
@@ -252,8 +265,6 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const targetInitialized = useRef(false);
   const [addingApplication, setAddingApplication] = useState(false);
   const [consent, setConsent] = useState(true);
-  const [noCall, setNoCall] = useState(false);
-  const testing = noCall && mode === "interview";
   const [busy, setBusy] = useState(false);
   const [joining, setJoining] = useState(false);
   useWorkspaceCallBusy(busy || joining);
@@ -281,7 +292,8 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const work = useCompanies(tokenSet, shown);
   const [employerId, setEmployerId] = useState("");
   const [agenda, setAgenda] = useState("");
-  const atWork = atWorkMode(mode);
+  const setupMode = atWorkMode(mode) ? "meeting" : "interview";
+  const atWork = setupMode === "meeting";
   const materials = useMaterials(atWork && tokenSet ? employerId : "", shown);
   const [materialIds, setMaterialIds] = useState<string[]>([]);
   const baseResume = useBaseResume(tokenSet, shown);
@@ -290,7 +302,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     if (materials.documents) setMaterialIds(ids => ids.filter(id => materials.documents!.some(d => d.id === id)));
   }, [materials.documents]);
   useEffect(() => { if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, read(LAST_COMPANY))); }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pack = usePackFor(atWork && !running ? employerId : "", mode);
+  const pack = usePackFor(atWork && !running ? employerId : "", setupMode);
   const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
     if (!target || !catalog.applications || !catalog.interviews) return;
@@ -304,7 +316,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     if (interviews.length) setTarget(`job:${interviews[0].job_id}`);
     else if (catalog.applications?.length) setTarget(`job:${catalog.applications[0].id}`);
   }, [catalog.applications, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (preset) { setMode("interview"); setNoCall(false); setTarget(preset.target); } }, [preset]);
+  useEffect(() => { if (preset) { setMode("interview"); setTarget(preset.target); } }, [preset]);
   const interview = target.startsWith("interview:") ? catalog.interviews?.find(i => `interview:${i.id}` === target) : undefined;
   const application = target.startsWith("job:") ? catalog.applications?.find(a => `job:${a.id}` === target) : interview ? catalog.applications?.find(a => a.id === interview.job_id) : undefined;
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
@@ -326,23 +338,21 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     const planned = guests.map(g => ({ ...g }));
     const beforeId = session.sessionId;
     try {
-      const picked = mode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
+      const picked = setupMode === "interview" ? parseTarget(target, catalog.interviews ?? []) : { job_id: null, interview_id: null };
       const company = atWork && employerId ? employerId : null;
       if (company) write(LAST_COMPANY, company);
       if (mini.mode !== "full" && !await mini.change("full")) return;
       await prepareForRealCall();
-      await api.startSession({ mode, ...picked, meeting_title: meetingTitle, employer_id: company, agenda: mode === "meeting" ? agenda.trim() || null : null,
-        material_ids: company ? materialIds : [], platform: testing ? "test" : "other", store_transcript: consent, answer_style: answerStyle, spoken_language: spokenLanguage, no_call: testing });
+      await api.startSession({ mode: setupMode, ...picked, meeting_title: meetingTitle, employer_id: company, agenda: setupMode === "meeting" ? agenda.trim() || null : null,
+        material_ids: company ? materialIds : [], platform: "other", store_transcript: consent, answer_style: answerStyle, spoken_language: spokenLanguage, no_call: false });
       if (planned.length) setPendingInvites({ beforeId, scope, guests: planned });
-      if (testing) { const value = await api.getSettings(); await api.setCodingPrefs("assessment", value.settings.coding_language ?? ""); }
     } catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   };
   const endOther = async () => { setMessage(null); try { setMessage(`${await api.endOtherSession()}. You can start now.`); } catch (error) { setMessage(String(error)); } };
   const employer = work.employers?.find(e => e.id === employerId);
   const forWhat = atWork ? employer?.name ?? "No company" : application ? `${application.company} · ${application.role}` : "Base resume";
-  const stopped = session.stopped && session.stopped !== "ended" && session.stopped !== "left" && !running ? session.stopped : null;
-  const watchedEnded = session.seat && !running && session.stopped === "ended" ? session.seat.hostName : null;
+  const stopped = session.stopped && ["unauthorized", "session_active", "no_minutes"].includes(session.stopped) && !running ? session.stopped : null;
   if (session.seat && running) return <Watching s={session} dispatch={dispatch ?? (() => undefined)} />;
   if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
   const disabled = busy || joining;
@@ -356,19 +366,18 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             {mini.mode === "toolbar" && inviteCount > 0 ? <Button className="window-mode-toggle" variant="ghost" aria-label={`Assist a call · ${inviteCount} invitation${inviteCount === 1 ? "" : "s"}`} title="Invitations to assist" onClick={async () => { if (await mini.change("full")) setJoinOpen(true); }} icon={<Icon name="users" size={16} />} /> : <Button className="window-mode-toggle" variant="ghost" disabled={mini.mode === "dot"} aria-label="Expand setup" title="Expand window" onClick={() => void mini.change("full")} icon={<Icon name="chevronDown" size={16} />} />}
       <RubyLauncher className="session-compact-ruby" label={mini.mode === "dot" ? "Expand compact toolbar" : "Expand full window"} title={mini.mode === "dot" ? "Hover to open · Drag to move" : "Click to expand · Drag to move"} onOpen={() => void mini.change(mini.mode === "dot" ? "toolbar" : "full")} onDrag={mini.drag} />
       {inviteCount > 0 && <span className="call-compact-invites" aria-label={`${inviteCount} invitations`}>{inviteCount}</span>}
-      {mini.mode === "toolbar" && <><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button>
+      {mini.mode === "toolbar" && <><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button>
         <Button variant="ghost" aria-label="Quick settings" onPointerEnter={compactSettingsHover.onPointerEnter} onPointerLeave={compactSettingsHover.onPointerLeave} onClick={async () => { compactSettingsHover.cancel(); if (await mini.change("full")) { if (openWorkspaceQuickSettings) openWorkspaceQuickSettings(); else changeQuickSettings(true); } }} icon={<Icon name="settings" size={16} />} /></>}
     </header>
     <section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
         <header className="call-design-heading"><div><h1>Start a call</h1><p className="call-design-description">Choose your context. Get guidance when you need it.</p></div><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></header>
         <div className="call-design-body">
-          <SegmentedControl label="Session type" value={testing ? "test" : mode} options={[["interview", "Interview"], ["standup", "Standup"], ["meeting", "Meeting"], ["test", "Online test"]] as const} disabled={disabled} onChange={value => { setNoCall(value === "test"); changeMode(value === "test" ? "interview" : value); }} />
+          <SegmentedControl label="Session type" value={setupMode} options={MODES} disabled={disabled} onChange={changeMode} />
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
             {mini.error && <Banner tone="danger">{mini.error}</Banner>}
             {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
-            {watchedEnded && <Banner tone="info" title={`${watchedEnded}'s call ended`} />}
-            {stopped && <Banner tone={stopped === "outdated" ? "info" : "warning"} title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
+            {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
             {message && <Banner tone="danger">{message}</Banner>}
           </div>
           <div className="call-setup-fields" aria-label="Call context">
@@ -378,7 +387,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
               <div className="call-row"><span className="call-row-label">Work log</span><span className="call-row-value">{employerId ? "Recent work and decisions" : "Choose a company"}</span><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Update</Button></div>
               <div className="call-row"><span className="call-row-label">Documents</span><span className="call-row-value">{materials.documents?.length ? plural(materials.documents.length, "document") : "Company context"}</span><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Open</Button></div>
               {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
-              {mode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
+              {setupMode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
               {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
             </> : <>
               <div className="call-row call-application-row">
@@ -401,9 +410,9 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
           </div>
           <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
           <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
-          {testing ? <p className="ui-field-hint">Audio off. Type a question or capture your screen.</p> : settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
+          {settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
         </div>
-        <footer className="call-design-footer">{onHistory && <Button variant="ghost" size="sm" onClick={onHistory} disabled={disabled}>Past calls</Button>}<span className="ui-spacer" /><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>{testing ? "Start test" : "Start call"}<Icon name="arrow" size={16} /></Button></footer>
+        <footer className="call-design-footer">{onHistory && <Button variant="ghost" size="sm" onClick={onHistory} disabled={disabled}>Past calls</Button>}<span className="ui-spacer" /><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
       </>}
       {quickSettingsOpen && !openWorkspaceQuickSettings && <div className="call-compact-settings"><WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} /></div>}
       <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
@@ -516,7 +525,7 @@ function Live({
       <Card>
         <div className="form-2">
           <Field label="Mode">
-            <SegmentedControl label="Mode" value={mode} options={MODES} onChange={onMode} />
+            <SegmentedControl label="Mode" value={atWorkMode(mode) ? "meeting" : "interview"} options={MODES} onChange={onMode} />
           </Field>
           <Field label="Detailed answer" hint="Changes apply to the next answers.">
             <SegmentedControl label="Detailed answer" value={answerStyle} options={ANSWER_STYLES} onChange={onAnswerStyle} />

@@ -70,6 +70,7 @@ class InviteBody(BaseModel):
 class SeatPatch(BaseModel):
     admit: Literal[True] | None = None
     capabilities: list[str] | None = Field(default=None, max_length=8)
+    expected_capabilities: list[str] | None = Field(default=None, max_length=8)
 
     @field_validator("capabilities")
     @classmethod
@@ -307,6 +308,12 @@ async def change_seat(
         status = _status(row)
         if status not in seats.OPEN:
             raise HTTPException(409, f"the seat is {status}")
+        if body.expected_capabilities is not None and set(body.expected_capabilities) != set(
+            row["capabilities"]
+        ):
+            raise HTTPException(
+                409, "Assistant permissions changed. Review the current access and try again."
+            )
         sets: list[str] = ["rev = rev + 1"]
         args: list[Any] = [seat_id]
         if body.admit and status != "admitted":  # admitted already: a retry, mirrored again
@@ -333,7 +340,7 @@ async def change_seat(
     await _publish(svc, session_id, _record(row))
     if had_voice and "voice" not in row["capabilities"]:
         await _drop_voice(svc, session_id, seat_id)
-    if had_screen and had_screen != SCREEN.intersection(row["capabilities"]):
+    if "device.view" in had_screen and "device.view" not in row["capabilities"]:
         await _drop_screen(svc, session_id, seat_id)
     return _host_view(row)
 
@@ -366,13 +373,16 @@ async def remove_seat(session_id: UUID, seat_id: UUID, svc: SvcDep, user: UserDe
 
 
 @router.post("/sessions/{session_id}/voice")
-async def host_voice(session_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+async def host_voice(
+    session_id: UUID, svc: SvcDep, user: UserDep, device_id: UUID | None = None
+) -> dict[str, Any]:
     """The host's way into the call's voice room: listen only. 404 when voice is not set up."""
     await _hosts_live_call(svc, user, session_id)
     lk = svc.settings.livekit()
     if lk is None:
         raise HTTPException(404, "Voice is not set up on this server.")
-    return _voice(lk, session_id, livekit.HOST, "Host", guest=False)
+    identity = f"host:{device_id}" if device_id else livekit.HOST
+    return _voice(lk, session_id, identity, "Host", guest=False)
 
 
 def _screen(lk: livekit.LiveKit, room: str, identity: str, token: str) -> dict[str, Any]:
@@ -488,8 +498,8 @@ async def decline(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, 
 
 @router.post("/seats/{seat_id}/screen")
 async def guest_screen(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
-    """A guest's way into the call's screen room: watch the host's screen, and with
-    `device.control` also send their mouse and keys to the host. Only for an admitted seat
+    """A guest's way into the call's screen room: viewers send quality/consent requests;
+    input additionally needs device.control and explicit host approval. Only for an admitted seat
     with `device.view`, on a call that is live."""
     lk = svc.settings.livekit()
     if lk is None:
@@ -511,5 +521,7 @@ async def guest_screen(seat_id: UUID, svc: SvcDep, account: AccountDep) -> dict[
     room = livekit.screen_room_of(row["session_id"])
     identity = livekit.guest_identity(seat_id)
     control = "device.control" in row["capabilities"]
-    token = lk.token(room, identity, row["guest_name"], subscribe=True, data=control)
-    return _screen(lk, room, identity, token) | {"control": control}
+    # Viewers send bounded quality/control requests; only the host can authorize input.
+    # Keeping the same room for control-only changes preserves the pending consent request.
+    token = lk.token(room, identity, row["guest_name"], subscribe=True, data=True)
+    return _screen(lk, room, identity, token) | {"control": control, "can_request_control": True}

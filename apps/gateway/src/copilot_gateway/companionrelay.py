@@ -92,6 +92,8 @@ class CompanionRelay:
                     "session_id": sid,
                     "attachment_id": aid,
                     "audio_source": "desktop",
+                    "sharing": state.get("sharing", "1") != "0",
+                    "sharing_control": True,
                     "profile_id": record.profile_id,
                     "spoken_language": state.get("spoken_language") or "en",
                     "language_switching": state.get("language_switching") == "1",
@@ -109,6 +111,7 @@ class CompanionRelay:
             receive = asyncio.create_task(ws.receive_text())
             last_command = 0.0
             last_host: bool | None = None
+            last_sharing: bool | None = None
             while True:
                 state = await store.load_state(sid)
                 if state.get("status") == "ended":
@@ -120,11 +123,18 @@ class CompanionRelay:
                 if principal.expires_at is not None and principal.expires_at <= time.time():
                     raise AuthError("Access token expired")
                 host = state.get("status") == "active" and bool(await store.lease_holder(sid))
-                if host != last_host:
+                sharing = state.get("sharing", "1") != "0"
+                if host != last_host or sharing != last_sharing:
                     await send(
-                        {"type": "companion.host", "connected": host, "audio_source": "desktop"}
+                        {
+                            "type": "companion.host",
+                            "connected": host,
+                            "audio_source": "desktop",
+                            "sharing": sharing,
+                        }
                     )
                     last_host = host
+                    last_sharing = sharing
                 if receive.done():
                     raw = receive.result()
                     receive = asyncio.create_task(ws.receive_text())
@@ -196,7 +206,7 @@ class CompanionRelay:
                 for cursor, data in events:
                     event_cursor = cursor
                     message = json.loads(data)
-                    if message.get("type") in FORWARDED:
+                    if message.get("type") in FORWARDED or message.get("type") == "sharing":
                         await send(message)
                 for cursor, fields in results:
                     result_cursor = cursor

@@ -433,6 +433,9 @@ export const api = {
   openMainSettings: () => invoke<void>("open_main_settings"),
   /** Return from the overlay to the main Call screen. */
   openMainCall: () => invoke<void>("open_main_call"),
+  /** Show one session-bound consent prompt without changing saved window preferences. */
+  screenControlPrompt: (sessionId: string, requestId: string, active: boolean, durationMs: number) =>
+    invoke<void>("screen_control_prompt", { sessionId, requestId, active, durationMs }),
   /** Minimize the overlay (it gets a taskbar button until it is restored). */
   minimizeOverlay: () => invoke<void>("minimize_overlay"),
   /** Quit the whole app. */
@@ -971,8 +974,8 @@ export const rest = {
   /** The call's seats, and whether this server can carry guests' voice and the host's screen. */
   seatsOf: (sessionId: string) => call<{ seats: HostSeat[]; voice?: boolean; screen?: boolean }>("GET", `/sessions/${sessionId}/seats`),
   admitGuest: (sessionId: string, seatId: string) => call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { admit: true }),
-  setGuestCapabilities: (sessionId: string, seatId: string, capabilities: string[]) =>
-    call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities }),
+  setGuestCapabilities: (sessionId: string, seatId: string, capabilities: string[], expectedCapabilities?: string[]) =>
+    call<HostSeat>("PATCH", `/sessions/${sessionId}/seats/${seatId}`, { capabilities, ...(expectedCapabilities ? { expected_capabilities: expectedCapabilities } : {}) }),
   removeGuest: (sessionId: string, seatId: string) => call<null>("DELETE", `/sessions/${sessionId}/seats/${seatId}`),
   hostVoice: (sessionId: string) => call<{ url: string; token: string }>("POST", `/sessions/${sessionId}/voice`),
   guestVoice: (seatId: string) => call<{ url: string; token: string }>("POST", `/seats/${seatId}/voice`),

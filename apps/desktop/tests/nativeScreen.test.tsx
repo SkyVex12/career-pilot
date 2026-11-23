@@ -55,7 +55,9 @@ describe("native screen stream ownership", () => {
     const capture = captureNativeScreen();
     fireEvent.click(await screen.findByRole("button", { name: "Main display View and remote control" }));
     const [local] = await capture;
-    expect(nativeShares.get(local.mediaStreamTrack)).toEqual(source);
+    expect(nativeShares.get(local.mediaStreamTrack)).toMatchObject(source);
+    await nativeShares.get(local.mediaStreamTrack)?.setQuality?.(2160);
+    expect(invoke).toHaveBeenCalledWith("native_screen_quality", { token: 42, height: 2160 });
     local.stop();
     window.dispatchEvent(new Event("pagehide"));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("native_screen_stop", { token: 42 }));

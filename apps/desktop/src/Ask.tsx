@@ -20,6 +20,7 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   const [scope, setScope] = useState<AskScope>({ kind: "auto" });
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [loadingSource, setLoadingSource] = useState(false);
@@ -31,21 +32,31 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   const draftElement = useRef<HTMLTextAreaElement>(null);
   const scrollPosition = useRef<{ element: Element; top: number } | null>(null);
   const alive = useRef(true);
-  const generation = useRef(0), sourceGeneration = useRef(0);
+  const generation = useRef(0), sourceGeneration = useRef(0), sending = useRef(false);
   const valid = (ticket: number) => alive.current && generation.current === ticket;
-  const invalidate = () => { generation.current++; sourceGeneration.current++; setBusy(false); setDeleting(false); setLoadingConversation(false); setLoadingSource(false); };
+  const invalidate = () => { generation.current++; sourceGeneration.current++; sending.current = false; setBusy(false); setUpdateError(null); setDeleting(false); setLoadingConversation(false); setLoadingSource(false); };
   const currentRef = useRef(current); currentRef.current = current;
   const drafts = useRef(new Map<string, string>());
-  const [pendingRequest, setPendingRequest] = useState<{ id: string; question: string } | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<{ id: string; question: string; scope: AskScope } | null>(null);
   const reload = () => { const ticket = generation.current; return request<{ conversations: Conversation[] }>("GET", base).then(data => { if (valid(ticket)) setConversations(data.conversations); }); };
   useEffect(() => { alive.current = true; void reload().catch(e => setError(String(e))); return () => { alive.current = false; generation.current++; sourceGeneration.current++; for (const m of currentRef.current?.messages ?? []) if (m.status === "pending") void request("POST", `${base}/${currentRef.current!.id}/messages/${m.id}/cancel`).catch(() => {}); }; }, []);
   useEffect(() => { if (entry) { invalidate(); drafts.current.set(current?.id ?? "new", draft); setCurrent(null); setScope(entry.scope); setDraft(""); setSource(null); setPendingRequest(null); } }, [entry?.n]);
   const pending = current?.messages?.some(m => m.status === "pending");
   useEffect(() => {
     if (!active || !current?.id || !pending) return;
-    const ticket = generation.current; let stopped = false;
-    const timer = setInterval(() => { request<Conversation>("GET", `${base}/${current.id}`).then(value => { if (!stopped && valid(ticket)) setCurrent(value); }).catch(e => { if (!stopped && valid(ticket)) setError(String(e)); }); }, 1000);
-    return () => { stopped = true; clearInterval(timer); };
+    const ticket = generation.current; let stopped = false, timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const value = await request<Conversation>("GET", `${base}/${current.id}`);
+        if (!stopped && valid(ticket)) { setCurrent(value); setUpdateError(null); }
+      } catch (e) {
+        if (!stopped && valid(ticket)) setUpdateError(`Your question is saved. Reconnecting to the answer… ${String(e)}`);
+      } finally {
+        if (!stopped && valid(ticket)) timer = setTimeout(() => void poll(), 1000);
+      }
+    };
+    void poll();
+    return () => { stopped = true; clearTimeout(timer); };
   }, [active, current?.id, pending]);
   useEffect(() => {
     let stopped = false; setOptions([]);
@@ -65,25 +76,29 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   const needsContext = !["auto", "all", "general"].includes(scope.kind) && !scope.id;
   const invalidDates = !!(scope.from_date && scope.to_date && scope.from_date > scope.to_date);
   const send = async () => {
-    if (busy || pending || loadingConversation || needsContext || invalidDates || !draft.trim()) return;
+    if (sending.current || busy || pending || loadingConversation || needsContext || invalidDates || !draft.trim()) return;
     const ticket = generation.current;
+    sending.current = true;
     setBusy(true); setError(null);
-    const attempt = pendingRequest?.question === draft ? pendingRequest : { id: crypto.randomUUID(), question: draft };
+    const sameScope = pendingRequest && ["kind", "id", "from_date", "to_date"].every(key => pendingRequest.scope[key as keyof AskScope] === scope[key as keyof AskScope]);
+    const attempt = pendingRequest?.question === draft && sameScope ? pendingRequest : { id: crypto.randomUUID(), question: draft, scope: { ...scope } };
     setPendingRequest(attempt);
     try {
       let conversation = current;
       if (!conversation) { conversation = await request<Conversation>("POST", base, { title: draft.slice(0, 80), scope }); if (!valid(ticket)) return; setCurrent(conversation); }
-      const message = await request<Message>("POST", `${base}/${conversation.id}/messages`, { request_id: attempt.id, question: attempt.question, scope });
+      const message = await request<Message>("POST", `${base}/${conversation.id}/messages`, { request_id: attempt.id, question: attempt.question, scope: attempt.scope });
       if (!valid(ticket)) return;
-      const updated = await request<Conversation>("GET", `${base}/${conversation.id}`);
-      if (!valid(ticket)) return;
-      setCurrent({ ...updated, messages: updated.messages ?? [message] }); setDraft(value => value === attempt.question ? "" : value); drafts.current.delete(conversation.id); setPendingRequest(null); void reload();
-    } catch (e) { if (valid(ticket)) setError(String(e)); } finally { if (valid(ticket)) setBusy(false); }
+      // The POST receipt is already persisted. Publish it before another network read so
+      // a brief outage cannot hide an accepted question or stop answer polling.
+      setCurrent({ ...conversation, scope: attempt.scope, messages: [...(conversation.messages ?? []).filter(m => m.id !== message.id), message] });
+      setDraft(value => value === attempt.question ? "" : value); drafts.current.delete(conversation.id); setPendingRequest(null);
+      void reload().catch(() => {});
+    } catch (e) { if (valid(ticket)) setError(String(e)); } finally { if (valid(ticket)) { sending.current = false; setBusy(false); } }
   };
   const action = async (message: Message, command: "cancel" | "retry") => {
     if (!current) return;
     const ticket = generation.current, id = current.id;
-    try { await request("POST", `${base}/${id}/messages/${message.id}/${command}`); if (!valid(ticket)) return; const value = await request<Conversation>("GET", `${base}/${id}`); if (!valid(ticket)) return; setCurrent(value); if (command === "cancel") setDraft(value => value || message.question); } catch (e) { if (valid(ticket)) setError(String(e)); }
+    try { const value = await request<Message>("POST", `${base}/${id}/messages/${message.id}/${command}`); if (!valid(ticket)) return; setCurrent(previous => previous?.id === id ? { ...previous, messages: previous.messages?.map(m => m.id === value.id ? value : m) } : previous); setError(null); if (command === "cancel") setDraft(value => value || message.question); } catch (e) { if (valid(ticket)) setError(String(e)); }
   };
   const inspect = async (item: Source) => {
     setShowCall(false);
@@ -100,6 +115,11 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   };
   const callId = source?.kind === "transcript" ? source.target_id ?? source.id.split(":")[0] : null;
   const sourceParts = source?.id.split(":") ?? [];
+  const hasMessages = !!current?.messages?.length;
+  const composer = <form className="ask-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
+    <Field label="Ask a question"><Textarea ref={draftElement} dir="auto" value={draft} maxLength={8000} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} placeholder="Ask about your work…" rows={2} /></Field>
+    <div className="ask-composer-footer"><span className="ui-field-hint">{needsContext ? "Choose a source in Context to continue." : invalidDates ? "Check the date range in Context." : pending ? "Your answer is being prepared." : "Ctrl / ⌘ + Enter to ask"}</span><Button type="submit" variant="primary" loading={busy} disabled={pending || loadingConversation || !draft.trim() || needsContext || invalidDates}>Ask</Button></div>
+  </form>;
   return <div className="ask-workspace feature-page">
     <header className="feature-heading">
       <div><h2>Ask about your work</h2><p>Answers grounded in your calls, documents, and experience.</p></div>
@@ -110,7 +130,8 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
       <Button onClick={() => void choose("")}>New</Button>
       {current && <Button variant="danger-ghost" size="sm" onClick={() => setDeleting(true)}>Delete conversation</Button>}
     </div>
-    {error && <Banner tone="danger" title="Could not complete your request">{error}</Banner>}
+    {error && <Banner tone="danger" title="Could not complete your request" action={scope.id ? <Button size="sm" onClick={() => { setScope({ kind: "auto" }); setPendingRequest(null); setError(null); }}>Use profile context</Button> : undefined}>{error}</Banner>}
+    {updateError && <Banner tone="warning" title="Answer connection interrupted">{updateError}</Banner>}
     {loadingSource && <p className="feature-loading" role="status"><Spinner size="sm" label={null} /> Opening source…</p>}
     {source && <Card className="ask-source" title={source.label} actions={<Button size="sm" onClick={() => { sourceGeneration.current++; setSource(null); requestAnimationFrame(() => { const saved = scrollPosition.current; if (saved) saved.element.scrollTop = saved.top; }); }}>Back to conversation</Button>}>
       {source.start_ms !== undefined && <p className="ui-field-hint">Transcript at {Math.floor(source.start_ms / 1000)} seconds</p>}
@@ -118,7 +139,7 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
       {callId && !showCall && <Button onClick={() => setShowCall(true)}>Open saved call at this passage</Button>}
       {callId && showCall && <PageHeadingActive.Provider value={false}><Suspense fallback={<SkeletonList rows={2} label="Loading saved call" />}><SavedCall sessionId={callId} transcriptFocus={{sessionId:callId,startMs:source.start_ms,channel:sourceParts[1] === "them" || sourceParts[1] === "me" ? sourceParts[1] : undefined,segId:Number(sourceParts[2])}} onClose={() => setShowCall(false)} onDeleted={() => { setShowCall(false); setSource(null); setError("The saved call was deleted. This citation is no longer available."); }} /></Suspense></PageHeadingActive.Provider>}
     </Card>}
-    <div ref={conversationElement} hidden={source !== null} className="ask-conversation">
+    <div ref={conversationElement} hidden={source !== null} className={`ask-conversation${hasMessages ? "" : " ask-conversation-empty"}`}>
       <details className="ask-context feature-disclosure">
         <summary><span>Context</span><span className="feature-summary-meta">{scopeLabels[scope.kind]}{scope.id ? ` · ${options.find(o => o.id === scope.id)?.label ?? "Selected source"}` : ""}</span></summary>
         <div className="ui-stack">
@@ -128,6 +149,7 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
           <Field label="To date" optional error={invalidDates ? "Choose a date on or after the start date." : null}><Input type="date" min={scope.from_date} value={scope.to_date ?? ""} onChange={e => setScope({ ...scope, to_date: e.target.value || undefined })} /></Field>
         </div>
       </details>
+      {!hasMessages && composer}
       {loadingConversation ? <SkeletonList rows={3} label="Loading conversation" /> : <div aria-live="polite" aria-relevant="additions text" className="ask-messages">
         {!current?.messages?.length && <div className="ask-empty">
           <h3>What would you like to work through?</h3><p>Start with a question, or choose one below.</p>
@@ -143,10 +165,7 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
           </div>
         </article>)}
       </div>}
-      <form className="ask-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-        <Field label="Ask a question"><Textarea ref={draftElement} dir="auto" value={draft} maxLength={8000} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} placeholder="Ask about your work…" rows={3} /></Field>
-        <div className="ask-composer-footer"><span className="ui-field-hint">{needsContext ? "Choose a source in Context to continue." : invalidDates ? "Check the date range in Context." : pending ? "Your answer is being prepared." : "Ctrl / ⌘ + Enter to ask"}</span><Button type="submit" variant="primary" loading={busy} disabled={pending || loadingConversation || !draft.trim() || needsContext || invalidDates}>Ask</Button></div>
-      </form>
+      {hasMessages && composer}
       <p className="feature-footnote">{current?.retrieval_notice ?? "Answers use available information in this profile. Public web search is not connected."}</p>
       {current?.retention_notice && <p className="feature-footnote">{current.retention_notice}</p>}
     </div>

@@ -52,7 +52,7 @@ describe("assistant remote desktop workspace", () => {
     await act(() => rooms[0].emit("trackSubscribed", track, {}, { identity: "host" }));
     expect(screen.getByText("Viewing")).toBeVisible();
     expect(track.attach).toHaveBeenCalledWith(document.querySelector("video"));
-    expect(screen.getByRole("button", { name: "Take control" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request control" })).toBeEnabled();
   });
 
   it("moves one receiver between the main window and overlay and releases it on permission loss", async () => {
@@ -74,9 +74,14 @@ describe("assistant remote desktop workspace", () => {
     expect(screen.getAllByText("Screen access is off")).toHaveLength(2);
   });
 
-  it("reopens with new permissions and ignores stale room subscriptions", async () => {
+  it("keeps its receiver through control approval and ignores stale subscriptions after screen access is restored", async () => {
     const view = render(<GuestScreenView s={session(["view", "device.view"])} />);
     await waitFor(() => expect(rooms).toHaveLength(1));
+    view.rerender(<GuestScreenView s={session()} />);
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].disconnect).not.toHaveBeenCalled();
+    view.rerender(<GuestScreenView s={session(["view", "note"])} />);
+    await waitFor(() => expect(rooms[0].disconnect).toHaveBeenCalled());
     view.rerender(<GuestScreenView s={session()} />);
     await waitFor(() => expect(rooms).toHaveLength(2));
     const old = videoTrack(); await act(() => rooms[0].emit("trackSubscribed", old, {}, { identity: "host" }));
@@ -88,10 +93,13 @@ describe("assistant remote desktop workspace", () => {
   it("keeps release controls inside full screen and releases held keys on blur", async () => {
     render(<GuestScreenView s={session()} />);
     await waitFor(() => expect(rooms).toHaveLength(1));
-    await act(() => {
-      rooms[0].emit("trackSubscribed", videoTrack(), {}, { identity: "host" });
-      rooms[0].emit("dataReceived", new TextEncoder().encode(JSON.stringify({ on: true })), { identity: "host" }, 0, TOPIC.control);
-    });
+    await act(() => rooms[0].emit("trackSubscribed", videoTrack(), {}, { identity: "host" }));
+    await userEvent.click(screen.getByRole("button", { name: "Request control" }));
+    const requestPacket = (rooms[0].localParticipant.publishData.mock.calls as unknown as [Uint8Array, { topic: string }][]).find(([, options]) => options.topic === TOPIC.ask);
+    expect(requestPacket).toBeDefined();
+    const request = JSON.parse(new TextDecoder().decode(requestPacket![0]));
+    expect(screen.queryByRole("button", { name: "Release control" })).toBeNull();
+    await act(() => rooms[0].emit("dataReceived", new TextEncoder().encode(JSON.stringify({ on: true, requestId: request.requestId })), { identity: "host" }, 0, TOPIC.control));
     const desktop = screen.getByRole("region", { name: "Alex's screen" });
     Object.defineProperty(desktop, "requestFullscreen", { value: vi.fn(async () => undefined), configurable: true });
     await userEvent.click(screen.getByRole("button", { name: "Full screen" }));

@@ -270,7 +270,15 @@ async def test_control_needs_view(api: Api, voice_on: None) -> None:
     assert r.status_code == 422
 
 
-async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on: None) -> None:
+async def test_the_host_shares_the_screen_and_a_guest_watches(
+    api: Api, voice_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dropped: list[uuid.UUID] = []
+
+    async def drop_screen(_svc: object, _session: uuid.UUID, seat: uuid.UUID) -> None:
+        dropped.append(seat)
+
+    monkeypatch.setattr("copilot_api.routes.seats._drop_screen", drop_screen)
     host, hh, _ = await account(api, "Alex")
     _, gh, guest_email = await account(api, "Blair")
     _, oh, other_email = await account(api, "Other")
@@ -290,16 +298,17 @@ async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on
     assert video["canPublishSources"] == ["screen_share"]
     assert video["canPublishData"] is True
 
-    # A guest who may watch: subscribe only, no data.
+    # A viewer may send quality and consent requests, but has no input grant.
     seat = mine["Blair"]["seat_id"]
     r = await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)
     assert r.status_code == 200, r.text
     assert r.json()["control"] is False
+    assert r.json()["can_request_control"] is True
     video = lk_claims(r.json()["token"])["video"]
     assert (video["canPublish"], video["canSubscribe"], video["canPublishData"]) == (
         False,
         True,
-        False,
+        True,
     )
 
     # With control: data too, still nothing published.
@@ -311,6 +320,16 @@ async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on
     assert r.status_code == 200, r.text
     r = await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)
     assert r.json()["control"] is True
+    assert dropped == []  # Approval must preserve the viewer and pending consent request.
+    r = await api.client.patch(
+        f"/v1/sessions/{sid}/seats/{seat}",
+        headers=hh,
+        json={"capabilities": ["view", "device.view"]},
+    )
+    assert r.status_code == 200
+    assert dropped == []  # Revocation is enforced by the host input gate without a room bounce.
+    r = await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)
+    assert r.json()["control"] is False
     video = lk_claims(r.json()["token"])["video"]
     assert (video["canPublish"], video["canPublishData"]) == (False, True)
 
@@ -323,5 +342,42 @@ async def test_the_host_shares_the_screen_and_a_guest_watches(api: Api, voice_on
     )
     assert r.status_code == 200
     assert (await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)).status_code == 403
+    # An approval based on stale viewer permissions cannot restore revoked screen access.
+    r = await api.client.patch(
+        f"/v1/sessions/{sid}/seats/{seat}",
+        headers=hh,
+        json={
+            "capabilities": ["view", "device.view", "device.control"],
+            "expected_capabilities": ["view", "device.view"],
+        },
+    )
+    assert r.status_code == 409
+    assert "permissions changed" in r.json()["detail"]
+    assert (await api.client.post(f"/v1/seats/{seat}/screen", headers=gh)).status_code == 403
+    assert dropped == [uuid.UUID(seat)]
     await api.svc.valkey.hset(keys.sess_state(sid), "status", "ended")
     assert (await api.client.post(f"/v1/sessions/{sid}/screen", headers=hh)).status_code == 409
+
+
+async def test_mobile_host_voice_does_not_replace_desktop_and_is_receive_only(
+    api: Api, voice_on: None
+) -> None:
+    host, hh, _ = await account(api, "Mobile host")
+    _, other, _ = await account(api, "Unrelated")
+    sid = await live_call(api, host)
+    device_id = uuid.uuid4()
+    desktop = await api.client.post(f"/v1/sessions/{sid}/voice", headers=hh)
+    mobile = await api.client.post(f"/v1/sessions/{sid}/voice?device_id={device_id}", headers=hh)
+    assert desktop.status_code == mobile.status_code == 200
+    assert desktop.json()["identity"] == "host"
+    assert mobile.json()["identity"] == f"host:{device_id}"
+    video = lk_claims(mobile.json()["token"])["video"]
+    assert video["canSubscribe"] is True
+    assert video["canPublish"] is False
+    assert video["canPublishData"] is False
+    assert (
+        await api.client.post(f"/v1/sessions/{sid}/voice?device_id={device_id}", headers=other)
+    ).status_code == 404
+    assert (
+        await api.client.post(f"/v1/sessions/{sid}/voice?device_id=invalid", headers=hh)
+    ).status_code == 422

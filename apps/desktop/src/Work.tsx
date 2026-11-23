@@ -84,24 +84,6 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
     }
   };
 
-  if (error && !employers) {
-    return (
-      <>
-        <PageHeader title="Work context" />
-        <Banner tone="danger" title="Could not load your companies" action={<Button size="sm" onClick={load}>Retry</Button>}>
-          {error}
-        </Banner>
-      </>
-    );
-  }
-  if (!employers) {
-    return (
-      <>
-        <PageHeader title="Work context" />
-        <SkeletonList rows={3} label="Loading companies" />
-      </>
-    );
-  }
   return (
     <div className="work-workspace feature-page">
       <PageHeader
@@ -109,7 +91,7 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
         actions={
           <>
             <Button variant={asking ? "ghost" : "primary"} onClick={() => { setAsking(v => !v); setAskOpened(true); }}>{asking ? "Back to work context" : "Ask a question"}</Button>
-            {!asking && employers.length > 0 && (
+            {!asking && !!employers?.length && (
               <Button variant="secondary" onClick={() => setForm("add")}>
                 + Add company
               </Button>
@@ -131,9 +113,10 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
       />
       {askOpened && <div hidden={!asking}><Ask active={active && asking} entry={askEntry} /></div>}
       <div hidden={asking}>
-      {error && <Banner tone="danger" title="Could not refresh your companies" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
-      <details className="work-personal-context feature-disclosure"><summary><span>Context from my AI</span><span className="work-personal-caption">Bring a private brief into your work</span></summary><PersonalAI /></details>
-      {employers.length === 0 ? (
+      {!employers && !error && <SkeletonList rows={3} label="Loading companies" />}
+      {error && <Banner tone="danger" title={employers ? "Could not refresh your companies" : "Could not load your companies"} action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
+      {employers && <details className="work-personal-context feature-disclosure"><summary><span>Context from my AI</span><span className="work-personal-caption">Bring a private brief into your work</span></summary><PersonalAI /></details>}
+      {!employers ? null : employers.length === 0 ? (
         <EmptyState
           icon={<Icon name="work" size={28} />}
           title="Add the company you work at"

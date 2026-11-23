@@ -25,7 +25,7 @@
 .ask-workspace .ask-context { margin: 0; border-top: 0; padding-top: 0; }
 .ask-workspace .ask-context > .ui-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; padding: 14px; }
 .ask-context .ui-field { min-width: 0; margin: 0; }
-.ask-workspace .ask-empty { padding: 26px 0 22px; text-align: left; }
+.ask-workspace .ask-empty { padding: 8px 0 4px; text-align: left; }
 .ask-workspace .ask-empty h3 { font-size: 16px; font-weight: 500; }
 .ask-workspace .ask-prompts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }
 .ask-workspace .ask-prompts .ui-btn { min-height: 62px; padding: 11px 13px; text-align: left; justify-content: flex-start; font-size: 12px; line-height: 1.5; background: var(--surface-2); border-color: var(--border); }
@@ -40,7 +40,7 @@
 .ask-citations { display: grid; gap: 7px; padding-top: 12px; border-top: 1px solid var(--border); }
 .ask-citations .ui-btn { max-width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .ask-workspace .ask-composer { margin-top: 16px; border-color: var(--border-strong); padding: 14px; }
-.ask-workspace .ask-composer textarea { min-height: 88px; line-height: 1.65; }
+.ask-workspace .ask-composer textarea { min-height: 64px; line-height: 1.65; }
 .ask-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ask-workspace .ask-composer-footer .ui-field-hint { margin: 0; font-size: 11px; }
 .ask-composer-footer .ui-btn { flex: none; min-width: 82px; }
