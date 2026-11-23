@@ -43,7 +43,11 @@ describe("assistant remote desktop workspace", () => {
 
   it("connects on the main call page and presents the host video without opening another window", async () => {
     render(<Watching s={session()} dispatch={() => undefined} />);
-    expect(await screen.findByText("Waiting for Alex to share")).toBeVisible();
+    // The waiting heading also exists before the token request creates a receiver.
+    await waitFor(() => expect(rooms).toHaveLength(1));
+    expect(rooms[0].connect).toHaveBeenCalledWith("wss://example", "screen-token", { autoSubscribe: true });
+    expect(await screen.findByText("Their shared display will appear here automatically.")).toBeVisible();
+    expect(screen.getByText("Waiting for Alex to share")).toBeVisible();
     const track = videoTrack();
     await act(() => rooms[0].emit("trackSubscribed", track, {}, { identity: "host" }));
     expect(screen.getByText("Viewing")).toBeVisible();
