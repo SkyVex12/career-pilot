@@ -24,6 +24,10 @@ on:
         description: Build an installable development-signed Android preview
         type: boolean
         default: false
+      http_test:
+        description: Use the separate HTTP/WS Test APK for native_apk (manual testing only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -80,11 +84,25 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
       - name: Build bundled preview APK (development signing key)
+        if: github.event_name != 'workflow_dispatch' || !inputs.http_test
         run: cd android && bash ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'workflow_dispatch' || !inputs.http_test
         with:
           name: career-pilot-android-preview
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build bundled HTTP Test APK for phones and LDPlayer (development signing key)
+        if: github.event_name == 'workflow_dispatch' && inputs.http_test
+        env:
+          EXPO_PUBLIC_MOBILE_HTTP_TEST: "true"
+        run: cd android && bash ./gradlew assembleHttpTest -PreactNativeArchitectures=arm64-v8a,x86_64 --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.http_test
+        with:
+          name: career-pilot-android-http-test
+          path: apps/mobile/android/app/build/outputs/apk/httpTest/app-httpTest.apk
           if-no-files-found: error
           retention-days: 14
 

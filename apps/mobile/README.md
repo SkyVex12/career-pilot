@@ -61,7 +61,7 @@ Official references: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/), [Ex
 
 ## Optional native CI validation
 
-The `mobile` workflow has explicit manual `native_apk` and `ios_simulator` inputs. The iOS job uses the standard `macos-26` ARM64 runner and installed Xcode26.4, installs CocoaPods, compiles a Release simulator app with signing disabled, and uploads a zipped `.app` plus build evidence for fourteen days. It does not publish to a store or install on a phone. [GitHub's runner catalog](https://github.com/actions/runner-images#available-images) and [macOS26 image manifest](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md) list this runner and Xcode26.4.1; [Expo's SDK table](https://docs.expo.dev/versions/latest/) requires Xcode26.4+ for SDK58. Real iPhone installation still requires provisioning/signing.
+The `mobile` workflow has explicit manual `native_apk`, `http_test` and `ios_simulator` inputs. With `native_apk=true`, Android builds the secure preview by default. Selecting `http_test=true` as well builds the separate HTTP Test APK described below. `mobile-v*` tag builds always use the secure preview. The iOS job uses the standard `macos-26` ARM64 runner and installed Xcode26.4, installs CocoaPods, compiles a Release simulator app with signing disabled, and uploads a zipped `.app` plus build evidence for fourteen days. It does not publish to a store or install on a phone. [GitHub's runner catalog](https://github.com/actions/runner-images#available-images) and [macOS26 image manifest](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md) list this runner and Xcode26.4.1; [Expo's SDK table](https://docs.expo.dev/versions/latest/) requires Xcode26.4+ for SDK58. Real iPhone installation still requires provisioning/signing.
 
 Before `mobile.yml` exists on the default branch, the existing `desktop-macos` workflow exposes a manual `mobile_ios=true` bridge that calls the branch's mobile workflow. This mode skips desktop build/publication and passes no release credentials.
 
@@ -70,6 +70,8 @@ On Windows, a long checkout path can exceed Ninja's native object-path limit. Th
 ## Testing a server without HTTPS (Android)
 
 Use the separate **Career Pilot HTTP Test** APK for an HTTP/WS deployment. It installs as `app.careerpilot.mobile.httptest`, alongside the ordinary app, with its own stored sign-in. The APK embeds its JavaScript and needs no Metro server. HTTP sends sign-in and call content unencrypted; use a test account and fictional content.
+
+To build it in GitHub Actions, manually run the **mobile** workflow on the desired branch with both `native_apk=true` and `http_test=true`. Download the **career-pilot-android-http-test** artifact and extract `app-httpTest.apk`. The APK includes `arm64-v8a` and `x86_64` libraries for Android phones and LDPlayer and uses a development signing key. CI disables dotenv loading and scopes `EXPO_PUBLIC_MOBILE_HTTP_TEST=true` to this build step; enter the current server address in the app. Artifacts are retained for fourteen days. The HTTP option has no effect unless `native_apk` is also selected.
 
 Enter the API origin, such as `http://HOST`, and leave the gateway blank to derive `ws://HOST/v1/companion`. A trailing `/v1` on the API field is accepted and normalized. `/v1/session` is the separate phone-microphone transport and is derived automatically. The Stage0 wake URL is a wake/status service, not an API origin. The VM's public IP may change after a restart.
 
