@@ -34,6 +34,8 @@ import {
   needsItem,
   makeScope,
   parseConversation,
+  parseMessage,
+  withMessage,
   parseConversations,
   parseOptions,
   parseSourceDetail,
@@ -61,7 +63,8 @@ const contextChoices = [
   { value: "document", label: "One document" },
   { value: "call", label: "One saved call" },
 ];
-export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
+export type AskEntry = { scope: Scope; n: number };
+export function Ask({ api, visible = true, entry }: { api: Api; visible?: boolean; entry?: AskEntry | null }) {
   const c = useContext(Theme);
   const [list, setList] = useState<Conversation[]>([]),
     [current, setCurrent] = useState<Conversation | null>(null);
@@ -93,6 +96,8 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
     mutation: new RequestScope(),
   }));
   const mutationBusy = useRef(false);
+  const navigation = useRef(0);
+  const drafts = useRef(new Map<string, string>());
   const alive = useRef(true),
     selected = useRef<string | null>(null),
     scroll = useRef<React.ElementRef<typeof ScrollView>>(null),
@@ -132,13 +137,14 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
   }
   async function load(id: string, reset = true) {
     closeSource();
+    if (reset) drafts.current.set(selected.current ?? "new", draft);
     selected.current = id;
     setLoading(true);
     setError("");
     if (reset) {
       setCurrent(null);
       operation.current = null;
-      setDraft("");
+      setDraft(drafts.current.get(id) ?? "");
       atBottom.current = true;
     }
     try {
@@ -163,19 +169,27 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
       if (alive.current && selected.current === id) setLoading(false);
     }
   }
-  function newConversation() {
+  function newConversation(scope: Scope = { kind: "auto" }, restoreDraft = true) {
+    drafts.current.set(selected.current ?? "new", draft);
+    navigation.current++;
+    requests.mutation.invalidate();
+    mutationBusy.current = false;
+    setBusy(false);
     requests.load.invalidate();
     closeSource();
     selected.current = null;
     setCurrent(null);
     operation.current = null;
-    setDraft("");
+    setDraft(restoreDraft ? drafts.current.get("new") ?? "" : "");
     setError("");
     setLoading(false);
-    changeScope({ kind: "auto" });
+    changeScope(scope);
     setPanel(null);
     atBottom.current = true;
   }
+  useEffect(() => {
+    if (entry) newConversation(entry.scope, false);
+  }, [entry?.n]);
   useEffect(() => {
     alive.current = true;
     void refresh();
@@ -184,6 +198,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
     );
     return () => {
       alive.current = false;
+      navigation.current++;
       subscription.remove();
       Object.values(requests).forEach((r) => r.invalidate());
       selected.current = null;
@@ -258,15 +273,19 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
   }, [pending?.id, current?.id, foreground, visible, api]);
   async function send() {
     if (!draft.trim() || mutationBusy.current || pending || loading) return;
+    const ticket = navigation.current;
     mutationBusy.current = true;
     setBusy(true);
     setError("");
     try {
-      const body = operation.current ?? {
+      const scope = makeScope(kind, choice, from, to);
+      const previous = operation.current;
+      const sameScope = previous && JSON.stringify(previous.scope) === JSON.stringify(scope);
+      const body = previous?.question === draft.trim() && sameScope ? previous : {
         request_id: randomUUID(),
         question: draft.trim(),
-        scope: makeScope(kind, choice, from, to),
-        conversationId: current?.id,
+        scope,
+        conversationId: current?.id ?? previous?.conversationId,
       };
       operation.current = body;
       const result = await requests.mutation.run(async (signal) => {
@@ -287,7 +306,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
           selected.current = id;
           setCurrent(conversation);
         }
-        await api.request(
+        const message = parseMessage(await api.request(
           `/ask/conversations/${encodeURIComponent(id)}/messages`,
           {
             request_id: body.request_id,
@@ -297,50 +316,62 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
           "POST",
           true,
           signal,
-        );
-        return id;
+        ));
+        return { id, message };
       });
-      if (result && alive.current) {
+      if (result && alive.current && ticket === navigation.current && selected.current === result.id) {
+        // A successful POST is the durable receipt. Show it now so answer polling
+        // survives a temporarily unavailable conversation read.
+        setCurrent((value) => value?.id === result.id ? withMessage({ ...value, scope: body.scope }, result.message) : value);
         operation.current = null;
+        drafts.current.delete(result.id);
+        drafts.current.delete("new");
         setDraft("");
         atBottom.current = true;
-        await load(result, false);
         void refresh();
       }
     } catch (e) {
-      if (alive.current) setError(String(e));
+      if (alive.current && ticket === navigation.current) setError(String(e));
     } finally {
-      mutationBusy.current = false;
-      if (alive.current) setBusy(false);
+      if (ticket === navigation.current) {
+        mutationBusy.current = false;
+        if (alive.current) setBusy(false);
+      }
     }
   }
   async function control(message: Message, action: "cancel" | "retry") {
     if (!current || mutationBusy.current) return;
+    const ticket = navigation.current;
     mutationBusy.current = true;
     const id = current.id;
     setBusy(true);
     setError("");
     try {
-      const ok = await requests.mutation.run(async (signal) => {
-        await api.request(
+      const receipt = await requests.mutation.run(async (signal) => {
+        return parseMessage(await api.request(
           `/ask/conversations/${encodeURIComponent(id)}/messages/${encodeURIComponent(message.id)}/${action}`,
           {},
           "POST",
           true,
           signal,
-        );
-        return true;
+        ));
       });
-      if (ok && selected.current === id) await load(id, false);
+      if (receipt && ticket === navigation.current && selected.current === id) {
+        setCurrent((value) => value?.id === id ? withMessage(value, receipt) : value);
+        if (action === "cancel") setDraft((value) => value || receipt.question);
+      }
     } catch (e) {
-      if (alive.current) setError(String(e));
+      if (alive.current && ticket === navigation.current) setError(String(e));
     } finally {
-      mutationBusy.current = false;
-      if (alive.current) setBusy(false);
+      if (ticket === navigation.current) {
+        mutationBusy.current = false;
+        if (alive.current) setBusy(false);
+      }
     }
   }
   async function manage(remove: boolean) {
     if (!current || mutationBusy.current || (!remove && !title.trim())) return;
+    const ticket = navigation.current;
     mutationBusy.current = true;
     const id = current.id;
     setBusy(true);
@@ -356,17 +387,19 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
         );
         return true;
       });
-      if (ok && selected.current === id) {
+      if (ok && ticket === navigation.current && selected.current === id) {
         setPanel(null);
         if (remove) newConversation();
         else await load(id, false);
         void refresh();
       }
     } catch (e) {
-      if (alive.current) setError(String(e));
+      if (alive.current && ticket === navigation.current) setError(String(e));
     } finally {
-      mutationBusy.current = false;
-      if (alive.current) setBusy(false);
+      if (ticket === navigation.current) {
+        mutationBusy.current = false;
+        if (alive.current) setBusy(false);
+      }
     }
   }
   async function openSource(item: Source) {
@@ -441,7 +474,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
                 label="New conversation"
                 icon="plus"
                 disabled={busy}
-                onPress={newConversation}
+                onPress={() => newConversation()}
               />
               {current ? (
                 <IconButton
@@ -818,7 +851,7 @@ export function Ask({ api, visible = true }: { api: Api; visible?: boolean }) {
                 <Button
                   label="New conversation"
                   icon="plus"
-                  onPress={newConversation}
+                  onPress={() => newConversation()}
                 />
                 {listLoading ? (
                   <Loading label="Loading conversations…" />

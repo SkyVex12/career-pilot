@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   makeScope,
   parseConversation,
+  parseMessage,
+  withMessage,
   parseConversations,
   parseOptions,
   parseSourceDetail,
@@ -73,4 +75,18 @@ test("completed conversation retains real citations and Unicode content; pending
       true,
     ),
   );
+});
+
+
+test("accepted message receipts remain visible without a subsequent detail read", () => {
+  const conversation = parseConversation({ id: "c", title: "DNS", scope: { kind: "general" } });
+  const receipt = parseMessage({ id: "m", question: "Explain DNS", answer: "", status: "pending", sources: [] });
+  const pending = withMessage(conversation, receipt);
+  assert.equal(pending.messages?.[0].status, "pending");
+  assert.equal(pending.messages?.[0].question, "Explain DNS");
+  const complete = withMessage(pending, { ...receipt, status: "done", answer: "Names map to addresses." });
+  assert.equal(complete.messages?.length, 1);
+  assert.equal(complete.messages?.[0].answer, "Names map to addresses.");
+  assert.equal(pending.messages?.[0].status, "pending");
+  assert.throws(() => parseMessage({ ...receipt, status: "unknown" }));
 });

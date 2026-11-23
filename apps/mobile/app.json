@@ -19,7 +19,8 @@
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
       ],
       "allowBackup": false
     },
@@ -29,7 +30,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Record only when you explicitly start practice or an in-person microphone turn.",
+          "microphonePermission": "Record only when you explicitly start practice, an in-person turn, or Talk to host.",
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }
@@ -38,15 +39,23 @@
         "react-native-audio-api",
         {
           "iosBackgroundMode": false,
-          "iosMicrophonePermission": "Record only when you explicitly start practice or an in-person microphone turn.",
+          "iosMicrophonePermission": "Record only when you explicitly start practice, an in-person turn, or Talk to host.",
           "androidPermissions": [
             "android.permission.RECORD_AUDIO",
             "android.permission.MODIFY_AUDIO_SETTINGS"
           ],
           "androidForegroundService": false
         }
+      ],
+      "@livekit/react-native-expo-plugin",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Record only when you explicitly start practice, an in-person turn, or Talk to host."
+        }
       ]
     ],
-    "icon": "./assets/icon.png"
+    "icon": "./assets/icon.png",
+    "platforms": ["ios", "android"]
   }
 }

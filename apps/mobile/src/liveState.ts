@@ -28,6 +28,8 @@ export type LiveState = {
   memory: string;
   spokenLanguage: string | null;
   languageSwitching: boolean;
+  assistantSharing: boolean;
+  sharingControl: boolean;
 };
 export const emptyLive = (): LiveState => ({
   seq: 0,
@@ -38,6 +40,8 @@ export const emptyLive = (): LiveState => ({
   memory: "",
   spokenLanguage: null,
   languageSwitching: false,
+  assistantSharing: true,
+  sharingControl: false,
 });
 // Keep the request identity until this authoritative event arrives. A relay command
 // receipt can arrive before or after it and does not confirm the active language.
@@ -90,6 +94,8 @@ export function event(state: LiveState, message: Event): LiveState {
       ...next,
       connected: state.connected,
       languageSwitching: state.languageSwitching,
+      assistantSharing: state.assistantSharing,
+      sharingControl: state.sharingControl,
       spokenLanguage: next.spokenLanguage ?? state.spokenLanguage,
       seq: message.seq ?? next.seq,
       status: "Connected",
@@ -99,13 +105,29 @@ export function event(state: LiveState, message: Event): LiveState {
     return {
       ...state,
       connected: message.connected === true,
+      assistantSharing:
+        typeof message.sharing === "boolean"
+          ? message.sharing
+          : state.assistantSharing,
       status: message.connected
         ? "Desktop audio connected"
         : "Desktop disconnected — phone microphone is off",
     };
   if (message.type === "companion.ended")
     return { ...state, ended: true, connected: false, status: "Call ended" };
+  if (message.type === "companion.ready")
+    state = {
+      ...state,
+      assistantSharing: message.sharing !== false,
+      sharingControl: message.sharing_control === true,
+    };
   if (typeof message.seq === "number" && message.seq <= state.seq) return state;
+  if (message.type === "sharing")
+    return {
+      ...state,
+      seq: message.seq ?? state.seq,
+      assistantSharing: message.on === true,
+    };
   const next = {
     ...state,
     seq: message.seq ?? state.seq,
@@ -176,10 +198,11 @@ export function event(state: LiveState, message: Event): LiveState {
 }
 export function command(
   id: string,
-  kind: "answer" | "followup" | "end" | "set_language",
+  kind: "answer" | "followup" | "end" | "set_language" | "set_sharing",
   text = "",
   confirmed = false,
   summarize = true,
+  sharing = true,
 ) {
   if (kind === "end" && !confirmed)
     throw new Error("Confirm ending the desktop call first.");
@@ -199,6 +222,7 @@ export function command(
     ...(kind === "followup" ? { text: text.trim() } : {}),
     ...(kind === "end" ? { confirmed: true, summarize } : {}),
     ...(kind === "set_language" ? { spoken_language: text } : {}),
+    ...(kind === "set_sharing" ? { sharing } : {}),
   };
 }
 export function gatewayURL(

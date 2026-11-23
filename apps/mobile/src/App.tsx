@@ -124,7 +124,15 @@ export default function App() {
         throw new Error(
           "The server returned an unsupported profile response. Update the server and try again.",
         );
-      if (ticket === authScope.current) setProfiles(d.items);
+      if (ticket === authScope.current) {
+        setProfiles(d.items);
+        if (client.profile && !d.items.some((p) => p.id === client.profile)) {
+          client.profile = "";
+          setProfile("");
+          setImported(undefined);
+          setTab("Companion");
+        }
+      }
     } catch (e) {
       if (ticket === authScope.current) setError(String(e));
     }
@@ -691,6 +699,10 @@ export default function App() {
                   api={api}
                   url={gateway}
                   tab={tab}
+                  onTab={setTab}
+                  onProfilesChanged={() =>
+                    void readProfiles(api, authScope.current)
+                  }
                   imported={imported}
                   onPractice={(q) => {
                     setImported(q);

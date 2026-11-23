@@ -11,6 +11,7 @@ import {
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { randomUUID } from "expo-crypto";
 import { Api, ApiError } from "./api";
+import { HostAssistants } from "./HostAssistants";
 import { companionDeviceName } from "./companionDevice";
 import { findReusableCompanionAttachment } from "./companionAttachment";
 import { RequestScope, ConnectionGate, withDeadline } from "./requestScope";
@@ -625,10 +626,11 @@ export function Companion({
       }
   }
   function send(
-    kind: "answer" | "followup" | "end" | "set_language",
+    kind: "answer" | "followup" | "end" | "set_language" | "set_sharing",
     confirmed = false,
     summarize = true,
     spokenLanguage = "",
+    sharing = true,
   ) {
     if (pending.current)
       return setError(
@@ -651,6 +653,7 @@ export function Companion({
         kind === "set_language" ? spokenLanguage : draft,
         confirmed,
         summarize,
+        sharing,
       );
       pending.current = cmd;
       socket.current.send(JSON.stringify(cmd));
@@ -872,6 +875,15 @@ export function Companion({
               onPress={() => void detach()}
             />
           </Row>
+          <HostAssistants
+            api={api}
+            sessionId={attachment.session_id}
+            visible={visible}
+            connected={usable}
+            sharing={live.assistantSharing}
+            canShare={live.sharingControl}
+            onSharing={(on) => send("set_sharing", false, true, "", on)}
+          />
           {displaySettings ? (
             <Card subtle>
               <Select
