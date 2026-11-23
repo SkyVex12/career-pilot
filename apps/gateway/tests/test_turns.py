@@ -4,14 +4,17 @@ for a prepared match. A slow scripted detector stands in for the 1.3 s OpenAI on
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any
 
 from copilot_core import keys
+from copilot_core.llm import LLMChunk, LLMRequest
 from copilot_gateway.testing import (
     GatewayServer,
     ProtocolClient,
     Reply,
     ScriptedProvider,
+    job_of,
     text_frame_audio,
 )
 from copilot_gateway.testing import default_reply as scripted_reply
@@ -65,24 +68,68 @@ def test_likely_question_gates_the_speculative_start() -> None:
 
 
 async def test_fast_pass_starts_before_the_detector_returns(env) -> None:
-    """Issue 1: the fast pass waited for the detector, so the first word was detector + TTFT.
-    Now it starts at the speech end, held, and its first words go out as the detector fires."""
-    use(env)
-    async with GatewayServer(env.services()) as gw:
+    """The fast pass must produce buffered words while the detector is still awaiting a
+    response. A shared event-loop pause can delay both starts without serializing them."""
+    detector_started = asyncio.Event()
+    release_detector = asyncio.Event()
+    detector_cancelled = asyncio.Event()
+    fast_buffered = asyncio.Event()
+
+    class GatedDetector(ScriptedProvider):
+        async def stream(
+            self,
+            model: str,
+            req: LLMRequest,
+            params: Mapping[str, Any],
+        ) -> AsyncGenerator[LLMChunk]:
+            job = job_of(req)
+            if job == "detector":
+                detector_started.set()
+                try:
+                    await release_detector.wait()
+                except asyncio.CancelledError:
+                    detector_cancelled.set()
+                    raise
+            async for chunk in super().stream(model, req, params):
+                yield chunk
+                if job == "fast" and isinstance(chunk, str):
+                    # The consumer has processed this chunk before asking for the next one.
+                    fast_buffered.set()
+
+    env.providers = [GatedDetector("anthropic")]
+    # Exercise the speech-end path. Early detection and the silence timer have separate tests;
+    # neither should determine whether the two provider requests overlap.
+    settings = env.settings(
+        early_decision_interval_ms=None,
+        first_show_min_words=None,
+        silence_timer_ms=0,
+        speculative_start_ms=0,
+    )
+    async with GatewayServer(env.services(settings)) as gw:
         c = ProtocolClient(gw.url)
         await c.start()
-        await c.say("How did you scale the ledger?")
-        # The detector outlasts the 250 ms silence timer, so the question goes out confirmed.
+        try:
+            await c.say("How did you scale the ledger?")
+            async with asyncio.timeout(5):
+                await detector_started.wait()
+                await fast_buffered.wait()
+            await c.wait_type("transcript.final")
+            assert not detector_cancelled.is_set()
+            session = next(iter(gw.manager.sessions.values()))
+            [held] = session.answers.questions.values()
+            assert held.held
+            assert held.held_text
+            assert not c.of_type("question.detected")
+            assert not c.of_type("answer.delta")
+        finally:
+            release_detector.set()
         q = await c.wait_type("question.detected", speculative=False)
         first = await c.wait_type("answer.delta", question_id=q["question_id"], pass_="fast")
         fast = await c.wait_type("answer.done", question_id=q["question_id"], pass_="fast")
     lat = fast["latency_ms"]
-    assert lat["detector_ms"] >= DETECTOR_S * 1000 - 50
-    assert lat["start_ms"] < 100, lat  # started with the detector, not after it
-    # The buffered text went out right behind the question, at the release.
+    # The buffered text went out immediately behind the question, only after release.
     assert first["seq"] == q["seq"] + 1
-    assert lat["first_delta_ms"] >= lat["release_ms"] >= lat["detector_ms"]
-    # The answer comes back typed: the type reached the deep pass and the log.
+    assert lat["start_ms"] <= lat["release_ms"] <= lat["first_delta_ms"]
     assert q["question_type"] == "technical"
 
 
