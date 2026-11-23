@@ -10,6 +10,7 @@ import {
   type RemoteTrackPublication,
 } from "livekit-client";
 import type { Api } from "./api";
+import { updateAssistantPermissions } from "./hostAssistantPermissions";
 import {
   Button,
   Card,
@@ -276,6 +277,18 @@ export function HostAssistants({
       if (mounted.current) setBusy(false);
     }
   }
+  function setCapabilities(seat: HostSeat, next: string[]) {
+    return updateAssistantPermissions(
+      api,
+      sessionId,
+      seat.seat_id,
+      seat.capabilities,
+      next,
+      () => {
+        if (mounted.current) setRevision((value) => value + 1);
+      },
+    );
+  }
   function capabilities(
     value: string,
     previous = ["view", "note", ...(list.voice ? ["voice"] : [])],
@@ -441,15 +454,9 @@ export function HostAssistants({
                     ]}
                     onChange={(value) =>
                       void action(() =>
-                        api.request(
-                          `/sessions/${sessionId}/seats/${seat.seat_id}`,
-                          {
-                            capabilities: capabilities(
-                              value,
-                              seat.capabilities,
-                            ),
-                          },
-                          "PATCH",
+                        setCapabilities(
+                          seat,
+                          capabilities(value, seat.capabilities),
                         ),
                       )
                     }
@@ -466,14 +473,11 @@ export function HostAssistants({
                     disabled={busy}
                     onPress={() =>
                       void action(() =>
-                        api.request(
-                          `/sessions/${sessionId}/seats/${seat.seat_id}`,
-                          {
-                            capabilities: seat.capabilities.includes("note")
-                              ? seat.capabilities.filter((x) => x !== "note")
-                              : [...seat.capabilities, "note"],
-                          },
-                          "PATCH",
+                        setCapabilities(
+                          seat,
+                          seat.capabilities.includes("note")
+                            ? seat.capabilities.filter((x) => x !== "note")
+                            : [...seat.capabilities, "note"],
                         ),
                       )
                     }
@@ -489,14 +493,11 @@ export function HostAssistants({
                       disabled={busy}
                       onPress={() =>
                         void action(() =>
-                          api.request(
-                            `/sessions/${sessionId}/seats/${seat.seat_id}`,
-                            {
-                              capabilities: seat.capabilities.includes("voice")
-                                ? seat.capabilities.filter((x) => x !== "voice")
-                                : [...seat.capabilities, "voice"],
-                            },
-                            "PATCH",
+                          setCapabilities(
+                            seat,
+                            seat.capabilities.includes("voice")
+                              ? seat.capabilities.filter((x) => x !== "voice")
+                              : [...seat.capabilities, "voice"],
                           ),
                         )
                       }
