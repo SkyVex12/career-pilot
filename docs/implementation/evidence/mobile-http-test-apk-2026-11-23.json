@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-23",
+  "source_commit": "e9578f0507df775e7cc8d5fbc0c730ffdfedff19",
+  "workflow_run": "https://github.com/SkyVex12/career-pilot/actions/runs/45205144382",
+  "workflow_conclusion": "success",
+  "artifact_id": 14835500037,
+  "artifact_name": "career-pilot-android-http-test",
+  "archive_sha256": "2223f0d93c6816e62bdcbcf096f8573916d605e98691ea2dbdf34a408e75cf8c",
+  "archive_checksum_verified_against_github": true,
+  "apk": {
+    "filename": "CoRuby-HTTP-Test-2026-11-23.apk",
+    "bytes": 55984686,
+    "sha256": "c5adecd46848204d47c8a47926131d35b90413a636bc41eb72bf03b427badf8f",
+    "saved_in_user_downloads": true,
+    "package": "app.careerpilot.mobile.httptest",
+    "label": "Career Pilot HTTP Test",
+    "version": "0.1.0-http-test",
+    "abis": ["arm64-v8a", "x86_64"],
+    "signing": "Repository Android development key; APK Signature Scheme v2 verified"
+  },
+  "validation": {
+    "mobile_ci": "TypeScript, tests, export and native HTTP Test APK build passed",
+    "static_package_checks_passed": 18,
+    "static_package_checks_failed": 0,
+    "bundle": "Hermes bytecode includes the current live-language command and user-interface markers",
+    "server": "Running Stage 0 HTTP health check and actual mobile client's unauthenticated sign-in configuration loading passed",
+    "installed_or_authenticated_during_delivery": false
+  },
+  "limitations": [
+    "Static package verification does not establish runtime behavior on a device.",
+    "This HTTP Test preview is development-signed; it is not a production store release.",
+    "Stage 0 uses an ephemeral address that can change after VM restart."
+  ]
+}
