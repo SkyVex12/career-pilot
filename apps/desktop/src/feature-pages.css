@@ -155,6 +155,14 @@
 .work-workspace .work-company > .ui-badge { margin-bottom: 7px; }
 .work-workspace .work-company .ui-field { min-width: 0; max-width: 380px; }
 .work-workspace .work-company .ui-select { width: 100%; }
+.work-company-question { display: grid; gap: 12px; min-width: 0; padding-bottom: 4px; }
+.work-company-question-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.work-company-question-header .ui-section-title { margin: 0; }
+.work-company-question-header > .ui-btn { flex: none; margin-left: auto; }
+.work-company-question .ask-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 10px; }
+.work-company-question .ask-form > .ui-btn { min-width: 64px; }
+.work-company-question > .ui-field-hint,.work-workspace .work-company-question > .ui-banner,.work-company-question > .ask-result { margin: 0; }
+.work-company-question > .ui-spinner { justify-self: start; }
 .work-workspace .work-unsaved { color: var(--text-3); font-size: 11px; white-space: nowrap; }
 .work-workspace .work-log-past { padding-left: 16px; border-left: 1px solid var(--border); }
 .work-workspace .work-past-empty { font-size: 12px; line-height: 1.7; color: var(--text-3); margin: 10px 0; }

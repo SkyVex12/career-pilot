@@ -11,7 +11,7 @@
 .call-design-body > .ui-segmented .ui-segment { flex: 1; min-width: 0; justify-content: center; text-align: center; }
 .call-setup-fields { display: flex; flex-direction: column; gap: 12px; }
 .call-optional-settings { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:12px; }
-.call-optional-settings:has(details[open]) { grid-template-columns:minmax(0,1fr); }
+.call-optional-settings > .meeting-preparation[open] { grid-column:1 / -1; }
 .call-optional-settings .call-options { border:1px solid var(--border);margin:0;padding:0;border-radius:var(--radius-md); }
 .call-optional-settings .call-options > summary { display:flex;padding:12px 14px;color:var(--text); }
 .call-optional-settings .call-options > .ui-stack { margin:0;padding:16px; }
