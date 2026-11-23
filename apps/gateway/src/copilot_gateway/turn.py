@@ -605,6 +605,7 @@ class TurnDetector:
         if now - self.early_at < self.early_s:
             return
         self._drop_early()
+
         self.early_at = now
         self.early_starts += 1
         detection = asyncio.ensure_future(self.host.detect(text))
@@ -615,6 +616,26 @@ class TurnDetector:
             self.held_starts += 1
             held = self.host.start_held(text, now, match)
         self.early = _Early(_Candidate(text, detection, match), held, now)
+
+    async def change_language(self, language: str) -> None:
+        """Finish cancellation before a new recognition generation can deliver text."""
+        tasks: list[Awaitable[object]] = [
+            task for task in (self.task, *self._detached) if task is not None
+        ]
+        if self.early is not None:
+            tasks.append(self.early.cand.detection)
+            if self.early.cand.match is not None:
+                tasks.append(self.early.cand.match)
+        self.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.reset()
+        self.turn = None
+        self.speaking = False
+        self.carry_until = None
+        self.carry_depth = 0
+        self.early_at = 0.0
+        self.text_arrived.clear()
+        self.spoken_language = language
 
     def _drop_early(self, early: "_Early | None" = None) -> None:
         if early is None:
@@ -957,6 +978,7 @@ class TurnDetector:
                 cand, detection = await self._decide(turn, cand)
             finally:
                 first.cancel()
+                await asyncio.gather(first, return_exceptions=True)
             while True:
                 recovered = await self._recover(turn, detection)
                 # Recovery waits longer than the normal final deadline. A final arriving
@@ -998,6 +1020,11 @@ class TurnDetector:
         except asyncio.CancelledError:
             if cand is not None and not turn.taken:
                 cand.cancel()
+                await asyncio.gather(
+                    cand.detection,
+                    *([cand.match] if cand.match is not None else []),
+                    return_exceptions=True,
+                )
             self._discard_held(turn)
             if turn.speculative_qid is not None:
                 self.speculative_cancels += 1

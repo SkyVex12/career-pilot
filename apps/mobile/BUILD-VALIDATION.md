@@ -2,6 +2,17 @@
 
 Validated with Node 24.19.0, Expo SDK 58.0.26 and React Native 0.88.1.
 
+## Language selection and live switching (2026-11-23)
+
+The current mobile source consumes the 96-language Deepgram catalog, searches English/native names and codes, preserves profile defaults and RTL labels, and changes live language only after a correlated server acknowledgement. Relay receipts do not prematurely clear the pending change. In-person switching is available between recordings, and older gateways leave live switching disabled.
+
+- Strict TypeScript and all **86 mobile tests** pass. The fictional native fixture has **12 passing tests**, including both acknowledgement orders, rejection, idempotent retry and reconnect restoration. Ruff formatting and lint pass for the fixture and its tests.
+- Secure Android Hermes export passes: 866 modules and a 2,263,715-byte bundle. Local output: `.implementation/mobile-language96-android-export`; log: `.implementation/mobile-language96-android-export.log`.
+- These local build attempts **did not produce or install a fresh APK**. The initial configured Gradle attempt could not resolve `org.gradle.toolchains.foojay-resolver-convention:1.0.0` from the plugin repositories. A bounded host retry was stopped before Gradle reported any build tasks. Logs are `.implementation/mobile-language96-native-build.log` and `.implementation/mobile-language96-native-build-host-cache.log`. The earlier artifacts below do not validate the current source; any hosted preview result must be checked against its source revision in Actions.
+- Actual Android UI acceptance was **not completed**: the existing isolated `CareerPilotValidation` instance failed to reach a running Android/ADB state after a bounded launch retry. Both instance 1 and the user's instance 0 are stopped at completion; instance 0 and installed production apps were not modified. No device screenshots, speech-quality results or native crash-free claim are made for this source. The fixture scenarios in [NATIVE-ACCEPTANCE.md](scripts/NATIVE-ACCEPTANCE.md) are prepared for a functioning development emulator.
+
+Local machine-readable evidence: `.implementation/mobile-language96-validation.receipt.json`. Earlier native validation below remains tied to its recorded source revisions.
+
 ## Current completion follow-up (2026-11-20)
 
 The current app retains four primary tabs: Call, Interview prep, Work and History. Searchable profile/context selectors, compact navigation, source sheets, focused practice controls and phone/landscape layouts replace the earlier rows of oversized buttons. Work preserves its in-memory conversation and draft while opening a source or changing tabs. Server addresses survive launch, account tokens remain origin-scoped, and explicit companion attachment can reuse a fresh authorized device/profile/session grant after process recreation.

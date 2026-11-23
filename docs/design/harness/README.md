@@ -45,7 +45,7 @@ media delivery require the desktop build.
 ## Production UI review
 
 `production-ui.mjs` audits the current navigation, call setup and live view, all Settings
-sections, calendar states, the 24-language picker, Interview prep, Work context, Ask,
+sections, calendar states, the searchable language catalog, Interview prep, Work context, Ask,
 Practice, and Past calls. It captures 1080×780, the default 920×720, 720×520, 390×780, and the
 native minimum 400×240, in light and dark themes. Each state runs axe WCAG A/AA checks
 and records horizontal overflow, clipped controls, nested page scroll chains, call-footer
@@ -56,6 +56,7 @@ PW_DIR=/folder/containing/node_modules node docs/design/harness/production-ui.mj
 PW_DIR=/folder/containing/node_modules node docs/design/harness/production-interactions.mjs docs/design/screens/production-ui/interactions
 PW_DIR=/folder/containing/node_modules node docs/design/harness/production-notifications.mjs docs/design/screens/production-ui/notifications
 PW_DIR=/folder/containing/node_modules node docs/design/harness/production-overlay.mjs docs/design/screens/production-ui/overlay-final
+PW_DIR=/folder/containing/node_modules node docs/design/harness/language-switching.mjs docs/design/screens/production-ui/language-switching
 ```
 
 The screenshot script accepts a comma-separated scene filter as its second argument and
@@ -63,14 +64,18 @@ runs two isolated pages at a time (`UI_WORKERS=1` runs sequentially).
 Keep product source stable during an audit; Vite hot reload can invalidate the fixture's
 native-event callbacks. Rerun any state interrupted by a source reload.
 `UI_SIZES=1080x780,400x240` and `UI_SCHEMES=light,dark` restrict the matrix. `PW_CHANNEL` defaults
-to installed Edge. The interaction script verifies keyboard popover dismissal, all 24
-language options, modal focus trapping/restoration, and a 200% CSS zoom layout simulation.
+to installed Edge. The interaction script verifies keyboard popover dismissal, all configured
+language options, native-name search, modal focus trapping/restoration, and a 200% CSS zoom layout simulation.
 That simulation is not certification of native WebView/browser zoom.
 The notification checks emit fictional server/update events and verify fixed positioning,
 unchanged page dimensions, dismissal across progress updates, and visibility of the call footer.
 Every stacked notice action is also scrolled into view, focused, and hit-tested at each size.
 The standalone overlay smoke audits live-call rendering in both themes at 760×620 and 400×520,
 including accessible contrast after the fictional live session has finished initializing.
+The language-switching checks exercise server-acknowledged changes, native-name search, RTL
+options and Escape focus restoration in the main live screen, overlay and compact overlay,
+at 920px and 400px widths in both themes. A fictional IPC acknowledgement changes only the
+displayed language; it does not open audio or contact a speech provider.
 
 `production.ts` provides fictional background/Hushed statuses. `?calendar=connected`
 adds one fictional meeting and connected Google Calendar. `languages.json` mirrors the

@@ -446,6 +446,13 @@ class Conversation:
         if self._task is not None:
             self._task.cancel()
 
+    async def cancel_fold(self) -> None:
+        """Stop a pending summary while preserving the original lines and prior summary."""
+        task = self._task
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     # Session state, for a resume on another gateway task.
 
     def to_state(self) -> dict[str, Any]:

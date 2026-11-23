@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use copilot_protocol::{
     AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerMode, AnswerStyle, AnswerStyleSet, Channel,
-    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ScreenImage, Screenshot, SharingSet,
+    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ScreenImage, Screenshot,
+    SessionSetLanguage, SharingSet,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -251,6 +252,12 @@ impl Engine {
 
     pub async fn set_mode(&self, mode: Mode) {
         self.send(ClientMessage::ModeSet(ModeSet { mode })).await;
+    }
+
+    /// Request a live language change. The gateway's correlated event is authoritative.
+    pub async fn set_spoken_language(&self, spoken_language: String, request_id: Uuid) {
+        self.send(ClientMessage::SessionSetLanguage(SessionSetLanguage { spoken_language, request_id }))
+            .await;
     }
 
     /// The Session tab's detailed-answer style, changed mid-call: applies to the next answers.

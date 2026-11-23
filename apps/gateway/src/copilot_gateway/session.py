@@ -243,6 +243,10 @@ class Session:
         self.principal = principal
         self.info = info
         self.spoken_language = info.spoken_language
+        self._language_lock = asyncio.Lock()
+        self._language_generation = 0
+        self._language_changes: set[asyncio.Task[None]] = set()
+        self._language_requests: OrderedDict[UUID, str] = OrderedDict()
         self.account_id: UUID | None = None
         self.account_token: str | None = None
         self.private_context_account_id: str | None = (restored or {}).get(
@@ -391,6 +395,8 @@ class Session:
         self.seatdesk = SeatDesk(self, dict(restored), resumed=bool(restored))
         self.companiondesk = CompanionDesk(self, dict(restored))
         self.core_task: asyncio.Task[None] | None = None
+        self._core_group: asyncio.TaskGroup | None = None
+        self._stt_tasks: list[asyncio.Task[None]] = []
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
 
@@ -440,27 +446,40 @@ class Session:
         on_result: Callable[[TimedResult], Awaitable[None]],
         providers: Sequence[tuple[str, STTFactory]] | None = None,
         label: str = "",
+        *,
+        language: str | None = None,
+        generation: int | None = None,
     ) -> ResilientSTT:
         s = self.settings
+        selected = language or self.spoken_language
+        generation = self._language_generation if generation is None else generation
 
         def configured(factory: STTFactory) -> STTFactory:
             def create(keyterms: Sequence[str]):
                 stream = factory(keyterms)
                 if isinstance(stream, DeepgramSTT):
-                    stream.set_language(self.spoken_language)
-                elif self.spoken_language != "en":
+                    stream.set_language(selected)
+                elif selected != "en":
                     raise ValueError("Recognition provider does not support this call language")
                 return stream
 
             return create
+
+        async def current_result(result: TimedResult) -> None:
+            if generation == self._language_generation:
+                await on_result(result)
+
+        def current_status(state: str, message: str) -> None:
+            if generation == self._language_generation:
+                self._on_stt_status(state, message)
 
         return ResilientSTT(
             [
                 (name, configured(factory))
                 for name, factory in (providers or self.svc.stt_providers)
             ],
-            on_result=on_result,
-            on_status=self._on_stt_status,
+            on_result=current_result,
+            on_status=current_status,
             stall_s=s.stt_stall_s,
             failures_before_switch=s.stt_failures_before_switch,
             keepalive_s=s.stt_keepalive_s,
@@ -748,7 +767,7 @@ class Session:
     def cache_version(self) -> str:
         digest = self.digest.version if self.digest else "-"
         pack = str(self.pack.pack_id) if self.pack else "-"
-        return f"{digest}|{pack}|{self.info.mode}"
+        return f"{digest}|{pack}|{self.info.mode}|{self.spoken_language}"
 
     async def qa_get(self, qhash: str) -> dict[str, Any] | None:
         return await self.svc.store.qa_get(self.principal.user_id, qhash)
@@ -1270,7 +1289,12 @@ class Session:
         is often a pause, not a question: in three of eight real standups the user gave
         yesterday and today with nothing on screen, and the prepared points had been shown
         once in nine (2026-11-11 analysis). Once per session."""
-        if self._update_shown or self.info.mode != "standup" or self.pack is None:
+        if (
+            self.spoken_language != "en"
+            or self._update_shown
+            or self.info.mode != "standup"
+            or self.pack is None
+        ):
             return
         if not update_opening(text):
             return
@@ -1464,6 +1488,7 @@ class Session:
             "me_audio": "1" if self.me_audio else "0",
             "no_call": "1" if self.info.no_call else "0",
             "spoken_language": self.spoken_language,
+            "language_switching": "1",
             "account_id": str(self.account_id) if self.account_id else "",
             **(
                 {"private_context_account_id": self.private_context_account_id}
@@ -1481,10 +1506,8 @@ class Session:
     async def _run_core(self) -> None:
         try:
             async with asyncio.TaskGroup() as tg:
-                if self.stt is not None:
-                    tg.create_task(self.stt.run())
-                if self.stt_me is not None:
-                    tg.create_task(self.stt_me.run())
+                self._core_group = tg
+                self._start_stt_tasks()
                 tg.create_task(self.writer.run())
                 tg.create_task(self._lease_loop())
                 tg.create_task(self._flush_loop())
@@ -1498,6 +1521,121 @@ class Session:
         except* Exception as eg:
             log.error("session %s failed", self.sid, exc_info=eg)
             await self.abandon(CLOSE_INTERNAL, "internal error")
+        finally:
+            self._core_group = None
+            self._stt_tasks.clear()
+
+    def _start_stt_tasks(self) -> None:
+        if self._core_group is not None:
+            self._stt_tasks = [
+                self._core_group.create_task(stream.run())
+                for stream in (self.stt, self.stt_me)
+                if stream is not None
+            ]
+
+    async def _replace_language_streams(self, selected: str) -> None:
+        old_language = self.spoken_language
+        incoming, microphone = self.stt is not None, self.stt_me is not None
+        self._language_generation += 1
+
+        def build(language: str) -> tuple[ResilientSTT | None, ResilientSTT | None]:
+            return (
+                self._stt_stream(self._on_stt, label="them", language=language)
+                if incoming
+                else None,
+                self._stt_stream(
+                    self._on_me_stt, self.svc.stt_me_providers, label="me", language=language
+                )
+                if microphone
+                else None,
+            )
+
+        old_tasks = list(self._stt_tasks)
+        for task in old_tasks:
+            task.cancel()
+        await asyncio.gather(*old_tasks, return_exceptions=True)
+        self._stt_tasks.clear()
+        candidates = build(selected)
+        try:
+            # Finish all old-language work while recognition is stopped. Committing the
+            # prepared replacement below then contains no cancellation points.
+            await self.turns.change_language(self.spoken_language)
+            pending = [*self._settling, *self._forced]
+            if self._warm is not None:
+                pending.append(self._warm)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            await self.answers.change_language()
+            await self.conv.cancel_fold()
+            # Close both old channels before opening either replacement. If one fails,
+            # close all prepared channels and restore the previous language supervisors.
+            for stream in candidates:
+                if stream is not None:
+                    await stream.prepare()
+            if self.ending or self.lost:
+                raise ValueError("This call has ended.")
+        except BaseException as exc:
+            for stream in candidates:
+                if stream is not None:
+                    await stream.discard_prepared()
+            self.stt, self.stt_me = build(old_language)
+            if not self.ending and not self.lost:
+                self._start_stt_tasks()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise ValueError(
+                "Could not connect transcription in that language. Please try again."
+            ) from exc
+        self.stt, self.stt_me = candidates
+
+    async def _set_language(self, message: models.SessionSetLanguage) -> None:
+        """Apply an explicit language boundary without replacing the call or its history."""
+        async with self._language_lock:
+            error: str | None = None
+            try:
+                selected = languages.validate_language(
+                    message.spoken_language, self.settings.verified_call_languages
+                )
+                self.manager.validate_recognition_language(selected)
+                if self.ending or self.lost:
+                    raise ValueError("This call has ended.")
+                previous = self._language_requests.get(message.request_id)
+                if previous is not None and previous != selected:
+                    raise ValueError("This language request ID has already been used.")
+                if previous is None and selected != self.spoken_language:
+                    await self._replace_language_streams(selected)
+                    self.spoken_language = self.info.spoken_language = selected
+                    self.turns.spoken_language = selected
+                    self.detector.spoken_language = selected
+                    self.detector.cache.clear()
+                    self._prompt_ctx = self._build_prompt_ctx()
+                    self._last_detection = None
+                    self._automatic_questions.clear()
+                    self._question_sources.clear()
+                    self.them_open = self.me_since = None
+                    self.me_audio_seen = False
+                    self.them_closing = False
+                    self.writer.set_state(spoken_language=selected)
+                    self.log_entry({"kind": "language", "spoken_language": selected})
+                    self._start_stt_tasks()
+                    # Clear transient transcript text; completed transcript lines remain.
+                    for channel, segment in (("them", self.seg_id), ("me", self.seg_me)):
+                        self.emit(
+                            models.TranscriptPartial, channel=channel, seg_id=segment, text=""
+                        )
+                    self.set_status("stt", "ok", "Call language updated")
+                self._language_requests[message.request_id] = selected
+                while len(self._language_requests) > 100:
+                    self._language_requests.popitem(last=False)
+            except ValueError as exc:
+                error = str(exc)
+            self.emit(
+                models.SessionLanguage,
+                spoken_language=self.spoken_language,
+                request_id=message.request_id,
+                **({"error": error} if error else {}),
+            )
 
     async def _keep_warm(self, every_s: float) -> None:
         """Keep the model connections open through a quiet spell (llm_warm_interval_s). The
@@ -1780,6 +1918,10 @@ class Session:
         self.manager.forget(self)
         await self.seatdesk.stop()
         await self.companiondesk.stop()
+        changing = list(self._language_changes)
+        for task in changing:
+            task.cancel()
+        await asyncio.gather(*changing, return_exceptions=True)
         self.conv.close()
         for task in list(self._settling):
             task.cancel()
@@ -1790,6 +1932,9 @@ class Session:
             task.cancel()
             with contextlib.suppress(BaseException):
                 await task
+        for stream in (self.stt, self.stt_me):
+            if stream is not None:
+                await stream.discard_prepared()
 
     async def _flush_socket(self) -> None:
         q = self.send_q
@@ -1820,6 +1965,7 @@ class Session:
             replay = [(s, m) for s, m in self.ring if s > last_seq]
         for _, message in replay:
             q.put_nowait(message)
+        self.emit(models.SessionLanguage, spoken_language=self.spoken_language)
         sender = asyncio.create_task(self._sender(ws, q))
         reader = asyncio.create_task(self._reader(ws))
         try:
@@ -1861,6 +2007,10 @@ class Session:
                 await self.on_text(data_text)
 
     async def on_audio(self, data: bytes) -> None:
+        async with self._language_lock:
+            await self._on_audio(data)
+
+    async def _on_audio(self, data: bytes) -> None:
         try:
             frame = audio.parse(data)
         except ValueError as e:
@@ -1874,7 +2024,7 @@ class Session:
         if frame.channel == "me":
             await self._on_me_frame(frame)
             return
-        if frame.speech_start:
+        if frame.speech_start or (frame.audio and self.stt is not None and not self.stt.in_speech):
             self._call_heard()
             self.them_open = frame.capture_ms
             if self.stt is not None:
@@ -1899,7 +2049,7 @@ class Session:
         (session.ready me_audio). A speech segment that came with no audio (an older client,
         or me_stt off) leaves only its timing, as "(name spoke for N s)"."""
         stt = self.stt_me
-        if frame.speech_start:
+        if frame.speech_start or (frame.audio and stt is not None and not stt.in_speech):
             self._mic_heard()
             self.me_since = frame.capture_ms
             self.me_audio_seen = False
@@ -1939,6 +2089,17 @@ class Session:
         await self.handle(message)
 
     async def handle(self, message: Any) -> None:
+        if isinstance(message, models.SessionSetLanguage):
+            # A transport disconnect must not leave the provider transaction half-applied.
+            task = asyncio.create_task(self._set_language(message))
+            self._language_changes.add(task)
+            task.add_done_callback(self._language_changes.discard)
+            await asyncio.shield(task)
+            return
+        async with self._language_lock:
+            await self._handle(message)
+
+    async def _handle(self, message: Any) -> None:
         match message:
             case models.SessionStart() | models.SessionResume():
                 self.error("unexpected_message", f"{message.type} is only valid as a first message")
@@ -2556,7 +2717,7 @@ class SessionManager:
         with contextlib.suppress(Exception):
             await self.svc.jobs.send(message)
 
-    def _validate_recognition_language(self, language: str) -> None:
+    def validate_recognition_language(self, language: str) -> None:
         if language == "en":
             return
         paths = list(self.svc.stt_providers) + list(self.svc.stt_me_providers or [])
@@ -2571,6 +2732,9 @@ class SessionManager:
             raise ValueError(
                 "Selected language is unavailable on the configured recognition paths."
             )
+
+    # Retain the old internal hook for existing embedders.
+    _validate_recognition_language = validate_recognition_language
 
     async def start(
         self,
@@ -2588,7 +2752,7 @@ class SessionManager:
                 msg.spoken_language if msg.spoken_language is not None else "en",
                 self.svc.settings.verified_call_languages,
             )
-            self._validate_recognition_language(spoken_language)
+            self.validate_recognition_language(spoken_language)
         except ValueError as exc:
             await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
             return
@@ -2706,6 +2870,8 @@ class SessionManager:
             limits={"max_minutes": self.svc.settings.max_session_minutes},
             me_audio=session.me_audio,
             deep_auto_types=session.deep_auto_types(),
+            spoken_language=session.spoken_language,
+            language_switching=True,
         )
         if digest is None:
             session.set_status("memory", "degraded", "No career digest loaded")
@@ -2749,7 +2915,7 @@ class SessionManager:
                 languages.validate_language(
                     state.get("spoken_language") or "en", self.svc.settings.verified_call_languages
                 )
-                self._validate_recognition_language(state.get("spoken_language") or "en")
+                self.validate_recognition_language(state.get("spoken_language") or "en")
             except ValueError as exc:
                 await self.reject(ws, CLOSE_NO_START, "invalid_message", str(exc))
                 return

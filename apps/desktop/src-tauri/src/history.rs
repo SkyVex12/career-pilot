@@ -72,6 +72,7 @@ fn replaced_by_snapshot(entry: &Value) -> bool {
                 | "answer.done"
                 | "answer.error"
                 | "status"
+                | "session.language"
                 | "seat.snapshot"
         )
 }
@@ -166,6 +167,28 @@ mod tests {
                 format!("{}:{}", m["type"].as_str().unwrap_or("?"), m["text"].as_str().unwrap_or(""))
             })
             .collect()
+    }
+
+    #[test]
+    fn reopened_window_keeps_language_changes_in_acknowledgement_order() {
+        let mut h = History::default();
+        h.push(server(
+            json!({ "type": "session.ready", "seq": 1, "spoken_language": "en", "language_switching": true }),
+        ));
+        h.push(partial("them", 0, "Hello"));
+        h.push(server(json!({ "type": "session.language", "seq": 3, "spoken_language": "es" })));
+        h.push(server(
+            json!({ "type": "session.language", "seq": 4, "spoken_language": "es", "error": "Unavailable" }),
+        ));
+        h.push(server(json!({ "type": "session.language", "seq": 5, "spoken_language": "ja" })));
+        let languages: Vec<_> = h
+            .snapshot()
+            .0
+            .iter()
+            .filter_map(|entry| entry["event"]["message"]["spoken_language"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(languages, vec!["en", "es", "es", "ja"]);
+        assert_eq!(h.snapshot().0[1]["event"]["message"]["text"], "Hello");
     }
 
     #[test]

@@ -74,7 +74,8 @@
     { "type": "question.force", "text": "Ask about the ledger migration", "note_id": "0192f3d0-0000-7a00-8000-0000000000a1" },
     { "type": "sharing.set", "on": false },
     { "type": "seat.join", "session_id": "0192f3c1-7b2e-7a10-9c41-5d2e8f0a1b33", "seat_id": "0192f3d0-0000-7a00-8000-0000000000b1", "last_seq": 0, "client_version": "desktop-0.2.15" },
-    { "type": "seat.command", "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "kind": "note", "text": "Mention the 40% latency cut" }
+    { "type": "seat.command", "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "kind": "note", "text": "Mention the 40% latency cut" },
+    {"type": "session.set_language", "spoken_language": "es", "request_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"}
   ],
   "server": [
     {
@@ -215,7 +216,10 @@
     { "type": "seat.snapshot", "seq": 412, "messages": [{ "type": "transcript.final", "seq": 400, "channel": "them", "seg_id": 7, "text": "Tell me about a migration.", "start_ms": 1000, "end_ms": 2400 }] },
     { "type": "seat.host", "seq": 412, "connected": false, "sharing": true },
     { "type": "seat.update", "seq": 412, "capabilities": ["view"] },
-    { "type": "seat.command.result", "seq": 412, "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "result": "ok" }
+    { "type": "seat.command.result", "seq": 412, "command_id": "0192f3d0-0000-7a00-8000-0000000000c1", "result": "ok" },
+    {"type": "session.language", "seq": 80, "spoken_language": "es", "request_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"},
+    {"type": "session.language", "seq": 81, "spoken_language": "es", "request_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210", "error": "This language is not enabled."},
+    {"type": "session.language", "seq": 82, "spoken_language": "ja"}
   ],
   "invalid": [
     { "side": "client", "why": "unknown type", "message": { "type": "session.pause" } },
@@ -339,7 +343,9 @@
       "why": "echo is a boolean",
       "message": { "type": "transcript.final", "seq": 3, "channel": "me", "seg_id": 0, "text": "hi", "start_ms": 0, "end_ms": 10, "echo": [true] }
     },
-    { "side": "server", "why": "client message sent as server message", "message": { "type": "session.end", "seq": 3 } }
+    { "side": "server", "why": "client message sent as server message", "message": { "type": "session.end", "seq": 3 } },
+    {"side": "client", "why": "language change requires correlation id", "message": {"type": "session.set_language", "spoken_language": "es"}},
+    {"side": "server", "why": "language acknowledgement requires current language", "message": {"type": "session.language", "seq": 1, "request_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210"}}
   ],
   "audio_frames": [
     {

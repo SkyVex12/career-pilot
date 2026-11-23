@@ -27,7 +27,7 @@ const details = (text) => async p => {
 };
 const sequence = (...steps) => async p => { for (const step of steps) await step(p); };
 const openSelect = label => async p => {
-  const trigger = p.getByRole("combobox", { name: label, exact: true });
+  const trigger = p.getByRole(label === "Language" ? "button" : "combobox", { name: label, exact: true });
   await trigger.scrollIntoViewIfNeeded();
   // A popup closes when its page scrolls. Let the page settle before opening it.
   await p.waitForTimeout(100);

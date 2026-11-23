@@ -127,6 +127,15 @@ class CompanionDesk:
                 await self.s.handle(
                     models.SessionEnd(type="session.end", summarize=command.summarize)
                 )
+            elif command.kind == "set_language":
+                assert command.spoken_language is not None
+                await self.s.handle(
+                    models.SessionSetLanguage(
+                        type="session.set_language",
+                        spoken_language=command.spoken_language,
+                        request_id=command.command_id,
+                    )
+                )
             else:
                 await self.s.handle(models.QuestionForce(type="question.force", text=command.text))
             result = "executed"
@@ -135,5 +144,11 @@ class CompanionDesk:
                     message = json.loads(data)
                     if message.get("code") in {"rate_limited", "nothing_to_answer"}:
                         result = message["code"]
+                    if (
+                        message.get("type") == "session.language"
+                        and message.get("request_id") == cid
+                        and message.get("error")
+                    ):
+                        result = "language_unavailable"
         await companions.finish(self.store.client, sid, cid, result)
         await self.store.put_result(self.s.sid, aid, cid, result)

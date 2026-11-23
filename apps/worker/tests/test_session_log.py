@@ -398,3 +398,44 @@ async def test_a_legacy_transcribe_job_only_cleans_up(stack: Stack) -> None:
     assert status == "none"
     [postcall] = stack.take("session.postcall")
     assert postcall["payload"] == {"session_id": str(log.sid)}
+
+
+@pytest.mark.parametrize("store_transcript", [True, False])
+async def test_live_language_changes_persist_after_first_flush(
+    stack: Stack, store_transcript: bool
+) -> None:
+    uid = await stack.new_user()
+    log = GatewayLog(stack, uid, store_transcript=store_transcript)
+    await log.start()
+    await stack.ctx.valkey.hset(keys.sess_state(log.sid), "spoken_language", "en")
+    first = await log.segment("Original English evidence", 1000)
+    await stack.run(log.flush_job(first))
+    assert (
+        await stack.admin.fetchval("select spoken_language from app.sessions where id=$1", log.sid)
+        == "en"
+    )
+
+    await log.add({"kind": "language", "spoken_language": "es"})
+    last = await log.add({"kind": "language", "spoken_language": "ja"})
+    await stack.run(log.flush_job(last))
+    await stack.run(log.flush_job(last))
+    # Rejected or unknown language data cannot overwrite the accepted setting.
+    bad = await log.add({"kind": "language", "spoken_language": "not-a-language"})
+    await stack.run(log.flush_job(bad))
+    assert (
+        await stack.admin.fetchval("select spoken_language from app.sessions where id=$1", log.sid)
+        == "ja"
+    )
+    await log.end(seconds=120)
+    await stack.run(log.ended_job())
+    [postcall] = stack.take("session.postcall")
+    before = len(stack.claude.requests)
+    await stack.run(postcall)
+    if store_transcript:
+        assert "Japanese" in json.dumps(stack.claude.requests[-1][1])
+        assert (await decrypt_all(stack, uid, log.sid))["segments"] == [
+            "them: Original English evidence"
+        ]
+    else:
+        assert len(stack.claude.requests) == before
+        assert (await decrypt_all(stack, uid, log.sid))["segments"] == []

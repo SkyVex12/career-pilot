@@ -16,7 +16,7 @@ async def test_catalog_preference_rejection_and_history(api: Api) -> None:
     }
     catalog = (await api.client.get("/v1/call-languages", headers=headers)).json()["items"]
     assert {item["id"] for item in catalog} == set(CALL_LANGUAGES)
-    assert len(catalog) == 24
+    assert len(catalog) == 96
     for language in ("xx", "en-US", "ES", "../en"):
         response = await api.client.patch(
             "/v1/profile/call-preferences", headers=headers, json={"spoken_language": language}

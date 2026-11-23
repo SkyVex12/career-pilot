@@ -1,7 +1,7 @@
 // Keyboard and enlarged-layout checks with fictional IPC; never starts real capture.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 const require = createRequire(resolve(process.env.PW_DIR ?? process.cwd(), "package.json"));
 const { chromium } = require("playwright-core");
@@ -9,6 +9,7 @@ const out = resolve(process.argv[2] ?? "docs/design/screens/production-ui/intera
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.PW_CHANNEL ?? "msedge", headless: true });
 const results = [];
+const languages = JSON.parse(readFileSync(new URL("./languages.json", import.meta.url), "utf8"));
 try {
   for (const scheme of ["light", "dark"]) {
     const page = await browser.newPage({ viewport: { width: 720, height: 520 }, colorScheme: scheme, reducedMotion: "reduce" });
@@ -34,15 +35,27 @@ try {
       const languageSummary = page.locator(".call-options summary");
       await languageSummary.focus();
       await page.keyboard.press("Enter");
-      const language = page.getByRole("combobox", { name: "Language", exact: true });
-      await page.waitForFunction(() => !document.querySelector('[role="combobox"][aria-label="Language"]')?.disabled);
+      const language = page.getByRole("button", { name: "Language", exact: true });
+      await page.waitForFunction(() => !document.querySelector('button[aria-label="Language"]')?.disabled);
       await language.scrollIntoViewIfNeeded();
       await page.waitForTimeout(100);
       await language.focus();
       await page.keyboard.press("Enter");
       await page.getByRole("listbox", { name: "Language", exact: true }).waitFor();
-      assert.equal(await page.getByRole("option").count(), 24);
-      await page.keyboard.press("End");
+      assert.equal(await page.getByRole("option").count(), languages.length);
+      const search = page.getByRole("combobox", { name: "Search languages", exact: true });
+      assert(await search.evaluate(el => el === document.activeElement));
+      await search.fill("tieng viet");
+      assert.equal(await page.getByRole("option").count(), 1);
+      assert.match(await page.getByRole("option").innerText(), /Vietnamese/);
+      await search.fill("no matching language");
+      assert.equal(await page.getByRole("option").count(), 0);
+      await page.keyboard.press("Enter");
+      assert.equal(await language.getAttribute("aria-expanded"), "true");
+      await page.keyboard.press("Escape");
+      assert(await language.evaluate(el => el === document.activeElement));
+      await page.keyboard.press("Enter");
+      await search.fill("Punjabi");
       await page.keyboard.press("Enter");
       await page.getByRole("listbox", { name: "Language", exact: true }).waitFor({ state: "hidden" });
       assert.equal(await language.getAttribute("aria-expanded"), "false");
@@ -99,7 +112,7 @@ try {
       await page.screenshot({ path: resolve(out, `keyboard-scroll-400-${scheme}.png`) });
       assert.equal(errors.length, 0, JSON.stringify(errors));
       assert.equal(externalRequests.length, 0, JSON.stringify(externalRequests));
-      results.push({ scheme, status: "passed", selectedLanguage, keyboard: ["quick-settings Escape restores focus", "24-language select End/Enter", "application modal trap and Escape focus restoration", "PageDown scrolls Past calls at 400x240"], minimumScroll: { scrollBefore, scrollAfter }, enlarged, errors, externalRequests });
+      results.push({ scheme, status: "passed", selectedLanguage, keyboard: ["quick-settings Escape restores focus", `${languages.length}-language search, empty results, Escape and Enter selection`, "application modal trap and Escape focus restoration", "PageDown scrolls Past calls at 400x240"], minimumScroll: { scrollBefore, scrollAfter }, enlarged, errors, externalRequests });
     } catch (error) {
       await page.screenshot({ path: resolve(out, `failure-${scheme}.png`), fullPage: true });
       results.push({ scheme, status: "failed", error: String(error), errors, externalRequests });

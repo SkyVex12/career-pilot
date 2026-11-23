@@ -399,6 +399,7 @@ export const api = {
   sendFeedback: (questionId: string, up: boolean) =>
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
+  setSpokenLanguage: (language: string, requestId: string) => invoke<void>("set_spoken_language", { language, requestId }),
   setAnswerStyle: (style: AnswerStyle) => invoke<void>("set_answer_style", { style }),
   // Guest seats (ARCHITECTURE.md, "Guest seats"). The host: Ask AI on a note, and pause or
   // resume what guests see. The guest: join an admitted seat, leave it, send a note.

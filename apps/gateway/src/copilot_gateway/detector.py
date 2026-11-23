@@ -193,7 +193,7 @@ class Detector:
     ) -> Detection:
         key = text_hash(utterance)
         # The call type and the turn-taking block are part of the prompt.
-        cache_key = f"{mode}:{turns}:{key}"
+        cache_key = f"{self.spoken_language}:{mode}:{turns}:{key}"
         if (hit := self.cache.get(cache_key)) is not None:
             result = replace(hit, latency_ms=0)
             self._report(utterance, key, result, None, cached=True)

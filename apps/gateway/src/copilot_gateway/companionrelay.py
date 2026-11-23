@@ -85,6 +85,7 @@ class CompanionRelay:
                 fold.add(seq, data)
             # A complete reset also handles a trimmed replay window and server migration.
             await self.authorize(principal, sid, aid)
+            state = await store.load_state(sid)
             await send(
                 {
                     "type": "companion.ready",
@@ -92,6 +93,8 @@ class CompanionRelay:
                     "attachment_id": aid,
                     "audio_source": "desktop",
                     "profile_id": record.profile_id,
+                    "spoken_language": state.get("spoken_language") or "en",
+                    "language_switching": state.get("language_switching") == "1",
                 }
             )
             await send(

@@ -4,9 +4,9 @@ import { Button, Checkbox, Field, Select } from "./ui";
 import { Icon } from "./ui/Icon";
 
 type Preference = { spoken_language: string };
-type Language = { id: string; name: string; native_name?: string; direction?: "ltr" | "rtl" };
-type Catalog = { items: Language[] };
-function validCatalog(value: unknown): value is Catalog {
+export type Language = { id: string; name: string; native_name?: string; direction?: "ltr" | "rtl" };
+export type Catalog = { items: Language[] };
+export function validCatalog(value: unknown): value is Catalog {
   if (!value || typeof value !== "object" || !("items" in value) || !Array.isArray(value.items)) return false;
   const seen = new Set<string>();
   return value.items.every(item => {
@@ -46,8 +46,8 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
   };
   const selection = items.find(item => item.id === value);
   return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span><span className="ui-disclosure-meta">{loading ? "Loading languages…" : error ? "Language needs attention" : `${selection?.name ?? value} · call language`}</span></summary><div className="ui-disclosure-body ui-stack">
-    <Field label="Language" hint="Choose before starting. The language stays fixed during the call.">
-      <Select aria-label="Language" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
+    <Field label="Language" hint="Choose the spoken language for transcription and answers. You can also change it during a call.">
+      <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
         {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
         {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
       </Select>

@@ -22,6 +22,7 @@
         { "$ref": "#/$defs/LatencyReport" },
         { "$ref": "#/$defs/ModeSet" },
         { "$ref": "#/$defs/AnswerStyleSet" },
+        { "$ref": "#/$defs/SessionSetLanguage" },
         { "$ref": "#/$defs/SessionEnd" },
         { "$ref": "#/$defs/SharingSet" },
         { "$ref": "#/$defs/SeatJoin" },
@@ -34,6 +35,7 @@
       "description": "Any JSON message the gateway sends to the client. Every server message carries seq.",
       "oneOf": [
         { "$ref": "#/$defs/SessionReady" },
+        { "$ref": "#/$defs/SessionLanguage" },
         { "$ref": "#/$defs/TranscriptPartial" },
         { "$ref": "#/$defs/TranscriptFinal" },
         { "$ref": "#/$defs/QuestionDetected" },
@@ -408,6 +410,28 @@
       },
       "required": ["type", "answer_style"]
     },
+    "SessionSetLanguage": {
+      "description": "Change the spoken language of an active call. The server acknowledges the effective language before clients update their selection.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.set_language" },
+        "spoken_language": { "type": "string", "minLength": 2, "maxLength": 16 },
+        "request_id": { "$ref": "#/$defs/Uuid" }
+      },
+      "required": ["type", "spoken_language", "request_id"]
+    },
+    "SessionLanguage": {
+      "description": "Authoritative current call language. A correlated error retains the previous language; an absent error confirms the switch. Historical transcript and answers retain their original text.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "const": "session.language" },
+        "seq": { "$ref": "#/$defs/Seq" },
+        "spoken_language": { "type": "string", "minLength": 2, "maxLength": 16 },
+        "request_id": { "$ref": "#/$defs/Uuid" },
+        "error": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["type", "seq", "spoken_language"]
+    },
     "SessionEnd": {
       "description": "User ends the session.",
       "type": "object",
@@ -430,6 +454,11 @@
         "session_id": { "$ref": "#/$defs/Uuid" },
         "server_time": { "type": "string", "format": "date-time" },
         "limits": { "$ref": "#/$defs/SessionLimits" },
+        "spoken_language": { "type": "string", "minLength": 2, "maxLength": 16 },
+        "language_switching": {
+          "description": "True when this gateway accepts session.set_language. Absent means live switching is unavailable.",
+          "type": "boolean"
+        },
         "me_audio": {
           "description": "true: the gateway transcribes the user's own speech live, so the client sends speech audio on the me channel (after echo cancellation and VAD, never silence). Absent or false: me frames carry speech flags only, as before.",
           "type": "boolean"

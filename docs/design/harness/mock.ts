@@ -36,6 +36,7 @@ try {
 // --- The session's event stream --------------------------------------------------------------
 
 let n = 0;
+let spokenLanguage = "en";
 const ev = (event: UiEvent): Numbered => ({ n: n++, event });
 const srv = (message: Omit<ServerMessage, "seq">) => ev({ kind: "server", message: { seq: n, ...message } as ServerMessage });
 const final = (channel: "them" | "me", seg: number, text: string, at: number) =>
@@ -49,7 +50,7 @@ const done = (id: string, pass: "fast" | "deep", refs = fx.REFS) =>
 function midcall(): Numbered[] {
   const out = [
     ev({ kind: "connection", state: { state: "live", session_id: "live-1", resumed: false } }),
-    srv({ type: "session.ready", session_id: "live-1", server_time: new Date().toISOString(), limits: { max_minutes: 90 }, me_audio: true } as never),
+    srv({ type: "session.ready", session_id: "live-1", server_time: new Date().toISOString(), limits: { max_minutes: 90 }, me_audio: true, spoken_language: spokenLanguage, language_switching: true } as never),
     final("them", 1, "Thanks for joining. So, tell me about a time you handled a production incident", 2000),
     final("them", 2, "under pressure. What happened and what did you do?", 6000),
     detected("q1", "Tell me about a time you handled a production incident under pressure.", "behavioral"),
@@ -259,6 +260,12 @@ mockIPC(
         };
       case "snapshot":
         return snapshot();
+      case "set_spoken_language":
+        setTimeout(() => {
+          spokenLanguage = String(a.language);
+          void emit("copilot://event", srv({ type: "session.language", spoken_language: spokenLanguage, request_id: String(a.requestId) } as never));
+        }, 250);
+        return null;
       case "live_status":
         return { running: call !== "none" && call !== "ended", session_id: "live-1", levels: { them_rms: 0.08, me_rms: 0.02, them_speech: 0.9, me_speech: 0.1, them_underruns: 0, me_underruns: 0 }, stats: null };
       case "window_prefs":

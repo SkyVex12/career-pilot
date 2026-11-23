@@ -1,4 +1,7 @@
 /** Bounded wire parsing and request identity for the phone practice experience. */
+import { parseCallLanguages } from "./callLanguages.ts";
+import type { Choice } from "./choiceState.ts";
+
 export type PracticeFeedback = {
   rubric_version: string;
   dimensions: Record<string, number>;
@@ -233,17 +236,16 @@ export function parsePracticeHistory(value: unknown): PracticeEntry[] {
 export function parsePracticeChoices(
   value: unknown,
   kind: "languages" | "applications",
-): { value: string; label: string }[] {
+): Choice[] {
+  if (kind === "languages") return parseCallLanguages(value);
   const row = object(value);
-  return list(kind === "languages" ? row.items : row.options, 1000).map(
-    (value) => {
-      const item = object(value);
-      return {
-        value: required(item.id, 100),
-        label: required(kind === "languages" ? item.name : item.label),
-      };
-    },
-  );
+  return list(row.options, 1000).map((value) => {
+    const item = object(value);
+    return {
+      value: required(item.id, 100),
+      label: required(item.label),
+    };
+  });
 }
 /** Load each setup resource independently so a failed endpoint cannot hide the other. */
 export async function loadPracticeSetup(

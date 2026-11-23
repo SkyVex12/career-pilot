@@ -64,6 +64,8 @@ function clientSummary(m: ClientMessage): string {
       return m.mode;
     case "answer_style.set":
       return m.answer_style;
+    case "session.set_language":
+      return `${m.spoken_language} ${m.request_id}`;
     case "session.end":
       return "end";
     case "sharing.set":
@@ -81,6 +83,8 @@ function serverSummary(m: ServerMessage): string {
   switch (m.type) {
     case "session.ready":
       return `${m.seq} ${m.session_id} ${m.server_time} ${m.limits.max_minutes}`;
+    case "session.language":
+      return `${m.spoken_language} ${m.request_id ?? ""} ${m.error ?? ""}`;
     case "transcript.partial":
       return `${m.seq} ${m.channel} ${m.seg_id} ${m.text}`;
     case "transcript.final":

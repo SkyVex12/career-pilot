@@ -1,4 +1,9 @@
-"""Small fixed post-call chrome; generated content follows the selected language."""
+"""Reviewed fixed post-call chrome, independent of the spoken-language catalog.
+
+Generated answers, feedback and summaries follow the selected language. A language
+without a reviewed fixed-label translation uses the existing English chrome in the
+renderer; do not claim an expanded speech catalog also translates the interface.
+"""
 # ruff: noqa: RUF001 -- Native language punctuation and letters are intentional.
 
 LABELS = {

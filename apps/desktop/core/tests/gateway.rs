@@ -617,3 +617,43 @@ async fn a_guest_follows_the_call_and_sends_the_host_a_note() {
     let reason = tokio::time::timeout(Duration::from_secs(15), task).await.expect("the seat stops").unwrap();
     assert_eq!(reason, StopReason::Ended);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn language_commands_are_acknowledged_and_resume_keeps_the_same_call() {
+    let gw = Gateway::start(0, &[TOKEN], None);
+    let mut call = Call::start(&gw.url(), tokens(TOKEN), None);
+    let (sid, _) = call.live().await;
+    for (language, rejected) in [("xx", true), ("en", false)] {
+        let request_id = Uuid::now_v7();
+        call.handle
+            .send(ClientMessage::SessionSetLanguage(copilot_client::protocol::SessionSetLanguage {
+                spoken_language: language.into(),
+                request_id,
+            }))
+            .await;
+        let event = call.server("language confirmation", |message| {
+            matches!(message, ServerMessage::SessionLanguage(m) if m.request_id == Some(request_id))
+        }).await;
+        let ServerMessage::SessionLanguage(ack) = event else { unreachable!() };
+        assert_eq!(ack.spoken_language, "en");
+        assert_eq!(ack.error.is_some(), rejected);
+    }
+    assert!(call.server_messages().iter().any(|message| {
+        matches!(message, ServerMessage::SessionReady(r) if r.language_switching == Some(true) && r.spoken_language.as_deref() == Some("en"))
+    }));
+    call.handle.command(Command::DropConnection).await;
+    assert_eq!(call.live().await, (sid, true));
+    let restored = call
+        .server(
+            "resumed language",
+            |message| matches!(message, ServerMessage::SessionLanguage(m) if m.request_id.is_none()),
+        )
+        .await;
+    let ServerMessage::SessionLanguage(language) = restored else { unreachable!() };
+    assert_eq!(language.spoken_language, "en");
+    call.say("How would you shard a database?");
+    let (question, _) = call.question().await;
+    call.answer_done(question, Pass::Fast).await;
+    call.handle.command(Command::End { summarize: false }).await;
+    assert_eq!(call.stopped().await.0, StopReason::Ended);
+}

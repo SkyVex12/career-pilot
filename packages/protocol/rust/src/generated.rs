@@ -29,6 +29,8 @@ pub enum ClientMessage {
     ModeSet(ModeSet),
     #[serde(rename = "answer_style.set")]
     AnswerStyleSet(AnswerStyleSet),
+    #[serde(rename = "session.set_language")]
+    SessionSetLanguage(SessionSetLanguage),
     #[serde(rename = "session.end")]
     SessionEnd(SessionEnd),
     #[serde(rename = "sharing.set")]
@@ -53,6 +55,7 @@ impl ClientMessage {
             Self::LatencyReport(_) => "latency.report",
             Self::ModeSet(_) => "mode.set",
             Self::AnswerStyleSet(_) => "answer_style.set",
+            Self::SessionSetLanguage(_) => "session.set_language",
             Self::SessionEnd(_) => "session.end",
             Self::SharingSet(_) => "sharing.set",
             Self::SeatJoin(_) => "seat.join",
@@ -74,6 +77,7 @@ impl Validate for ClientMessage {
             Self::LatencyReport(m) => m.validate(),
             Self::ModeSet(m) => m.validate(),
             Self::AnswerStyleSet(m) => m.validate(),
+            Self::SessionSetLanguage(m) => m.validate(),
             Self::SessionEnd(m) => m.validate(),
             Self::SharingSet(m) => m.validate(),
             Self::SeatJoin(m) => m.validate(),
@@ -142,6 +146,12 @@ impl From<AnswerStyleSet> for ClientMessage {
     }
 }
 
+impl From<SessionSetLanguage> for ClientMessage {
+    fn from(m: SessionSetLanguage) -> Self {
+        Self::SessionSetLanguage(m)
+    }
+}
+
 impl From<SessionEnd> for ClientMessage {
     fn from(m: SessionEnd) -> Self {
         Self::SessionEnd(m)
@@ -172,6 +182,8 @@ impl From<SeatCommand> for ClientMessage {
 pub enum ServerMessage {
     #[serde(rename = "session.ready")]
     SessionReady(SessionReady),
+    #[serde(rename = "session.language")]
+    SessionLanguage(SessionLanguage),
     #[serde(rename = "transcript.partial")]
     TranscriptPartial(TranscriptPartial),
     #[serde(rename = "transcript.final")]
@@ -215,6 +227,7 @@ impl ServerMessage {
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::SessionReady(_) => "session.ready",
+            Self::SessionLanguage(_) => "session.language",
             Self::TranscriptPartial(_) => "transcript.partial",
             Self::TranscriptFinal(_) => "transcript.final",
             Self::QuestionDetected(_) => "question.detected",
@@ -240,6 +253,7 @@ impl ServerMessage {
     pub fn seq(&self) -> u64 {
         match self {
             Self::SessionReady(m) => m.seq,
+            Self::SessionLanguage(m) => m.seq,
             Self::TranscriptPartial(m) => m.seq,
             Self::TranscriptFinal(m) => m.seq,
             Self::QuestionDetected(m) => m.seq,
@@ -266,6 +280,7 @@ impl Validate for ServerMessage {
     fn validate(&self) -> Result<(), ValidationError> {
         match self {
             Self::SessionReady(m) => m.validate(),
+            Self::SessionLanguage(m) => m.validate(),
             Self::TranscriptPartial(m) => m.validate(),
             Self::TranscriptFinal(m) => m.validate(),
             Self::QuestionDetected(m) => m.validate(),
@@ -291,6 +306,12 @@ impl Validate for ServerMessage {
 impl From<SessionReady> for ServerMessage {
     fn from(m: SessionReady) -> Self {
         Self::SessionReady(m)
+    }
+}
+
+impl From<SessionLanguage> for ServerMessage {
+    fn from(m: SessionLanguage) -> Self {
+        Self::SessionLanguage(m)
     }
 }
 
@@ -1042,6 +1063,59 @@ impl Validate for AnswerStyleSet {
     }
 }
 
+/// Change the spoken language of an active call. The server acknowledges the effective language
+/// before clients update their selection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSetLanguage {
+    pub spoken_language: String,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    pub request_id: Uuid,
+}
+
+impl Validate for SessionSetLanguage {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.spoken_language;
+            check::min_len("spoken_language", v, 2)?;
+            check::max_len("spoken_language", v, 16)?;
+        }
+        Ok(())
+    }
+}
+
+/// Authoritative current call language. A correlated error retains the previous language; an absent
+/// error confirms the switch. Historical transcript and answers retain their original text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionLanguage {
+    /// Per-session server message counter. Starts at 1 and increases by one per message; the client
+    /// sends the last one it processed on resume (0 if none).
+    pub seq: u64,
+    pub spoken_language: String,
+    /// UUID (v7 for ids we generate), lowercase hex with dashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl Validate for SessionLanguage {
+    fn validate(&self) -> Result<(), ValidationError> {
+        {
+            let v = &self.seq;
+            check::min_int("seq", u64::from(*v), 1)?;
+        }
+        {
+            let v = &self.spoken_language;
+            check::min_len("spoken_language", v, 2)?;
+            check::max_len("spoken_language", v, 16)?;
+        }
+        if let Some(v) = &self.error {
+            check::max_len("error", v, 500)?;
+        }
+        Ok(())
+    }
+}
+
 /// User ends the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionEnd {
@@ -1067,6 +1141,12 @@ pub struct SessionReady {
     pub session_id: Uuid,
     pub server_time: String,
     pub limits: SessionLimits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_language: Option<String>,
+    /// True when this gateway accepts session.set_language. Absent means live switching is
+    /// unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_switching: Option<bool>,
     /// true: the gateway transcribes the user's own speech live, so the client sends speech audio
     /// on the me channel (after echo cancellation and VAD, never silence). Absent or false: me
     /// frames carry speech flags only, as before.
@@ -1092,6 +1172,10 @@ impl Validate for SessionReady {
         {
             let v = &self.limits;
             v.validate()?;
+        }
+        if let Some(v) = &self.spoken_language {
+            check::min_len("spoken_language", v, 2)?;
+            check::max_len("spoken_language", v, 16)?;
         }
         Ok(())
     }
