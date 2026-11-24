@@ -20,10 +20,9 @@ import { isTextFile, resumeStatusLabel } from "./pairing";
 import { DeviceTest } from "./AudioCheck";
 import { useWindowMode } from "./windowMode";
 import { Icon } from "./ui/Icon";
-import { useHoverMenu } from "./ui/useHoverMenu";
 import { WorkspaceQuickSettings } from "./WorkspaceQuickSettings";
 import { RubyLauncher } from "./RubyLauncher";
-import { useWorkspaceCallBusy, useWorkspaceCompactWindow, useWorkspaceOpenQuickSettings } from "./Shell";
+import { useWorkspaceCallBusy, useWorkspaceCompactWindow } from "./Shell";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
@@ -261,7 +260,6 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onWork, onOpenLive, preset, active = true }: CallProps) {
   const dataActive = useDataActivity(active);
   const mini = useWindowMode(false, active && !session.running);
-  const openWorkspaceQuickSettings = useWorkspaceOpenQuickSettings();
   useWorkspaceCompactWindow((mode) => { void mini.change(mode ?? "toolbar"); }, () => mini.change("full"));
   const running = session.running;
   const [mode, setMode] = useState<Mode>("interview");
@@ -286,13 +284,6 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   useWorkspaceCallBusy(busy || joining);
   const [joinOpen, setJoinOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(0);
-  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
-  const [quickSettingsHover, setQuickSettingsHover] = useState(false);
-  const changeQuickSettings = useCallback((open: boolean) => { setQuickSettingsHover(false); setQuickSettingsOpen(open); }, []);
-  const compactSettingsHover = useHoverMenu({
-    onOpen: () => { if (mini.mode === "toolbar") void mini.change("full").then(changed => { if (changed) { if (openWorkspaceQuickSettings) openWorkspaceQuickSettings(); else { setQuickSettingsHover(true); setQuickSettingsOpen(true); } } }); },
-    onClose: () => {},
-  });
   const [message, setMessage] = useState<string | null>(null);
   const scope = guestScope(settings, signedInAs, environment);
   const [guests, setGuests] = useState<PlannedGuest[]>([]);
@@ -375,14 +366,14 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const selectedResume = application ? (detail?.id === application.id ? detail : application).resume : baseResume.resume;
   const resumeSummary = selectedResume ? `Resume · ${selectedResume.label} · ${resumeStatusLabel(selectedResume.status)}`
     : application || baseResume.resume === null ? "No resume attached" : baseResume.error ? "Resume unavailable" : "Loading resume…";
-  return <div className="session-window" data-mini={mini.mode} onPointerEnter={mini.onPointerEnter} onPointerLeave={mini.onPointerLeave} onPointerDownCapture={mini.cancelHover}>
+  return <div className="session-window" data-mini={mini.mode} data-menu-open={mini.menuOpen || undefined} onPointerEnter={mini.onPointerEnter} onPointerLeave={mini.onPointerLeave} onPointerDownCapture={mini.cancelHover}>
     <header ref={mini.compactRef} className="session-commandbar" data-shape={mini.mode === "dot" ? "dot" : "toolbar"} data-morphing={mini.busy || undefined} inert={mini.busy || undefined} hidden={mini.mode === "full"} data-native-drag-region="header">
       <span className="session-compact-outline" aria-hidden="true" />
             {mini.mode === "toolbar" && inviteCount > 0 ? <Button className="window-mode-toggle" variant="ghost" aria-label={`Assist a call · ${inviteCount} invitation${inviteCount === 1 ? "" : "s"}`} title="Invitations to assist" onClick={async () => { if (await mini.change("full")) setJoinOpen(true); }} icon={<Icon name="users" size={16} />} /> : <Button className="window-mode-toggle" variant="ghost" disabled={mini.mode === "dot"} aria-label="Expand setup" title="Expand window" onClick={() => void mini.change("full")} icon={<Icon name="chevronDown" size={16} />} />}
       <RubyLauncher className="session-compact-ruby" label={mini.mode === "dot" ? "Expand compact toolbar" : "Expand full window"} title={mini.mode === "dot" ? "Hover to open · Drag to move" : "Click to expand · Drag to move"} onOpen={() => void mini.change(mini.mode === "dot" ? "toolbar" : "full")} onDrag={mini.drag} />
       {inviteCount > 0 && <span className="call-compact-invites" aria-label={`${inviteCount} invitations`}>{inviteCount}</span>}
       {mini.mode === "toolbar" && <><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button>
-        <Button variant="ghost" aria-label="Quick settings" onPointerEnter={compactSettingsHover.onPointerEnter} onPointerLeave={compactSettingsHover.onPointerLeave} onClick={async () => { compactSettingsHover.cancel(); if (await mini.change("full")) { if (openWorkspaceQuickSettings) openWorkspaceQuickSettings(); else changeQuickSettings(true); } }} icon={<Icon name="settings" size={16} />} /></>}
+        <WorkspaceQuickSettings running={running} compact open={mini.menuOpen} onOpenChange={open => { void mini.setMenuOpen(open); }} /></>}
     </header>
     <section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
@@ -447,7 +438,6 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
         </div>
         <footer className="call-design-footer call-start-footer"><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
       </>}
-      {quickSettingsOpen && !openWorkspaceQuickSettings && <div className="call-compact-settings"><WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} /></div>}
       <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
     </section>
   </div>;

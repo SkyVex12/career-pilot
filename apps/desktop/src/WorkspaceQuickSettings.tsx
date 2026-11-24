@@ -12,9 +12,10 @@ import "./workspaceQuickSettings.css";
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabindex="0"]';
 
 /** Quick controls for this workspace window, alongside the app-wide actions. */
-export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenChange, hoverOpen = false }: {
+export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenChange, compact = false }: {
   running: boolean;
-  hoverOpen?: boolean;
+  /** Reserve a narrow menu below the medium toolbar without restoring the setup page. */
+  compact?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -62,8 +63,6 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     document.addEventListener(WORKSPACE_MENU_OPEN, otherOpened);
     return () => document.removeEventListener(WORKSPACE_MENU_OPEN, otherOpened);
   }, [id, changeOpen]);
-
-  useLayoutEffect(() => { if (open && hoverOpen) openedByHover.current = true; }, [open, hoverOpen]);
 
   const loadPrefs = useCallback(async () => {
     const request = ++prefsRequest.current;
@@ -130,10 +129,11 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
       const width = Math.min(292, Math.max(0, window.innerWidth - edge * 2));
       const below = window.innerHeight - anchor.bottom - gap - edge;
       const above = anchor.top - gap - edge;
-      const up = below < Math.min(360, panel.current.scrollHeight) && above > below;
-      const maxHeight = Math.max(0, up ? above : below);
+      const up = !compact && below < Math.min(360, panel.current.scrollHeight) && above > below;
+      const menuTop = compact ? 64 : anchor.bottom + gap;
+      const maxHeight = Math.max(0, compact ? window.innerHeight - menuTop - edge : up ? above : below);
       const height = Math.min(panel.current.scrollHeight + 2, maxHeight);
-      const next = { width, maxHeight, left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), top: up ? Math.max(edge, anchor.top - gap - height) : anchor.bottom + gap };
+      const next = { width, maxHeight, left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), top: up ? Math.max(edge, anchor.top - gap - height) : menuTop };
       setPosition(previous => Object.keys(next).every(key => previous[key as keyof CSSProperties] === next[key as keyof typeof next]) ? previous : next);
     };
     fit();
@@ -143,7 +143,7 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     window.addEventListener("resize", fit);
     window.addEventListener("scroll", fit, true);
     return () => { observer.disconnect(); window.removeEventListener("resize", fit); window.removeEventListener("scroll", fit, true); };
-  }, [open]);
+  }, [open, compact]);
 
   useEffect(() => {
     if (!open) return;
@@ -155,9 +155,11 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
       if (event.key === "Escape") changeOpen(false, panel.current?.contains(document.activeElement) || document.activeElement === gear.current);
     };
     document.addEventListener("keydown", escape);
+    const blur = () => changeOpen(false);
+    window.addEventListener("blur", blur);
     document.addEventListener("pointerdown", outside);
     document.addEventListener("focusin", outside);
-    return () => { document.removeEventListener("keydown", escape); document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); };
+    return () => { window.removeEventListener("blur", blur); document.removeEventListener("keydown", escape); document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); };
   }, [open, changeOpen]);
   useEffect(() => {
     if (open && !openedByHover.current && prefs && document.activeElement === panel.current) panel.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();

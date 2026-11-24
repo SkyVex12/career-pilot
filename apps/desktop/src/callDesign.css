@@ -109,7 +109,6 @@
 .call-jd-editor .ui-field,.call-jd-editor .ui-field-control { display:flex;flex:1;flex-direction:column;min-height:0; }
 .call-jd-editor textarea { width:100%;min-height:256px;padding:16px;resize:vertical; }
 .call-jd-editor > p { margin:0; }
-.call-compact-settings { position:absolute;top:8px;right:16px; }
 .call-compact-invites { position:absolute;top:0;right:0;display:grid;place-items:center;min-width:16px;height:16px;border-radius:50%;color:var(--on-action);background:var(--action);font-size:10px;pointer-events:none; }
 .session-commandbar[data-shape="dot"] > .call-compact-invites { display:grid;z-index:3; }
 

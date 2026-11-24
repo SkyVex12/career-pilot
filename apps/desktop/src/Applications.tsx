@@ -419,16 +419,17 @@ function ApplicationView({ id, stamp, interviews, onStartInterview, onBack, onCh
     {error && <Banner tone="danger" title="Could not refresh the application" action={<Button size="sm" onClick={() => void load({ refresh: true })}>Retry</Button>}>{error}</Banner>}
     {app ? <>
       <header className="app-view-head prep-document-head">
-        <div className="app-view-title"><h2>{app.company}</h2><p>{app.role}</p></div>
-        <Button size="sm" onClick={() => openPractice({ application_id: app.id, topic: `Interview for ${app.role}` })}>Practice interview</Button>
-        <Button size="sm" onClick={() => openAsk({ kind: "application", id: app.id })}>Ask about this role</Button>
-        <Button size="sm" onClick={() => setEditing(!editing)} aria-expanded={editing} aria-label="Edit application">Edit</Button>
-        <Menu label="Application actions" trigger="⋯" items={[
-          { label: "Schedule interview…", onSelect: () => setScheduling(true) }, "separator",
-          { label: "Delete application…", danger: true, onSelect: () => setDeleting(true) },
-        ]} />
+        <div className="app-view-title"><h2>{app.company}</h2><p>{app.role}</p><div className="prep-document-status"><PackBadge pack={app.pack} /></div></div>
+        <div className="prep-document-actions">
+          <Button size="sm" onClick={() => openPractice({ application_id: app.id, topic: `Interview for ${app.role}` })}>Practice interview</Button>
+          <Button size="sm" onClick={() => openAsk({ kind: "application", id: app.id })}>Ask about this role</Button>
+          <Button size="sm" onClick={() => setEditing(!editing)} aria-expanded={editing} aria-label="Edit application">Edit</Button>
+          <Menu label="Application actions" trigger="⋯" items={[
+            { label: "Schedule interview…", onSelect: () => setScheduling(true) }, "separator",
+            { label: "Delete application…", danger: true, onSelect: () => setDeleting(true) },
+          ]} />
+        </div>
       </header>
-      <div className="prep-document-status"><PackBadge pack={app.pack} /></div>
       {editing && <DetailsEditor app={app} onCancel={() => setEditing(false)} onSaved={a => { saved(a); setEditing(false); }} />}
       <ResumeSection app={app} onSaved={saved} />
       <JobDescription app={app} onSaved={saved} />

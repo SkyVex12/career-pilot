@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize, PhysicalSize } from "@tauri-apps/api/dpi";
+import { currentMonitor, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 
 let pending: Promise<unknown> = Promise.resolve();
 /** Native window updates must never overlap auto-fit and a user transition. */
@@ -64,4 +64,33 @@ export async function isPointerInsideWindow(mode: "toolbar" | "dot" = "toolbar")
   }
   // All three APIs use physical pixels, including monitors with negative origins and different DPI.
   return pointer.x >= position.x && pointer.x < right && pointer.y >= position.y && pointer.y < bottom;
+}
+
+/** Extend only the medium canvas beneath its toolbar; keep the saved full-mode bounds alone. */
+export async function openCompactMenu(): Promise<() => Promise<void>> {
+  const win = getCurrentWindow();
+  const [position, scale, monitor] = await Promise.all([win.outerPosition(), win.scaleFactor(), currentMonitor()]);
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error("Window display scale is unavailable.");
+  const work = monitor?.workArea;
+  const below = work ? (work.position.y + work.size.height - position.y) / scale - 8 : 480;
+  const height = Math.max(56, Math.floor(Math.min(480, below >= 240 ? below : work ? work.size.height / scale - 16 : 480) / 8) * 8);
+  const top = work ? Math.max(work.position.y, Math.min(position.y, work.position.y + work.size.height - Math.round((height + 8) * scale))) : position.y;
+  const target = new PhysicalPosition(position.x, top);
+  const moved = target.y !== position.y;
+  const restore = async () => {
+    await win.setSize(new LogicalSize(280, 56));
+    if (moved) {
+      const current = await win.outerPosition();
+      // Preserve a deliberate drag while the menu was open.
+      if (current.x === target.x && current.y === target.y) await win.setPosition(position);
+    }
+  };
+  try {
+    if (moved) await win.setPosition(target);
+    await win.setSize(new LogicalSize(280, height));
+  } catch (error) {
+    await restore();
+    throw error;
+  }
+  return restore;
 }
