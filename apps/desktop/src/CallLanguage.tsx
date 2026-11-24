@@ -26,6 +26,7 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
   const [items, setItems] = useState<Catalog["items"]>([{ id: "en", name: "English" }]);
   const [error, setError] = useState<string | null>(null);
   const [remember, setRemember] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [legacyEnglish, setLegacyEnglish] = useState(false);
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
@@ -52,7 +53,7 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
     }
   };
   const selection = items.find(item => item.id === value);
-  return <details className="call-options ui-disclosure">
+  return <details className="call-options ui-disclosure" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary>
       <Icon name="settings" size={18} /><span>Customize</span>
       <span className="ui-disclosure-meta" role={error && !loading ? "alert" : undefined}>

@@ -7,6 +7,25 @@ import { ipc } from "./ipc";
 import corpus from "../../../tests/fixtures/call_languages.json";
 
 describe("profile call language", () => {
+  it("opens Customize by default and respects collapsing it through preference updates", async () => {
+    let finish!: (value: { spoken_language: string }) => void;
+    ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
+    ipc.api("GET", /^\/profile\/call-preferences$/, () => new Promise(resolve => { finish = resolve; }));
+    const change = vi.fn();
+    const view = render(<CallLanguage value="en" onChange={change} />);
+    const disclosure = screen.getByText("Customize").closest("details")!;
+    expect(disclosure).toHaveAttribute("open");
+    await userEvent.click(screen.getByText("Customize"));
+    expect(disclosure).not.toHaveAttribute("open");
+    finish({ spoken_language: "en" });
+    await waitFor(() => expect(change).toHaveBeenCalledWith("en"));
+    view.rerender(<CallLanguage value="en" onChange={change} disabled />);
+    expect(disclosure).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByText("Customize"));
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getByRole("button", { name: "Language" })).toBeVisible();
+  });
+
   it("loads the profile default, offers only enabled languages and saves explicitly", async () => {
     ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }, { id: "es", name: "Spanish" }] }));
     ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "es" }));
@@ -54,7 +73,6 @@ it("shows error details on hover and retries without closing Customize", async (
   const ready = vi.fn();
   render(<CallLanguage value="en" onChange={() => {}} onReady={ready} />);
   await screen.findByRole("alert");
-  await userEvent.click(screen.getByText("Customize"));
   const disclosure = screen.getByText("Customize").closest("details")!;
   const axe = (await import("axe-core")).default;
   const accessibility = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
@@ -77,7 +95,6 @@ it("renders the configured languages with native labels and isolated right-to-le
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "ar" }));
   const { container } = render(<CallLanguage value="ar" onChange={() => {}} />);
   await waitFor(() => expect(container.querySelector("select")!.options).toHaveLength(corpus.length));
-  fireEvent.click(screen.getByText("Customize"));
   const picker = screen.getByRole("button", { name: "Language" });
   expect(picker).toHaveTextContent("العربية · Arabic");
   expect(picker.querySelector("bdi")).toHaveAttribute("dir", "rtl");
@@ -103,7 +120,6 @@ it("searches a large catalog by English, native name and code, and saves only th
     return <CallLanguage value={value} onChange={setValue} />;
   }
   render(<Picker />);
-  await userEvent.click(screen.getByText("Customize"));
   const picker = screen.getByRole("button", { name: "Language" });
   await waitFor(() => expect(picker).toBeEnabled());
   await userEvent.click(screen.getByLabelText("Use as default"));
@@ -141,7 +157,6 @@ it("leaves the selection unchanged for an empty search and cancels cleanly with 
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
   const change = vi.fn();
   render(<CallLanguage value="en" onChange={change} />);
-  await userEvent.click(screen.getByText("Customize"));
   const picker = screen.getByRole("button", { name: "Language" });
   await waitFor(() => expect(picker).toBeEnabled());
   await userEvent.click(picker);
@@ -162,7 +177,6 @@ it("closes the searchable popup and continues to the next field with Tab", async
   ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
   render(<CallLanguage value="en" onChange={() => {}} />);
-  await userEvent.click(screen.getByText("Customize"));
   const picker = screen.getByRole("button", { name: "Language" });
   await waitFor(() => expect(picker).toBeEnabled());
   await userEvent.click(picker);

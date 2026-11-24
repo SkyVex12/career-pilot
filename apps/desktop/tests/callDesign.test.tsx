@@ -202,7 +202,6 @@ describe("the Call setup design", () => {
     rememberGuest(scope, { email: "sam@example.com", name: "Sam Jones" });
     render(tree());
     await screen.findByText("We build routing.");
-    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("button", { name: "Add assistants" }));
     const picker = screen.getByRole("dialog", { name: "Add assistants" });
     await userEvent.click(within(picker).getByRole("checkbox", { name: /Dana Singh/ }));
@@ -226,7 +225,6 @@ describe("the Call setup design", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Discuss routing decisions");
     await userEvent.click(screen.getByText("Focus on documents"));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));
-    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("checkbox", { name: "Save transcript" }));
     await userEvent.click(screen.getByRole("radio", { name: "Paragraphs" }));
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
