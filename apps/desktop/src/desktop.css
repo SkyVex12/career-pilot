@@ -65,10 +65,12 @@
 .ui-select-option { min-height:30px;border-radius:3px; }
 .ui-select-option.is-active { background:var(--surface-sunken);color:var(--text); }
 .ui-dialog { border-radius:var(--radius-lg);box-shadow:var(--shadow-2); }
-.ui-dialog-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+.ui-dialog-head { align-items:center;flex:none;padding:16px 20px;border-bottom:1px solid var(--border); }
 .ui-dialog-title { font-size:14px;line-height:20px;font-weight:600; }
-.ui-dialog-body { padding:16px; }
-.ui-dialog-foot { padding:12px 16px;border-top:1px solid var(--border);background:var(--surface-2); }
+.ui-dialog-body { display:flex;flex-direction:column;gap:16px;padding:20px; }
+.ui-dialog-body > * { flex-shrink:0; }
+.ui-dialog-body > :is(.ui-field,.form-2,.ui-row-inline,p) { margin:0; }
+.ui-dialog-foot { align-items:center;padding:16px 20px;border-top:1px solid var(--border);background:var(--surface-2); }
 .workspace-quick-settings { border-color:var(--border);border-radius:5px; }
 #root .session-window:not([data-mini="full"]) .session-commandbar { border-radius:8px; }
 #root .session-window[data-mini="dot"] .session-commandbar { width:64px;height:44px;padding:0;justify-content:center;border-radius:8px; }
@@ -190,4 +192,12 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
   .detection-apps { grid-template-columns:minmax(0,1fr); }
   #root .desktop-workspace .settings-nav ul { width:100%;flex-wrap:wrap;gap:4px; }
   #root .desktop-workspace .settings-link { padding-inline:10px; }
+}
+
+/* Spacing belongs to the parent layout, not to both the layout and its children. */
+:is(.ui-stack,.ui-stack-tight) > :is(.ui-field,.form-2,.ui-row-inline,p) { margin-block:0; }
+.ui-row-inline:has(> .ui-input, > .ui-select-wrap) > .ui-btn { min-height:var(--control-h-md); }
+.ui-dialog-foot > .ui-btn { min-height:var(--control-h-md); }
+@media (max-width:520px) {
+  .ui-dialog-head, .ui-dialog-body, .ui-dialog-foot { padding:16px; }
 }

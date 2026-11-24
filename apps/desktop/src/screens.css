@@ -1200,7 +1200,8 @@
 
 /* A native dialog has one padded body and one edge-to-edge action row. */
 .ui-dialog-window { gap: 0; padding: 0; overflow: visible; }
-.ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding: 14px 16px 0; }
+.ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding: 20px 20px 0; }
+@media (max-width:520px) { .ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding:16px 16px 0; } }
 .ui-dialog-window > .ui-dialog-body { margin: 0; }
 .ui-dialog-window > .ui-dialog-foot { flex: none; }
 .ui-confirm { gap: 16px; padding: 20px; }
@@ -1220,3 +1221,5 @@
 .sd-unavailable h2 { margin: 0 0 6px; font-size: var(--text-lg); font-weight: 600; }
 .sd-unavailable p { margin: 0; color: var(--text-2); max-width: 60ch; line-height: 1.6; }
 .sd-unavailable .ui-btn { margin-top: 16px; }
+
+.device-feedback-flow { display:contents; }

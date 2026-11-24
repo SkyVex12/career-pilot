@@ -36,6 +36,28 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
+  it("keeps the audio feedback slot mounted through testing and a long failure", async () => {
+    routes();
+    let fail!: (error: string) => void;
+    ipc.handle("audio_check", () => new Promise((_resolve, reject) => { fail = reject; }));
+    render(tree());
+    await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByRole("button", { name: "Change or test" }));
+    const feedback = document.querySelector(".device-test-stable .device-feedback")!;
+    const meter = feedback.querySelector(".device-meter")!;
+    expect(meter).not.toBeVisible();
+    await userEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
+    expect(await screen.findByText("Speak now: say a sentence as you would on the call.")).toBeVisible();
+    expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
+    expect(meter).toBeVisible();
+    const error = "Microphone unavailable. Check the selected device and microphone permission before trying again.";
+    await act(async () => fail(error));
+    expect(await screen.findByText(error)).toHaveAttribute("tabindex", "0");
+    expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
+    expect(meter).not.toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Test" })).toHaveLength(2);
+  });
+
   it("uses calendar context when returning to Call", async () => {
     routes();
     render(tree({ preset: { target: "job:a1", meetingTitle: "Team interview", mode: "interview", n: 1 } }));

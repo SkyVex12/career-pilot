@@ -32,7 +32,7 @@ import { clock } from "./postcall";
 import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
 import { plural, useShowCount } from "./shared";
-import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, useToast, type Tone } from "./ui";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, EmptyState, Field, HelpTip, PageHeader, SegmentedControl, Select, SkeletonList, Spinner, Textarea, useToast, type Tone } from "./ui";
 
 import { GuestPicker } from "./GuestPicker";
 import { guestScope, invitePlannedGuests, type PlannedGuest } from "./guestStorage";
@@ -399,15 +399,15 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
                 <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
               </div>
               {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
-              <div className="call-row call-jd-row"><span className="call-row-label">Job description</span><p className="call-jd-preview">{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</p><Button className="call-row-action" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div>
+              <div className="call-row call-jd-row"><span className="call-row-label">Job description</span><div className="call-jd-preview" role="region" aria-label="Job description preview" tabIndex={0}>{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</div><Button className="call-row-action" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div>
               {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
             </>}
           </div>
           <div className="call-optional-settings">
             <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}>
-              <Field label="Answers"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></Field>
+              <div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullet points or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>
               <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
-              <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
+              <div className="customize-row"><span className="customize-label">Transcript<HelpTip label="Transcript">Save a transcript for review after the call, with everyone’s agreement.</HelpTip></span><div className="customize-control"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /></div></div>
             </CallLanguage>
           </div>
           {settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
@@ -627,7 +627,7 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
   const name = (list: DeviceInfo[] | undefined, id: string | null) => (id ? (list?.find((d) => d.id === id)?.name ?? "Unknown device") : "System default");
   return (
     <div className="audio-summary">
-      <div className="ui-row-inline audio-line">
+      <div className={`ui-row-inline audio-line${open ? " is-editing" : ""}`}>
         {open ? <DevicePickers settings={settings} disabled={false} onSaved={onSaved} inline /> : <>
           <div className="audio-device"><Icon name="mic" /><div><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div></div>
           <div className="audio-device"><Icon name="headphones" /><div><span>{isMac() ? "System audio" : "Call audio"}</span><strong>{isMac() ? "All apps" : name(devices?.outputs, settings.output_device)}</strong></div></div>
@@ -680,13 +680,13 @@ export function DevicePickers({ settings, disabled, onSaved, inline = false }: {
     <div className={inline ? "devices devices-inline" : "ui-stack devices"}>
       <div className="ui-field">
         <span className="ui-field-label">Microphone</span>
-        <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled}>
+        <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout={inline}>
           {select(devices?.inputs, mic, "mic_device", "Microphone")}
         </DeviceTest>
       </div>
       <div className="ui-field">
         <span className="ui-field-label">{outputLabel}</span>
-        <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled}>
+        <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout={inline}>
           {select(devices?.outputs, output, "output_device", outputLabel)}
         </DeviceTest>
         {!inline && <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>}

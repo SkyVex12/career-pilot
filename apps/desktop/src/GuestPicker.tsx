@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayPopover } from "./overlayPopover";
 import { GUESTS_CHANGED, normalizeGuestEmail, recentGuests, validGuestEmail, type GuestPerson, type PlannedGuest } from "./guestStorage";
-import { Button, Checkbox, Input } from "./ui";
+import { Button, Checkbox, HelpTip, Input } from "./ui";
 import { Icon } from "./ui/Icon";
 
 export function GuestPicker({ scope, selected, onChange, disabled }: { scope: string; selected: PlannedGuest[]; onChange: (guests: PlannedGuest[]) => void; disabled?: boolean }) {
@@ -26,11 +26,10 @@ export function GuestPicker({ scope, selected, onChange, disabled }: { scope: st
   const toggle = (person: GuestPerson, checked: boolean) => onChange(checked ? [...selected, { ...person, screen: false, control: false }].slice(0, 2) : selected.filter(p => p.email !== person.email));
   const permission = (email: string, kind: "screen" | "control", checked: boolean) => onChange(selected.map(p => p.email !== email ? p : { ...p, [kind]: checked, ...(kind === "control" && checked ? { screen: true } : {}), ...(kind === "screen" && !checked ? { control: false } : {}) }));
   return <div className="call-guests">
-    <div className="call-row"><span className="call-row-label">Assistants</span><div className="call-guest-selection">
+    <div className="call-row"><span className="call-row-label">Assistants<HelpTip label="Assistants">Invite up to two assistants to send notes and talk to you. Invitations are sent when your call starts.</HelpTip></span><div className="call-guest-selection">
       {selected.map(p => <span className="call-guest-chip" key={p.email} title={p.email}><span>{p.name || p.email}</span><button type="button" disabled={disabled} aria-label={`Remove ${p.name || p.email}`} onClick={() => toggle(p, false)}><Icon name="close" size={12} /></button></span>)}
       <Button ref={button} size="sm" disabled={disabled} aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen(o => !o)}>{selected.length ? "Change assistants" : "Add assistants"}<Icon name="chevronDown" size={14} /></Button>
     </div></div>
-    <p className="call-row-hint">Invitations are sent when your call starts.</p>
     {open && createPortal(<div ref={panel} className="call-popover guest-picker" role="dialog" aria-label="Add assistants" style={position}>
       <div className="guest-picker-search"><Input ref={input} aria-label="Find assistant by name or email" placeholder="Name or email" value={search} onChange={e => setSearch(e.target.value)} /><span className="ui-field-hint">{selected.length} of 2 assistants</span></div>
       <div className="guest-picker-people">{people.length ? people.map(p => {

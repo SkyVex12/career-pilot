@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { request } from "./api";
-import { Button, Checkbox, Field, Select } from "./ui";
+import { Button, Checkbox, Field, HelpTip, Select } from "./ui";
 import { Icon } from "./ui/Icon";
 import { useDataActivity } from "./usePolling";
 
@@ -52,19 +52,22 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
     }
   };
   const selection = items.find(item => item.id === value);
-  return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span><span className="ui-disclosure-meta">{loading ? "Loading languages…" : error ? "Language needs attention" : `${selection?.name ?? value} · call language`}</span></summary><div className="ui-disclosure-body ui-stack">
-    <Field label="Language" hint="Choose the spoken language for transcription and answers. You can also change it during a call.">
-      <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
-        {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
-        {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
-      </Select>
-    </Field>
-    {legacyEnglish && <p className="ui-field-hint">Using English compatibility mode. Update the CoRuby server to choose other languages.</p>}
-    <Checkbox label="Save selection as this profile’s default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
-      setRemember(checked);
-      if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
-    }} />
-    {error && <p role="alert">{error} <Button size="sm" disabled={disabled} onClick={() => setRevision(n => n + 1)}>Retry language settings</Button></p>}
+  return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span>{error && !loading ? <span className="customize-status" role="alert"><span className="customize-status-message">Language needs attention</span><HelpTip label="Language error">{error}</HelpTip><span className="ui-visually-hidden">{error}</span><Button size="sm" aria-label="Retry language settings" disabled={disabled} onClick={event => { event.stopPropagation(); setRevision(n => n + 1); }}>Retry</Button></span> : <span className="ui-disclosure-meta">{loading ? "Loading languages…" : `${selection?.name ?? value} · call language`}</span>}</summary><div className="ui-disclosure-body call-customize">
+    <div className="customize-row">
+      <span className="customize-label">Language<HelpTip label="Language">Spoken language for transcription and answers. Choose “Use as default” to remember it for future calls with this profile.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
+      <div className="customize-control customize-language-control">
+        <Field label="Language" hideLabel>
+          <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
+            {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
+            {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
+          </Select>
+        </Field>
+        <Checkbox label="Use as default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
+          setRemember(checked);
+          if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
+        }} />
+      </div>
+    </div>
     {children}
   </div></details>;
 }
