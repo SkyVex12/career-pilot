@@ -56,6 +56,9 @@ it("shows error details on hover and retries without closing Customize", async (
   await screen.findByRole("alert");
   await userEvent.click(screen.getByText("Customize"));
   const disclosure = screen.getByText("Customize").closest("details")!;
+  const axe = (await import("axe-core")).default;
+  const accessibility = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
+  expect(accessibility.violations.map(violation => violation.id)).toEqual([]);
   expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   await userEvent.hover(screen.getByRole("button", { name: "About Language error" }));
   expect(await screen.findByRole("tooltip")).toHaveTextContent("Could not reach the language server");

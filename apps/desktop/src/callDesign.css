@@ -27,13 +27,11 @@
 .call-customize .ui-segment { flex:1;justify-content:center;padding-inline:8px; }
 .call-customize .ui-check { min-height:24px;align-items:center; }
 .call-customize .customize-language-control { flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px 8px; }
-.call-customize .customize-language-control > .ui-field { flex:1 1 140px;width:140px;max-width:240px; }
+.call-customize .customize-language-control > .ui-field { flex:1 1 110px;width:110px;max-width:240px; }
+.call-customize .customize-language-control > .ui-btn { min-height:36px; }
 .call-customize .call-guest-selection { grid-column:2;min-height:36px; }
 .call-customize .call-guest-selection > .ui-btn { min-height:36px; }
 .call-customize .customize-control > .ui-check:first-child { min-height:36px; }
-.customize-status { display:flex;align-items:center;gap:8px;min-width:0;margin-left:auto;color:var(--text-2);font-size:12px;font-weight:400; }
-.call-options > summary:has(.customize-status)::after { margin-left:4px; }
-.customize-status-message { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .calendar-connections { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
 .calendar-connection .ui-card-head { flex-wrap:wrap;gap:8px; }
 .calendar-connection .ui-card-actions { margin-left:0; }

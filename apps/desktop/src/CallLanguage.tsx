@@ -52,9 +52,16 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
     }
   };
   const selection = items.find(item => item.id === value);
-  return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span>{error && !loading ? <span className="customize-status" role="alert"><span className="customize-status-message">Language needs attention</span><HelpTip label="Language error">{error}</HelpTip><span className="ui-visually-hidden">{error}</span><Button size="sm" aria-label="Retry language settings" disabled={disabled} onClick={event => { event.stopPropagation(); setRevision(n => n + 1); }}>Retry</Button></span> : <span className="ui-disclosure-meta">{loading ? "Loading languages…" : `${selection?.name ?? value} · call language`}</span>}</summary><div className="ui-disclosure-body call-customize">
+  return <details className="call-options ui-disclosure">
+    <summary>
+      <Icon name="settings" size={18} /><span>Customize</span>
+      <span className="ui-disclosure-meta" role={error && !loading ? "alert" : undefined}>
+        {loading ? "Loading languages…" : error ? <>Language needs attention<span className="ui-visually-hidden">{error}</span></> : `${selection?.name ?? value} · call language`}
+      </span>
+    </summary>
+    <div className="ui-disclosure-body call-customize">
     <div className="customize-row">
-      <span className="customize-label">Language<HelpTip label="Language">Spoken language for transcription and answers. Choose “Use as default” to remember it for future calls with this profile.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
+      <span className="customize-label">Language<HelpTip label={error ? "Language error" : "Language"}>{error && <>{error} </>}Spoken language for transcription and answers. Choose “Use as default” to remember it for future calls with this profile.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
       <div className="customize-control customize-language-control">
         <Field label="Language" hideLabel>
           <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
@@ -66,6 +73,7 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
           setRemember(checked);
           if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
         }} />
+        {error && <Button size="sm" aria-label="Retry language settings" disabled={disabled || loading} onClick={() => setRevision(n => n + 1)}>Retry</Button>}
       </div>
     </div>
     {children}
