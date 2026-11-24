@@ -28,6 +28,7 @@ import pytest_asyncio
 from copilot_api.config import ApiSettings
 from copilot_api.deps import Services as ApiServices
 from copilot_api.main import create_app
+from copilot_core import jobs, keys
 from copilot_core.auth import Principal, StaticVerifier
 from copilot_core.crypto import DevKeyProvider, UserCrypto
 from copilot_core.db import create_pool
@@ -42,6 +43,7 @@ from copilot_core.teststack import (
 )
 from copilot_core.valkey_client import make_valkey
 from copilot_gateway.config import Settings as GatewaySettings
+from copilot_gateway.metering import ConnectedLiveMeter, LivePrice
 from copilot_gateway.router import build_router as gateway_router
 from copilot_gateway.session import Services as GatewayServices
 from copilot_gateway.store import GatewayStore, make_client
@@ -78,10 +80,17 @@ COMMON: dict[str, Any] = {
 
 
 class World:
-    def __init__(self, api: httpx2.AsyncClient, gateway_url: str, ctx: Ctx, queue: MemoryJobQueue,
-                 token: str) -> None:  # fmt: skip
+    def __init__(
+        self,
+        api: httpx2.AsyncClient,
+        gateway: GatewayServer,
+        ctx: Ctx,
+        queue: MemoryJobQueue,
+        token: str,
+    ) -> None:
         self.api = api
-        self.gateway_url = gateway_url
+        self.gateway = gateway
+        self.gateway_url = gateway.url
         self.ctx = ctx
         self.queue = queue
         self.token = token
@@ -163,7 +172,7 @@ async def world() -> AsyncIterator[World]:
     )
     async with GatewayServer(gw_svc) as gw:
         try:
-            yield World(api, gw.url, ctx, queue, token)
+            yield World(api, gw, ctx, queue, token)
         finally:
             await api.aclose()
             for pool in (api_svc.pool, ctx.pool, ctx.system_pool, gateway_pool):
@@ -265,6 +274,82 @@ async def test_resume_to_interview_to_summary(world: World) -> None:
     assert [s["id"] for s in sessions] == [sid]
     usage = (await w.api.get("/v1/usage", headers=w.headers)).json()
     assert usage["sessions"] == 1
+
+
+async def test_connected_usage_survives_reconnect_and_history_deletion(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual gateway admission/receipts, worker roles and REST counters agree."""
+    w = world
+    me = (await w.api.get("/v1/me", headers=w.headers)).json()
+    clock = [100.0]
+    anchor = datetime(2026, 11, 23, 12, tzinfo=UTC)
+
+    def meter(sid: uuid.UUID, price: LivePrice, record: Any) -> ConnectedLiveMeter:
+        return ConnectedLiveMeter(
+            sid, price, record, monotonic=lambda: clock[0], utc_now=lambda: anchor
+        )
+
+    monkeypatch.setattr("copilot_gateway.session.ConnectedLiveMeter", meter)
+    client = ProtocolClient(w.gateway_url, token=w.token)
+    await client.start(mode="meeting", consent={"store_transcript": False})
+    sid = uuid.UUID(client.session_id)
+    session = w.gateway.manager.sessions[sid]
+    assert session.durable is not None
+
+    async def attached(active: bool) -> None:
+        async with asyncio.timeout(3):
+            while session.usage_meter.active != active:  # noqa: ASYNC110
+                await asyncio.sleep(0.01)
+
+    async def totals() -> dict[str, Any]:
+        response = await w.api.get(f"/v1/usage/totals?session_id={sid}", headers=w.headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    await attached(True)
+    initial = await totals()
+    assert initial["total_seconds"] == initial["session_seconds"] == 0
+    # The clock advances during silence, without sending speech or invoking a model.
+    clock[0] += 60.25
+    await client.drop()
+    await attached(False)
+    assert await session.writer.drain(within_s=2)
+    retained = await w.ctx.valkey.xrange(keys.sess_log(sid))
+    assert retained
+    flush = jobs.envelope(
+        "session.flush", f"usage-test-flush:{sid}", uuid.UUID(me["id"]),
+        {"session_id": str(sid), "upto_entry_id": retained[-1][0].decode()},
+    )  # fmt: skip
+    await HANDLERS["session.flush"](Job.parse(json.dumps(flush)), w.ctx)
+    first = await totals()
+    assert first["total_seconds"] == first["session_seconds"] == 60.25
+
+    clock[0] += 120
+    assert (await totals())["session_seconds"] == 60.25
+    await client.resume()
+    await attached(True)
+    clock[0] += 30.125
+    await client.send({"type": "session.end"})
+    assert await client.closed() == 1000
+    assert "session.ended" in await w.work()
+
+    final = await totals()
+    assert final["total_seconds"] == final["session_seconds"] == 90.375
+    assert final["total_minutes"] == final["session_minutes"] == 90.375 / 60
+    assert final["total_sessions"] == 1
+    assert final["tracking_only"] is True
+    async with w.ctx.system_pool.acquire() as conn:
+        segments = await conn.fetch(
+            "select started_at,ended_at,duration_microseconds from app.live_usage_intervals"
+            " where session_id=$1 order by started_at", sid,
+        )  # fmt: skip
+    assert sum(row["duration_microseconds"] for row in segments) == 90_375_000
+    assert len(segments) == 2
+    assert (segments[1]["started_at"] - segments[0]["ended_at"]).total_seconds() == 120
+    deleted = await w.api.delete(f"/v1/sessions/{sid}", headers=w.headers)
+    assert deleted.status_code == 204, deleted.text
+    assert (await totals())["session_seconds"] == 90.375
 
 
 def load_dev_profile() -> Any:

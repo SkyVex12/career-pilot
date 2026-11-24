@@ -9,6 +9,7 @@ import { MeetingPreparation } from "./MeetingPreparation";
 // - just ended: the call's summary as it is written (SessionDetail).
 import { CallLanguage } from "./CallLanguage";
 import { LiveCallLanguage } from "./LiveCallLanguage";
+import { LiveUsage } from "./Usage";
 import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
@@ -498,6 +499,7 @@ function Live({
             </Button>
           </>
         }
+        meta={<LiveUsage session={session} />}
       />
       <CompanionDevices sessionId={session.sessionId} />
       <Card>

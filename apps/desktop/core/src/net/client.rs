@@ -579,13 +579,15 @@ impl Client {
                             continue; // replayed on resume, already processed
                         }
                         self.last_seq = message.seq();
-                        // A takeover's refusal comes as an error before the close: not accepted.
-                        let refusal = self.adopting && matches!(message, ServerMessage::ServerError(_));
+                        // A refusal comes as an error before the close: not an accepted session.
+                        let refusal = matches!(message, ServerMessage::ServerError(_));
                         if announce_resume && !refusal {
                             announce_resume = false;
                             self.announce_resumed();
                         }
-                        if !stable {
+                        // An admission error is not a working connection. Resetting here
+                        // made repeated startup refusals retry every 250 ms forever.
+                        if !stable && !refusal {
                             stable = true;
                             self.backoff.reset();
                         }

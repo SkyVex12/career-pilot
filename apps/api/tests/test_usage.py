@@ -345,3 +345,135 @@ async def test_usage_keeps_one_snapshot_when_a_checkpoint_commits_between_aggreg
     assert after["estimated_costs"] == [
         {"currency": "USD", "estimated_minor": 16, "adjustment_minor": -1}
     ]
+
+
+async def test_usage_totals_start_at_zero_and_require_authentication(api: Api) -> None:
+    _, headers = api.user("New usage account")
+    response = await api.client.get("/v1/usage/totals", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["vary"] == "Authorization"
+    data = response.json()
+    assert data["tracking_only"] is True
+    assert data["measurement"] == "connected-v1"
+    assert (data["total_seconds"], data["total_minutes"], data["total_sessions"]) == (0, 0, 0)
+    assert data["session_id"] is None
+    assert data["session_seconds"] is None
+    assert data["session_minutes"] is None
+    assert data["last_connected_at"] is None
+    assert datetime.fromisoformat(data["as_of"]).tzinfo is not None
+    assert (await api.client.get("/v1/usage/totals")).status_code == 401
+
+
+async def test_usage_totals_span_workspaces_and_months_without_legacy_or_other_payers(
+    api: Api,
+) -> None:
+    uid, headers = api.user("Lifetime usage account")
+    other, other_headers = api.user("Other lifetime usage account")
+    for authenticated in (headers, other_headers):
+        await api.client.get("/v1/me", headers=authenticated)
+    person = str(uuid4())
+    shared = await profiles.ensure(api.svc.pool, Principal(uid, "First", None), person, "Shared")
+    assert (
+        await profiles.ensure(api.svc.pool, Principal(other, "Second", None), person, "Shared")
+        == shared
+    )
+    start = datetime(2026, 10, 12, 12, tzinfo=UTC)
+    old = await measured_interval(api, uid, uid, start, start + timedelta(minutes=2))
+    current_start = datetime(2026, 11, 12, 12, tzinfo=UTC)
+    current = await measured_interval(
+        api, shared, uid, current_start, current_start + timedelta(seconds=30, milliseconds=125),
+        rate=0, version="test-free-usage-v1",
+    )  # fmt: skip
+    foreign = await measured_interval(
+        api, shared, other, current_start, current_start + timedelta(hours=2)
+    )
+    legacy = uuid4()
+    await api.admin.execute(
+        "insert into app.sessions"
+        " (id,user_id,mode,store_transcript,started_at,ended_at,billed_seconds)"
+        " values($1,$2,'interview',false,$3,$4,600)",
+        legacy,
+        uid,
+        start,
+        start + timedelta(minutes=10),
+    )
+
+    async def totals() -> dict[str, Any]:
+        response = await api.client.get(
+            f"/v1/usage/totals?session_id={current}&payer_account_id={other}",
+            headers={**headers, "x-copilot-profile": str(shared)},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    before = await totals()
+    assert before["total_seconds"] == 150.125
+    assert before["total_minutes"] == pytest.approx(150.125 / 60)
+    assert before["total_sessions"] == 2
+    assert before["session_id"] == str(current)
+    assert before["session_seconds"] == 30.125
+    assert before["session_minutes"] == pytest.approx(30.125 / 60)
+    assert datetime.fromisoformat(before["last_connected_at"]) == current_start + timedelta(
+        seconds=30, milliseconds=125
+    )
+    # Accounting survives deleted history, including a session in another workspace.
+    await api.admin.execute("delete from app.sessions where id=any($1::uuid[])", [old, current])
+    after = await totals()
+    for key in ("total_seconds", "total_sessions", "session_seconds", "last_connected_at"):
+        assert after[key] == before[key]
+
+    for sid in (foreign, legacy, uuid4()):
+        response = await api.client.get(f"/v1/usage/totals?session_id={sid}", headers=headers)
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "usage session not found"
+    response = await api.client.get("/v1/usage/totals?session_id=not-a-uuid", headers=headers)
+    assert response.status_code == 422
+
+
+async def test_usage_totals_count_only_committed_connected_ranges(api: Api) -> None:
+    uid, headers = api.user("Connected usage counter")
+    await api.client.get("/v1/me", headers=headers)
+    sid = uuid4()
+    # Admission pins the session before the initial connected checkpoint exists.
+    async with api.admin.transaction():
+        await api.admin.execute("select set_config('app.user_id',$1,true)", str(uid))
+        await usage.ensure_usage_session(
+            api.admin, workspace_id=uid, payer_account_id=uid, session_id=sid,
+            price=usage.UsagePrice(),
+        )  # fmt: skip
+    initial = (await api.client.get(f"/v1/usage/totals?session_id={sid}", headers=headers)).json()
+    assert initial["session_seconds"] == 0
+    assert initial["total_seconds"] == 0
+    assert initial["total_sessions"] == 0
+
+    start = datetime(2026, 11, 12, 12, tzinfo=UTC)
+    event_id = uuid4()
+    for checkpoint, begin, end in (
+        (event_id, 0, 10),
+        (event_id, 0, 10),  # Retry of a committed event.
+        (uuid4(), 5, 15),  # Different event partly overlaps accepted time.
+        (uuid4(), 45, 50),  # Thirty seconds of reconnect downtime are excluded.
+    ):
+        async with api.admin.transaction():
+            await api.admin.execute("select set_config('app.user_id',$1,true)", str(uid))
+            await usage.record_interval(
+                api.admin,
+                workspace_id=uid,
+                payer_account_id=uid,
+                session_id=sid,
+                event_id=checkpoint,
+                started_at=start + timedelta(seconds=begin),
+                ended_at=start + timedelta(seconds=end),
+                price=usage.UsagePrice(),
+            )
+    response = await api.client.get(f"/v1/usage/totals?session_id={sid}", headers=headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_seconds"] == data["session_seconds"] == 20
+    assert data["total_sessions"] == 1
+    assert data["total_minutes"] == data["session_minutes"] == pytest.approx(1 / 3)
+    assert datetime.fromisoformat(data["last_connected_at"]) == start + timedelta(seconds=50)
+    # Repeated reads cannot advance time without another accepted checkpoint.
+    later = (await api.client.get(f"/v1/usage/totals?session_id={sid}", headers=headers)).json()
+    assert later["session_seconds"] == data["session_seconds"]

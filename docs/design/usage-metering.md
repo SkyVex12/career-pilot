@@ -1,7 +1,8 @@
 # Connected live usage and billing preparation
 
 Implemented as an additive application change on the existing deployment shape.
-Payment collection is not enabled. The displayed amounts are usage estimates.
+Payment collection is not enabled. The app displays confirmed consumed minutes for every
+account, including internal testing accounts, without requiring a paid plan.
 
 ## What counts
 
@@ -79,9 +80,18 @@ discounts. No balance is debited and no payment provider is called.
 estimates, and the last recorded checkpoint from one consistent database snapshot. Responses
 are not cached. The existing combined
 `live_seconds` / `live_minutes` fields remain for older clients; new clients distinguish
-measured connected time from nonbillable historical estimates. The desktop history screen
-labels the new estimate as tracking only, with no charges, and continues refreshing visible
-usage after a call ends so the worker's final checkpoint can appear.
+measured connected time from nonbillable historical estimates.
+
+`GET /v1/usage/totals?session_id=UUID` returns confirmed lifetime and optional current-session
+seconds/minutes from one payer-scoped snapshot. It reads the merged connected ranges, so
+polling does not scan every historical checkpoint. Unknown or another account's session
+returns 404, including in a shared workspace. Totals survive call-history deletion.
+
+The desktop shows current-call minutes in the main call screen and overlay, and lifetime
+minutes in Past calls and Settings → Account. Live counters refresh every 10 seconds;
+visible idle screens continue refreshing every 30 seconds so final worker checkpoints appear.
+The UI does not extrapolate elapsed time or add current-call time to a total that already
+includes it. Historical estimates stay separate, and the desktop does not show prices.
 
 ## Migration and deployment
 

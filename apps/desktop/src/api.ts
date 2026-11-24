@@ -799,6 +799,20 @@ export interface Usage {
   days?: { day: string; live_seconds: number; measured_seconds: number; legacy_estimated_seconds: number }[];
 }
 
+/** Confirmed connected live time for the signed-in account, across all workspaces. */
+export interface UsageTotals {
+  tracking_only: true;
+  measurement: "connected-v1";
+  as_of: string;
+  total_seconds: number;
+  total_minutes: number;
+  total_sessions: number;
+  session_id: string | null;
+  session_seconds: number | null;
+  session_minutes: number | null;
+  last_connected_at: string | null;
+}
+
 export interface Me {
   id: string;
   email: string;
@@ -954,6 +968,7 @@ export function queryString(query: object): string {
 export const rest = {
   me: () => call<Me>("GET", "/me"),
   usage: (policy?: ReadPolicy) => call<Usage>("GET", "/usage", undefined, { ...policy, refresh: true }),
+  usageTotals: (sessionId?: string | null, policy?: ReadPolicy) => call<UsageTotals>("GET", `/usage/totals${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`, undefined, { ...policy, refresh: true }),
   documents: () => call<{ documents: DocumentItem[]; digest: DigestInfo | null }>("GET", "/documents"),
   jobs: () => call<{ jobs: JobItem[] }>("GET", "/jobs"),
   interviews: (policy?: ReadPolicy) => call<{ interviews: InterviewItem[] }>("GET", "/interviews", undefined, policy),

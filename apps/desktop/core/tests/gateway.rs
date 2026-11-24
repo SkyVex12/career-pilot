@@ -210,6 +210,68 @@ fn tokens(t: &str) -> Arc<StaticTokens> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn repeated_startup_errors_back_off_until_the_session_is_ready() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let sid = Uuid::now_v7();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let start = ws.next().await.unwrap().unwrap().into_text().unwrap();
+            assert!(start.contains("session.start"));
+            ws.send(Message::text(
+                r#"{"type":"error","seq":1,"code":"unavailable","message":"Preparing context","fatal":true}"#,
+            ))
+            .await
+            .unwrap();
+            ws.close(Some(CloseFrame { code: CloseCode::Library(4500), reason: "unavailable".into() }))
+                .await
+                .unwrap();
+            let _ = ws.next().await;
+        }
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let _ = ws.next().await;
+        ws.send(Message::text(
+            serde_json::json!({
+                "type": "session.ready", "seq": 1, "session_id": sid,
+                "server_time": "2026-11-24T00:00:00Z", "limits": { "max_minutes": 120 }
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+        let _ = ws.next().await;
+    });
+    let mut call = Call::start(&url, tokens(TOKEN), None);
+    assert_eq!(call.live().await, (sid, false));
+    let retries: Vec<_> = call
+        .seen
+        .iter()
+        .filter_map(|event| match event {
+            ClientEvent::Connection(ConnectionState::Reconnecting { attempt, in_ms, .. }) => {
+                Some((*attempt, *in_ms))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retries.len(), 3);
+    for ((attempt, delay), (expected_attempt, base)) in retries.iter().zip([(1, 250), (2, 500), (3, 1000)]) {
+        assert_eq!(*attempt, expected_attempt);
+        assert!((base..=base * 6 / 5).contains(delay), "delay {delay} for attempt {attempt}");
+    }
+    call.handle.command(Command::Shutdown).await;
+    assert_eq!(call.task.await.unwrap(), StopReason::Ended);
+    server.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_call_with_questions_answers_and_a_dropped_socket() {
     let gw = Gateway::start(0, &[TOKEN], None);
     let mut call = Call::start(&gw.url(), tokens(TOKEN), Some(Duration::from_millis(300)));

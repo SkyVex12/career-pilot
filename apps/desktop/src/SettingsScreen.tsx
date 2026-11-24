@@ -9,6 +9,7 @@ import { api, rest, type Settings, type SettingsView, type UpdateState } from ".
 import { cloudUrlsFor } from "./urls";
 import { ago, settingsLine } from "./updates";
 import { CareerOsSettings } from "./CareerOs";
+import { AccountUsage } from "./Usage";
 import { DevicePickers } from "./CallScreen";
 import { HOTKEYS, clashWith } from "./hotkeys";
 import { accountOf } from "./profiles";
@@ -273,6 +274,7 @@ function Account({ view, onSaved, profileScope }: { view: SettingsView; onSaved:
           </p>
         )}
       </Card>
+      {view.ready && <Card title="Usage"><AccountUsage key={accountOf(view)} /></Card>}
       <Card title="HubRuby">
         <CareerOsSettings key={accountOf(view)} ready={view.ready} />
       </Card>
