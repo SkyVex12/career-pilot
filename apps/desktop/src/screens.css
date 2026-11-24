@@ -1200,7 +1200,7 @@
 
 /* A native dialog has one padded body and one edge-to-edge action row. */
 .ui-dialog-window { gap: 0; padding: 0; overflow: visible; }
-.ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding: 24px 24px 0; }
+.ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding: 16px 24px 0; }
 @media (max-width:520px) { .ui-dialog-window > .ui-dialog-desc:not(.ui-visually-hidden) { padding:16px 16px 0; } }
 .ui-dialog-window > .ui-dialog-body { margin: 0; }
 .ui-dialog-window > .ui-dialog-foot { flex: none; }

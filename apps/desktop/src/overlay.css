@@ -1118,19 +1118,19 @@ button.ov-watching[aria-expanded="true"] {
   --focus: var(--accent);
 }
 .ov { border: 1px solid var(--ov-line); border-radius: 8px; overflow: hidden; background: rgb(var(--ov-panel) / var(--ov-alpha)); }
-.ov-head { min-height: 48px; flex: none; gap: 8px; padding: 8px 8px; }
+.ov-head { min-height: 40px; flex: none; gap: 8px; padding: 4px 12px; }
 .ov-brand { display: inline-flex; flex: none; align-items: center; }
 .ov-brand img { width: 19px; height: 19px; }
 .ov-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ov-host-name > span { margin-left: 8px; color: var(--ov-text-3); }
 .ov-status { font-size: 12px; font-weight: 400; gap: 8px; }
 .ov-head .ui-icon-btn[aria-pressed=true], .ov-head .ui-icon-btn[aria-expanded=true] { background: var(--ov-raise); color: var(--ov-text); }
-.ov-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 8px; border-bottom: 1px solid var(--ov-line); }
+.ov-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--ov-line); }
 .ov-work-tabs, .ov-toolbar-actions, .ov-compact-tools { display: flex; align-items: center; gap: 8px; }
-.ov-work-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; padding: 8px 8px; border: 1px solid transparent; border-radius: 4px; color: var(--ov-text-2); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.ov-work-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; color: var(--ov-text-2); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .ov-work-tabs > button[aria-selected=true] { border-color: var(--ov-line); color: var(--ov-text); background: var(--ov-raise); }
 .ov-toolbar-actions { margin-left: auto; }
-.ov-compact-tools { padding: 8px 8px; justify-content: flex-end; border-bottom: 1px solid var(--ov-line); }
+.ov-compact-tools { padding: 4px 12px; justify-content: flex-end; border-bottom: 1px solid var(--ov-line); }
 .ov-conversation-workarea { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .ov-conversation-workarea > .ov-body { min-width: 0; width: 100%; }
 .ov-conversation-workarea[hidden], .ov-screen-panel[hidden], .ov-shared-screen-panel[hidden] { display: none; }
@@ -1152,9 +1152,9 @@ button.ov-watching[aria-expanded="true"] {
 .ov .ov-thumb, .ov .copy { color: var(--ov-text-2); }
 .ov .ov-jump-top { background: var(--action); color: var(--on-action); }
 .ov .ov-ask { gap: 8px; padding: 8px 16px; flex: none; }
-.ov .ov-ask-input { min-width: 0; min-height: 40px; flex-basis: 100px; border-color: var(--ov-line); background: rgb(var(--surface-2-rgb) / var(--ov-alpha)); }
+.ov .ov-ask-input { min-width: 0; min-height: 32px; flex-basis: 100px; border-color: var(--ov-line); background: rgb(var(--surface-2-rgb) / var(--ov-alpha)); }
 .ov .ov-ask-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; border-color: var(--ov-line); font-weight: 400; }
-.ov .ov-ask > .ov-ask-btn { min-height: 40px; background: var(--action); border-color: var(--action); color: var(--on-action); }
+.ov .ov-ask > .ov-ask-btn { min-height: 32px; padding: 0 12px; background: var(--action); border-color: var(--action); color: var(--on-action); }
 .ov .ov-coding { border: 0; padding: 16px; }
 .ov-coding-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12px; }
 .ov-coding-heading strong { font-weight: 500; }
@@ -1163,9 +1163,9 @@ button.ov-watching[aria-expanded="true"] {
 .ov .ov-coding-lang { flex: 1 1 120px; min-width: 100px; max-width: 220px; }
 .ov .ov-coding-clear { background: transparent; }
 .ov-sharing-status:empty { display: none; }
-.ov-sharing-status { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px; border-bottom: 1px solid var(--ov-line); }
+.ov-sharing-status { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--ov-line); }
 .ov .ov-screen-chip { display: inline-flex; gap: 8px; align-items: center; border-radius: 4px; font-weight: 400; background: var(--surface-2); }
-.ov .ov-watching { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; border: 1px solid transparent; border-radius: 4px; padding: 8px 8px; color: var(--ov-text-2); font-weight: 400; font-size: 12px; }
+.ov .ov-watching { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; border: 1px solid transparent; border-radius: 4px; padding: 0 8px; color: var(--ov-text-2); font-weight: 400; font-size: 12px; }
 .ov .ov-watching:hover, .ov .ov-watching[aria-expanded=true] { color: var(--ov-text); background: var(--ov-raise); }
 .ov-guest-footer { flex: none; min-width: 0; padding: 8px 16px; border-top: 1px solid var(--ov-line); }
 .ov-guest-footer .ov-talk, .ov-guest-footer .ov-note-box { padding: 0; border: 0; }
@@ -1192,11 +1192,11 @@ button.ov-watching[aria-expanded="true"] {
 .ov-summary-choice { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .ov-summary-choice input { width: 15px; height: 15px; }
 @container overlay (max-width: 420px) {
-  .ov-head { gap: 8px; padding: 8px 8px; }
+  .ov-head { gap: 8px; padding: 4px 8px; }
   .ov-status { max-width: 110px; }
-  .ov-toolbar { padding: 8px; }
+  .ov-toolbar { padding: 4px 8px; }
   .ov-work-tabs { gap: 8px; }
-  .ov-work-tabs > button { padding: 8px 8px; }
+  .ov-work-tabs > button { padding: 0 8px; }
   .ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 16px 16px; }
   .ov-pane-transcript { flex-basis: 130px; }
 }

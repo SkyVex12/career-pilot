@@ -14,19 +14,19 @@
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) { border:0;background:transparent;max-width:none;max-height:none; }
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-header { display:none; }
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-body { overflow:visible; }
-.desktop-titlebar { height:40px;display:flex;align-items:center;justify-content:space-between;padding-left:16px;user-select:none; }
+.desktop-titlebar { height:32px;display:flex;align-items:center;justify-content:space-between;padding-left:16px;user-select:none; }
 .desktop-brand { display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.1px;color:var(--text);pointer-events:none; }
 .desktop-brand img,.desktop-brand svg { width:16px;height:16px; }
-.desktop-title-actions { display:flex;align-items:center;gap:16px;height:100%; }
+.desktop-title-actions { display:flex;align-items:center;gap:8px;height:100%; }
 .desktop-window-actions { display:flex;align-self:stretch; }
 .desktop-window-actions button { display:grid;place-items:center;width:40px;padding:0;border:0;background:transparent;color:var(--text-3); }
 .desktop-window-actions button:hover { background:var(--surface-sunken);color:var(--text); }
 .desktop-window-actions .desktop-close:hover { background:var(--danger);color:var(--on-danger); }
-.desktop-commandbar { display:flex;align-items:end;gap:8px;min-height:42px;padding:0 16px;border-bottom:1px solid var(--border); }
+.desktop-commandbar { display:flex;align-items:end;gap:8px;min-height:33px;padding:0 16px;border-bottom:1px solid var(--border); }
 #root .desktop-commandbar .shell-side { display:flex;flex:none;align-items:end;flex-direction:row;gap:8px;min-height:0;height:auto;max-width:100%;padding:0;border:0;background:transparent;overflow:visible; }
 #root .desktop-commandbar .shell-side > div,#root .desktop-commandbar .shell-nav { display:contents; }
 #root .desktop-commandbar .shell-nav > li { list-style:none;min-width:0; }
-#root .desktop-commandbar .shell-link { display:flex;align-items:center;gap:8px;padding:0 16px;min-height:40px;width:auto;font-size:13px;font-weight:500;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--text-2);box-shadow:none;white-space:nowrap; }
+#root .desktop-commandbar .shell-link { display:flex;align-items:center;gap:8px;padding:0 12px;min-height:32px;width:auto;font-size:13px;font-weight:500;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--text-2);box-shadow:none;white-space:nowrap; }
 #root .desktop-commandbar .shell-link:hover { background:var(--surface);color:var(--text); }
 #root .desktop-commandbar .shell-link[aria-current="page"] { background:var(--surface);color:var(--text);border-color:var(--border);font-weight:600;position:relative; }
 #root .desktop-commandbar .shell-link[aria-current="page"]::before { content:"";position:absolute;height:2px;top:-1px;left:5px;right:5px;background:var(--action);border-radius:2px; }
@@ -35,14 +35,14 @@
 .desktop-commandbar .shell-link-icon svg { width:16px;height:16px; }
 .desktop-command-tools { display:flex;align-items:center;gap:8px;flex:none;padding:0; }
 .desktop-command-tools > .ui-menu-wrap > button { width:auto;min-width:32px;padding:0 8px;font-size:11px; }
-.desktop-profile { position:relative;width:30px;flex:none; }
-.desktop-profile .ui-select-wrap { width:30px; }
-.desktop-profile .ui-select { display:flex;align-items:center;justify-content:center;min-width:32px;width:32px;height:32px;min-height:32px;padding:8px;border:0;background:transparent;background-image:none; }
+.desktop-profile { position:relative;width:32px;flex:none; }
+.desktop-profile .ui-select-wrap { width:32px; }
+.desktop-profile .ui-select { display:flex;align-items:center;justify-content:center;min-width:32px;width:32px;height:32px;min-height:32px;padding:0;border:0;background:transparent;background-image:none; }
 .desktop-profile .ui-select-wrap::after { display:none; }
 .desktop-profile-initials { display:grid;place-items:center;width:24px;height:24px;border:1px solid var(--border);border-radius:50%;background:var(--surface-sunken);font-size:10px;font-weight:600;letter-spacing:.2px; }
 .desktop-profile .ui-field-error { position:absolute;right:0;top:100%;z-index:80;width:230px;padding:8px;background:var(--surface);border:1px solid var(--danger);border-radius:4px; }
 #root .desktop-workspace .ui-page-head { margin:0 0 24px; }
-#root .desktop-workspace .ui-page-title { font-size:24px;line-height:32px;letter-spacing:-.4px;font-weight:650; }
+#root .desktop-workspace .ui-page-title { font-size:20px;line-height:28px;letter-spacing:-.3px;font-weight:600; }
 #root .desktop-workspace .ui-page-meta { margin-top:0;font-size:13px;line-height:20px; }
 #root .desktop-workspace .ui-card { border-radius:var(--radius-lg);box-shadow:none; }
 #root .desktop-workspace .calendar-connections > .ui-card { margin:0; }
@@ -54,24 +54,24 @@
 #root .desktop-workspace .ui-row-hit { min-height:48px;padding:8px 16px; }
 #root .desktop-workspace .form-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .ui-btn,.ui-input,.ui-select,.ui-textarea { border-radius:var(--radius-sm); }
-.ui-btn { font-size:13px;font-weight:600;box-shadow:none; }
+.ui-btn { font-size:13px;font-weight:500;box-shadow:none; }
 .ui-btn-secondary { border-color:var(--border);background:var(--surface-2); }
-.ui-btn-primary { background:var(--action);border-color:var(--action);color:var(--on-action);box-shadow:none; }
+.ui-btn-primary { font-weight:600;background:var(--action);border-color:var(--action);color:var(--on-action);box-shadow:none; }
 .ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
 .ui-segmented { border:0;border-radius:var(--radius-md);padding:0;gap:0;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border); }
-.ui-segmented .ui-segment { border-radius:var(--radius-sm);min-height:var(--control-h-md);padding:0 16px;justify-content:center; }
+.ui-segmented .ui-segment { border-radius:var(--radius-sm);min-height:var(--control-h-md);padding:0 12px;justify-content:center; }
 .ui-segmented-sm .ui-segment { min-height:var(--control-h-sm);padding:0 8px; }
 .ui-segmented .ui-segment.is-on { background:var(--surface);color:var(--text);box-shadow:var(--shadow-1); }
-.ui-select-menu { padding:8px;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-2); }
-.ui-select-option { min-height:32px;border-radius:8px; }
+.ui-select-menu { padding:4px;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-2); }
+.ui-select-option { min-height:var(--option-h);border-radius:4px; }
 .ui-select-option.is-active { background:var(--surface-sunken);color:var(--text); }
 .ui-dialog { border-radius:var(--radius-lg);box-shadow:var(--shadow-2); }
-.ui-dialog-head { align-items:center;flex:none;padding:16px 24px;border-bottom:1px solid var(--border); }
+.ui-dialog-head { align-items:center;flex:none;min-height:48px;padding:8px 24px;border-bottom:1px solid var(--border); }
 .ui-dialog-title { font-size:14px;line-height:20px;font-weight:600; }
-.ui-dialog-body { display:flex;flex-direction:column;gap:16px;padding:24px; }
+.ui-dialog-body { display:flex;flex-direction:column;gap:12px;padding:16px 24px; }
 .ui-dialog-body > * { flex-shrink:0; }
 .ui-dialog-body > :is(.ui-field,.form-2,.ui-row-inline,p) { margin:0; }
-.ui-dialog-foot { align-items:center;padding:16px 24px;border-top:1px solid var(--border);background:var(--surface-2); }
+.ui-dialog-foot { align-items:center;padding:12px 24px;border-top:1px solid var(--border);background:var(--surface-2); }
 .workspace-quick-settings { border-color:var(--border);border-radius:8px; }
 #root .session-window:not([data-mini="full"]) .session-commandbar { border-radius:8px; }
 #root .session-window[data-mini="dot"] .session-commandbar { width:64px;height:44px;padding:0;justify-content:center;border-radius:8px; }
@@ -116,11 +116,6 @@
 .app-notification-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:8px; }
 body:has(.shell-content:not([hidden]) .session-window[data-mini="full"]) .ui-toast-viewport { bottom:76px;max-height:calc(100vh - 92px); }
 body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .ui-toast-viewport { display:none; }
-@media (max-height:400px) {
-  .desktop-titlebar { height:32px; }
-  .desktop-commandbar { min-height:34px; }
-  #root .desktop-commandbar .shell-link { min-height:30px; }
-}
 
 #root .desktop-workspace .session-start.ui-btn-primary { border-radius:var(--radius-sm);background:var(--action);border-color:var(--action);color:var(--on-action); }
 #root .desktop-workspace .session-start.ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
@@ -133,8 +128,9 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 
 /* Desktop pages share one readable measure; popovers and compact windows keep their geometry. */
 #root .desktop-workspace .shell-content:not(:has(.session-window)) { max-width:1280px;margin-inline:auto; }
-#root .desktop-workspace .ui-card-title { font-size:16px;line-height:24px; }
-.desktop-workspace .ui-input,.desktop-workspace .ui-select,.desktop-workspace .ui-textarea { font-size:14px; }
+#root .desktop-workspace .ui-card-title { font-size:14px;line-height:20px; }
+.desktop-workspace .ui-input,.desktop-workspace .ui-select { font-size:13px; }
+.desktop-workspace .ui-textarea { font-size:14px; }
 .desktop-workspace .ui-input:enabled:hover,.desktop-workspace .ui-select:enabled:hover,.desktop-workspace .ui-textarea:enabled:hover { border-color:var(--text-3); }
 .desktop-workspace .ui-empty { padding:32px 24px; }
 .desktop-workspace .ui-empty-icon { width:48px;height:48px;border-radius:12px;background:var(--surface-2);color:var(--accent);margin-bottom:8px; }
@@ -150,16 +146,12 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
   .desktop-workspace .ui-page-actions { width:100%; }
   .desktop-workspace .ui-banner-action { margin-left:32px; }
 }
-@media(pointer:coarse) {
-  .desktop-workspace .ui-btn,.desktop-workspace .ui-icon-btn,.desktop-workspace .ui-select { min-height:48px; }
-  .desktop-workspace .ui-icon-btn { min-width:48px; }
-}
 
 /* Settings have a stable section index and clearly bounded groups. */
 #root .desktop-workspace .settings { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;gap:24px; }
-#root .desktop-workspace .settings-nav { grid-column:span 2;position:sticky;top:0;padding:0;border:0;margin:0; }
-#root .desktop-workspace .settings-nav ul { background:transparent;display:flex;flex-direction:column;gap:8px; }
-#root .desktop-workspace .settings-link { width:100%;min-height:40px;padding:8px 16px;border:0;border-radius:var(--radius-sm);text-align:left;font-size:13px; }
+#root .desktop-workspace .settings-nav { grid-column:span 2;position:sticky;top:0;align-self:start;padding:0;border:0;margin:0;background:transparent; }
+#root .desktop-workspace .settings-nav ul { background:transparent;display:flex;flex-direction:column;gap:4px; }
+#root .desktop-workspace .settings-link { width:100%;min-height:32px;padding:0 12px;border:0;border-radius:var(--radius-sm);text-align:left;font-size:13px; }
 #root .desktop-workspace .settings-link[aria-current="true"] { background:var(--accent-soft);color:var(--accent);font-weight:600; }
 #root .desktop-workspace .settings-body { grid-column:span 10;width:100%;max-width:none;margin:0;padding:0; }
 #root .desktop-workspace .settings-body > .ui-card,#root .desktop-workspace .background-settings > .ui-card { border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface); }
@@ -168,7 +160,7 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 #root .desktop-workspace .settings-body > .ui-card + .ui-card { margin-top:16px; }
 #root .desktop-workspace .settings-body > .ui-disclosure { margin-block:16px; }
 .settings-rows { display:grid;gap:0; }
-.settings-rows > .ui-switch-row { padding-block:16px;gap:24px; }
+.settings-rows > .ui-switch-row { padding-block:12px;gap:24px; }
 .settings-rows > .ui-switch-row:first-child { padding-top:0; }
 .settings-rows > .ui-switch-row:last-child { padding-bottom:0; }
 .settings-rows > .ui-switch-row + .ui-switch-row { border-top:1px solid var(--border); }
@@ -199,7 +191,9 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 .ui-row-inline:has(> .ui-input, > .ui-select-wrap) > .ui-btn { min-height:var(--control-h-md); }
 .ui-dialog-foot > .ui-btn { min-height:var(--control-h-md); }
 @media (max-width:520px) {
-  .ui-dialog-head, .ui-dialog-body, .ui-dialog-foot { padding:16px; }
+  .ui-dialog-head { padding:8px 16px; }
+  .ui-dialog-body { padding:16px; }
+  .ui-dialog-foot { padding:12px 16px; }
 }
 
 /* Short settings values align in a consistent control column; long forms stack on small windows. */
@@ -208,6 +202,17 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 .settings-body .settings-field > .ui-field-control { grid-column:2;grid-row:1;width:100%; }
 .settings-body .settings-field > .ui-field-error { grid-column:2;grid-row:2; }
 .settings-body .settings-field .ui-input,.settings-body .settings-field .ui-select-wrap { width:100%; }
-.settings-body .settings-field .ui-field-heading { min-height:40px; }
+.settings-body .settings-field .ui-field-heading { min-height:32px; }
 .settings-body .ui-switch-row { min-height:32px; }
 @media(max-width:600px) { .settings-body .settings-field { grid-template-columns:minmax(0,1fr); } .settings-body .settings-field > .ui-field-control { grid-column:1;grid-row:2; } .settings-body .settings-field > .ui-field-error { grid-column:1;grid-row:3; } .settings-body .settings-field .ui-field-heading { min-height:24px; } }
+
+@media(pointer:coarse) {
+  .desktop-titlebar { height:48px; }
+  .desktop-window-actions button { width:48px; }
+  .desktop-profile,.desktop-profile .ui-select-wrap { width:48px; }
+  .desktop-profile .ui-select { width:48px;min-width:48px;height:48px; }
+  .desktop-workspace .ui-btn,.desktop-workspace .ui-icon-btn,.desktop-workspace .ui-select { min-height:48px; }
+  .desktop-workspace .ui-icon-btn { min-width:48px; }
+  #root .desktop-commandbar .shell-link { min-height:48px; }
+  #root .desktop-workspace .settings-link { min-height:48px; }
+}

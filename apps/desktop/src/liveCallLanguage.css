@@ -3,7 +3,7 @@
 .live-call-language .ui-select-wrap { width: 100%; min-width: 0; }
 .live-call-language-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .live-call-language.is-compact { position: relative; width: 160px; max-width: 40vw; gap: 8px; }
-.live-call-language.is-compact .ui-select { min-height: 28px; height: 28px; font-size: 12px; padding-block: 8px; }
+.live-call-language.is-compact .ui-select { min-height: 28px; height: 28px; font-size: 12px; padding-block: 0; }
 .live-call-language.is-compact .ui-field-hint { font-size: 10px; line-height: 13px; }
 .live-call-language.is-compact .live-call-language-error { position: absolute; z-index: var(--layer-popup); top: calc(100% + 6px); right: 0; width: min(300px, calc(100vw - 16px)); padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow-2); }
 @media (max-width: 520px) { .live-call-language.is-compact { width: 120px; max-width: 34vw; } }

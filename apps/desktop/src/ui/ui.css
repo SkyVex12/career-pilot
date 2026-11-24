@@ -32,7 +32,7 @@ body {
 
 /* Optional setup sections use the same disclosure treatment across product screens. */
 .ui-disclosure { min-width:0;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface); }
-.ui-disclosure > summary { display:flex;align-items:center;gap:8px;min-height:48px;padding:16px 16px;list-style:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);border-radius:inherit; }
+.ui-disclosure > summary { display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 16px;list-style:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);border-radius:inherit; }
 .ui-disclosure > summary::-webkit-details-marker { display:none; }
 .ui-disclosure > summary::after { content:"";width:7px;height:7px;flex:none;margin-left:auto;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg) translateY(-2px); }
 .ui-disclosure[open] > summary::after { transform:rotate(225deg) translate(-2px,-1px); }
@@ -57,7 +57,7 @@ body {
   min-height: var(--control-h-md);
   max-width: 100%;
   width: auto;
-  padding: 0 var(--space-5);
+  padding: 0 var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   font: inherit;
@@ -82,13 +82,13 @@ body {
 }
 .ui-btn-sm {
   min-height: var(--control-h-sm);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3);
   font-size: var(--text-sm);
 }
 .ui-btn-lg {
   min-height: var(--control-h-lg);
-  padding: 0 var(--space-7);
-  font-size: var(--text-lg);
+  padding: 0 var(--space-5);
+  font-size: var(--text-md);
 }
 .ui-btn-primary {
   background: var(--accent);
@@ -415,7 +415,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: var(--control-h-lg);
+  min-height: var(--control-h-md);
   padding: 0 var(--space-4);
   border: 0;
   border-bottom: 2px solid transparent;
@@ -423,6 +423,7 @@ body {
   background: transparent;
   color: var(--text-2);
   font: inherit;
+  font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;

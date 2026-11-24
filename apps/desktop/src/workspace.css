@@ -62,7 +62,7 @@
 .ui-card { box-shadow: none; }
 /* The overlay has a quiet, independent palette. Never fade answer text. */
 .ov { border: 1px solid var(--ov-line); border-radius: 12px; overflow: hidden; }
-.ov-head { min-height: 44px; padding: 8px 8px 8px 16px; background: rgb(var(--ov-panel) / .6); gap: 8px; }
+.ov-head { min-height: 40px; padding: 4px 12px; background: rgb(var(--ov-panel) / .6); gap: 8px; }
 .ov-head .ui-icon-btn { border-radius: 6px; }
 .ov-status { font-size: 12px; letter-spacing: .01em; }
 .ov-status-icon { font-size: 12px; }
@@ -137,7 +137,7 @@
 .call-more > .ui-btn { color: var(--text-3); text-decoration: none; font-size: 12px; }
 .call-more .ui-card { text-align: left; margin-top: 16px; }
 /* The live window presents one reading surface, with secondary tools on demand. */
-.ov-head { min-height: 44px; padding: 8px 16px; border-bottom: 0; }
+.ov-head { min-height: 40px; padding: 4px 12px; border-bottom: 0; }
 .ov-speaking { display: none; }
 .ov .card { padding: 24px 24px; }
 .ov .question { font-size: calc(13px * var(--ov-scale)); line-height: 1.6; margin-bottom: 16px; color: var(--ov-text-3); }
@@ -201,7 +201,7 @@
 .settings { grid-template-columns: 168px minmax(0,1fr); gap: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .settings-nav { padding: 16px 16px; align-self: stretch; background: var(--surface-2); border-right: 1px solid var(--border); }
 .settings-nav ul { flex-direction: column; }
-.settings-link { width: 100%; font-size: 13px; margin-bottom: 8px; }
+.settings-link { width: 100%; font-size: 13px; margin: 0; }
 .settings-body { padding: 8px 24px 24px; }
 .settings-body > .ui-card { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .settings-body > .ui-card + .ui-card { border-top: 1px solid var(--border); margin-top: 0; }
@@ -386,12 +386,12 @@ body:has(.workspace-card) > #root { height: 100%; overflow: hidden; }
 .call-kind > .workspace-quick-settings-trigger { margin-top: 8px; }
 
 /* Audio feedback uses the label line and the control edge; every test state has the same geometry. */
-.device-test-stable { position:relative;gap:0; }
+.device-test-stable { --device-test-width:88px;position:relative;gap:0; }
 .device-test-stable .device-row { gap:8px;flex-wrap:nowrap; }
-.device-test-stable .device-row > .ui-btn { flex:0 0 96px;min-width:96px; }
+.device-test-stable .device-row > .ui-btn { flex:0 0 var(--device-test-width);min-width:var(--device-test-width);gap:4px; }
 .device-test-stable .device-feedback { position:absolute;inset:0;pointer-events:none; }
 .device-test-stable .device-feedback > .ui-tooltip-wrap { position:absolute;right:0;top:-24px;pointer-events:auto; }
 .device-status { display:inline-flex;align-items:center;min-height:16px;padding:0;border:0;background:transparent;color:var(--text-3);font:500 12px/16px var(--font);cursor:help; }
 .device-status.is-ok { color:var(--success); }
 .device-status.is-bad { color:var(--danger); }
-.device-test-stable .device-meter { position:absolute;left:8px;right:112px;bottom:1px;height:4px; }
+.device-test-stable .device-meter { position:absolute;left:8px;right:calc(var(--device-test-width) + 16px);bottom:1px;height:4px; }

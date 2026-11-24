@@ -28,7 +28,7 @@
 .ask-workspace .ask-empty { padding: 8px 0 8px; text-align: left; }
 .ask-workspace .ask-empty h3 { font-size: 16px; font-weight: 500; }
 .ask-workspace .ask-prompts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
-.ask-workspace .ask-prompts .ui-btn { min-height: 64px; padding: 8px 16px; text-align: left; justify-content: flex-start; font-size: 12px; line-height: 1.5; background: var(--surface-2); border-color: var(--border); }
+.ask-workspace .ask-prompts .ui-btn { min-height: 56px; padding: 8px 12px; text-align: left; justify-content: flex-start; font-size: 12px; line-height: 1.5; background: var(--surface-2); border-color: var(--border); }
 .ask-workspace .ask-prompts .ui-btn-label { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; width: 100%; }
 .ask-prompts .ui-btn-label > span { color: var(--text-3); }
 .ask-workspace .ask-messages { gap: 24px; margin: 16px 0; }
@@ -152,7 +152,7 @@
 .work-workspace .work-personal-context > summary { padding: 0; color: var(--text); }
 .work-workspace .work-personal-context > section { padding: 16px 0 8px; border-top: 1px solid var(--border); margin-top: 16px; }
 .work-personal-caption { display: inline; margin-left: 16px; color: var(--text-3); font-weight: 400; font-size: 12px; }
-.work-workspace .work-company { padding:0 0 16px;margin-bottom:16px;gap:16px;align-items:center; }
+.work-workspace .work-company { padding:0;margin-bottom:16px;gap:16px;align-items:center; }
 .work-workspace .work-company > .ui-text-2 { padding-bottom: 0; font-size: 13px; }
 .work-workspace .work-company > .ui-badge { margin-bottom: 8px; }
 .work-workspace .work-company .ui-field { min-width: 0; max-width: 380px; }

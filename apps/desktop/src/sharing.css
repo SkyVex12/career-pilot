@@ -7,9 +7,9 @@
 .assistant-eyebrow { display:flex; align-items:center; gap:8px; color:var(--text-2); font-size:11px; }
 .assistant-live-dot { height:6px; width:6px; background:var(--success,#70be9a); border-radius:50%; }
 .assistant-workspace-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-.assistant-workspace-actions .guest-leave .ov-ask-btn { min-height:32px; padding:0 8px; background:transparent; border-color:var(--border); color:var(--text-2); border-radius:4px; font-size:12px; }
+.assistant-workspace-actions .guest-leave .ov-ask-btn { min-height:28px; padding:0 8px; background:transparent; border-color:var(--border); color:var(--text-2); border-radius:4px; font-size:12px; }
 .screen-view.remote-desktop { display:flex; flex:1; min-width:0; min-height:220px; flex-direction:column; gap:0; overflow:hidden; border:1px solid var(--border); border-radius:5px; background:var(--surface); }
-.remote-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 16px; flex:none; min-height:48px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+.remote-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 12px; flex:none; min-height:40px; background:var(--surface-2); border-bottom:1px solid var(--border); }
 .remote-title { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; }
 .remote-title > svg { color:var(--text-3); flex:none; }
 .remote-title strong { font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:34ch; }
@@ -18,7 +18,7 @@
 .remote-status.is-control { color:var(--action); }
 .remote-actions { display:flex; align-items:center; gap:8px; flex:none; }
 .remote-actions .ui-btn-label { display:flex; align-items:center; gap:8px; }
-.remote-actions .ui-btn { min-height:32px; padding:0 8px; font-size:11px; }
+.remote-actions .ui-btn { min-height:28px; padding:0 8px; font-size:11px; }
 .remote-stage { position:relative; flex:1; min-height:160px; display:grid; place-items:center; overflow:hidden; background:#111314; }
 .remote-stage.is-control { outline:2px solid var(--action); outline-offset:-2px; cursor:default; }
 .remote-stage.is-control:focus-visible { outline-width:3px; }
@@ -38,8 +38,8 @@
 .assistant-communication-head > span { display:flex; align-items:center; gap:8px; color:var(--text-3); font-size:11px; }
 .assistant-communication .guest-talk { padding:0; }
 .assistant-communication .ov-ask { padding:0; border:0; background:transparent; gap:8px; }
-.assistant-communication .ov-ask-input { font-size:12px; min-height:40px; border-radius:4px; }
-.assistant-communication .ov-ask-btn { padding:8px 16px; min-height:40px; font-size:12px; border-radius:4px; }
+.assistant-communication .ov-ask-input { font-size:12px; min-height:32px; border-radius:4px; }
+.assistant-communication .ov-ask-btn { padding:0 12px; min-height:32px; font-size:12px; border-radius:4px; }
 .ov-shared-screen-panel > .remote-desktop { min-height:240px; }
 .ov-shared-screen-panel { overflow:auto; }
 .ov-guests:has(.assistant-panel) { width:400px; max-width:calc(100vw - 16px); padding:0; }
