@@ -1,4 +1,4 @@
-.usage-summary { display: grid; gap: 4px; line-height: 1.5; }
+.usage-summary { display: grid; gap: 8px; line-height: 1.5; }
 .usage-summary strong { font-weight: 600; }
 .usage-note { color: var(--text-2); font-size: 12px; }
 .usage-total { white-space: nowrap; }

@@ -26,7 +26,7 @@
 .call-design .call-notices { margin:0; }
 .call-notices:empty { display:none; }
 .call-setup-grid { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--call-gap);flex:1 1 auto;min-height:min-content;align-items:stretch; }
-.call-setup-fields { grid-column:span 7;display:flex;flex-direction:column;gap:16px;min-width:0;padding:8px 16px 16px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--border); }
+.call-setup-fields { grid-column:span 7;display:flex;flex-direction:column;gap:16px;min-width:0;padding:8px 0 0;border:0;border-radius:0;background:transparent;box-shadow:none; }
 .call-setup-fields > :not(.call-jd-row):not(.call-agenda-row) { flex-shrink:0; }
 .call-optional-settings { grid-column:span 5;align-self:start;min-width:0; }
 .call-optional-settings .call-options { margin:0;padding:0;border:0;border-radius:8px;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border); }
@@ -86,24 +86,19 @@
 .call-guest-chip button:hover { background:var(--surface-sunken); }
 .call-design-footer { border-top:1px solid var(--border); }
 .call-start-footer .session-start { grid-column:9 / -1;justify-self:end;min-width:160px;min-height:48px;padding:0 24px;font-size:14px; }
-.call-design .audio-summary { margin:0;padding:16px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--border); }
-.call-design .audio-line { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;gap:16px; }
-.call-design .audio-line > .ui-btn { grid-column:span 2;width:100%;min-height:32px;margin-top:24px;padding-inline:8px; }
+.call-design .audio-summary { margin:0;padding:16px 0;border:0;border-top:1px solid var(--border);border-radius:0;background:transparent; }
+.call-design .audio-line { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:24px; }
+.call-design .audio-line > .ui-btn { grid-column:2;width:128px;min-width:128px;min-height:40px;margin-top:24px;padding-inline:8px; }
 .call-design .audio-line.is-editing > .ui-btn { min-height:40px; }
-.audio-devices,.devices-inline { grid-column:span 10;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;min-width:0; }
+.audio-devices,.devices-inline { grid-column:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;min-width:0; }
 .call-design .audio-device { display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0; }
 .call-design .audio-device > span,.call-design .devices-inline .ui-field-label { color:var(--text-3);font-size:12px;font-weight:500;line-height:16px; }
-.call-design .audio-device strong { display:block;min-height:32px;line-height:32px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;color:var(--text); }
+.call-design .audio-device strong { display:block;min-height:40px;line-height:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;color:var(--text); }
 .devices-inline > .ui-field { min-width:0;margin:0;gap:8px; }
 .devices-inline > .ui-field-error { grid-column:1 / -1; }
 .devices-inline .device-row { flex-wrap:nowrap;gap:8px; }
 .devices-inline .device-control { flex:1 1 0; }
 .devices-inline .device-row > .ui-btn { width:96px;min-width:96px;padding-inline:8px;gap:8px; }
-/* Idle, running, and failed tests share this fixed feedback area. */
-.device-test-stable { gap:8px; }
-.device-test-stable .device-feedback { display:grid;grid-template-rows:8px 32px;gap:8px;height:48px; }
-.device-test-stable .device-meter { height:8px; }
-.device-test-stable .device-verdict { margin:0;font-size:12px;line-height:16px;overflow:auto;overflow-wrap:anywhere; }
 .call-jd-editor .ui-field,.call-jd-editor .ui-field-control { display:flex;flex:1;flex-direction:column;min-height:0; }
 .call-jd-editor textarea { width:100%;min-height:256px;padding:16px;resize:vertical; }
 .call-jd-editor > p { margin:0; }
@@ -164,7 +159,7 @@
 }
 @container call-page (max-width:600px) {
   .call-options > .call-customize { grid-template-columns:minmax(0,1fr); }
-  .call-design .audio-line > .ui-btn { grid-column:7 / -1;grid-row:1;width:128px;margin-top:0;justify-self:end; }
+  .call-design .audio-line > .ui-btn { grid-column:2;grid-row:1;width:auto;margin-top:0;justify-self:end; }
   .audio-devices,.devices-inline { grid-column:1 / -1;grid-row:2; }
   .devices-inline { grid-template-columns:minmax(0,1fr); }
 }
@@ -188,3 +183,16 @@
   .guest-permissions .ui-check label,.guest-picker-person > .ui-check label { display:flex;align-items:center;min-height:48px; }
   .call-guest-chip button { min-width:32px;height:32px; }
 }
+
+/* Calendar prioritizes the upcoming meeting; connections stay in the secondary column. */
+.calendar-layout { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:24px;align-items:start; }
+.calendar-upcoming { grid-column:span 8;display:grid;gap:16px;min-width:0; }
+.calendar-integrations { grid-column:span 4;display:grid;gap:16px;min-width:0; }
+.calendar-section-heading { display:flex;align-items:center;gap:8px; }
+.calendar-layout .ui-section-title { margin:0;font-size:16px;line-height:24px; }
+.calendar-integrations .calendar-connections { grid-template-columns:minmax(0,1fr);gap:16px; }
+.calendar-integrations .ui-card-head { flex-direction:column;align-items:flex-start;gap:8px; }
+.calendar-refresh { display:flex;align-items:center;gap:8px; }
+.calendar-empty { padding:32px 24px;background:var(--surface-2);border:1px solid var(--border);font-size:14px;line-height:24px; }
+@media(max-width:800px) { .calendar-upcoming,.calendar-integrations { grid-column:1 / -1; } .calendar-integrations .calendar-connections { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .calendar-integrations .calendar-connections { grid-template-columns:minmax(0,1fr); } }

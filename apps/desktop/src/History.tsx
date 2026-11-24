@@ -29,7 +29,7 @@ function UsageSummary({ usage }: { usage: Usage }) {
   const calls = usage.measured_sessions ?? 0;
   const minutes = (seconds: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(seconds / 60);
   return <div className="history-usage" role="group" aria-label="Account usage">
-    <span className="ui-num">{minutes(measured)} connected minutes in {usage.period} (UTC) · {calls} {calls === 1 ? "call" : "calls"}</span>
+    <span className="ui-num"><strong>{minutes(measured)}</strong> connected minutes in {usage.period} (UTC) · {calls} {calls === 1 ? "call" : "calls"}</span>
     {legacy > 0 && <span>Historical estimate: {minutes(legacy)} minutes · separate from recorded usage.</span>}
   </div>;
 }
@@ -160,10 +160,8 @@ export function History({
       <PageHeader
         title="Past calls"
         actions={<Button size="sm" loading={refreshing} disabled={loadingMore} onClick={() => void read({ refresh: true })}>Refresh</Button>}
-        meta={
-          <div className="history-usage"><AccountUsage active={active && ready} running={running} />{usage && <UsageSummary usage={usage} />}</div>
-        }
       />
+      <section className="history-overview" aria-label="Usage overview"><AccountUsage active={active && ready} running={running} />{usage && <UsageSummary usage={usage} />}</section>
       {active && <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />}
       <div className="history-filters">
         <SegmentedControl label="Show" size="sm" value={filter} options={FILTERS} onChange={setFilter} />

@@ -85,41 +85,42 @@
   --text-xl: 20px;
   --text-2xl: 24px;
   --lh-xs: 16px;
-  --lh-sm: 18px;
+  --lh-sm: 20px;
   --lh-md: 20px;
   --lh-lg: 24px;
   --lh-xl: 28px;
   --lh-2xl: 32px;
 
-  --space-1: 2px;
-  --space-2: 4px;
+  /* Keep existing token names as aliases on the shared 8px spacing scale. */
+  --space-1: 8px;
+  --space-2: 8px;
   --space-3: 8px;
-  --space-4: 12px;
+  --space-4: 16px;
   --space-5: 16px;
-  --space-6: 20px;
+  --space-6: 24px;
   --space-7: 24px;
   --space-8: 32px;
   --space-9: 40px;
   --space-10: 48px;
 
-  --radius-sm: 6px;
+  --radius-sm: 8px;
   --radius-md: 8px;
-  --radius-lg: 10px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
 
-  --control-h-sm: 28px;
+  --control-h-sm: 32px;
   --option-h: 32px;
   --icon-sm: 16px;
   --layer-popup: 70;
-  --control-h-md: 36px;
-  --control-h-lg: 44px;
+  --control-h-md: 40px;
+  --control-h-lg: 48px;
 
   --dur-fast: 120ms;
   --dur: 200ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   --sidebar-w: 196px;
-  --content-max: 920px;
+  --content-max: 1280px;
 }
 
 /* The overlay is always dark: it floats over whatever is on screen. */

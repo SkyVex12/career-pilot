@@ -679,13 +679,13 @@ export function DevicePickers({ settings, disabled, onSaved, inline = false }: {
     <div className={inline ? "devices devices-inline" : "ui-stack devices"}>
       <div className="ui-field">
         <span className="ui-field-label">Microphone</span>
-        <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout={inline}>
+        <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout>
           {select(devices?.inputs, mic, "mic_device", "Microphone")}
         </DeviceTest>
       </div>
       <div className="ui-field">
         <span className="ui-field-label">{outputLabel}</span>
-        <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout={inline}>
+        <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled} stableLayout>
           {select(devices?.outputs, output, "output_device", outputLabel)}
         </DeviceTest>
         {!inline && <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>}

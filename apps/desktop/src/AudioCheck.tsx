@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, onAudioCheck, type AudioPart } from "./api";
 import { type CheckState, meterFill, partLevel, partLine, partVerdict } from "./audiotest";
-import { Button } from "./ui";
+import { Button, Tooltip } from "./ui";
 import { isMac } from "./platform";
 
 export function DeviceTest({
@@ -22,7 +22,7 @@ export function DeviceTest({
   disabled?: boolean;
   /** Said under the row while testing is not possible. */
   disabledNote?: string;
-  /** Reserve feedback space so inline device controls do not shift while testing. */
+  /** Show feedback in the existing label row, without adding height while testing. */
   stableLayout?: boolean;
   /** The device's dropdown, or a label when the device is chosen elsewhere. */
   children: ReactNode;
@@ -58,6 +58,7 @@ export function DeviceTest({
   const line = partLine(part, check);
   const ok = check.state === "done" ? partVerdict(part, check.result).ok : null;
   const tone = ok === true ? "is-ok" : ok === false || check.state === "failed" ? "is-bad" : "";
+  const status = running ? (part === "mic" ? "Speak now" : "Listening…") : ok === true ? "Ready" : line ? "Check device" : null;
   return (
     <div className={`device-test${stableLayout ? " device-test-stable" : ""}`}>
       <div className="device-row">
@@ -73,13 +74,14 @@ export function DeviceTest({
         </Button>
       </div>
       <div className={stableLayout ? "device-feedback" : "device-feedback-flow"}>
+        {stableLayout && status && <Tooltip content={line}><button type="button" className={`device-status ${tone}`} aria-label={`${part === "mic" ? "Microphone" : "Call audio"} test: ${status}`}>{ok === true ? "✓ " : ok === false || check.state === "failed" ? "! " : ""}{status}</button></Tooltip>}
         {(running || stableLayout) && (
           <div className="device-meter" style={!running ? { visibility: "hidden" } : undefined} aria-hidden={!running} role="meter" aria-label={part === "mic" ? "Microphone level" : isMac() ? "System audio level" : "Call audio level"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(meterFill(partLevel(part, check.state === "running" ? check.meter : null)) * 100)}>
             <div className="device-meter-fill" style={{ width: `${Math.round(meterFill(partLevel(part, check.state === "running" ? check.meter : null)) * 100)}%` }} />
           </div>
         )}
         {(line || stableLayout) && (
-          <p className={`device-verdict ${tone}`} aria-live="polite" title={line || undefined} tabIndex={stableLayout && line ? 0 : undefined}>
+          <p className={`device-verdict ${tone}${stableLayout ? " ui-visually-hidden" : ""}`} aria-live="polite" title={line || undefined}>
             <span aria-hidden="true">{ok === true ? "✓ " : ok === false || check.state === "failed" ? "✕ " : ""}</span>
             {line}
           </p>

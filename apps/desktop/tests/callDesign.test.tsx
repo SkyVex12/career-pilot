@@ -36,7 +36,7 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
-  it("keeps the audio feedback slot mounted through testing and a long failure", async () => {
+  it("announces audio progress and exposes full results without adding feedback rows", async () => {
     routes();
     let fail!: (error: string) => void;
     ipc.handle("audio_check", () => new Promise((_resolve, reject) => { fail = reject; }));
@@ -47,12 +47,16 @@ describe("the Call setup design", () => {
     const meter = feedback.querySelector(".device-meter")!;
     expect(meter).not.toBeVisible();
     await userEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
-    expect(await screen.findByText("Speak now: say a sentence as you would on the call.")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Microphone test: Speak now" })).toBeVisible();
+    expect(feedback.querySelector("[aria-live=polite]")).toHaveTextContent("Speak now: say a sentence as you would on the call.");
     expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
     expect(meter).toBeVisible();
     const error = "Microphone unavailable. Check the selected device and microphone permission before trying again.";
     await act(async () => fail(error));
-    expect(await screen.findByText(error)).toHaveAttribute("tabindex", "0");
+    const result = await screen.findByRole("button", { name: "Microphone test: Check device" });
+    expect(feedback.querySelector("[aria-live=polite]")).toHaveTextContent(error);
+    act(() => result.focus());
+    expect(await screen.findByRole("tooltip", { name: error })).toBeVisible();
     expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
     expect(meter).not.toBeVisible();
     expect(screen.getAllByRole("button", { name: "Test" })).toHaveLength(2);
