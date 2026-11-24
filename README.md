@@ -510,20 +510,20 @@ Every push to `main` deploys (`.github/workflows/deploy.yml`):
    manual run (Actions → deploy → Run workflow) always builds and deploys.
 3. **Deploy** of exactly those images, as the deploy service account (Workload Identity
    Federation; IAP and OS Login to the VM, no SSH port): `stage.py deploy --tag <sha> --start
-   --check`. If the VM is stopped it is started first and left running (the run's summary
-   says so). On the VM, `copilotctl` pulls the images, runs the migrations and the database
-   logins as a one-off container, then replaces the API, the worker, the gateway and the proxy
-   one at a time; each must report healthy, or it puts the previous tag back. Then the health
-   check (`stage.py health`): each service's `/healthz`, and through nginx the API's
-   `/v1/auth/config` and a WebSocket handshake on `/v1/session` that the gateway itself
-   answers. If it fails, the previous tag is deployed again and the run fails.
+   --check --coordinated`. If the VM is stopped it is started first. Pending migrations
+   require a drained application, a verified backup, and a successful migration rehearsal on
+   a restored copy before the live database changes. The matching services then start and
+   pass health checks, including the API and WebSocket paths through nginx. A failure after
+   live migration starts holds application writers stopped for inspection. See the
+   [schema cutover runbook](infra/gcp/README.md#deploying-across-a-schema-boundary), including
+   the operator's `prepare-host` step when the host helper changes.
 4. **Desktop app:** once the deploy passed, `release-desktop.yml` (called from `deploy.yml`)
    releases a new installer if the merge changed something the app ships, and skips
    otherwise (see "Releasing the desktop app").
 
 One deploy runs at a time: a merge that lands during a deploy waits for it, and of several
-waiting the newest wins (the older ones show as cancelled). A call in progress reconnects and
-resumes in a few seconds.
+waiting the newest wins (the older ones show as cancelled). A schema cutover refuses to
+interrupt live calls or unfinished work; let them finish before retrying the deployment.
 
 **Actions minutes.** The repository is private, so Actions minutes count against the free
 plan's 2,000 a month, and Windows minutes count double. To keep well inside it:
@@ -538,17 +538,17 @@ Images are built for linux/amd64 only.
 
 **Watching a deploy:** Actions → deploy, or `gh run watch` (`gh run list --workflow deploy`).
 The run's summary page shows the commit, the tag it replaced, the health check, and whether
-the VM was started or a rollback happened. Then `stage.py status` and `stage.py logs --since
+the VM was started or the deployment entered a recovery hold. Then `stage.py status` and `stage.py logs --since
 15m`.
 
 **Deploying a specific commit** (it must be on `main`): Actions → deploy → Run workflow, with
 the SHA, or `gh workflow run deploy --ref main -f sha=<git sha>`. That run checks out the
 commit, runs the checks on it, builds its images (mostly from the cache) and deploys it, with
-the same health check and rollback. By hand, without the checks, for images already in the
+the same health checks and schema compatibility guards. By hand, without CI checks, for images already in the
 registry:
 
 ```sh
-uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check   # --start if it is stopped
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check --coordinated # --start if stopped
 uv run infra/gcp/scripts/stage.py status
 uv run infra/gcp/scripts/stage.py health
 ```
@@ -566,17 +566,21 @@ live after an apply and `stage.py restart` (each container reads both when it st
 
 ### Rollback
 
-A failed health check rolls back by itself. By hand:
+A failed cutover after live migration starts leaves writers stopped. Inspect the maintenance
+state and follow the [recovery runbook](infra/gcp/README.md#deploying-across-a-schema-boundary).
+For a compatible image, manual rollback is available:
 
 ```sh
 uv run infra/gcp/scripts/stage.py rollback                       # the tag deployed before this one
-uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check # or any older tag still kept
+uv run infra/gcp/scripts/stage.py deploy --tag <git sha> --check # a compatible retained tag
 ```
 
 or Actions → deploy → Run workflow with the older commit's SHA (checks and all). A rollback
 does not revert `main`: the next merge deploys the head of `main` again, so revert the bad
-commit in a pull request too. The registry keeps about the last ten tags. Migrations follow
-expand then contract, so older code runs against the newer schema.
+commit in a pull request too. The registry keeps about the last ten tags. The helper rejects
+images missing an applied migration or carrying different migration checksums. The account
+and workspace separation is a schema boundary: old images cannot run against it. Recovery
+needs either a compatible forward fix or a full database restore with matching images.
 
 ### Logs
 

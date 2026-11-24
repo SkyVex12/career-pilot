@@ -96,36 +96,23 @@ async def list_sessions(
             raise HTTPException(422, "invalid history cursor") from error
     elif before is not None and before.tzinfo is None:
         raise HTTPException(422, "before needs a time zone")
-    items: list[dict[str, Any]] = []
-    # Scan until one extra visible row is found. Filtering an unflushed live privacy
-    # marker must not remove pagination merely because the SQL page was full.
-    while len(items) <= limit:
-        async with svc.tx(user) as conn:
-            rows = await conn.fetch(
-                f"select {SESSION_COLUMNS} from app.sessions where user_id = $1"
-                " and ($2::timestamptz is null or started_at < $2"
-                " or ($5::uuid is not null and started_at=$2 and id<$5))"
-                " and (private_context_account_id is null or private_context_account_id=$4)"
-                " order by started_at desc,id desc limit $3",
-                user.user_id,
-                before,
-                limit + 1,
-                account.user_id,
-                before_id,
-            )
-        if not rows:
-            break
-        for row in rows:
-            try:
-                await _privacy(svc, user, account, row["id"])
-            except HTTPException:
-                continue
-            items.append(_session(row))
-            if len(items) > limit:
-                break
-        if len(rows) < limit + 1:
-            break
-        before, before_id = rows[-1]["started_at"], rows[-1]["id"]
+    # Parent privacy is committed before private context can be used. Hold one shared
+    # lock per returned parent while constructing the response instead of performing
+    # an extra transaction and cache request for every row in the page.
+    async with svc.tx(user) as conn:
+        rows = await conn.fetch(
+            f"select {SESSION_COLUMNS} from app.sessions where user_id = $1"
+            " and ($2::timestamptz is null or started_at < $2"
+            " or ($5::uuid is not null and started_at=$2 and id<$5))"
+            " and (private_context_account_id is null or private_context_account_id=$4)"
+            " order by started_at desc,id desc limit $3 for share",
+            user.user_id,
+            before,
+            limit + 1,
+            account.user_id,
+            before_id,
+        )
+        items = [_session(row) for row in rows]
     more = len(items) > limit
     items = items[:limit]
     next_cursor = None
@@ -157,6 +144,11 @@ async def live_sessions(svc: SvcDep, user: UserDep, account: AccountDep) -> dict
         sid = text(sid)
         raw = await svc.valkey.hgetall(keys.sess_state(sid))
         state = {text(k): text(v) for k, v in raw.items()}
+        if _int(state.get("writer_generation"), 0) > 0:
+            async with svc.tx(user) as conn:
+                parent = await conn.fetchrow("select id from app.sessions where id=$1", UUID(sid))
+            if parent is None:
+                return {"sessions": []}
         if (
             state.get("private_context_account_id") in (None, "", str(account.user_id))
             and state.get("user_id") == str(user.user_id)
@@ -183,9 +175,14 @@ async def live_sessions(svc: SvcDep, user: UserDep, account: AccountDep) -> dict
 
 
 async def _live_owner(svc: Services, user: Principal, sid: UUID) -> dict[str, str] | None:
-    """The gateway's state for a session that has no row yet (before its first flush)."""
+    """Transient coordination never overrides an admitted parent's visibility."""
     raw = await svc.valkey.hgetall(keys.sess_state(sid))
     state = {text(k): text(v) for k, v in raw.items()}
+    if _int(state.get("writer_generation"), 0) > 0:
+        async with svc.tx(user) as conn:
+            parent = await conn.fetchrow("select id from app.sessions where id=$1", sid)
+        if parent is None:
+            return None
     return state if state.get("user_id") == str(user.user_id) else None
 
 
@@ -427,7 +424,7 @@ async def get_replay(
         answers = await conn.fetch(
             "select a.id, a.question_id, a.pass, a.model, a.text_enc, a.key_version,"
             " a.memory_node_ids, a.expanded, a.feedback from app.answers a"
-            " join app.questions q on q.id = a.question_id where q.session_id = $1",
+            " where a.session_id = $1",
             session_id,
         )
         node_ids = {n for a in answers for n in a["memory_node_ids"]}
@@ -480,6 +477,24 @@ async def delete_session(
         raise HTTPException(409, "the session is still live; end it first")
     async with svc.tx(user) as conn:
         await _lock_private(conn, account, session_id, write=True)
+        row = await conn.fetchrow(
+            "select ended_at, metering_version from app.sessions where id = $1", session_id
+        )
+        if row is None and state is None:
+            raise HTTPException(404, "no such session")
+        connected_metering = (row is not None and row["metering_version"] == "connected-v1") or (
+            state is not None and state.get("metering_version") == "connected-v1"
+        )
+        # An ended gateway state can precede the worker's final ledger commit.
+        # The worker trims retained logs only after commit; a held lease may
+        # still append the final checkpoint. Keep both history and log intact.
+        if connected_metering and (
+            row is None
+            or row["ended_at"] is None
+            or await svc.valkey.exists(keys.sess_lease(session_id))
+            or await svc.valkey.xlen(keys.sess_log(session_id))
+        ):
+            raise HTTPException(409, "session usage is still saving; retry shortly")
         deleted = await conn.fetchval(
             "delete from app.sessions where id = $1 returning id", session_id
         )

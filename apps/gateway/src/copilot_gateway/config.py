@@ -320,6 +320,19 @@ class Settings(CoreSettings):
     ws_ping_interval_s: float = 30.0
     ws_ping_timeout_s: float = 60.0  # with the 30 s interval: a socket silent 90 s is closed
     store_buffer_max: int = 50_000
+    # Retained history cannot be evicted like replay events. An outage that fills either
+    # budget ends the session explicitly, leaving accepted entries available to drain.
+    retained_log_max_entries: int = Field(default=1000, ge=1)
+    retained_log_max_bytes: int = Field(default=2 * 1024 * 1024, ge=1)
+    # A slow host socket is disconnected resumably when its outbound queue fills.
+    host_send_max_entries: int = Field(default=500, ge=1)
+    host_send_max_bytes: int = Field(default=2 * 1024 * 1024, ge=1)
+    # Server-side usage checkpoints and the price snapshot attached to each live session.
+    # These calculate usage estimates only; payment collection is handled independently.
+    usage_interval_s: float = Field(default=10.0, gt=0)
+    billing_price_version: str = Field(default="live-usd-v1", min_length=1, max_length=128)
+    billing_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    billing_rate_minor_per_hour: int = Field(default=500, ge=0, lt=2**63)
 
     # Guest seats (ARCHITECTURE.md, "Guest seats"). Off: /v1/seat refuses every guest (4412)
     # and host sessions never look for seats; the host's call is unchanged either way.

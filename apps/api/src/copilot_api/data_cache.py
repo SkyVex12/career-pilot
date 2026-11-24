@@ -99,6 +99,9 @@ class DataCacheRoute(APIRoute):
                 await require_link(svc, account)
             async with svc.pool.acquire() as conn, conn.transaction(isolation="repeatable_read"):
                 await conn.execute("select set_config('app.user_id',$1,true)", str(user.user_id))
+                await conn.execute(
+                    "select set_config('app.account_id',$1,true)", str(account.user_id)
+                )
                 token = snapshot.set(ReadSnapshot(account, user, authorization, profile, conn))
                 try:
                     eligible = True

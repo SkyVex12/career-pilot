@@ -97,7 +97,7 @@ fn lifetime(path: &str) -> Option<u64> {
         {
             Some(15_000)
         }
-        ["usage"] | ["ask", "conversations"] | ["ask", "context-options"] => Some(30_000),
+        ["ask", "conversations"] | ["ask", "context-options"] => Some(30_000),
         ["ask", "conversations", _] => Some(30_000),
         _ => None,
     }
@@ -807,6 +807,8 @@ mod tests {
         assert!(result.is_err());
         for path in [
             "/sessions/live",
+            "/usage",
+            "/usage?month=2026-11",
             "/seats",
             "/profiles",
             "/applications/status",

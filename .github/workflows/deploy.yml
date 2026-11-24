@@ -6,9 +6,10 @@
 #
 # Stage 0 on GCP (the gcp-* jobs): linux/amd64 images (the VM's) to Artifact Registry, tagged
 # with the git SHA; then `stage.py deploy --tag <sha> --start --check` as the deploy service account: start
-# the VM if it is stopped (and leave it running), migrations, each service in turn, a health
-# check of the gateway and the API, and a rollback to the previous tag if that fails (the run
-# then fails). Access is Workload Identity Federation only (no keys), the VM is reached over
+# the VM if it is stopped (and leave it running). Pending migrations require drained calls,
+# a verified backup and restored-copy rehearsal, then a coordinated writer cutover. Failures
+# after migration begins hold writers; there is no image-only schema rollback. Access is
+# Workload Identity Federation only (no keys), the VM is reached over
 # IAP with OS Login (no SSH port is open), and one deploy runs at a time.
 #
 # Then the desktop app (desktop-release): release-desktop.yml, called once the GCP deploy
@@ -229,10 +230,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.7"
-      - name: Deploy, health check, roll back on failure
+      - name: Verified schema cutover and health check
         run: >-
           uv run --no-project python infra/gcp/scripts/stage.py deploy
-          --tag "${{ needs.commit.outputs.sha }}" --start --check
+          --tag "${{ needs.commit.outputs.sha }}" --start --check --coordinated
 
   # --- The desktop app (release-desktop.yml) ---------------------------------------------------
   # After the backend is deployed and healthy, so a new app never meets an old backend; when

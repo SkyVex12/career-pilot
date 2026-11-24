@@ -3,6 +3,7 @@
 import json
 import time
 from datetime import UTC, date, datetime, timedelta
+from uuid import uuid4
 
 import httpx2
 import pytest
@@ -89,7 +90,7 @@ async def test_user_delete_leaves_nothing_behind(stack: Stack) -> None:
               for t in tables}  # fmt: skip
     for t in ("user_keys", "memory_nodes", "memory_edges", "applications", "resume_versions",
               "sessions",
-              "transcript_segments", "session_outputs", "documents", "job_runs"):  # fmt: skip
+              "transcript_segments", "session_outputs", "documents", "operations"):  # fmt: skip
         assert before[t] > 0, f"the test should have put rows in {t}"
     assert await stack.ctx.store.list_keys(user_prefix(uid))
 
@@ -98,9 +99,17 @@ async def test_user_delete_leaves_nothing_behind(stack: Stack) -> None:
     await stack.run(message)  # a rerun after a crash finds nothing to do and does not fail
 
     for t in tables:
+        if t in {"operations", "outbox_events"}:
+            continue  # Content-free dedupe/dispatch metadata has independent retention.
         n = await stack.admin.fetchval(f"select count(*) from app.{t} where user_id = $1", uid)
         assert n == 0, f"{t} still has {n} rows of the deleted user"
     assert await stack.admin.fetchval("select count(*) from app.users where id = $1", uid) == 0
+    assert await stack.admin.fetchval("select count(*) from app.accounts where id=$1", uid) == 0
+    assert not await stack.admin.fetchval(
+        "select exists(select 1 from app.operations where user_id=$1"
+        " and status not in ('done','cancelled'))",
+        uid,
+    )
     assert await stack.ctx.store.list_keys(user_prefix(uid)) == []
     left = [k async for k in stack.ctx.valkey.scan_iter(match=f"*{uid}*")]
     assert left == [], f"Valkey keys left: {left}"
@@ -135,8 +144,14 @@ async def test_user_delete_takes_the_accounts_profiles(stack: Stack) -> None:
     other = await stack.new_user("Someone Else")
     profiles = []
     for owner in (uid, other):
-        pid = await stack.new_user("Blair Roe")
-        await stack.admin.execute("update app.users set owner_id = $2 where id = $1", pid, owner)
+        pid = uuid4()
+        await stack.admin.execute(
+            "insert into app.workspaces(id,email,display_name,owner_id)"
+            " values($1,$2,'Blair Roe',$3)",
+            pid,
+            f"{pid}@profiles.invalid",
+            owner,
+        )
         await stack.admin.execute(
             "insert into app.profiles (id, user_id, career_os_user_id, name)"
             " values ($1, $2, 'u2', 'Blair Roe')",
@@ -179,6 +194,56 @@ async def test_user_delete_removes_the_cognito_user(stack: Stack) -> None:
     finally:
         stack.ctx.users = None
     assert await stack.admin.fetchval("select count(*) from app.users where id = $1", uid) == 0
+
+
+async def test_account_deletion_transfers_shared_personal_workspace_and_keeps_its_keys(
+    stack: Stack,
+) -> None:
+    uid, collaborator = await stack.new_user(), await stack.new_user("Collaborator")
+    await stack.admin.execute(
+        "insert into app.workspace_memberships(workspace_id,account_id,role)"
+        " values($1,$2,'editor')",
+        uid,
+        collaborator,
+    )
+    doc = await stack.upload(uid, "resume", FIXTURES / "inputs" / "resume.md", "text/markdown")
+    async with stack.ctx.user(uid) as conn:
+        sealed, version = await stack.ctx.crypto.encrypt(conn, uid, "work_logs", "retained", "Kept")
+        await stack.ctx.crypto.encrypt(conn, uid, "integrations", "private", "Private secret")
+    conversation = uuid4()
+    await stack.admin.execute(
+        "insert into app.ask_conversations(id,user_id,profile_id,title) values($1,$2,$2,'Private')",
+        conversation,
+        uid,
+    )
+    await stack.run(jobs.envelope("user.delete", f"user.delete:{uid}", uid, {}))
+    assert await stack.admin.fetchval("select count(*) from app.accounts where id=$1", uid) == 0
+    assert await stack.admin.fetchval("select count(*) from app.workspaces where id=$1", uid) == 1
+    assert (
+        await stack.admin.fetchval(
+            "select role from app.workspace_memberships where workspace_id=$1 and account_id=$2",
+            uid,
+            collaborator,
+        )
+        == "owner"
+    )
+    assert (
+        await stack.admin.fetchval(
+            "select count(*) from app.ask_conversations where id=$1", conversation
+        )
+        == 0
+    )
+    assert (
+        await stack.admin.fetchval("select count(*) from app.account_keys where account_id=$1", uid)
+        == 0
+    )
+    assert await stack.admin.fetchval("select count(*) from app.documents where id=$1", doc) == 1
+    assert await stack.ctx.store.list_keys(user_prefix(uid))
+    async with stack.ctx.user(uid) as conn:
+        assert (
+            await stack.ctx.crypto.decrypt(conn, uid, "work_logs", "retained", sealed, version)
+            == "Kept"
+        )
 
 
 async def test_sweeper_ends_abandoned_sessions(stack: Stack) -> None:

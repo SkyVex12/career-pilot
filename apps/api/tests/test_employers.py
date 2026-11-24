@@ -98,7 +98,8 @@ async def test_work_log_is_sealed_and_extracted_once_per_content(api: Api) -> No
     assert entry["text"] == text
     assert entry["status"] == "extracting"
     stored = await api.admin.fetchrow(
-        "select text_enc, content_sha256 from app.work_logs where id = $1", uuid.UUID(entry["id"])
+        "select text_enc,content_sha256,current_revision_id from app.work_logs where id=$1",
+        uuid.UUID(entry["id"]),
     )
     assert stored is not None
     assert text.encode() not in bytes(stored["text_enc"])
@@ -106,9 +107,11 @@ async def test_work_log_is_sealed_and_extracted_once_per_content(api: Api) -> No
     assert job["payload"] == {
         "work_log_id": entry["id"],
         "content_sha256": stored["content_sha256"],
+        "work_log_revision_id": str(stored["current_revision_id"]),
     }
     assert job["idempotency_key"] == (
         f"worklog.extract:{uid}:{entry['id']}:{stored['content_sha256']}"
+        f":r{stored['current_revision_id']}"
     )
     # The same text again changes nothing and extracts nothing.
     await api.client.put(f"/v1/employers/{eid}/logs/{DAY}", headers=h, json={"text": text})
@@ -165,7 +168,13 @@ async def test_attachments_are_sealed_and_change_the_logs_content(api: Api) -> N
     assert r.status_code == 204
     [again] = api.take("worklog.extract")
     assert again["payload"]["content_sha256"] != job["payload"]["content_sha256"]
-    assert await api.svc.store.get(row["s3_key"]) is None
+    assert (
+        await api.admin.fetchval(
+            "select 1 from app.object_deletions where object_key=$1 and completed_at is null",
+            row["s3_key"],
+        )
+        == 1
+    )
     bad = await api.client.post(
         path, headers={**h, "content-type": "image/png", "x-file-name": "x.png"}, content=b"png"
     )

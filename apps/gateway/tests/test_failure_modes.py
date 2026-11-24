@@ -265,15 +265,20 @@ async def test_valkey_unavailable_keeps_the_session_going(env) -> None:
         await c.say("How do you handle incidents?", capture_ms=0)
         await c.wait_type("answer.done", pass_="fast")
         await c.wait_type("answer.done", pass_="deep")
-        # A drop and resume on the same task still works from memory.
+        # A new attachment must verify ownership, even on the same task. The already
+        # accepted session remains buffered, but no new service time starts in an outage.
         await c.drop()
         await c.resume()
-        await c.send({"type": "question.force", "text": "What would you change?"})
-        await c.wait(lambda m: m["type"] == "question.detected" and "change" in m["text"])
+        assert await c.closed() == 4500
         session = next(iter(gw.manager.sessions.values()))
         assert session.writer.available is False
         assert session.writer.pending()
         env.valkey_server.connected = True
+        # The rejection is not part of the session event sequence.
+        c.messages = [m for m in c.messages if m.get("code") != "unavailable"]
+        await c.resume()
+        await c.send({"type": "question.force", "text": "What would you change?"})
+        await c.wait(lambda m: m["type"] == "question.detected" and "change" in m["text"])
         deadline = time.monotonic() + 5
         while session.writer.pending() or not session.writer.available:
             assert time.monotonic() < deadline, "buffer never flushed"
@@ -290,14 +295,8 @@ async def test_valkey_down_at_session_start(env) -> None:
     env.valkey_server.connected = False
     async with GatewayServer(env.services()) as gw:
         c = ProtocolClient(gw.url)
-        await c.start()
-        await c.wait_type("status", component="memory", state="degraded")
-        await c.send({"type": "question.force", "text": "Why us?"})
-        await c.wait_type("answer.done", pass_="fast")
-        # The in-memory check still enforces one live session per user on this task.
-        second = ProtocolClient(gw.url)
-        await second.connect()
-        await second.send(
+        await c.connect()
+        await c.send(
             {
                 "type": "session.start",
                 "mode": "interview",
@@ -307,7 +306,10 @@ async def test_valkey_down_at_session_start(env) -> None:
                 "audio": {"sample_rate": 16000, "encoding": "pcm16"},
             }
         )
-        assert await second.closed() == 4409
+        assert await c.closed() == 4500
+        assert c.of_type("session.ready") == []
+        assert gw.manager.sessions == {}
+        assert env.stt.connects == 0
         env.valkey_server.connected = True
 
 

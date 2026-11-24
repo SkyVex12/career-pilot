@@ -32,7 +32,15 @@ from copilot_core.crypto import UserCrypto, segment_row_id
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7, uuid7_for
 from copilot_core.languages import CALL_LANGUAGES
+from copilot_core.session_writes import entry_hash
 from copilot_core.storage import me_audio_key
+from copilot_core.usage import (
+    UsagePrice,
+    ensure_usage_session,
+    record_interval,
+    session_microseconds,
+    usage_session,
+)
 from copilot_core.valkey_client import text
 from copilot_core.workplace import local_today, memory_version
 from copilot_worker import prompts
@@ -108,14 +116,48 @@ async def load_state(ctx: Ctx, sid: UUID) -> dict[str, str]:
 async def ensure_session(
     conn: Conn, uid: UUID, sid: UUID, meta: dict[str, Any], crypto: UserCrypto | None = None
 ) -> dict[str, Any] | None:
-    """The sessions row, created from the gateway's state on the first flush."""
+    """Lock the authoritative parent; only pre-admission legacy calls can create it here."""
     row = await conn.fetchrow(
-        "select mode, store_transcript, started_at, ended_at, me_audio_status, job_id"
-        " from app.sessions where id = $1",
+        "select mode, store_transcript, started_at, ended_at, me_audio_status, job_id,"
+        " metering_version, writer_generation, private_context_account_id, agenda_enc,"
+        " payer_account_id, billing_price_version, billing_currency, billing_rate_minor_per_hour"
+        " from app.sessions where id = $1 for update",
         sid,
     )
     if row is not None:
-        if meta.get("private_context_account_id"):
+        agenda = str(meta.get("agenda") or "")
+        if row["agenda_enc"] is None and agenda and crypto is not None:
+            enc, version = await crypto.encrypt(conn, uid, "sessions", str(sid), agenda)
+            await conn.execute(
+                "update app.sessions set agenda_enc=$2,agenda_key_version=$3 where id=$1",
+                sid,
+                enc,
+                version,
+            )
+        if row["writer_generation"] > 0:
+            # Price and privacy are parent-owned. Cache state cannot weaken either.
+            meta.update(
+                usage_payer_account_id=str(row["payer_account_id"])
+                if row["payer_account_id"]
+                else "",
+                billing_price_version=row["billing_price_version"],
+                billing_currency=row["billing_currency"],
+                billing_rate_minor_per_hour=row["billing_rate_minor_per_hour"],
+                private_context_account_id=row["private_context_account_id"],
+            )
+        if row["metering_version"] == "connected-v1" and meta.get("usage_payer_account_id"):
+            await ensure_usage_session(
+                conn,
+                workspace_id=uid,
+                session_id=sid,
+                payer_account_id=UUID(str(meta["usage_payer_account_id"])),
+                price=UsagePrice(
+                    currency=str(meta["billing_currency"]),
+                    rate_minor_per_hour=int(meta["billing_rate_minor_per_hour"]),
+                    version=str(meta["billing_price_version"]),
+                ),
+            )
+        if row["writer_generation"] == 0 and meta.get("private_context_account_id"):
             await conn.execute(
                 "update app.sessions set private_context_account_id=$2 "
                 "where id=$1 and private_context_account_id is null",
@@ -123,6 +165,9 @@ async def ensure_session(
                 UUID(str(meta["private_context_account_id"])),
             )
         return dict(row)
+    if int(meta.get("writer_generation") or 0) > 0:
+        # A removed durable parent must never be reconstructed from transient state.
+        return None
     started_at = _when(meta.get("started_at"))
     if not meta or started_at is None:
         return None
@@ -144,9 +189,10 @@ async def ensure_session(
     )
     await conn.execute(
         "insert into app.sessions (id, user_id, mode, job_id, interview_id, platform, title,"
-        " store_transcript, started_at, employer_id, spoken_language, private_context_account_id)"
+        " store_transcript, started_at, employer_id, spoken_language, private_context_account_id,"
+        " metering_version)"
         " values ($1, $2, $3, $4, $5, $6, $7, $8, $9,"
-        " $10, $11, $12) on conflict (id) do nothing",
+        " $10, $11, $12, $13) on conflict (id) do nothing",
         sid,
         uid,
         mode,
@@ -159,6 +205,7 @@ async def ensure_session(
         employer_id,
         meta.get("spoken_language") or None,
         _uuid(meta.get("private_context_account_id")),
+        "connected-v1" if meta.get("metering_version") == "connected-v1" else "legacy-wall-v0",
     )
     agenda = str(meta.get("agenda") or "")
     if agenda and crypto is not None:
@@ -169,7 +216,7 @@ async def ensure_session(
             enc,
             version,
         )
-    return await ensure_session(conn, uid, sid, {})
+    return await ensure_session(conn, uid, sid, meta)
 
 
 async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: bool) -> FlushResult:
@@ -179,6 +226,7 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
     if state.get("user_id") and state["user_id"] != str(uid):
         raise ValueError(f"session {sid} belongs to another user")
     entries = await read_log(ctx, sid, upto)
+    received_entries = entries
     meta: dict[str, Any] = dict(state)
     for e in entries:
         if e.kind == "session.started" and not meta.get("started_at"):
@@ -193,11 +241,48 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
             log.info("session %s: no state and no row; nothing to flush", sid)
             return result
         result.session_exists = True
+        if session["writer_generation"] > 0:
+            ids = {
+                value
+                for e in entries
+                if (value := _uuid(e.data.get("writer_batch_id"))) is not None
+            }
+            receipts = {
+                str(row["batch_id"]): row
+                for row in await conn.fetch(
+                    "select batch_id,generation,entry_hashes from app.session_write_batches"
+                    " where session_id=$1 and batch_id=any($2::uuid[])",
+                    sid,
+                    list(ids),
+                )
+            }
+            admitted: list[Entry] = []
+            for e in entries:
+                receipt = receipts.get(str(e.data.get("writer_batch_id")))
+                if (
+                    receipt is not None
+                    and e.data.get("writer_generation") == receipt["generation"]
+                    and entry_hash(e.data) in receipt["entry_hashes"]
+                ):
+                    admitted.append(e)
+                else:
+                    log.warning("session %s rejected unconfirmed retained entry %s", sid, e.id)
+            entries = admitted
+            result.last_at = None
+            for entry in entries:
+                result.last_at = _when(entry.data.get("at")) or result.last_at
         store = bool(session["store_transcript"])
         counts = result.written
+        referenced_questions = {
+            qid for e in entries if (qid := _uuid(e.data.get("question_id"))) is not None
+        }
         known = {
             r["id"]
-            for r in await conn.fetch("select id from app.questions where session_id = $1", sid)
+            for r in await conn.fetch(
+                "select id from app.questions where session_id = $1 and id = any($2::uuid[])",
+                sid,
+                list(referenced_questions),
+            )
         }
         # Questions first, so answers later in the same batch find theirs.
         for e in entries:
@@ -207,7 +292,10 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
                 counts["question"] = counts.get("question", 0) + 1
         for e in entries:
             kind = e.kind
-            if kind == "segment":
+            if kind == "usage.interval":
+                await write_usage_interval(conn, uid, sid, e.data, meta, session)
+                counts["usage"] = counts.get("usage", 0) + 1
+            elif kind == "segment":
                 if store and e.data.get("text"):
                     await write_segment(ctx, conn, uid, sid, e.data)
                     counts["segment"] = counts.get("segment", 0) + 1
@@ -246,6 +334,21 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
                     e.data["spoken_language"],
                 )
                 counts["language"] = counts.get("language", 0) + 1
+        if (
+            session["metering_version"] == "connected-v1"
+            and session["ended_at"] is not None
+            and counts.get("usage")
+        ):
+            # This display field follows committed, deduplicated usage, never wall time.
+            # The independent ledger remains authoritative after history deletion.
+            # Live checkpoints do not invalidate the entire workspace history feed.
+            microseconds = await session_microseconds(conn, session_id=sid)
+            await conn.execute(
+                "update app.sessions set billed_seconds = $2 where id = $1"
+                " and billed_seconds is distinct from $2",
+                sid,
+                microseconds // 1_000_000,
+            )
         # Timings that came after their pass was logged (the client's first word, or the
         # confirmation of a speculative question), once every answer in the batch is written.
         # A report whose answer was deferred waits with it.
@@ -263,16 +366,91 @@ async def flush_log(ctx: Ctx, uid: UUID, sid: UUID, upto: str | None, final: boo
             if updated is None and not final:
                 deferred.append(e)
     result.deferred = len(deferred)
-    if entries:
+    if received_entries:
         trim_to = (
             min(deferred, key=lambda e: _stream_id(e.id)).id
             if deferred
-            else next_id(entries[-1].id)
+            else next_id(received_entries[-1].id)
         )
         await ctx.valkey.xtrim(keys.sess_log(sid), minid=trim_to, approximate=False)
     if final:
         await ctx.valkey.expire(keys.sess_log(sid), ctx.settings.log_ttl_after_flush_s)
     return result
+
+
+async def write_usage_interval(
+    conn: Conn,
+    uid: UUID,
+    sid: UUID,
+    data: dict[str, Any],
+    state: dict[str, Any],
+    session: dict[str, Any],
+) -> None:
+    """Validate a server checkpoint before adding it to the independent usage ledger."""
+    if session["metering_version"] != "connected-v1":
+        raise ValueError("usage checkpoint requires a connected-v1 session")
+    if str(state.get("no_call", "0")) in ("1", "true", "True"):
+        raise ValueError("a no-call session cannot produce live usage")
+    if not state.get("usage_payer_account_id"):
+        # An already-persisted session can outlive its transient coordination state.
+        # Recover only a previously authenticated snapshot, never infer a payer from
+        # the workspace owner or accept a fresh price from the checkpoint itself.
+        pinned = await usage_session(conn, session_id=sid)
+        if pinned is not None:
+            state = {
+                **state,
+                "usage_payer_account_id": str(pinned["payer_account_id"]),
+                "billing_currency": pinned["currency"],
+                "billing_rate_minor_per_hour": str(pinned["rate_minor_per_hour"]),
+                "billing_price_version": pinned["price_version"],
+            }
+    payer = _uuid(state.get("usage_payer_account_id"))
+    event_id = _uuid(data.get("event_id"))
+    started = _when(data.get("started_at"))
+    ended = _when(data.get("ended_at"))
+    duration_ms = data.get("duration_ms")
+    if (
+        payer is None
+        or _uuid(data.get("payer_account_id")) != payer
+        or _uuid(data.get("session_id")) != sid
+        or event_id is None
+        or started is None
+        or ended is None
+        or started.utcoffset() is None
+        or ended.utcoffset() is None
+        or type(duration_ms) is not int
+        or duration_ms <= 0
+        or data.get("metering_version") != "connected-v1"
+        or data.get("service") != "live"
+    ):
+        raise ValueError("invalid server usage checkpoint")
+    delta = ended - started
+    micros = (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+    if micros != duration_ms * 1000:
+        raise ValueError("usage duration does not match its interval")
+    rate = data.get("rate_minor_per_hour")
+    if type(rate) is not int or rate < 0:
+        raise ValueError("invalid usage price")
+    if (
+        str(state.get("billing_rate_minor_per_hour", "")) != str(rate)
+        or state.get("billing_price_version") != data.get("price_version")
+        or state.get("billing_currency") != data.get("currency")
+    ):
+        raise ValueError("usage price differs from the session's price snapshot")
+    await record_interval(
+        conn,
+        workspace_id=uid,
+        session_id=sid,
+        payer_account_id=payer,
+        event_id=event_id,
+        started_at=started,
+        ended_at=ended,
+        price=UsagePrice(
+            currency=str(data["currency"]),
+            rate_minor_per_hour=rate,
+            version=str(data["price_version"]),
+        ),
+    )
 
 
 async def write_question(
@@ -387,35 +565,60 @@ async def session_flush(job: Job, ctx: Ctx) -> None:
 async def session_ended(job: Job, ctx: Ctx) -> None:
     sid = UUID(job.payload["session_id"])
     uid = job.uid
-    # Guest seats end with the call, whatever else happens to it (ARCHITECTURE.md, "Guest
-    # seats"): no guest reads anything of it afterwards. The gateway has closed them already.
-    async with ctx.user(uid) as conn:
-        await conn.execute(
-            "update app.session_seats set status = 'ended', ended_at = now(), rev = rev + 1"
-            " where session_id = $1 and status in ('invited', 'accepted', 'admitted')",
-            sid,
-        )
     result = await flush_log(ctx, uid, sid, None, final=True)
     if not result.session_exists:
         return
     ended_at = _when(result.state.get("ended_at")) or result.last_at
     async with ctx.user(uid) as conn:
+        parent = await conn.fetchrow(
+            "select writer_generation,admission_state,writer_expires_at>clock_timestamp() as held"
+            " from app.sessions where id=$1 for update",
+            sid,
+        )
+        requested_generation = job.payload.get("writer_generation")
+        if (
+            parent is not None
+            and requested_generation is not None
+            and requested_generation != parent["writer_generation"]
+        ):
+            log.info("session %s finalization ignored: newer durable writer", sid)
+            return
+        if (
+            parent is not None
+            and parent["writer_generation"] > 0
+            and parent["admission_state"] == "active"
+            and parent["held"]
+        ):
+            # A delayed old finalization job cannot end a newly claimed live generation.
+            log.info("session %s finalization deferred: durable writer is active", sid)
+            return
+        # A delayed finalization from an old writer must not end the current guests.
+        await conn.execute(
+            "update app.session_seats set status='ended',ended_at=now(),rev=rev+1"
+            " where session_id=$1 and status in ('invited','accepted','admitted')",
+            sid,
+        )
         if ended_at is None:
-            # Valkey forgot the session (the sweeper found it open in Aurora): bill up to the
-            # last thing the log recorded, never up to now.
+            # The transient state expired. Preserve the latest durable activity timestamp,
+            # including a silent call's usage intervals, never the sweeper's current time.
             ended_at = await conn.fetchval(
-                "select greatest(s.started_at, max(q.detected_at)) from app.sessions s"
+                "select greatest(s.started_at, max(q.detected_at),"
+                " (select max(u.ended_at) from app.live_usage_intervals u"
+                " where u.session_id=s.id)) from app.sessions s"
                 " left join app.questions q on q.session_id = s.id where s.id = $1"
-                " group by s.started_at",
+                " group by s.id",
                 sid,
             )
+        measured_microseconds = await session_microseconds(conn, session_id=sid)
         row = await conn.fetchrow(
-            "update app.sessions set ended_at = coalesce(ended_at, $2),"
-            " billed_seconds = greatest(0, ceil(extract(epoch from"
-            " (coalesce(ended_at, $2) - started_at))))::int"
+            "update app.sessions set admission_state='ended', ended_at = coalesce(ended_at, $2),"
+            " billed_seconds = case when metering_version = 'connected-v1' then $3::int"
+            " else greatest(0, ceil(extract(epoch from"
+            " (coalesce(ended_at, $2) - started_at))))::int end"
             " where id = $1 returning id",
             sid,
             ended_at,
+            measured_microseconds // 1_000_000,
         )
         assert row is not None
         if result.state.get("summarize") == "0":
@@ -428,7 +631,13 @@ async def session_ended(job: Job, ctx: Ctx) -> None:
             )
             log.info("session %s: ended without a summary, as asked", sid)
             return
-    await ctx.enqueue("session.postcall", f"session.postcall:{sid}", uid, {"session_id": str(sid)})
+        await ctx.enqueue(
+            "session.postcall",
+            f"session.postcall:{sid}",
+            uid,
+            {"session_id": str(sid)},
+            conn=conn,
+        )
 
 
 @handler("me_audio.transcribe")

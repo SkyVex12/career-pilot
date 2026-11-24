@@ -345,6 +345,24 @@ async def live_context(
         await conn.execute(
             "select pg_advisory_xact_lock(hashtextextended($1, 0))", "private:" + str(session_id)
         )
+        parent = await conn.fetchrow(
+            "select user_id,payer_account_id,private_context_account_id,ended_at,job_id,"
+            "employer_id,writer_generation,admission_state"
+            " from app.sessions where id=$1 for update",
+            session_id,
+        )
+        if parent is None and int(state.get("writer_generation") or 0) > 0:
+            raise HTTPException(404, "No such active session")
+        if parent is not None and (
+            parent["user_id"] != user.user_id
+            or parent["ended_at"] is not None
+            or (parent["writer_generation"] > 0 and parent["admission_state"] != "active")
+            or parent["payer_account_id"] not in (None, account.user_id)
+            or parent["private_context_account_id"] not in (None, account.user_id)
+            or parent["job_id"] != job_id
+            or parent["employer_id"] != employer_id
+        ):
+            raise HTTPException(409, "Session ownership or context changed; retry")
         if await conn.fetchval(
             "select 1 from app.session_seats where session_id=$1 "
             "and status='admitted' and expires_at > now() limit 1",
@@ -389,6 +407,13 @@ async def live_context(
         )
         if marked is None:
             raise HTTPException(409, "Session private context belongs to another account")
+        # Historical children inherit parent privacy. Cached guest permissions must also
+        # stop reflecting a shared audience before private output is returned.
+        await conn.execute(
+            "update app.session_seats set status='removed',ended_at=now(),rev=rev+1"
+            " where session_id=$1 and status in ('invited','accepted')",
+            session_id,
+        )
     # Never clear this marker on deletion/refresh: generated artifacts remain private.
     claimed = await svc.valkey.eval(
         CLAIM_PRIVATE,

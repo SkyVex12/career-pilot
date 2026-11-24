@@ -3,10 +3,10 @@
 One task long-polls the `jobs` queue and runs up to `concurrency` jobs at once. For each
 message:
 1. The envelope is parsed; its type picks a handler and a visibility timeout from the catalog.
-2. The idempotency key is claimed in `app.job_runs`. A key already `done` deletes the message
-   and stops. A key `running` elsewhere, and started within its visibility timeout, is left
-   alone: SQS delivered it twice, and the other run finishes it.
-3. While the handler runs, a heartbeat extends the message's visibility every minute.
+2. The durable operation is claimed with a renewable owner/generation lease. A completed
+   key deletes the duplicate delivery. A currently leased key is left to its owner.
+3. A heartbeat renews both the database lease and queue visibility. Guarded transactions
+   reject results from an expired or replaced generation.
 4. Success marks the key `done` and deletes the message. An error marks it `failed` and leaves
    the message to come back after its visibility timeout (the dead-letter queue takes it after
    five receives). `RetryLater` does the same with a shorter delay.
@@ -24,11 +24,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
-from copilot_core import logs
+from copilot_core import jobs, logs, operations
 from copilot_core.aws import boto3_client
 from copilot_core.db import system_tx
 
@@ -116,55 +116,30 @@ def handler(job_type: str) -> Callable[[Handler], Handler]:
 
 
 class JobRuns:
-    """`app.job_runs`: one row per idempotency key (a system table, no row-level security)."""
+    """Renewable operation leases; every settlement names its acquired generation."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self.pool = pool
+        self.owner = uuid4()
 
-    async def claim(self, job: Job, visibility_s: int) -> str:
-        """'run' when this worker should run the job, 'done' or 'busy' otherwise."""
+    async def claim(self, job: Job, lease_s: float) -> operations.Lease | str:
         async with system_tx(self.pool) as conn:
-            attempts = await conn.fetchval(
-                """
-                insert into app.job_runs (idempotency_key, job_type, user_id, status)
-                values ($1, $2, $3, 'running')
-                on conflict (idempotency_key) do update
-                  set status = 'running', attempts = app.job_runs.attempts + 1,
-                      started_at = now(), finished_at = null, error = null
-                  where app.job_runs.status = 'failed'
-                     or (app.job_runs.status = 'running'
-                         and app.job_runs.started_at < now() - make_interval(secs => $4))
-                returning attempts
-                """,
-                job.idempotency_key,
-                job.type,
-                job.user_id,
-                float(visibility_s),
+            await operations.adopt(
+                conn, jobs.envelope(job.type, job.idempotency_key, job.user_id, job.payload)
             )
-            if attempts is not None:
-                return "run"
-            status = await conn.fetchval(
-                "select status from app.job_runs where idempotency_key = $1",
-                job.idempotency_key,
-            )
-        return "done" if status == "done" else "busy"
+            return await operations.claim(conn, job.idempotency_key, self.owner, lease_s)
 
-    async def finish(self, key: str) -> None:
+    async def finish(self, lease: operations.Lease) -> bool:
         async with system_tx(self.pool) as conn:
-            await conn.execute(
-                "update app.job_runs set status = 'done', finished_at = now(), error = null"
-                " where idempotency_key = $1",
-                key,
-            )
+            return await operations.finish(conn, lease)
 
-    async def fail(self, key: str, error: str) -> None:
+    async def fail(self, lease: operations.Lease, error: str, delay_s: float = 0) -> bool:
         async with system_tx(self.pool) as conn:
-            await conn.execute(
-                "update app.job_runs set status = 'failed', finished_at = now(), error = $2"
-                " where idempotency_key = $1",
-                key,
-                error[:2000],
-            )
+            return await operations.fail(conn, lease, error, delay_s)
+
+    async def renew(self, lease: operations.Lease, lease_s: float) -> bool:
+        async with system_tx(self.pool) as conn:
+            return await operations.renew(conn, lease, lease_s)
 
 
 @dataclass
@@ -221,10 +196,19 @@ class Consumer:
     concurrency: int = 10
     receive_wait_s: int = 20
     heartbeat_s: float = 60.0
+    lease_s: float = 180.0
+    persistence_concurrency: int = 2
     shutdown_grace_s: float = 100.0
     handlers: Mapping[str, Handler] = field(default_factory=lambda: HANDLERS)
     running: set["asyncio.Task[None]"] = field(default_factory=set["asyncio.Task[None]"])
     processed: int = 0
+    _background_budget: asyncio.Semaphore = field(init=False)
+    _persistence_budget: asyncio.Semaphore = field(init=False)
+
+    def __post_init__(self) -> None:
+        reserved = min(self.persistence_concurrency, max(0, self.concurrency - 1))
+        self._background_budget = asyncio.Semaphore(max(1, self.concurrency - reserved))
+        self._persistence_budget = asyncio.Semaphore(max(1, self.persistence_concurrency))
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -275,6 +259,20 @@ class Consumer:
             # Left on the queue; the dead-letter queue takes it after five receives.
             log.error("unreadable job message (%s): %.200s", e, message.body)
             return
+        budget = (
+            self._persistence_budget
+            if job.type in operations.PERSISTENCE_TYPES
+            else self._background_budget
+        )
+        if budget.locked():
+            # Do not occupy a receive slot waiting behind expensive work. Leave
+            # reserved capacity available for final logs and usage checkpoints.
+            await self.queue.set_visibility(message.receipt, 5)
+            return
+        async with budget:
+            await self._process(message, job)
+
+    async def _process(self, message: Message, job: Job) -> None:
         # Every line about this job names it, its user and its session (CloudWatch filters on
         # session_id). process() runs as its own task, so the ids stay with this job.
         logs.set_ids(job=job.type, user_id=job.user_id, session_id=job.payload.get("session_id"))
@@ -285,54 +283,90 @@ class Consumer:
         visibility = VISIBILITY[job.type]
         try:
             await self.queue.set_visibility(message.receipt, visibility)
-            claim = await self.runs.claim(job, visibility)
+            claim = await self.runs.claim(job, self.lease_s)
         except Exception as e:
             log.warning("%s: could not claim (%s); it comes back later", job.idempotency_key, e)
             return
-        if claim == "done":
-            log.info("%s already done; deleting the duplicate", job.idempotency_key)
+        if claim in ("done", "dead"):
+            log.info("%s already %s; deleting the duplicate", job.idempotency_key, claim)
             if job.type == "pack.build":
                 from copilot_core import pack_operations
 
-                await pack_operations.finished(self.ctx.valkey, job.uid, job.idempotency_key, True)
+                await pack_operations.finished(
+                    self.ctx.valkey, job.uid, job.idempotency_key, claim == "done"
+                )
             await self.queue.delete(message.receipt)
             return
         if claim == "busy":
             log.info("%s is running elsewhere; leaving this copy", job.idempotency_key)
             return
-        beat = asyncio.create_task(self._heartbeat(message.receipt, visibility))
-        try:
+        assert isinstance(claim, operations.Lease)
+        lease = claim
+        lost = asyncio.Event()
+        token = operations.current_lease.set(lease)
+
+        async def execute() -> None:
             await fn(job, self.ctx)
+
+        work = asyncio.create_task(execute())
+        beat = asyncio.create_task(self._heartbeat(message.receipt, visibility, lease, work, lost))
+        try:
+            await work
         except RetryLater as e:
             log.info("%s: retry in %ss (%s)", job.idempotency_key, e.delay_s, e)
-            await self._settle_failed(job, f"retry later: {e}", message.receipt, e.delay_s)
+            await self._settle_failed(lease, f"retry later: {e}", message.receipt, e.delay_s)
             return
         except asyncio.CancelledError:
-            await asyncio.shield(self._settle_failed(job, "cancelled", message.receipt, 0))
+            if lost.is_set():
+                log.warning("%s lost its durable lease; stale work stopped", lease.key)
+                return
+            await asyncio.shield(self._settle_failed(lease, "cancelled", message.receipt, 0))
             raise
+        except operations.LeaseLost:
+            log.warning("%s cannot commit after lease loss", lease.key)
+            return
         except Exception as e:
             log.exception("%s failed", job.idempotency_key)
-            await self._settle_failed(job, f"{type(e).__name__}: {e}", message.receipt, None)
+            await self._settle_failed(lease, f"{type(e).__name__}: {e}", message.receipt, None)
             return
         finally:
             beat.cancel()
-        await self.runs.finish(job.idempotency_key)
+            await asyncio.gather(beat, return_exceptions=True)
+            operations.current_lease.reset(token)
+        if not await self.runs.finish(lease):
+            log.warning("%s completed after lease expiry; leaving delivery for recovery", lease.key)
+            return
         await self.queue.delete(message.receipt)
         self.processed += 1
         log.info("%s done", job.idempotency_key)
 
     async def _settle_failed(
-        self, job: Job, error: str, receipt: str, visible_in_s: int | None
+        self, lease: operations.Lease, error: str, receipt: str, visible_in_s: int | None
     ) -> None:
         with contextlib.suppress(Exception):
-            await self.runs.fail(job.idempotency_key, error)
+            if not await self.runs.fail(lease, error, visible_in_s or 0):
+                return
         if visible_in_s is not None:
             with contextlib.suppress(Exception):
                 await self.queue.set_visibility(receipt, visible_in_s)
 
-    async def _heartbeat(self, receipt: str, visibility: int) -> None:
+    async def _heartbeat(
+        self,
+        receipt: str,
+        visibility: int,
+        lease: operations.Lease,
+        work: asyncio.Task[None],
+        lost: asyncio.Event,
+    ) -> None:
         while True:
             await asyncio.sleep(self.heartbeat_s)
+            try:
+                if not await self.runs.renew(lease, self.lease_s):
+                    raise operations.LeaseLost(lease.key)
+            except Exception:
+                lost.set()
+                work.cancel()
+                return
             try:
                 await self.queue.set_visibility(receipt, visibility)
             except Exception as e:

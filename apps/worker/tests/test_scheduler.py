@@ -1,9 +1,11 @@
 """The local scheduler: cadences, one send per slot, and standup packs 30 minutes ahead."""
 
 from datetime import UTC, date, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
+from copilot_core import jobs, operations
 from copilot_core.ids import uuid7
 from copilot_core.jobs import MemoryJobQueue
 from copilot_worker.scheduler import Scheduler, next_standup, slots
@@ -41,6 +43,7 @@ async def test_tick_sends_each_slot_once(stack: Stack) -> None:
     queue = MemoryJobQueue()
     scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
     now = datetime(2031, 3, 4, 14, 10, tzinfo=UTC)  # a Tuesday, 09:10 in New York (EST)
+    await stack.admin.execute("delete from app.scheduled_jobs")
     await stack.ctx.valkey.delete(
         *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
     )
@@ -77,6 +80,7 @@ async def test_standup_time_builds_each_current_companys_pack(stack: Stack) -> N
     queue = MemoryJobQueue()
     scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
     now = datetime(2031, 3, 5, 14, 10, tzinfo=UTC)  # a Wednesday, 09:10 in New York
+    await stack.admin.execute("delete from app.scheduled_jobs")
     await stack.ctx.valkey.delete(
         *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
     )
@@ -117,6 +121,7 @@ async def test_failed_and_stuck_work_logs_are_retried_hourly(stack: Stack) -> No
         )  # fmt: skip
     queue = MemoryJobQueue()
     scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    await stack.admin.execute("delete from app.scheduled_jobs")
     await stack.ctx.valkey.delete(
         *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
     )
@@ -158,6 +163,7 @@ async def test_documents_without_an_index_are_indexed_hourly(stack: Stack) -> No
         )  # fmt: skip
     queue = MemoryJobQueue()
     scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    await stack.admin.execute("delete from app.scheduled_jobs")
     await stack.ctx.valkey.delete(
         *[k async for k in stack.ctx.valkey.scan_iter(match="sched:*")] or ["x"]
     )
@@ -170,3 +176,81 @@ async def test_documents_without_an_index_are_indexed_hourly(stack: Stack) -> No
     queue.sent.clear()
     await scheduler.tick(now)  # the same hour: nothing again
     assert not [m for m in queue.sent if m["type"] == "knowledge.index"]
+
+
+@pytest.mark.stack
+async def test_slot_survives_queue_outage_and_scheduler_restart(stack: Stack) -> None:
+    slot = str(uuid4())
+    key = f"sessions.sweep:{slot}"
+    message = jobs.envelope("sessions.sweep", key, None, {})
+
+    class OfflineQueue:
+        async def send(self, message, delay_s=0):
+            raise ConnectionError("queue unavailable")
+
+    first = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, OfflineQueue())
+    assert await first.schedule("sessions.sweep", slot, [message]) == [key]
+    assert await first.dispatcher.once() == 0
+    assert await stack.admin.fetchval(
+        "select 1 from app.scheduled_jobs where name='sessions.sweep' and slot=$1", slot
+    )
+    await stack.admin.execute(
+        "update app.outbox_events set available_at=now() where operation_key=$1", key
+    )
+    queue = MemoryJobQueue()
+    restarted = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, queue)
+    assert await restarted.schedule("sessions.sweep", slot, [message]) == []
+    await restarted.dispatcher.once()
+    assert [m["idempotency_key"] for m in queue.sent if m["idempotency_key"] == key] == [key]
+
+
+@pytest.mark.stack
+async def test_hourly_retries_cannot_bypass_dead_revision_or_attempt_budget(stack: Stack) -> None:
+    uid, eid = await stack.new_user(), uuid4()
+    await stack.admin.execute(
+        "insert into app.employers(id,user_id,name) values($1,$2,'Retry limits')", eid, uid
+    )
+    now = datetime.now(UTC)
+    ready = None
+    for day, label in enumerate(("dead", "exhausted", "ready"), 1):
+        lid = uuid4()
+        revision = await stack.admin.fetchval(
+            "insert into app.work_logs(id,user_id,employer_id,day,text_enc,key_version,"
+            " content_sha256,status) values($1,$2,$3,$4,$5,1,$6,'failed')"
+            " returning current_revision_id",
+            lid,
+            uid,
+            eid,
+            date(2035, 1, day),
+            b"sealed",
+            label,
+        )
+        if label == "ready":
+            ready = str(lid)
+            continue
+        async with stack.ctx.system() as conn:
+            for attempt in range(2 if label == "exhausted" else 1):
+                key = f"worklog.extract:{lid}:{attempt}"
+                await operations.enqueue(
+                    conn,
+                    jobs.envelope(
+                        "worklog.extract",
+                        key,
+                        uid,
+                        {
+                            "work_log_id": str(lid),
+                            "content_sha256": label,
+                            "work_log_revision_id": str(revision),
+                        },
+                    ),
+                )
+                await conn.execute(
+                    "update app.operations set status=$2,attempts=$3 where idempotency_key=$1",
+                    key,
+                    "dead" if label == "dead" else "done",
+                    3 if attempt == 0 else 2,
+                )
+    scheduler = Scheduler(stack.ctx.system_pool, stack.ctx.valkey, MemoryJobQueue())
+    messages = [m for m in await scheduler.retry_work_logs(now) if m["user_id"] == str(uid)]
+    assert [m["payload"]["work_log_id"] for m in messages] == [ready]
+    assert messages[0]["payload"]["work_log_revision_id"]

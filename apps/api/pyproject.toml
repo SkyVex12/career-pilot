@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 copilot-api = "copilot_api.main:run"
+copilot-interactive = "copilot_api.interactive:run"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.13"]

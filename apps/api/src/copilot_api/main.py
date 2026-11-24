@@ -1,5 +1,6 @@
 """Copilot API (ARCHITECTURE.md, "REST API"): base path /v1, a bearer token on every request."""
 
+import asyncio
 import logging
 import os
 import re
@@ -41,11 +42,11 @@ from copilot_api.routes import (
     sync,
 )
 from copilot_api.tokens import TokenService
-from copilot_core import __version__, logs, versions
+from copilot_core import __version__, logs, operations, versions
 from copilot_core.auth import make_verifier
 from copilot_core.careeros import CareerOsClient, make_client
 from copilot_core.crypto import UserCrypto, make_key_provider
-from copilot_core.db import create_pool
+from copilot_core.db import actor_account, create_pool
 from copilot_core.dotenv import load_dotenv
 from copilot_core.identities import Identities
 from copilot_core.jobs import SqsJobQueue
@@ -81,9 +82,13 @@ class RequestLog:
                 status["code"] = message["status"]
             await send(message)
 
+        actor_token = actor_account.set(None)
+        lease_token = operations.current_lease.set(None)
         try:
             await self.app(scope, receive, send_status)
         finally:
+            operations.current_lease.reset(lease_token)
+            actor_account.reset(actor_token)
             log.info(
                 "%s %s %s %.0fms", scope["method"], scope["path"], status["code"],
                 (time.monotonic() - started) * 1000,
@@ -172,9 +177,20 @@ def create_app(services: Services | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = services is None
         app.state.services = services or await build_services(ApiSettings())
+        from copilot_api.interactive import InteractiveRunner
+
+        runner = InteractiveRunner(app.state.services)
+        runner_task = (
+            asyncio.create_task(runner.run())
+            if app.state.services.settings.interactive_runner_enabled
+            else None
+        )
         try:
             yield
         finally:
+            runner.stop.set()
+            if runner_task is not None:
+                await runner_task
             if app.state.services.email is not None:
                 await app.state.services.email.drain()  # a code's mail on its way out
             if owned:

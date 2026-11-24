@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import AccountDep, SvcDep, current_account, require_link
 from copilot_core.auth import Principal, bearer_token
+from copilot_core.db import actor_account
 from copilot_core.valkey_client import text
 
 router = APIRouter(tags=["personal-ai-oauth"])
@@ -411,10 +412,14 @@ async def mcp_account(request: Request, svc: SvcDep) -> Principal:
                 401, "MCP authorization expired", headers=challenge(svc, error="invalid_token")
             )
         async with svc.tx(account) as conn:
-            if not await conn.fetchval("select 1 from app.users where id=$1", account.user_id):
+            if not await conn.fetchval(
+                "select 1 from app.accounts where id=$1 and status='active'",
+                account.user_id,
+            ):
                 raise HTTPException(
                     401, "Account no longer exists", headers=challenge(svc, error="invalid_token")
                 )
+        actor_account.set(account.user_id)
         request.state.mcp_scopes = set(record["scope"].split())
     else:
         try:

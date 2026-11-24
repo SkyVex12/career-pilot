@@ -34,6 +34,7 @@ async def test_manual_application_with_a_pasted_resume(api: Api) -> None:
     b = await base(api, h)
     [extract] = api.take("resume.extract")
     assert extract["payload"] == {"resume_version_id": b["id"],
+                                  "resume_revision_id": b["revision_id"],
                                   "content_sha256": resumes.sha256_text(RESUME)}  # fmt: skip
     app = await create(
         api, h, url="https://jobs.example.com/1", source_site="LinkedIn", stage="interview",
@@ -80,7 +81,7 @@ async def test_pairing_changes_and_rules(api: Api) -> None:
     assert r.json()["resume"] == {**r.json()["resume"], "version_id": b["id"], "manual": True}
     [build] = api.take("pack.build")
     assert f":{uuid.UUID(b['id']).hex[:12]}:" in build["idempotency_key"]
-    assert build["idempotency_key"].endswith(":r1")
+    assert build["idempotency_key"].endswith(f":r1:s{b['revision_id']}")
     # Another application's tailored version is refused; so is a version that is not theirs.
     r = await api.client.patch(f"/v1/applications/{one['id']}", headers=h,
                                json={"resume_version_id": two["resume"]["version_id"]})  # fmt: skip
@@ -96,7 +97,11 @@ async def test_pairing_changes_and_rules(api: Api) -> None:
                                json={"resume_version_id": "auto"})  # fmt: skip
     assert r.json()["resume"]["version_id"] == one["resume"]["version_id"]
     [build] = api.take("pack.build")
-    assert build["idempotency_key"].endswith(":r2")
+    revision = await api.admin.fetchval(
+        "select current_revision_id from app.resume_versions where id=$1",
+        uuid.UUID(one["resume"]["version_id"]),
+    )
+    assert build["idempotency_key"].endswith(f":r2:s{revision}")
     # A new JD rebuilds the pack; other fields alone do not.
     r = await api.client.patch(f"/v1/applications/{one['id']}", headers=h, json={"stage": "offer"})
     assert r.json()["stage"] == "offer"

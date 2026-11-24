@@ -24,6 +24,7 @@ def fixture() -> tuple[Any, Any, dict, Principal, Principal, list]:
         "original_text_key_version": 7,
         "original_content_sha256": "current",
         "content_sha256": "current",
+        "current_revision_id": uuid4(),
     }
     conn = SimpleNamespace(fetchrow=AsyncMock(return_value=row))
 
@@ -31,6 +32,12 @@ def fixture() -> tuple[Any, Any, dict, Principal, Principal, list]:
         return [row] if "select * from app.resume_versions" in sql else []
 
     conn.fetch = fetch
+
+    @asynccontextmanager
+    async def transaction():
+        yield
+
+    conn.transaction = transaction
     scopes = []
 
     @asynccontextmanager
@@ -41,7 +48,7 @@ def fixture() -> tuple[Any, Any, dict, Principal, Principal, list]:
     svc = SimpleNamespace(
         tx=tx,
         crypto=SimpleNamespace(decrypt=AsyncMock(return_value="Original file text")),
-        queue=SimpleNamespace(send=AsyncMock()),
+        accept=AsyncMock(),
     )
     return svc, conn, row, user, account, scopes
 
@@ -68,7 +75,7 @@ async def test_legacy_file_queues_worker_backfill_without_parsing_or_leaking_sta
         == []
     )
     svc.crypto.decrypt.assert_not_awaited()
-    job = svc.queue.send.await_args.args[0]
+    job = svc.accept.await_args.args[1]
     assert job["type"] == "resume.original"
     assert job["user_id"] == str(user.user_id)
     row["original_content_sha256"] = "current"

@@ -129,7 +129,7 @@ async def link_of(api: Api, user_id: uuid.UUID) -> tuple[str, str, str] | None:
 
 
 async def accounts(api: Api) -> int:
-    return int(await api.admin.fetchval("select count(*) from app.users where owner_id is null"))
+    return int(await api.admin.fetchval("select count(*) from app.accounts"))
 
 
 def code_of(r: Any) -> tuple[int, str]:
@@ -756,7 +756,9 @@ async def test_a_sign_in_ends_when_career_os_disables_the_account(
     # An account that was deleted is not brought back by its token.
     other = await signed_in(api, fake, "u2")
     uid = uuid.UUID((await me(api, bearer(other)))["id"])
-    await api.admin.execute("delete from app.users where id = $1", uid)
+    async with api.admin.transaction():
+        await api.admin.execute("delete from app.workspaces where id=$1", uid)
+        await api.admin.execute("delete from app.accounts where id=$1", uid)
     assert (await api.client.get("/v1/me", headers=bearer(other))).status_code == 401
     assert await identity_of(api, "user:u2") is None
 
@@ -814,7 +816,7 @@ async def test_sign_in_reads_only_the_links_of_the_account_signing_in(
     async with sign_in_tx(api.svc.pool, "career_os_link:user:u1") as conn:
         rows = await conn.fetch("select user_id from app.integrations")
         assert [r["user_id"] for r in rows] == [a]
-        assert await conn.fetch("select 1 from app.users") == []
+        assert await conn.fetch("select 1 from app.accounts") == []
         assert await conn.fetch("select 1 from app.identities") == []
         assert await conn.execute("delete from app.integrations") == "DELETE 0"
         status = await conn.execute("update app.integrations set status = 'revoked'")

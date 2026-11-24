@@ -8,6 +8,7 @@ import pytest
 from copilot_core import jobs, keys
 from copilot_core.packs import SHORT_ID, Digest, SessionPack, cited_refs, ref_map, short_ids
 from copilot_worker.memory import load_digest_nodes, render_digest, replace_resume_nodes
+from copilot_worker.runtime import RetryLater
 from copilot_worker.testing import FIXTURES, Stack
 
 pytestmark = pytest.mark.stack
@@ -237,7 +238,7 @@ async def test_job_description_becomes_a_job_and_a_pack(stack: Stack) -> None:
     tag = digest.version.removeprefix("sha256:")[:16]
     # and the pairing: the resume version, the JD and the pairing revision.
     assert f":{tag}:none:" in message["idempotency_key"]
-    assert message["idempotency_key"].endswith(":r0")
+    assert message["idempotency_key"].endswith(f":r0:s{digest.resume_revision_id}")
     await stack.run(message)
 
     pack = await pack_for(stack, uid, f"job:{doc}")
@@ -344,7 +345,7 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
 ) -> None:
     """The job description is read while the resume is: its pack starts before the digest
     exists and finishes after it does, when the digest rebuild could not yet see the pack in
-    the index. The pack queues its own rebuild for the new digest."""
+    the index. The same accepted input retries; its key must not be consumed as done."""
     from copilot_core import resumes
 
     uid = await stack.new_user()
@@ -362,15 +363,16 @@ async def test_pack_built_while_the_digest_changes_rebuilds_itself(
         return None if len(reads) == 1 else await real(*args)  # type: ignore[arg-type]
 
     monkeypatch.setattr(resumes, "version_digest", first_read_sees_no_digest)
-    await stack.run(build)
+    with pytest.raises(RetryLater, match="context changed"):
+        await stack.run(build)
     assert await stack.ctx.valkey.hget(keys.pack_index(uid), f"job:{doc}") is None
-    [again] = stack.take("pack.build")
+    assert stack.take("pack.build") == []
     digest = await digest_of(stack, uid)
     # The key names the digest, then the embedding model ("none": no embedder here).
     tag = digest.version.removeprefix("sha256:")[:16]
-    assert f":{tag}:none:" in again["idempotency_key"]
+    assert f":{tag}:none:" in build["idempotency_key"]
     monkeypatch.setattr(resumes, "version_digest", real)
-    await stack.run(again)
+    await stack.run(build)
     pack = await pack_for(stack, uid, f"job:{doc}")
     assert pack.digest_version == digest.version
 

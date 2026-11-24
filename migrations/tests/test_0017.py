@@ -70,11 +70,18 @@ async def db() -> AsyncIterator[Db]:
 async def seat(db: Db, status: str = "invited", expires_in: timedelta = timedelta(minutes=10),
                guest: uuid.UUID | None = None) -> uuid.UUID:  # fmt: skip
     sid = uuid.uuid4()
+    session_id = uuid.uuid4()
+    await db.conn.execute(
+        "insert into app.sessions(id,user_id,mode,store_transcript,started_at)"
+        " values($1,$2,'interview',false,now())",
+        session_id,
+        db.host,
+    )
     await db.conn.execute(
         "insert into app.session_seats (id, user_id, session_id, host_account_id, guest_id,"
         " host_name, guest_name, guest_email, mode, status, expires_at)"
         " values ($1, $2, $3, $2, $4, 'Host', 'Guest', 'guest@example.com', 'interview', $5, $6)",
-        sid, db.host, uuid.uuid4(), guest or db.guest, status, datetime.now(UTC) + expires_in,
+        sid, db.host, session_id, guest or db.guest, status, datetime.now(UTC) + expires_in,
     )  # fmt: skip
     return sid
 
@@ -90,7 +97,10 @@ async def as_user(
     try:
         async with db.conn.transaction():
             await db.conn.execute(f"set local role {role}")
-            await db.conn.execute("select set_config('app.user_id', $1, true)", str(user))
+            await db.conn.execute(
+                "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+                str(user),
+            )
             if lookup is not None:
                 await db.conn.execute("select set_config('app.seat_lookup', $1, true)", lookup)
             rows = await db.conn.fetch(sql, *args)
@@ -134,7 +144,10 @@ async def test_a_guest_answers_their_invite_once(db: Db) -> None:
     # Not committed (as_user rolls back); answer for real now.
     async with db.conn.transaction():
         await db.conn.execute("set local role app_api")
-        await db.conn.execute("select set_config('app.user_id', $1, true)", str(db.guest))
+        await db.conn.execute(
+            "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+            str(db.guest),
+        )
         assert await db.conn.fetchval("select app.seat_answer($1, true)", sid) is not None
     row = await db.conn.fetchrow(
         "select status, rev, accepted_at from app.session_seats where id = $1", sid
@@ -157,7 +170,10 @@ async def test_declining_closes_the_invite(db: Db) -> None:
     sid = await seat(db, "invited")
     async with db.conn.transaction():
         await db.conn.execute("set local role app_api")
-        await db.conn.execute("select set_config('app.user_id', $1, true)", str(db.guest))
+        await db.conn.execute(
+            "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+            str(db.guest),
+        )
         assert await db.conn.fetchval("select app.seat_answer($1, false)", sid) is not None
     row = await db.conn.fetchrow(
         "select status, ended_at from app.session_seats where id = $1", sid
@@ -175,13 +191,13 @@ async def test_only_the_api_may_answer_for_a_guest(db: Db) -> None:
 
 
 async def test_the_email_lookup_finds_accounts_only_when_asked(db: Db) -> None:
-    sql = "select id from app.users where email = $1"
+    sql = "select id from app.accounts where email = $1"
     rows, _ = await as_user(db, db.host, sql, "guest@example.com")
     assert rows == []
     rows, _ = await as_user(db, db.host, sql, "guest@example.com", lookup="guest@example.com")
     assert [r["id"] for r in rows] == [db.guest]
     # The lookup names one address: no other account shows, and never a profile.
-    rows, _ = await as_user(db, db.host, "select id from app.users", lookup="guest@example.com")
+    rows, _ = await as_user(db, db.host, "select id from app.accounts", lookup="guest@example.com")
     assert {r["id"] for r in rows} == {db.host, db.guest}
     rows, _ = await as_user(db, db.other, sql, "profile@example.com", lookup="profile@example.com")
     assert rows == []

@@ -24,6 +24,9 @@ class ApiSettings(DataSettings):
     ask_semantic_min_similarity: float = Field(default=0.55, ge=0.0, le=1.0)
     max_document_bytes: int = 10 * 1024 * 1024
     upload_url_ttl_s: int = 900
+    interactive_concurrency: int = Field(default=2, ge=1, le=100)
+    interactive_lease_s: int = Field(default=60, ge=15, le=600)
+    interactive_runner_enabled: bool = True
 
     # Email sign-in (ARCHITECTURE.md, "Email sign-in"; on with COPILOT_EMAIL_SIGN_IN). The code:
     # how long it lives, how many wrong tries kill it, and how long the app waits before it

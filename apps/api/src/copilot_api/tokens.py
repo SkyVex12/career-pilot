@@ -109,6 +109,14 @@ class TokenService:
     ) -> Tokens:  # fmt: skip
         """The tokens of a new sign-in to `user_id`."""
         async with user_tx(self.pool, user_id) as conn:
+            if (
+                await conn.fetchval(
+                    "select status from app.accounts where id=$1 for share",
+                    user_id,
+                )
+                != "active"
+            ):
+                raise RefreshError("not_allowed")
             # Tokens past their time have nothing left to tell; replaced ones are kept until
             # then, to recognize one shown again.
             await conn.execute(
@@ -142,6 +150,11 @@ class TokenService:
             )
             if row is None or row["revoked_at"] is not None or row["expired"]:
                 raise RefreshError("invalid")
+            account = await conn.fetchrow(
+                "select display_name,status from app.accounts where id=$1 for share",
+                user_id,
+            )
+            ended = ended or account is None or account["status"] != "active"
             provider, family = str(row["provider"]), row["family_id"]
             email, subject = row["email"], row["subject"]
             if row["replaced_at"] is not None or ended or not self._allowed(provider, email):
@@ -152,9 +165,8 @@ class TokenService:
                     "update app.refresh_tokens set replaced_at = now() where token_hash = $1",
                     digest,
                 )
-                name = await conn.fetchval(
-                    "select display_name from app.users where id = $1", user_id
-                )
+                assert account is not None
+                name = account["display_name"]
                 fresh = await self._insert(conn, user_id, family, provider, email, subject)
                 return self._tokens(
                     user_id, str(name or email or "HubRuby account"), fresh, provider, email,

@@ -241,11 +241,11 @@ async def invite(
         raise HTTPException(409, f"a call has at most {seats.MAX_GUESTS} guests")
     async with svc.tx(account) as conn:
         host_name = await conn.fetchval(
-            "select display_name from app.users where id = $1", account.user_id
+            "select display_name from app.accounts where id = $1", account.user_id
         )
         await conn.execute("select set_config('app.seat_lookup', $1, true)", body.email)
         guest = await conn.fetchrow(
-            "select id, display_name from app.users where lower(email) = $1 and owner_id is null",
+            "select id, display_name from app.accounts where lower(email) = $1",
             body.email,
         )
     sent = {"status": "sent"}

@@ -23,6 +23,7 @@ from copilot_core.packs import SessionPack, render_pack
 from copilot_core.storage import company_document_key, employer_prefix
 from copilot_core.teststack import as_role
 from copilot_core.workplace import memory_version, search
+from copilot_worker.retention import delete_objects
 from copilot_worker.sessionlog import replace_session_commitments
 from copilot_worker.testing import FIXTURES, STARTED, GatewayLog, Stack
 from copilot_worker.workplace import write_worklog_nodes
@@ -708,6 +709,11 @@ async def test_a_new_upload_of_the_same_file_replaces_the_old_one(stack: Stack) 
         "select id from app.company_documents where employer_id = $1", eid
     )
     assert [r["id"] for r in docs] == [new]
+    assert await stack.ctx.store.get(old_key) is not None
+    assert await stack.admin.fetchval(
+        "select completed_at is null from app.object_deletions where object_key=$1", old_key
+    )
+    await delete_objects(stack.ctx)
     assert await stack.ctx.store.get(old_key) is None
     owners = await stack.admin.fetch(
         "select distinct document_id from app.knowledge_chunks where employer_id = $1", eid
@@ -787,3 +793,68 @@ async def test_a_test_question_gets_an_answer_with_its_type_and_sources(stack: S
     assert "what was rejected and why not" in asked
     assert "(doc: dispatch.md > Dispatch platform: architecture notes > Decisions" in asked
     assert "decision|how_it_works" not in json.dumps(typed["messages"])
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_worklog_result_and_failure_cannot_cross_aba_revision(
+    stack: Stack,
+    monkeypatch: pytest.MonkeyPatch,
+    fails: bool,
+) -> None:
+    from copilot_worker import workplace
+
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    log_id, sha = await seed_log(stack, uid, eid, "Original work")
+    revision = await stack.admin.fetchval(
+        "select current_revision_id from app.work_logs where id=$1", log_id
+    )
+    message = extract_job(uid, log_id, sha)
+    message["payload"]["work_log_revision_id"] = str(revision)
+    calls = 0
+
+    async def change_source(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        for current in ("different-content", sha):
+            await stack.admin.execute(
+                "update app.work_logs set content_sha256=$2 where id=$1", log_id, current
+            )
+        if fails:
+            raise RuntimeError("provider failed after source change")
+        return {}
+
+    monkeypatch.setattr(workplace, "complete_json", change_source)
+    if fails:
+        with pytest.raises(RuntimeError, match="source change"):
+            await stack.run(message)
+    else:
+        await stack.run(message)
+    row = await stack.admin.fetchrow(
+        "select current_revision_id,extracted_revision_id,status from app.work_logs where id=$1",
+        log_id,
+    )
+    assert row is not None
+    assert row["current_revision_id"] != revision
+    assert row["extracted_revision_id"] is None
+    assert row["status"] == "extracting"
+    await stack.run(message)  # an old explicit revision cannot even call the provider
+    assert calls == 1
+
+
+async def test_same_worklog_content_on_new_day_requires_new_extraction(stack: Stack) -> None:
+    uid = await stack.new_user()
+    eid = await new_employer(stack, uid)
+    log_id, sha = await seed_log(stack, uid, eid, (INPUTS / "worklog.md").read_text("utf-8"))
+    await stack.run(extract_job(uid, log_id, sha))
+    prior = await stack.admin.fetchval(
+        "select extracted_revision_id from app.work_logs where id=$1", log_id
+    )
+    await stack.admin.execute("update app.work_logs set day=day+1 where id=$1", log_id)
+    await stack.run(extract_job(uid, log_id, sha))
+    row = await stack.admin.fetchrow(
+        "select current_revision_id,extracted_revision_id from app.work_logs where id=$1", log_id
+    )
+    assert row is not None
+    assert row["extracted_revision_id"] != prior
+    assert row["extracted_revision_id"] == row["current_revision_id"]

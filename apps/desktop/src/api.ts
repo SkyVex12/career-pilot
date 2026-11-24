@@ -778,9 +778,25 @@ export interface Replay {
 
 export interface Usage {
   period: string;
+  period_start?: string;
+  period_end?: string;
+  as_of?: string;
+  last_recorded_at?: string | null;
+  /** Compatibility display totals include historical estimates; never use them for billing. */
   live_seconds: number;
   live_minutes: number;
   sessions: number;
+  tracking_only?: boolean;
+  measurement?: "connected-v1";
+  measured_seconds?: number;
+  measured_sessions?: number;
+  legacy_estimated_seconds?: number;
+  legacy_sessions?: number;
+  legacy_billable?: false;
+  /** estimated_minor already includes adjustment_minor. Currencies are never combined. */
+  estimated_costs?: { currency: string; estimated_minor: number; adjustment_minor: number }[];
+  prices?: { currency: string; price_version: string; rate_minor_per_hour: number; measured_seconds: number }[];
+  days?: { day: string; live_seconds: number; measured_seconds: number; legacy_estimated_seconds: number }[];
 }
 
 export interface Me {
@@ -937,7 +953,7 @@ export function queryString(query: object): string {
 
 export const rest = {
   me: () => call<Me>("GET", "/me"),
-  usage: (policy?: ReadPolicy) => call<Usage>("GET", "/usage", undefined, policy),
+  usage: (policy?: ReadPolicy) => call<Usage>("GET", "/usage", undefined, { ...policy, refresh: true }),
   documents: () => call<{ documents: DocumentItem[]; digest: DigestInfo | null }>("GET", "/documents"),
   jobs: () => call<{ jobs: JobItem[] }>("GET", "/jobs"),
   interviews: (policy?: ReadPolicy) => call<{ interviews: InterviewItem[] }>("GET", "/interviews", undefined, policy),

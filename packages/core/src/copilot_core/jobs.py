@@ -139,17 +139,36 @@ def workplace_refresh(user_id: UUID, employer_id: UUID, memory_version: str) -> 
     return envelope("workplace.refresh", key, user_id, {"employer_id": str(employer_id)})
 
 
-def resume_extract(user_id: UUID, resume_version_id: UUID, content_sha256: str) -> dict[str, Any]:
+def resume_extract(
+    user_id: UUID,
+    resume_version_id: UUID,
+    content_sha256: str,
+    *,
+    resume_revision_id: UUID | None = None,
+) -> dict[str, Any]:
     """`resume.extract`: one resume version's content into its memory nodes, once per content."""
     key = f"resume.extract:{user_id}:{resume_version_id}:{content_sha256}"
     payload = {"resume_version_id": str(resume_version_id), "content_sha256": content_sha256}
+    if resume_revision_id is not None:
+        key += f":r{resume_revision_id}"
+        payload["resume_revision_id"] = str(resume_revision_id)
     return envelope("resume.extract", key, user_id, payload)
 
 
-def digest_rebuild(user_id: UUID, resume_version_id: UUID, memory_version: str) -> dict[str, Any]:
+def digest_rebuild(
+    user_id: UUID,
+    resume_version_id: UUID,
+    memory_version: str,
+    *,
+    resume_revision_id: UUID | None = None,
+) -> dict[str, Any]:
     """`digest.rebuild` for one resume version, once per version of its memory."""
     key = f"digest.rebuild:{user_id}:{resume_version_id}:{memory_version}"
-    return envelope("digest.rebuild", key, user_id, {"resume_version_id": str(resume_version_id)})
+    payload = {"resume_version_id": str(resume_version_id)}
+    if resume_revision_id is not None:
+        key += f":r{resume_revision_id}"
+        payload["resume_revision_id"] = str(resume_revision_id)
+    return envelope("digest.rebuild", key, user_id, payload)
 
 
 def knowledge_index(user_id: UUID, document_id: UUID, sha256: str) -> dict[str, Any]:

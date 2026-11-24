@@ -177,6 +177,8 @@
 .prep-workspace .prep-sidebar .ui-empty-text { font-size: 12px; line-height: 1.7; }
 .prep-workspace > .ui-banner { margin-bottom: 12px; }
 .history-workspace .history-filters { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.history-usage { display: grid; gap: 4px; line-height: 1.5; }
+.history-usage-note { font-size: 12px; }
 .history-workspace .history-filters > .ui-input { flex: 1; max-width: 240px; min-width: 150px; }
 .history-list-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
 .history-workspace .history-session-icon { width: 32px; height: 32px; border-radius: 6px; }

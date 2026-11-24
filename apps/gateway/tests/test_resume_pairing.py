@@ -89,12 +89,21 @@ def digest_of(fact: str) -> Digest:
 async def seed(env, db: Db) -> tuple[Digest, Digest, SessionPack, SessionPack]:
     vk = env.client()
     base, tailored = digest_of(BASE_FACT), digest_of(TAILORED_FACT)
+    for version, digest in ((db.base, base), (db.tailored, tailored)):
+        row = await db.admin.fetchrow(
+            "select current_revision_id,content_sha256 from app.resume_versions where id=$1",
+            version,
+        )
+        assert row is not None
+        digest.resume_revision_id = row["current_revision_id"]
+        digest.resume_content_sha256 = row["content_sha256"]
     await vk.set(keys.resume_digest(USER_A, db.base), base.model_dump_json(by_alias=True))
     await vk.set(keys.digest(USER_A), base.model_dump_json(by_alias=True))
     await vk.set(keys.resume_digest(USER_A, db.tailored), tailored.model_dump_json(by_alias=True))
     packs: list[SessionPack] = []
     async with db.pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
+        await conn.execute("select set_config('app.account_id', $1, true)", str(USER_A))
         pairings = [await resumes.pairing(conn, a) for a in (db.on_base, db.on_tailored)]
     cases = (
         (db.on_base, db.base, base, pairings[0]),
@@ -107,6 +116,8 @@ async def seed(env, db: Db) -> tuple[Digest, Digest, SessionPack, SessionPack]:
             "built_at": "2026-10-22T10:00:00Z", "digest_version": digest.version,
             "context": {"company": str(app_id)}, "resume_version_id": str(version),
             "pairing": resumes.pairing_tag(paired),
+            "resume_revision_id": digest.resume_revision_id,
+            "resume_content_sha256": digest.resume_content_sha256,
         })  # fmt: skip
         await vk.set(keys.pack(USER_A, pack.pack_id), pack.model_dump_json(by_alias=True))
         await vk.hset(keys.pack_index(USER_A), f"job:{app_id}", str(pack.pack_id))

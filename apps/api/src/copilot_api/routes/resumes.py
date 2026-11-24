@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import Services, SvcDep, UserDep
 from copilot_api.routes.applications import MAX_RESUME_TEXT, enqueue_packs
-from copilot_core import jobs, keys, resumes
+from copilot_core import keys, resumes
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
 from copilot_core.packs import Digest
@@ -40,7 +40,7 @@ class ResumePatch(BaseModel):
 VERSION_SQL = """
 select v.id, v.kind, v.application_id, v.label, v.source, v.status, v.created_at,
        v.updated_at, v.career_os_ref, v.pulled_at, v.file_s3_key is not null as has_file,
-       v.file_content_type, a.company, a.role
+       v.file_content_type, v.current_revision_id, a.company, a.role
 from app.resume_versions v left join app.applications a on a.id = v.application_id
 """
 
@@ -58,6 +58,7 @@ async def version_out(svc: Services, conn: Conn, uid: UUID, row: Any) -> dict[st
     used_by = await resumes.applications_using(conn, row["id"])
     return {
         "id": str(row["id"]),
+        "revision_id": str(row["current_revision_id"]),
         "kind": row["kind"],
         "label": row["label"],
         "source": row["source"],
@@ -87,8 +88,9 @@ async def set_text(svc: Services, conn: Conn, uid: UUID, version: UUID, body: st
     await conn.execute(
         "update app.resume_versions set source = 'text', text_enc = $2, key_version = $3,"
         " document_id = null, file_s3_key = null, file_name_enc = null,"
-        " file_content_type = null, career_os_ref = null, pulled_at = null,"
-        " content_sha256 = $4, status = 'extracting', updated_at = now() where id = $1",
+        " file_content_type = null, file_sha256 = null, career_os_ref = null, pulled_at = null,"
+        " status = case when source='text' and content_sha256=$4 then status "
+        "else 'extracting' end, content_sha256 = $4, updated_at = now() where id = $1",
         version, sealed, key_version, sha,
     )  # fmt: skip
     return sha
@@ -156,7 +158,7 @@ async def create_resume(body: ResumeIn, svc: SvcDep, user: UserDep) -> dict[str,
                 )  # fmt: skip
         row = await conn.fetchrow(VERSION_SQL + " where v.id = $1", version)
         out = await version_out(svc, conn, uid, row)
-    await svc.queue.send(jobs.resume_extract(uid, version, sha))
+        await svc.extract_resume(conn, uid, version, sha)
     return out
 
 
@@ -213,6 +215,59 @@ async def get_resume_file(version_id: UUID, svc: SvcDep, user: UserDep) -> Respo
     )  # fmt: skip
 
 
+@router.get("/resumes/{version_id}/revisions")
+async def list_revisions(version_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any]:
+    async with svc.tx(user) as conn:
+        if not await conn.fetchval("select 1 from app.resume_versions where id=$1", version_id):
+            raise HTTPException(404, "no such resume")
+        rows = await conn.fetch(
+            "select id,revision_number,content_sha256,source,created_at from app.resume_revisions "
+            "where resume_version_id=$1 order by revision_number desc limit 100",
+            version_id,
+        )
+    return {"revisions": [dict(row) for row in rows]}
+
+
+@router.get("/resumes/{version_id}/revisions/{revision_id}")
+async def get_revision(
+    version_id: UUID,
+    revision_id: UUID,
+    svc: SvcDep,
+    user: UserDep,
+) -> dict[str, Any]:
+    async with svc.tx(user) as conn:
+        row = await conn.fetchrow(
+            "select r.*,x.text_enc as original_text_enc,x.key_version as original_key_version "
+            "from app.resume_revisions r left join app.resume_revision_extractions x "
+            "on x.revision_id=r.id where r.id=$1 and r.resume_version_id=$2",
+            revision_id,
+            version_id,
+        )
+        if row is None:
+            raise HTTPException(404, "resume revision unavailable")
+        original = row["text_enc"] is None
+        content = row["original_text_enc"] if original else row["text_enc"]
+        text = None
+        if content is not None:
+            text = await svc.crypto.decrypt(
+                conn,
+                user.user_id,
+                "resume_versions:original" if original else "resume_versions",
+                str(version_id),
+                content,
+                row["original_key_version"] if original else row["key_version"],
+            )
+    return {
+        "id": str(revision_id),
+        "resume_version_id": str(version_id),
+        "revision_number": row["revision_number"],
+        "content_sha256": row["content_sha256"],
+        "source": row["source"],
+        "created_at": row["created_at"],
+        "text": text,
+    }
+
+
 @router.patch("/resumes/{version_id}")
 async def update_resume(
     version_id: UUID, body: ResumePatch, svc: SvcDep, user: UserDep
@@ -236,8 +291,8 @@ async def update_resume(
             sha = await set_text(svc, conn, uid, version_id, body.text)
         row = await conn.fetchrow(VERSION_SQL + " where v.id = $1", version_id)
         out = await version_out(svc, conn, uid, row)
-    if sha is not None:
-        await svc.queue.send(jobs.resume_extract(uid, version_id, sha))
+        if sha is not None:
+            await svc.extract_resume(conn, uid, version_id, sha)
     return out
 
 
@@ -269,6 +324,4 @@ async def delete_resume(version_id: UUID, svc: SvcDep, user: UserDep) -> Respons
     if row["kind"] == "base":
         stale.append(keys.digest(uid))
     await svc.valkey.delete(*stale)
-    if row["file_s3_key"]:
-        await svc.store.delete(row["file_s3_key"])
     return Response(status_code=204)

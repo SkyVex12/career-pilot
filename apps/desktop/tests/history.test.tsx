@@ -1,7 +1,7 @@
 // History, the reference screen: its list states, filters, a call's detail, and deleting one.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionDetail as Detail, SessionItem } from "../src/api";
 import { History, minutes, sessionTitle, statusBadge } from "../src/History";
 import { SessionDetail } from "../src/SessionDetail";
@@ -27,7 +27,7 @@ const call = (id: string, mode: SessionItem["mode"], title: string | null, statu
 
 function routes(sessions: SessionItem[], next: string | null = null) {
   ipc.api("GET", /^\/sessions$/, (path) => (path.includes("before=") ? { sessions: [call("old", "meeting", "Older one")], next_before: null } : { sessions, next_before: next }));
-  ipc.api("GET", /^\/usage$/, () => ({ period: "October", live_seconds: 9000, live_minutes: 150, sessions: sessions.length }));
+  ipc.api("GET", /^\/usage$/, () => ({ period: "October", live_seconds: 9000, live_minutes: 150, sessions: sessions.length, measured_seconds: 9000, measured_sessions: sessions.length, legacy_estimated_seconds: 0, tracking_only: true, estimated_costs: [{ currency: "USD", estimated_minor: 1250, adjustment_minor: 0 }] }));
   ipc.api("GET", /^\/employers$/, () => ({ employers: [{ id: "e1", name: "Fernhill Logistics" }] }));
   ipc.api("GET", /^\/sessions\/live$/, () => ({ sessions: [] }));
 }
@@ -81,7 +81,9 @@ describe("History list", () => {
     expect(within(list).getByText("Interview · Northwind technical")).toBeInTheDocument();
     expect(within(list).getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
     expect(within(list).getByText("Processing")).toBeInTheDocument();
-    expect(screen.getByText(/150 live minutes in October · 2 calls/)).toBeInTheDocument();
+    expect(screen.getByText(/150 connected minutes in October \(UTC\) · 2 calls/)).toBeInTheDocument();
+    expect(screen.getByText(/\$12.50 estimated cost/)).toBeInTheDocument();
+    expect(screen.getByText("Tracking only — no charges")).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText("Standups"));
     expect(screen.queryByText("Interview · Northwind technical")).not.toBeInTheDocument();
@@ -103,6 +105,73 @@ describe("History list", () => {
     expect(await screen.findByText("It went well.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "← Past calls" }));
     expect(await screen.findByRole("list", { name: "Past calls" })).toBeInTheDocument();
+  });
+
+  it("keeps historical estimates out of measured cost and always refreshes usage", async () => {
+    routes([]);
+    ipc.api("GET", /^\/usage$/, () => ({ period: "2026-11", live_seconds: 4200, live_minutes: 70, sessions: 3, measured_seconds: 600, measured_sessions: 1, legacy_estimated_seconds: 3600, tracking_only: true, estimated_costs: [{ currency: "USD", estimated_minor: 58, adjustment_minor: -25 }] }));
+    view();
+    const summary = await screen.findByRole("group", { name: "Account usage" });
+    expect(summary).toHaveTextContent("10 connected minutes in 2026-11 (UTC) · 1 call");
+    expect(summary).toHaveTextContent("$0.58 estimated cost");
+    expect(summary).toHaveTextContent("Includes -$0.25 in adjustments.");
+    expect(summary).toHaveTextContent("Historical estimate: 60 minutes · excluded from cost.");
+    expect(summary).toHaveTextContent("Tracking only — no charges");
+    const usageReads = ipc.calls.filter(call => call.cmd === "api_call" && call.args.path === "/usage");
+    expect(usageReads.length).toBeGreaterThan(0);
+    expect(usageReads.every(call => call.args.refresh === true)).toBe(true);
+  });
+
+  it("labels an older server's totals as historical instead of inventing measured charges", async () => {
+    routes([]);
+    ipc.api("GET", /^\/usage$/, () => ({ period: "2026-11", live_seconds: 300, live_minutes: 5, sessions: 1 }));
+    view();
+    const summary = await screen.findByRole("group", { name: "Account usage" });
+    expect(summary).toHaveTextContent("0 connected minutes");
+    expect(summary).toHaveTextContent("Historical estimate: 5 minutes · excluded from cost.");
+    expect(summary).toHaveTextContent("No measured cost yet");
+  });
+
+  it("settles final usage after a local call ends and keeps remote usage fresh only while visible", async () => {
+    vi.useFakeTimers();
+    let mounted: ReturnType<typeof view> | undefined;
+    try {
+      routes([]);
+      let measuredSeconds = 60;
+      ipc.api("GET", /^\/usage$/, () => ({
+        period: "2026-11", live_seconds: measuredSeconds, live_minutes: Math.ceil(measuredSeconds / 60),
+        sessions: 1, measured_seconds: measuredSeconds, measured_sessions: 1,
+        legacy_estimated_seconds: 0, tracking_only: true,
+        estimated_costs: [{ currency: "USD", estimated_minor: Math.round(measuredSeconds * 500 / 3600), adjustment_minor: 0 }],
+      }));
+      await act(async () => { mounted = view({ running: true, liveId: "local-call" }); });
+      const summary = screen.getByRole("group", { name: "Account usage" });
+      expect(summary).toHaveTextContent("1 connected minutes");
+      measuredSeconds = 90;
+      await act(async () => vi.advanceTimersByTimeAsync(15_000));
+      expect(summary).toHaveTextContent("1.5 connected minutes");
+
+      mounted!.rerender(<ToastProvider><History running={false} liveId={null} onOpenLive={async () => {}} /></ToastProvider>);
+      // The final worker checkpoint becomes durable after the UI has stopped its call.
+      measuredSeconds = 120;
+      await act(async () => vi.advanceTimersByTimeAsync(30_000));
+      expect(summary).toHaveTextContent("2 connected minutes");
+      expect(summary).toHaveTextContent("$0.17 estimated cost");
+
+      // Another device continues using the account while this desktop stays idle.
+      measuredSeconds = 180;
+      await act(async () => vi.advanceTimersByTimeAsync(30_000));
+      expect(summary).toHaveTextContent("3 connected minutes");
+      const reads = () => ipc.calls.filter(call => call.cmd === "api_call" && call.args.path === "/usage");
+      expect(reads().slice(1).every(call => call.args.wake === false && call.args.refresh === true)).toBe(true);
+      const beforeHide = reads().length;
+      mounted!.rerender(<ToastProvider><History active={false} running={false} liveId={null} onOpenLive={async () => {}} /></ToastProvider>);
+      await act(async () => vi.advanceTimersByTimeAsync(90_000));
+      expect(reads()).toHaveLength(beforeHide);
+    } finally {
+      mounted?.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("uses opaque older-page cursors and preserves loaded pages during an explicit refresh", async () => {

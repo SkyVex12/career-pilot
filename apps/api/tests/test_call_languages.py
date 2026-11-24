@@ -70,8 +70,8 @@ async def test_original_resume_citations_are_encrypted_profile_bound_and_deletab
     detail = (await api.client.get(f"/v1/ask/conversations/{conversation}", headers=owner)).json()
     assert detail["messages"][0]["status"] == "done"
     citation = next(s for s in detail["messages"][0]["sources"] if s["kind"] == "resume")
-    assert citation["id"] == rid
-    path = f"/v1/ask/sources/resume/{rid}"
+    assert citation["id"] == f"{rid}:{created.json()['revision_id']}"
+    path = f"/v1/ask/sources/resume/{citation['id']}"
     assert (await api.client.get(path, headers=owner)).json()[
         "content"
     ] == "AcmeでPostgreSQLの性能を改善しました。"

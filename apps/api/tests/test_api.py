@@ -131,6 +131,11 @@ async def test_document_upload_and_ingest(api: Api) -> None:
     assert job["payload"] == {
         "resume_version_id": str(version),
         "content_sha256": hashlib.sha256(body).hexdigest(),
+        "resume_revision_id": str(
+            await api.admin.fetchval(
+                "select current_revision_id from app.resume_versions where id=$1", version
+            )
+        ),
     }
     assert job["user_id"] == str(uid)
     assert r.json()["resume_version_id"] == str(version)

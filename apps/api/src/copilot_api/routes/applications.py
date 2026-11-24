@@ -83,8 +83,12 @@ async def pack_info(
     context: str | None = None,
     *,
     summary: bool = True,
+    operation_state: str | None = None,
 ) -> dict[str, Any] | None:
-    operation_state = await pack_operations.state(svc.valkey, uid, context) if context else "idle"
+    if operation_state is None:
+        operation_state = (
+            await pack_operations.state(svc.valkey, uid, context) if context else "idle"
+        )
     base = {"pack_id": pack_id, "operation_state": operation_state}
     if not pack_id:
         if context is None:
@@ -117,7 +121,26 @@ async def enqueue_packs(svc: Services, conn: Conn, uid: UUID, application_id: UU
     for message in await resumes.pack_messages(
         conn, svc.valkey, uid, application_id, svc.settings.embedding_model_id
     ):
-        await svc.queue.send(message)
+        await svc.accept(conn, message)
+
+
+async def durable_pack_states(conn: Conn, contexts: list[str]) -> dict[str, str]:
+    rows = await conn.fetch(
+        "select distinct on (envelope->'payload'->>'context') "
+        "envelope->'payload'->>'context' as context,status from app.operations "
+        "where job_type='pack.build' and envelope->'payload'->>'context'=any($1::text[]) "
+        "order by envelope->'payload'->>'context',created_at desc",
+        contexts,
+    )
+    states = {
+        "queued": "queued",
+        "running": "running",
+        "failed": "queued",
+        "dead": "failed",
+        "done": "succeeded",
+        "cancelled": "idle",
+    }
+    return {r["context"]: states[r["status"]] for r in rows}
 
 
 APPLICATION_SQL = """
@@ -171,8 +194,13 @@ async def application_out(
         return None
     out = _application(row)
     index = await svc.valkey.hget(keys.pack_index(uid), f"job:{application_id}")
+    states = await durable_pack_states(conn, [f"job:{application_id}"])
     out["pack"] = await pack_info(
-        svc, uid, text(index) if index is not None else None, f"job:{application_id}"
+        svc,
+        uid,
+        text(index) if index is not None else None,
+        f"job:{application_id}",
+        operation_state=states.get(f"job:{application_id}"),
     )
     if detail:
         out["jd_text"] = await conn.fetchval(
@@ -208,13 +236,18 @@ async def seal_tailored(
 async def list_applications(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     async with svc.tx(user) as conn:
         rows = await conn.fetch(APPLICATION_SQL + " order by a.created_at desc, a.id desc")
+        states = await durable_pack_states(conn, [f"job:{r['id']}" for r in rows])
     index = await svc.valkey.hgetall(keys.pack_index(user.user_id))
     by_field = {text(k): text(v) for k, v in index.items()}
     out: list[dict[str, Any]] = []
     for r in rows:
         item = _application(r)
         item["pack"] = await pack_info(
-            svc, user.user_id, by_field.get(f"job:{r['id']}"), f"job:{r['id']}"
+            svc,
+            user.user_id,
+            by_field.get(f"job:{r['id']}"),
+            f"job:{r['id']}",
+            operation_state=states.get(f"job:{r['id']}"),
         )
         out.append(item)
     return {"applications": out}
@@ -237,8 +270,8 @@ async def create_application(body: ApplicationIn, svc: SvcDep, user: UserDep) ->
                                           body.resume_label)  # fmt: skip
         await enqueue_packs(svc, conn, uid, app_id)
         out = await application_out(svc, conn, uid, app_id, detail=True)
-    if extract is not None:
-        await svc.queue.send(jobs.resume_extract(uid, *extract))
+        if extract is not None:
+            await svc.extract_resume(conn, uid, *extract)
     assert out is not None
     return out
 
@@ -255,6 +288,10 @@ async def catalog_status(svc: SvcDep, user: UserDep, response: Response) -> dict
         interviews = await conn.fetch("select id,pack_id from app.interviews order by id")
         versions = await conn.fetch("select id,status from app.resume_versions order by id")
         documents = await conn.fetch("select id,status from app.documents order by id")
+        durable = await durable_pack_states(
+            conn,
+            [f"job:{r['id']}" for r in applications] + [f"interview:{r['id']}" for r in interviews],
+        )
     index = await svc.valkey.hgetall(keys.pack_index(user.user_id))
     by_field = {text(k): text(v) for k, v in index.items()}
     contexts = {
@@ -262,6 +299,7 @@ async def catalog_status(svc: SvcDep, user: UserDep, response: Response) -> dict
         **{f"interview:{r['id']}": str(r["pack_id"]) if r["pack_id"] else None for r in interviews},
     }
     operations = await pack_operations.states(svc.valkey, user.user_id, list(contexts))
+    operations.update(durable)
     pack_ids = list(dict.fromkeys(pack_id for pack_id in contexts.values() if pack_id))
     present: dict[str, bool] = {}
     if pack_ids:
@@ -463,21 +501,22 @@ async def create_interview(body: InterviewIn, svc: SvcDep, user: UserDep) -> dic
             interview_id, user.user_id, body.job_id, body.round, body.starts_at,
         )  # fmt: skip
         paired = await resumes.pairing(conn, body.job_id)
-    assert paired is not None
-    digest = await resumes.version_digest(
-        svc.valkey, user.user_id, paired.resume_version_id, paired.is_base
-    )
-    await svc.queue.send(
-        jobs.pack_build(
-            user.user_id,
-            "interview",
-            f"interview:{interview_id}",
-            body.starts_at,
-            digest.version if digest else None,
-            svc.settings.embedding_model_id,
-            resumes.pairing_tag(paired),
+        assert paired is not None
+        digest = await resumes.version_digest(
+            svc.valkey, user.user_id, paired.resume_version_id, paired.is_base
         )
-    )
+        await svc.accept(
+            conn,
+            jobs.pack_build(
+                user.user_id,
+                "interview",
+                f"interview:{interview_id}",
+                body.starts_at,
+                digest.version if digest else None,
+                svc.settings.embedding_model_id,
+                resumes.pairing_tag(paired),
+            ),
+        )
     return _interview(row)
 
 
@@ -490,9 +529,16 @@ async def list_interviews(svc: SvcDep, user: UserDep) -> dict[str, Any]:
             " where i.user_id = $1 order by i.starts_at desc",
             user.user_id,
         )
+        states = await durable_pack_states(conn, [f"interview:{r['id']}" for r in rows])
     out: list[dict[str, Any]] = []
     for r in rows:
         item = _interview(r)
-        item["pack"] = await pack_info(svc, user.user_id, item["pack_id"], f"interview:{r['id']}")
+        item["pack"] = await pack_info(
+            svc,
+            user.user_id,
+            item["pack_id"],
+            f"interview:{r['id']}",
+            operation_state=states.get(f"interview:{r['id']}"),
+        )
         out.append(item)
     return {"interviews": out}

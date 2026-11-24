@@ -128,7 +128,9 @@ async def test_oauth_pkce_single_use_scopes_hash_storage_revocation_and_account_
     assert (await api.client.post("/v1/personal-ai/mcp", headers=oauth, json={})).status_code == 401
     # Existing issued tokens also stop at account deletion and do not recreate the user.
     second = (await exchange(api, await prepare(api, alice))).json()["access_token"]
-    await api.admin.execute("delete from app.users where id=$1", uid)
+    async with api.admin.transaction():
+        await api.admin.execute("delete from app.workspaces where id=$1", uid)
+        await api.admin.execute("delete from app.accounts where id=$1", uid)
     assert (
         await api.client.post(
             "/v1/personal-ai/mcp", headers={"Authorization": "Bearer " + second}, json={}

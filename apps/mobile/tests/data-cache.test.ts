@@ -205,6 +205,20 @@ test("caller reload bypasses freshness and caller no-store cannot replace a cach
     { value: 3 },
   );
 });
+
+test("usage always reads the server even when an older server advertises cache freshness", async () => {
+  let reads = 0;
+  const persistence = disk();
+  const api = await client(async () => json(
+    { measured_seconds: ++reads },
+    { ...scope, "Cache-Control": "private, max-age=60" },
+  ), persistence);
+  assert.equal(cacheLifetime("/usage"), null);
+  assert.equal(cacheLifetime("/usage?month=2026-11"), null);
+  assert.deepEqual(await api.request("/usage"), { measured_seconds: 1 });
+  assert.deepEqual(await api.request("/usage"), { measured_seconds: 2 });
+  assert.equal(persistence.writes, 0);
+});
 test("writes invalidate dependencies and a delayed older read cannot repopulate them", async () => {
   let finish!: (response: Response) => void,
     reads = 0;

@@ -310,6 +310,7 @@ async def test_the_end_of_a_session_closes_its_guest_seats(stack: Stack) -> None
     uid = await stack.new_user()
     log = GatewayLog(stack, uid)
     await log.start()
+    await stack.run(log.flush_job(await log.add({"kind": "connected"})))
     seat_ids = [uuid7() for _ in range(3)]
     for seat_id, status in zip(seat_ids, ("admitted", "invited", "declined"), strict=True):
         guest = await stack.new_user("Blair")
@@ -396,8 +397,16 @@ async def test_a_legacy_transcribe_job_only_cleans_up(stack: Stack) -> None:
         "select me_audio_status from app.sessions where id = $1", log.sid
     )
     assert status == "none"
-    [postcall] = stack.take("session.postcall")
-    assert postcall["payload"] == {"session_id": str(log.sid)}
+    # The same follow-on was already durably accepted by finalization; the legacy
+    # cleanup cannot create a second operation or outbox delivery.
+    assert stack.take("session.postcall") == []
+    assert (
+        await stack.admin.fetchval(
+            "select count(*) from app.operations where idempotency_key=$1",
+            f"session.postcall:{log.sid}",
+        )
+        == 1
+    )
 
 
 @pytest.mark.parametrize("store_transcript", [True, False])

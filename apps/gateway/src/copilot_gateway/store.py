@@ -6,8 +6,9 @@ Writes for a live session go through `SessionWriter`, an in-memory buffer draine
   into it again (fencing); the writer reports the loss and the session stops.
 - Server messages go to `sess:{sid}:events` with the stream id `<seq>-0`, so a resume replays
   with XRANGE from `<last_seq + 1>-0`, and Valkey itself rejects a seq that goes backwards.
-- When Valkey is unavailable, the buffer keeps everything and the writer retries
-  (failure row "Valkey unavailable"): the live session carries on from memory.
+- When Valkey is unavailable, the writer retries from a bounded memory buffer. Retained
+  history is never evicted: exceeding its limit fails the session explicitly, while already
+  accepted entries remain buffered for a final drain.
 """
 
 import asyncio
@@ -18,8 +19,9 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import asyncpg
 import valkey.asyncio as valkey_async
 from valkey.asyncio.cluster import ValkeyCluster
 from valkey.exceptions import ConnectionError as ValkeyConnectionError
@@ -28,6 +30,7 @@ from valkey.exceptions import TimeoutError as ValkeyTimeoutError
 from copilot_core import keys
 from copilot_core.knowledge import LiveIndex
 from copilot_core.packs import Digest, SessionPack
+from copilot_gateway.admission import DurableSession, WriterOwnershipLost
 from copilot_gateway.config import Settings
 
 log = logging.getLogger(__name__)
@@ -40,6 +43,9 @@ type Client = Any
 
 APPEND_LUA = """
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return {0, ''} end
+if redis.call('HGET', KEYS[4], '_append_batch_id') == ARGV[3] then
+  return {1, redis.call('HGET', KEYS[4], '_append_log_id') or ''}
+end
 local p = cjson.decode(ARGV[2])
 for _, e in ipairs(p.events) do
   redis.call('XADD', KEYS[2], 'MAXLEN', '~', p.maxlen, e[1] .. '-0', 'm', e[2])
@@ -51,6 +57,7 @@ end
 if #p.state > 0 then
   redis.call('HSET', KEYS[4], unpack(p.state))
 end
+redis.call('HSET', KEYS[4], '_append_batch_id', ARGV[3], '_append_log_id', last)
 if #p.events > 0 then redis.call('EXPIRE', KEYS[2], p.ttl) end
 redis.call('EXPIRE', KEYS[4], p.ttl)
 return {1, last}
@@ -62,11 +69,19 @@ if holder == ARGV[1] then
   redis.call('PEXPIRE', KEYS[1], ARGV[2])
   return 1
 end
-if not holder then
+if not holder and redis.call('EXISTS', KEYS[2]) == 1 and
+   redis.call('HGET', KEYS[2], 'status') ~= 'ended' then
   redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
   return 2
 end
 return 0
+"""
+
+RESUME_LEASE_LUA = """
+if redis.call('EXISTS', KEYS[2]) == 0 or
+   redis.call('HGET', KEYS[2], 'status') == 'ended' then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
 """
 
 EXPIRE_IF_LUA = """
@@ -84,6 +99,20 @@ return 1
 DEL_IF_LUA = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
+"""
+
+
+CLAIM_ACTIVE_LUA = """
+local current = redis.call('GET', KEYS[1])
+if current then return current end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return ''
+"""
+
+REPLACE_ACTIVE_LUA = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
 """
 
 
@@ -113,6 +142,10 @@ class LeaseLostError(Exception):
     pass
 
 
+class RetainedLogOverflowError(Exception):
+    """The session cannot accept more retained history without exceeding its memory budget."""
+
+
 class GatewayStore:
     """Valkey access shared by all sessions on this gateway task."""
 
@@ -123,9 +156,12 @@ class GatewayStore:
         self.settings = settings
         self._append = client.register_script(APPEND_LUA)
         self._renew = client.register_script(RENEW_LUA)
+        self._resume_lease = client.register_script(RESUME_LEASE_LUA)
         self._del_if = client.register_script(DEL_IF_LUA)
         self._expire_if = client.register_script(EXPIRE_IF_LUA)
         self._put_view = client.register_script(PUT_VIEW_LUA)
+        self._claim_active = client.register_script(CLAIM_ACTIVE_LUA)
+        self._replace_active = client.register_script(REPLACE_ACTIVE_LUA)
 
     async def ping(self) -> bool:
         try:
@@ -138,26 +174,24 @@ class GatewayStore:
     async def claim_active(self, uid: UUID, sid: UUID) -> str | None:
         """Claim the user's live-session slot; returns the other session id if it is taken."""
         key = keys.user_active_session(uid)
-        ttl = self.settings.state_ttl_s
-        if await self.client.set(key, str(sid), nx=True, ex=ttl):
-            return None
-        current = await self.client.get(key)
-        if current is None:  # expired in between
-            await self.client.set(key, str(sid), ex=ttl)
-            return None
-        return _s(current)
+        current = _s(
+            await self._claim_active(keys=[key], args=[str(sid), self.settings.state_ttl_s])
+        )
+        return current or None
 
     async def replace_active(self, uid: UUID, old_sid: str, sid: UUID) -> bool:
         """Take the slot from a stale session, only if it still names that session."""
         key = keys.user_active_session(uid)
-        if await self._del_if(keys=[key], args=[old_sid]):
-            return bool(await self.client.set(key, str(sid), nx=True, ex=self.settings.state_ttl_s))
-        return False
+        return bool(
+            await self._replace_active(
+                keys=[key], args=[old_sid, str(sid), self.settings.state_ttl_s]
+            )
+        )
 
-    async def refresh_active(self, uid: UUID, sid: UUID) -> None:
+    async def refresh_active(self, uid: UUID, sid: UUID) -> bool:
         """Extend the slot's TTL, only while it still names this session."""
         key = keys.user_active_session(uid)
-        await self._expire_if(keys=[key], args=[str(sid), self.settings.state_ttl_s])
+        return bool(await self._expire_if(keys=[key], args=[str(sid), self.settings.state_ttl_s]))
 
     async def set_active(self, uid: UUID, sid: UUID) -> None:
         await self.client.set(keys.user_active_session(uid), str(sid), ex=self.settings.state_ttl_s)
@@ -172,6 +206,15 @@ class GatewayStore:
         ttl_ms = int(self.settings.lease_ttl_s * 1000)
         await self.client.set(keys.sess_lease(sid), task_id, px=ttl_ms)
 
+    async def take_resume_lease(self, sid: UUID, task_id: str) -> bool:
+        """Take over only while the same-slot state still exists and has not ended."""
+        ttl_ms = int(self.settings.lease_ttl_s * 1000)
+        return bool(
+            await self._resume_lease(
+                keys=[keys.sess_lease(sid), keys.sess_state(sid)], args=[task_id, ttl_ms]
+            )
+        )
+
     async def lease_holder(self, sid: UUID | str) -> str | None:
         value = await self.client.get(keys.sess_lease(sid))
         return None if value is None else _s(value)
@@ -179,7 +222,9 @@ class GatewayStore:
     async def renew_lease(self, sid: UUID, task_id: str) -> bool:
         """Renew, or retake after an outage let it expire; False when another task holds it."""
         ttl_ms = int(self.settings.lease_ttl_s * 1000)
-        result = await self._renew(keys=[keys.sess_lease(sid)], args=[task_id, ttl_ms])
+        result = await self._renew(
+            keys=[keys.sess_lease(sid), keys.sess_state(sid)], args=[task_id, ttl_ms]
+        )
         return int(cast(int, result)) != 0
 
     async def release_lease(self, sid: UUID, task_id: str) -> None:
@@ -211,8 +256,14 @@ class GatewayStore:
         events: list[tuple[int, str]],
         log_entries: list[str],
         state: Mapping[str, str],
+        *,
+        batch_id: str | None = None,
     ) -> str:
-        """One fenced batch; returns the last log entry id written ('' if none)."""
+        """One fenced batch; its stable ID recovers an acknowledgement lost in transport.
+
+        The writer serializes batches, so one receipt in the existing state hash suffices.
+        A retry still checks the lease before consulting that receipt.
+        """
         flat: list[str] = []
         for k, v in state.items():
             flat += [k, v]
@@ -235,7 +286,7 @@ class GatewayStore:
                     keys.sess_log(sid),
                     keys.sess_state(sid),
                 ],
-                args=[task_id, payload],
+                args=[task_id, payload, batch_id or str(uuid4())],
             ),
         )
         if int(result[0]) == 0:
@@ -398,6 +449,7 @@ class GatewayStore:
 
 @dataclass
 class _Batch:
+    id: str
     events: list[tuple[int, str]]
     log: list[str]
     state: dict[str, str]
@@ -414,15 +466,22 @@ class SessionWriter:
         on_lost: Callable[[], None],
         on_availability: Callable[[bool], None] | None = None,
         buffer_max: int = 50_000,
+        on_overflow: Callable[[RetainedLogOverflowError], None] | None = None,
     ) -> None:
         self.store = store
         self.sid = sid
         self.task_id = task_id
         self.on_lost = on_lost
         self.on_availability = on_availability
+        self.on_overflow = on_overflow
+        self.durable: DurableSession | None = None
         self.buffer_max = buffer_max
         self.events: deque[tuple[int, str]] = deque()
         self.log: deque[str] = deque()
+        # Entries stay in this deque while append is in flight, so limits include both the
+        # queued and in-flight data. Failed append attempts must not release this budget.
+        self.retained_log_bytes = 0
+        self.retention_error: RetainedLogOverflowError | None = None
         self.state: dict[str, str] = {}
         self.available = True
         self.last_log_id = ""
@@ -439,7 +498,24 @@ class SessionWriter:
         self._kick()
 
     def log_entry(self, entry: Mapping[str, Any]) -> None:
-        self.log.append(json.dumps(entry, separators=(",", ":"), default=str))
+        if self.retention_error is not None:
+            raise self.retention_error
+        value = json.dumps(entry, separators=(",", ":"), default=str)
+        size = len(value.encode("utf-8"))
+        settings = self.store.settings
+        if (
+            len(self.log) >= settings.retained_log_max_entries
+            or self.retained_log_bytes + size > settings.retained_log_max_bytes
+        ):
+            self.retention_error = RetainedLogOverflowError(
+                f"retained history buffer exhausted for session {self.sid} "
+                f"({len(self.log)} entries, {self.retained_log_bytes} bytes pending)"
+            )
+            if self.on_overflow is not None:
+                self.on_overflow(self.retention_error)
+            raise self.retention_error
+        self.log.append(value)
+        self.retained_log_bytes += size
         self._kick()
 
     def set_state(self, **fields: object) -> None:
@@ -455,33 +531,55 @@ class SessionWriter:
         return bool(self.events or self.log or self.state)
 
     async def drain(self, within_s: float) -> bool:
-        """Wait until everything buffered is written; False on timeout."""
+        """Wait for accepted writes; False on timeout or any rejected retained history."""
         try:
             await asyncio.wait_for(self._idle.wait(), within_s)
-            return True
+            return self.retention_error is None
         except TimeoutError:
             return False
 
     async def run(self) -> None:
         backoff = 0.1
+        batch: _Batch | None = None
         while True:
             await self._wake.wait()
             self._wake.clear()
             while self.pending():
-                batch = _Batch(
-                    events=[self.events[i] for i in range(min(len(self.events), 200))],
-                    log=[self.log[i] for i in range(min(len(self.log), 200))],
-                    state=dict(self.state),
-                )
-                try:
-                    last = await self.store.append(
-                        self.sid, self.task_id, batch.events, batch.log, batch.state
+                if batch is None:
+                    batch = _Batch(
+                        id=str(uuid4()),
+                        events=[self.events[i] for i in range(min(len(self.events), 200))],
+                        log=[self.log[i] for i in range(min(len(self.log), 200))],
+                        state=dict(self.state),
                     )
-                except LeaseLostError:
+                try:
+                    if self.durable is not None and batch.log:
+                        async with self.durable.batch(batch.id, batch.log) as retained:
+                            # Keep the parent lock bounded. No provider/model work runs in
+                            # this transaction; only the one local retention transport call.
+                            async with asyncio.timeout(0.75):
+                                last = await self.store.append(
+                                    self.sid,
+                                    self.task_id,
+                                    batch.events,
+                                    retained,
+                                    batch.state,
+                                    batch_id=batch.id,
+                                )
+                    else:
+                        last = await self.store.append(
+                            self.sid,
+                            self.task_id,
+                            batch.events,
+                            batch.log,
+                            batch.state,
+                            batch_id=batch.id,
+                        )
+                except (LeaseLostError, WriterOwnershipLost):
                     log.warning("session %s: lease lost, stopping writes", self.sid)
                     self.on_lost()
                     return
-                except UNAVAILABLE as e:
+                except (*UNAVAILABLE, TimeoutError, asyncpg.PostgresError) as e:
                     if self.available:
                         log.warning("valkey unavailable (%s); buffering session %s", e, self.sid)
                         self.available = False
@@ -496,13 +594,18 @@ class SessionWriter:
                     log.info("valkey back; session %s buffer flushed", self.sid)
                     if self.on_availability:
                         self.on_availability(True)
-                for _ in batch.events:
-                    self.events.popleft()
+                # Replay events may be evicted while append awaits Valkey. Remove only
+                # events that were actually acknowledged, preserving newer arrivals.
+                if batch.events:
+                    acknowledged_seq = batch.events[-1][0]
+                    while self.events and self.events[0][0] <= acknowledged_seq:
+                        self.events.popleft()
                 for _ in batch.log:
-                    self.log.popleft()
+                    self.retained_log_bytes -= len(self.log.popleft().encode("utf-8"))
                 for k, v in batch.state.items():
                     if self.state.get(k) == v:
                         del self.state[k]
                 if last:
                     self.last_log_id = last
+                batch = None
             self._idle.set()

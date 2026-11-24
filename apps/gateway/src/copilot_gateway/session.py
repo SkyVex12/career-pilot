@@ -41,7 +41,7 @@ from copilot_core import (
     versions,
     workplace,
 )
-from copilot_core.db import user_tx
+from copilot_core.db import actor_account, user_tx
 from copilot_core.embed import Embedder
 from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
@@ -60,6 +60,7 @@ from copilot_core.packs import (
 )
 from copilot_core.pricing import cost_usd
 from copilot_gateway import audio
+from copilot_gateway.admission import ContextNotReady, DurableSession, WriterOwnershipLost
 from copilot_gateway.answer import (
     AnswerEngine,
     MatchResult,
@@ -74,10 +75,11 @@ from copilot_gateway.companionhost import CompanionDesk
 from copilot_gateway.config import Settings
 from copilot_gateway.conversation import Budget, Conversation, Line, echo_share
 from copilot_gateway.detector import Detector, named_or_model
+from copilot_gateway.metering import METERING_VERSION, ConnectedLiveMeter, LivePrice
 from copilot_gateway.retrieval import CompanyMemory
 from copilot_gateway.router import decisions_route
 from copilot_gateway.seathost import SeatDesk
-from copilot_gateway.store import UNAVAILABLE, GatewayStore, SessionWriter
+from copilot_gateway.store import UNAVAILABLE, GatewayStore, RetainedLogOverflowError, SessionWriter
 from copilot_gateway.stt import ResilientSTT, STTFactory, TimedResult
 from copilot_gateway.stt.deepgram import DeepgramSTT
 from copilot_gateway.turn import (
@@ -220,6 +222,33 @@ async def close_ws(ws: WebSocket, code: int, reason: str = "") -> None:
         await ws.close(code=code, reason=reason[:120])
 
 
+class HostSendQueue(asyncio.Queue[str | None]):
+    """One socket's pending output; replay remains in its existing bounded event ring."""
+
+    def __init__(self, max_entries: int, max_bytes: int) -> None:
+        super().__init__(maxsize=max_entries)
+        self.max_bytes = max_bytes
+        self.bytes = 0
+
+    def put_nowait(self, item: str | None) -> None:
+        size = len(item.encode("utf-8")) if item is not None else 0
+        if self.bytes + size > self.max_bytes:
+            raise asyncio.QueueFull
+        super().put_nowait(item)
+        self.bytes += size
+
+    def get_nowait(self) -> str | None:
+        item = super().get_nowait()
+        self.bytes -= len(item.encode("utf-8")) if item is not None else 0
+        return item
+
+    def close(self) -> None:
+        # Closing must succeed even when the very reason to close is a full queue.
+        while not self.empty():
+            self.get_nowait()
+        self.put_nowait(None)
+
+
 class Session:
     def __init__(
         self,
@@ -256,19 +285,40 @@ class Session:
         self.digest = digest
         self.pack = pack
         restored = restored or {}
+        self.metering_version = (
+            restored.get("metering_version", "legacy-wall-v0") if restored else METERING_VERSION
+        )
+        payer = restored.get("usage_payer_account_id") or restored.get("account_id")
+        self.usage_payer_account_id = UUID(payer) if payer else None
+        self.live_price = LivePrice(
+            restored.get("billing_price_version") or self.settings.billing_price_version,
+            restored.get("billing_currency") or self.settings.billing_currency,
+            int(
+                restored.get(
+                    "billing_rate_minor_per_hour", self.settings.billing_rate_minor_per_hour
+                )
+            ),
+        )
+        self.usage_meter = ConnectedLiveMeter(sid, self.live_price, self.log_entry)
+        self._attach_lock = asyncio.Lock()
+        self._retention_failed = False
+        self.durable: DurableSession | None = None
+        self._durable_renewed_at = time.monotonic()
+        self._host_close_tasks: set[asyncio.Task[None]] = set()
 
         self.seq = seq
         self.ring: deque[tuple[int, str]] = deque(ring, maxlen=self.settings.events_maxlen)
         self.ws: WebSocket | None = None
-        self.send_q: asyncio.Queue[str | None] | None = None
+        self.send_q: HostSendQueue | None = None
         self.status: dict[str, str] = {"stt": "ok", "llm": "ok", "memory": "ok"}
 
         self.writer = SessionWriter(
             svc.store,
             sid,
             svc.task_id,
-            on_lost=self._on_lease_lost,
+            on_lost=self.on_lease_lost,
             buffer_max=self.settings.store_buffer_max,
+            on_overflow=self._on_retention_overflow,
         )
         self.stt: ResilientSTT | None = None
         # The user's own microphone, transcribed live as a second stream (me_stt).
@@ -426,7 +476,10 @@ class Session:
         self.writer.event(self.seq, data)
         self.writer.set_state(last_seq=str(self.seq), updated_at=str(time.time()))
         if self.send_q is not None:
-            self.send_q.put_nowait(data)
+            try:
+                self.send_q.put_nowait(data)
+            except asyncio.QueueFull:
+                self._disconnect_slow_host()
         return self.seq
 
     def error(self, code: str, message: str, fatal: bool = False, **extra: Any) -> None:
@@ -439,7 +492,40 @@ class Session:
         self.emit(models.Status, component=component, state=state, message=message)
 
     def log_entry(self, entry: Mapping[str, Any]) -> None:
-        self.writer.log_entry({**entry, "at": datetime.now(UTC).isoformat()})
+        # The writer invokes the fatal callback once. Retention must not interrupt
+        # shutdown itself or strand the session's lease and active-session slot.
+        with contextlib.suppress(RetainedLogOverflowError):
+            self.writer.log_entry({**entry, "at": datetime.now(UTC).isoformat()})
+
+    def _on_retention_overflow(self, error: RetainedLogOverflowError) -> None:
+        self._retention_failed = True
+        self.usage_meter.stop(discard=True)
+        self.turns.cancel()
+        self.answers.cancel_all()
+        for task in (*self._settling, *self._forced, *self._language_changes):
+            task.cancel()
+        if self._warm is not None:
+            self._warm.cancel()
+        log.error("%s", error)
+        self.error(
+            "retention_unavailable",
+            "Session history cannot be retained. The session has stopped; please retry later.",
+            fatal=True,
+        )
+        self.request_end("retention_unavailable", CLOSE_INTERNAL)
+
+    def _disconnect_slow_host(self) -> None:
+        """Bound a slow socket without discarding the session's durable output."""
+        self.usage_meter.stop()
+        q, self.send_q = self.send_q, None
+        if q is not None:
+            q.close()
+        if self.ws is not None:
+            task = asyncio.create_task(
+                close_ws(self.ws, CLOSE_GOING_AWAY, "slow client; reconnect")
+            )
+            self._host_close_tasks.add(task)
+            task.add_done_callback(self._host_close_tasks.discard)
 
     def _stt_stream(
         self,
@@ -1475,6 +1561,10 @@ class Session:
             "started_at": self.info.started_at.isoformat(),
             "pack_id": str(self.pack.pack_id) if self.pack else "",
             "digest_version": self.digest.version if self.digest else "",
+            "resume_revision_id": str(self.digest.resume_revision_id)
+            if self.digest and self.digest.resume_revision_id
+            else "",
+            "resume_content_sha256": self.digest.resume_content_sha256 or "" if self.digest else "",
             "employer_id": str(self.info.employer_id) if self.info.employer_id else "",
             "agenda": self.info.agenda or "",
             "material_ids": ",".join(str(i) for i in self.info.material_ids),
@@ -1490,12 +1580,21 @@ class Session:
             "spoken_language": self.spoken_language,
             "language_switching": "1",
             "account_id": str(self.account_id) if self.account_id else "",
+            **self.live_price.state_fields(),
+            "metering_version": self.metering_version,
+            "usage_payer_account_id": str(self.usage_payer_account_id)
+            if self.usage_payer_account_id
+            else "",
             **(
                 {"private_context_account_id": self.private_context_account_id}
                 if self.private_context_account_id
                 else {}
             ),
             "task_id": self.svc.task_id,
+            "writer_generation": str(self.durable.generation) if self.durable else "0",
+            "writer_id": str(self.durable.writer_id) if self.durable else "",
+            "workspace_id": str(self.principal.user_id),
+            "created_by_account_id": str(self.usage_payer_account_id or self.account_id or ""),
         }
 
     def start_core(self) -> None:
@@ -1512,6 +1611,7 @@ class Session:
                 tg.create_task(self._lease_loop())
                 tg.create_task(self._flush_loop())
                 tg.create_task(self._watchdog())
+                tg.create_task(self._usage_loop())
                 if self.settings.llm_warm_interval_s:
                     tg.create_task(self._keep_warm(self.settings.llm_warm_interval_s))
                 if self.matcher.stale:
@@ -1650,19 +1750,39 @@ class Session:
     async def _lease_loop(self) -> None:
         while True:
             await asyncio.sleep(self.settings.lease_renew_s)
+            if self.ending or self.lost:
+                return
             try:
+                if self.durable is not None:
+                    await self.durable.renew()
+                    self._durable_renewed_at = time.monotonic()
                 held = await self.svc.store.renew_lease(self.sid, self.svc.task_id)
                 if not held:
-                    self._on_lease_lost()
+                    self.on_lease_lost()
                     return
                 await self.svc.store.refresh_active(self.principal.user_id, self.sid)
-            except UNAVAILABLE:
+            except WriterOwnershipLost:
+                self.on_lease_lost()
+                return
+            except (*UNAVAILABLE, asyncpg.PostgresError):
+                if self.durable is not None and time.monotonic() - self._durable_renewed_at >= 30:
+                    self._on_retention_overflow(
+                        RetainedLogOverflowError("Durable session ownership could not be renewed")
+                    )
+                    return
                 continue  # Valkey down: keep the session in memory
 
     async def _flush_loop(self) -> None:
         while True:
             await asyncio.sleep(self.settings.flush_interval_s)
             await self.flush_job()
+
+    async def _usage_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.settings.usage_interval_s)
+            if self.ending or self.lost or self._retention_failed:
+                return
+            self.usage_meter.flush()
 
     async def flush_job(self) -> None:
         upto = self.writer.last_log_id
@@ -1850,6 +1970,8 @@ class Session:
             self.emit(models.AuthExpiring, expires_in_s=int(remaining))
 
     def request_end(self, reason: str, code: int = CLOSE_NORMAL) -> None:
+        # Stop on the accepted end request, before any asynchronous drains or summaries.
+        self.usage_meter.stop()
         if self.end_task is None:
             self.end_task = asyncio.create_task(self.end(reason, code))
 
@@ -1858,6 +1980,7 @@ class Session:
         if self.ending:
             return
         self.ending = True
+        self.usage_meter.stop()
         self.turns.cancel()
         self.answers.cancel_all()
         self.log_entry({"kind": "session.ended", "reason": reason})
@@ -1872,9 +1995,22 @@ class Session:
         self.writer.set_state(status="ended", ended_at=datetime.now(UTC).isoformat())
         if not await self.writer.drain(within_s=10):
             log.error("session %s ended with unwritten log entries (valkey down)", self.sid)
-        await self._send_job(
-            "session.ended", f"session.ended:{self.sid}", {"session_id": str(self.sid)}
-        )
+        if self.durable is not None:
+            try:
+                await self.durable.close(reason)
+            except asyncpg.SerializationError:
+                # Takeover won while the final drain awaited transport. Never publish an
+                # end job or release the new owner's active slot from this generation.
+                await self._stop_lost(self.ws)
+                return
+            except (*UNAVAILABLE, asyncpg.PostgresError) as exc:
+                log.warning("session %s close intent awaits database recovery: %s", self.sid, exc)
+        end_key = f"session.ended:{self.sid}"
+        end_payload: dict[str, Any] = {"session_id": str(self.sid)}
+        if self.durable is not None:
+            end_key += f":g{self.durable.generation}"
+            end_payload["writer_generation"] = self.durable.generation
+        await self._send_job("session.ended", end_key, end_payload)
         with contextlib.suppress(*UNAVAILABLE):
             await self.svc.store.end_session(self.sid, self.svc.task_id)
             await self.svc.store.release_active(self.principal.user_id, self.sid)
@@ -1889,6 +2025,7 @@ class Session:
         if self.ending:
             return
         self.ending = True
+        self.usage_meter.stop()
         self.turns.cancel()
         self.answers.cancel_all()
         await self.writer.drain(within_s=2)
@@ -1898,12 +2035,15 @@ class Session:
             await close_ws(self.ws, code, reason)
         await self._stop()
 
-    def _on_lease_lost(self) -> None:
+    def on_lease_lost(self) -> None:
         """Another task resumed this session: stop here, write nothing more."""
         if self.lost or self.ending:
             return
         self.lost = True
         self.ending = True
+        # Ownership already moved: fencing rejects this task's unconfirmed tail. Never
+        # infer it from the new attachment's wall clock or write after lease loss.
+        self.usage_meter.stop(discard=True)
         log.info("session %s moved to another task", self.sid)
         self.turns.cancel()
         self.answers.cancel_all()
@@ -1926,7 +2066,7 @@ class Session:
         for task in list(self._settling):
             task.cancel()
         if self.send_q is not None:
-            self.send_q.put_nowait(None)
+            self.send_q.close()
         task = self.core_task
         if task is not None and task is not asyncio.current_task():
             task.cancel()
@@ -1950,27 +2090,36 @@ class Session:
     async def attach(
         self, ws: WebSocket, last_seq: int, replay: Sequence[tuple[int, str]] | None = None
     ) -> None:
-        if self.ws is not None:
-            old = self.ws
-            if self.send_q is not None:
-                self.send_q.put_nowait(None)
-            await close_ws(old, CLOSE_REPLACED, "replaced by a newer connection")
-        q: asyncio.Queue[str | None] = asyncio.Queue()
-        self.ws, self.send_q, self.disconnected_at = ws, q, None
-        self.auth_warned = False
-        # Connected again (a resume on this same task left "reconnecting" before): GET
-        # /sessions/live and the guests' "host reconnecting" read this.
-        self.writer.set_state(status="active")
-        if replay is None:
-            replay = [(s, m) for s, m in self.ring if s > last_seq]
-        for _, message in replay:
-            q.put_nowait(message)
-        self.emit(models.SessionLanguage, spoken_language=self.spoken_language)
-        sender = asyncio.create_task(self._sender(ws, q))
-        reader = asyncio.create_task(self._reader(ws))
+        # Serialize only handover, not the connection lifetime. A third attachment cannot
+        # overtake an in-flight close and leave an older reader attached to the new meter.
+        async with self._attach_lock:
+            if self.ending or self._retention_failed:
+                await close_ws(ws, CLOSE_NO_START, "session has ended")
+                return
+            if self.ws is not None:
+                old = self.ws
+                self.usage_meter.stop()
+                if self.send_q is not None:
+                    self.send_q.close()
+                await close_ws(old, CLOSE_REPLACED, "replaced by a newer connection")
+            q = HostSendQueue(
+                self.settings.host_send_max_entries, self.settings.host_send_max_bytes
+            )
+            self.ws, self.send_q, self.disconnected_at = ws, q, None
+            self.auth_warned = False
+            self.writer.set_state(status="active")
+            if replay is None:
+                replay = [(s, m) for s, m in self.ring if s > last_seq]
+            # Stream the bounded replay separately; copying it into the socket queue would
+            # reject a valid resume merely because it had more history than queue slots.
+            self.emit(models.SessionLanguage, spoken_language=self.spoken_language)
+            sender = asyncio.create_task(self._sender(ws, q, replay))
+            reader = asyncio.create_task(self._reader(ws))
         try:
             await asyncio.wait({sender, reader}, return_when=asyncio.FIRST_COMPLETED)
         finally:
+            if self.ws is ws:
+                self.usage_meter.stop()
             for task in (sender, reader):
                 task.cancel()
             await asyncio.gather(sender, reader, return_exceptions=True)
@@ -1981,7 +2130,23 @@ class Session:
                     self.writer.set_state(status="reconnecting")
                     self.log_entry({"kind": "disconnected"})
 
-    async def _sender(self, ws: WebSocket, q: "asyncio.Queue[str | None]") -> None:
+    async def _sender(
+        self, ws: WebSocket, q: HostSendQueue, replay: Sequence[tuple[int, str]] = ()
+    ) -> None:
+        for _, message in replay:
+            await ws.send_text(message)
+        if (
+            self.ws is ws
+            and self.send_q is q
+            and not self.ending
+            and not self._retention_failed
+            and not self.info.no_call
+            and self.metering_version == METERING_VERSION
+            and self.usage_payer_account_id is not None
+        ):
+            # Initial replay includes session.ready. Until it is sent successfully there
+            # is no confirmed connected service time to meter.
+            self.usage_meter.start(self.usage_payer_account_id)
         while True:
             message = await q.get()
             if message is None:
@@ -1993,6 +2158,10 @@ class Session:
         while True:
             raw = await ws.receive()
             if raw["type"] == "websocket.disconnect":
+                if self.ws is ws:
+                    self.usage_meter.stop()
+                return
+            if self.ws is not ws or self.ending or self._retention_failed:
                 return
             data_bytes: bytes | None = raw.get("bytes")
             data_text: str | None = raw.get("text")
@@ -2007,6 +2176,8 @@ class Session:
                 await self.on_text(data_text)
 
     async def on_audio(self, data: bytes) -> None:
+        if self.ending or self._retention_failed:
+            return
         async with self._language_lock:
             await self._on_audio(data)
 
@@ -2089,6 +2260,8 @@ class Session:
         await self.handle(message)
 
     async def handle(self, message: Any) -> None:
+        if self.ending or self._retention_failed:
+            return
         if isinstance(message, models.SessionSetLanguage):
             # A transport disconnect must not leave the provider transaction half-applied.
             task = asyncio.create_task(self._set_language(message))
@@ -2172,6 +2345,18 @@ class Session:
             reason = str(e)
         else:
             reason = "token is for another user"
+            if self.usage_payer_account_id not in (None, principal.user_id):
+                self.error(
+                    "unauthorized",
+                    "This session belongs to another paying account. Start a new session.",
+                    fatal=True,
+                )
+                self.usage_meter.stop()
+                ws = self.ws
+                if ws is not None:
+                    await self._flush_socket()
+                    await close_ws(ws, CLOSE_UNAUTHORIZED, "payer mismatch")
+                return
             if (
                 self.private_context_account_id
                 and str(principal.user_id) != self.private_context_account_id
@@ -2422,7 +2607,8 @@ class SessionManager:
                         if await workplace.employer(conn, employer_id) is None:
                             return None
                         settings = await conn.fetchval(
-                            "select settings from app.users where id = $1", uid
+                            "select settings from app.accounts where id = $1",
+                            actor_account.get() or uid,
                         )
                         today = workplace.local_today(
                             json.loads(settings) if isinstance(settings, str) else settings
@@ -2624,6 +2810,13 @@ class SessionManager:
         await self.reject(ws, close, body.code, body.message)
 
     async def handle(self, ws: WebSocket) -> None:
+        context = actor_account.set(None)
+        try:
+            await self._handle(ws)
+        finally:
+            actor_account.reset(context)
+
+    async def _handle(self, ws: WebSocket) -> None:
         s = self.svc.settings
         token = bearer_token(ws.headers.get("authorization"))
         await ws.accept()
@@ -2747,6 +2940,12 @@ class SessionManager:
     ) -> None:
         store = self.svc.store
         uid = principal.user_id
+        if self.svc.pool is None and (
+            self.svc.settings.database_url or self.svc.settings.env not in ("dev", "test")
+        ):
+            await self.reject(ws, CLOSE_INTERNAL, "unavailable", "session database is unavailable")
+            return
+        actor_account.set(principal.user_id)
         try:
             spoken_language = languages.validate_language(
                 msg.spoken_language if msg.spoken_language is not None else "en",
@@ -2764,7 +2963,6 @@ class SessionManager:
         sid = uuid7()
         # Every line logged for this session from here on (and in the tasks it starts) names it.
         logs.set_ids(session_id=sid)
-        valkey_ok = True
         try:
             other = await store.claim_active(uid, sid)
             if other is not None:
@@ -2780,8 +2978,13 @@ class SessionManager:
                     )
                     return
         except UNAVAILABLE as e:
-            log.warning("valkey unavailable at session start (%s); continuing in memory", e)
-            valkey_ok = False
+            log.warning("valkey unavailable at session start: %s", e)
+            with contextlib.suppress(*UNAVAILABLE):
+                await store.release_active(uid, sid)
+            await self.reject(
+                ws, CLOSE_INTERNAL, "unavailable", "session state is unavailable; retry"
+            )
+            return
         digest: Digest | None = None
         pack: SessionPack | None = None
         at_work = msg.employer_id is not None and msg.mode in ("standup", "meeting")
@@ -2799,29 +3002,39 @@ class SessionManager:
             and msg.mode == "interview"
             and (msg.job_id is not None or msg.interview_id is not None)
         )
-        if valkey_ok:
-            try:
-                if for_application:
-                    memory = await self.application_memory(uid, msg.job_id, msg.interview_id)
-                    digest, pack = memory.digest, memory.pack
-                    resume_version_id, resume_is_base = memory.resume_version_id, memory.is_base
-                else:
-                    # The base resume's digest. An interview for no application gets no
-                    # application's pack: only a mode pack from before resume versions, which
-                    # came from the one (base) resume too.
-                    digest = await store.get_digest(uid)
-                    if employer_id is None:
-                        pack = await store.get_pack(uid, None, msg.mode, None)
-                        if pack is not None and pack.resume_version_id is not None:
-                            pack = None
-            except (*UNAVAILABLE, ValidationError, ValueError) as e:
-                log.warning("could not load digest or pack for %s: %s", uid, e)
+        try:
+            if for_application:
+                memory = await self.application_memory(uid, msg.job_id, msg.interview_id)
+                digest, pack = memory.digest, memory.pack
+                resume_version_id, resume_is_base = memory.resume_version_id, memory.is_base
+            else:
+                # The base resume's digest. An interview for no application gets no
+                # application's pack: only a mode pack from before resume versions, which
+                # came from the one (base) resume too.
+                digest = await store.get_digest(uid)
+                if employer_id is None:
+                    pack = await store.get_pack(uid, None, msg.mode, None)
+                    if pack is not None and pack.resume_version_id is not None:
+                        pack = None
+        except (*UNAVAILABLE, ValidationError, ValueError) as e:
+            log.warning("could not load digest or pack for %s: %s", uid, e)
         if employer_id is not None:
             pack = await self.employer_pack(
                 uid, employer_id, msg.mode, msg.meeting_title, agenda, material_ids
             )
             if pack is None:
                 employer_id = None  # not this user's company, or nothing to load at all
+        if (
+            self.svc.pool is not None
+            and msg.mode == "interview"
+            and pack is not None
+            and digest is not None
+            and (
+                pack.digest_version != digest.version
+                or pack.resume_revision_id != digest.resume_revision_id
+            )
+        ):
+            pack = None
         info = SessionInfo(
             mode=msg.mode,
             job_id=msg.job_id,
@@ -2842,10 +3055,43 @@ class SessionManager:
         )
         session = Session(self.svc, self, sid, principal, info, digest, pack)
         session.account_id = (account or principal).user_id
+        session.usage_payer_account_id = session.account_id
         session.account_token = account_token
-        self.sessions[sid] = session
-        with contextlib.suppress(*UNAVAILABLE):
+        try:
+            if self.svc.pool is not None:
+                session.durable = await DurableSession.acquire(
+                    self.svc.pool,
+                    sid,
+                    uid,
+                    session.account_id,
+                    metadata=session.state_fields(),
+                )
+                session.writer.durable = session.durable
+            if not await store.refresh_active(uid, sid):
+                if session.durable is not None:
+                    await session.durable.close("admission_failed")
+                await self.reject(
+                    ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
+                )
+                return
             await store.take_lease(sid, self.svc.task_id)
+        except (*UNAVAILABLE, asyncpg.PostgresError, ContextNotReady) as exc:
+            if session.durable is not None:
+                with contextlib.suppress(Exception):
+                    await session.durable.close("admission_failed")
+            with contextlib.suppress(*UNAVAILABLE):
+                await store.release_lease(sid, self.svc.task_id)
+                await store.release_active(uid, sid)
+            await self.reject(
+                ws,
+                CLOSE_INTERNAL,
+                "memory_not_ready" if isinstance(exc, ContextNotReady) else "unavailable",
+                str(exc)
+                if isinstance(exc, ContextNotReady)
+                else "session state is unavailable; retry",
+            )
+            return
+        self.sessions[sid] = session
         session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "session.started", **session.state_fields()})
         # Which pack was loaded, so an analysis can find it after the next rebuild overwrites
@@ -2862,6 +3108,12 @@ class SessionManager:
             digest is not None, loaded,
         )  # fmt: skip
         session.start_core()
+        if session.durable is not None and not await session.writer.drain(within_s=2):
+            await session.end("admission_failed", CLOSE_INTERNAL)
+            await self.reject(
+                ws, CLOSE_INTERNAL, "unavailable", "session state could not be saved; retry"
+            )
+            return
         session.warm_models()
         session.emit(
             models.SessionReady,
@@ -2892,10 +3144,43 @@ class SessionManager:
         logs.set_ids(session_id=sid)
         log.info("session resume from seq %d", msg.last_seq)
         actor = (account or principal).user_id
+        if self.svc.pool is None and (
+            self.svc.settings.database_url or self.svc.settings.env not in ("dev", "test")
+        ):
+            await self.reject(ws, CLOSE_INTERNAL, "unavailable", "session database is unavailable")
+            return
         local = self.sessions.get(sid)
         if local is not None and local.principal.user_id == uid and not local.ending:
+            if local.usage_payer_account_id not in (None, actor):
+                await self.reject(
+                    ws,
+                    CLOSE_UNAUTHORIZED,
+                    "payer_mismatch",
+                    "This session belongs to another paying account. Start a new session.",
+                )
+                return
             if local.private_context_account_id and local.private_context_account_id != str(actor):
                 await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
+                return
+            try:
+                if local.durable is not None:
+                    await local.durable.renew()
+                if not await store.refresh_active(uid, sid):
+                    await self.reject(
+                        ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
+                    )
+                    return
+                if not await store.take_resume_lease(sid, self.svc.task_id):
+                    local.on_lease_lost()
+                    await store.release_active(uid, sid)
+                    await self.reject(
+                        ws, CLOSE_NO_START, "session_not_found", "no resumable session with that id"
+                    )
+                    return
+            except (*UNAVAILABLE, asyncpg.PostgresError, WriterOwnershipLost):
+                await self.reject(
+                    ws, CLOSE_INTERNAL, "unavailable", "session state is unavailable; retry"
+                )
                 return
             local.account_id = actor
             local.writer.set_state(account_id=str(actor))
@@ -2904,6 +3189,7 @@ class SessionManager:
             local.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
             await local.attach(ws, msg.last_seq)
             return
+        durable: DurableSession | None = None
         try:
             state = await store.load_state(sid)
             if not state or state.get("user_id") != str(uid) or state.get("status") == "ended":
@@ -2922,6 +3208,15 @@ class SessionManager:
             if state.get("private_context_account_id") not in (None, "", str(actor)):
                 await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", "Private session")
                 return
+            payer = state.get("usage_payer_account_id") or state.get("account_id")
+            if payer and payer != str(actor):
+                await self.reject(
+                    ws,
+                    CLOSE_UNAUTHORIZED,
+                    "payer_mismatch",
+                    "This session belongs to another paying account. Start a new session.",
+                )
+                return
             other = await store.claim_active(uid, sid)
             if other is not None and other != str(sid):
                 if not await self._stale(other):
@@ -2930,9 +3225,33 @@ class SessionManager:
                     )
                     return
                 await self._end_abandoned(uid, other)
-                await store.replace_active(uid, other, sid)
-            await store.set_active(uid, sid)
-            await store.take_lease(sid, self.svc.task_id)
+                if not await store.replace_active(uid, other, sid):
+                    await self.reject(
+                        ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
+                    )
+                    return
+            if not await store.refresh_active(uid, sid):
+                await self.reject(
+                    ws, CLOSE_SESSION_ACTIVE, "session_active", "another session is active"
+                )
+                return
+            if self.svc.pool is not None and int(state.get("writer_generation") or 0) > 0:
+                durable = await DurableSession.acquire(self.svc.pool, sid, uid, actor)
+                for key, value in (durable.metadata or {}).items():
+                    if value is not None:
+                        state[key] = str(value)
+                state["usage_payer_account_id"] = str(actor)
+                if durable.private_account_id:
+                    state["private_context_account_id"] = durable.private_account_id
+            if not await store.take_resume_lease(sid, self.svc.task_id):
+                if durable is not None:
+                    with contextlib.suppress(Exception):
+                        await durable.close("admission_failed")
+                await store.release_active(uid, sid)
+                await self.reject(
+                    ws, CLOSE_NO_START, "session_not_found", "no resumable session with that id"
+                )
+                return
             replay = await store.events_after(sid, msg.last_seq)
             seq = max(
                 int(state.get("last_seq", "0")), await store.last_event_seq(sid), msg.last_seq
@@ -2953,9 +3272,35 @@ class SessionManager:
             pack = None
             if state.get("pack_id"):
                 pack = await store.get_pack_by_id(uid, state["pack_id"])
-        except UNAVAILABLE:
+            if (
+                durable is not None
+                and state.get("resume_revision_id")
+                and (
+                    digest is None or str(digest.resume_revision_id) != state["resume_revision_id"]
+                )
+            ):
+                raise ContextNotReady("Resume context changed. Start a new session.")
+            if (
+                pack is not None
+                and state.get("mode") == "interview"
+                and digest is not None
+                and (
+                    pack.digest_version != digest.version
+                    or pack.resume_revision_id != digest.resume_revision_id
+                )
+            ):
+                pack = None
+        except (*UNAVAILABLE, asyncpg.PostgresError, ContextNotReady) as exc:
+            if durable is not None:
+                with contextlib.suppress(Exception):
+                    await durable.close("admission_failed")
             await self.reject(
-                ws, CLOSE_INTERNAL, "unavailable", "session state is unavailable; retry"
+                ws,
+                CLOSE_INTERNAL,
+                "memory_not_ready" if isinstance(exc, ContextNotReady) else "unavailable",
+                str(exc)
+                if isinstance(exc, ContextNotReady)
+                else "session state is unavailable; retry",
             )
             return
         info = SessionInfo(
@@ -2983,8 +3328,10 @@ class SessionManager:
         )
         session.account_id = actor
         session.account_token = account_token
+        session.durable = durable
+        session.writer.durable = durable
         self.sessions[sid] = session
-        session.writer.set_state(status="active", task_id=self.svc.task_id, account_id=str(actor))
+        session.writer.set_state(**session.state_fields())
         session.log_entry({"kind": "resumed", "task_id": self.svc.task_id})
         session.start_core()
         await session.attach(ws, msg.last_seq, replay=replay)

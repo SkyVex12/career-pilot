@@ -51,6 +51,50 @@ The data disk holds `postgres/`, `valkey/`, `elasticmq/` (the jobs queue and its
 file), `copilot/` (the deployed tag and the earlier ones, for rollbacks), `backups/` (the newest
 dump) and the swap file.
 
+## Deploying across a schema boundary
+
+Before deploying a release that changes the host helper, an operator runs:
+
+```sh
+uv run infra/gcp/scripts/stage.py prepare-host
+```
+
+This updates only the embedded `copilotctl.sh` in the existing instance `user-data` and the
+installed helper. It does not restart services or apply migrations. The operator needs
+`compute.instances.setMetadata`; the CI deploy account deliberately does not have it. CI
+verifies that the boot helper matches the release before installing it, so a reboot cannot
+silently restore an older helper. Run `prepare-host` again if the helper changes afterward.
+
+The GCP workflow deploys with `--start --check --coordinated`. For an operator deployment:
+
+```sh
+uv run infra/gcp/scripts/stage.py deploy --tag <image-tag> --start --check --coordinated
+```
+
+Candidate images are pulled before downtime. If migrations are pending, the helper briefly
+rejects new requests at nginx and checks for live connections, session leases, retained logs,
+and unfinished sessions or interactive work. An occupied stage aborts and restores admission
+without stopping existing calls; let the work finish before retrying. After stopping the old
+app services and scheduler, it checks again, creates a fresh database backup, verifies the
+uploaded bytes, and restores that backup into a separate temporary database. Only a successful
+migration rehearsal permits live migration and startup of the new services together.
+
+The persistent `/mnt/disks/data/copilot/maintenance` marker records the old/new tags and
+cutover phase; `/mnt/disks/data/copilot/cutover-backup` records the verified backup URI. Before
+live migration starts, an ordinary failure resumes the old services. After migration begins,
+a failure keeps application writers and the scheduler stopped, including after reboot or a
+manual restart attempt. A lost SSH connection is not automatically retried: inspect
+`stage.py status` and the logs first, because the remote deploy may still be running.
+
+There is no automatic image-only rollback across a schema boundary. `rollback` rejects an
+image missing any applied migration or carrying different migration checksums. Recovery from
+a held cutover requires operator inspection and either a compatible forward fix or a full
+restore of the recorded database backup with its matched old images, while writers remain
+stopped. The legacy `restore` command refuses a held cutover. Do not simply delete the marker
+to bypass this protection. The helper does not automate this exceptional recovery procedure.
+
+These changes retain the existing VM size, services, and IAM grants.
+
 **Identity on one host.** The VM has one service account; containers share the host's
 network, so the host firewall lets only root, the API (uid 10001) and the workers (10002) reach
 the metadata server, which hands out its tokens. The API and the workers need it for Cloud KMS;
