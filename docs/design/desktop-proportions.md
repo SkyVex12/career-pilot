@@ -28,9 +28,13 @@ Size short selectors for their content: Company is at most 352px; Application is
 
 Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop, using five columns for Call type and seven for context below an 800px content width; stack below a 680px content width. Status messages belong directly beneath their selector. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
 
+Application details give company, role, and pack status their own full-width block. Place actions in a separate compact row so they cannot squeeze the title. Keep the same page inset on narrow screens. Past-call filters use All / Interviews / Work; Work includes stored standup and meeting calls. Transcripts have one top-right Copy action for the complete, time-ordered conversation, with no per-entry practice controls.
+
 ## State stability
 
 The Call audio summary keeps the same height in idle, editing, testing, and failure states. Device feedback uses the existing label line and a meter within the control; full messages remain available through focus/hover help and live announcements. Keep test-button width fixed through its loading state.
+
+Quick settings in medium mode open below its 280 × 56px toolbar. Extend only the narrow canvas needed for the menu, cap its height to the monitor work area, and keep the setup page hidden. Closing the menu restores the toolbar bounds; explicit expansion still restores the saved full-window size. Pause automatic collapse while the menu is open.
 
 The assistant picker opens with a search field and a compact selection count. Show matching people or necessary input guidance as the user types; avoid repeating the help text from the parent control.
 

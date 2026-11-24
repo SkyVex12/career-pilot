@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { mockWindows } from "@tauri-apps/api/mocks";
 import { LogicalSize } from "@tauri-apps/api/dpi";
-import { clearCompactShape, isPointerInsideWindow, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "../src/windowMotion";
+import { clearCompactShape, isPointerInsideWindow, openCompactMenu, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "../src/windowMotion";
 import { ipc } from "./ipc";
 
 it("serializes auto-fit and mode transitions instead of interleaving writes", async () => {
@@ -143,4 +143,47 @@ it.each([0, Number.NaN, Number.POSITIVE_INFINITY])("does not infer dot hover fro
   ipc.handle("plugin:window|inner_size", () => ({ width: 280, height: 56 }));
   ipc.handle("plugin:window|scale_factor", () => scale);
   await expect(isPointerInsideWindow("dot")).rejects.toThrow();
+});
+
+it.each([1, 1.5, 2])("opens settings below the medium toolbar without restoring full bounds at %s scale", async scale => {
+  mockWindows("main");
+  const position = { x: -1000, y: 100 };
+  ipc.handle("plugin:window|outer_position", () => position);
+  ipc.handle("plugin:window|scale_factor", () => scale);
+  ipc.handle("plugin:window|current_monitor", () => ({ name: "Display", position: { x: -1920, y: 0 }, size: { width: 1920, height: 1080 }, scaleFactor: scale, workArea: { position: { x: -1920, y: 0 }, size: { width: 1920, height: 1040 } } }));
+  const restore = await openCompactMenu();
+  const height = Math.floor(Math.min(480, 940 / scale - 8) / 8) * 8;
+  expect(ipc.calls.filter(c => c.cmd === "plugin:window|set_size").map(c => JSON.parse(JSON.stringify(c.args.value)))).toEqual([{ Logical: { width: 280, height } }]);
+  expect(ipc.calls.some(c => c.cmd === "plugin:window|set_position")).toBe(false);
+  await restore();
+  expect(JSON.parse(JSON.stringify(ipc.calls.slice(-1)[0]?.args.value))).toEqual({ Logical: { width: 280, height: 56 } });
+  expect(ipc.calls.some(c => c.cmd === "set_compact_window_shape")).toBe(false);
+});
+
+it.each([false, true])("keeps settings inside the work area and respects a user drag (%s)", async dragged => {
+  mockWindows("main");
+  let position = { x: 100, y: 940 };
+  ipc.handle("plugin:window|outer_position", () => position);
+  ipc.handle("plugin:window|scale_factor", () => 1);
+  ipc.handle("plugin:window|current_monitor", () => ({ name: "Display", position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 }, scaleFactor: 1, workArea: { position: { x: 0, y: 0 }, size: { width: 1920, height: 1040 } } }));
+  ipc.handle("plugin:window|set_position", args => { position = JSON.parse(JSON.stringify(args.value)).Physical; });
+  const restore = await openCompactMenu();
+  expect(position).toEqual({ x: 100, y: 552 });
+  if (dragged) position = { x: 200, y: 240 };
+  await restore();
+  expect(position).toEqual(dragged ? { x: 200, y: 240 } : { x: 100, y: 940 });
+});
+
+it("restores medium bounds when extending the settings canvas fails", async () => {
+  mockWindows("main");
+  ipc.handle("plugin:window|outer_position", () => ({ x: 100, y: 100 }));
+  ipc.handle("plugin:window|scale_factor", () => 1);
+  let height = 56;
+  ipc.handle("plugin:window|set_size", args => {
+    const next = JSON.parse(JSON.stringify(args.value)).Logical.height;
+    if (next > 56) throw new Error("Resize failed");
+    height = next;
+  });
+  await expect(openCompactMenu()).rejects.toThrow("Resize failed");
+  expect(height).toBe(56);
 });
