@@ -45,15 +45,14 @@
 .call-options.ui-disclosure > summary::after { margin-left:8px; }
 .call-options[open] > summary .ui-disclosure-meta:not([role="alert"]) { display:none; }
 .call-options > summary .ui-disclosure-meta { max-width:48%; }
-.call-options > .call-customize { display:grid;grid-template-columns:minmax(0,528px) minmax(0,256px);gap:32px;margin:0;padding:0 0 8px; }
+.call-options > .call-customize { display:grid;grid-template-columns:minmax(0,352px) minmax(0,256px);gap:32px;margin:0;padding:0 0 8px; }
 .call-customize .customize-group { display:flex;flex-direction:column;gap:8px;min-width:0; }
 .call-customize .customize-row,.call-customize .call-row { display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;align-items:start;min-width:0; }
 .call-customize .customize-label,.call-customize .call-row-label { display:flex;align-items:center;gap:4px;min-height:32px;color:var(--text-2);font-size:12px;font-weight:500;line-height:16px; }
 .call-customize .customize-control { display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0; }
 .call-customize .customize-control > .ui-field { width:100%;max-width:256px;margin:0; }
 .call-customize .ui-field-control,.call-customize .ui-select { width:100%; }
-.call-customize .customize-language-control { display:grid;grid-template-columns:minmax(0,208px) max-content auto;gap:8px;align-items:center; }
-.call-customize .customize-language-control > .ui-btn { justify-self:start; }
+.call-customize .customize-language-control > .ui-field { max-width:208px; }
 .call-customize .ui-check { min-height:32px;align-items:center;font-size:13px;line-height:16px; }
 .call-design .ui-checkbox { margin:0; }
 .call-design .ui-help-tip { width:24px;height:24px; }
@@ -93,7 +92,7 @@
 .call-focus .material-pick { margin-top:16px; }
 .call-guest-selection { display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0; }
 .call-design-footer { padding-block:12px;border-top:1px solid var(--border); }
-.call-start-footer .session-start { grid-column:9 / -1;justify-self:end;min-width:128px;min-height:40px;padding:0 16px;font-size:13px; }
+.call-start-footer .session-start { grid-column:9 / -1;justify-self:end;min-width:112px;min-height:32px;padding:0 12px;font-size:13px; }
 .call-design .audio-summary { margin:0;padding:12px 0;border:0;border-top:1px solid var(--border);border-radius:0;background:transparent; }
 .call-design .audio-line { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:24px; }
 .call-design .audio-line > .ui-btn { grid-column:2;width:128px;min-width:128px;min-height:32px;margin-top:24px;padding-inline:8px; }
@@ -165,10 +164,6 @@
 @container call-page (max-width:800px) {
   .call-type-picker,.call-context-selection { grid-column:1 / -1; }
   .call-options > .call-customize { grid-template-columns:minmax(0,352px) minmax(0,256px);gap:24px; }
-  .call-customize .customize-language-control { grid-template-columns:minmax(0,1fr) auto;gap:4px; }
-  .call-customize .customize-language-control > .ui-field { grid-column:1 / -1; }
-  .call-customize .customize-language-control > .ui-check { grid-column:1; }
-  .call-customize .customize-language-control > .ui-btn { grid-column:2;justify-self:end; }
 }
 @container call-page (max-width:600px) {
   .call-options > .call-customize { grid-template-columns:minmax(0,352px);gap:8px; }
@@ -191,11 +186,11 @@
   .call-design-heading,.call-design-footer { padding-block:8px; }
 }
 @media (pointer:coarse) {
-  .call-type-option { min-height:48px; }
+  .call-type-option,.call-start-footer .session-start { min-height:48px; }
   .call-customize .customize-label,.call-customize .call-row-label { min-height:48px; }
   .guest-picker-count { height:48px; }
   .call-design .ui-select,.call-design .ui-segmented { min-height:48px;height:auto; }
-  .call-customize .ui-btn,.call-customize .ui-check,.call-customize .customize-language-control > .ui-check { min-height:48px; }
+  .call-customize .ui-btn,.call-customize .ui-check { min-height:48px; }
   .call-design .ui-segmented .ui-segment,.call-design .call-row .call-row-action,.call-design .audio-line > .ui-btn,.call-design .audio-line.is-editing > .ui-btn { min-height:48px; }
   .call-design .audio-device strong { min-height:48px;line-height:48px; }
   .guest-permissions .ui-check,.guest-picker-person > .ui-check { min-height:48px;align-items:center; }

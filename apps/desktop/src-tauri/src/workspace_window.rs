@@ -303,11 +303,11 @@ mod tests {
 
     #[test]
     fn startup_size_is_bounded_by_the_usable_display_at_any_scale() {
-        let preferred = LogicalSize::new(1120.0, 760.0);
+        let preferred = LogicalSize::new(960.0, 672.0);
         for (physical_width, physical_height, scale, width, height) in [
-            (1920, 1040, 1.0, 1120.0, 760.0),
-            (1366, 728, 1.0, 1120.0, 680.0),
-            (1920, 1040, 1.5, 1120.0, 640.0),
+            (1920, 1040, 1.0, 960.0, 672.0),
+            (1366, 728, 1.0, 960.0, 672.0),
+            (1920, 1040, 1.5, 960.0, 640.0),
             (1920, 1040, 2.0, 912.0, 472.0),
             (800, 600, 1.0, 752.0, 552.0),
             (320, 200, 1.0, 320.0, 200.0),

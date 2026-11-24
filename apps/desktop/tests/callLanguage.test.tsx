@@ -26,7 +26,7 @@ describe("profile call language", () => {
     expect(screen.getByRole("button", { name: "Language" })).toBeVisible();
   });
 
-  it("loads the profile default, offers only enabled languages and saves explicitly", async () => {
+  it("loads the profile default and changes the call language without rewriting it", async () => {
     ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }, { id: "es", name: "Spanish" }] }));
     ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "es" }));
     ipc.api("PATCH", /^\/profile\/call-preferences$/, (_p, body) => body);
@@ -35,10 +35,10 @@ describe("profile call language", () => {
     await waitFor(() => expect(change).toHaveBeenCalledWith("es"));
     expect(ready).toHaveBeenLastCalledWith(true);
     expect(container.querySelector("select")!.options).toHaveLength(2);
-    fireEvent.click(screen.getByLabelText("Use as default"));
-    await waitFor(() => expect(ipc.apiCalls("PATCH")).toHaveLength(1));
+    expect(screen.queryByLabelText("Use as default")).not.toBeInTheDocument();
     fireEvent.change(container.querySelector("select")!, { target: { value: "en" } });
-    await waitFor(() => expect(ipc.apiCalls("PATCH")[1].body).toEqual({ spoken_language: "en" }));
+    expect(change).toHaveBeenLastCalledWith("en");
+    expect(ipc.apiCalls("PATCH")).toHaveLength(0);
   });
   it("does not silently replace an unavailable persisted language", async () => {
     ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
@@ -67,7 +67,7 @@ it("keeps call start unavailable when a server returns malformed language settin
   expect(ready).not.toHaveBeenCalledWith(true);
 });
 
-it("shows error details on hover and retries without closing Customize", async () => {
+it("shows error details on hover and retries when Customize is reopened", async () => {
   ipc.api("GET", /^\/call-languages$/, () => { throw "Could not reach the language server"; });
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
   const ready = vi.fn();
@@ -82,7 +82,10 @@ it("shows error details on hover and retries without closing Customize", async (
   expect(await screen.findByRole("tooltip")).toHaveTextContent("Could not reach the language server");
   expect(ready).not.toHaveBeenCalledWith(true);
   ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
-  await userEvent.click(screen.getByRole("button", { name: "Retry language settings" }));
+  expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByText("Customize"));
+  expect(disclosure).not.toHaveAttribute("open");
+  await userEvent.click(screen.getByText("Customize"));
   await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true));
   expect(disclosure).toHaveAttribute("open");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -105,7 +108,7 @@ it("renders the configured languages with native labels and isolated right-to-le
   expect(option.querySelector("bdi")).toHaveAttribute("lang", "ar");
 });
 
-it("searches a large catalog by English, native name and code, and saves only the chosen language", async () => {
+it("searches a large catalog by English, native name and code, and changes only after selection", async () => {
   const items = [
     { id: "en", name: "English" },
     { id: "vi", name: "Vietnamese", native_name: "Tiếng Việt" },
@@ -122,15 +125,13 @@ it("searches a large catalog by English, native name and code, and saves only th
   render(<Picker />);
   const picker = screen.getByRole("button", { name: "Language" });
   await waitFor(() => expect(picker).toBeEnabled());
-  await userEvent.click(screen.getByLabelText("Use as default"));
-  await waitFor(() => expect(ipc.apiCalls("PATCH")).toHaveLength(1));
   await userEvent.click(picker);
   const search = screen.getByRole("combobox", { name: "Search languages" });
   expect(search).toHaveFocus();
   expect(screen.getAllByRole("option")).toHaveLength(113);
   fireEvent.keyDown(search, { key: "Enter", isComposing: true });
   expect(search).toHaveFocus();
-  expect(ipc.apiCalls("PATCH")).toHaveLength(1);
+  expect(ipc.apiCalls("PATCH")).toHaveLength(0);
   await userEvent.type(search, "vietnam");
   expect(screen.getAllByRole("option")).toHaveLength(1);
   expect(screen.getByRole("option")).toHaveTextContent("Tiếng Việt · Vietnamese");
@@ -143,10 +144,10 @@ it("searches a large catalog by English, native name and code, and saves only th
   await userEvent.clear(search);
   await userEvent.type(search, "qef");
   expect(screen.getAllByRole("option")).toHaveLength(1);
-  expect(ipc.apiCalls("PATCH")).toHaveLength(1);
+  expect(ipc.apiCalls("PATCH")).toHaveLength(0);
   expect(picker).toHaveTextContent("English");
   await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(ipc.apiCalls("PATCH")[1].body).toEqual({ spoken_language: "qef" }));
+  expect(ipc.apiCalls("PATCH")).toHaveLength(0);
   expect(picker).toHaveFocus();
   expect(picker).toHaveTextContent("Fixture language 109");
   expect(screen.queryByRole("dialog", { name: "Language" })).not.toBeInTheDocument();
@@ -176,13 +177,13 @@ it("leaves the selection unchanged for an empty search and cancels cleanly with 
 it("closes the searchable popup and continues to the next field with Tab", async () => {
   ipc.api("GET", /^\/call-languages$/, () => ({ items: [{ id: "en", name: "English" }] }));
   ipc.api("GET", /^\/profile\/call-preferences$/, () => ({ spoken_language: "en" }));
-  render(<CallLanguage value="en" onChange={() => {}} />);
+  render(<CallLanguage value="en" onChange={() => {}} answerFormat={<button>Next option</button>} />);
   const picker = screen.getByRole("button", { name: "Language" });
   await waitFor(() => expect(picker).toBeEnabled());
   await userEvent.click(picker);
   await userEvent.tab();
   expect(screen.queryByRole("dialog", { name: "Language" })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Use as default")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Next option" })).toHaveFocus();
 });
 
 it("explains legacy English compatibility without blocking older-server calls or saving unsupported settings", async () => {
@@ -191,7 +192,7 @@ it("explains legacy English compatibility without blocking older-server calls or
   expect(await screen.findByText(/Using English compatibility mode/)).toHaveTextContent("Update the CoRuby server");
   expect(change).toHaveBeenLastCalledWith("en");
   expect(ready).toHaveBeenLastCalledWith(true);
-  expect(screen.getByLabelText("Use as default")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Language" })).toBeEnabled();
   expect(ipc.apiCalls("PATCH")).toHaveLength(0);
 });
 
