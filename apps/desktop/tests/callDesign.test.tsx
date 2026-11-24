@@ -36,9 +36,47 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
+  it("changes call type with arrow keys while keeping each context draft", async () => {
+    routes();
+    render(tree());
+    await screen.findByText("We build routing.");
+    const types = screen.getByRole("radiogroup", { name: "Call type" });
+    const interview = within(types).getByRole("radio", { name: "Interview" });
+    const work = within(types).getByRole("radio", { name: "Work" });
+    act(() => interview.focus());
+    await userEvent.keyboard("{ArrowRight}");
+    expect(work).toHaveFocus();
+    expect(work).toBeChecked();
+    expect(interview).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Company" })).toBeVisible();
+    await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Plan the release");
+    act(() => work.focus());
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(interview).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("textbox", { name: "Agenda" })).toHaveValue("Plan the release");
+    expect(ipc.calls.some(call => call.cmd === "start_session" || call.cmd === "set_mode")).toBe(false);
+  });
+
+  it("locks the call type while a call is starting", async () => {
+    routes();
+    let finish!: () => void;
+    ipc.handle("start_session", () => new Promise<void>(resolve => { finish = resolve; }));
+    render(tree());
+    await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByRole("button", { name: "Start call" }));
+    const work = screen.getByRole("radio", { name: "Work" });
+    expect(work).toBeDisabled();
+    await userEvent.click(work);
+    expect(screen.getByRole("radio", { name: "Interview" })).toBeChecked();
+    await act(async () => finish());
+    expect(work).toBeEnabled();
+  });
+
   it.each([
-    ["Company context", "For work", /^\/employers$/],
-    ["Applications", "For interviews", /^\/applications$/],
+    ["Company context", "Work", /^\/employers$/],
+    ["Applications", "Interview", /^\/applications$/],
   ] as const)("keeps %s failures concise with accessible details and a Settings action", async (label, mode, path) => {
     routes();
     const error = "Could not reach the server: the server URL needs a host.";
@@ -247,7 +285,7 @@ describe("the Call setup design", () => {
     ipc.api("POST", /^\/employers\/e1\/packs$/, () => ({ status: "ready" }));
     ipc.api("GET", /^\/employers\/e1\/documents$/, () => ({ documents: [{ id: "d1", name: "Architecture", status: "ingested", approved_proposals: 3 }] }));
     render(tree());
-    await userEvent.click(screen.getByRole("radio", { name: "For work" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Work" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Discuss routing decisions");
     await userEvent.click(screen.getByText("Focus on documents"));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));

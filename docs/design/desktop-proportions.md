@@ -14,7 +14,7 @@ Use the shared control tokens in ui/tokens.css. Horizontal button padding is 8px
 
 ## Spacing and hierarchy
 
-- Keep the responsive twelve-column desktop grid. Call follows a top-to-bottom sequence: context, a compact four-column Customize section, audio, then the primary action. Use 16px between these sections and 24px between option groups; stack options to two columns in narrow windows.
+- Keep the responsive twelve-column desktop grid. Call pairs an explicit Call type radio group with the context selector, then follows a top-to-bottom sequence: context details, a compact four-column Customize section, audio, then the primary action. Use 16px between these sections and 24px between option groups; stack options to two columns in narrow windows.
 - Use 4px for labels, metadata, and optical adjustments; 8px between related controls; 12–16px inside groups; and 24–32px between sections. Maintain the 8px rhythm for page insets and macro layout.
 - Use roughly 5:4 steps for visual emphasis: 13px controls, 16px section emphasis, and 20px page headings. Secondary card headings use 14px. Keep reading text at 13–14px with comfortable 20–24px line heights.
 - Use 6px control corners and 8px card corners. Reserve accent fills and stronger weight for primary actions and selected navigation.
@@ -25,6 +25,8 @@ Use the shared control tokens in ui/tokens.css. Horizontal button padding is 8px
 The workspace opens at 1120 × 760 logical pixels. At launch, fit it to the current monitor’s usable area, accounting for display scaling and leaving 24px around the window where possible. Center within that usable area so the taskbar remains clear. Apply this only at startup; navigation must preserve manual resizing, and returning from compact mode restores the previous full size. The live overlay keeps its separate sizing.
 
 Size short selectors for their content: Company is at most 352px; Application is at most 528px for the combined company and role. Keep Add/Manage 8px beside the field. Both shrink with narrow windows. Reading and editing areas can still use the full content width.
+
+Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop and above it in narrow windows. Status messages belong directly beneath their selector. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
 
 ## State stability
 

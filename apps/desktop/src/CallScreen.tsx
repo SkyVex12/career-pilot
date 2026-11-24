@@ -10,7 +10,7 @@ import { CallLanguage } from "./CallLanguage";
 import { LiveCallLanguage } from "./LiveCallLanguage";
 import { LiveUsage } from "./Usage";
 import { SignIn, signInWays } from "./SignIn";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
 import { api, rest, POLL_READ, type ApplicationDetail, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type ResumeVersion, type Settings } from "./api";
 import { useDataActivity, usePolling } from "./usePolling";
@@ -45,6 +45,21 @@ const MODES = [
   ["interview", "For interviews"],
   ["meeting", "For work"],
 ] as const;
+
+function CallTypePicker({ value, onChange, disabled }: { value: "interview" | "meeting"; onChange: (value: Mode) => void; disabled: boolean }) {
+  const name = useId();
+  return <fieldset className="call-type-picker" role="radiogroup" disabled={disabled}>
+    <legend>Call type</legend>
+    <div className="call-type-options">
+      {([["interview", "Interview", "briefcase"], ["meeting", "Work", "work"]] as const).map(([mode, label, icon]) => (
+        <label key={mode} className="call-type-option">
+          <Icon name={icon} size={16} /><span>{label}</span>
+          <input type="radio" name={name} value={mode} checked={value === mode} onChange={() => onChange(mode)} />
+        </label>
+      ))}
+    </div>
+  </fieldset>;
+}
 
 const ANSWER_STYLES = [
   ["bullets", "Bulleted"],
@@ -371,7 +386,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     </header>
     <section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
-        <header className="call-design-heading call-setup-heading"><h1>Start a call</h1><div className="call-heading-actions"><SegmentedControl label="Session type" value={setupMode} options={MODES} disabled={disabled} onChange={changeMode} /><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></div></header>
+        <header className="call-design-heading call-setup-heading"><h1>Start a call</h1><div className="call-heading-actions"><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></div></header>
         <div className="call-design-body">
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
             {mini.error && <Banner tone="danger">{mini.error}</Banner>}
@@ -381,22 +396,40 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
           </div>
           <div className="call-setup-grid">
             <section className={`call-setup-fields${atWork ? "" : " call-interview-context"}`} aria-label="Call context">
+              <div className="call-context-top">
+                <CallTypePicker value={setupMode} onChange={changeMode} disabled={disabled} />
+                <div className="call-context-selection">
+                  {atWork ? <>
+                    <div className="call-row call-company-row">
+                      <label className="call-row-label" htmlFor="call-company">Company</label>
+                      <div className="call-application-field">
+                        <Select id="call-company" aria-describedby={employerId ? "call-company-context" : undefined} value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}>
+                          <option value="">Choose a company</option>
+                          {work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                        </Select>
+                        {employerId && <span className="call-application-resume" id="call-company-context">Work log · {materials.documents ? plural(materials.documents.length, "document") : "Company documents"}</span>}
+                      </div>
+                      <Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button>
+                    </div>
+                    {work.error && <ContextLoadError label="Company context" detail={work.error} onSettings={onSettings} />}
+                    {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
+                  </> : <>
+                    <div className="call-row call-application-row">
+                      <label className="call-row-label" htmlFor="call-application">Application</label>
+                      <div className="call-application-field">
+                        <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
+                        <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
+                      </div>
+                      <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
+                    </div>
+                    {catalog.error && <ContextLoadError label="Applications" detail={catalog.error} onSettings={onSettings} />}
+                  </>}
+                </div>
+              </div>
               {atWork ? <>
-                <div className="call-row call-company-row"><label className="call-row-label" htmlFor="call-company">Company</label><div className="call-application-field"><Select id="call-company" aria-describedby="call-company-context" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><span className="call-application-resume" id="call-company-context">{employerId ? <>Work log · {materials.documents ? plural(materials.documents.length, "document") : "Company documents"}</> : "Choose a company to use your work context."}</span></div><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
-                {work.error && <ContextLoadError label="Company context" detail={work.error} onSettings={onSettings} />}
-                {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
-                {setupMode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
+                <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={3} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>
                 {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
               </> : <>
-                <div className="call-row call-application-row">
-                  <label className="call-row-label" htmlFor="call-application">Application</label>
-                  <div className="call-application-field">
-                    <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
-                    <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
-                  </div>
-                  <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
-                </div>
-                {catalog.error && <ContextLoadError label="Applications" detail={catalog.error} onSettings={onSettings} />}
                 <div className="call-jd-row"><div className="call-jd-heading"><span className="call-row-label">Job description</span><Button variant="ghost" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div><div className={`call-jd-preview${detail?.jd_text.trim() ? "" : " is-empty"}`} role="region" aria-label="Job description preview" tabIndex={0}>{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</div></div>
                 {detailError && <ContextLoadError label="Job description" detail={detailError} onSettings={onSettings} />}
               </>}
