@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalSize } from "@tauri-apps/api/dpi";
 import { flushSync } from "react-dom";
-import { clearCompactShape, isPointerInsideWindow, prepareCompactShape, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "./windowMotion";
+import { clearCompactShape, isPointerInsideWindow, openCompactMenu, prepareCompactShape, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "./windowMotion";
 import { inTauri } from "./api";
 
 export type WindowMode = "full" | "toolbar" | "dot";
@@ -12,6 +12,10 @@ export type WindowMode = "full" | "toolbar" | "dot";
 export function useWindowMode(overlay = false, autoHover = false) {
   const [mode, setMode] = useState<WindowMode>("full");
   const [busy, setBusy] = useState(false);
+  const [menuOpen, renderMenu] = useState(false);
+  const menuVisible = useRef(false);
+  const menuWanted = useRef(false);
+  const restoreMenu = useRef<(() => Promise<void>) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const saved = useRef<{ size: LogicalSize | PhysicalSize; decorated: boolean; maximized: boolean; fullscreen: boolean; resizable: boolean } | null>(null);
   const locked = useRef(false);
@@ -22,6 +26,8 @@ export function useWindowMode(overlay = false, autoHover = false) {
   const change = async (next: WindowMode) => {
     if (locked.current) return false;
     if (next === mode) return true;
+    if ((menuVisible.current || menuWanted.current) && !await setMenuOpen(false)) return false;
+    if (locked.current) return false;
     cancelHover();
     locked.current = true; setBusy(true); setError(null);
     let completed = false;
@@ -153,6 +159,37 @@ export function useWindowMode(overlay = false, autoHover = false) {
       window.dispatchEvent(new Event("copilot:window-layout"));
     }
   };
+  const setMenuOpen = async (open: boolean): Promise<boolean> => {
+    menuWanted.current = open;
+    cancelHover();
+    try {
+      return await withWindowResize(async () => {
+        if (disposed.current || locked.current || open !== menuWanted.current) return false;
+        if (menuVisible.current === open) return true;
+        if (open && latest.current.mode !== "toolbar") { menuWanted.current = false; return false; }
+        if (open) {
+          // Pin the toolbar before extending its transparent canvas downward.
+          flushSync(() => { menuVisible.current = true; renderMenu(true); });
+          try {
+            if (inTauri) restoreMenu.current = await openCompactMenu();
+          } catch (error) {
+            flushSync(() => { menuVisible.current = false; renderMenu(false); });
+            throw error;
+          }
+        } else {
+          await restoreMenu.current?.();
+          restoreMenu.current = null;
+          flushSync(() => { menuVisible.current = false; renderMenu(false); });
+          settleHover();
+        }
+        return true;
+      });
+    } catch (error) {
+      menuWanted.current = menuVisible.current;
+      if (!disposed.current) setError("Could not open quick settings: " + String(error));
+      return false;
+    }
+  };
   const latest = useRef({ mode, change, autoHover });
   latest.current = { mode, change, autoHover };
   const pointerInside = useRef<boolean | null>(null);
@@ -171,6 +208,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
       hoverTimer.current = undefined;
       const current = next === "toolbar" ? "dot" : "toolbar";
       const stale = () => disposed.current || locked.current || !latest.current.autoHover
+        || menuVisible.current || menuWanted.current
         || generation !== hoverGeneration.current || latest.current.mode !== current;
       if (stale()) return;
       let inside = pointerInside.current;
@@ -185,7 +223,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
   };
   const settleHover = () => {
     cancelHover();
-    if (!autoHover || pointerInside.current === null) return;
+    if (!autoHover || menuVisible.current || menuWanted.current || pointerInside.current === null) return;
     const current = latest.current.mode;
     const next = current === "dot" && pointerInside.current ? "toolbar" : current === "toolbar" && !pointerInside.current ? "dot" : null;
     if (next) scheduleHover(next);
@@ -204,5 +242,5 @@ export function useWindowMode(overlay = false, autoHover = false) {
     scheduleHover("dot");
   };
   const drag = () => { if (inTauri) void startWindowDrag().catch(e => setError(`Could not move the window: ${String(e)}`)); };
-  return { mode, busy, error, compactRef, change, drag, onPointerEnter, onPointerLeave, cancelHover };
+  return { mode, busy, error, menuOpen, setMenuOpen, compactRef, change, drag, onPointerEnter, onPointerLeave, cancelHover };
 }

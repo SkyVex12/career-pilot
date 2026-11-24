@@ -613,6 +613,48 @@ describe("Call", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Paste the whole code");
   });
 
+  it("opens medium settings on hover, keeps them open across the gap, and restores only medium bounds on Escape", async () => {
+    callRoutes();
+    mockWindows("main");
+    ipc.handle("plugin:window|inner_size", () => ({ width: 800, height: 672 }));
+    ipc.handle("plugin:window|outer_position", () => ({ x: 100, y: 100 }));
+    ipc.handle("plugin:window|scale_factor", () => 1);
+    ipc.handle("get_settings", () => settingsView());
+    ipc.handle("window_prefs", () => ({ opacity: 1, compact: false, click_through: false, on_top: true, hotkeys: {} }));
+    wrapCallWindow(<CallScreen {...callProps()} />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1"));
+    await collapseToMedium();
+    const surface = screen.getByRole("button", { name: "Expand full window" }).closest<HTMLElement>(".session-window")!;
+    const gear = within(surface).getByRole("button", { name: "Quick settings" });
+    await userEvent.hover(gear);
+    const menu = await screen.findByRole("dialog", { name: "Quick settings" });
+    await screen.findByRole("slider", { name: "Transparency" });
+    expect(surface).toHaveAttribute("data-mini", "toolbar");
+    expect(menu).toHaveStyle({ top: "64px" });
+    fireEvent.pointerLeave(gear);
+    fireEvent.pointerEnter(menu);
+    await act(() => new Promise(resolve => setTimeout(resolve, 300)));
+    expect(menu).toBeInTheDocument();
+    expect(surface).toHaveAttribute("data-mini", "toolbar");
+    await userEvent.click(within(menu).getByRole("switch", { name: "Keep on top" }));
+    expect(ipc.calls.some(c => c.cmd === "set_window_on_top")).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Quick settings" })).toBeNull());
+    expect(surface).toHaveAttribute("data-mini", "toolbar");
+    expect(gear).toHaveFocus();
+    expect(ipc.calls.filter(c => c.cmd === "plugin:window|set_size").map(c => JSON.parse(JSON.stringify(c.args.value)))).toEqual([
+      { Logical: { width: 280, height: 56 } },
+      { Logical: { width: 280, height: 480 } },
+      { Logical: { width: 280, height: 56 } },
+    ]);
+    await userEvent.click(gear);
+    await screen.findByRole("dialog", { name: "Quick settings" });
+    await userEvent.click(within(surface).getByRole("button", { name: "Expand setup" }));
+    await waitFor(() => expect(surface).toHaveAttribute("data-mini", "full"));
+    expect(screen.queryByRole("dialog", { name: "Quick settings" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
+    expect(JSON.parse(JSON.stringify(ipc.calls.filter(c => c.cmd === "plugin:window|set_size").slice(-1)[0]?.args.value))).toEqual({ Logical: { width: 800, height: 672 } });
+  });
   it("collapses to toolbar and dot, then restores the selected interview and native size", async () => {
     callRoutes();
     mockWindows("main");

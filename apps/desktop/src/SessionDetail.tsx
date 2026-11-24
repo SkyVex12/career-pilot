@@ -1,4 +1,3 @@
-import { openPractice } from "./Practice";
 import { openAsk } from "./Ask";
 // One call after it ended: the Call screen right after it ends, and a past call opened from
 // History. Polls compact status for up to 5 minutes until the outputs are ready, then shows
@@ -230,16 +229,21 @@ export function SessionDetail({
   ) : transcript.length === 0 ? (
     <EmptyState icon={<Icon name="mic" size={28} />} title="Nothing was transcribed" />
   ) : (
-    <>{matchingFocus && <p className="ui-field-hint">{focusKey ? "Supporting transcript moment highlighted." : "The referenced transcript moment is unavailable."}</p>}<ol className="sd-transcript">
-      {transcript.map((r) => (
-        <li key={r.key} ref={r.key === focusKey ? focusedRow : undefined} aria-current={r.key === focusKey ? "location" : undefined}>
-          <span className="sd-at ui-num">{r.at}</span>
-          <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
-          <span className="sd-text">{r.key === focusKey ? <mark style={{ background:"rgba(183, 38, 75, 0.16)", color:"inherit", borderRadius:3 }}>{r.text}</mark> : r.text}</span>
-          {r.who === "Them" && <Button size="sm" onClick={() => leave(() => openPractice({ source_question: { session_id: sessionId, channel: "them", seg_id: Number(r.key.split(":")[1]) }, topic: "Rehearse a saved interview question" }))}>Practice this question</Button>}
-        </li>
-      ))}
-    </ol></>
+    <div className="sd-transcript-panel">
+      <div className="sd-output-toolbar">
+        {matchingFocus && <span className="ui-field-hint">{focusKey ? "Supporting transcript moment highlighted." : "The referenced transcript moment is unavailable."}</span>}
+        <CopyButton text={transcript.map((r) => r.at + " " + r.who + ": " + r.text).join("\n")} />
+      </div>
+      <ol className="sd-transcript">
+        {transcript.map((r) => (
+          <li key={r.key} ref={r.key === focusKey ? focusedRow : undefined} aria-current={r.key === focusKey ? "location" : undefined}>
+            <span className="sd-at ui-num">{r.at}</span>
+            <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
+            <span className="sd-text">{r.key === focusKey ? <mark style={{ background:"rgba(183, 38, 75, 0.16)", color:"inherit", borderRadius:3 }}>{r.text}</mark> : r.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 
   return (
@@ -358,16 +362,28 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   const toast = useToast();
   const copy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const focused = document.activeElement;
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.readOnly = true;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        try {
+          area.select();
+          if (!document.execCommand("copy")) throw new Error("Copy was refused");
+        } finally {
+          area.remove();
+          if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+        }
+      }
+      toast({ tone: "success", text: "Copied" });
     } catch {
-      const area = document.createElement("textarea");
-      area.value = text;
-      document.body.appendChild(area);
-      area.select();
-      document.execCommand("copy");
-      area.remove();
+      toast({ tone: "error", text: "Could not copy. Select the text and copy it manually." });
     }
-    toast({ tone: "success", text: "Copied" });
   }, [text, toast]);
   return (
     <Button size="sm" onClick={copy}>

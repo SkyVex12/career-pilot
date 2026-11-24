@@ -395,3 +395,6 @@ body:has(.workspace-card) > #root { height: 100%; overflow: hidden; }
 .device-status.is-ok { color:var(--success); }
 .device-status.is-bad { color:var(--danger); }
 .device-test-stable .device-meter { position:absolute;left:8px;right:calc(var(--device-test-width) + 16px);bottom:1px;height:4px; }
+
+/* Medium settings extend below the existing toolbar without exposing the full setup. */
+.session-window[data-mini="toolbar"][data-menu-open] .session-commandbar { top:0;transform:translateX(-50%); }
