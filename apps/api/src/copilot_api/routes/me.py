@@ -1,4 +1,4 @@
-"""`GET /me`, `PATCH /me`, `PATCH /me/settings`, `DELETE /me`, `GET /usage`.
+"""Account settings, deletion, monthly usage and confirmed lifetime usage totals.
 
 All of them are the signed-in account's, whichever profile the app has switched to
 (ARCHITECTURE.md, "Profiles"): preferences belong to the account, measured usage belongs to
@@ -238,4 +238,42 @@ async def usage(
             }
             for day, values in sorted(by_day.items())
         ],
+    }
+
+
+@router.get("/usage/totals")
+async def usage_totals(
+    svc: SvcDep,
+    user: AccountDep,
+    response: Response,
+    session_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Confirmed minutes consumed by this account, independently of billing.
+
+    Both counters use the same database snapshot across every workspace. The
+    session is the authenticated payer's, including after its call history was
+    deleted. Connected time still awaiting a worker commit appears on a later poll.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization"
+    async with svc.tx(user) as conn:
+        totals = await usage_ledger.usage_totals(
+            conn, payer_account_id=user.user_id, session_id=session_id
+        )
+    if totals is None:
+        raise HTTPException(404, "usage session not found")
+    current_us = totals.session_connected_microseconds
+    return {
+        "tracking_only": True,
+        "measurement": "connected-v1",
+        "as_of": datetime.now(UTC).isoformat(),
+        "total_seconds": totals.connected_microseconds / 1_000_000,
+        "total_minutes": totals.connected_microseconds / 60_000_000,
+        "total_sessions": totals.session_count,
+        "session_id": str(session_id) if session_id is not None else None,
+        "session_seconds": current_us / 1_000_000 if current_us is not None else None,
+        "session_minutes": current_us / 60_000_000 if current_us is not None else None,
+        "last_connected_at": totals.last_connected_at.isoformat()
+        if totals.last_connected_at is not None
+        else None,
     }

@@ -10,6 +10,7 @@ import { LiveNow, minutes, sessionTitle, statusBadge } from "./calls";
 import { Badge, Button, EmptyState, List, ListRow, ListState, PageHeader, SegmentedControl, Input } from "./ui";
 import { Icon } from "./ui/Icon";
 import { usePolling } from "./usePolling";
+import { AccountUsage } from "./Usage";
 import "./feature-pages.css";
 
 export { MODE_LABEL, minutes, sessionTitle, statusBadge } from "./calls";
@@ -22,24 +23,14 @@ const FILTERS = [
   ["meeting", "Meetings"],
 ] as const;
 
-function usageMoney(amountMinor: number, currency: string): string {
-  const format = new Intl.NumberFormat(undefined, { style: "currency", currency });
-  const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
-  return format.format(amountMinor / (10 ** digits));
-}
-
 function UsageSummary({ usage }: { usage: Usage }) {
   const measured = usage.measured_seconds ?? 0;
   const legacy = usage.legacy_estimated_seconds ?? usage.live_seconds;
   const calls = usage.measured_sessions ?? 0;
   const minutes = (seconds: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(seconds / 60);
-  const costs = usage.estimated_costs ?? [];
   return <div className="history-usage" role="group" aria-label="Account usage">
     <span className="ui-num">{minutes(measured)} connected minutes in {usage.period} (UTC) · {calls} {calls === 1 ? "call" : "calls"}</span>
-    <span>{costs.length ? `${costs.map(cost => usageMoney(cost.estimated_minor, cost.currency)).join(" · ")} estimated cost` : "No measured cost yet"} · <strong>Tracking only — no charges</strong></span>
-    {costs.filter(cost => cost.adjustment_minor !== 0).map(cost => <span key={cost.currency}>Includes {usageMoney(cost.adjustment_minor, cost.currency)} in adjustments.</span>)}
-    {legacy > 0 && <span>Historical estimate: {minutes(legacy)} minutes · excluded from cost.</span>}
-    <span className="history-usage-note">Account total across workspaces. Recent activity may take a moment to appear.</span>
+    {legacy > 0 && <span>Historical estimate: {minutes(legacy)} minutes · separate from recorded usage.</span>}
   </div>;
 }
 
@@ -170,11 +161,7 @@ export function History({
         title="Past calls"
         actions={<Button size="sm" loading={refreshing} disabled={loadingMore} onClick={() => void read({ refresh: true })}>Refresh</Button>}
         meta={
-          usage ? (
-            <UsageSummary usage={usage} />
-          ) : (
-            <span aria-hidden="true">&nbsp;</span>
-          )
+          <div className="history-usage"><AccountUsage active={active && ready} running={running} />{usage && <UsageSummary usage={usage} />}</div>
         }
       />
       {active && <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />}

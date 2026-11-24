@@ -28,6 +28,7 @@ const call = (id: string, mode: SessionItem["mode"], title: string | null, statu
 function routes(sessions: SessionItem[], next: string | null = null) {
   ipc.api("GET", /^\/sessions$/, (path) => (path.includes("before=") ? { sessions: [call("old", "meeting", "Older one")], next_before: null } : { sessions, next_before: next }));
   ipc.api("GET", /^\/usage$/, () => ({ period: "October", live_seconds: 9000, live_minutes: 150, sessions: sessions.length, measured_seconds: 9000, measured_sessions: sessions.length, legacy_estimated_seconds: 0, tracking_only: true, estimated_costs: [{ currency: "USD", estimated_minor: 1250, adjustment_minor: 0 }] }));
+  ipc.api("GET", /^\/usage\/totals$/, () => ({ tracking_only: true, measurement: "connected-v1", as_of: iso, total_seconds: 18000, total_minutes: 300, total_sessions: 10, session_id: null, session_seconds: null, session_minutes: null, last_connected_at: iso }));
   ipc.api("GET", /^\/employers$/, () => ({ employers: [{ id: "e1", name: "Fernhill Logistics" }] }));
   ipc.api("GET", /^\/sessions\/live$/, () => ({ sessions: [] }));
 }
@@ -82,8 +83,8 @@ describe("History list", () => {
     expect(within(list).getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
     expect(within(list).getByText("Processing")).toBeInTheDocument();
     expect(screen.getByText(/150 connected minutes in October \(UTC\) · 2 calls/)).toBeInTheDocument();
-    expect(screen.getByText(/\$12.50 estimated cost/)).toBeInTheDocument();
-    expect(screen.getByText("Tracking only — no charges")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("group", { name: "Lifetime account usage" })).toHaveTextContent("300.0 total minutes used"));
+    expect(screen.queryByText(/estimated cost/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText("Standups"));
     expect(screen.queryByText("Interview · Northwind technical")).not.toBeInTheDocument();
@@ -107,29 +108,26 @@ describe("History list", () => {
     expect(await screen.findByRole("list", { name: "Past calls" })).toBeInTheDocument();
   });
 
-  it("keeps historical estimates out of measured cost and always refreshes usage", async () => {
+  it("keeps historical estimates separate from consumed minutes and always refreshes usage", async () => {
     routes([]);
     ipc.api("GET", /^\/usage$/, () => ({ period: "2026-11", live_seconds: 4200, live_minutes: 70, sessions: 3, measured_seconds: 600, measured_sessions: 1, legacy_estimated_seconds: 3600, tracking_only: true, estimated_costs: [{ currency: "USD", estimated_minor: 58, adjustment_minor: -25 }] }));
     view();
     const summary = await screen.findByRole("group", { name: "Account usage" });
     expect(summary).toHaveTextContent("10 connected minutes in 2026-11 (UTC) · 1 call");
-    expect(summary).toHaveTextContent("$0.58 estimated cost");
-    expect(summary).toHaveTextContent("Includes -$0.25 in adjustments.");
-    expect(summary).toHaveTextContent("Historical estimate: 60 minutes · excluded from cost.");
-    expect(summary).toHaveTextContent("Tracking only — no charges");
+    expect(summary).toHaveTextContent("Historical estimate: 60 minutes · separate from recorded usage.");
+    expect(summary).not.toHaveTextContent(/cost|charges|adjustments/);
     const usageReads = ipc.calls.filter(call => call.cmd === "api_call" && call.args.path === "/usage");
     expect(usageReads.length).toBeGreaterThan(0);
     expect(usageReads.every(call => call.args.refresh === true)).toBe(true);
   });
 
-  it("labels an older server's totals as historical instead of inventing measured charges", async () => {
+  it("labels an older server's totals as historical instead of measured usage", async () => {
     routes([]);
     ipc.api("GET", /^\/usage$/, () => ({ period: "2026-11", live_seconds: 300, live_minutes: 5, sessions: 1 }));
     view();
     const summary = await screen.findByRole("group", { name: "Account usage" });
     expect(summary).toHaveTextContent("0 connected minutes");
-    expect(summary).toHaveTextContent("Historical estimate: 5 minutes · excluded from cost.");
-    expect(summary).toHaveTextContent("No measured cost yet");
+    expect(summary).toHaveTextContent("Historical estimate: 5 minutes · separate from recorded usage.");
   });
 
   it("settles final usage after a local call ends and keeps remote usage fresh only while visible", async () => {
@@ -156,7 +154,6 @@ describe("History list", () => {
       measuredSeconds = 120;
       await act(async () => vi.advanceTimersByTimeAsync(30_000));
       expect(summary).toHaveTextContent("2 connected minutes");
-      expect(summary).toHaveTextContent("$0.17 estimated cost");
 
       // Another device continues using the account while this desktop stays idle.
       measuredSeconds = 180;

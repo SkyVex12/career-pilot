@@ -39,6 +39,11 @@ def resume_digest(uid: Id, resume_version_id: Id) -> str:
     return f"digest:{{{uid}}}:{{{resume_version_id}}}"
 
 
+def resume_digest_repair(uid: Id, resume_revision_id: Id) -> str:
+    """Short lease coalescing requests to restore a source revision's derived cache."""
+    return f"digest:{{{uid}}}:repair:{resume_revision_id}"
+
+
 def pack(uid: Id, pack_id: Id) -> str:
     return f"pack:{{{uid}}}:{{{pack_id}}}"
 

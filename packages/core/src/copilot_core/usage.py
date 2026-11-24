@@ -74,6 +74,14 @@ class UsageSummary:
 
 
 @dataclass(frozen=True)
+class UsageTotals:
+    connected_microseconds: int
+    session_count: int
+    session_connected_microseconds: int | None
+    last_connected_at: datetime | None
+
+
+@dataclass(frozen=True)
 class LegacyUsageDayTotal:
     day: date
     estimated_microseconds: int
@@ -288,6 +296,41 @@ async def session_microseconds(conn: Conn, *, session_id: UUID) -> int:
             " where session_id=$1",
             session_id,
         )
+    )
+
+
+async def usage_totals(
+    conn: Conn, *, payer_account_id: UUID, session_id: UUID | None = None
+) -> UsageTotals | None:
+    """One snapshot of confirmed lifetime and optional session time for an account.
+
+    ``covered`` is updated atomically with accepted intervals, merging adjacent
+    checkpoints. Polling an active call therefore reads its connected ranges rather
+    than every checkpoint ever written. It never extrapolates a running interval or
+    adds legacy wall-clock estimates. A missing or foreign requested session returns
+    None, including when its workspace is shared with the authenticated account.
+    """
+    row = await conn.fetchrow(
+        "select coalesce(sum(t.duration),0) as duration,"
+        " count(*) filter(where t.duration>0) as sessions,"
+        " coalesce(sum(t.duration) filter(where s.session_id=$2),0) as session_duration,"
+        " coalesce(bool_or(s.session_id=$2),false) as session_found,"
+        " max(t.last_connected_at) as last_connected_at"
+        " from app.live_usage_sessions s left join lateral ("
+        " select sum((extract(epoch from upper(r)-lower(r))*1000000)::bigint) as duration,"
+        " max(upper(r)) as last_connected_at from unnest(s.covered) as r"
+        " ) t on true where s.payer_account_id=$1",
+        payer_account_id,
+        session_id,
+    )
+    assert row is not None
+    if session_id is not None and not row["session_found"]:
+        return None
+    return UsageTotals(
+        int(row["duration"]),
+        row["sessions"],
+        int(row["session_duration"]) if session_id is not None else None,
+        row["last_connected_at"],
     )
 
 

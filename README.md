@@ -212,6 +212,7 @@ The API (base path `/v1`, bearer token on every request):
 | `GET /sessions/{id}/transcript`, `DELETE /sessions/{id}` | The decrypted transcript, if stored; delete a session and its log |
 | `GET /sessions/{id}/replay` | The call as the overlay showed it (both sides and every suggestion), for History |
 | `GET /usage` | Live minutes this month (`?month=YYYY-MM` for another) |
+| `GET /usage/totals` | Confirmed lifetime minutes across workspaces; `?session_id=UUID` also returns this call's minutes |
 
 ### Running the gateway locally
 
@@ -683,18 +684,18 @@ For teammates (Windows 10 or 11). The installer is built on every merge that cha
    this app".
 5. Settings: pick the microphone and the speakers the call plays on.
 
-**Updates** install by themselves. The app asks the releases bucket for a newer version at
-start and every four hours, downloads it in the background and checks its signature (only
-installers signed with the release key are installed). It never installs during a call: only
-when no session is running or starting, at once if you have not touched the app since it
-started, otherwise after two minutes without a click, key press or scroll in it (a session's end
-counts as activity too). A status bar under the tabs shows each step as it happens:
-downloading (with its percentage), ready (with the time left and **Restart now**), installing,
-then **Updated to x.y.z** after the restart. Settings → Updates → **Ask me first** downloads
-but waits for your **Install and restart** instead. A failed download or install shows in the
-bar and is retried after half an hour; the running version keeps working meanwhile. Settings
-shows the version and the live check status (**Check now**). For support, every step is also
-written to `%LOCALAPPDATA%\com.copilot.desktop\logs\updates.log`.
+**Updates** use the in-app **App update** notification. The app asks the releases bucket for a
+newer version at start and every four hours, downloads it in the background and checks its
+signature (only installers signed with the release key are installed). **Ask me first** is the default: the
+notification shows download progress and waits for **Install and restart** when ready.
+Settings → Updates also offers automatic installation. It never installs during a call or
+while a session starts; in automatic mode it installs at once if you have not touched the app
+since it started, otherwise after two minutes without a click, key press or scroll (a session's
+end counts as activity too). The notification shows the time left and **Restart now**,
+installation progress, then **Updated to x.y.z** after the restart. A failed download or install
+shows in the notification and is retried after half an hour; the running version keeps working.
+Settings shows the version and the live check status (**Check now**). For support, every step
+is also written to `%LOCALAPPDATA%\com.copilot.desktop\logs\updates.log`.
 
 If the server no longer supports your version (see "The minimum app version"), the session
 stops with a note and the app updates at once, in either mode.

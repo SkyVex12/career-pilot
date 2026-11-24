@@ -30,6 +30,7 @@ import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
 import { OverlayAudio } from "./OverlayAudio";
 import { LiveCallLanguage } from "./LiveCallLanguage";
+import { LiveUsage } from "./Usage";
 import { OverlayQuickSettings } from "./OverlayQuickSettings";
 import { startWindowResize } from "./windowDrag";
 
@@ -197,6 +198,7 @@ export default function Overlay() {
       <header className="ov-head" data-native-drag-region>
         <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
         {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
+        {!guest && <LiveUsage session={s} compact />}
         <span className="ov-spacer" data-native-drag-region />
         <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
         <OverlayQuickSettings

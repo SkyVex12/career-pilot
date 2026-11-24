@@ -30,6 +30,7 @@ from starlette.websockets import WebSocket, WebSocketState
 from copilot_core import (
     careeros,
     jobs,
+    keys,
     knowledge,
     languages,
     logs,
@@ -2786,6 +2787,57 @@ class SessionManager:
         except Exception as e:
             log.warning("could not ask for the application's packs: %s", e)
 
+    async def request_resume_digest(
+        self,
+        uid: UUID,
+        actor: UUID,
+        job_id: UUID | None,
+        interview_id: UUID | None,
+    ) -> None:
+        """Repair missing or legacy derived context through the normal worker path.
+
+        A short source-specific lease coalesces reconnects. Each new lease gets a new
+        operation key so a completed rebuild cannot prevent recovery after cache loss.
+        The worker reads durable memory under its source lock and proves its provenance;
+        the gateway never stamps an old digest with the current source revision.
+        """
+        svc = self.svc
+        if svc.pool is None:
+            return
+        async with asyncio.timeout(2):
+            async with user_tx(svc.pool, uid, actor_account_id=actor) as conn:
+                if job_id is not None or interview_id is not None:
+                    application = await self._application_of(conn, job_id, interview_id)
+                    paired = await resumes.pairing(conn, application) if application else None
+                    version = paired.resume_version_id if paired else None
+                else:
+                    version = await resumes.base_version(conn, uid)
+                if version is None:
+                    return
+                revision = await conn.fetchval(
+                    "select current_revision_id from app.resume_versions where id=$1", version
+                )
+            if revision is None:
+                return
+            repair_key = keys.resume_digest_repair(uid, revision)
+            repair_id = str(uuid7())
+            if not await svc.store.client.set(repair_key, repair_id, nx=True, ex=30):
+                return
+            try:
+                await svc.jobs.send(
+                    jobs.digest_rebuild(
+                        uid,
+                        version,
+                        f"cache-repair:{repair_id}",
+                        resume_revision_id=revision,
+                    )
+                )
+            except BaseException:
+                with contextlib.suppress(*UNAVAILABLE, TimeoutError):
+                    async with asyncio.timeout(0.2):
+                        await svc.store.client.delete(repair_key)
+                raise
+
     def live_for_user(self, uid: UUID) -> Session | None:
         for s in self.sessions.values():
             if s.principal.user_id == uid and not s.ending:
@@ -2825,6 +2877,7 @@ class SessionManager:
         except AuthError as e:
             await self.reject(ws, CLOSE_UNAUTHORIZED, "unauthorized", str(e))
             return
+        actor_account.set(principal.user_id)
         if s.require_career_os and not await self.linked(principal):
             # 4410: the app stops and does not reconnect; the error says why.
             await self.reject(ws, CLOSE_REPLACED, careeros.REQUIRED_CODE, careeros.REQUIRED_MESSAGE)
@@ -2945,7 +2998,7 @@ class SessionManager:
         ):
             await self.reject(ws, CLOSE_INTERNAL, "unavailable", "session database is unavailable")
             return
-        actor_account.set(principal.user_id)
+        actor_account.set((account or principal).user_id)
         try:
             spoken_language = languages.validate_language(
                 msg.spoken_language if msg.spoken_language is not None else "en",
@@ -3075,20 +3128,43 @@ class SessionManager:
                 )
                 return
             await store.take_lease(sid, self.svc.task_id)
-        except (*UNAVAILABLE, asyncpg.PostgresError, ContextNotReady) as exc:
+        except (*UNAVAILABLE, asyncpg.PostgresError, ContextNotReady, TimeoutError) as exc:
+            cause = exc.__cause__ if isinstance(exc, ContextNotReady) else exc
+            log.warning(
+                "session admission failed: error=%s sqlstate=%s",
+                type(exc).__name__,
+                getattr(cause, "sqlstate", None),
+            )
             if session.durable is not None:
                 with contextlib.suppress(Exception):
                     await session.durable.close("admission_failed")
             with contextlib.suppress(*UNAVAILABLE):
                 await store.release_lease(sid, self.svc.task_id)
                 await store.release_active(uid, sid)
+            if isinstance(exc, ContextNotReady):
+                try:
+                    await self.request_resume_digest(
+                        uid, session.account_id, msg.job_id, msg.interview_id
+                    )
+                except Exception as repair_error:
+                    log.warning(
+                        "resume context repair request failed: error=%s sqlstate=%s",
+                        type(repair_error).__name__,
+                        getattr(repair_error, "sqlstate", None),
+                    )
+                await self.reject(
+                    ws,
+                    CLOSE_RATE_LIMITED,
+                    "memory_not_ready",
+                    "Preparing your resume context. Retrying in a few seconds.",
+                    retry_after_ms=5000,
+                )
+                return
             await self.reject(
                 ws,
                 CLOSE_INTERNAL,
-                "memory_not_ready" if isinstance(exc, ContextNotReady) else "unavailable",
-                str(exc)
-                if isinstance(exc, ContextNotReady)
-                else "session state is unavailable; retry",
+                "unavailable",
+                "session state is unavailable; retry",
             )
             return
         self.sessions[sid] = session
@@ -3144,6 +3220,7 @@ class SessionManager:
         logs.set_ids(session_id=sid)
         log.info("session resume from seq %d", msg.last_seq)
         actor = (account or principal).user_id
+        actor_account.set(actor)
         if self.svc.pool is None and (
             self.svc.settings.database_url or self.svc.settings.env not in ("dev", "test")
         ):
