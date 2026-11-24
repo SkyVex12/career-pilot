@@ -2,6 +2,7 @@
 visibility and SIGTERM. Then every job type in the catalog delivered twice."""
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -10,7 +11,7 @@ import boto3
 import pytest
 import pytest_asyncio
 
-from copilot_core import jobs
+from copilot_core import jobs, operations
 from copilot_core.teststack import SQS_ENDPOINT
 from copilot_worker.runtime import (
     HANDLERS,
@@ -51,7 +52,12 @@ async def run_until(consumer: Consumer, cond: Any, within_s: float = 10) -> None
     task = asyncio.create_task(consumer.run(stop))
     try:
         async with asyncio.timeout(within_s):
-            while not cond():  # noqa: ASYNC110 - polls a plain predicate
+            while True:
+                ready = cond()
+                if inspect.isawaitable(ready):
+                    ready = await ready
+                if ready:
+                    break
                 await asyncio.sleep(0.05)
     finally:
         stop.set()
@@ -83,23 +89,38 @@ async def status(stack: Stack, key: str) -> tuple[str, int] | None:
     return None if row is None else (row["status"], row["attempts"])
 
 
-async def test_duplicate_delivery_runs_once(stack: Stack, queue: SqsQueue) -> None:
+async def test_duplicate_delivery_runs_once(
+    stack: Stack, queue: SqsQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runs: list[str] = []
+    duplicate_busy = asyncio.Event()
+    # Exercise an in-flight duplicate without waiting for the production 10-minute timeout.
+    monkeypatch.setitem(VISIBILITY, "pack.build", 1)
 
     async def handle(job: Job, ctx: Any) -> None:
         runs.append(job.idempotency_key)
+        await duplicate_busy.wait()
 
     key = f"pack.build:dup:{uuid.uuid4()}"
     m = message("pack.build", key)
     await send(queue, m)
     await send(queue, m)  # SQS may deliver a message twice; producers may send twice too
     c = consumer(stack, queue, {"pack.build": handle})
-    await run_until(c, lambda: len(runs) >= 1 and c.processed >= 1)
-    for _ in range(40):
-        if await queue_empty(queue):
-            break
-        await run_until(c, lambda: True, within_s=2)
+    claim = c.runs.claim
+
+    async def observe_claim(job: Job, lease_s: float) -> operations.Lease | str:
+        result = await claim(job, lease_s)
+        if result == "busy":
+            duplicate_busy.set()
+        return result
+
+    monkeypatch.setattr(c.runs, "claim", observe_claim)
+    # Keep consuming through the busy copy's redelivery and acknowledgement. Stopping
+    # after the first execution leaves that copy invisible, which is expected behavior.
+    await run_until(c, lambda: queue_empty(queue))
+    assert duplicate_busy.is_set()
     assert runs == [key]
+    assert c.processed == 1
     assert await status(stack, key) == ("done", 1)
     assert await queue_empty(queue)
 
