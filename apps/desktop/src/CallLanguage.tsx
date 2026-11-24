@@ -20,7 +20,7 @@ export function validCatalog(value: unknown): value is Catalog {
 }
 
 /** Mounted under the account/profile boundary; a draft never crosses profiles. */
-export function CallLanguage({ value, onChange, disabled = false, onReady, children }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void; children?: ReactNode }) {
+export function CallLanguage({ value, onChange, disabled = false, onReady, answerFormat, children }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void; answerFormat?: ReactNode; children?: ReactNode }) {
   const active = useDataActivity();
   const initialized = useRef(false);
   const [items, setItems] = useState<Catalog["items"]>([{ id: "en", name: "English" }]);
@@ -61,22 +61,26 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
       </span>
     </summary>
     <div className="ui-disclosure-body call-customize">
-    <div className="customize-row">
-      <span className="customize-label">Language<HelpTip label={error ? "Language error" : "Language"}>{error && <>{error} </>}Spoken language for transcription and answers. Choose “Use as default” to remember it for future calls with this profile.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
-      <div className="customize-control customize-language-control">
-        <Field label="Language" hideLabel>
-          <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
-            {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
-            {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
-          </Select>
-        </Field>
-        <Checkbox label="Use as default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
-          setRemember(checked);
-          if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
-        }} />
-        {error && <Button size="sm" aria-label="Retry language settings" disabled={disabled || loading} onClick={() => setRevision(n => n + 1)}>Retry</Button>}
+      <div className="customize-group">
+        <div className="customize-row">
+          <span className="customize-label">Language<HelpTip label={error ? "Language error" : "Language"}>{error && <>{error} </>}Spoken language for transcription and answers. Choose “Use as default” to remember it for future calls with this profile.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
+          <div className="customize-control customize-language-control">
+            <Field label="Language" hideLabel>
+              <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
+                {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
+                {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
+              </Select>
+            </Field>
+            <Checkbox label="Use as default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
+              setRemember(checked);
+              if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
+            }} />
+            {error && <Button size="sm" aria-label="Retry language settings" disabled={disabled || loading} onClick={() => setRevision(n => n + 1)}>Retry</Button>}
+          </div>
+        </div>
+        {answerFormat}
       </div>
+      {children && <div className="customize-group">{children}</div>}
     </div>
-    {children}
-  </div></details>;
+  </details>;
 }
