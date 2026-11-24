@@ -87,6 +87,7 @@ create table app.company_document_revisions (
 
 alter table app.resume_versions add column current_revision_id uuid;
 alter table app.work_logs add column current_revision_id uuid;
+alter table app.work_logs add column extracted_revision_id uuid;
 alter table app.company_documents add column current_revision_id uuid;
 
 insert into app.resume_revisions
@@ -105,7 +106,10 @@ insert into app.work_log_revisions
   created_at)
  select id,user_id,employer_id,1,content_sha256,text_enc,key_version,day,created_at
  from app.work_logs;
-update app.work_logs v set current_revision_id=r.id
+-- Backfill both pointers before installing deferred revision FKs and revision triggers.
+-- Updating extracted rows afterwards queues FK events that block subsequent ALTER TABLE.
+update app.work_logs v set current_revision_id=r.id,
+ extracted_revision_id=case when v.extracted_sha256=v.content_sha256 then r.id else null end
  from app.work_log_revisions r where r.work_log_id=v.id;
 insert into app.company_document_revisions
  (document_id,workspace_id,employer_id,revision_number,content_sha256,s3_key,name_enc,key_version,
@@ -123,6 +127,9 @@ alter table app.resume_versions add constraint resume_current_revision_fk
  references app.resume_revisions(id,resume_version_id,workspace_id) deferrable initially deferred;
 alter table app.work_logs add constraint work_log_current_revision_fk
  foreign key(current_revision_id,id,user_id)
+ references app.work_log_revisions(id,work_log_id,workspace_id) deferrable initially deferred;
+alter table app.work_logs add constraint work_log_extracted_revision_fk
+ foreign key(extracted_revision_id,id,user_id)
  references app.work_log_revisions(id,work_log_id,workspace_id) deferrable initially deferred;
 alter table app.company_documents add constraint company_document_current_revision_fk
  foreign key(current_revision_id,id,user_id)
@@ -289,13 +296,6 @@ end $$;
 grant select(id,resume_version_id,workspace_id,revision_number,content_sha256)
  on app.resume_revisions to app_gateway;
 grant select(current_revision_id,content_sha256) on app.resume_versions to app_gateway;
-
-alter table app.work_logs add column extracted_revision_id uuid;
-update app.work_logs set extracted_revision_id=current_revision_id
- where extracted_sha256=content_sha256;
-alter table app.work_logs add constraint work_log_extracted_revision_fk
- foreign key(extracted_revision_id,id,user_id)
- references app.work_log_revisions(id,work_log_id,workspace_id) deferrable initially deferred;
 
 alter table app.resume_versions force row level security;
 alter table app.work_logs force row level security;
