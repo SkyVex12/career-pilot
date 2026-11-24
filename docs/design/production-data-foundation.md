@@ -1,8 +1,9 @@
 # Production data foundation
 
-Implemented in the working tree, November 2026. Migrations `0029`–`0035` and the
-corresponding application changes have not been deployed to the shared VM. This is
-the schema and execution model to carry forward into production. Scaling the
+Introduced in November 2026 by migrations `0029`–`0035` and the corresponding
+application changes. Check the deployed image tag and `public.schema_migrations`
+for a particular environment's rollout status. This is the schema and execution
+model to carry forward into production. Scaling the
 deployment does not require replacing this ownership model or moving billing out
 of interview-history rows later.
 
@@ -166,9 +167,9 @@ account sharding, database-per-user, or universal entity table is introduced.
 
 ## Rollout on the existing VM
 
-This change does not provision infrastructure, increase VM sizes, remove idle shutdown,
-apply shared-database migrations, or collect money. The current tiny testing deployment
-can run these services. It is not certified for 1,000 concurrent calls.
+The rollout preserves VM sizing, service topology and idle shutdown. Payment collection
+remains disabled. The current testing deployment can run these services; it is not
+certified for 1,000 concurrent calls.
 
 1. Take a verified database backup and preserve the previous image/config versions.
    Rehearse the full migration chain on a restored copy, including RLS roles and keys.
@@ -183,6 +184,13 @@ can run these services. It is not certified for 1,000 concurrent calls.
 5. If cutover fails, keep writes stopped and use the rehearsed forward fix or restore
    the matched database backup and old application versions. Do not edit applied SQL
    files or assume image rollback alone reverses the ownership migration.
+
+The GCP release helper implements this sequence with `stage.py deploy --coordinated`.
+An operator first runs `stage.py prepare-host` when the host helper changes, updating
+its boot copy and installed copy without restarting services or changing IAM. CI verifies
+that boot copy before deployment. A persistent maintenance marker keeps writers stopped
+after a migration failure, including across VM restarts. See the GCP deployment runbook
+for recovery commands and backup locations.
 
 Before serving the eventual large production workload, separately validate the
 deployment: representative load tests, provider quotas, fleet connection budgets,

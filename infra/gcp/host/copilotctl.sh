@@ -6,7 +6,7 @@
 # /etc in memory) and runs `copilotctl boot`. Everything runs as root.
 #
 #   copilotctl boot                  mount the data disk, firewall, units; start everything
-#   copilotctl deploy <tag>          migrations, then each app service on images <tag>
+#   copilotctl deploy <tag> [--coordinated]  compatible images, or verified schema cutover
 #   copilotctl rollback              deploy the tag before the current one
 #   copilotctl status                tag, containers and their health
 #   copilotctl restart [name...]     restart services (picks up new config and secrets)
@@ -31,6 +31,7 @@ export HOME=/var/lib/copilot/home
 
 APP_SERVICES=(proxy gateway api worker)
 DATA_SERVICES=(postgres valkey elasticmq)
+MAINTENANCE=$STATE/maintenance
 
 log() { echo "copilotctl: $*" >&2; }
 die() { log "$*"; exit 1; }
@@ -191,7 +192,12 @@ boot() {
   docker-credential-gcr configure-docker --registries="$(registry | cut -d/ -f1)" >/dev/null
   systemctl daemon-reload
   systemctl start copilot-postgres copilot-valkey copilot-elasticmq
-  systemctl start copilot-scheduler.timer copilot-backup.timer copilot-idle.timer
+  systemctl start copilot-backup.timer
+  if [ -f "$MAINTENANCE" ]; then
+    log "maintenance hold survives reboot; app writers, scheduler and idle stop stay disabled"
+    return
+  fi
+  systemctl start copilot-scheduler.timer copilot-idle.timer
   if [ "$(tag)" != none ]; then
     systemctl start "${APP_SERVICES[@]/#/copilot-}"
   else
@@ -232,10 +238,206 @@ prune_images() {
   docker image prune -f >/dev/null 2>&1 || true
 }
 
+candidate_database() {
+  # Validate every already-applied checksum, including versions absent from an old image.
+  # Rehearsal changes only the database URL path; secrets never appear in arguments/logs.
+  local action=$1 selected=$2 database=${3:-copilot}
+  docker run --rm -i --network host --user 10004 --memory 384m \
+    --env-file "$RUN/migrate.env" --entrypoint python "$(registry)/worker:$selected" \
+    - "$action" "$database" <<'PY'
+import asyncio, os, sys
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+import asyncpg
+from copilot_core.migrate import apply, load_migrations
+async def main():
+    url = urlunsplit(urlsplit(os.environ['COPILOT_DATABASE_URL'])._replace(path='/'+sys.argv[2]))
+    migrations = load_migrations(Path('/app/migrations'))
+    expected = {m.version:m.checksum for m in migrations}
+    conn = await asyncpg.connect(url)
+    try:
+        exists = await conn.fetchval("select to_regclass('public.schema_migrations') is not null")
+        rows = await conn.fetch('select version,checksum from public.schema_migrations') if exists else []
+        for row in rows:
+            if expected.get(row['version']) != row['checksum']:
+                raise SystemExit('candidate image is incompatible with applied migration '+row['version'])
+    finally:
+        await conn.close()
+    if sys.argv[1] == 'migrate':
+        await apply(url, Path('/app/migrations'))
+    else:
+        print(len(expected)-len(rows))
+asyncio.run(main())
+PY
+}
+
+freeze_admission() {
+  # Reload nginx to reject new HTTP/WebSocket requests without closing established calls.
+  # If any existing call remains, the cutover aborts and restores the original configuration.
+  [ "$(tag)" = none ] && return 0
+  docker exec copilot-proxy sh -ec '
+    cp /etc/nginx/nginx.conf /tmp/copilot-before-cutover.conf
+    sed "/listen 80 default_server;/a\\        return 503;" /tmp/copilot-before-cutover.conf > /etc/nginx/nginx.conf
+    nginx -t
+    nginx -s reload'
+  local code
+  for _ in $(seq 1 20); do
+    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1/healthz || true)
+    [ "$code" = 503 ] && return 0
+    sleep 1
+  done
+  die "proxy did not confirm maintenance admission gate"
+}
+
+restore_admission() {
+  [ "$(tag)" = none ] && return 0
+  docker exec copilot-proxy sh -ec '
+    if [ -f /tmp/copilot-before-cutover.conf ]; then
+      cp /tmp/copilot-before-cutover.conf /etc/nginx/nginx.conf
+      nginx -t && nginx -s reload
+    fi'
+}
+
+assert_drained() {
+  local connections pending key keys_file=$RUN/cutover-log-keys
+  connections=$(ss -Htn state established '( sport = :8081 )' | wc -l)
+  [ "$connections" -eq 0 ] || die "active gateway connections remain; finish calls before cutover"
+  docker exec copilot-valkey valkey-cli --raw --scan --pattern 'sess:*:lease' > "$keys_file"
+  [ ! -s "$keys_file" ] || die "session leases remain; finish or expire disconnected calls before cutover"
+  docker exec copilot-valkey valkey-cli --raw --scan --pattern 'sess:*:log' > "$keys_file"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    pending=$(docker exec copilot-valkey valkey-cli --raw XLEN "$key")
+    [[ $pending =~ ^[0-9]+$ ]] && [ "$pending" -eq 0 ] ||
+      die "retained session logs remain; let the existing worker finish before cutover"
+  done < "$keys_file"
+  if [ "$(tag)" != none ]; then
+    pending=$(docker exec copilot-postgres psql -U postgres -d copilot -At -v ON_ERROR_STOP=1 -c \
+      "select (select count(*) from app.sessions where ended_at is null) + (select count(*) from app.ask_messages where status='pending') + (select count(*) from app.practice_operations where status='pending')")
+    [[ $pending =~ ^[0-9]+$ ]] && [ "$pending" -eq 0 ] ||
+      die "unfinished sessions or interactive work remain; drain or resolve them before cutover"
+  fi
+}
+
+stop_writers() {
+  systemctl stop copilot-scheduler.timer copilot-scheduler.service copilot-idle.timer \
+    copilot-backup.timer copilot-backup.service
+  systemctl stop copilot-proxy copilot-gateway copilot-api copilot-worker
+}
+
+cutover_backup() {
+  local bucket stamp object
+  bucket=$(attr copilot-backup-bucket)
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)-$$
+  object=postgres/cutover-$stamp.dump
+  CUTOVER_BACKUP=$DATA/backups/cutover-$stamp.dump
+  umask 077
+  docker exec copilot-postgres pg_dump -U postgres -d copilot -Fc > "$CUTOVER_BACKUP.tmp"
+  docker exec -i copilot-postgres pg_restore --list < "$CUTOVER_BACKUP.tmp" >/dev/null
+  mv "$CUTOVER_BACKUP.tmp" "$CUTOVER_BACKUP"
+  curl -sfS -X POST -H "Authorization: Bearer $(token)" -H "Content-Type: application/octet-stream" \
+    --data-binary "@$CUTOVER_BACKUP" \
+    "https://storage.googleapis.com/upload/storage/v1/b/$bucket/o?uploadType=media&name=$object" >/dev/null
+  curl -sfS -H "Authorization: Bearer $(token)" -o "$CUTOVER_BACKUP.verify" \
+    "https://storage.googleapis.com/storage/v1/b/$bucket/o/${object//\//%2F}?alt=media"
+  cmp "$CUTOVER_BACKUP" "$CUTOVER_BACKUP.verify"
+  rm -f "$CUTOVER_BACKUP.verify"
+  printf '%s\n' "gs://$bucket/$object" > "$STATE/cutover-backup"
+  log "verified backup gs://$bucket/$object"
+}
+
+rehearse() {
+  local selected=$1 database=copilot_rehearsal_$$ result=0
+  docker exec copilot-postgres createdb -U postgres "$database"
+  # pg_dump includes database-local grants. Existing cluster roles are reused; the
+  # rehearsal deliberately never runs copilot-db-logins or touches live role passwords.
+  docker exec -i copilot-postgres pg_restore -U postgres -d "$database" --exit-on-error \
+    < "$CUTOVER_BACKUP" || result=$?
+  if [ "$result" -eq 0 ]; then candidate_database migrate "$selected" "$database" || result=$?; fi
+  docker exec copilot-postgres dropdb -U postgres "$database" || result=$?
+  [ "$result" -eq 0 ] || die "restored-copy migration rehearsal failed; live schema unchanged"
+}
+
+cutover_phase() {
+  CUTOVER_PHASE=$1
+  printf 'old=%s\nnew=%s\nphase=%s\n' "$CUTOVER_OLD" "$CUTOVER_NEW" "$CUTOVER_PHASE" \
+    > "$MAINTENANCE.next"
+  mv "$MAINTENANCE.next" "$MAINTENANCE"
+}
+
+cutover_failed() {
+  local result=$?
+  trap - EXIT
+  rm -f "$RUN/cutover-start"
+  if [ "$result" -ne 0 ]; then
+    case $CUTOVER_PHASE in
+      migrate|start)
+        cutover_phase "$CUTOVER_PHASE"
+        stop_writers || true
+        log "cutover failed after migration began; writers remain held on $CUTOVER_NEW"
+        log "inspect $MAINTENANCE and $STATE/cutover-backup; no image-only rollback is safe"
+        ;;
+      *)
+        rm -f "$MAINTENANCE"
+        if [ "$CUTOVER_STOPPED" = true ]; then
+          [ "$CUTOVER_OLD" = none ] || systemctl start "${APP_SERVICES[@]/#/copilot-}"
+        else
+          restore_admission || true
+        fi
+        systemctl start copilot-scheduler.timer copilot-idle.timer copilot-backup.timer
+        log "cutover aborted before live migration; old schema and services retained"
+        ;;
+    esac
+  fi
+  exit "$result"
+}
+
+coordinated_deploy() (
+  set -e
+  CUTOVER_NEW=$1 CUTOVER_OLD=$(tag) CUTOVER_PHASE=admission CUTOVER_STOPPED=false
+  trap cutover_failed EXIT
+  cutover_phase admission
+  freeze_admission
+  assert_drained
+  cutover_phase quiesce
+  CUTOVER_STOPPED=true
+  stop_writers
+  # Stop completion may append final retained entries; verify once more before backup.
+  assert_drained
+  cutover_phase backup
+  cutover_backup
+  cutover_phase rehearse
+  rehearse "$CUTOVER_NEW"
+  cutover_phase migrate
+  printf '%s\n' "$CUTOVER_NEW" > "$STATE/image-tag"
+  docker_run migrate wait
+  cutover_phase start
+  touch "$RUN/cutover-start"
+  for s in api worker gateway proxy; do
+    systemctl start "copilot-$s"
+    healthy "$s" || die "$s failed candidate health; keeping the schema cutover held"
+  done
+  systemctl start copilot-scheduler.timer copilot-idle.timer copilot-backup.timer
+  if [ "$CUTOVER_OLD" != none ] && [ "$CUTOVER_OLD" != "$CUTOVER_NEW" ]; then
+    printf '%s\n' "$CUTOVER_OLD" >> "$STATE/tag-history"
+  fi
+  rm -f "$RUN/cutover-start" "$MAINTENANCE"
+  log "schema cutover deployed $CUTOVER_NEW; prior images require their matched database backup"
+)
+
+hold() {
+  printf 'new=%s\nphase=health-failed\n' "$(tag)" > "$MAINTENANCE"
+  rm -f "$RUN/cutover-start"
+  stop_writers
+  log "writers held; inspect schema, logs and matched backup before explicit recovery"
+}
+
 deploy() {
-  local new=$1 old
+  local new=$1 mode=${2:-} old pending
   old=$(tag)
-  [ -n "$new" ] || die "usage: copilotctl deploy <tag>"
+  [[ $new =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid image tag"
+  [ ! -f "$MAINTENANCE" ] || die "maintenance hold exists; inspect it before explicit recovery"
+  [ -z "$mode" ] || [ "$mode" = --coordinated ] || die "unknown deployment mode"
   log "deploy $new (was $old)"
   # Room for the new images: only the running tag's stay (and $new's, if a pull was cut short).
   prune_images "$old" "$new"
@@ -243,8 +445,17 @@ deploy() {
   for s in gateway api worker proxy; do
     docker pull -q "$(registry)/$s:$new" >/dev/null || { rm -f "$STATE/image-tag.next"; die "no image $s:$new in the registry"; }
   done
-  mv "$STATE/image-tag.next" "$STATE/image-tag"
   wait_data
+  write_env migrate
+  pending=$(candidate_database status "$new") || die "candidate schema compatibility check failed"
+  [[ $pending =~ ^[0-9]+$ ]] || die "candidate did not return a migration count"
+  if [ "$pending" -gt 0 ]; then
+    [ "$mode" = --coordinated ] || die "pending migrations require --coordinated"
+    rm -f "$STATE/image-tag.next"
+    coordinated_deploy "$new"
+    return
+  fi
+  mv "$STATE/image-tag.next" "$STATE/image-tag"
   if ! docker_run migrate wait; then
     echo "$old" > "$STATE/image-tag"
     die "migrations failed on $new; still on $old"
@@ -273,12 +484,13 @@ rollback() {
   local prev
   prev=$(tail -n 1 "$STATE/tag-history" 2>/dev/null || true)
   [ -n "$prev" ] || die "no earlier tag to roll back to"
-  sed -i '$ d' "$STATE/tag-history"
   local cur
   cur=$(tag)
+  # deploy validates that every live migration is represented by the target image.
+  # A schema-boundary rollback is refused, preserving the history for manual recovery.
   deploy "$prev"
-  # deploy() appended the tag it replaced; a rollback should not make it the next rollback.
   [ "$(tail -n 1 "$STATE/tag-history" 2>/dev/null)" = "$cur" ] && sed -i '$ d' "$STATE/tag-history"
+  [ "$(tail -n 1 "$STATE/tag-history" 2>/dev/null)" = "$prev" ] && sed -i '$ d' "$STATE/tag-history"
   return 0
 }
 
@@ -286,7 +498,8 @@ status() {
   echo "image tag: $(tag)"
   echo "earlier:   $(tail -n 3 "$STATE/tag-history" 2>/dev/null | tr '\n' ' ')"
   docker ps -a --filter name=copilot- --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
-  systemctl list-timers 'copilot-*' --no-pager | head -n 4
+  [ ! -f "$MAINTENANCE" ] || cat "$MAINTENANCE"
+  systemctl list-timers 'copilot-*' --no-pager | sed -n '1,4p'
   df -h "$DATA" | tail -n 1
   df -h /var/lib/docker | tail -n 1  # the boot disk, where the images are
   free -m | sed -n 2,3p
@@ -303,6 +516,7 @@ status() {
 # stopped VM bills only its disks.
 idle_reason() {
   local minutes=$1 up requests sessions queued
+  [ ! -f "$MAINTENANCE" ] || { echo "maintenance hold"; return; }
   up=$(cut -d. -f1 /proc/uptime)
   [ "$up" -ge $((minutes * 60)) ] || { echo "booted $((up / 60)) min ago"; return; }
   pgrep -f "copilotctl.sh (deploy|rollback|restore|backup)" >/dev/null && { echo "a deploy, restore or backup is running"; return; }
@@ -353,6 +567,7 @@ backup() {
 
 restore() {
   local object=$1 bucket file
+  [ ! -f "$MAINTENANCE" ] || die "held schema cutover: use an explicit matched database/image recovery; legacy restore is disabled"
   [ -n "$object" ] || die "usage: copilotctl restore postgres/copilot-<stamp>.dump"
   bucket=$(attr copilot-backup-bucket)
   file=$DATA/backups/restore.dump
@@ -373,14 +588,31 @@ restore() {
   log "restored gs://$bucket/$object"
 }
 
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+# Serialize deploy/recovery against other invocations, including uncertain SSH outcomes.
+case ${1:-} in deploy|rollback|restore|hold)
+  mkdir -p "$STATE"
+  exec 9>"$STATE/deploy.lock"
+  flock -n 9 || die "another deployment or recovery is running"
+  ;;
+esac
 case ${1:-} in
   boot) boot ;;
-  run) docker rm -f "copilot-$2" >/dev/null 2>&1 || true; docker_run "$2" exec ;;
-  deploy) deploy "${2:-}" ;;
+  run)
+    case $2 in postgres|valkey|elasticmq) ;; *)
+      [ ! -f "$MAINTENANCE" ] || [ -f "$RUN/cutover-start" ] || die "maintenance hold"
+      ;;
+    esac
+    docker rm -f "copilot-$2" >/dev/null 2>&1 || true; docker_run "$2" exec ;;
+  deploy) deploy "${2:-}" "${3:-}" ;;
+  hold) hold ;;
   rollback) rollback ;;
   status) status ;;
-  restart) shift; systemctl restart "${@/#/copilot-}" ;;
+  restart)
+    [ ! -f "$MAINTENANCE" ] || die "maintenance hold"
+    shift; systemctl restart "${@/#/copilot-}" ;;
   scheduler)
+    [ ! -f "$MAINTENANCE" ] || { log "maintenance hold; scheduler skipped"; exit 0; }
     [ "$(tag)" = none ] && { log "no deploy yet; skipping the tick"; exit 0; }
     docker_run scheduler wait ;;
   backup) backup ;;

@@ -95,7 +95,8 @@ Although the metering tables are additive, the combined ownership migration chan
 and write contracts: drain calls and stop old writers before applying the full chain.
 Rehearse against a backup using the normal migration runner; do not drop accounting
 records or rewrite applied migration files.
-No production migrations or infrastructure changes are performed by this implementation.
+The coordinated release applies the database changes without resizing the current VM
+or enabling payment collection. Check the deployed schema/image versions for rollout status.
 
 ## Related reliability changes
 

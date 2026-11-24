@@ -7,12 +7,10 @@ Commands on the VM go through IAP SSH with OS Login, so nothing but port 80 is o
 `copilotctl` there (infra/gcp/host/copilotctl.sh). Secret values are read with a hidden prompt
 or generated here, piped straight into Secret Manager, and never printed.
 
-    deploy [--tag SHA]     migrations, then each service, on images already in the registry
-                           (default: the commit at origin/main, which CI built); --start
-                           starts a stopped VM first (and leaves it running), --check runs
-                           `health` after and rolls back to the previous tag if it fails
-                           (what .github/workflows/deploy.yml runs on every merge)
-    rollback               the tag deployed before the current one
+    deploy [--tag SHA]     compatible images; --coordinated permits a verified schema cutover
+                           --start starts a stopped VM; --check holds writers on health failure
+    prepare-host           operator: update only the boot/control helper before a new deploy
+    rollback               the preceding tag, only if compatible with the current schema
     health                 the gateway and the API, on the VM and through nginx
     status                 the deployed tag, the containers and their health, disk and memory
     restart [NAME ...]     restart services, which reread their config and secrets
@@ -40,11 +38,14 @@ import base64
 import getpass
 import json
 import os
+import re
 import secrets
+import shlex
 import shutil
 import string
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -135,13 +136,20 @@ def on_vm(command: str) -> None:
         sys.exit(f"command on {NAME} failed ({code})")
 
 
-def on_vm_rc(command: str, capture: bool = False) -> tuple[int, str]:
-    """Run on the VM without exiting on failure: (exit code, stdout if captured). Every
-    command copilotctl runs is safe to run again, so an ssh failure is retried."""
+def on_vm_rc(
+    command: str,
+    capture: bool = False,
+    *,
+    retry: bool = True,
+) -> tuple[int, str]:
+    """Return (exit code, stdout if captured), retrying SSH failures unless disabled.
+
+    Deployment opts out because a lost connection does not prove the remote command stopped.
+    """
     cmd = [gcloud_bin(), *ssh_args(command), f"--project={PROJECT}"]
     for attempt in range(1, SSH_TRIES + 1):
         result = subprocess.run(cmd, stdout=subprocess.PIPE if capture else None, check=False)
-        if result.returncode != SSH_FAILED or attempt == SSH_TRIES:
+        if result.returncode != SSH_FAILED or attempt == SSH_TRIES or not retry:
             return result.returncode, (result.stdout or b"").decode()
         print(
             f"ssh to {NAME} failed (attempt {attempt}/{SSH_TRIES}); trying again", file=sys.stderr
@@ -154,10 +162,97 @@ CTL = "sudo bash /var/lib/copilot/copilotctl.sh"
 
 
 def ctl(*args: str) -> None:
-    on_vm(f"{CTL} {' '.join(args)}")
+    on_vm(f"{CTL} {shlex.join(args)}")
 
 
 # --- Deploys ---------------------------------------------------------------------------------
+
+
+def host_script() -> bytes:
+    return (ROOT / "infra/gcp/host/copilotctl.sh").read_bytes().replace(b"\r\n", b"\n")
+
+
+def boot_metadata(script: bytes, user_data: str) -> str:
+    """Replace only cloud-init's embedded helper, preserving every other metadata setting."""
+    pattern = re.compile(
+        r"(?m)(^  - path: /var/lib/copilot/copilotctl\.sh\n"
+        r"(?:(?!  - path:).+\n)*?    content: )[^\n]+"
+    )
+    replaced, count = pattern.subn(
+        lambda match: match[1] + base64.b64encode(script).decode(), user_data
+    )
+    if count != 1:
+        raise ValueError("cloud-init must contain exactly one embedded copilotctl.sh helper")
+    return replaced
+
+
+def current_boot_metadata() -> str:
+    metadata = json.loads(
+        gcloud(
+            "compute",
+            "instances",
+            "describe",
+            NAME,
+            f"--zone={ZONE}",
+            "--format=json(metadata.items)",
+            capture=True,
+        )
+    )
+    for item in metadata.get("metadata", {}).get("items", []):
+        if item.get("key") == "user-data":
+            return str(item["value"]).replace("\r\n", "\n")
+    sys.exit("instance user-data is missing; prepare the host with the Terraform cloud-init first")
+
+
+def install_host_helper() -> None:
+    """CI can read metadata and sudo-install; it has no setMetadata permission."""
+    script = host_script()
+    current = current_boot_metadata()
+    if boot_metadata(script, current) != current:
+        sys.exit("boot helper is stale; an operator must run stage.py prepare-host before deploy")
+    # SCP avoids cmd.exe/SSH command-length limits for the embedded shell script.
+    remote = f"/tmp/copilotctl-{secrets.token_hex(12)}.sh"
+    with tempfile.TemporaryDirectory(prefix="copilot-helper-") as directory:
+        path = Path(directory) / "copilotctl.sh"
+        path.write_bytes(script)
+        args = [
+            "compute",
+            "scp",
+            str(path),
+            f"{NAME}:{remote}",
+            f"--zone={ZONE}",
+            "--tunnel-through-iap",
+            "--quiet",
+        ]
+        if IN_CI:
+            args += ["--strict-host-key-checking=no", "--ssh-key-expire-after=2h"]
+        gcloud(*args)
+    on_vm(
+        f"set -e; sudo bash -n {remote}; "
+        f"sudo install -m 700 {remote} /var/lib/copilot/copilotctl.sh.next; "
+        "sudo mv /var/lib/copilot/copilotctl.sh.next /var/lib/copilot/copilotctl.sh; "
+        f"rm -f {remote}"
+    )
+
+
+def prepare_host() -> None:
+    """Operator-only bootstrap: update the existing boot helper without changing VM sizing/IAM."""
+    if IN_CI:
+        sys.exit("prepare-host requires an operator identity; CI only verifies boot metadata")
+    updated = boot_metadata(host_script(), current_boot_metadata())
+    with tempfile.TemporaryDirectory(prefix="copilot-boot-") as directory:
+        path = Path(directory) / "user-data.yaml"
+        path.write_text(updated, encoding="utf-8", newline="\n")
+        gcloud(
+            "compute",
+            "instances",
+            "add-metadata",
+            NAME,
+            f"--zone={ZONE}",
+            f"--metadata-from-file=user-data={path}",
+        )
+    install_host_helper()
+    print("Boot and installed helpers updated; no services restarted and no migration applied.")
 
 
 def main_sha() -> str:
@@ -179,50 +274,33 @@ def check_images(tag: str) -> None:
             )
 
 
-def deploy(tag: str | None, start: bool, check: bool) -> None:
-    """copilotctl deploy, which runs the migrations and replaces each service in turn (it
-    puts the previous tag back itself if the migrations fail or a service does not get
-    healthy). With `check`, `health` runs after it; if that fails the previous tag is
-    deployed again. Either failure exits non-zero, so the workflow fails."""
+def deploy(tag: str | None, start: bool, check: bool, coordinated: bool = False) -> None:
+    """Deploy with schema compatibility checks; never image-roll back an advanced schema."""
     tag = tag or main_sha()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", tag):
+        sys.exit("invalid image tag")
     check_images(tag)
     notes: list[str] = []
     if ensure_running(start):
         notes.append(f"The VM `{NAME}` was stopped: started it for this deploy, left running.")
+    install_host_helper()
     before = deployed_tag()
-    # Room on the boot disk for the new images: drop every image no container uses (earlier
-    # tags; the running ones stay, and a rollback pulls its tag again). copilotctl prunes too,
-    # but the VM runs the copilotctl of its last boot, so this works before that one is there.
-    on_vm_rc("sudo docker image prune -af >/dev/null")
     print(f"deploying {tag} (was {before})")
-    code, _ = on_vm_rc(f"{CTL} deploy {tag}")
-    if code == SSH_FAILED:
-        summary(
-            "failed",
-            tag,
-            before,
-            [
-                *notes,
-                f"Could not reach `{NAME}` over ssh after {SSH_TRIES} tries; nothing was "
-                "deployed. Re-run the job.",
-                f"`{deployed_tag()}` is deployed now.",
-            ],
-        )
-        sys.exit(f"could not reach {NAME}; {tag} was not deployed")
+    mode = " --coordinated" if coordinated else ""
+    # A lost SSH connection does not prove that a remote migration stopped. Do not
+    # automatically repeat this command; the persistent marker requires inspection.
+    code, _ = on_vm_rc(f"{CTL} deploy {shlex.quote(tag)}{mode}", retry=False)
     if code != 0:
-        healthy = health(quiet=True) if check else None
-        summary(
-            "failed",
-            tag,
-            before,
-            [
-                *notes,
-                f"`copilotctl deploy {tag}` failed (migrations, or a service did not get "
-                f"healthy); it put `{before}` back itself.",
-                f"`{deployed_tag()}` is deployed now; health check: {verdict(healthy)}.",
-            ],
+        notes.append(
+            "Deployment did not complete. Inspect stage.py status and the maintenance marker. "
+            "A schema cutover failure keeps writers stopped; no image-only rollback was made."
         )
-        sys.exit(f"deploy of {tag} failed; {before} is back")
+        if code == SSH_FAILED:
+            notes.append(
+                "SSH was lost; the remote deploy may still be running. Do not assume failure."
+            )
+        summary("failed", tag, before, notes)
+        sys.exit(f"deploy of {tag} did not complete; inspect the VM before retrying")
     if not check:
         summary("deployed", tag, before, notes)
         return
@@ -230,29 +308,19 @@ def deploy(tag: str | None, start: bool, check: bool) -> None:
         public_check(notes)
         summary("deployed", tag, before, [*notes, "Health check passed: gateway and API."])
         return
-    if before in ("none", "unknown", tag):
-        summary(
-            "failed",
-            tag,
-            before,
-            [*notes, "The health check failed and there is no earlier tag to roll back to."],
+    # Domain migrations can commit file by file. Even if old images are available,
+    # an automatic binary-only rollback cannot restore the old write contracts.
+    code, _ = on_vm_rc(f"{CTL} hold", retry=False)
+    notes.append(
+        "Post-deploy health failed. No rollback was attempted; "
+        + (
+            "writers are held for inspection."
+            if code == 0
+            else "maintenance hold FAILED; inspect now."
         )
-        sys.exit(f"health check failed on {tag}; nothing to roll back to")
-    print(f"health check failed on {tag}: rolling back to {before}")
-    code, _ = on_vm_rc(f"{CTL} rollback")
-    healthy = code == 0 and health()
-    summary(
-        "rolled back",
-        tag,
-        before,
-        [
-            *notes,
-            f"The health check failed on `{tag}`, so `{before}` was deployed again (rollback "
-            f"{'succeeded' if code == 0 else 'FAILED'}; health check: {verdict(healthy)}).",
-            f"`{deployed_tag()}` is deployed now.",
-        ],
     )
-    sys.exit(f"health check failed on {tag}; rolled back to {before}")
+    summary("failed", tag, before, notes)
+    sys.exit(f"health check failed on {tag}; inspect the matched schema and image before recovery")
 
 
 def verdict(ok: bool | None) -> str:
@@ -673,10 +741,13 @@ def main() -> None:
     p = sub.add_parser("deploy")
     p.add_argument("--tag")
     p.add_argument("--start", action="store_true", help="start the VM first if it is stopped")
-    p.add_argument("--check", action="store_true", help="health check after; roll back on failure")
+    p.add_argument(
+        "--check", action="store_true", help="health check after; hold writers on failure"
+    )
+    p.add_argument("--coordinated", action="store_true", help="allow verified schema cutover")
     for name in (
         "rollback", "status", "start", "stop", "backup", "backups", "ssh", "latency", "health",
-        "desktop-config",
+        "desktop-config", "prepare-host",
     ):  # fmt: skip
         sub.add_parser(name)
     p = sub.add_parser("restart")
@@ -709,7 +780,9 @@ def main() -> None:
 
     match a.cmd:
         case "deploy":
-            deploy(a.tag, a.start, a.check)
+            deploy(a.tag, a.start, a.check, a.coordinated)
+        case "prepare-host":
+            prepare_host()
         case "health":
             if not health():
                 sys.exit(1)
