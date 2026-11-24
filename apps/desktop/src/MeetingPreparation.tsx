@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { request as api } from "./api";
-import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea } from "./ui";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea, PageHeader } from "./ui";
+import { useDataActivity } from "./usePolling";
 import { Icon } from "./ui/Icon";
 
 type Connection = { provider: "google" | "outlook"; available: boolean; connected: boolean; status: string; calendars: { id: string; name: string }[]; selected_calendars: string[]; last_sync_at?: string; last_error?: string };
@@ -15,8 +16,9 @@ type Preparation = {
 };
 type PreparationResponse = { items: Preparation[]; connections: { connection_id: string; provider: string }[]; applications?: Application[]; saved_sessions?: SavedSession[] };
 
-export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, applicationId: string | null) => void }) {
-  const [open, setOpen] = useState(false), [connections, setConnections] = useState<Connection[]>([]);
+export function MeetingPreparation({ onChoose, standalone = false }: { standalone?: boolean; onChoose?: (title: string, applicationId: string | null) => void }) {
+  const active = useDataActivity();
+  const [open, setOpen] = useState(standalone), [connections, setConnections] = useState<Connection[]>([]);
   const [preparation, setPreparation] = useState<PreparationResponse>({ items: [], connections: [] });
   const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false), [loaded, setLoaded] = useState(false);
@@ -35,7 +37,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
     } catch (e) { if (alive.current && ticket === revision.current) setError(String(e)); return false; }
     finally { if (alive.current && ticket === revision.current) setLoading(false); }
   };
-  useEffect(() => { if (open) void reload(); }, [open]);
+  useEffect(() => { if (open && active) void reload(); }, [open, active]);
   const run = async (operation: () => Promise<void>) => {
     setBusy(true); setError(null); setNotice(null);
     try { await operation(); if (alive.current) await reload(true); }
@@ -44,7 +46,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
   };
   const providers = Object.fromEntries(preparation.connections.map(c => [c.connection_id, c.provider]));
   const connected = connections.filter(c => c.connected && !["reauth_required", "error"].includes(c.status)).length;
-  return <details className="ui-disclosure meeting-preparation" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
+  return <>{standalone && <PageHeader title="Calendar" meta="Prepare for upcoming meetings and choose a call context." />}<details className={`ui-disclosure meeting-preparation${standalone ? " calendar-page" : ""}`} open={open} onToggle={e => setOpen(e.currentTarget.open)}>
     <summary><Icon name="calendar" size={18} /><span>Meeting preparation</span><span className="ui-disclosure-meta">{connected ? `${connected} calendar${connected === 1 ? "" : "s"} connected` : "Optional calendar"}</span></summary><div className="ui-disclosure-body ui-stack">
       <p className="ui-field-hint">Bring the next meeting and its notes into your call. Calendar access is read-only.</p>
       {error && <Banner tone="danger" title="Calendar could not be loaded" action={<Button size="sm" disabled={busy || loading} onClick={() => void run(async () => {})}>Retry</Button>}>{error}</Banner>}
@@ -89,7 +91,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
         }
       }}>Cached calendar events will be removed. Your saved calls and notes will stay.</ConfirmDialog>
     </div>
-  </details>;
+  </details></>;
 }
 
 function Meeting({ item, provider, applications, sessions, onSaved, onChoose }: {

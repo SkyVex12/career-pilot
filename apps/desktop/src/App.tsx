@@ -9,6 +9,7 @@ import { api, inTauri, onOpenCall, onOpenSettings, onSettingsChanged, onUpdate, 
 import { ServerNotification, UpdateNotification } from "./AppNotifications";
 import { Applications, CatalogProvider } from "./Applications";
 import { DataActivity, useDataActivity } from "./usePolling";
+import { MeetingPreparation } from "./MeetingPreparation";
 import { CallScreen } from "./CallScreen";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
@@ -97,7 +98,7 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   // Interview context and the application or shared resume to open in Interview prep.
-  const [preset, setPreset] = useState<{ target: string; n: number } | null>(null);
+  const [preset, setPreset] = useState<{ target: string; n: number; meetingTitle?: string; mode?: "interview" | "meeting" } | null>(null);
   const [baseResumeRequest, setBaseResumeRequest] = useState(0);
   const [focusApp, setFocusApp] = useState<{ id: string; n: number } | null>(null);
   // The current environment can make calls: the dev token is set (local) or signed in (cloud).
@@ -262,6 +263,10 @@ export default function App() {
               active={tab === "start"}
             />,
           )}
+          {page("calendar", gate(<MeetingPreparation standalone onChoose={(title, applicationId) => {
+            setPreset({ target: applicationId ? `job:${applicationId}` : "", meetingTitle: title, mode: applicationId ? "interview" : "meeting", n: Date.now() });
+            setTab("start");
+          }} />), true)}
           {page(
             "applications",
             gate(

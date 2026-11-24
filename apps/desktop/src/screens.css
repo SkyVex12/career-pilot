@@ -1053,7 +1053,7 @@
 .session-detail { min-width: 0; }
 .session-detail .ui-tablist { gap: 0; margin-bottom: var(--space-4); }
 .session-detail .ui-tab { padding-inline: var(--space-4); white-space: nowrap; }
-.sd-reading { width: min(100%, 76ch); margin-inline: auto; min-width: 0; padding: var(--space-2) 0 var(--space-5); }
+.sd-reading { width: 100%; margin-inline: auto; min-width: 0; padding: var(--space-2) 0 var(--space-5); }
 .sd-output-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-5); flex-wrap: wrap; }
 .sd-output-toolbar h2 { margin: 0; font-size: var(--text-md); font-weight: 600; }
 .sd-output-toolbar .ui-btn { flex: none; }
@@ -1063,7 +1063,7 @@
 .sd-output-line { margin: 0; white-space: pre-wrap; }
 .sd-output-line + .sd-output-line { margin-top: var(--space-2); }
 .sd-notes .ui-textarea { min-height: 220px; max-height: 45vh; resize: vertical; }
-.sd-transcript { width: min(100%, 84ch); margin-inline: auto; padding: var(--space-4); border-radius: var(--radius-sm); }
+.sd-transcript { width: 100%; margin-inline: auto; padding: var(--space-4); border-radius: var(--radius-sm); }
 .session-detail .ov-replay { min-height: 280px; height: min(480px, 55vh); }
 .history-filters { margin-bottom: var(--space-4); }
 .live-now { margin-bottom: var(--space-4); }
@@ -1211,7 +1211,7 @@
 .ui-confirm .ov-summary-choice { display: flex; align-items: center; gap: 10px; color: var(--text); }
 .ui-confirm .ov-summary-choice input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .ui-confirm .ui-dialog-desc p { margin: 10px 0 0; font-size: var(--text-sm); }
-.session-detail .sd-reading { width: min(100%, 84ch); margin-inline: 0; padding-top: 12px; }
+.session-detail .sd-reading { width: 100%; margin-inline: 0; padding-top: 12px; }
 .session-detail .sd-output-toolbar { min-height: 36px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .session-detail .sd-output-toolbar > .ui-btn:last-child { margin-left: auto; }
 .session-detail .sd-output { line-height: 1.65; }

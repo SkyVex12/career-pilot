@@ -10,7 +10,7 @@
 .call-design-body > .ui-segmented { width: 100%; }
 .call-design-body > .ui-segmented .ui-segment { flex: 1; min-width: 0; justify-content: center; text-align: center; }
 .call-setup-fields { display: flex; flex-direction: column; gap: 12px; }
-.call-optional-settings { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:12px; }
+.call-optional-settings { display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:12px; }
 .call-optional-settings > .meeting-preparation[open] { grid-column:1 / -1; }
 .call-optional-settings .call-options { border:1px solid var(--border);margin:0;padding:0;border-radius:var(--radius-md); }
 .call-optional-settings .call-options > summary { display:flex;padding:12px 14px;color:var(--text); }
@@ -35,7 +35,7 @@
 .call-application-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .call-application-resume { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-width: 0; color: var(--text-3); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .call-application-resume > .ui-btn { min-height: 18px; padding: 0; }
-.call-jd-preview { margin: 0; color: var(--text-2); font-size: 13px; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.call-jd-preview { white-space: pre-wrap; margin: 0; color: var(--text-2); font-size: 13px; line-height: 19px; display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .call-jd-row { align-items: start; }
 .call-jd-row .call-row-label { padding-top: 6px; }
 .call-row-hint { margin: 6px 76px 0 132px; color: var(--text-3); font-size: 12px; line-height: 18px; }
@@ -134,3 +134,12 @@
   .call-design-footer { padding:6px 16px; }
   .call-design-body { padding-inline:16px;gap:12px; }
 }
+
+.devices-inline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; flex: 1; min-width: 0; }
+.devices-inline > .ui-field { min-width: 0; }
+.devices-inline > .ui-field-error { grid-column: 1 / -1; }
+.calendar-page { border: 0; }
+.calendar-page > summary { display: none; }
+.calendar-page > .ui-disclosure-body { padding: 0; }
+.call-design .audio-summary { margin-top: auto; }
+@media (max-width: 600px) { .devices-inline { grid-template-columns: minmax(0, 1fr); } }

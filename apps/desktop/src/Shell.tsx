@@ -5,7 +5,7 @@ import { inTauri } from "./api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CoRubyWordmark, RubyMark } from "./ui/RubyMark";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Menu, Select, Tooltip } from "./ui";
+import { Select, Tooltip } from "./ui";
 import type { ProfileState } from "./profiles";
 import type { SessionView } from "./session";
 import { Icon, type IconName } from "./ui/Icon";
@@ -118,7 +118,7 @@ export function WorkspaceMenu() {
   </details>;
 }
 
-export type Tab = "start" | "applications" | "work" | "history" | "settings" | "debug";
+export type Tab = "start" | "calendar" | "applications" | "work" | "history" | "settings" | "debug";
 
 interface NavItem {
   tab: Tab;
@@ -176,7 +176,7 @@ export function Shell({
     } catch (error) { setWindowError(String(error)); }
   };
   const groups: [string | null, NavItem[]][] = [
-    [null, [{ tab: "start", label: "Call", icon: "call", badge: live ? <span className="shell-live">Live</span> : undefined }]],
+    [null, [{ tab: "start", label: "Call", icon: "call", badge: live ? <span className="shell-live">Live</span> : undefined }, { tab: "calendar", label: "Calendar", icon: "calendar" }]],
     [
       null,
       [
@@ -217,15 +217,11 @@ export function Shell({
               <span className="desktop-brand" title={version ? `CoRuby ${version}` : "CoRuby"}><RubyMark /><CoRubyWordmark /></span>
               <div className="desktop-title-actions">
                 <div className="desktop-command-tools">
-                  <Menu label="Window size" trigger={<span>Full</span>} items={[
-                    { label: "Small", disabled: !windowActions || live || callBusy, onSelect: () => { onTab("start"); windowActions?.compact("dot"); } },
-                    { label: "Medium", disabled: !windowActions || live || callBusy, onSelect: () => { onTab("start"); windowActions?.compact("toolbar"); } },
-                    { label: "Full", onSelect: () => {} },
-                  ]} />
                   <ProfileSwitch state={profiles} running={live || callBusy} onSwitch={onSwitchProfile} error={profileError} inline avatar />
                   <WorkspaceQuickSettings running={live} open={quickSettingsOpen} onOpenChange={setQuickSettingsOpen} />
                 </div>
                 <div className="desktop-window-actions">
+                  <button type="button" aria-label="Medium window" title="Medium window" disabled={!windowActions || live || callBusy} onClick={() => { onTab("start"); windowActions?.compact("toolbar"); }}><Icon name="chevronUp" size={16} /></button>
                   <button type="button" aria-label="Minimize window" onClick={() => void windowAction("minimize")}><Icon name="minus" size={15} /></button>
                   <button type="button" aria-label="Maximize or restore window" onClick={() => void windowAction("maximize")}><Icon name="square" size={13} /></button>
                   <button type="button" className="desktop-close" aria-label="Close window" onClick={() => void windowAction("close")}><Icon name="close" size={15} /></button>

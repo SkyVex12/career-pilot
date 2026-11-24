@@ -27,6 +27,7 @@ function routes() {
 }
 const tree = (over: Partial<CallProps> = {}) => <ToastProvider><CallScreen {...props(over)} /></ToastProvider>;
 async function chooseGuest(email: string) {
+  if (!screen.getByText("Customize").closest("details")?.open) await userEvent.click(screen.getByText("Customize"));
   await userEvent.click(screen.getByRole("button", { name: /Add assistants|Change assistants/ }));
   const picker = screen.getByRole("dialog", { name: "Add assistants" });
   await userEvent.type(within(picker).getByRole("textbox", { name: "Find assistant by name or email" }), email);
@@ -35,6 +36,27 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
+  it("uses calendar context when returning to Call", async () => {
+    routes();
+    render(tree({ preset: { target: "job:a1", meetingTitle: "Team interview", mode: "interview", n: 1 } }));
+    await screen.findByText("We build routing.");
+    expect(screen.queryByText("Meeting preparation")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start call" }));
+    expect(ipc.calls.find(call => call.cmd === "start_session")?.args.request).toMatchObject({ job_id: "a1", meeting_title: "Team interview" });
+  });
+
+  it("replaces the audio summaries with inline pickers and tests", async () => {
+    routes();
+    render(tree());
+    await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByRole("button", { name: "Change or test" }));
+    expect(screen.getByRole("combobox", { name: "Microphone" })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Test" })).toHaveLength(2);
+    expect(document.querySelector(".audio-pickers")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("combobox", { name: "Microphone" })).not.toBeInTheDocument();
+  });
+
   it.each([false, true])("uses the application's attached resume without changing its pairing (manual: %s)", async manual => {
     routes();
     let current = { ...role, resume: { version_id: "rt1", kind: "tailored" as const, label: "Backend version", status: "extracted" as const, manual } };
@@ -46,8 +68,10 @@ describe("the Call setup design", () => {
     expect(screen.queryByRole("combobox", { name: "Resume" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Round" })).not.toBeInTheDocument();
     expect(screen.queryByText("Upcoming")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Manage" }));
-    expect(onApplications).toHaveBeenCalledWith("a1");
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("dialog", { name: "Add application" })).toBeVisible();
+    expect(onApplications).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(ipc.apiCalls("PATCH")).toEqual([]);
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
     const editor = screen.getByRole("textbox", { name: "Job description" });
@@ -156,6 +180,7 @@ describe("the Call setup design", () => {
     rememberGuest(scope, { email: "sam@example.com", name: "Sam Jones" });
     render(tree());
     await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("button", { name: "Add assistants" }));
     const picker = screen.getByRole("dialog", { name: "Add assistants" });
     await userEvent.click(within(picker).getByRole("checkbox", { name: /Dana Singh/ }));
@@ -179,6 +204,7 @@ describe("the Call setup design", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Discuss routing decisions");
     await userEvent.click(screen.getByText("Focus on documents"));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));
+    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("checkbox", { name: "Save transcript" }));
     await userEvent.click(screen.getByRole("radio", { name: "Paragraphs" }));
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));

@@ -465,8 +465,7 @@ function wrapCallWindow(ui: ReactNode) {
   return wrap(<Shell tab="start" onTab={() => {}} session={initial} profiles={{ profiles: [], here: null, current: null }} onSwitchProfile={() => {}} profileError={null} version={null} showDebug={false}>{ui}</Shell>);
 }
 async function collapseToMedium() {
-  await userEvent.click(screen.getByRole("button", { name: "Window size" }));
-  await userEvent.click(screen.getByRole("menuitem", { name: "Medium" }));
+  await userEvent.click(screen.getByRole("button", { name: "Medium window" }));
 }
 function callRoutes() {
   appRoutes();
@@ -631,7 +630,7 @@ describe("Call", () => {
     expect(dotRuby.parentElement!.querySelector(".session-compact-outline")).toBe(outline);
     await userEvent.click(dotRuby);
     await userEvent.click(await screen.findByRole("button", { name: "Expand full window" }));
-    await screen.findByRole("button", { name: "Window size" });
+    await screen.findByRole("button", { name: "Medium window" });
     expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
     expect(ipc.calls.filter((c) => c.cmd === "plugin:window|set_size").map((c) => JSON.parse(JSON.stringify(c.args.value)))).toEqual([
       { Logical: { width: 280, height: 56 } },
@@ -722,7 +721,7 @@ describe("Call", () => {
     } finally {
       await act(async () => { completeResize(); await resize; });
     }
-    await screen.findByRole("button", { name: "Window size" });
+    await screen.findByRole("button", { name: "Medium window" });
     expect(resumeNotice).toBeVisible();
     expect(authNotice).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
