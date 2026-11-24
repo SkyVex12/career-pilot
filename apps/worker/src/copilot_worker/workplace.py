@@ -134,16 +134,25 @@ async def worklog_extract(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     log_id = UUID(job.payload["work_log_id"])
     sha = str(job.payload["content_sha256"])
+    requested = job.payload.get("work_log_revision_id")
+    revision = UUID(str(requested)) if requested is not None else None
     async with ctx.user(uid) as conn:
         row = await conn.fetchrow(
             "select w.id, w.employer_id, w.day, w.text_enc, w.key_version, w.content_sha256,"
-            " w.extracted_sha256, e.name, u.display_name from app.work_logs w"
+            " w.extracted_sha256,w.current_revision_id,w.extracted_revision_id,"
+            " e.name,u.display_name from app.work_logs w"
             " join app.employers e on e.id = w.employer_id"
             " join app.users u on u.id = w.user_id where w.id = $1",
             log_id,
         )
-        if row is None or row["content_sha256"] != sha or row["extracted_sha256"] == sha:
+        if (
+            row is None
+            or row["content_sha256"] != sha
+            or (revision is not None and row["current_revision_id"] != revision)
+            or row["extracted_revision_id"] == row["current_revision_id"]
+        ):
             return  # deleted, changed since (a newer job runs), or already done
+        revision = row["current_revision_id"]
         eid: UUID = row["employer_id"]
         log_text = await ctx.crypto.decrypt(
             conn, uid, "work_logs", str(log_id), row["text_enc"], row["key_version"]
@@ -189,31 +198,40 @@ async def worklog_extract(job: Job, ctx: Ctx) -> None:
         log.warning("work log %s: extraction failed (%s)", log_id, e)
         async with ctx.user(uid) as conn:
             await conn.execute(
-                "update app.work_logs set status = 'failed' where id = $1 and content_sha256 = $2",
+                "update app.work_logs set status='failed' where id=$1 and content_sha256=$2"
+                " and current_revision_id=$3",
                 log_id,
                 sha,
+                revision,
             )
         if isinstance(e, ModelOutputError):
             return
         raise
     async with ctx.user(uid) as conn:
-        current = await conn.fetchval(
-            "select content_sha256 from app.work_logs where id = $1 for update", log_id
+        current = await conn.fetchrow(
+            "select content_sha256,current_revision_id from app.work_logs where id=$1 for update",
+            log_id,
         )
-        if current != sha:
+        if (
+            current is None
+            or current["content_sha256"] != sha
+            or current["current_revision_id"] != revision
+        ):
             return  # changed while the model ran; the newer job writes
         count = await write_worklog_nodes(conn, uid, eid, log_id, day, data, by_short)
         await conn.execute(
-            "update app.work_logs set status = 'extracted', extracted_sha256 = $2 where id = $1",
+            "update app.work_logs set status='extracted',extracted_sha256=$2,"
+            " extracted_revision_id=$3 where id=$1",
             log_id,
             sha,
+            revision,
         )
         await conn.execute(
             "update app.company_documents set status = 'ingested' where work_log_id = $1", log_id
         )
         version = await memory_version(conn, uid, eid)
+        await ctx.queue.send(jobs.workplace_refresh(uid, eid, version))
     log.info("work log %s (%s): %d nodes", log_id, day, count)
-    await ctx.queue.send(jobs.workplace_refresh(uid, eid, version))
 
 
 async def log_context(
@@ -499,14 +517,15 @@ async def build_employer_pack(ctx: Ctx, job: Job) -> None:
     carry_vectors(pack, previous)
     if pack.prepared_answers and pack.embedding_model is None:
         await embed_prepared(ctx, pack)
-    await ctx.valkey.set(
-        keys.pack(uid, pack.pack_id),
-        pack.model_dump_json(by_alias=True, exclude_none=True),
-        ex=min(PACK_TTL_MAX_S, 7 * 24 * 3600),
-    )
-    await ctx.valkey.hset(keys.pack_index(uid), mapping={field: str(pack.pack_id)})  # pyright: ignore[reportUnknownMemberType]
-    if previous_id is not None and text(previous_id) != str(pack.pack_id):
-        await ctx.valkey.delete(keys.pack(uid, text(previous_id)))
+    async with ctx.cache_commit(uid):
+        await ctx.valkey.set(
+            keys.pack(uid, pack.pack_id),
+            pack.model_dump_json(by_alias=True, exclude_none=True),
+            ex=min(PACK_TTL_MAX_S, 7 * 24 * 3600),
+        )
+        await ctx.valkey.hset(keys.pack_index(uid), mapping={field: str(pack.pack_id)})  # pyright: ignore[reportUnknownMemberType]
+        if previous_id is not None and text(previous_id) != str(pack.pack_id):
+            await ctx.valkey.delete(keys.pack(uid, text(previous_id)))
     log.info("pack %s for employer %s (%s, %s)", pack.pack_id, eid, mode, pack.memory_version)
 
 

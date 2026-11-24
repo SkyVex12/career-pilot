@@ -21,6 +21,13 @@ async def test_companion_attach_and_revoke_do_not_claim_capture(api: Api):
     await api.client.get("/v1/companion/attachments", headers=headers)
     await api.client.get("/v1/companion/attachments", headers=other_headers)
     sid = uuid7()
+    await api.admin.execute(
+        "insert into app.sessions(id,user_id,mode,started_at,store_transcript,"
+        "private_context_account_id)"
+        " values($1,$2,'meeting',now(),true,$2)",
+        sid,
+        owner,
+    )
     await api.svc.valkey.hset(
         keys.sess_state(sid),
         mapping={

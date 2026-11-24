@@ -68,6 +68,7 @@ class World:
     employer_id: uuid.UUID = field(default_factory=uuid.uuid4)
     work_log_id: uuid.UUID = field(default_factory=uuid.uuid4)
     company_document_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    company_document_revision_id: uuid.UUID = field(default_factory=uuid.uuid4)
     resume_version_id: uuid.UUID = field(default_factory=uuid.uuid4)
     document_id: uuid.UUID = field(default_factory=uuid.uuid4)
     conversation_id: uuid.UUID = field(default_factory=uuid.uuid4)
@@ -109,9 +110,9 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "revision": 1,
         "deleted": False,
     },
-    # The profile's own users row is not needed: profiles.id has no foreign key.
+    # The listing points to a real workspace (the personal workspace suffices here).
     "profiles": lambda w, n: {
-        "id": uuid.uuid4(),
+        "id": w.user_id if n == 0 else uuid.uuid4(),
         "user_id": w.user_id,
         "career_os_user_id": f"u{n}",
         "name": f"Profile {n}",
@@ -147,6 +148,7 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "user_id": w.user_id,
         "employer_id": w.employer_id,
         "document_id": w.company_document_id,
+        "document_revision_id": w.company_document_revision_id,
         "ord": n,
         "body_enc": b"ciphertext",
         "key_version": 1,
@@ -223,6 +225,7 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
     },
     "answers": lambda w, n: {
         "id": uuid.uuid4(),
+        "session_id": w.session_id,
         "question_id": w.question_id,
         "user_id": w.user_id,
         "pass": "fast",
@@ -284,7 +287,7 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "guest_name": "Guest",
         "guest_email": "guest@example.com",
         "mode": "interview",
-        "status": "admitted",
+        "status": "admitted" if n == 0 else "declined",
         "capabilities": ["view", "note"],
         "expires_at": NOW + timedelta(hours=12),
     },
@@ -452,6 +455,11 @@ async def db() -> AsyncIterator[Db]:
             for w in (a, b):
                 for table, make in ROWS.items():
                     await insert(conn, table, make(w, 0))
+                    if table == "company_documents":
+                        w.company_document_revision_id = await conn.fetchval(
+                            "select current_revision_id from app.company_documents where id=$1",
+                            w.company_document_id,
+                        )
                     if table == "memory_nodes":
                         await insert(conn, table, make(w, 1))
         yield Db(url, conn, a, b)
@@ -478,7 +486,10 @@ async def as_user(
     try:
         async with db.conn.transaction():
             await db.conn.execute(f"set local role {role}")
-            await db.conn.execute("select set_config('app.user_id', $1, true)", str(user.user_id))
+            await db.conn.execute(
+                "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+                str(user.user_id),
+            )
             if sql.lstrip().lower().startswith("select"):
                 rows = await db.conn.fetch(sql, *args)
             else:
@@ -559,7 +570,10 @@ async def test_queries_fail_closed_without_a_user(db: Db, role: str) -> None:
         # After a transaction-scoped set_config ends, the setting is '' (not missing):
         # that must fail too, so a pooled connection never falls back to "all users".
         async with fresh.transaction():
-            await fresh.execute("select set_config('app.user_id', $1, true)", str(db.a.user_id))
+            await fresh.execute(
+                "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+                str(db.a.user_id),
+            )
         async with fresh.transaction():
             await fresh.execute(f"set local role {role}")
             with pytest.raises(asyncpg.PostgresError):
@@ -574,16 +588,30 @@ async def test_every_user_table_has_forced_rls_and_is_tested(db: Db) -> None:
         select c.relname, c.relrowsecurity, c.relforcerowsecurity,
                exists (select 1 from pg_policy p
                        where p.polrelid = c.oid
-                         and p.polname in ('tenant_isolation','private_account')) as has_policy
+                         and p.polname in ('tenant_isolation','private_account','account_scope',
+                           'membership_self','operations_scope','outbox_scope')) as has_policy
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'app' and c.relkind = 'r'
-          and (c.relname = 'users' or exists (
+          and (c.relname in ('workspaces','accounts') or exists (
                 select 1 from pg_attribute a
                 where a.attrelid = c.oid and a.attname in ('user_id','account_id')
                   and not a.attisdropped))
         """
     )
-    found = {r["relname"] for r in rows} - NO_RLS_TABLES
+    # Canonical tables keep the old view contracts covered by this matrix. New
+    # owner/worker semantics have dedicated concurrency and authorization suites.
+    aliases = {"workspaces": "users", "account_identities": "identities"}
+    dedicated = {
+        "accounts",
+        "account_keys",
+        "account_tombstones",
+        "workspace_memberships",
+        "operations",
+        "outbox_events",
+    }
+    found = {
+        aliases.get(r["relname"], r["relname"]) for r in rows if r["relname"] not in dedicated
+    } - NO_RLS_TABLES
     assert found == set(USER_TABLES), (
         "user tables and this test's ROWS differ; add new tables to ROWS (and give them RLS)"
     )
@@ -622,7 +650,15 @@ async def test_role_attributes_and_privileges(db: Db) -> None:
         " where grantee = 'app_gateway' and table_schema = 'app'"
     )
     assert {(g["table_name"], g["privilege_type"]) for g in grants} == {
-        (t, "SELECT") for t in GATEWAY_TABLE_GRANTS | {"career_os_people"}
+        (t, "SELECT")
+        for t in GATEWAY_TABLE_GRANTS
+        | {
+            "career_os_people",
+            "workspaces",
+            "account_identities",
+            "workspace_memberships",
+            "external_workspace_links",
+        }
     }
     columns = await db.conn.fetch(
         "select column_name, privilege_type from information_schema.column_privileges"
@@ -683,6 +719,7 @@ REFERENCES = [
     ("memory_nodes", "resume_version_id", "resume_versions"),
     ("documents", "application_id", "applications"),
     ("documents", "resume_version_id", "resume_versions"),
+    ("session_seats", "session_id", "sessions"),
 ]
 WRITE_ROLES = [r for r in APP_ROLES if can_write(r)]
 
@@ -730,7 +767,19 @@ async def test_cannot_insert_reference_to_another_users_row(
 
     other = ROWS[child](db.a, 3) | {column: parent_id(db.b, parent)}
     _, _, err = await as_user(db, role, db.a, insert_sql(child, other), *other.values())
-    assert err == FOREIGN_KEY_VIOLATION, (
+    expected = {FOREIGN_KEY_VIOLATION}
+    if (
+        role == "app_api"
+        and parent == "sessions"
+        and child
+        in {
+            "transcript_segments",
+            "questions",
+            "session_outputs",
+        }
+    ):
+        expected.add(INSUFFICIENT_PRIVILEGE)  # Parent privacy can refuse before FK validation.
+    assert err in expected, (
         f"{role} inserted a {child} row of user A that points at user B's {parent}"
     )
 
@@ -748,6 +797,7 @@ async def test_cannot_repoint_reference_to_another_users_row(
     # (document, ord).
     extra = {"transcript_segments": ", seg_id = seg_id + 1000",
              "work_logs": ", day = day + 1000",
+             "session_seats": ", status = 'declined'",
              "knowledge_chunks": ", ord = ord + 1000"}.get(child, "")  # fmt: skip
     sql = f"update app.{child} set {column} = $1{extra} where user_id = $2"
     status, _, err = await as_user(db, role, db.a, sql, parent_id(db.b, parent), db.a.user_id)
@@ -757,7 +807,19 @@ async def test_cannot_repoint_reference_to_another_users_row(
     # A resume version never moves to another application: its trigger refuses first.
     expected = CHECK_VIOLATION if (child, column) == ("resume_versions", "application_id") else (
         FOREIGN_KEY_VIOLATION)  # fmt: skip
-    assert err == expected, (
+    allowed = {expected}
+    if (
+        role == "app_api"
+        and parent == "sessions"
+        and child
+        in {
+            "transcript_segments",
+            "questions",
+            "session_outputs",
+        }
+    ):
+        allowed.add(INSUFFICIENT_PRIVILEGE)
+    assert err in allowed, (
         f"{role} pointed user A's {child}.{column} at user B's {parent}: {status}"
     )
 
@@ -814,13 +876,66 @@ async def test_every_reference_between_user_tables_is_same_user(db: Db) -> None:
         join pg_class cl on cl.oid = c.conrelid
         join pg_class pcl on pcl.oid = c.confrelid
         where c.contype = 'f' and c.connamespace = 'app'::regnamespace
-          and pcl.relname <> 'users'
+          and pcl.relname not in ('users','workspaces','accounts')
         """
     )
     found: set[tuple[str, str, str]] = set()
     for r in rows:
         cols, ref_cols = list(r["cols"]), list(r["ref_cols"])
+        source_revisions = {
+            "resume_revisions",
+            "work_log_revisions",
+            "company_document_revisions",
+            "resume_revision_extractions",
+        }
+        if r["child"] in source_revisions or r["parent"] in source_revisions:
+            pairs = dict(zip(cols, ref_cols, strict=True))
+            assert pairs.get("workspace_id", pairs.get("user_id")) in {"workspace_id", "user_id"}
+            assert (
+                "id" in ref_cols
+            )  # Full source/version tests cover the typed revision relationships.
+            continue
+        if (r["child"], r["parent"]) == ("answers", "questions") and "session_id" in cols:
+            assert cols == ["question_id", "session_id", "user_id"]
+            assert ref_cols == ["id", "session_id", "user_id"]
+            continue
+        if (
+            len(cols) == 3
+            and "employer_id" in cols
+            and r["parent"] in {"work_logs", "company_documents"}
+        ):
+            assert cols[1:] == ["user_id", "employer_id"]
+            assert ref_cols == ["id", "user_id", "employer_id"]
+            continue
         special = {
+            ("session_writer_claims", "sessions"): (["session_id"], ["id"]),
+            ("session_write_batches", "session_writer_claims"): (
+                ["session_id", "generation"],
+                ["session_id", "generation"],
+            ),
+            ("outbox_events", "operations"): (["operation_key"], ["idempotency_key"]),
+            ("companion_attachments", "sessions"): (
+                ["session_id", "profile_id"],
+                ["id", "user_id"],
+            ),
+            # Billing has separate immutable workspace and payer attribution. Its
+            # dedicated role tests live in test_0029.py; every child carries both.
+            ("live_usage_sessions", "usage_prices"): (
+                ["price_version", "currency", "rate_minor_per_hour"],
+                ["version", "currency", "rate_minor_per_hour"],
+            ),
+            ("live_usage_events", "live_usage_sessions"): (
+                ["session_id", "workspace_id", "payer_account_id"],
+                ["session_id", "workspace_id", "payer_account_id"],
+            ),
+            ("live_usage_intervals", "live_usage_events"): (
+                ["event_id", "session_id", "workspace_id", "payer_account_id"],
+                ["event_id", "session_id", "workspace_id", "payer_account_id"],
+            ),
+            ("usage_adjustments", "live_usage_sessions"): (
+                ["session_id", "workspace_id", "payer_account_id"],
+                ["session_id", "workspace_id", "payer_account_id"],
+            ),
             ("context_requests", "employers"): (["employer_id", "profile_id"], ["id", "user_id"]),
             ("context_requests", "applications"): (["job_id", "profile_id"], ["id", "user_id"]),
             ("context_brief_versions", "context_requests"): (
@@ -920,7 +1035,8 @@ async def with_key(
         async with db.conn.transaction():
             await db.conn.execute(f"set local role {role}")
             await db.conn.execute(
-                "select set_config('app.user_id', $1, true)", str(uuid.UUID(int=0))
+                "select set_config('app.user_id', $1, true),set_config('app.account_id', $1, true)",
+                str(uuid.UUID(int=0)),
             )
             if key is not None:
                 await db.conn.execute("select set_config('app.sign_in', $1, true)", key)

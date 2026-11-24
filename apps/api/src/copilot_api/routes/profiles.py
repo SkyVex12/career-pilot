@@ -49,7 +49,7 @@ async def call_languages(svc: SvcDep, user: UserDep) -> dict[str, Any]:
 async def call_preferences(svc: SvcDep, user: UserDep) -> dict[str, str]:
     async with svc.tx(user) as conn:
         language = await conn.fetchval(
-            "select call_language from app.users where id = $1", user.user_id
+            "select call_language from app.workspaces where id = $1", user.user_id
         )
     return {"spoken_language": language or "en"}
 
@@ -68,7 +68,7 @@ async def save_call_preferences(body: CallPreference, svc: SvcDep, user: UserDep
         raise HTTPException(422, str(error)) from error
     async with svc.tx(user) as conn:
         await conn.execute(
-            "update app.users set call_language = $2 where id = $1",
+            "update app.workspaces set call_language = $2 where id = $1",
             user.user_id,
             body.spoken_language,
         )
@@ -103,7 +103,7 @@ async def _list_profiles(svc: SvcDep, account: AccountDep) -> dict[str, Any]:
             PROVIDER,
         )
         name = await conn.fetchval(
-            "select display_name from app.users where id = $1", account.user_id
+            "select display_name from app.accounts where id = $1", account.user_id
         )
     me = profiles.me_out(account)
     me["name"] = name or account.display_name

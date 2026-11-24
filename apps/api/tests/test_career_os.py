@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from copilot_api.testing import Api, FakeCareerOs
-from copilot_core.storage import resume_file_key
 
 pytestmark = pytest.mark.stack
 
@@ -83,7 +82,8 @@ async def test_search_and_pull_then_pull_again(api: Api, fake: FakeCareerOs) -> 
     assert app["resume"]["kind"] == "tailored"
     version = uuid.UUID(app["resume"]["version_id"])
     row = await api.admin.fetchrow(
-        "select source, career_os_ref, file_content_type, text_enc from app.resume_versions"
+        "select source, career_os_ref, file_content_type, text_enc,file_s3_key,current_revision_id "
+        "from app.resume_versions"
         " where id = $1",
         version,
     )
@@ -91,7 +91,7 @@ async def test_search_and_pull_then_pull_again(api: Api, fake: FakeCareerOs) -> 
     assert (row["source"], row["career_os_ref"], row["file_content_type"]) == (
         "career_os", "resume_version:rv20261001090000", "application/pdf")  # fmt: skip
     assert b"zero downtime" not in bytes(row["text_enc"])  # sealed
-    stored = await api.svc.store.get(resume_file_key(uid, version))
+    stored = await api.svc.store.get(row["file_s3_key"])
     assert stored is not None
     assert fake.pdf not in stored  # the file is sealed too
     r = await api.client.get(f"/v1/resumes/{version}/file", headers=h)
@@ -133,6 +133,12 @@ async def test_search_and_pull_then_pull_again(api: Api, fake: FakeCareerOs) -> 
     assert again["resume"]["version_id"] == base["id"]
     assert again["resume"]["manual"] is True
     assert api.take("resume.extract") == []  # the resume did not change: not read again
+    assert (
+        await api.admin.fetchval(
+            "select current_revision_id from app.resume_versions where id=$1", version
+        )
+        == row["current_revision_id"]
+    )
     contexts = sorted(m["payload"]["context"].split(":")[0] for m in api.take("pack.build"))
     assert contexts == ["interview", "job"]  # the new JD rebuilds the packs
     [item] = (await api.client.get("/v1/career-os/applications", headers=h)).json()["items"]

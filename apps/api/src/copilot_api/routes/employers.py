@@ -164,7 +164,7 @@ def content_sha(log_text: str, attachment_shas: list[str]) -> str:
 async def _refresh(svc: Services, conn: Conn, user: Principal, employer_id: UUID) -> None:
     """The company's memory changed: embed what is new and rebuild its packs."""
     version = await memory_version(conn, user.user_id, employer_id)
-    await svc.queue.send(jobs.workplace_refresh(user.user_id, employer_id, version))
+    await svc.accept(conn, jobs.workplace_refresh(user.user_id, employer_id, version))
 
 
 async def _read_upload(
@@ -350,12 +350,15 @@ async def delete_employer(
             )
         ]
         await conn.execute("delete from app.employers where id = $1", employer_id)  # cascades
+        await svc.enqueue(
+            "employer.purge",
+            f"employer.purge:{employer_id}",
+            user.user_id,
+            {"employer_id": str(employer_id)},
+            conn=conn,
+        )
     for sid in sessions:
         await svc.valkey.delete(keys.sess_state(sid), keys.sess_events(sid), keys.sess_log(sid))
-    await svc.enqueue(
-        "employer.purge", f"employer.purge:{employer_id}", user.user_id,
-        {"employer_id": str(employer_id)},
-    )  # fmt: skip
     return {"deleted": dict(counts) if counts else {}}
 
 
@@ -512,10 +515,25 @@ async def _attachment_shas(conn: Conn, log_id: UUID) -> list[str]:
     ]
 
 
-async def _extract_log(svc: Services, user: Principal, log_id: UUID, sha: str) -> None:
+async def _extract_log(
+    svc: Services,
+    conn: Conn,
+    user: Principal,
+    log_id: UUID,
+    sha: str,
+    *,
+    retry: bool = False,
+) -> None:
+    revision = await conn.fetchval(
+        "select current_revision_id from app.work_logs where id=$1", log_id
+    )
+    key = f"worklog.extract:{user.user_id}:{log_id}:{sha}:r{revision}"
+    if retry:
+        key += f":retry{uuid7()}"
     await svc.enqueue(
-        "worklog.extract", f"worklog.extract:{user.user_id}:{log_id}:{sha}", user.user_id,
-        {"work_log_id": str(log_id), "content_sha256": sha},
+        "worklog.extract", key, user.user_id,
+        {"work_log_id": str(log_id), "content_sha256": sha, "work_log_revision_id": str(revision)},
+        conn=conn,
     )  # fmt: skip
 
 
@@ -582,8 +600,8 @@ async def put_log(
             f"select {LOG_COLUMNS} from app.work_logs where id = $1", log_id
         )
         entry = await _log_entry(svc, conn, user, saved)
-    if changed or retry:
-        await _extract_log(svc, user, log_id, sha)
+        if changed or retry:
+            await _extract_log(svc, conn, user, log_id, sha, retry=retry)
     return entry
 
 
@@ -614,17 +632,9 @@ async def delete_log(employer_id: UUID, day: date, svc: SvcDep, user: UserDep) -
         )
         if row is None:
             raise HTTPException(404, "no log for that day")
-        files = [
-            r["s3_key"]
-            for r in await conn.fetch(
-                "select s3_key from app.company_documents where work_log_id = $1", row["id"]
-            )
-        ]
         await _forget_log_nodes(conn, user, employer_id, row["id"])
         await conn.execute("delete from app.work_logs where id = $1", row["id"])  # cascades
         await _refresh(svc, conn, user, employer_id)
-    for key in files:
-        await svc.store.delete(key)
     return Response(status_code=204)
 
 
@@ -666,7 +676,7 @@ async def add_attachment(
             row["id"],
             sha,
         )
-    await _extract_log(svc, user, row["id"], sha)
+        await _extract_log(svc, conn, user, row["id"], sha)
     doc.pop("sha256")
     return doc
 
@@ -786,8 +796,8 @@ async def upload_document(
                 UUID(doc["id"]),
                 older,
             )
-    sha = doc.pop("sha256")
-    await svc.queue.send(jobs.knowledge_index(user.user_id, UUID(doc["id"]), sha))
+        sha = doc.pop("sha256")
+        await svc.accept(conn, jobs.knowledge_index(user.user_id, UUID(doc["id"]), sha))
     return {
         **doc,
         "sections": 0,
@@ -822,7 +832,7 @@ async def _publish(svc: Services, conn: Conn, user: Principal, employer_id: UUID
         "select id from app.knowledge_chunks where employer_id = $1", employer_id
     )
     version = knowledge.live_version(r["id"] for r in rows)
-    await svc.queue.send(jobs.knowledge_publish(user.user_id, employer_id, version))
+    await svc.accept(conn, jobs.knowledge_publish(user.user_id, employer_id, version))
 
 
 @router.delete("/employers/{employer_id}/documents/{document_id}", status_code=204)
@@ -868,9 +878,8 @@ async def delete_document(
                     log_id,
                     sha,
                 )
-    await svc.store.delete(row["s3_key"])
-    if log_id is not None and sha is not None:
-        await _extract_log(svc, user, log_id, sha)
+        if log_id is not None and sha is not None:
+            await _extract_log(svc, conn, user, log_id, sha)
     return Response(status_code=204)
 
 
@@ -938,7 +947,7 @@ async def _after_memory_change(
     # Career memory feeds the digest instead (debounced like approvals).
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M")
     await svc.enqueue("digest.rebuild", f"digest.rebuild:{user.user_id}:edit:{stamp}",
-                      user.user_id, {}, delay_s=60)  # fmt: skip
+                      user.user_id, {}, delay_s=60, conn=conn)  # fmt: skip
 
 
 @router.delete("/memory/{node_id}", status_code=204)
@@ -1167,15 +1176,18 @@ async def ensure_pack(
         # The live copy of the company's sections expired: open it again before the call.
         live = knowledge.live_version(r["id"] for r in sections)
         stamp = datetime.now(UTC).strftime("%Y%m%d%H%M")
-        await svc.queue.send(jobs.knowledge_publish(user.user_id, employer_id, live, stamp))
+        async with svc.tx(user) as conn:
+            await svc.accept(conn, jobs.knowledge_publish(user.user_id, employer_id, live, stamp))
     state = await _pack_state(svc, user, employer_id, mode, version)
     if state["status"] == "ready" and (mode != "standup" or state.get("day") == today):
         return state
-    await svc.queue.send(
-        jobs.employer_pack_build(
-            user.user_id, employer_id, mode, version, today, svc.settings.embedding_model_id
+    async with svc.tx(user) as conn:
+        await svc.accept(
+            conn,
+            jobs.employer_pack_build(
+                user.user_id, employer_id, mode, version, today, svc.settings.embedding_model_id
+            ),
         )
-    )
     return {**state, "status": "building"}
 
 
@@ -1190,10 +1202,11 @@ async def ask_knowledge(
     the company's digest, facts and document sections; fetch the result with the id."""
     async with svc.tx(user) as conn:
         await _require_employer(conn, employer_id)
-    ask_id = uuid7()
-    await svc.queue.send(
-        jobs.knowledge_ask(user.user_id, employer_id, ask_id, body.question.strip(), body.mode)
-    )
+        ask_id = uuid7()
+        await svc.accept(
+            conn,
+            jobs.knowledge_ask(user.user_id, employer_id, ask_id, body.question.strip(), body.mode),
+        )
     return {"ask_id": str(ask_id), "status": "pending"}
 
 

@@ -15,6 +15,7 @@ Prepared answers carry vectors from the worker's embedder, and the pack names it
 (`embedding_model`); the build key names it too, so a new embedding model rebuilds the packs.
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import Sequence
@@ -30,7 +31,7 @@ from copilot_worker import prompts
 from copilot_worker.context import Ctx
 from copilot_worker.llm import as_dict, as_list, complete_json
 from copilot_worker.memory import load_digest_nodes, render_digest
-from copilot_worker.runtime import Job, handler
+from copilot_worker.runtime import Job, RetryLater, handler
 
 log = logging.getLogger(__name__)
 
@@ -76,15 +77,19 @@ async def digest_rebuild(job: Job, ctx: Ctx) -> None:
     with a rebuilt version are built for its new digest."""
     uid = job.uid
     only = job.payload.get("resume_version_id")
+    revision = job.payload.get("resume_revision_id")
     async with ctx.user(uid) as conn:
         name = await conn.fetchval("select display_name from app.users where id = $1", uid)
         if name is None:
             return  # the user was deleted
         versions = await conn.fetch(
-            "select id, kind from app.resume_versions where user_id = $1"
-            " and ($2::uuid is null or id = $2) order by id",
+            "select id, kind,current_revision_id,content_sha256,extracted_sha256"
+            " from app.resume_versions where user_id = $1"
+            " and ($2::uuid is null or id = $2)"
+            " and ($3::uuid is null or current_revision_id=$3) order by id for share",
             uid,
             UUID(str(only)) if only else None,
+            UUID(str(revision)) if revision else None,
         )
         nodes = {v["id"]: await load_digest_nodes(conn, uid, v["id"]) for v in versions}
     built_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -93,18 +98,39 @@ async def digest_rebuild(job: Job, ctx: Ctx) -> None:
         targets = [keys.resume_digest(uid, v["id"])]
         if v["kind"] == "base":
             targets.append(keys.digest(uid))
+        if digest is not None:
+            digest.built_at = built_at
+            if v["content_sha256"] == v["extracted_sha256"]:
+                digest.resume_revision_id = v["current_revision_id"]
+                digest.resume_content_sha256 = v["content_sha256"]
+        async with ctx.cache_commit(uid) as conn:
+            current = await conn.fetchrow(
+                "select current_revision_id,content_sha256,extracted_sha256"
+                " from app.resume_versions where id=$1 for share",
+                v["id"],
+            )
+            if (
+                current is None
+                or current["current_revision_id"] != v["current_revision_id"]
+                or current["content_sha256"] != v["content_sha256"]
+                or current["extracted_sha256"] != v["extracted_sha256"]
+            ):
+                continue
+            if digest is None:
+                await ctx.valkey.delete(*targets)
+            else:
+                for key in targets:
+                    await ctx.valkey.set(key, digest.model_dump_json(by_alias=True))
         if digest is None:
-            await ctx.valkey.delete(*targets)
             continue
-        digest.built_at = built_at
-        for key in targets:
-            await ctx.valkey.set(key, digest.model_dump_json(by_alias=True))
         log.info(
             "digest for %s, version %s: %s, %d refs",
             uid, v["id"], digest.version[:19], len(digest.refs),
         )  # fmt: skip
     messages: list[dict[str, Any]] = []
-    embedding = ctx.settings.embedding_model_id
+    embedding = (
+        ctx.embedder.model_id if ctx.embedder is not None else ctx.settings.embedding_model_id
+    )
     async with ctx.user(uid) as conn:
         seen: set[UUID] = set()
         for v in versions:
@@ -149,22 +175,28 @@ def stale(ctx: Ctx, pack: SessionPack, digest: Digest) -> bool:
 
 @handler("pack.build")
 async def pack_build(job: Job, ctx: Ctx) -> None:
-    await pack_operations.started(
-        ctx.valkey, job.uid, str(job.payload["context"]), job.idempotency_key
-    )
+    async with ctx.cache_commit(job.uid):
+        await pack_operations.started(
+            ctx.valkey, job.uid, str(job.payload["context"]), job.idempotency_key
+        )
     try:
         await _pack_build(job, ctx)
     except BaseException:
-        await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, False)
+        async with ctx.cache_commit(job.uid):
+            await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, False)
         raise
     else:
-        await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, True)
+        async with ctx.cache_commit(job.uid):
+            await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, True)
 
 
 async def _pack_build(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     mode = str(job.payload.get("mode", "interview"))
     context = str(job.payload["context"])
+    embedding = (
+        ctx.embedder.model_id if ctx.embedder is not None else ctx.settings.embedding_model_id
+    )
     if context.startswith("employer:"):
         from copilot_worker.workplace import build_employer_pack
 
@@ -189,9 +221,12 @@ async def _pack_build(job: Job, ctx: Ctx) -> None:
         if await conn.fetchval("select 1 from app.users where id = $1", uid) is None:
             return  # the user was deleted meanwhile
         now_paired = await resumes.pairing(conn, job_id) if job_id is not None else None
-    await ctx.valkey.set(
-        keys.pack(uid, pack.pack_id), pack.model_dump_json(by_alias=True, exclude_none=True), ex=ttl
-    )
+    async with ctx.cache_commit(uid):
+        await ctx.valkey.set(
+            keys.pack(uid, pack.pack_id),
+            pack.model_dump_json(by_alias=True, exclude_none=True),
+            ex=ttl,
+        )
     if job_id is not None and paired is not None:
         # The pairing, the JD or the version's digest changed while this pack was built: build
         # again for what is current (a new key, so it runs once) and leave the index alone, so
@@ -203,21 +238,20 @@ async def _pack_build(job: Job, ctx: Ctx) -> None:
             log.info("pack %s is out of date already; rebuilding it", pack.pack_id)
             if now_paired is not None:
                 async with ctx.user(uid) as conn:
-                    messages = await resumes.pack_messages(
-                        conn, ctx.valkey, uid, job_id, ctx.settings.embedding_model_id
-                    )
+                    messages = await resumes.pack_messages(conn, ctx.valkey, uid, job_id, embedding)
                 for message in messages:
+                    if message["idempotency_key"] == job.idempotency_key:
+                        raise RetryLater(1, "prepared context changed during build")
                     await ctx.queue.send(message)
             return
     else:
         latest = await current_digest(ctx, uid)
         if latest is not None and latest.version != pack.digest_version:
             log.info("pack %s built from an older digest; rebuilding it", pack.pack_id)
-            await ctx.queue.send(
-                jobs.pack_build(
-                    uid, mode, context, due_at, latest.version, ctx.settings.embedding_model_id
-                )
-            )
+            message = jobs.pack_build(uid, mode, context, due_at, latest.version, embedding)
+            if message["idempotency_key"] == job.idempotency_key:
+                raise RetryLater(1, "prepared context changed during build")
+            await ctx.queue.send(message)
             return
     # An application's pack is indexed under its application and interview only, never as
     # the mode's: a session for no application must not get one application's resume.
@@ -228,7 +262,8 @@ async def _pack_build(job: Job, ctx: Ctx) -> None:
         fields[f"job:{job_id}"] = str(pack.pack_id)
     if interview_id is not None:
         fields[f"interview:{interview_id}"] = str(pack.pack_id)
-    await ctx.valkey.hset(keys.pack_index(uid), mapping=fields)
+    async with ctx.cache_commit(uid):
+        await ctx.valkey.hset(keys.pack_index(uid), mapping=fields)
     if interview_id is not None:
         async with ctx.user(uid) as conn:
             await conn.execute(
@@ -262,6 +297,36 @@ async def build_interview_pack(
             return None
         paired = await resumes.pairing(conn, row["job_id"])
         assert paired is not None
+        source = None
+        if paired.resume_version_id is not None:
+            source = await conn.fetchrow(
+                "select current_revision_id,content_sha256,extracted_sha256"
+                " from app.resume_versions where id=$1 for share",
+                paired.resume_version_id,
+            )
+            if (
+                source is None
+                or source["current_revision_id"] != paired.resume_revision_id
+                or source["content_sha256"] != source["extracted_sha256"]
+            ):
+                raise RetryLater(5, "resume extraction is not current")
+        # Extraction takes this same source row for update before replacing nodes.
+        # Keep the source lock through the bounded cache read so old memory cannot
+        # be combined with a newer digest and stamped as that digest's revision.
+        async with asyncio.timeout(1):
+            digest = await resumes.version_digest(
+                ctx.valkey, uid, paired.resume_version_id, paired.is_base
+            )
+        if (
+            source is not None
+            and source["content_sha256"] is not None
+            and (
+                digest is None
+                or digest.resume_revision_id != source["current_revision_id"]
+                or digest.resume_content_sha256 != source["content_sha256"]
+            )
+        ):
+            raise RetryLater(5, "prepared context changed: resume digest is not current")
         version_nodes = await conn.fetch(
             "select id, kind, title, summary, body from app.memory_nodes"
             " where user_id = $1 and resume_version_id = $2 and status = 'active'"
@@ -270,7 +335,6 @@ async def build_interview_pack(
             paired.resume_version_id,
         )
         stories = {r["id"]: r for r in version_nodes if r["kind"] == "story"}
-    digest = await resumes.version_digest(ctx.valkey, uid, paired.resume_version_id, paired.is_base)
     round_ = str(row["round"] or "general")
     req = prompts.pack_request(
         digest.text if digest else None,
@@ -340,6 +404,8 @@ async def build_interview_pack(
             "ranked_stories": ranked,
             "prepared_answers": prepared,
             "resume_version_id": str(version) if version else None,
+            "resume_revision_id": digest.resume_revision_id if digest else None,
+            "resume_content_sha256": digest.resume_content_sha256 if digest else None,
             "pairing": resumes.pairing_tag(paired),
             "keyterms": interview_keyterms(str(row["company"]), version_nodes),
         }

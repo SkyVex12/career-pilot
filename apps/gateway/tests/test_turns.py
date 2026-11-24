@@ -338,7 +338,11 @@ async def test_a_prepared_hit_before_the_first_token_takes_the_slot(env) -> None
     assert deltas == ["- Scaled the ledger 10x [n:3f2a]\n- Zero downtime cutover\n"]
     assert provider.cancelled >= 1  # the model call it replaced was stopped
     log = await session_log(env, c.session_id)
-    assert [e["reason"] for e in log if e["kind"] == "pass_cancelled"] == ["prepared"]
+    # This assertion concerns the fast model displaced by the prepared hit. A detailed
+    # answer can still be running when session.end arrives and is legitimately stopped.
+    assert [e["reason"] for e in log if e["kind"] == "pass_cancelled" and e["pass"] == "fast"] == [
+        "prepared"
+    ]
 
 
 async def test_the_prompt_cache_is_written_at_session_start(env) -> None:

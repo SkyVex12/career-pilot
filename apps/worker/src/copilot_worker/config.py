@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from copilot_core.config import DataSettings
 
@@ -20,9 +20,15 @@ class WorkerSettings(DataSettings):
     )
 
     # Consumer.
-    concurrency: int = 10
+    concurrency: int = Field(default=10, ge=1)
+    persistence_concurrency: int = Field(default=2, ge=1)
     receive_wait_s: int = 20
-    heartbeat_s: float = 60.0  # extend the running message's visibility this often
+    heartbeat_s: float = Field(default=30.0, gt=0)
+    operation_lease_s: float = Field(default=180.0, gt=0, le=3600)
+    outbox_interval_s: float = Field(default=1.0, gt=0)
+    outbox_batch_size: int = Field(default=25, ge=1, le=100)
+    outbox_publish_concurrency: int = Field(default=8, ge=1, le=32)
+    outbox_recovery_s: float = Field(default=120.0, gt=0)
     shutdown_grace_s: float = 100.0  # Spot gives two minutes after SIGTERM
 
     # Claude for background jobs. Bedrock routes try the Flex tier first, then Standard;
@@ -45,3 +51,9 @@ class WorkerSettings(DataSettings):
     # Offline runs (dev and test only): replay recorded model responses from
     # this directory instead of calling the providers. See copilot_worker.fixtures.
     fixtures_dir: str | None = None
+
+    @model_validator(mode="after")
+    def lease_covers_heartbeat(self) -> "WorkerSettings":
+        if self.heartbeat_s >= self.operation_lease_s:
+            raise ValueError("operation_lease_s must exceed heartbeat_s")
+        return self

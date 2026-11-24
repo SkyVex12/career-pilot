@@ -51,7 +51,7 @@ export function cacheLifetime(path: string): number | null {
     return 60_000;
   if (/^\/(?:applications|resumes|interviews|documents)(?:\/[^/]+)?$/.test(p))
     return 30_000;
-  if (/^\/(?:proposals|usage|meeting-preparation)$/.test(p)) return 60_000;
+  if (/^\/(?:proposals|meeting-preparation)$/.test(p)) return 60_000;
   // Pending conversations receive ttl=0 below so their reconciliation GET still runs.
   if (
     /^\/ask\/conversations(?:\/[^/]+)?$/.test(p) ||

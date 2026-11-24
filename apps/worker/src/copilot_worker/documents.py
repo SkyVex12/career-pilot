@@ -80,7 +80,13 @@ async def memory_extract(job: Job, ctx: Ctx) -> None:
 @handler("resume.extract")
 async def resume_extract(job: Job, ctx: Ctx) -> None:
     await extract_version(
-        ctx, job.uid, UUID(job.payload["resume_version_id"]), str(job.payload["content_sha256"])
+        ctx,
+        job.uid,
+        UUID(job.payload["resume_version_id"]),
+        str(job.payload["content_sha256"]),
+        UUID(str(job.payload["resume_revision_id"]))
+        if job.payload.get("resume_revision_id")
+        else None,
     )
 
 
@@ -122,15 +128,26 @@ async def version_content(ctx: Ctx, uid: UUID, row: Any) -> dict[str, Any] | Non
 
 
 async def persist_original(
-    ctx: Ctx, uid: UUID, version_id: UUID, sha: str, block: dict[str, Any]
+    ctx: Ctx,
+    uid: UUID,
+    version_id: UUID,
+    sha: str,
+    block: dict[str, Any],
+    revision_id: UUID | None = None,
 ) -> None:
     text = await original_text(block)
     async with ctx.user(uid) as conn:
         current = await conn.fetchrow(
-            "select content_sha256,text_enc from app.resume_versions where id=$1 for update",
+            "select content_sha256,text_enc,current_revision_id"
+            " from app.resume_versions where id=$1 for update",
             version_id,
         )
-        if current is None or current["content_sha256"] != sha or current["text_enc"] is not None:
+        if (
+            current is None
+            or current["content_sha256"] != sha
+            or current["text_enc"] is not None
+            or (revision_id is not None and current["current_revision_id"] != revision_id)
+        ):
             return
         sealed, key = (None, None)
         if text:
@@ -154,6 +171,7 @@ async def backfill_original(job: Job, ctx: Ctx) -> None:
         UUID(job.payload["resume_version_id"]),
         str(job.payload["content_sha256"]),
     )
+    expected_revision = job.payload.get("resume_revision_id")
     async with ctx.user(uid) as conn:
         row = await conn.fetchrow(
             "select v.*,d.s3_key,d.sha256 as doc_sha,d.content_type from app.resume_versions v "
@@ -163,58 +181,92 @@ async def backfill_original(job: Job, ctx: Ctx) -> None:
     if (
         row is None
         or row["content_sha256"] != sha
+        or (expected_revision and str(row["current_revision_id"]) != expected_revision)
         or row["text_enc"] is not None
         or row["original_content_sha256"] == sha
     ):
         return
     block = await version_content(ctx, uid, row)
     if block is not None:
-        await persist_original(ctx, uid, version_id, sha, block)
+        await persist_original(ctx, uid, version_id, sha, block, row["current_revision_id"])
 
 
-async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> None:
+async def extract_version(
+    ctx: Ctx,
+    uid: UUID,
+    version_id: UUID,
+    sha: str,
+    revision_id: UUID | None = None,
+) -> None:
     """One version's content into its own memory nodes, then its digest. Content that has
     been replaced since the job was sent is skipped (the newer content has its own job)."""
     async with ctx.user(uid) as conn:
         row = await conn.fetchrow(
             "select v.id, v.label, v.text_enc, v.key_version, v.content_sha256,"
             " v.extracted_sha256, v.status, v.document_id, v.file_s3_key, v.file_content_type,"
-            " v.original_content_sha256,"
+            " v.original_content_sha256,v.current_revision_id,"
             " d.s3_key, d.sha256 as doc_sha,"
             " d.content_type from app.resume_versions v"
             " left join app.documents d on d.id = v.document_id where v.id = $1",
             version_id,
         )
-    if row is None or row["content_sha256"] != sha:
+    if (
+        row is None
+        or row["content_sha256"] != sha
+        or (revision_id is not None and row["current_revision_id"] != revision_id)
+    ):
         return
+    # Even a legacy message captures the source once, before external model work.
+    revision_id = row["current_revision_id"]
     already_extracted = row["status"] == "extracted" and row["extracted_sha256"] == sha
     original_missing = row["text_enc"] is None and dict(row).get("original_content_sha256") != sha
     if already_extracted and not original_missing:
+        async with ctx.user(uid) as conn:
+            current = await conn.fetchval(
+                "select current_revision_id from app.resume_versions where id=$1 for share",
+                version_id,
+            )
+            if current == revision_id:
+                version = await memory_version(conn, uid, version_id)
+                await ctx.queue.send(
+                    jobs.digest_rebuild(
+                        uid,
+                        version_id,
+                        version,
+                        resume_revision_id=revision_id,
+                    )
+                )
         return
     block = await version_content(ctx, uid, row)
     if block is None:
         log.warning("resume version %s: content missing or not as declared", version_id)
         async with ctx.user(uid) as conn:
-            await conn.execute(
+            changed = await conn.fetchval(
                 "update app.resume_versions set status = 'failed', updated_at = now()"
-                " where id = $1 and content_sha256 = $2",
-                version_id, sha,
+                " where id = $1 and content_sha256 = $2 and current_revision_id=$3 returning id",
+                version_id, sha, revision_id,
             )  # fmt: skip
-            if row["document_id"] is not None:
+            if changed is not None and row["document_id"] is not None:
                 await conn.execute(
                     "update app.documents set status = 'failed' where id = $1", row["document_id"]
                 )
         return
     if original_missing:
-        await persist_original(ctx, uid, version_id, sha, block)
+        await persist_original(ctx, uid, version_id, sha, block, revision_id)
     if already_extracted:
         return
     data = await complete_json(ctx.router, "extract", prompts.resume_request(block))
     async with ctx.user(uid) as conn:
-        current = await conn.fetchval(
-            "select content_sha256 from app.resume_versions where id = $1 for update", version_id
+        current = await conn.fetchrow(
+            "select content_sha256,current_revision_id from app.resume_versions"
+            " where id = $1 for update",
+            version_id,
         )
-        if current != sha:  # replaced while the model read it
+        if (
+            current is None
+            or current["content_sha256"] != sha
+            or current["current_revision_id"] != revision_id
+        ):
             return
         count = await replace_resume_nodes(conn, uid, version_id, data)
         await conn.execute(
@@ -227,8 +279,15 @@ async def extract_version(ctx: Ctx, uid: UUID, version_id: UUID, sha: str) -> No
                 "update app.documents set status = 'ingested' where id = $1", row["document_id"]
             )
         version = await memory_version(conn, uid, version_id)
+        await ctx.queue.send(
+            jobs.digest_rebuild(
+                uid,
+                version_id,
+                version,
+                resume_revision_id=revision_id,
+            )
+        )
     log.info("resume version %s: %d memory nodes", version_id, count)
-    await ctx.queue.send(jobs.digest_rebuild(uid, version_id, version))
 
 
 async def ingest_job_description(
@@ -261,5 +320,5 @@ async def ingest_job_description(
         messages = await resumes.pack_messages(
             conn, ctx.valkey, uid, target, ctx.settings.embedding_model_id
         )
-    for message in messages:
-        await ctx.queue.send(message)
+        for message in messages:
+            await ctx.queue.send(message)

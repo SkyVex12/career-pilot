@@ -198,7 +198,10 @@ class EmailSignIn:
         if result != 1 or not self.may_sign_in(email):
             raise CodeError({0: "expired", 2: "locked"}.get(result, "invalid"))
         user_id, name = await identities.account_for_email(self.pool, email)
-        return await self._tokens.issue(user_id, name, email=email)
+        try:
+            return await self._tokens.issue(user_id, name, email=email)
+        except RefreshError as error:
+            raise CodeError("invalid") from error
 
     # --- Tokens -------------------------------------------------------------------------------
 

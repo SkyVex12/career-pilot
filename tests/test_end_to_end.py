@@ -91,6 +91,7 @@ class World:
         """Run queued jobs like a worker until the queue is empty."""
         ran: list[str] = []
         for _ in range(100):
+            await self.ctx.dispatcher.once()
             if not self.queue.sent:
                 return ran
             message = self.queue.sent.pop(0)
@@ -150,6 +151,7 @@ async def world() -> AsyncIterator[World]:
     }  # fmt: skip
     gw_settings = GatewaySettings(_env_file=None, **gw_overrides)  # pyright: ignore[reportCallIssue]
     control = TextSTTControl()
+    gateway_pool = await create_pool(as_role(url, "app_gateway"), 1, 3)
     gw_svc = GatewayServices(
         settings=gw_settings,
         store=GatewayStore(make_client(gw_settings), gw_settings),
@@ -157,13 +159,14 @@ async def world() -> AsyncIterator[World]:
         router=gateway_router(gw_settings, [ScriptedProvider("anthropic")]),
         verifier=verifier,
         stt_providers=[("text", lambda _: TextSTT(control, "text"))],
+        pool=gateway_pool,
     )
     async with GatewayServer(gw_svc) as gw:
         try:
             yield World(api, gw.url, ctx, queue, token)
         finally:
             await api.aclose()
-            for pool in (api_svc.pool, ctx.pool, ctx.system_pool):
+            for pool in (api_svc.pool, ctx.pool, ctx.system_pool, gateway_pool):
                 await pool.close()
             await api_svc.valkey.aclose()
             await ctx.valkey.aclose()
@@ -237,11 +240,10 @@ async def test_resume_to_interview_to_summary(world: World) -> None:
     await c.send({"type": "session.end"})
     assert await c.closed() == 1000
 
-    # After the socket closes, the workers: session.ended writes the log (the user's own
-    # words with it) and creates the row, then the post-call job runs at once; there is no
-    # audio to wait for.
+    # The durable session already exists. After the socket closes, persistence jobs
+    # flush the final log and post-call work runs without waiting for an audio upload.
     ran = await w.work()
-    assert ran[0] == "session.ended"
+    assert "session.ended" in ran
     assert "me_audio.transcribe" not in ran
     assert "session.postcall" in ran
     r = await w.api.get(f"/v1/sessions/{sid}/transcript", headers=w.headers)

@@ -9,11 +9,11 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep, require_link
-from copilot_core import ask, embed, jobs, personal_ai
+from copilot_core import ask, embed, jobs, operations, personal_ai
 from copilot_core.auth import Principal
 from copilot_core.crypto import segment_row_id
 from copilot_core.db import Conn
@@ -111,7 +111,10 @@ async def expire(conn: Conn, cid: UUID) -> None:
         "update app.ask_messages set status='failed',answer_enc=null,answer_key_version=null,error="
         "'Generation interrupted; retry explicitly.',updated_at=now() "
         "where conversation_id=$1 and status='pending' "
-        "and updated_at < now()-interval '5 minutes'",
+        "and updated_at < now()-interval '5 minutes' "
+        "and not exists(select 1 from app.operations o where "
+        "o.idempotency_key='ask.generate:'||ask_messages.id||':'||ask_messages.attempt "
+        "and o.status in ('queued','running','failed'))",
         cid,
     )
 
@@ -245,7 +248,6 @@ async def delete_conversation(cid: UUID, svc: SvcDep, user: UserDep, account: Ac
 async def post_message(
     cid: UUID,
     body: MessageIn,
-    background: BackgroundTasks,
     svc: SvcDep,
     user: UserDep,
     account: AccountDep,
@@ -302,7 +304,7 @@ async def post_message(
             body.question.strip()[:80],
         )
         result = await message(conn, svc, account, row)
-    background.add_task(generate, svc, user, account, cid, mid, 1)
+        await queue_generation(conn, account, user, cid, mid, 1)
     return result
 
 
@@ -322,6 +324,7 @@ async def cancel_message(
         if row is None:
             raise HTTPException(404, "message unavailable")
         result = await message(conn, svc, account, row)
+        await operations.cancel(conn, f"ask.generate:{mid}:{row['attempt']}")
     if task := _running.get(mid):
         task.cancel()
     return result
@@ -331,7 +334,6 @@ async def cancel_message(
 async def retry_message(
     cid: UUID,
     mid: UUID,
-    background: BackgroundTasks,
     svc: SvcDep,
     user: UserDep,
     account: AccountDep,
@@ -357,10 +359,39 @@ async def retry_message(
             "attempt=attempt+1,updated_at=now() where id=$1 returning *",
             mid,
         )
+        assert row is not None  # The conversation lock serializes retry/delete.
         result = await message(conn, svc, account, row)
-    assert row is not None
-    background.add_task(generate, svc, user, account, cid, mid, row["attempt"])
+        await queue_generation(conn, account, user, cid, mid, row["attempt"])
     return result
+
+
+async def queue_generation(
+    conn: Conn,
+    account: Principal,
+    user: Principal,
+    cid: UUID,
+    mid: UUID,
+    attempt: int,
+) -> None:
+    await operations.enqueue(
+        conn,
+        jobs.envelope(
+            "ask.generate",
+            f"ask.generate:{mid}:{attempt}",
+            account.user_id,
+            {
+                "account_id": str(account.user_id),
+                "workspace_id": str(user.user_id),
+                "conversation_id": str(cid),
+                "message_id": str(mid),
+                "attempt": attempt,
+            },
+        ),
+        lane="interactive",
+        account_id=account.user_id,
+        input_revision=str(attempt),
+        transport="local",
+    )
 
 
 def source(
@@ -522,17 +553,19 @@ async def retrieve(
                 if backfills < 3:
                     backfills += 1
                     try:
-                        async with asyncio.timeout(2):
-                            await svc.queue.send(
+                        async with conn.transaction(), asyncio.timeout(2):
+                            await svc.accept(
+                                conn,
                                 jobs.envelope(
                                     "resume.original",
-                                    f"resume-original:{row['id']}:{row['content_sha256']}",
+                                    f"resume-original:{row['id']}:{row['current_revision_id']}",
                                     user.user_id,
                                     {
                                         "resume_version_id": str(row["id"]),
                                         "content_sha256": row["content_sha256"],
+                                        "resume_revision_id": str(row["current_revision_id"]),
                                     },
-                                )
+                                ),
                             )
                     except Exception:
                         logging.getLogger(__name__).warning("Resume text backfill unavailable")
@@ -555,10 +588,12 @@ async def retrieve(
             candidates.append(
                 source(
                     "resume",
-                    row["id"],
+                    f"{row['id']}:{row['current_revision_id']}",
                     row["label"] or "Resume",
                     text,
                     row["updated_at"],
+                    target_id=row["id"],
+                    revision_id=str(row["current_revision_id"]),
                     record_type="original resume",
                 )
             )
@@ -958,6 +993,7 @@ async def generate(
     except asyncio.CancelledError:
         if model_task:
             model_task.cancel()
+        raise
     except Exception as exc:
         if model_task:
             model_task.cancel()
@@ -974,6 +1010,9 @@ async def generate(
                 generation_error(exc, stage),
             )
     finally:
+        if model_task is not None and not model_task.done():
+            model_task.cancel()
+            await asyncio.gather(model_task, return_exceptions=True)
         if _running.get(mid) is current:
             _running.pop(mid, None)
 
@@ -1091,6 +1130,43 @@ async def resolve_source(
             raise HTTPException(404, "private brief removed or unavailable") from exc
     async with svc.tx(user) as conn:
         try:
+            if kind == "resume" and ":" in source_id:
+                version, revision = (UUID(value) for value in source_id.split(":"))
+                row = await conn.fetchrow(
+                    "select r.*,v.label,e.text_enc as extracted_text,"
+                    "e.key_version as extracted_key "
+                    "from app.resume_revisions r join app.resume_versions v "
+                    "on v.id=r.resume_version_id left join app.resume_revision_extractions e "
+                    "on e.revision_id=r.id where r.id=$1 and r.resume_version_id=$2",
+                    revision,
+                    version,
+                )
+                if row is None:
+                    raise HTTPException(404, "Resume revision unavailable")
+                original = row["text_enc"] is None
+                encrypted = row["extracted_text"] if original else row["text_enc"]
+                key_version = row["extracted_key"] if original else row["key_version"]
+                if encrypted is None:
+                    raise HTTPException(404, "Resume revision text unavailable")
+                text = await svc.crypto.decrypt(
+                    conn,
+                    user.user_id,
+                    "resume_versions:original" if original else "resume_versions",
+                    str(version),
+                    encrypted,
+                    key_version,
+                )
+                return source(
+                    kind,
+                    source_id,
+                    row["label"] or "Resume",
+                    text,
+                    row["created_at"],
+                    target_id=version,
+                    revision_id=str(revision),
+                    record_type="original resume",
+                    href="/prep",
+                )
             if kind == "transcript":
                 sid, channel, segment = source_id.split(":")
                 row = await conn.fetchrow(

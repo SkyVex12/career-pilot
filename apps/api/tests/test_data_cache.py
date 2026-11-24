@@ -43,7 +43,10 @@ async def test_work_validation_skips_decryption_and_worker_change_invalidates(
     decrypt.assert_not_awaited()
     async with api.admin.transaction():
         await api.admin.execute("set local role app_worker")
-        await api.admin.execute("select set_config('app.user_id',$1,true)", str(uid))
+        await api.admin.execute(
+            "select set_config('app.user_id',$1,true),set_config('app.account_id',$1,true)",
+            str(uid),
+        )
         # The old worker deliberately doesn't advance updated_at here.
         await api.admin.execute(
             "update app.work_logs set status='extracted' where id=$1", UUID(saved.json()["id"])
@@ -101,8 +104,14 @@ async def test_revision_counter_cannot_skip_a_later_commit(api: Api):
         ta, tb = a.transaction(), b.transaction()
         await ta.start()
         await tb.start()
-        await a.execute("select set_config('app.user_id',$1,true)", str(uid))
-        await b.execute("select set_config('app.user_id',$1,true)", str(uid))
+        await a.execute(
+            "select set_config('app.user_id',$1,true),set_config('app.account_id',$1,true)",
+            str(uid),
+        )
+        await b.execute(
+            "select set_config('app.user_id',$1,true),set_config('app.account_id',$1,true)",
+            str(uid),
+        )
         await a.execute("update app.employers set title='First' where id=$1", UUID(first))
         later = asyncio.create_task(
             b.execute("update app.employers set title='Second' where id=$1", UUID(second))
@@ -155,11 +164,19 @@ async def test_history_ties_and_live_privacy_do_not_truncate_pagination(api: Api
     await api.client.get("/v1/me", headers=h)
     ids = [await seed_session(api, uid) for _ in range(5)]
     hidden = max(ids)
+    private_owner, private_headers = api.user()
+    await api.client.get("/v1/me", headers=private_headers)
+    # Conversion commits its durable parent marker before publishing live cache state.
+    await api.admin.execute(
+        "update app.sessions set private_context_account_id=$2 where id=$1",
+        hidden,
+        private_owner,
+    )
     await api.svc.valkey.hset(
         keys.sess_state(hidden),
         mapping={
             "user_id": str(uid),
-            "private_context_account_id": str(uuid4()),
+            "private_context_account_id": str(private_owner),
             "status": "ended",
         },
     )
@@ -323,6 +340,12 @@ async def test_same_workspace_different_accounts_get_distinct_validators(api: Ap
         uid,
         other_uid,
         f"shared-{uid}",
+    )
+    await api.admin.execute(
+        "insert into app.workspace_memberships(workspace_id,account_id,role)"
+        " values($1,$2,'editor')",
+        uid,
+        other_uid,
     )
     other = {**other, "X-Copilot-Profile": str(uid)}
     first = await api.client.get("/v1/employers", headers=h)
@@ -572,8 +595,14 @@ async def test_opposite_domain_writes_acquire_one_workspace_clock(api: Api):
         ta, tb = a.transaction(), b.transaction()
         await ta.start()
         await tb.start()
-        await a.execute("select set_config('app.user_id',$1,true)", str(uid))
-        await b.execute("select set_config('app.user_id',$1,true)", str(uid))
+        await a.execute(
+            "select set_config('app.user_id',$1,true),set_config('app.account_id',$1,true)",
+            str(uid),
+        )
+        await b.execute(
+            "select set_config('app.user_id',$1,true),set_config('app.account_id',$1,true)",
+            str(uid),
+        )
         await a.execute("update app.employers set title='work-first' where id=$1", UUID(eid))
         # Opposite domain first. Under separate per-domain clocks this would hold
         # history while A held work, then deadlock when each touched the other.

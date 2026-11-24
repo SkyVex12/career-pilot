@@ -17,7 +17,7 @@ from copilot_core.auth import AuthError, Principal
 @pytest.fixture
 def capability_api():
     principal = Principal(uuid4(), "Account", None, provider="email")
-    conn = SimpleNamespace(fetchval=AsyncMock(return_value=1), execute=AsyncMock())
+    conn = SimpleNamespace(fetchval=AsyncMock(return_value="active"), execute=AsyncMock())
 
     @asynccontextmanager
     async def tx(user):

@@ -99,7 +99,11 @@ async def apply(database_url: str, directory: Path, *, status_only: bool = False
                     m.name,
                     m.checksum,
                 )
-                await conn.execute(m.sql)
+                try:
+                    await conn.execute(m.sql)
+                except asyncpg.PostgresError as exc:
+                    exc.add_note(f"Migration failed: {m.name}; its transaction was rolled back.")
+                    raise
             done.append(m.name)
         return done
     finally:

@@ -27,6 +27,7 @@ class Pairing:
     manual: bool  # the user chose it, rather than the automatic rule
     jd_sha256: str
     rev: int  # applications.pairing_rev
+    resume_revision_id: UUID | None = None
 
 
 def sha256_text(text: str) -> str:
@@ -38,7 +39,7 @@ async def pairing(conn: Conn, application_id: UUID) -> Pairing | None:
     """The application's resume pairing, or None if it is not this user's."""
     row = await conn.fetchrow(
         "select a.id, a.jd_text, a.pairing_rev, a.resume_version_id is not null as manual,"
-        " p.rv, v.kind from app.applications a"
+        " p.rv, v.kind,v.current_revision_id from app.applications a"
         " cross join lateral (select app.paired_resume(a.id) as rv) p"
         " left join app.resume_versions v on v.id = p.rv"
         " where a.id = $1",
@@ -53,13 +54,15 @@ async def pairing(conn: Conn, application_id: UUID) -> Pairing | None:
         manual=bool(row["manual"]),
         jd_sha256=sha256_text(str(row["jd_text"])),
         rev=int(row["pairing_rev"]),
+        resume_revision_id=row["current_revision_id"],
     )
 
 
 def pairing_tag(p: Pairing) -> str:
     """The part of an application pack's idempotency key that names its pairing."""
     rv = p.resume_version_id.hex[:12] if p.resume_version_id else "none"
-    return f"{rv}:{p.jd_sha256[:8]}:r{p.rev}"
+    tag = f"{rv}:{p.jd_sha256[:8]}:r{p.rev}"
+    return f"{tag}:s{p.resume_revision_id}" if p.resume_revision_id else tag
 
 
 async def version_digest(

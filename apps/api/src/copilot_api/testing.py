@@ -56,6 +56,7 @@ class Api:
     jobs: MemoryJobQueue
     verifier: StaticVerifier
     mailer: MemoryMailer = field(default_factory=MemoryMailer)
+    process_accepted_work: bool = True
 
     def user(self, name: str = "Alex") -> tuple[uuid.UUID, dict[str, str]]:
         """A new user's id and auth headers (their row is created on first request)."""

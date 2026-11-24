@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import SvcDep, UserDep
-from copilot_core import jobs, keys, resumes
+from copilot_core import keys, resumes
 from copilot_core.ids import uuid7
 from copilot_core.packs import Digest
 from copilot_core.storage import document_key
@@ -155,13 +155,15 @@ async def ingest(document_id: UUID, svc: SvcDep, user: UserDep) -> dict[str, Any
                 conn, user.user_id, document_id, row["sha256"], row["application_id"],
                 row["resume_version_id"], row["label"],
             )  # fmt: skip
+            await svc.extract_resume(conn, user.user_id, version, row["sha256"])
+        elif row["kind"] != "resume" and updated == "UPDATE 1":
+            key = f"memory.extract:{user.user_id}:{document_id}:{row['sha256']}"
+            await svc.enqueue(
+                "memory.extract", key, user.user_id, {"document_id": str(document_id)}, conn=conn
+            )
     if row["kind"] == "resume":
-        if version is not None:
-            await svc.queue.send(jobs.resume_extract(user.user_id, version, row["sha256"]))
         return {**_doc(row), "status": "ingesting",
                 "resume_version_id": str(version) if version else None}  # fmt: skip
     # One extraction per uploaded content (the key also names the document: two uploads of
     # the same file are two documents, each ingested once).
-    key = f"memory.extract:{user.user_id}:{document_id}:{row['sha256']}"
-    await svc.enqueue("memory.extract", key, user.user_id, {"document_id": str(document_id)})
     return {**_doc(row), "status": "ingesting"}

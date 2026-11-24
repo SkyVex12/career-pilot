@@ -36,6 +36,8 @@ class Digest(_Model):
     text: str
     refs: dict[str, NodeRef] = {}
     built_at: str | None = None  # when the worker wrote it; not part of the prompt
+    resume_revision_id: UUID | None = None
+    resume_content_sha256: str | None = None
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -189,6 +191,8 @@ class SessionPack(_Model):
     # An application's interview pack: the resume version its digest and stories came from.
     # None on packs from before resume versions, which all came from the one (base) resume.
     resume_version_id: UUID | None = None
+    resume_revision_id: UUID | None = None
+    resume_content_sha256: str | None = None
     # The pairing it was built for (copilot_core.resumes.pairing_tag), so a rebuild can tell
     # whether it is still current.
     pairing: str | None = None

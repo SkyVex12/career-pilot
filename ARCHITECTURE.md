@@ -2,6 +2,15 @@
 
 Oct 3, 2026 · Leadstar
 
+**Current data/runtime architecture (November 2026):**
+[Production data foundation](docs/design/production-data-foundation.md) documents migrations
+`0029`–`0035`: separate accounts/workspaces/memberships and keys, durable session admission,
+operations/outbox and worker fencing, source revisions, usage accounting and retention.
+It supersedes the older ownership, session-persistence and job-execution descriptions below.
+The SQL examples here include earlier design history; the migration files define the current
+schema. The shared VM has not been migrated or resized by this implementation. Deploy this
+ownership change through the coordinated cutover in that guide, not an old/new rolling mix.
+
 Design for the career copilot: a desktop app that listens to live interviews and work meetings, detects questions aimed at the user, and shows answers grounded in the user's career memory in about a second. Source: the *Copilot Architecture Design* doc ([Claude Docs](https://claude.ai/artifact/FX8sQTyewUycnmMb5kqt7b)).
 
 ## Contents
@@ -175,7 +184,7 @@ Every live dependency has a fallback, so a failure makes answers slower or thinn
 | STT stream drops | No results for 3 s while VAD hears speech | Reconnect; switch to the second STT provider after two failures | "Reconnecting transcription"; hotkey and typed questions still work |
 | Gateway task dies or is replaced | WebSocket closes | Client reconnects and resumes from Valkey | A brief "reconnecting" |
 | Aurora slow or down | Retrieval over 100 ms | Skip full search; answer from hot digest and session pack | Talking points as usual; deep answer marked limited |
-| Valkey unavailable | Connection errors | Gateway keeps the session in memory and buffers logs until Valkey returns | Nothing, unless the gateway also restarts |
+| Valkey unavailable | Connection errors | New starts/resumes fail closed. Existing calls retry retained writes within entry/byte limits; overflow ends the call explicitly | Retry notice on admission; explicit error if active-call retention fills |
 | Model declines (refusal) | `stop_reason: "refusal"`; on OpenAI a `refusal` output item, the content filter or a policy failure, mapped to the same stop reason | Direct API: server-side `fallbacks: "default"`. Bedrock has no server-side fallback, so the gateway retries on the next route with another model (Sonnet 5, thinking off; never `between_tools`, which only Sonnet 5.5 accepts). OpenAI: the next route with another model (another provider in the list). A refusal after text has streamed ends that pass | The fallback model's answer, or `answer.error` with code `refused` (also when every route refused) |
 
 ### Guest seats
@@ -486,7 +495,7 @@ Every interview and standup is a session with the same core log; the mode decide
 
 **Interviews** link to the job and round; outputs are the list of questions asked, a review of how the user answered compared with the suggestion, and a draft follow-up email. **Standups** produce yesterday, today, blockers and dated commitments (the post-call request carries the call's day and weekday in the user's time zone, so "tomorrow" becomes a date, and a commitment is the promise alone, with no remarks about the call); at a company, the request also carries the company's open commitments by short id (`<open_commitments>`), and the report returns only new commitments (at most 3, steps of one task as one, nothing already open) and `closed_commitments`, the open ones the user said are done, dropped or replaced. The new ones become that company's open commitments (`commitment` nodes with the session as source), the closed ones are marked done with the session as `closed_by`, a retried post-call reopens and replaces both, and they feed the next standup pack. In the 2026-10-27 standup, before this, the report stored 6 commitments, mostly steps of one fix and repeats of the 10-26 ones, and the next pack listed 8.
 
-**Usage metering:** billed minutes come from `sessions`; a nightly worker job reports them to the payment provider.
+**Usage metering:** new live sessions measure server-observed host connection time, including silence and excluding reconnect gaps. Migration 0029 adds an independent, append-only usage ledger with immutable payer/price snapshots, retry/overlap protection, and UTC day splitting. History deletion cannot erase accounting. `sessions.billed_seconds` and the nightly `usage_daily` rollup are compatibility displays, not billing authorities. Old wall-clock totals remain nonbillable estimates. `GET /v1/usage` and History show measured time and configurable cost estimates (USD $5/hour by default); payment collection is not implemented. See [connected usage and rollout details](docs/design/usage-metering.md).
 
 ### Infrastructure on AWS
 
@@ -968,7 +977,9 @@ create table app.sessions (
   store_transcript boolean not null,
   started_at       timestamptz not null,
   ended_at         timestamptz,
-  billed_seconds   int not null default 0,
+  billed_seconds   int not null default 0,       -- compatibility display; ledger is authoritative
+  metering_version text not null default 'legacy-wall-v0'
+                   check (metering_version in ('legacy-wall-v0','connected-v1')), -- 0029
   me_audio_status  text not null default 'live'    -- 0007: the user's words come live;
                    check (me_audio_status in ('pending','uploaded','transcribed','none','live')),
                                                     -- the others are from before it
@@ -1197,6 +1208,8 @@ create table app.integrations (
   primary key (user_id, provider)
 );
 
+-- Compatibility rollup of measured + nonbillable legacy seconds, not invoice input.
+-- Durable accounting is in the independent 0029 usage ledger; see docs/design/usage-metering.md.
 create table app.usage_daily (
   user_id      uuid not null references app.users(id) on delete cascade,
   day          date not null,

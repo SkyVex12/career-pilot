@@ -33,7 +33,7 @@ from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
 from copilot_api.links import ACCOUNT_TYPES, integration_row_id
 from copilot_api.routes.applications import application_out, enqueue_packs
-from copilot_core import careeros, jobs, profiles, resumes
+from copilot_core import careeros, profiles, resumes
 from copilot_core.auth import CAREER_OS, Principal
 from copilot_core.careeros import CareerOsClient, CareerOsError, ResumeFile, principal_kind
 from copilot_core.db import Conn
@@ -175,7 +175,7 @@ async def connect(body: ConnectIn, svc: SvcDep, user: AccountDep) -> dict[str, A
         current = await conn.fetchval(
             "select status from app.integrations where provider = $1", PROVIDER
         )
-        email = await conn.fetchval("select email from app.users where id = $1", uid)
+        email = await conn.fetchval("select email from app.accounts where id = $1", uid)
         signs_in_as = await conn.fetchval(
             "select subject from app.identities where provider = $1", CAREER_OS
         )
@@ -509,12 +509,12 @@ async def pull(cos_id: str, svc: SvcDep, account: AccountDep) -> dict[str, Any]:
             )  # fmt: skip
         await enqueue_packs(svc, conn, uid, app_id)
         out = await application_out(svc, conn, uid, app_id, detail=True)
+        if extract is not None:
+            await svc.extract_resume(conn, uid, *extract)
     async with svc.tx(account) as conn:
         await conn.execute(
             "update app.integrations set last_sync_at = now() where provider = $1", PROVIDER
         )
-    if extract is not None:
-        await svc.queue.send(jobs.resume_extract(uid, *extract))
     assert out is not None
     out["pulled"] = "new" if existing is None else "again"
     out["profile_id"] = str(uid)
@@ -536,18 +536,33 @@ async def _pull_resume(
         return None
     sha = (resumes.sha256_text(text) if text.strip()
            else hashlib.sha256(file.body).hexdigest())  # type: ignore[union-attr]  # fmt: skip
+    file_sha = hashlib.sha256(file.body).hexdigest() if file is not None else None
     if kind == "base":
         current = await conn.fetchrow(
-            "select id, content_sha256 from app.resume_versions where kind = 'base'"
+            "select id,content_sha256,file_sha256,source from app.resume_versions "
+            "where kind='base' for update"
         )
     else:
         current = await conn.fetchrow(
-            "select id, content_sha256 from app.resume_versions"
+            "select id,content_sha256,file_sha256,source from app.resume_versions"
             " where application_id = $1 and career_os_ref is not null"
-            " order by created_at desc limit 1",
+            " order by created_at desc limit 1 for update",
             app_id,
         )
     version = current["id"] if current is not None else uuid7()
+    if (
+        current is not None
+        and current["source"] == "career_os"
+        and current["content_sha256"] == sha
+        and current["file_sha256"] == file_sha
+    ):
+        await conn.execute(
+            "update app.resume_versions set label=$2,career_os_ref=$3,pulled_at=now() where id=$1",
+            version,
+            label,
+            ref,
+        )
+        return None
     sealed, key_version = await svc.crypto.encrypt(conn, uid, "resume_versions", str(version), text)
     file_key = name_enc = file_type = None
     if file is not None:
@@ -557,31 +572,29 @@ async def _pull_resume(
         name_enc, _ = await svc.crypto.encrypt(
             conn, uid, "resume_versions", f"{version}:file-name", file.filename[:200]
         )
-        file_key = resume_file_key(uid, version)
+        # Revision objects are immutable: never overwrite a file pinned by older history.
+        file_key = resume_file_key(uid, version) + "/" + str(uuid7())
         file_type = file.content_type
         await svc.store.put(file_key, body, "application/octet-stream")
-    elif current is not None:
-        await svc.store.delete(resume_file_key(uid, version))  # an earlier pull's file
     now = datetime.now(UTC)
     if current is None:
         await conn.execute(
             "insert into app.resume_versions (id, user_id, kind, application_id, label, source,"
             " text_enc, key_version, file_s3_key, file_name_enc, file_content_type,"
-            " content_sha256, status, career_os_ref, pulled_at)"
+            " content_sha256, status, career_os_ref, pulled_at, file_sha256)"
             " values ($1, $2, $3, $4, $5, 'career_os', $6, $7, $8, $9, $10, $11, 'extracting',"
-            " $12, $13)",
+            " $12, $13, $14)",
             version, uid, kind, app_id if kind == "tailored" else None, label, sealed,
-            key_version, file_key, name_enc, file_type, sha, ref, now,
+            key_version, file_key, name_enc, file_type, sha, ref, now, file_sha,
         )  # fmt: skip
     else:
         await conn.execute(
             "update app.resume_versions set source = 'career_os', label = $2, text_enc = $3,"
             " key_version = $4, document_id = null, file_s3_key = $5, file_name_enc = $6,"
             " file_content_type = $7, content_sha256 = $8, career_os_ref = $9, pulled_at = $10,"
-            " status = case when content_sha256 = $8 then status else 'extracting' end,"
+            " status = 'extracting', file_sha256=$11,"
             " updated_at = now() where id = $1",
             version, label, sealed, key_version, file_key, name_enc, file_type, sha, ref, now,
+            file_sha,
         )  # fmt: skip
-        if current["content_sha256"] == sha:
-            return None
     return version, sha

@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep, require_link
 from copilot_api.routes import ask
-from copilot_core import practice
+from copilot_core import jobs, operations, practice
 from copilot_core.ask import Scope, semantic_window
 from copilot_core.auth import Principal
 from copilot_core.db import Conn
@@ -179,7 +179,6 @@ async def list_sessions(svc: SvcDep, user: UserDep, account: AccountDep) -> dict
 @router.post("/sessions", status_code=202)
 async def create_session(
     body: practice.Setup,
-    background: BackgroundTasks,
     svc: SvcDep,
     user: UserDep,
     account: AccountDep,
@@ -265,7 +264,7 @@ async def create_session(
             sid,
             hashed,
         )
-    background.add_task(generate, svc, user, account, sid, operation)
+        await queue_generation(conn, account, user, sid, operation)
     return public(sid, state, svc)
 
 
@@ -276,7 +275,11 @@ async def get_session(sid: UUID, svc: SvcDep, user: UserDep, account: AccountDep
         if state["status"] in ("preparing", "processing"):
             stale = await conn.fetchval(
                 "select 1 from app.practice_sessions where id=$1 "
-                "and updated_at<now()-interval '5 minutes'",
+                "and updated_at<now()-interval '5 minutes' "
+                "and not exists(select 1 from app.practice_operations p "
+                "join app.operations o on o.idempotency_key='practice.generate:'||p.id "
+                "where p.session_id=$1 and p.status='pending' "
+                "and o.status in ('queued','running','failed'))",
                 sid,
             )
             if stale:
@@ -299,7 +302,6 @@ async def get_session(sid: UUID, svc: SvcDep, user: UserDep, account: AccountDep
 async def action(
     sid: UUID,
     body: practice.Action,
-    background: BackgroundTasks,
     svc: SvcDep,
     user: UserDep,
     account: AccountDep,
@@ -323,6 +325,12 @@ async def action(
             raise HTTPException(409, str(exc)) from exc
         if body.action in ("pause", "finish", "retry"):
             cancel = True
+            pending = await conn.fetch(
+                "select id from app.practice_operations where session_id=$1 and status='pending'",
+                sid,
+            )
+            for old in pending:
+                await operations.cancel(conn, f"practice.generate:{old['id']}")
             await conn.execute(
                 "update app.practice_operations set status='cancelled',updated_at=now() "
                 "where session_id=$1 and status='pending'",
@@ -341,11 +349,38 @@ async def action(
             "pending" if needs_model else "done",
         )
         await save(conn, svc, account, sid, state)
+        if needs_model:
+            await queue_generation(conn, account, user, sid, body.request_id)
     if cancel and (task := _running.get(sid)):
         task.cancel()
-    if needs_model:
-        background.add_task(generate, svc, user, account, sid, body.request_id)
     return public(sid, state, svc)
+
+
+async def queue_generation(
+    conn: Conn,
+    account: Principal,
+    user: Principal,
+    sid: UUID,
+    operation: UUID,
+) -> None:
+    await operations.enqueue(
+        conn,
+        jobs.envelope(
+            "practice.generate",
+            f"practice.generate:{operation}",
+            account.user_id,
+            {
+                "account_id": str(account.user_id),
+                "workspace_id": str(user.user_id),
+                "session_id": str(sid),
+                "operation_id": str(operation),
+            },
+        ),
+        lane="interactive",
+        account_id=account.user_id,
+        input_revision=str(operation),
+        transport="local",
+    )
 
 
 @router.delete("/sessions/{sid}", status_code=204)
@@ -458,6 +493,7 @@ async def generate(
     except asyncio.CancelledError:
         if model_task:
             model_task.cancel()
+        raise
     except Exception:
         if model_task:
             model_task.cancel()
@@ -487,6 +523,9 @@ async def generate(
                         operation,
                     )
     finally:
+        if model_task is not None and not model_task.done():
+            model_task.cancel()
+            await asyncio.gather(model_task, return_exceptions=True)
         if _running.get(sid) is task:
             _running.pop(sid, None)
 

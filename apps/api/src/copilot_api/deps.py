@@ -2,7 +2,7 @@
 
 Every request carries an access token (Google's or Cognito's, the API's own after an email or
 Career-OS sign-in, or the dev token locally). The first request of a new user creates their
-`app.users` row from the token; an email or Career-OS sign-in's account is made by the sign-in
+`app.accounts` row from the token; an email or Career-OS sign-in's account is made by the sign-in
 itself instead.
 Every handler then runs its queries inside `services.tx(user)`, which opens a transaction that
 sets `app.user_id` first (ARCHITECTURE.md, "Row-level security").
@@ -22,7 +22,8 @@ import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated, Any
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
@@ -34,11 +35,20 @@ from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.config import ApiSettings
 from copilot_api.emailauth import EmailSignIn
 from copilot_api.tokens import TokenService
-from copilot_core import careeros, identities, jobs, keys, logs, pack_operations, profiles
+from copilot_core import (
+    careeros,
+    identities,
+    jobs,
+    keys,
+    logs,
+    operations,
+    pack_operations,
+    profiles,
+)
 from copilot_core.auth import CAREER_OS, AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
-from copilot_core.db import Conn, user_tx
+from copilot_core.db import Conn, actor_account, user_tx
 from copilot_core.packs import Digest
 from copilot_core.storage import ObjectStore
 from copilot_core.valkey_client import Valkey
@@ -65,23 +75,62 @@ class Services:
             self.queue = pack_operations.ObservedQueue(self.queue, self.valkey)
 
     @asynccontextmanager
-    async def tx(self, user: Principal) -> AsyncGenerator[Conn]:
+    async def tx(
+        self,
+        user: Principal,
+        *,
+        isolation: Literal["repeatable_read"] | None = None,
+    ) -> AsyncGenerator[Conn]:
         active = snapshot.get()
         if active is not None and active.user.user_id == user.user_id:
+            # DataCacheRoute already opens its snapshot at repeatable-read isolation.
             yield active.conn
             return
-        async with user_tx(self.pool, user.user_id) as conn:
+        async with user_tx(
+            self.pool,
+            user.user_id,
+            isolation=isolation,
+            actor_account_id=actor_account.get() or user.user_id,
+        ) as conn:
             yield conn
 
     async def enqueue(
         self, job_type: str, key: str, user_id: UUID | None, payload: Mapping[str, Any],
-        delay_s: int = 0,
+        delay_s: int = 0, *, conn: Conn | None = None,
     ) -> None:  # fmt: skip
-        await self.queue.send(jobs.envelope(job_type, key, user_id, payload), delay_s=delay_s)
+        message = jobs.envelope(job_type, key, user_id, payload)
+        if conn is not None:
+            await self.accept(conn, message, delay_s=delay_s)
+        elif user_id is not None:
+            async with self.tx(Principal(user_id, "", None)) as connection:
+                await self.accept(connection, message, delay_s=delay_s)
+        else:
+            raise ValueError("system work must be accepted by a system transaction")
+
+    async def accept(
+        self,
+        conn: Conn,
+        message: Mapping[str, Any],
+        *,
+        delay_s: int = 0,
+    ) -> None:
+        """Commit accepted work atomically with the domain mutation that requested it."""
+        await operations.enqueue(
+            conn,
+            message,
+            account_id=actor_account.get(),
+            available_at=datetime.now(UTC) + timedelta(seconds=delay_s),
+        )
 
     async def digest_version(self, user_id: UUID) -> str | None:
         raw = await self.valkey.get(keys.digest(user_id))
         return None if raw is None else Digest.model_validate_json(raw).version
+
+    async def extract_resume(self, conn: Conn, uid: UUID, version: UUID, sha: str) -> None:
+        revision = await conn.fetchval(
+            "select current_revision_id from app.resume_versions where id=$1", version
+        )
+        await self.accept(conn, jobs.resume_extract(uid, version, sha, resume_revision_id=revision))
 
 
 def services(request: Request) -> Services:
@@ -107,6 +156,7 @@ async def current_account(
 ) -> Principal:
     active = snapshot.get()
     if active is not None and active.authorization == authorization:
+        actor_account.set(active.account.user_id)
         return active.account
     token = bearer_token(authorization)
     if token is None:
@@ -119,13 +169,25 @@ async def current_account(
         # A Google sign-in nothing has recorded yet: an account from before identities, or
         # the account an email sign-in made for the same address (copilot_core.identities).
         principal = await identities.adopt_google(svc.pool, principal)
+    actor_account.set(principal.user_id)
     logs.set_ids(user_id=principal.user_id)
     async with svc.tx(principal) as conn:
-        known = await conn.fetchval("select 1 from app.users where id = $1", principal.user_id)
+        known = await conn.fetchval(
+            "select status from app.accounts where id = $1",
+            principal.user_id,
+        )
+        if known is None and await conn.fetchval(
+            "select 1 from app.account_tombstones where account_id=$1", principal.user_id
+        ):
+            known = "retired"
+    if known is not None and known != "active":
+        raise HTTPException(401, "this account is inactive", headers={"WWW-Authenticate": "Bearer"})
     if known is None:
-        if principal.provider in ("email", CAREER_OS):
-            # An email or Career-OS sign-in makes its account itself; a token without one is
-            # a deleted account's, and does not bring it back.
+        if principal.provider in ("email", CAREER_OS) or (
+            principal.provider == "google" and not principal.new_identity
+        ):
+            # App-issued tokens and already-resolved Google identities cannot recreate
+            # a deleted account. A fresh Google identity is handled by adopt_google above.
             raise HTTPException(
                 401, "this account no longer exists; sign in again",
                 headers={"WWW-Authenticate": "Bearer"},
@@ -136,7 +198,7 @@ async def current_account(
         try:
             async with svc.tx(principal) as conn:
                 await conn.execute(
-                    "insert into app.users (id, email, display_name) values ($1, $2, $3)"
+                    "insert into app.accounts (id, email, display_name) values ($1, $2, $3)"
                     " on conflict (id) do nothing",
                     principal.user_id,
                     email,

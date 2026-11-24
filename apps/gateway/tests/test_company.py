@@ -335,6 +335,7 @@ async def test_a_company_that_is_not_the_users_is_ignored(env: Env, db: Db) -> N
 async def test_a_current_stored_pack_is_used_as_it_is(env: Env, db: Db, mode: str) -> None:
     async with db.pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
+        await conn.execute("select set_config('app.account_id', $1, true)", str(USER_A))
         pack = await render_employer_pack(conn, USER_A, db.fernhill, mode, local_today({}))
     assert pack is not None
     vk: Any = env.client()
@@ -362,6 +363,7 @@ async def test_a_current_stored_pack_is_used_as_it_is(env: Env, db: Db, mode: st
 async def test_without_a_database_the_stored_pack_still_loads(env: Env, db: Db) -> None:
     async with db.pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
+        await conn.execute("select set_config('app.account_id', $1, true)", str(USER_A))
         pack = await render_employer_pack(conn, USER_A, db.fernhill, "meeting", local_today({}))
     assert pack is not None
     vk: Any = env.client()
@@ -493,6 +495,7 @@ async def test_meeting_refreshes_daily_brief_without_memory_changes(
     today = local_today({})
     async with db.pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.user_id', $1, true)", str(USER_A))
+        await conn.execute("select set_config('app.account_id', $1, true)", str(USER_A))
         pack = await render_employer_pack(
             conn,
             USER_A,

@@ -1,6 +1,6 @@
 """A session for one of the account's profiles (ARCHITECTURE.md, "Profiles"): the client names
-it in the `profile` query parameter; the gateway checks it against the account's
-`app.profiles` as app_gateway and then runs the session as the profile, with the profile's
+it in the `profile` query parameter; the gateway checks the account's active workspace
+membership as app_gateway and then runs the session as the profile, with the profile's
 digest. Another account's profile, or an unknown one, is refused. Needs Postgres from the
 docker compose stack."""
 
@@ -104,6 +104,12 @@ async def test_a_user_links_me_is_the_persons_shared_workspace(env, db: Db) -> N
         "insert into app.career_os_people (career_os_user_id, user_id) values ('u3', $1)",
         db.profile,
     )  # fmt: skip
+    await db.admin.execute(
+        "insert into app.workspace_memberships(workspace_id,account_id,role)"
+        " values($1,$2,'editor')",
+        db.profile,
+        USER_B,
+    )
     try:
         vk = env.client()
         async with GatewayServer(env.services(env.settings(), pool=db.pool)) as gw:
@@ -115,6 +121,11 @@ async def test_a_user_links_me_is_the_persons_shared_workspace(env, db: Db) -> N
                 await c.send({"type": "session.end"})
                 assert await c.closed() == 1000
     finally:
+        await db.admin.execute(
+            "delete from app.workspace_memberships where workspace_id=$1 and account_id=$2",
+            db.profile,
+            USER_B,
+        )
         await db.admin.execute("delete from app.career_os_people where career_os_user_id = 'u3'")
         await db.admin.execute("delete from app.integrations where user_id = $1", USER_B)
 

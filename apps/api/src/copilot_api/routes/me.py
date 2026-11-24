@@ -1,20 +1,21 @@
 """`GET /me`, `PATCH /me`, `PATCH /me/settings`, `DELETE /me`, `GET /usage`.
 
 All of them are the signed-in account's, whichever profile the app has switched to
-(ARCHITECTURE.md, "Profiles"): settings are copied to the profiles, usage counts them too, and
-deleting the account deletes its profiles."""
+(ARCHITECTURE.md, "Profiles"): preferences belong to the account, measured usage belongs to
+its payer, and deletion transfers shared workspaces before removing private account data."""
 
 import re
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from copilot_api.deps import AccountDep, SvcDep
 from copilot_core import profiles
+from copilot_core import usage as usage_ledger
 from copilot_core.auth import CAREER_OS, Principal
 
 router = APIRouter()
@@ -26,7 +27,7 @@ class Consent(BaseModel):
 
 
 class SettingsPatch(BaseModel):
-    """User settings (ARCHITECTURE.md, `users.settings`): retention days, standup time,
+    """Account settings (ARCHITECTURE.md, `accounts.settings`): retention days, standup time,
     consent defaults. Fields left out stay as they are; null clears one."""
 
     model_config = ConfigDict(extra="forbid")
@@ -71,7 +72,9 @@ def _me(row: Any) -> dict[str, Any]:
     }
 
 
-ME_SQL = "select id, email, display_name, plan, settings, created_at from app.users where id = $1"
+ME_SQL = (
+    "select id, email, display_name, plan, settings, created_at from app.accounts where id = $1"
+)
 
 
 @router.get("/me")
@@ -108,7 +111,7 @@ async def patch_me(body: MePatch, svc: SvcDep, user: AccountDep) -> dict[str, An
     async with svc.tx(user) as conn:
         if body.display_name is not None:
             await conn.execute(
-                "update app.users set display_name = $2 where id = $1",
+                "update app.accounts set display_name = $2 where id = $1",
                 user.user_id,
                 body.display_name,
             )
@@ -122,7 +125,7 @@ async def patch_settings(body: SettingsPatch, svc: SvcDep, user: AccountDep) -> 
     async with svc.tx(user) as conn:
         if changes:
             current: dict[str, Any] = dict(
-                await conn.fetchval("select settings from app.users where id = $1", user.user_id)
+                await conn.fetchval("select settings from app.accounts where id = $1", user.user_id)
                 or {}
             )
             for key, value in changes.items():
@@ -133,12 +136,9 @@ async def patch_settings(body: SettingsPatch, svc: SvcDep, user: AccountDep) -> 
                 else:
                     current[key] = value
             await conn.execute(
-                "update app.users set settings = $2 where id = $1", user.user_id, current
+                "update app.accounts set settings = $2 where id = $1", user.user_id, current
             )
         row = await conn.fetchrow(ME_SQL, user.user_id)
-    if changes and row is not None:
-        settings = cast(dict[str, Any], row["settings"] or {})
-        await profiles.sync_settings(svc.pool, user, settings)
     return _me(row)
 
 
@@ -150,45 +150,92 @@ async def delete_me(svc: SvcDep, user: AccountDep) -> dict[str, str]:
 
 
 @router.get("/usage")
-async def usage(svc: SvcDep, user: AccountDep, month: str | None = None) -> dict[str, Any]:
-    """Live minutes this calendar month (UTC), from the sessions' billed seconds: the
-    account's and its profiles'."""
+async def usage(
+    svc: SvcDep, user: AccountDep, response: Response, month: str | None = None
+) -> dict[str, Any]:
+    """Durable connected usage owned by the signed-in payer, plus nonbillable history.
+
+    Old clients retain the combined live_seconds/live_minutes display. Only measured
+    intervals contribute to price estimates; legacy wall-clock durations never do.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization"
+    as_of = datetime.now(UTC)
     try:
+        if month is not None and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) is None:
+            raise ValueError("invalid month format")
         first = (
-            date.fromisoformat(f"{month}-01") if month else datetime.now(UTC).date().replace(day=1)
+            date.fromisoformat(f"{month}-01") if month is not None else as_of.date().replace(day=1)
         )
-    except ValueError as e:
+        nxt = (first + timedelta(days=32)).replace(day=1)
+    except (ValueError, OverflowError) as e:
         raise HTTPException(422, "month must be YYYY-MM") from e
-    nxt = (first + timedelta(days=32)).replace(day=1)
     start = datetime.combine(first, time(), UTC)
     end = datetime.combine(nxt, time(), UTC)
+    async with svc.tx(user, isolation="repeatable_read") as conn:
+        measured = await usage_ledger.usage_summary(
+            conn, payer_account_id=user.user_id, started_at=start, ended_at=end
+        )
     who = [user] + [
         Principal(UUID(p["id"]), p["name"], user.expires_at)
         for p in await profiles.listed(svc.pool, user)
     ]
+    legacy_us = legacy_sessions = 0
     by_day: dict[date, list[int]] = {}
+    for day in measured.days:
+        by_day[day.day] = [day.connected_microseconds, 0]
     for principal in who:
         async with svc.tx(principal) as conn:
-            for r in await conn.fetch(
-                "select (started_at at time zone 'UTC')::date as day, count(*) as sessions,"
-                " sum(billed_seconds)::int as seconds from app.sessions"
-                " where user_id = $1 and started_at >= $2 and started_at < $3"
-                " and ended_at is not null group by 1",
-                principal.user_id,
-                start,
-                end,
-            ):
-                day = by_day.setdefault(r["day"], [0, 0])
-                day[0] += int(r["sessions"])
-                day[1] += int(r["seconds"] or 0)
-    days = sorted(by_day.items())
-    seconds = sum(v[1] for _, v in days)
+            legacy = await usage_ledger.legacy_summary(
+                conn, workspace_id=principal.user_id, started_at=start, ended_at=end
+            )
+        legacy_us += legacy.estimated_microseconds
+        legacy_sessions += legacy.session_count
+        for day in legacy.days:
+            by_day.setdefault(day.day, [0, 0])[1] += day.estimated_microseconds
+    total_us = measured.connected_microseconds + legacy_us
     return {
         "period": first.strftime("%Y-%m"),
         "period_start": start.isoformat(),
         "period_end": end.isoformat(),
-        "live_seconds": seconds,
-        "live_minutes": -(-seconds // 60),
-        "sessions": sum(v[0] for _, v in days),
-        "days": [{"day": d.isoformat(), "live_seconds": v[1]} for d, v in days],
+        "as_of": as_of.isoformat(),
+        "last_recorded_at": measured.last_recorded_at.isoformat()
+        if measured.last_recorded_at is not None
+        else None,
+        "tracking_only": True,
+        "measurement": "connected-v1",
+        "live_seconds": total_us // 1_000_000,
+        "live_minutes": -(-total_us // 60_000_000),
+        "sessions": measured.session_count + legacy_sessions,
+        "measured_seconds": measured.connected_microseconds / 1_000_000,
+        "measured_sessions": measured.session_count,
+        "legacy_estimated_seconds": legacy_us / 1_000_000,
+        "legacy_sessions": legacy_sessions,
+        "legacy_billable": False,
+        "estimated_costs": [
+            {
+                "currency": cost.currency,
+                "estimated_minor": cost.estimated_minor,
+                "adjustment_minor": cost.adjustment_minor,
+            }
+            for cost in measured.costs
+        ],
+        "prices": [
+            {
+                "currency": price.currency,
+                "price_version": price.price_version,
+                "rate_minor_per_hour": price.rate_minor_per_hour,
+                "measured_seconds": price.connected_microseconds / 1_000_000,
+            }
+            for price in measured.prices
+        ],
+        "days": [
+            {
+                "day": day.isoformat(),
+                "live_seconds": (values[0] + values[1]) // 1_000_000,
+                "measured_seconds": values[0] / 1_000_000,
+                "legacy_estimated_seconds": values[1] / 1_000_000,
+            }
+            for day, values in sorted(by_day.items())
+        ],
     }

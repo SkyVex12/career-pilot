@@ -5,6 +5,7 @@ import asyncio
 import re
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -17,6 +18,7 @@ from copilot_core import identities
 from copilot_core.auth import Principal, google_user_id
 from copilot_core.db import sign_in_tx, user_tx
 from copilot_core.identities import normalize_email
+from copilot_core.usage import UsagePrice, record_interval
 
 pytestmark = [pytest.mark.stack, pytest.mark.asyncio(loop_scope="session")]
 
@@ -327,13 +329,31 @@ async def test_leaving_the_allow_list_ends_the_sign_in(api: Api) -> None:
 async def test_a_deleted_account_is_not_brought_back_by_its_token(api: Api) -> None:
     tokens = await sign_in(api, address())
     me = (await api.client.get("/v1/me", headers=bearer(tokens))).json()
-    await api.admin.execute("delete from app.users where id = $1", uuid.UUID(me["id"]))
+    async with api.admin.transaction():
+        await api.admin.execute("delete from app.workspaces where id=$1", uuid.UUID(me["id"]))
+        await api.admin.execute("delete from app.accounts where id=$1", uuid.UUID(me["id"]))
     r = await api.client.get("/v1/me", headers=bearer(tokens))
     assert r.status_code == 401
     r = await api.client.post(
         "/v1/auth/email/refresh", json={"refresh_token": tokens["refresh_token"]}
     )
     assert r.status_code == 401
+
+
+async def test_inactive_account_cannot_use_or_refresh_tokens_or_sign_in(api: Api) -> None:
+    email = address()
+    tokens = await sign_in(api, email)
+    uid = uuid.UUID((await api.client.get("/v1/me", headers=bearer(tokens))).json()["id"])
+    async with api.admin.transaction():
+        await api.admin.execute("update app.workspaces set status='archived' where id=$1", uid)
+        await api.admin.execute("update app.accounts set status='disabled' where id=$1", uid)
+    assert (await api.client.get("/v1/me", headers=bearer(tokens))).status_code == 401
+    refreshed = await api.client.post(
+        "/v1/auth/email/refresh", json={"refresh_token": tokens["refresh_token"]}
+    )
+    assert refreshed.status_code == 401
+    verified = await post(api, "verify", {"email": email, "code": await code_for(api, email)})
+    assert verified.status_code == 400
 
 
 # --- Accounts -----------------------------------------------------------------------------------
@@ -354,6 +374,84 @@ async def google_principal(email: str, sub: str | None = None) -> Principal:
         google_user_id(sub), "Alex", None, email=email, provider="google", subject=sub,
         new_identity=True,
     )  # fmt: skip
+
+
+async def test_google_sign_in_after_deletion_keeps_retained_workspace_separate(api: Api) -> None:
+    google = await google_principal(address())
+    token = f"google-{google.subject}"
+    header = {"Authorization": f"Bearer {token}"}
+    api.verifier.principals[token] = google
+    assert (await api.client.get("/v1/me", headers=header)).json()["id"] == str(google.user_id)
+    measured_at = datetime.now(UTC)
+    await record_interval(
+        api.admin,
+        workspace_id=google.user_id,
+        session_id=uuid.uuid4(),
+        payer_account_id=google.user_id,
+        event_id=uuid.uuid4(),
+        started_at=measured_at - timedelta(seconds=10),
+        ended_at=measured_at,
+        price=UsagePrice(),
+    )
+    collaborator, collaborator_header = api.user()
+    await api.client.get("/v1/me", headers=collaborator_header)
+    await api.admin.execute(
+        "insert into app.workspace_memberships(workspace_id,account_id,role) values($1,$2,'owner')",
+        google.user_id,
+        collaborator,
+    )
+    await api.admin.execute("delete from app.accounts where id=$1", google.user_id)
+    assert await api.admin.fetchval("select id from app.workspaces where id=$1", google.user_id)
+    # A cached known-identity result cannot recreate the deleted account.
+    api.verifier.principals[token] = Principal(
+        google.user_id,
+        google.display_name,
+        None,
+        email=google.email,
+        provider="google",
+        subject=google.subject,
+    )
+    assert (await api.client.get("/v1/me", headers=header)).status_code == 401
+    # A new verified identity can register, with a fresh UUID and personal workspace.
+    api.verifier.principals[token] = google
+    response = await api.client.get("/v1/me", headers=header)
+    assert response.status_code == 200
+    replacement = uuid.UUID(response.json()["id"])
+    assert replacement != google.user_id
+    assert (
+        await api.admin.fetchval(
+            "select count(*) from app.workspace_memberships "
+            "where workspace_id=$1 and account_id=$2",
+            google.user_id,
+            replacement,
+        )
+        == 0
+    )
+    assert (
+        await api.client.get(
+            "/v1/applications", headers={**header, "X-Copilot-Profile": str(google.user_id)}
+        )
+    ).status_code == 404
+    # Repeated verification converges on the same replacement identity.
+    assert (await api.client.get("/v1/me", headers=header)).json()["id"] == str(replacement)
+    assert (await api.client.get("/v1/usage", headers=header)).json()["measured_seconds"] == 0
+    assert (
+        await api.admin.fetchval(
+            "select sum(duration_microseconds) from app.live_usage_intervals "
+            "where payer_account_id=$1",
+            google.user_id,
+        )
+        == 10_000_000
+    )
+
+
+async def test_deleted_federated_account_token_is_rejected_before_bootstrap(api: Api) -> None:
+    uid, header = api.user()
+    assert (await api.client.get("/v1/me", headers=header)).status_code == 200
+    async with api.admin.transaction():
+        await api.admin.execute("delete from app.workspaces where id=$1", uid)
+        await api.admin.execute("delete from app.accounts where id=$1", uid)
+    assert (await api.client.get("/v1/me", headers=header)).status_code == 401
 
 
 async def test_email_sign_in_joins_the_account_of_the_same_google_address(api: Api) -> None:
@@ -400,7 +498,7 @@ async def test_an_account_from_before_identities_gets_its_real_subject(api: Api)
     email = address()
     google = await google_principal(email)
     await api.admin.execute(
-        "insert into app.users (id, email, display_name) values ($1, $2, 'Alex')",
+        "insert into app.accounts (id, email, display_name) values ($1, $2, 'Alex')",
         google.user_id, email,
     )  # fmt: skip
     await api.admin.execute(

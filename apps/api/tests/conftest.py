@@ -12,6 +12,7 @@ import pytest_asyncio
 
 from copilot_api.deps import Services
 from copilot_api.emailauth import EmailSignIn
+from copilot_api.interactive import InteractiveRunner
 from copilot_api.mailer import MemoryMailer
 from copilot_api.main import create_app
 from copilot_api.testing import Api, api_settings
@@ -27,6 +28,7 @@ from copilot_core.auth import (
 from copilot_core.crypto import DevKeyProvider, UserCrypto
 from copilot_core.db import create_pool
 from copilot_core.jobs import MemoryJobQueue
+from copilot_core.operations import OutboxDispatcher, current_lease
 from copilot_core.storage import S3Store
 from copilot_core.teststack import StackUnavailableError, as_role, temp_database
 from copilot_core.valkey_client import make_valkey
@@ -67,13 +69,40 @@ async def api() -> AsyncIterator[Api]:
     )
     app = create_app(svc)
     app.state.services = svc
-    client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://api.test")
+    system_pool = await create_pool(as_role(url, "app_system"), 1, 2)
+    dispatcher = OutboxDispatcher(system_pool, svc.queue)
+    runner = InteractiveRunner(svc)
+
+    class AcceptedWorkTransport(httpx2.AsyncBaseTransport):
+        """Most route tests execute accepted work deterministically after the response.
+
+        Restart/lease tests disable this and run another executor explicitly. Production
+        serves the response immediately; its lifespan executor and outbox run independently.
+        """
+
+        def __init__(self) -> None:
+            self.inner = httpx2.ASGITransport(app=app)
+
+        async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+            response = await self.inner.handle_async_request(request)
+            if fixture.process_accepted_work and current_lease.get() is None:
+                await dispatcher.once()
+                await runner.drain_ready()
+                await dispatcher.once()
+            return response
+
+        async def aclose(self) -> None:
+            await self.inner.aclose()
+
+    client = httpx2.AsyncClient(transport=AcceptedWorkTransport(), base_url="http://api.test")
     admin = await asyncpg.connect(url)
+    fixture = Api(svc, client, admin, jobs, verifier, mailer)
     try:
-        yield Api(svc, client, admin, jobs, verifier, mailer)
+        yield fixture
     finally:
         await client.aclose()
         await admin.close()
+        await system_pool.close()
         await svc.pool.close()
         await svc.valkey.aclose()
         await db.__aexit__(None, None, None)

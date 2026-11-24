@@ -10,7 +10,7 @@ import json
 import os
 import signal
 
-from copilot_core import __version__, logs
+from copilot_core import __version__, logs, operations
 from copilot_core.dotenv import load_dotenv
 from copilot_worker import documents, knowledge, packs, sessionlog, system, workplace
 from copilot_worker.config import WorkerSettings
@@ -73,15 +73,27 @@ async def main() -> None:
         concurrency=settings.concurrency,
         receive_wait_s=settings.receive_wait_s,
         heartbeat_s=settings.heartbeat_s,
+        lease_s=settings.operation_lease_s,
+        persistence_concurrency=settings.persistence_concurrency,
         shutdown_grace_s=settings.shutdown_grace_s,
     )
     host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8082"))
     health = asyncio.create_task(serve(host, port, stop))
+    dispatch = asyncio.create_task(
+        operations.OutboxDispatcher(
+            ctx.system_pool,
+            ctx.transport,
+            batch_size=settings.outbox_batch_size,
+            recovery_s=settings.outbox_recovery_s,
+            publish_concurrency=settings.outbox_publish_concurrency,
+        ).run(stop, settings.outbox_interval_s)
+    )
     try:
         await consumer.run(stop)
     finally:
         stop.set()
         await health
+        await dispatch
         await close_ctx(ctx)
 
 

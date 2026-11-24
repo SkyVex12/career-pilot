@@ -19,6 +19,12 @@ pytestmark = [pytest.mark.stack, pytest.mark.asyncio(loop_scope="session")]
 
 async def live_call(api: Api, uid: uuid.UUID, status: str = "active") -> uuid.UUID:
     sid = uuid.uuid4()
+    await api.admin.execute(
+        "insert into app.sessions(id,user_id,mode,started_at,store_transcript)"
+        " values($1,$2,'interview',now(),true)",
+        sid,
+        uid,
+    )
     await api.svc.valkey.hset(
         keys.sess_state(sid),
         mapping={"user_id": str(uid), "status": status, "mode": "interview", "title": "Acme"},

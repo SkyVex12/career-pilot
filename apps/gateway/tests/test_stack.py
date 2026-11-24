@@ -108,6 +108,21 @@ async def test_store_scripts_on_real_valkey(vk: Any, env: Any) -> None:
         assert await store.claim_active(uid, uuid.uuid4()) == str(sid)
         await store.release_active(uid, sid)
         assert await vk.get(keys.user_active_session(uid)) is None
+        # A late resume/renew may recover an active session after lease expiry,
+        # but must not recreate ownership after an end or content deletion.
+        await vk.hset(keys.sess_state(sid), mapping={"status": "active"})
+        assert await store.take_resume_lease(sid, "task-c")
+        await vk.pexpire(keys.sess_lease(sid), 0)
+        assert await store.lease_holder(sid) is None
+        assert await store.renew_lease(sid, "task-c")
+        await store.mark_ended(sid, "test finished")
+        await store.release_lease(sid, "task-c")
+        assert not await store.take_resume_lease(sid, "late-task")
+        assert not await store.renew_lease(sid, "task-c")
+        await vk.delete(keys.sess_state(sid))
+        assert not await store.take_resume_lease(sid, "late-task")
+        assert not await store.renew_lease(sid, "task-c")
+        assert await store.lease_holder(sid) is None
     finally:
         await vk.delete(
             *(k(sid) for k in (keys.sess_state, keys.sess_events, keys.sess_log, keys.sess_lease))

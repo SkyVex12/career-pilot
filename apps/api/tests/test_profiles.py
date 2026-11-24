@@ -155,13 +155,28 @@ async def test_account_things_stay_the_accounts(api: Api, fake: FakeCareerOs) ->
     assert me["id"] == str(uid)
     conn = (await api.client.get("/v1/career-os/connection", headers=ah)).json()
     assert (conn["connected"], conn["account_type"]) == (True, "admin")
-    # Settings are the account's, copied to its profiles for the services that read them.
+    # Account preferences do not overwrite another member's shared workspace policy.
     r = await api.client.patch("/v1/me/settings", headers=ah, json={"retention_days": 30})
     assert r.status_code == 200, r.text
-    copied = await api.admin.fetchval(
-        "select settings->>'retention_days' from app.users where id = $1", uuid.UUID(alex["id"])
+    shared = await api.admin.fetchval(
+        "select settings->>'retention_days' from app.workspaces where id = $1",
+        uuid.UUID(alex["id"]),
     )
-    assert copied == "30"
+    assert shared is None
+    assert (
+        await api.admin.fetchval(
+            "select settings->>'retention_days' from app.accounts where id=$1",
+            uid,
+        )
+        == "30"
+    )
+    assert (
+        await api.admin.fetchval(
+            "select settings->>'retention_days' from app.workspaces where id=$1",
+            uid,
+        )
+        == "30"
+    )
     # Usage counts the account's sessions and its profiles'.
     for who in (uid, uuid.UUID(alex["id"])):
         await api.admin.execute(

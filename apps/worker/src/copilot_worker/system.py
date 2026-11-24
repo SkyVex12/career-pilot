@@ -1,11 +1,11 @@
 """System jobs: they run as `app_system` (BYPASSRLS), the only code path that does.
 
-- `usage.report`: fills `usage_daily` from the billed seconds in `sessions` for one day. No
+- `usage.report`: fills `usage_daily` from durable measured and legacy usage for one day. No
   payment provider yet (Stage 0), so `reported_at` stays empty.
-- `user.delete`: removes everything the user has: the Cognito user (so no new sign-in can
-  start while the rest goes), the S3 prefix, every Valkey key, the data keys (`user_keys`,
-  which makes any ciphertext left anywhere unreadable), every row (the users row cascades),
-  and the user's `job_runs`; and the same for each of the account's profiles.
+- `user.delete`: disables sign-in, transfers shared workspaces to a remaining member, and
+  deletes unshared workspace content, objects, cache entries, and workspace keys. The final
+  account deletion removes private credentials, content, and account keys. Operational
+  tombstones and content-free usage accounting survive under separate retention policies.
 - `sessions.sweep`: ends sessions whose gateway task died and that nobody resumed
   (ARCHITECTURE.md, open question "Abandoned sessions"): no lease, not ended, and no state
   update for longer than the resume window. Also ends sessions whose Valkey state expired
@@ -19,9 +19,10 @@ from datetime import UTC, date, datetime
 from typing import Any, cast
 from uuid import UUID
 
-from copilot_core import keys
+from copilot_core import keys, operations
 from copilot_core.careeros import CareerOsError
 from copilot_core.storage import user_prefix
+from copilot_core.usage import daily_usage
 from copilot_core.valkey_client import text
 from copilot_worker.context import Ctx
 from copilot_worker.runtime import Job, handler
@@ -35,18 +36,17 @@ STALE_DB_SESSION_S = 3 * 3600  # Valkey state lives 2 h after its last write
 async def usage_report(job: Job, ctx: Ctx) -> None:
     day = date.fromisoformat(str(job.payload["day"]))
     async with ctx.system() as conn:
-        status = await conn.execute(
-            """
-            insert into app.usage_daily (user_id, day, live_seconds)
-            select user_id, $1, sum(billed_seconds)::int
-            from app.sessions
-            where ended_at is not null and (started_at at time zone 'UTC')::date = $1
-            group by user_id
-            on conflict (user_id, day) do update set live_seconds = excluded.live_seconds
-            """,
-            day,
-        )
-    log.info("usage for %s: %s", day, status)
+        rows = await daily_usage(conn, day=day)
+        for row in rows:
+            await conn.execute(
+                "insert into app.usage_daily (user_id, day, live_seconds)"
+                " select $1, $2, $3 where exists(select 1 from app.users where id = $1)"
+                " on conflict (user_id, day) do update set live_seconds = excluded.live_seconds",
+                row.workspace_id,
+                day,
+                (row.measured_microseconds + row.legacy_microseconds) // 1_000_000,
+            )
+    log.info("usage for %s: %d workspace rollups", day, len(rows))
 
 
 async def _scan_delete(ctx: Ctx, pattern: str) -> int:
@@ -59,34 +59,76 @@ async def _scan_delete(ctx: Ctx, pattern: str) -> int:
 @handler("user.delete")
 async def user_delete(job: Job, ctx: Ctx) -> None:
     uid = job.uid
-    # The sign-in first, so no new session can start while the rest is deleted (an access
-    # token already issued lasts until it expires, an hour at most).
+    lease = operations.current_lease.get()
+    except_key = None if lease is None else lease.key
+    # Fence access before external cleanup. Memberships, including revoked rows,
+    # remain until final deletion so a crash can rediscover unfinished workspaces.
+    async with ctx.system() as conn:
+        await conn.execute("update app.accounts set status='deleting' where id=$1", uid)
+        owned: list[UUID] = []
+        workspaces = await conn.fetch(
+            "select w.id from app.workspaces w where exists("
+            " select 1 from app.workspace_memberships m where m.workspace_id=w.id"
+            " and m.account_id=$1) or (w.created_by_account_id=$1 and w.status='deleting')"
+            " order by w.id for update of w",
+            uid,
+        )
+        for row in workspaces:
+            wid = row["id"]
+            heir = await conn.fetchval(
+                "select m.account_id from app.workspace_memberships m join app.accounts a"
+                " on a.id=m.account_id where m.workspace_id=$1 and m.account_id<>$2"
+                " and m.status='active' and a.status='active'"
+                " order by (m.role='owner') desc,m.created_at,m.account_id limit 1",
+                wid,
+                uid,
+            )
+            if heir is None:
+                await conn.execute("update app.workspaces set status='deleting' where id=$1", wid)
+                await operations.cancel_scope(conn, wid, except_key=except_key)
+                owned.append(wid)
+            else:
+                # Creator attribution is not ownership. A remaining member owns
+                # the retained workspace, even when its UUID was the old account's.
+                await conn.execute(
+                    "update app.workspace_memberships set role='owner'"
+                    " where workspace_id=$1 and account_id=$2",
+                    wid,
+                    heir,
+                )
+                await conn.execute(
+                    "update app.workspaces set owner_id=$2 where id=$1 and owner_id=$3",
+                    wid,
+                    heir,
+                    uid,
+                )
+            await conn.execute(
+                "update app.workspace_memberships set status='revoked'"
+                " where workspace_id=$1 and account_id=$2",
+                wid,
+                uid,
+            )
+        await conn.execute(
+            "update app.operations set status='cancelled',finished_at=clock_timestamp(),"
+            " lease_generation=lease_generation+1,lease_expires_at=null where account_id=$1"
+            " and ($2::text is null or idempotency_key<>$2) and status not in ('done','cancelled')",
+            uid,
+            except_key,
+        )
+    # Database account status already fences new authenticated work while external
+    # sign-in removal and workspace content cleanup complete.
     signin = "none (dev auth)" if ctx.settings.auth == "dev" else f"kept ({ctx.settings.auth})"
     if ctx.users is not None:
         signin = "deleted" if await ctx.users.delete_user(uid) else "already gone"
     career_os = await revoke_career_os(ctx, uid)
-    # The account's profiles (ARCHITECTURE.md, "Profiles") go the same way, before the account:
-    # their users rows would cascade, but not their objects, Valkey keys or data keys. A
-    # profile is a Career-OS person's shared workspace: one another account still lists passes
-    # to that account instead.
-    async with ctx.system() as conn:
-        owned: list[UUID] = []
-        for r in await conn.fetch("select id from app.users where owner_id = $1", uid):
-            heir = await conn.fetchval(
-                "select user_id from app.profiles where id = $1 and user_id <> $2"
-                " order by created_at limit 1",
-                r["id"], uid,
-            )  # fmt: skip
-            if heir is None:
-                owned.append(r["id"])
-            else:
-                await conn.execute(
-                    "update app.users set owner_id = $2 where id = $1", r["id"], heir
-                )
     removed = vk = 0
-    for who in (*owned, uid):
+    for who in owned:
         objects, valkey_keys = await _delete_data(ctx, who)
         removed, vk = removed + objects, vk + valkey_keys
+    async with ctx.system() as conn:
+        # Account-private rows cascade here. No workspace is owned by this FK.
+        await conn.execute("delete from app.accounts where id=$1", uid)
+    ctx.crypto.forget(uid)
     log.info(
         "user %s deleted: sign-in %s, %d profiles, %d objects, %d Valkey keys, HubRuby link %s",
         uid, signin, len(owned), removed, vk, career_os,
@@ -94,8 +136,8 @@ async def user_delete(job: Job, ctx: Ctx) -> None:
 
 
 async def _delete_data(ctx: Ctx, uid: UUID) -> tuple[int, int]:
-    """Everything one users row has: objects, live state, data keys, rows. Objects and live
-    state first: if this run dies halfway, the users row is still there and the retry finds
+    """Everything an unshared workspace has: objects, live state, data keys, rows. Objects and live
+    state first: if this run dies halfway, the workspace is still there and the retry finds
     everything it needs."""
     removed = await ctx.store.delete_prefix(user_prefix(uid))
     async with ctx.system() as conn:
@@ -119,8 +161,7 @@ async def _delete_data(ctx: Ctx, uid: UUID) -> tuple[int, int]:
         await conn.execute("delete from app.user_keys where user_id = $1", uid)
         # Other accounts' listings of this row (a shared workspace) go with it.
         await conn.execute("delete from app.profiles where id = $1", uid)
-        await conn.execute("delete from app.users where id = $1", uid)  # cascades
-        await conn.execute("delete from app.job_runs where user_id = $1", uid)
+        await conn.execute("delete from app.workspaces where id = $1", uid)  # cascades
     ctx.crypto.forget(uid)
     return removed, vk
 
@@ -153,7 +194,7 @@ async def revoke_career_os(ctx: Ctx, uid: UUID) -> str:
 @handler("sessions.sweep")
 async def sessions_sweep(job: Job, ctx: Ctx) -> None:
     window = ctx.settings.resume_window_s
-    ended = 0
+    ended = await _sweep_durable(ctx, window)
     async for key in ctx.valkey.scan_iter(match="sess:*:state", count=500):
         name = text(key)
         sid = name.split("{", 1)[-1].split("}", 1)[0]
@@ -161,7 +202,12 @@ async def sessions_sweep(job: Job, ctx: Ctx) -> None:
             text(k): text(v)
             for k, v in cast(dict[Any, Any], await ctx.valkey.hgetall(name)).items()
         }
-        if not state or state.get("status") == "ended" or not state.get("user_id"):
+        if (
+            not state
+            or state.get("status") == "ended"
+            or not state.get("user_id")
+            or int(state.get("writer_generation") or 0) > 0
+        ):
             continue
         if await ctx.valkey.exists(keys.sess_lease(sid)):
             continue
@@ -182,6 +228,7 @@ async def sessions_sweep(job: Job, ctx: Ctx) -> None:
     async with ctx.system() as conn:
         rows = await conn.fetch(
             "select id, user_id from app.sessions where ended_at is null"
+            " and admission_state='legacy'"
             " and started_at < now() - make_interval(secs => $1)",
             float(STALE_DB_SESSION_S),
         )
@@ -195,3 +242,35 @@ async def sessions_sweep(job: Job, ctx: Ctx) -> None:
         ended += 1
     if ended:
         log.info("sweeper ended %d abandoned sessions", ended)
+    from copilot_worker.retention import sweep
+
+    await sweep(ctx)
+
+
+async def _sweep_durable(ctx: Ctx, window: float) -> int:
+    """A missing cache cannot hide an admitted call after its writer lease expires."""
+    async with ctx.system() as conn:
+        rows = await conn.fetch(
+            "select id,user_id,writer_generation,coalesce(writer_expires_at,started_at) as expiry"
+            " from app.sessions where ended_at is null and admission_state<>'legacy'"
+            " and coalesce(writer_expires_at,started_at)"
+            " < clock_timestamp()-make_interval(secs=>$1)"
+            " order by coalesce(writer_expires_at,started_at),id for update skip locked limit 500",
+            float(window),
+        )
+        for row in rows:
+            await conn.execute(
+                "update app.sessions set admission_state='closing' where id=$1", row["id"]
+            )
+            key = (
+                f"session.ended:{row['id']}:sweep:g{row['writer_generation']}:"
+                f"{int(row['expiry'].timestamp())}"
+            )
+            await ctx.enqueue(
+                "session.ended",
+                key,
+                row["user_id"],
+                {"session_id": str(row["id"]), "writer_generation": row["writer_generation"]},
+                conn=conn,
+            )
+    return len(rows)

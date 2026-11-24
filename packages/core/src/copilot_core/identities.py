@@ -59,40 +59,44 @@ class Identities:
         self.pool = pool  # None: no database (the gateway offline), nothing is recorded
         self.ttl_s = ttl_s
         self.clock = clock
-        self._found: dict[tuple[str, str], tuple[UUID, float]] = {}
+        self._found: dict[tuple[str, str, str], tuple[UUID, float]] = {}
 
-    async def user_of(self, provider: str, subject: str) -> UUID | None:
+    async def user_of(self, provider: str, subject: str, realm: str = "default") -> UUID | None:
         if self.pool is None:
             return None
-        hit = self._found.get((provider, subject))
+        key = (provider, realm, subject)
+        hit = self._found.get(key)
         if hit is not None and self.clock() - hit[1] < self.ttl_s:
             return hit[0]
         try:
             async with sign_in_tx(self.pool, f"{provider}:{subject}") as conn:
+                await conn.execute("select set_config('app.sign_in_realm',$1,true)", realm)
                 user_id = await conn.fetchval(
-                    "select user_id from app.identities where provider = $1 and subject = $2",
-                    provider, subject,
+                    "select account_id from app.account_identities"
+                    " where provider=$1 and subject=$2 and realm=$3",
+                    provider, subject, realm,
                 )  # fmt: skip
         except (OSError, asyncpg.PostgresError) as e:
             raise AuthError("could not check the sign-in; try again") from e
         if user_id is None:
-            self._found.pop((provider, subject), None)
+            self._found.pop(key, None)
             return None
         if self.ttl_s <= 0:
             return user_id
         if len(self._found) > 10_000:
             self._found.clear()
-        self._found[(provider, subject)] = (user_id, self.clock())
+        self._found[key] = (user_id, self.clock())
         return user_id
 
-    def forget(self, provider: str, subject: str) -> None:
-        self._found.pop((provider, subject), None)
+    def forget(self, provider: str, subject: str, realm: str = "default") -> None:
+        self._found.pop((provider, realm, subject), None)
 
 
 async def _add(conn: Conn, provider: str, subject: str, user_id: UUID, email: str) -> None:
     await conn.execute(
-        "insert into app.identities (provider, subject, user_id, email) values ($1, $2, $3, $4)"
-        " on conflict (provider, subject) do nothing",
+        "insert into app.account_identities (provider, subject, account_id, email)"
+        " values ($1, $2, $3, $4)"
+        " on conflict (provider, realm, subject) do nothing",
         provider, subject, user_id, email,
     )  # fmt: skip
 
@@ -103,7 +107,7 @@ def name_of(email: str) -> str:
 
 
 class EmailTaken(Exception):
-    """The address is another account's `users.email`, and no identity says it may sign in."""
+    """The address is another account's `accounts.email`, and no identity permits sign-in."""
 
 
 async def account_for_email(pool: asyncpg.Pool, email: str) -> tuple[UUID, str]:
@@ -123,13 +127,15 @@ async def account_for_email(pool: asyncpg.Pool, email: str) -> tuple[UUID, str]:
                 # The account's verified Google address: from now on its email sign-in too.
                 await _add(conn, "email", email, user_id, email)
                 log.info("email sign-in joined the Google account %s", user_id)
-            name = await conn.fetchval("select display_name from app.users where id = $1", user_id)
+            name = await conn.fetchval(
+                "select display_name from app.accounts where id = $1", user_id
+            )
         return user_id, str(name or name_of(email))
     user_id = uuid7()
     try:
         async with user_tx(pool, user_id) as conn:
             await conn.execute(
-                "insert into app.users (id, email, display_name) values ($1, $2, $3)",
+                "insert into app.accounts (id, email, display_name) values ($1, $2, $3)",
                 user_id, email, name_of(email),
             )  # fmt: skip
             await _add(conn, "email", email, user_id, email)
@@ -141,20 +147,51 @@ async def account_for_email(pool: asyncpg.Pool, email: str) -> tuple[UUID, str]:
 
 async def adopt_google(pool: asyncpg.Pool, principal: Principal) -> Principal:
     """Record a Google sign-in that has no identity row (`principal.new_identity`) and return
-    the principal of its account. A sign-in for a new account is left as it is: the caller
-    makes the account, then calls `record_google`."""
+    the principal of its account. The caller creates a new account and records its identity.
+    A retired deterministic fallback UUID is replaced, never reused."""
     assert principal.subject
     assert principal.email
     email = principal.email.strip().lower()
     async with user_tx(pool, principal.user_id) as conn:
-        if await conn.fetchval("select 1 from app.users where id = $1", principal.user_id):
+        if await conn.fetchval("select 1 from app.accounts where id = $1", principal.user_id):
             await record_google(conn, principal)
             return _recorded(principal)
+        retired = await conn.fetchval(
+            "select 1 from app.account_tombstones where account_id=$1", principal.user_id
+        )
+    if retired:
+        # A stale lookup can outlive deletion. Repeated fresh identity resolution
+        # must find the replacement account, never allocate the retired ID again.
+        async with sign_in_tx(pool, f"google:{principal.subject}") as conn:
+            recorded = await conn.fetchval(
+                "select account_id from app.account_identities"
+                " where provider='google' and realm='default' and subject=$1",
+                principal.subject,
+            )
+        if recorded is not None:
+            return Principal(
+                recorded,
+                principal.display_name,
+                principal.expires_at,
+                email=principal.email,
+                provider="google",
+                subject=principal.subject,
+            )
     async with sign_in_tx(pool, f"email:{email}") as conn:
         other = await conn.fetchval(
             "select user_id from app.identities where provider = 'email' and subject = $1", email
         )
     if other is None:
+        if retired:
+            return Principal(
+                uuid7(),
+                principal.display_name,
+                principal.expires_at,
+                email=principal.email,
+                provider="google",
+                subject=principal.subject,
+                new_identity=True,
+            )
         return principal
     async with user_tx(pool, other) as conn:
         await _add(conn, "google", principal.subject, other, email)

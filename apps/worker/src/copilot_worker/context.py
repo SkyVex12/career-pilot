@@ -1,16 +1,19 @@
 """What every job handler gets: stores, clients and the settings."""
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 
-from copilot_core import jobs, pack_operations
+from copilot_core import jobs, operations, pack_operations
 from copilot_core.careeros import CareerOsClient
 from copilot_core.careeros import make_client as make_career_os
 from copilot_core.crypto import UserCrypto, make_key_provider
@@ -27,6 +30,25 @@ from copilot_worker.llm import build_router
 from copilot_worker.prompts import JOB_PROMPTS
 
 log = logging.getLogger(__name__)
+_connection: ContextVar[Conn | None] = ContextVar("worker_domain_connection", default=None)
+_queued: ContextVar[bool] = ContextVar("worker_domain_enqueued", default=False)
+
+
+class DurableQueue:
+    """Handler publication joins its domain transaction when one is active."""
+
+    def __init__(self, ctx: "Ctx") -> None:
+        self.ctx = ctx
+
+    async def send(self, message: Mapping[str, Any], delay_s: int = 0) -> None:
+        due = datetime.now(UTC) + timedelta(seconds=delay_s)
+        if (conn := _connection.get()) is not None:
+            await operations.enqueue(conn, message, available_at=due)
+            _queued.set(True)
+        else:
+            async with self.ctx.system() as conn:
+                await operations.enqueue(conn, message, available_at=due)
+                _queued.set(True)
 
 
 @dataclass
@@ -44,20 +66,50 @@ class Ctx:
     users: UserDirectory | None = None
     # Career-OS, to revoke an account's link when the account is deleted.
     career_os: CareerOsClient | None = None
+    transport: jobs.JobQueue = field(init=False)
+    dispatcher: operations.OutboxDispatcher = field(init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.queue, pack_operations.ObservedQueue):
             self.queue = pack_operations.ObservedQueue(self.queue, self.valkey)
+        self.transport = self.queue
+        self.dispatcher = operations.OutboxDispatcher(
+            self.system_pool,
+            self.transport,
+            batch_size=self.settings.outbox_batch_size,
+            recovery_s=self.settings.outbox_recovery_s,
+            publish_concurrency=self.settings.outbox_publish_concurrency,
+        )
+        self.queue = DurableQueue(self)
 
     @asynccontextmanager
     async def user(self, user_id: UUID) -> AsyncGenerator[Conn]:
+        publish = False
         async with user_tx(self.pool, user_id) as conn:
-            yield conn
+            token, queued = _connection.set(conn), _queued.set(False)
+            try:
+                yield conn
+                publish = _queued.get()
+            finally:
+                _connection.reset(token)
+                _queued.reset(queued)
+        if publish:
+            await self.dispatcher.once()
 
     @asynccontextmanager
     async def system(self) -> AsyncGenerator[Conn]:
+        publish = False
         async with system_tx(self.system_pool) as conn:
-            yield conn
+            token, queued = _connection.set(conn), _queued.set(False)
+            try:
+                yield conn
+                await operations.transaction_guard(conn)
+                publish = _queued.get()
+            finally:
+                _connection.reset(token)
+                _queued.reset(queued)
+        if publish:
+            await self.dispatcher.once()
 
     async def enqueue(
         self,
@@ -66,8 +118,25 @@ class Ctx:
         user_id: UUID | None,
         payload: Mapping[str, Any],
         delay_s: int = 0,
+        *,
+        conn: Conn | None = None,
     ) -> None:
-        await self.queue.send(jobs.envelope(job_type, key, user_id, payload), delay_s=delay_s)
+        message = jobs.envelope(job_type, key, user_id, payload)
+        if conn is None:
+            await self.queue.send(message, delay_s=delay_s)
+        else:
+            await operations.enqueue(
+                conn, message, available_at=datetime.now(UTC) + timedelta(seconds=delay_s)
+            )
+            _queued.set(True)
+
+    @asynccontextmanager
+    async def cache_commit(self, user_id: UUID) -> AsyncGenerator[Conn]:
+        """Serialize brief cache publication with lease takeover; never call models here."""
+        async with self.user(user_id) as conn:
+            await operations.transaction_guard(conn)
+            async with asyncio.timeout(1.0):
+                yield conn
 
 
 async def build_ctx(settings: WorkerSettings) -> Ctx:

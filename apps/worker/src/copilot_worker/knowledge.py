@@ -104,8 +104,13 @@ async def knowledge_index(job: Job, ctx: Ctx) -> None:
         # The sections are searchable already. Failed is shown on the file; a bad answer is
         # final, anything else is raised so the queue tries again.
         log.warning("company document %s: extraction failed (%s)", doc_id, type(e).__name__)
-        await _fail(ctx, uid, doc_id, "Its sections are searchable; its facts could not be read.")
-        await _after(ctx, uid, eid)
+        await _fail(
+            ctx,
+            uid,
+            doc_id,
+            "Its sections are searchable; its facts could not be read.",
+            employer_id=eid,
+        )
         if isinstance(e, ModelOutputError):
             return
         raise
@@ -117,38 +122,39 @@ async def knowledge_index(job: Job, ctx: Ctx) -> None:
             return  # deleted or replaced while the model read it
         # The earlier upload goes first, so its facts are not taken for facts another
         # source holds, and the new document's take their place.
-        old_key = await replace_older(conn, uid, eid, doc_id, row["replaces"])
+        await replace_older(conn, uid, eid, doc_id, row["replaces"])
         count = await write_facts(conn, uid, eid, doc_id, data, sections)
         await conn.execute(
             "delete from app.memory_proposals where company_document_id = $1"
             " and status = 'pending'",
             doc_id,
         )
+        await _after(ctx, uid, eid, conn)
         await conn.execute(
             "update app.company_documents set status = 'ingested', indexed_sha256 = sha256,"
             " error = null, replaces = null where id = $1",
             doc_id,
         )
-    if old_key is not None:
-        await ctx.store.delete(old_key)
     log.info("company document %s: %d sections, %d facts", doc_id, len(sections), count)
-    await _after(ctx, uid, eid)
 
 
-async def _fail(ctx: Ctx, uid: UUID, doc_id: UUID, error: str) -> None:
+async def _fail(
+    ctx: Ctx, uid: UUID, doc_id: UUID, error: str, *, employer_id: UUID | None = None
+) -> None:
     async with ctx.user(uid) as conn:
         await conn.execute(
             "update app.company_documents set status = 'failed', error = $2 where id = $1",
             doc_id,
             error,
         )
+        if employer_id is not None:
+            await _after(ctx, uid, employer_id, conn)
 
 
-async def _after(ctx: Ctx, uid: UUID, eid: UUID) -> None:
+async def _after(ctx: Ctx, uid: UUID, eid: UUID, conn: Conn) -> None:
     """The company's memory or sections changed: embed, rebuild its packs, republish."""
-    async with ctx.user(uid) as conn:
-        version = await memory_version(conn, uid, eid)
-        chunks = await conn.fetch("select id from app.knowledge_chunks where employer_id = $1", eid)
+    version = await memory_version(conn, uid, eid)
+    chunks = await conn.fetch("select id from app.knowledge_chunks where employer_id = $1", eid)
     await ctx.queue.send(jobs.workplace_refresh(uid, eid, version))
     live = knowledge.live_version(r["id"] for r in chunks)
     await ctx.queue.send(jobs.knowledge_publish(uid, eid, live))
@@ -336,12 +342,10 @@ async def write_facts(
     return count
 
 
-async def replace_older(
-    conn: Conn, uid: UUID, eid: UUID, doc_id: UUID, older: UUID | None
-) -> str | None:
+async def replace_older(conn: Conn, uid: UUID, eid: UUID, doc_id: UUID, older: UUID | None) -> None:
     """Delete the earlier upload this document replaces, with its sections (they cascade)
     and its facts. A fact the user edited stays, and now belongs to the new document.
-    Returns the old file's storage key, to delete after commit."""
+    The deletion trigger durably schedules the old object's cleanup."""
     if older is None:
         return None
     await conn.execute(
@@ -363,13 +367,12 @@ async def replace_older(
         str(doc_id),
         str(older),
     )
-    key = await conn.fetchval(
+    await conn.execute(
         "delete from app.company_documents where id = $1 and employer_id = $2"
-        " and work_log_id is null returning s3_key",
+        " and work_log_id is null",
         older,
         eid,
     )
-    return str(key) if key is not None else None
 
 
 # --- knowledge.publish ----------------------------------------------------------------------
@@ -420,12 +423,14 @@ async def knowledge_publish(job: Job, ctx: Ctx) -> None:
             }
     key = keys.knowledge(uid, eid)
     if not chunks:
-        await ctx.valkey.delete(key)
+        async with ctx.cache_commit(uid):
+            await ctx.valkey.delete(key)
         return
     live = knowledge.LiveIndex(
         version=knowledge.live_version(c.id for c in chunks), chunks=chunks, total=total
     )
-    await ctx.valkey.set(key, live.model_dump_json(), ex=LIVE_TTL_S)
+    async with ctx.cache_commit(uid):
+        await ctx.valkey.set(key, live.model_dump_json(), ex=LIVE_TTL_S)
     if total > len(chunks):
         log.warning("employer %s: %d of %d sections are live (the cap)", eid, len(chunks), total)
     await embed_chunks(ctx, uid, [c for c in chunks if c.id in missing])
@@ -523,12 +528,14 @@ async def knowledge_ask(job: Job, ctx: Ctx) -> None:
     except Exception as e:
         log.warning("test question for employer %s failed (%s)", eid, type(e).__name__)
         result = {"status": "failed", "error": "The question could not be answered. Try again."}
-        await ctx.valkey.set(key, json.dumps(result), ex=ASK_TTL_S)
+        async with ctx.cache_commit(uid):
+            await ctx.valkey.set(key, json.dumps(result), ex=ASK_TTL_S)
         if isinstance(e, ModelOutputError):
             return
         raise
     result["ms"] = int((time.monotonic() - started) * 1000)
-    await ctx.valkey.set(key, json.dumps(result), ex=ASK_TTL_S)
+    async with ctx.cache_commit(uid):
+        await ctx.valkey.set(key, json.dumps(result), ex=ASK_TTL_S)
 
 
 async def answer(ctx: Ctx, uid: UUID, eid: UUID, question: str, mode: str) -> dict[str, Any]:

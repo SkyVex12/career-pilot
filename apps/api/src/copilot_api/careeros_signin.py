@@ -61,7 +61,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from copilot_api import links
 from copilot_api.config import ApiSettings
 from copilot_api.emailauth import Limit, hit
-from copilot_api.tokens import Tokens, TokenService, sha
+from copilot_api.tokens import RefreshError, Tokens, TokenService, sha
 from copilot_core import profiles
 from copilot_core.auth import CAREER_OS, Principal
 from copilot_core.careeros import (
@@ -86,7 +86,7 @@ TICKET_TTL_S = 8 * 60
 CLIENT_LIMIT = (Limit(20, 15 * 60),)
 # The address of an account made by a Career-OS sign-in, until Career-OS's own replaces it
 # (`own_address`). It stays only when Career-OS has none, or another account has it:
-# `app.users.email` is unique.
+# `app.accounts.email` is unique.
 PLACEHOLDER_DOMAIN = "career-os.invalid"
 PLACEHOLDER_DOMAINS = (PLACEHOLDER_DOMAIN, "profiles.invalid")
 
@@ -140,7 +140,7 @@ def placeholder_email(user_id: UUID) -> str:
 
 async def own_address(conn: Any, user_id: UUID, email: str | None) -> bool:
     """Make Career-OS's address the account's own, in the account's transaction, when the
-    account still has the placeholder: as `app.users.email`, and as an email sign-in, so a
+    account still has the placeholder: as `app.accounts.email`, and as an email sign-in, so a
     guest-seat invite finds the account and an email-code or Google sign-in with that address
     lands in it ("the same address is the same account"). Career-OS's addresses are trusted
     (the owner's decision, 2026-11-17). An account with a real address keeps it, and an
@@ -148,14 +148,14 @@ async def own_address(conn: Any, user_id: UUID, email: str | None) -> bool:
     address = (email or "").strip().lower()
     if not 3 <= len(address) <= 320 or "@" not in address or address.endswith(".invalid"):
         return False
-    current = await conn.fetchval("select email from app.users where id = $1", user_id)
+    current = await conn.fetchval("select email from app.accounts where id = $1", user_id)
     if current is None or not str(current).endswith(f"@{PLACEHOLDER_DOMAIN}"):
         return False
     try:
         async with conn.transaction():  # a savepoint: another account may have the address
-            await conn.execute("update app.users set email = $2 where id = $1", user_id, address)
+            await conn.execute("update app.accounts set email = $2 where id = $1", user_id, address)
             await conn.execute(
-                "insert into app.identities (provider, subject, user_id, email)"
+                "insert into app.account_identities (provider, subject, account_id, email)"
                 " values ('email', $1, $2, $1)",
                 address, user_id,
             )  # fmt: skip
@@ -309,7 +309,7 @@ class CareerOsSignIn:
         """An account as the choice screen shows it: masked email, methods, created date."""
         async with user_tx(self.pool, user_id) as conn:
             row = await conn.fetchrow(
-                "select email, created_at from app.users where id = $1 and owner_id is null",
+                "select email, created_at from app.accounts where id = $1",
                 user_id,
             )
             if row is None:
@@ -333,11 +333,13 @@ class CareerOsSignIn:
         written or exchanged. Returns the account's (email, display name)."""
         async with user_tx(self.pool, user_id) as conn:
             account = await conn.fetchrow(
-                "select email, display_name from app.users where id = $1 and owner_id is null",
+                "select email, display_name,status from app.accounts where id = $1",
                 user_id,
             )
             if account is None:
                 raise SignInError("account_gone")
+            if account["status"] != "active":
+                raise SignInError("account_disabled")
             mine = await conn.fetchval(
                 "select subject from app.identities where provider = $1", CAREER_OS
             )
@@ -393,13 +395,13 @@ class CareerOsSignIn:
             async with user_tx(self.pool, user_id) as conn:
                 if new_account:
                     await conn.execute(
-                        "insert into app.users (id, email, display_name) values ($1, $2, $3)",
+                        "insert into app.accounts (id, email, display_name) values ($1, $2, $3)",
                         user_id, placeholder_email(user_id), person.name or "HubRuby account",
                     )  # fmt: skip
                 # Inserted, never updated: an identity that exists keeps its account.
                 await conn.execute(
-                    "insert into app.identities (provider, subject, user_id, email)"
-                    " values ($1, $2, $3, null) on conflict (provider, subject) do nothing",
+                    "insert into app.account_identities (provider, subject, account_id, email)"
+                    " values ($1, $2, $3, null) on conflict (provider, realm, subject) do nothing",
                     CAREER_OS, person.subject, user_id,
                 )  # fmt: skip
                 owner = await conn.fetchval(
@@ -425,7 +427,12 @@ class CareerOsSignIn:
     async def _signed_in(
         self, user_id: UUID, name: str, person: CareerOsPerson, account: str
     ) -> dict[str, Any]:
-        issued = await self.tokens.issue(user_id, name, provider=CAREER_OS, subject=person.subject)
+        try:
+            issued = await self.tokens.issue(
+                user_id, name, provider=CAREER_OS, subject=person.subject
+            )
+        except RefreshError as error:
+            raise SignInError("account_disabled") from error
         return {"status": "signed_in", "account": account, **tokens_out(issued)}
 
     # --- Tickets ------------------------------------------------------------------------------

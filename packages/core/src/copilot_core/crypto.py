@@ -1,6 +1,7 @@
 """Per-user envelope encryption (ARCHITECTURE.md, "Security and privacy" and "Conventions").
 
-Each user has a data key (DEK) in `app.user_keys`, stored encrypted by the KMS key with the
+Workspaces keep data keys in `app.user_keys`; account-private purposes use independently
+owned `app.account_keys`. Each DEK is stored encrypted by the KMS key with the historical
 encryption context `{"user_id": <uid>}`, so it decrypts only for that user. `_enc` columns hold
 AES-256-GCM ciphertext made with the DEK; the associated data is the table name plus the row
 id, so ciphertext copied to another row (or table) does not decrypt.
@@ -43,6 +44,23 @@ NONCE_BYTES = 12
 DEV_WRAP_PREFIX = b"dev1"
 GCP_WRAP_PREFIX = b"gkms1"
 CLOUD_KMS_URL = "https://cloudkms.googleapis.com/v1"
+ACCOUNT_PRIVATE_TABLES = frozenset(
+    {
+        "integrations",
+        "ask_messages",
+        "practice_sessions",
+        "practice_operations",
+        "calendar_connections",
+        "calendar_meeting_context",
+        "context_requests",
+        "context_brief_versions",
+    }
+)
+
+
+def account_owned(table: str) -> bool:
+    """AAD suffixes such as calendar_connections:tokens keep the parent's key scope."""
+    return table.partition(":")[0] in ACCOUNT_PRIVATE_TABLES
 
 
 class DecryptError(Exception):
@@ -230,70 +248,97 @@ def open_sealed(dek: bytes, table: str, row_id: str, sealed: bytes) -> str:
 
 
 class UserCrypto:
-    """Data keys per user, with a short in-memory cache of unwrapped keys.
+    """Independent account/workspace data keys and a short cache per scope and version.
 
     Every method takes a connection whose transaction already set `app.user_id` (or that
-    bypasses row-level security, for system jobs), since `user_keys` is a user table.
+    bypasses row-level security, for system jobs). Private tables use `app.account_id`.
     """
 
     def __init__(self, provider: KeyProvider, cache_ttl_s: float = 300.0) -> None:
         self.provider = provider
         self.cache_ttl_s = cache_ttl_s
-        self._cache: dict[tuple[UUID, int], tuple[bytes, float]] = {}
+        self._cache: dict[tuple[UUID, bool, int], tuple[bytes, float]] = {}
 
     def forget(self, user_id: UUID) -> None:
         for key in [k for k in self._cache if k[0] == user_id]:
             del self._cache[key]
 
-    async def current_key(self, conn: Conn, user_id: UUID) -> tuple[int, bytes]:
+    async def current_key(
+        self,
+        conn: Conn,
+        user_id: UUID,
+        *,
+        account_private: bool = False,
+    ) -> tuple[int, bytes]:
         """The user's newest live key, created on first use."""
+        storage, column = (
+            ("account_keys", "account_id") if account_private else ("user_keys", "user_id")
+        )
         row = await conn.fetchrow(
-            "select version, encrypted_dek from app.user_keys"
-            " where user_id = $1 and destroyed_at is null order by version desc limit 1",
+            f"select version, encrypted_dek from app.{storage}"
+            f" where {column} = $1 and destroyed_at is null order by version desc limit 1",
             user_id,
         )
         if row is None:
             dek, wrapped = await self.provider.generate_data_key(user_id)
             # Two jobs may race to create the first key; the loser reads the winner's.
             inserted = await conn.fetchval(
-                "insert into app.user_keys (user_id, version, encrypted_dek) values ($1, 1, $2)"
+                f"insert into app.{storage} ({column}, version, encrypted_dek) values ($1, 1, $2)"
                 " on conflict do nothing returning version",
                 user_id,
                 wrapped,
             )
             if inserted is not None:
-                self._cache[(user_id, 1)] = (dek, time.monotonic())
+                self._cache[(user_id, account_private, 1)] = (dek, time.monotonic())
                 return 1, dek
-            return await self.current_key(conn, user_id)
+            return await self.current_key(conn, user_id, account_private=account_private)
         version = int(row["version"])
-        return version, await self._unwrap(user_id, version, bytes(row["encrypted_dek"]))
+        return version, await self._unwrap(
+            user_id, version, bytes(row["encrypted_dek"]), account_private
+        )
 
-    async def key(self, conn: Conn, user_id: UUID, version: int) -> bytes:
-        cached = self._cache.get((user_id, version))
+    async def key(
+        self,
+        conn: Conn,
+        user_id: UUID,
+        version: int,
+        *,
+        account_private: bool = False,
+    ) -> bytes:
+        cached = self._cache.get((user_id, account_private, version))
         if cached is not None and time.monotonic() - cached[1] < self.cache_ttl_s:
             return cached[0]
+        storage, column = (
+            ("account_keys", "account_id") if account_private else ("user_keys", "user_id")
+        )
         wrapped = await conn.fetchval(
-            "select encrypted_dek from app.user_keys"
-            " where user_id = $1 and version = $2 and destroyed_at is null",
+            f"select encrypted_dek from app.{storage}"
+            f" where {column} = $1 and version = $2 and destroyed_at is null",
             user_id,
             version,
         )
         if wrapped is None:
             raise DecryptError(f"no live data key {version} for this user")
-        return await self._unwrap(user_id, version, bytes(wrapped))
+        return await self._unwrap(user_id, version, bytes(wrapped), account_private)
 
-    async def _unwrap(self, user_id: UUID, version: int, wrapped: bytes) -> bytes:
-        cached = self._cache.get((user_id, version))
+    async def _unwrap(
+        self,
+        user_id: UUID,
+        version: int,
+        wrapped: bytes,
+        account_private: bool = False,
+    ) -> bytes:
+        cached = self._cache.get((user_id, account_private, version))
         if cached is not None and time.monotonic() - cached[1] < self.cache_ttl_s:
             return cached[0]
         dek = await self.provider.decrypt_data_key(wrapped, user_id)
-        self._cache[(user_id, version)] = (dek, time.monotonic())
+        self._cache[(user_id, account_private, version)] = (dek, time.monotonic())
         return dek
 
     async def encrypt(
         self, conn: Conn, user_id: UUID, table: str, row_id: str, plaintext: str
     ) -> tuple[bytes, int]:
-        version, dek = await self.current_key(conn, user_id)
+        version, dek = await self.current_key(conn, user_id, account_private=account_owned(table))
         return seal(dek, table, row_id, plaintext), version
 
     async def decrypt(
@@ -305,18 +350,28 @@ class UserCrypto:
         sealed: bytes,
         version: int,
     ) -> str:
-        return open_sealed(await self.key(conn, user_id, version), table, row_id, sealed)
+        return open_sealed(
+            await self.key(conn, user_id, version, account_private=account_owned(table)),
+            table,
+            row_id,
+            sealed,
+        )
 
     async def encrypt_bytes(
         self, conn: Conn, user_id: UUID, table: str, row_id: str, plaintext: bytes
     ) -> tuple[bytes, int]:
-        version, dek = await self.current_key(conn, user_id)
+        version, dek = await self.current_key(conn, user_id, account_private=account_owned(table))
         return seal_bytes(dek, table, row_id, plaintext), version
 
     async def decrypt_bytes(
         self, conn: Conn, user_id: UUID, table: str, row_id: str, sealed: bytes, version: int
     ) -> bytes:
-        return open_sealed_bytes(await self.key(conn, user_id, version), table, row_id, sealed)
+        return open_sealed_bytes(
+            await self.key(conn, user_id, version, account_private=account_owned(table)),
+            table,
+            row_id,
+            sealed,
+        )
 
 
 def segment_row_id(session_id: UUID | str, channel: str, seg_id: int) -> str:
