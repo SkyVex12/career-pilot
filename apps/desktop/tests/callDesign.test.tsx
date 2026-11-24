@@ -36,6 +36,23 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
+  it.each([
+    ["Company context", "For work", /^\/employers$/],
+    ["Applications", "For interviews", /^\/applications$/],
+  ] as const)("keeps %s failures concise with accessible details and a Settings action", async (label, mode, path) => {
+    routes();
+    const error = "Could not reach the server: the server URL needs a host.";
+    ipc.api("GET", path, () => { throw error; });
+    const onSettings = vi.fn();
+    render(tree({ onSettings }));
+    await userEvent.click(screen.getByRole("radio", { name: mode }));
+    expect(await screen.findByText(label + " unavailable")).toBeVisible();
+    act(() => screen.getByRole("button", { name: "About " + label + " error" }).focus());
+    expect(await screen.findByRole("tooltip", { name: error })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onSettings).toHaveBeenCalledOnce();
+  });
+
   it("announces audio progress and exposes full results without adding feedback rows", async () => {
     routes();
     let fail!: (error: string) => void;
@@ -215,7 +232,12 @@ describe("the Call setup design", () => {
     await userEvent.click(within(picker).getByRole("checkbox", { name: /Lee Park/ }));
     expect(within(picker).getByRole("checkbox", { name: /Sam Jones/ })).toBeDisabled();
     await userEvent.keyboard("{Escape}");
-    expect(screen.getByRole("button", { name: "Remove Dana Singh" })).toBeVisible();
+    const selection = screen.getByRole("button", { name: "Change assistants, 2 selected" });
+    expect(selection).toHaveTextContent("2 assistants");
+    await userEvent.click(selection);
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Add assistants" })).getByRole("checkbox", { name: /Dana Singh/ }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Change assistants, 1 selected" })).toHaveTextContent("1 assistant");
     expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
   });
 

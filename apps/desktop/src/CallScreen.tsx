@@ -383,7 +383,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             <section className={`call-setup-fields${atWork ? "" : " call-interview-context"}`} aria-label="Call context">
               {atWork ? <>
                 <div className="call-row call-company-row"><label className="call-row-label" htmlFor="call-company">Company</label><div className="call-application-field"><Select id="call-company" aria-describedby="call-company-context" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><span className="call-application-resume" id="call-company-context">{employerId ? <>Work log · {materials.documents ? plural(materials.documents.length, "document") : "Company documents"}</> : "Choose a company to use your work context."}</span></div><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
-                {work.error && <p className="ui-field-error" role="alert">{work.error}</p>}
+                {work.error && <ContextLoadError label="Company context" detail={work.error} onSettings={onSettings} />}
                 {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
                 {setupMode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
                 {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
@@ -396,9 +396,9 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
                   </div>
                   <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
                 </div>
-                {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
+                {catalog.error && <ContextLoadError label="Applications" detail={catalog.error} onSettings={onSettings} />}
                 <div className="call-jd-row"><div className="call-jd-heading"><span className="call-row-label">Job description</span><Button variant="ghost" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div><div className={`call-jd-preview${detail?.jd_text.trim() ? "" : " is-empty"}`} role="region" aria-label="Job description preview" tabIndex={0}>{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</div></div>
-                {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
+                {detailError && <ContextLoadError label="Job description" detail={detailError} onSettings={onSettings} />}
               </>}
             </section>
             <div className="call-optional-settings">
@@ -417,6 +417,10 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
       <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
     </section>
   </div>;
+}
+
+function ContextLoadError({ label, detail, onSettings }: { label: string; detail: string; onSettings: () => void }) {
+  return <div className="call-context-error" role="alert"><span>{label} unavailable</span><HelpTip label={label + " error"}>{detail}</HelpTip><Button variant="ghost" size="sm" onClick={onSettings}>Settings</Button></div>;
 }
 
 function CallJdEditor({ app, onBack, onSaved }: { app: ApplicationDetail; onBack: () => void; onSaved: (app: ApplicationDetail) => void }) {
