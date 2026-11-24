@@ -38,6 +38,9 @@
 .call-optional-settings .call-options { margin:0;padding:0;border:0;border-top:1px solid var(--border);border-radius:0;background:transparent;box-shadow:none; }
 .call-options > summary { justify-content:flex-start;color:var(--text);min-height:40px;padding:8px 0;gap:8px;line-height:20px; }
 .call-options[open] > summary { border-bottom:0; }
+.call-options > summary:hover { background:transparent; }
+.call-options > summary:is(:hover,:focus-visible) > .call-options-title,.call-options > summary:is(:hover,:focus-visible) > .ui-symbol { color:var(--accent); }
+.call-options > summary:is(:hover,:focus-visible)::after { border-color:var(--accent); }
 .call-options-title { margin-right:auto; }
 .call-options.ui-disclosure > summary::after { margin-left:8px; }
 .call-options[open] > summary .ui-disclosure-meta:not([role="alert"]) { display:none; }
