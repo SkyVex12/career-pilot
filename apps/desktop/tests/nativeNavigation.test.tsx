@@ -42,7 +42,7 @@ async function setup(applications: ReturnType<typeof app>[] = []) {
 async function compact(mode: "toolbar" | "dot") {
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Profile" })).toHaveTextContent("DA"));
   await userEvent.click(screen.getByRole("button", { name: "Medium window" }));
-  const ruby = await screen.findByRole("button", { name: "Expand full window" });
+  const ruby = await screen.findByRole("button", { name: "Keep medium window open" });
   await waitFor(() => expect(ruby.closest("header")).not.toHaveAttribute("inert"));
   if (mode === "dot") {
     fireEvent.pointerLeave(ruby.closest(".session-window")!);
@@ -102,7 +102,7 @@ it("keeps compact controls reachable when expansion fails and allows a later ret
   await act(() => emit("copilot://open-settings"));
   await waitFor(() => expect(document.documentElement).not.toHaveAttribute("data-window-transition"));
   expect(surface).toHaveAttribute("data-mini", "toolbar");
-  expect(screen.getByRole("button", { name: "Expand full window" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Keep medium window open" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
   ipc.handle("set_compact_window_shape", () => true);
   await act(() => emit("copilot://open-settings"));

@@ -23,6 +23,7 @@ mod shots;
 mod stealth;
 mod voice;
 mod window_drag;
+mod window_visibility;
 mod workspace_window;
 
 use std::path::PathBuf;
@@ -2337,6 +2338,7 @@ pub fn run() {
                     .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                     .build()?;
             window_drag::setup(app.handle())?;
+            window_visibility::setup(app.handle())?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).
             let handle = app.handle().clone();
             overlay.on_window_event(move |event| {
