@@ -43,7 +43,7 @@ function workspace() {
 it("keeps the primary destinations visible without a second navigation inside Interview prep", () => {
   const { onTab, note } = workspace();
   const navigation = screen.getByRole("navigation", { name: "Main" });
-  expect(within(navigation).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Call", "Interview prep", "Work context", "Past calls"]);
+  expect(within(navigation).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Call", "Calendar", "Interview prep", "Work context", "Past calls"]);
   expect(within(navigation).getByRole("button", { name: "Interview prep" })).toHaveAttribute("aria-current", "page");
   expect(screen.queryByLabelText("App menu")).not.toBeInTheDocument();
   expect(note).toHaveFocus();

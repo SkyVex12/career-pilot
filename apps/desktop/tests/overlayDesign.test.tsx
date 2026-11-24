@@ -33,8 +33,10 @@ describe("the approved overlay interactions", () => {
   it("opens settings on hover and keeps the panel usable until the pointer leaves", async () => {
     start();
     const gear = screen.getByRole("button", { name: "Quick settings" });
+    gear.focus();
     fireEvent.pointerEnter(gear, { pointerType: "mouse" });
     const panel = await screen.findByRole("dialog", { name: "Quick settings" });
+    expect(gear).toHaveFocus();
     fireEvent.pointerLeave(gear, { pointerType: "mouse" });
     fireEvent.pointerEnter(panel, { pointerType: "mouse" });
     expect(panel).toBeVisible();

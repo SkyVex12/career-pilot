@@ -32,6 +32,7 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
   const position = useOverlayPopover(open, close, gear, panel);
   useEffect(() => {
     if (!open) return;
+    if (!hoverOpened.current) panel.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus();
     let active = true;
     const load = () => api.getSettings().then(v => { if (active) { setStealth(v?.settings?.stealth ?? false); setStealthKey(v?.settings?.toggle_stealth_hotkey ?? ""); } }, e => { if (active) setError(String(e)); });
     void load();
