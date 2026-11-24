@@ -22,11 +22,11 @@ Use the shared control tokens in ui/tokens.css. Horizontal button padding is 8px
 
 ## Window and field widths
 
-The workspace opens at 960 × 672 logical pixels. At launch, fit it to the current monitor’s usable area, accounting for display scaling and leaving 24px around the window where possible. Center within that usable area so the taskbar remains clear. Apply this only at startup; navigation must preserve manual resizing, and returning from compact mode restores the previous full size. The live overlay keeps its separate sizing. Start call uses a 112 × 32px desktop button; its accent fill supplies emphasis without extra height, and touch input retains a 48px target.
+The workspace opens at 800 × 672 logical pixels. At launch, fit it to the current monitor’s usable area, accounting for display scaling and leaving 24px around the window where possible. Center within that usable area so the taskbar remains clear. Apply this only at startup; navigation must preserve manual resizing, and returning from compact mode restores the previous full size. The live overlay keeps its separate sizing. Start call uses a 112 × 32px desktop button; its accent fill supplies emphasis without extra height, and touch input retains a 48px target.
 
 Size short selectors for their content: Company is at most 352px; Application is at most 528px for the combined company and role. Keep Add/Manage 8px beside the field. Both shrink with narrow windows. Reading and editing areas can still use the full content width.
 
-Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop and above it in narrow windows. Status messages belong directly beneath their selector. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
+Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop, using five columns for Call type and seven for context below an 800px content width; stack below a 680px content width. Status messages belong directly beneath their selector. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
 
 ## State stability
 
@@ -34,4 +34,4 @@ The Call audio summary keeps the same height in idle, editing, testing, and fail
 
 The assistant picker opens with a search field and a compact selection count. Show matching people or necessary input guidance as the user types; avoid repeating the help text from the parent control.
 
-Visual verification should include populated, empty, and failed-loading pages, 400/920/1280px windows, both themes, touch emulation, dialog alignment, keyboard focus, and expanded Customize. At the 960 × 672 default size and font scale, Call should fit without scrolling its body.
+Visual verification should include populated, empty, and failed-loading pages, 400/920/1280px windows, both themes, touch emulation, dialog alignment, keyboard focus, and expanded Customize. At the 800 × 672 default size and font scale, Call should fit without scrolling its body.

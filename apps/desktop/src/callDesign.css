@@ -162,8 +162,12 @@
   .call-context-selection { grid-column:span 9; }
 }
 @container call-page (max-width:800px) {
-  .call-type-picker,.call-context-selection { grid-column:1 / -1; }
+  .call-type-picker { grid-column:span 5; }
+  .call-context-selection { grid-column:span 7; }
   .call-options > .call-customize { grid-template-columns:minmax(0,352px) minmax(0,256px);gap:24px; }
+}
+@container call-page (max-width:680px) {
+  .call-type-picker,.call-context-selection { grid-column:1 / -1; }
 }
 @container call-page (max-width:600px) {
   .call-options > .call-customize { grid-template-columns:minmax(0,352px);gap:8px; }
