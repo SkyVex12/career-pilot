@@ -41,8 +41,7 @@ async function setup(applications: ReturnType<typeof app>[] = []) {
 
 async function compact(mode: "toolbar" | "dot") {
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Profile" })).toHaveTextContent("DA"));
-  await userEvent.click(screen.getByRole("button", { name: "Window size" }));
-  await userEvent.click(screen.getByRole("menuitem", { name: "Medium" }));
+  await userEvent.click(screen.getByRole("button", { name: "Medium window" }));
   const ruby = await screen.findByRole("button", { name: "Expand full window" });
   await waitFor(() => expect(ruby.closest("header")).not.toHaveAttribute("inert"));
   if (mode === "dot") {
@@ -88,7 +87,7 @@ it("restores compact bounds for the idle overlay's return-to-call event", async 
   const surface = await compact("dot");
   await act(() => emit("copilot://open-call"));
   await waitFor(() => expect(surface).toHaveAttribute("data-mini", "full"));
-  expect(screen.getByRole("button", { name: "Window size" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Medium window" })).toBeVisible();
   expect(screen.getByRole("button", { name: /^Start call/ })).toBeVisible();
   expect(ipc.calls.some(call => ["start_session", "open_session", "end_session"].includes(call.cmd))).toBe(false);
 });
@@ -186,19 +185,36 @@ it("toggles a pending debug destination back to Call without starting another re
 });
 
 
-it("opens the selected application's attached resume and description in one prep workspace", async () => {
-  await setup([app("a1", "Northwind", "Backend"), app("a2", "Lumen", "Payments")]);
+it("adds an application directly from Call and selects it for starting", async () => {
+  const created = detail(app("a3", "New company", "Engineer"));
+  let applications = [app("a1", "Northwind", "Backend")];
+  await setup(applications);
+  ipc.api("GET", /^\/applications$/, () => ({ applications }));
+  ipc.api("POST", /^\/applications$/, () => { applications = [...applications, created]; return created; });
+  ipc.api("GET", /^\/applications\/a3$/, () => created);
   const application = await screen.findByRole("combobox", { name: "Application" });
-  await waitFor(() => expect(application).toHaveValue("a1"));
-  await userEvent.click(application);
-  await userEvent.click(screen.getByRole("option", { name: "Lumen · Payments" }));
-  await userEvent.click(within(application.closest(".call-application-row")!).getByRole("button", { name: "Manage" }));
-  expect(await screen.findByRole("heading", { name: "Lumen" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Resume" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Job description" })).toBeVisible();
-  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-  expect(screen.queryByRole("navigation", { name: "Interview preparation" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Interview prep" })).toHaveAttribute("aria-current", "page");
+  await userEvent.click(within(application.closest(".call-application-row")!).getByRole("button", { name: "Add" }));
+  const dialog = screen.getByRole("dialog", { name: "Add application" });
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Company" }), "New company");
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Role" }), "Engineer");
+  await userEvent.type(within(dialog).getByRole("textbox", { name: /Job description/ }), "Build reliable systems.");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add application" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add application" })).not.toBeInTheDocument());
+  expect(application).toHaveValue("a3");
+  expect(screen.getByRole("button", { name: "Call" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("button", { name: "Start call" })).toBeVisible();
+});
+
+it("places Calendar immediately after Call and loads calendar preparation", async () => {
+  ipc.api("GET", /^\/calendars$/, () => ({ items: [] }));
+  ipc.api("GET", /^\/meeting-preparation$/, () => ({ items: [], connections: [] }));
+  await setup();
+  const call = screen.getByRole("button", { name: "Call" });
+  const calendar = screen.getByRole("button", { name: "Calendar" });
+  expect(call.compareDocumentPosition(calendar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await userEvent.click(calendar);
+  expect(await screen.findByRole("heading", { name: "Calendar" })).toBeVisible();
+  expect(await screen.findByText("Calendar is optional. You can start a call whenever you’re ready.")).toBeVisible();
 });
 
 it("opens the shared resume editor within Interview prep from an unpaired general call", async () => {

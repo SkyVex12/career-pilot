@@ -184,7 +184,7 @@ export function SessionDetail({
     <div className="sd-reading sd-notes">
       {notes.loaded ? <>
         <div className="sd-output-toolbar">
-          <h2>Your notes</h2><span className="ui-spacer" />
+          <span className="ui-spacer" />
           <span className="ui-field-hint" role="status">{savingNotes ? "Saving…" : notes.draft !== notes.saved ? "Unsaved changes" : notesSaved ? "Saved" : ""}</span>
           <Button size="sm" disabled={savingNotes || notes.draft === notes.saved} onClick={() => { setNotes((n) => ({ ...n, draft: n.saved })); setNotesError(null); setNotesSaved(false); }}>Discard</Button>
           <Button size="sm" variant="primary" loading={savingNotes} disabled={notes.draft === notes.saved || notesError?.includes("HTTP 409")} onClick={saveNotes}>Save notes</Button>
@@ -208,7 +208,7 @@ export function SessionDetail({
         <Button size="sm" onClick={() => setTab("notes")}>Add call notes</Button>
       </div>
     </section> : <section className="sd-reading">
-      <div className="sd-output-toolbar"><h2>{OUTPUT_TITLES[kind]}</h2><CopyButton text={text} /></div>
+      <div className="sd-output-toolbar"><CopyButton text={text} /></div>
       <ReviewText text={text} />
       {kind === "standup_report" && session?.employer_id && <p className="ui-field-hint sd-output-note">Commitments are saved under Work context → Saved facts.</p>}
       {!stored && index === 0 && <p className="ui-field-hint detail-note">The transcript was not stored, so transcript and replay are unavailable.</p>}

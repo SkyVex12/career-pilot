@@ -77,25 +77,24 @@ describe("the overlay's answers", () => {
     scroll.mockRestore();
   });
 
-  it("remembers a combined one-column layout and can return to simultaneous split panes", async () => {
+  it.each(["stacked", "split"])("preserves the saved %s layout without exposing layout settings", async layout => {
+    localStorage.setItem("overlay.layout", layout);
     const first = start(twoQuestions());
     await screen.findAllByRole("article");
     await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
-    await userEvent.click(screen.getByRole("combobox", { name: "Layout" }));
-    await userEvent.click(screen.getByRole("option", { name: "Stacked" }));
-    expect(localStorage.getItem("overlay.layout")).toBe("stacked");
-    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Current suggestion" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Layout" })).not.toBeInTheDocument();
+    expect(localStorage.getItem("overlay.layout")).toBe(layout);
     first.unmount();
     start(twoQuestions());
-    await screen.findByRole("region", { name: "Current suggestion" });
-    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
-    await userEvent.click(screen.getByRole("combobox", { name: "Layout" }));
-    await userEvent.click(screen.getByRole("option", { name: "Split" }));
-    expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Suggestions" })).toBeVisible();
-    expect(screen.getAllByRole("article")).toHaveLength(2);
+    await screen.findAllByRole("article");
+    if (layout === "stacked") {
+      expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
+      expect(screen.getByRole("region", { name: "Current suggestion" })).toBeVisible();
+    } else {
+      expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
+      expect(screen.getByRole("region", { name: "Suggestions" })).toBeVisible();
+      expect(screen.getAllByRole("article")).toHaveLength(2);
+    }
   });
 
   it("puts the newest question first, marked Now, with the earlier ones in full", async () => {

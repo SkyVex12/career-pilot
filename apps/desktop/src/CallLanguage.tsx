@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { request } from "./api";
 import { Button, Checkbox, Field, Select } from "./ui";
 import { Icon } from "./ui/Icon";
@@ -20,7 +20,7 @@ export function validCatalog(value: unknown): value is Catalog {
 }
 
 /** Mounted under the account/profile boundary; a draft never crosses profiles. */
-export function CallLanguage({ value, onChange, disabled = false, onReady }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void }) {
+export function CallLanguage({ value, onChange, disabled = false, onReady, children }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void; children?: ReactNode }) {
   const active = useDataActivity();
   const initialized = useRef(false);
   const [items, setItems] = useState<Catalog["items"]>([{ id: "en", name: "English" }]);
@@ -65,5 +65,6 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
       if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
     }} />
     {error && <p role="alert">{error} <Button size="sm" disabled={disabled} onClick={() => setRevision(n => n + 1)}>Retry language settings</Button></p>}
+    {children}
   </div></details>;
 }

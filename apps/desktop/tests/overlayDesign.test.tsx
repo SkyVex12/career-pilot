@@ -30,6 +30,20 @@ function start(guest = false) {
 }
 
 describe("the approved overlay interactions", () => {
+  it("opens settings on hover and keeps the panel usable until the pointer leaves", async () => {
+    start();
+    const gear = screen.getByRole("button", { name: "Quick settings" });
+    gear.focus();
+    fireEvent.pointerEnter(gear, { pointerType: "mouse" });
+    const panel = await screen.findByRole("dialog", { name: "Quick settings" });
+    expect(gear).toHaveFocus();
+    fireEvent.pointerLeave(gear, { pointerType: "mouse" });
+    fireEvent.pointerEnter(panel, { pointerType: "mouse" });
+    expect(panel).toBeVisible();
+    fireEvent.pointerLeave(panel, { pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument());
+  });
+
   it("saves Stealth with freshly read settings, preserving unrelated changes", async () => {
     start();
     let current = { ...SETTINGS, stealth: false, mic_device: "first" };
@@ -43,13 +57,13 @@ describe("the approved overlay interactions", () => {
     expect(toggle).toBeChecked();
   });
 
-  it("closes a nested select first and lets an outside End click work immediately", async () => {
+  it("closes quick settings with Escape and lets an outside End click work immediately", async () => {
     start();
     await screen.findByRole("article");
     await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
-    await userEvent.click(screen.getByRole("combobox", { name: "Layout" }));
-    await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Layout" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Call mode" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Paragraphs" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeVisible();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
@@ -97,7 +111,7 @@ describe("the approved overlay interactions", () => {
     expect(screen.queryByRole("tab", { name: "Shared screen" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
     const panel = screen.getByRole("dialog", { name: "Quick settings" });
-    expect(within(panel).getByRole("combobox", { name: "Layout" })).toBeVisible();
+    expect(within(panel).queryByRole("combobox", { name: "Layout" })).not.toBeInTheDocument();
     expect(within(panel).queryByText("Call options")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "All settings…" })).not.toBeInTheDocument();
     await userEvent.click(within(panel).getByRole("button", { name: "Quit CoRuby" }));

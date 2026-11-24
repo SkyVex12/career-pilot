@@ -1,6 +1,5 @@
 import { CompanionDevices } from "./CompanionDevices";
 import { prepareForRealCall } from "./practiceAudio";
-import { MeetingPreparation } from "./MeetingPreparation";
 // The Call screen (docs/design/ui-proposal.md, "Call"): one screen in four states.
 // - setup: what a new user still needs (sign in, the Career-OS link when the stage requires it,
 //   a resume, an audio check), each step with its own action;
@@ -96,7 +95,7 @@ export interface CallProps {
   onHistory?: () => void;
   onOpenLive: (live: LiveSession) => Promise<void>;
   /** An interview to start a call for, chosen elsewhere (Applications' "Start"). */
-  preset?: { target: string; n: number } | null;
+  preset?: { target: string; n: number; meetingTitle?: string; mode?: Mode } | null;
   /** The Call tab is shown. It stays mounted while hidden, so each time it is shown again it
    * reloads what other screens may have changed: applications and packs (a Career-OS pull),
    * resumes, companies and their documents. */
@@ -244,7 +243,7 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 
 // --- Ready and live -----------------------------------------------------------------------------
 
-function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onApplications, onWork, onHistory, onOpenLive, preset, active = true }: CallProps) {
+function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onWork, onHistory, onOpenLive, preset, active = true }: CallProps) {
   const dataActive = useDataActivity(active);
   const mini = useWindowMode(false, active && !session.running);
   const openWorkspaceQuickSettings = useWorkspaceOpenQuickSettings();
@@ -318,7 +317,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     if (interviews.length) setTarget(`job:${interviews[0].job_id}`);
     else if (catalog.applications?.length) setTarget(`job:${catalog.applications[0].id}`);
   }, [catalog.applications, catalog.interviews]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (preset) { setMode("interview"); setTarget(preset.target); } }, [preset]);
+  useEffect(() => { if (preset) { setMode(preset.mode ?? "interview"); setMeetingTitle(preset.meetingTitle ?? null); setTarget(preset.target); } }, [preset]);
   const interview = target.startsWith("interview:") ? catalog.interviews?.find(i => `interview:${i.id}` === target) : undefined;
   const application = target.startsWith("job:") ? catalog.applications?.find(a => `job:${a.id}` === target) : interview ? catalog.applications?.find(a => a.id === interview.job_id) : undefined;
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
@@ -358,7 +357,6 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   if (session.seat && running) return <Watching s={session} dispatch={dispatch ?? (() => undefined)} />;
   if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
   const disabled = busy || joining;
-  const manageApplication = () => onApplications ? onApplications(application?.id) : setAddingApplication(true);
   const selectedResume = application ? (detail?.id === application.id ? detail : application).resume : baseResume.resume;
   const resumeSummary = selectedResume ? `Resume · ${selectedResume.label} · ${resumeStatusLabel(selectedResume.status)}`
     : application || baseResume.resume === null ? "No resume attached" : baseResume.error ? "Resume unavailable" : "Loading resume…";
@@ -398,20 +396,20 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
                   <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
                   <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
                 </div>
-                <Button className="call-row-action" size="sm" disabled={disabled} onClick={manageApplication}>{catalog.applications?.length ? "Manage" : "Add"}</Button>
+                <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
               </div>
               {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
-              <div className="call-row call-jd-row"><span className="call-row-label">Job description</span><p className="call-jd-preview">{detail?.jd_text.trim() ? detail.jd_text.replace(/\s+/g, " ").trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</p><Button className="call-row-action" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div>
+              <div className="call-row call-jd-row"><span className="call-row-label">Job description</span><p className="call-jd-preview">{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</p><Button className="call-row-action" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div>
               {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
             </>}
           </div>
-          <div className="call-row call-answer-row"><span className="call-row-label">Answers</span><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div>
           <div className="call-optional-settings">
-            <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled} />
-            <MeetingPreparation onChoose={(title, applicationId) => { setMeetingTitle(title); setTarget(applicationId ? `job:${applicationId}` : ""); setMode(applicationId ? "interview" : "meeting"); }} />
+            <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}>
+              <Field label="Answers"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></Field>
+              <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
+              <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
+            </CallLanguage>
           </div>
-          <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
-          <div className="call-preferences"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /><span className="ui-field-hint">With everyone's agreement.</span></div>
           {settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
         </div>
         <footer className="call-design-footer">{onHistory && <Button variant="ghost" size="sm" onClick={onHistory} disabled={disabled}>Past calls</Button>}<span className="ui-spacer" /><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
@@ -630,17 +628,12 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
   return (
     <div className="audio-summary">
       <div className="ui-row-inline audio-line">
-        <div className="audio-device"><Icon name="mic" /><div><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div></div>
-        <div className="audio-device"><Icon name="headphones" /><div><span>{isMac() ? "System audio" : "Call audio"}</span><strong>{isMac() ? "All apps" : name(devices?.outputs, settings.output_device)}</strong></div></div>
-        <Button size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? "Done" : "Change or test"}
-        </Button>
+        {open ? <DevicePickers settings={settings} disabled={false} onSaved={onSaved} inline /> : <>
+          <div className="audio-device"><Icon name="mic" /><div><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div></div>
+          <div className="audio-device"><Icon name="headphones" /><div><span>{isMac() ? "System audio" : "Call audio"}</span><strong>{isMac() ? "All apps" : name(devices?.outputs, settings.output_device)}</strong></div></div>
+        </>}
+        <Button size="sm" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? "Done" : "Change or test"}</Button>
       </div>
-      {open && (
-        <div className="audio-pickers">
-          <DevicePickers settings={settings} disabled={false} onSaved={onSaved} />
-        </div>
-      )}
     </div>
   );
 }
@@ -654,7 +647,7 @@ function useDevices() {
 }
 
 /** The microphone and call-audio pickers, each with its Test; saved the moment one is picked. */
-export function DevicePickers({ settings, disabled, onSaved }: { settings: Settings; disabled: boolean; onSaved: () => void }) {
+export function DevicePickers({ settings, disabled, onSaved, inline = false }: { settings: Settings; disabled: boolean; onSaved: () => void; inline?: boolean }) {
   const devices = useDevices();
   const outputLabel = isMac() ? "Playback output" : "Call audio from";
   const [mic, setMic] = useState(settings.mic_device);
@@ -684,7 +677,7 @@ export function DevicePickers({ settings, disabled, onSaved }: { settings: Setti
     </Select>
   );
   return (
-    <div className="ui-stack devices">
+    <div className={inline ? "devices devices-inline" : "ui-stack devices"}>
       <div className="ui-field">
         <span className="ui-field-label">Microphone</span>
         <DeviceTest part="mic" micDevice={mic} outputDevice={output} disabled={disabled}>
@@ -696,7 +689,7 @@ export function DevicePickers({ settings, disabled, onSaved }: { settings: Setti
         <DeviceTest part="call" micDevice={mic} outputDevice={output} disabled={disabled}>
           {select(devices?.outputs, output, "output_device", outputLabel)}
         </DeviceTest>
-        <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>
+        {!inline && <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>}
       </div>
       {error && <p className="ui-field-error">{error}</p>}
     </div>
