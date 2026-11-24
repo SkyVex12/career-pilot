@@ -20,6 +20,12 @@ Use the shared control tokens in ui/tokens.css. Horizontal button padding is 8px
 - Use 6px control corners and 8px card corners. Reserve accent fills and stronger weight for primary actions and selected navigation.
 - Dialog header, body, and footer share 24px horizontal insets (16px in narrow windows), with smaller vertical insets so the frame does not compete with the form.
 
+## Window and field widths
+
+The workspace opens at 1120 × 760 logical pixels. At launch, fit it to the current monitor’s usable area, accounting for display scaling and leaving 24px around the window where possible. Center within that usable area so the taskbar remains clear. Apply this only at startup; navigation must preserve manual resizing, and returning from compact mode restores the previous full size. The live overlay keeps its separate sizing.
+
+Size short selectors for their content: Company is at most 352px; Application is at most 528px for the combined company and role. Keep Add/Manage 8px beside the field. Both shrink with narrow windows. Reading and editing areas can still use the full content width.
+
 ## State stability
 
 The Call audio summary keeps the same height in idle, editing, testing, and failure states. Device feedback uses the existing label line and a meter within the control; full messages remain available through focus/hover help and live announcements. Keep test-button width fixed through its loading state.
