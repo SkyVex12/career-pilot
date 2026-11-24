@@ -578,10 +578,8 @@ impl DataCache {
                             }
                             route(&entry.path) == "/sessions" || entry.path.contains(id)
                         });
-                    if affected {
-                        if let Some(disk) = &self.disk {
-                            disk.remove(ns, &entry.path);
-                        }
+                    if affected && let Some(disk) = &self.disk {
+                        disk.remove(ns, &entry.path);
                     }
                     !affected
                 });

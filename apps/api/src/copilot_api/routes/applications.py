@@ -259,10 +259,7 @@ async def catalog_status(svc: SvcDep, user: UserDep, response: Response) -> dict
     by_field = {text(k): text(v) for k, v in index.items()}
     contexts = {
         **{f"job:{r['id']}": by_field.get(f"job:{r['id']}") for r in applications},
-        **{
-            f"interview:{r['id']}": str(r["pack_id"]) if r["pack_id"] else None
-            for r in interviews
-        },
+        **{f"interview:{r['id']}": str(r["pack_id"]) if r["pack_id"] else None for r in interviews},
     }
     operations = await pack_operations.states(svc.valkey, user.user_id, list(contexts))
     pack_ids = list(dict.fromkeys(pack_id for pack_id in contexts.values() if pack_id))

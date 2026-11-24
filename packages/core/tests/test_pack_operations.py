@@ -24,7 +24,8 @@ async def test_operation_lifecycle_expiry_and_old_completion_cannot_finish_new_b
     await operations.finished(valkey, uid, first["idempotency_key"], True)
     assert await operations.state(valkey, uid, "job:a") == "queued"
     assert await operations.states(valkey, uid, ["job:a", "job:missing"]) == {
-        "job:a": "queued", "job:missing": "idle"
+        "job:a": "queued",
+        "job:missing": "idle",
     }
     await operations.started(valkey, uid, "job:a", second["idempotency_key"])
     await operations.finished(valkey, uid, second["idempotency_key"], False)
