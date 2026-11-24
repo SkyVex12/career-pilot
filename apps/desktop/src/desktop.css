@@ -2,10 +2,10 @@
 #root .shell { width:100%;height:100%;min-height:0;background:transparent; }
 #root .shell-main { display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0;overflow:hidden; }
 #root .desktop-workspace { width:100%;max-width:none;height:100%;max-height:none;min-height:0;display:flex;flex-direction:column;margin:auto;border:1px solid var(--border);border-radius:6px;background:rgb(var(--surface-rgb) / var(--workspace-opacity,1));box-shadow:none;overflow:visible; }
-#root .desktop-workspace > .workspace-card-header { display:block;flex:none;padding:0;border-radius:5px 5px 0 0;background:rgb(var(--surface-2-rgb) / var(--workspace-opacity,1)); }
+#root .desktop-workspace > .workspace-card-header { display:block;flex:none;padding:0;border-radius:5px 5px 0 0;background:rgb(var(--surface-rgb) / var(--workspace-opacity,1)); }
 #root .desktop-workspace > .workspace-card-body { flex:1;min-height:0;overflow:auto;border-radius:0 0 5px 5px; }
 #root .desktop-workspace > .workspace-card-body:focus-visible { outline:2px solid var(--action);outline-offset:-3px; }
-#root .desktop-workspace .shell-content { width:100%;max-width:none;margin:0;padding:20px 24px; }
+#root .desktop-workspace .shell-content { width:100%;max-width:none;margin:0;padding:24px; }
 #root .desktop-workspace .shell-content:has(.session-window) { height:100%;padding:0; }
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window[data-mini="full"]) > .workspace-card-body { display:flex;flex-direction:column;overflow:hidden; }
 #root .desktop-workspace .shell-content:not([hidden]):has(.session-window[data-mini="full"]) { flex:1;min-height:0;height:auto;overflow:hidden; }
@@ -14,80 +14,83 @@
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) { border:0;background:transparent;max-width:none;max-height:none; }
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-header { display:none; }
 #root .desktop-workspace:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) > .workspace-card-body { overflow:visible; }
-.desktop-titlebar { height:40px;display:flex;align-items:center;justify-content:space-between;padding-left:16px;user-select:none; }
+.desktop-titlebar { height:32px;display:flex;align-items:center;justify-content:space-between;padding-left:16px;user-select:none; }
 .desktop-brand { display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.1px;color:var(--text);pointer-events:none; }
 .desktop-brand img,.desktop-brand svg { width:16px;height:16px; }
-.desktop-title-actions { display:flex;align-items:center;gap:12px;height:100%; }
+.desktop-title-actions { display:flex;align-items:center;gap:8px;height:100%; }
 .desktop-window-actions { display:flex;align-self:stretch; }
-.desktop-window-actions button { display:grid;place-items:center;width:44px;padding:0;border:0;background:transparent;color:var(--text-3); }
+.desktop-window-actions button { display:grid;place-items:center;width:40px;padding:0;border:0;background:transparent;color:var(--text-3); }
 .desktop-window-actions button:hover { background:var(--surface-sunken);color:var(--text); }
 .desktop-window-actions .desktop-close:hover { background:var(--danger);color:var(--on-danger); }
-.desktop-commandbar { display:flex;align-items:end;gap:8px;min-height:42px;padding:0 12px;border-bottom:1px solid var(--border); }
-#root .desktop-commandbar .shell-side { display:flex;flex:none;align-items:end;flex-direction:row;gap:3px;min-height:0;height:auto;max-width:100%;padding:0;border:0;background:transparent;overflow:visible; }
+.desktop-commandbar { display:flex;align-items:end;gap:8px;min-height:37px;padding:0 16px;border-bottom:1px solid var(--border); }
+#root .desktop-commandbar .shell-side { display:flex;flex:none;align-items:end;flex-direction:row;gap:8px;min-height:0;height:auto;max-width:100%;padding:0;border:0;background:transparent;overflow:visible; }
 #root .desktop-commandbar .shell-side > div,#root .desktop-commandbar .shell-nav { display:contents; }
 #root .desktop-commandbar .shell-nav > li { list-style:none;min-width:0; }
-#root .desktop-commandbar .shell-link { display:flex;align-items:center;gap:8px;padding:0 16px;min-height:38px;width:auto;font-size:13px;font-weight:500;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--text-2);box-shadow:none;white-space:nowrap; }
-#root .desktop-commandbar .shell-link:hover { background:var(--surface);color:var(--text); }
-#root .desktop-commandbar .shell-link[aria-current="page"] { background:var(--surface);color:var(--text);border-color:var(--border);font-weight:600;position:relative; }
-#root .desktop-commandbar .shell-link[aria-current="page"]::before { content:"";position:absolute;height:2px;top:-1px;left:5px;right:5px;background:var(--action);border-radius:2px; }
-#root .desktop-commandbar .shell-link[aria-current="page"]::after { content:"";position:absolute;height:1px;bottom:-1px;left:0;right:0;background:var(--surface); }
+#root .desktop-commandbar .shell-link { display:flex;align-items:center;gap:8px;padding:0 12px;min-height:36px;width:auto;font-size:13px;font-weight:500;border:0;border-radius:0;background:transparent;color:var(--text-2);box-shadow:none;white-space:nowrap; }
+#root .desktop-commandbar .shell-link:hover { background:var(--surface-2);color:var(--text); }
+#root .desktop-commandbar .shell-link[aria-current="page"] { background:transparent;color:var(--text);font-weight:600;position:relative; }
+#root .desktop-commandbar .shell-link[aria-current="page"]::before { content:"";position:absolute;height:2px;bottom:0;left:12px;right:12px;background:var(--action);border-radius:2px; }
+#root .desktop-commandbar .shell-link[aria-current="page"]::after { content:none; }
 #root .desktop-commandbar .shell-link-icon,#root .desktop-commandbar .shell-link-text { display:flex;flex:none; }
 .desktop-commandbar .shell-link-icon svg { width:16px;height:16px; }
-.desktop-command-tools { display:flex;align-items:center;gap:5px;flex:none;padding:0; }
-.desktop-command-tools > .ui-menu-wrap > button { width:auto;min-width:32px;padding:0 7px;font-size:11px; }
-.desktop-profile { position:relative;width:30px;flex:none; }
-.desktop-profile .ui-select-wrap { width:30px; }
-.desktop-profile .ui-select { display:flex;align-items:center;justify-content:center;min-width:30px;width:30px;height:30px;min-height:30px;padding:2px;border:0;background:transparent;background-image:none; }
+.desktop-command-tools { display:flex;align-items:center;gap:8px;flex:none;padding:0; }
+.desktop-command-tools > .ui-menu-wrap > button { width:auto;min-width:32px;padding:0 8px;font-size:11px; }
+.desktop-profile { position:relative;width:32px;flex:none; }
+.desktop-profile .ui-select-wrap { width:32px; }
+.desktop-profile .ui-select { display:flex;align-items:center;justify-content:center;min-width:32px;width:32px;height:32px;min-height:32px;padding:0;border:0;background:transparent;background-image:none; }
 .desktop-profile .ui-select-wrap::after { display:none; }
 .desktop-profile-initials { display:grid;place-items:center;width:24px;height:24px;border:1px solid var(--border);border-radius:50%;background:var(--surface-sunken);font-size:10px;font-weight:600;letter-spacing:.2px; }
 .desktop-profile .ui-field-error { position:absolute;right:0;top:100%;z-index:80;width:230px;padding:8px;background:var(--surface);border:1px solid var(--danger);border-radius:4px; }
-#root .desktop-workspace .ui-page-head { margin:0 0 20px; }
-#root .desktop-workspace .ui-page-title { font-size:20px;line-height:28px;letter-spacing:-.35px;font-weight:650; }
-#root .desktop-workspace .ui-page-meta { margin-top:4px;font-size:13px;line-height:20px; }
+#root .desktop-workspace .ui-page-head { margin:0 0 24px; }
+#root .desktop-workspace .ui-page-title { font-size:20px;line-height:28px;letter-spacing:-.3px;font-weight:600; }
+#root .desktop-workspace .ui-page-meta { margin-top:0;font-size:13px;line-height:20px; }
 #root .desktop-workspace .ui-card { border-radius:var(--radius-lg);box-shadow:none; }
 #root .desktop-workspace .calendar-connections > .ui-card { margin:0; }
-#root .desktop-workspace .ui-card-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+#root .desktop-workspace .ui-card-head { padding:16px 16px 0;border-bottom:0; }
 #root .desktop-workspace .ui-card-body { padding:16px; }
 #root .desktop-workspace .ui-empty { border:0;border-radius:0;background:transparent; }
-#root .desktop-workspace .ui-list { border-radius:4px; }
+#root .desktop-workspace .ui-list { border-radius:8px; }
 #root .desktop-workspace .work-log-past .ui-list { max-height:none;overflow:visible; }
-#root .desktop-workspace .ui-row-hit { min-height:48px;padding:10px 12px; }
+#root .desktop-workspace .ui-row-hit { min-height:48px;padding:8px 16px; }
 #root .desktop-workspace .form-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .ui-btn,.ui-input,.ui-select,.ui-textarea { border-radius:var(--radius-sm); }
-.ui-btn { font-size:13px;font-weight:600;box-shadow:none; }
+.ui-btn { font-size:13px;font-weight:500;box-shadow:none; }
 .ui-btn-secondary { border-color:var(--border);background:var(--surface-2); }
-.ui-btn-primary { background:var(--action);border-color:var(--action);color:var(--on-action);box-shadow:none; }
+.ui-btn-primary { font-weight:600;background:var(--action);border-color:var(--action);color:var(--on-action);box-shadow:none; }
 .ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
-.ui-segmented { border:1px solid var(--border);border-radius:var(--radius-md);padding:3px;gap:3px;background:var(--surface-2); }
-.ui-segmented .ui-segment { border-radius:var(--radius-sm);min-height:30px;padding:4px 12px; }
-.ui-segmented .ui-segment.is-on { background:var(--surface);color:var(--text);box-shadow:var(--shadow-1); }
-.ui-select-menu { padding:4px;border:1px solid var(--border);border-radius:5px;box-shadow:var(--shadow-2); }
-.ui-select-option { min-height:30px;border-radius:3px; }
+.ui-segmented { border:0;border-radius:var(--radius-md);padding:0;gap:0;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border); }
+.ui-segmented .ui-segment { border-radius:var(--radius-sm);min-height:var(--control-h-md);padding:0 12px;justify-content:center; }
+.ui-segmented-sm .ui-segment { min-height:var(--control-h-sm);padding:0 8px; }
+.ui-segmented .ui-segment.is-on { background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent); }
+.ui-select-menu { padding:4px;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-2); }
+.ui-select-option { min-height:var(--option-h);border-radius:4px; }
 .ui-select-option.is-active { background:var(--surface-sunken);color:var(--text); }
 .ui-dialog { border-radius:var(--radius-lg);box-shadow:var(--shadow-2); }
-.ui-dialog-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+.ui-dialog-head { align-items:center;flex:none;min-height:48px;padding:8px 24px;border-bottom:1px solid var(--border); }
 .ui-dialog-title { font-size:14px;line-height:20px;font-weight:600; }
-.ui-dialog-body { padding:16px; }
-.ui-dialog-foot { padding:12px 16px;border-top:1px solid var(--border);background:var(--surface-2); }
-.workspace-quick-settings { border-color:var(--border);border-radius:5px; }
+.ui-dialog-body { display:flex;flex-direction:column;gap:12px;padding:16px 24px; }
+.ui-dialog-body > * { flex-shrink:0; }
+.ui-dialog-body > :is(.ui-field,.form-2,.ui-row-inline,p) { margin:0; }
+.ui-dialog-foot { align-items:center;padding:12px 24px;border-top:1px solid var(--border);background:var(--surface-2); }
+.workspace-quick-settings { border-color:var(--border);border-radius:8px; }
 #root .session-window:not([data-mini="full"]) .session-commandbar { border-radius:8px; }
 #root .session-window[data-mini="dot"] .session-commandbar { width:64px;height:44px;padding:0;justify-content:center;border-radius:8px; }
 #root .session-window[data-mini="dot"] .session-compact-ruby { width:62px;height:42px;border-radius:7px; }
 #root .session-window[data-mini="dot"] .session-compact-ruby img { width:28px;height:28px; }
 @media(max-width:700px) {
-  #root .desktop-commandbar .shell-link { padding:0 10px;font-size:12px;gap:5px; }
+  #root .desktop-commandbar .shell-link { padding:0 8px;font-size:12px;gap:8px; }
   #root .desktop-commandbar .shell-link-icon { display:none; }
   #root .desktop-workspace .shell-content { padding:16px; }
 }
 @media(max-width:520px) {
   .desktop-titlebar { padding-left:8px; }
-  .desktop-title-actions { gap:6px; }
+  .desktop-title-actions { gap:8px; }
   .desktop-window-actions button { width:32px; }
-  .desktop-command-tools { gap:2px; }
-  .desktop-commandbar { padding:0 6px; }
-  #root .desktop-commandbar .shell-side { flex:1;gap:3px;width:100%; }
+  .desktop-command-tools { gap:8px; }
+  .desktop-commandbar { padding:0 8px; }
+  #root .desktop-commandbar .shell-side { flex:1;gap:8px;width:100%; }
   #root .desktop-commandbar .shell-nav > li { flex:1 1 auto; }
-  #root .desktop-commandbar .shell-link { width:100%;padding:0 6px;justify-content:center; }
+  #root .desktop-commandbar .shell-link { width:100%;padding:0 8px;justify-content:center; }
   #root .desktop-workspace .form-2 { grid-template-columns:1fr; }
 }
 
@@ -96,30 +99,24 @@
 /* Notices float above the workspace and never consume page height. */
 .ui-toast-viewport { right:16px;bottom:16px;width:min(380px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin; }
 .ui-toast-region:empty { display:none; }
-.app-notification { flex:none;pointer-events:auto;border:1px solid var(--border);border-left:3px solid var(--action);border-radius:var(--radius-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow-2);padding:12px 14px;overflow-wrap:anywhere; }
+.app-notification { flex:none;pointer-events:auto;border:1px solid var(--border);border-left:3px solid var(--action);border-radius:var(--radius-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow-2);padding:16px 16px;overflow-wrap:anywhere; }
 .app-notification-danger { border-left-color:var(--danger); }
 .app-notification-success { border-left-color:var(--success); }
-.app-notification-head { display:flex;align-items:center;gap:9px;min-height:28px; }
+.app-notification-head { display:flex;align-items:center;gap:8px;min-height:32px; }
 .app-notification-head strong { flex:1;min-width:0;font-size:13px;line-height:20px; }
 .app-notification-head > .ui-btn { flex:none; }
 .app-notification-mark { display:flex;color:var(--action); }
 .app-notification-danger .app-notification-mark { color:var(--danger); }
 .app-notification-success .app-notification-mark { color:var(--success); }
-.app-notification-body { padding-top:6px;font-size:13px;line-height:20px;color:var(--text-2); }
+.app-notification-body { padding-top:8px;font-size:13px;line-height:20px;color:var(--text-2); }
 .app-notification-body p { margin:0; }
-.app-notification-body p + p { margin-top:4px; }
+.app-notification-body p + p { margin-top:8px; }
 .app-notification-detail { color:var(--text-3);font-size:12px; }
-.app-notification-body .update-track { display:block;margin-top:10px; }
-.app-notification-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:10px; }
+.app-notification-body .update-track { display:block;margin-top:8px; }
+.app-notification-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:8px; }
 body:has(.shell-content:not([hidden]) .session-window[data-mini="full"]) .ui-toast-viewport { bottom:76px;max-height:calc(100vh - 92px); }
 body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .ui-toast-viewport { display:none; }
-@media (max-height:400px) {
-  .desktop-titlebar { height:32px; }
-  .desktop-commandbar { min-height:34px; }
-  #root .desktop-commandbar .shell-link { min-height:30px; }
-}
 
-#root .desktop-workspace .call-design-heading h1 { font-size:20px;line-height:28px;letter-spacing:-.35px;font-weight:650; }
 #root .desktop-workspace .session-start.ui-btn-primary { border-radius:var(--radius-sm);background:var(--action);border-color:var(--action);color:var(--on-action); }
 #root .desktop-workspace .session-start.ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
 
@@ -130,38 +127,35 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 }
 
 /* Desktop pages share one readable measure; popovers and compact windows keep their geometry. */
-#root .desktop-workspace .shell-content:not(:has(.session-window)) { max-width:1200px;margin-inline:auto; }
-#root .desktop-workspace .ui-card-title { font-size:14px;line-height:21px; }
-.desktop-workspace .ui-input,.desktop-workspace .ui-select,.desktop-workspace .ui-textarea { font-size:14px; }
+#root .desktop-workspace .shell-content:not(:has(.session-window)) { max-width:1280px;margin-inline:auto; }
+#root .desktop-workspace .ui-card-title { font-size:14px;line-height:20px; }
+.desktop-workspace .ui-input,.desktop-workspace .ui-select { font-size:13px; }
+.desktop-workspace .ui-textarea { font-size:14px; }
 .desktop-workspace .ui-input:enabled:hover,.desktop-workspace .ui-select:enabled:hover,.desktop-workspace .ui-textarea:enabled:hover { border-color:var(--text-3); }
-.desktop-workspace .ui-empty { padding:32px 20px; }
-.desktop-workspace .ui-empty-icon { width:48px;height:48px;border-radius:12px;background:var(--surface-2);color:var(--accent);margin-bottom:4px; }
-.desktop-workspace .ui-empty-text { font-size:13px;line-height:21px; }
-.desktop-workspace .ui-page-head-row { gap:12px;flex-wrap:wrap; }
+.desktop-workspace .ui-empty { padding:32px 24px; }
+.desktop-workspace .ui-empty-icon { width:48px;height:48px;border-radius:12px;background:var(--surface-2);color:var(--accent);margin-bottom:8px; }
+.desktop-workspace .ui-empty-text { font-size:13px;line-height:24px; }
+.desktop-workspace .ui-page-head-row { gap:16px;flex-wrap:wrap; }
 .desktop-workspace .ui-page-actions { flex-wrap:wrap; }
 .desktop-workspace .ui-banner { flex-wrap:wrap; }
 .desktop-workspace .ui-banner-action { margin-left:auto; }
 .desktop-workspace .ui-btn-label { overflow-wrap:anywhere; }
 @media(max-width:520px) {
-  #root .desktop-workspace .shell-content { padding:16px 12px; }
-  #root .desktop-commandbar .shell-link { padding-inline:5px;font-size:12px; }
+  #root .desktop-workspace .shell-content { padding:16px 16px; }
+  #root .desktop-commandbar .shell-link { padding-inline:8px;font-size:12px; }
   .desktop-workspace .ui-page-actions { width:100%; }
-  .desktop-workspace .ui-banner-action { margin-left:28px; }
-}
-@media(pointer:coarse) {
-  .desktop-workspace .ui-btn,.desktop-workspace .ui-icon-btn,.desktop-workspace .ui-select { min-height:44px; }
-  .desktop-workspace .ui-icon-btn { min-width:44px; }
+  .desktop-workspace .ui-banner-action { margin-left:32px; }
 }
 
 /* Settings have a stable section index and clearly bounded groups. */
-#root .desktop-workspace .settings { display:grid;grid-template-columns:154px minmax(0,1fr);align-items:start;gap:24px; }
-#root .desktop-workspace .settings-nav { position:sticky;top:0;padding:0;border:0;margin:0; }
-#root .desktop-workspace .settings-nav ul { display:flex;flex-direction:column;gap:4px; }
-#root .desktop-workspace .settings-link { width:100%;min-height:38px;padding:8px 12px;border:0;border-radius:var(--radius-sm);text-align:left;font-size:13px; }
+#root .desktop-workspace .settings { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:start;gap:24px; }
+#root .desktop-workspace .settings-nav { grid-column:span 2;position:sticky;top:0;align-self:start;padding:0;border:0;margin:0;background:transparent; }
+#root .desktop-workspace .settings-nav ul { background:transparent;display:flex;flex-direction:column;gap:4px; }
+#root .desktop-workspace .settings-link { width:100%;min-height:32px;padding:0 12px;border:0;border-radius:var(--radius-sm);text-align:left;font-size:13px; }
 #root .desktop-workspace .settings-link[aria-current="true"] { background:var(--accent-soft);color:var(--accent);font-weight:600; }
-#root .desktop-workspace .settings-body { width:100%;max-width:800px;margin:0;padding:0; }
+#root .desktop-workspace .settings-body { grid-column:span 10;width:100%;max-width:none;margin:0;padding:0; }
 #root .desktop-workspace .settings-body > .ui-card,#root .desktop-workspace .background-settings > .ui-card { border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface); }
-#root .desktop-workspace .settings-body .ui-card-head { padding:12px 16px;border-bottom:1px solid var(--border); }
+#root .desktop-workspace .settings-body .ui-card-head { padding:16px 16px 0;border-bottom:0; }
 #root .desktop-workspace .settings-body .ui-card-body { padding:16px; }
 #root .desktop-workspace .settings-body > .ui-card + .ui-card { margin-top:16px; }
 #root .desktop-workspace .settings-body > .ui-disclosure { margin-block:16px; }
@@ -170,24 +164,55 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
 .settings-rows > .ui-switch-row:first-child { padding-top:0; }
 .settings-rows > .ui-switch-row:last-child { padding-bottom:0; }
 .settings-rows > .ui-switch-row + .ui-switch-row { border-top:1px solid var(--border); }
-.detection-check { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px; }
+.detection-check { display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px; }
 .detection-check p { margin:0; }
-.detection-apps { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 24px; }
+.detection-apps { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px; }
 .background-settings .ui-field-hint { margin-block:0;line-height:20px; }
 .background-settings .hushed-settings { margin:0; }
 .companion-displays { margin-bottom:16px; }
 .companion-display-list { list-style:none;margin:0;padding:0; }
-.companion-display-list li { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;flex-wrap:wrap; }
+.companion-display-list li { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;flex-wrap:wrap; }
 .companion-display-list li + li { border-top:1px solid var(--border); }
-.companion-display-list li > div { display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere; }
+.companion-display-list li > div { display:flex;flex-direction:column;gap:8px;min-width:0;overflow-wrap:anywhere; }
 @media(max-width:860px) {
   #root .desktop-workspace .settings { display:block; }
   #root .desktop-workspace .settings-nav { position:static;margin-bottom:16px;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:thin; }
-  #root .desktop-workspace .settings-nav ul { flex-direction:row;flex-wrap:nowrap;width:max-content;gap:4px;padding-bottom:6px; }
+  #root .desktop-workspace .settings-nav ul { flex-direction:row;flex-wrap:nowrap;width:max-content;gap:8px;padding-bottom:8px; }
   #root .desktop-workspace .settings-link { width:auto;white-space:nowrap; }
 }
 @media(max-width:520px) {
   .detection-apps { grid-template-columns:minmax(0,1fr); }
-  #root .desktop-workspace .settings-nav ul { width:100%;flex-wrap:wrap;gap:4px; }
-  #root .desktop-workspace .settings-link { padding-inline:10px; }
+  #root .desktop-workspace .settings-nav ul { width:100%;flex-wrap:wrap;gap:8px; }
+  #root .desktop-workspace .settings-link { padding-inline:8px; }
+}
+
+/* Spacing belongs to the parent layout, not to both the layout and its children. */
+:is(.ui-stack,.ui-stack-tight) > :is(.ui-field,.form-2,.ui-row-inline,p) { margin-block:0; }
+.ui-row-inline:has(> .ui-input, > .ui-select-wrap) > .ui-btn { min-height:var(--control-h-md); }
+.ui-dialog-foot > .ui-btn { min-height:var(--control-h-md); }
+@media (max-width:520px) {
+  .ui-dialog-head { padding:8px 16px; }
+  .ui-dialog-body { padding:16px; }
+  .ui-dialog-foot { padding:12px 16px; }
+}
+
+/* Short settings values align in a consistent control column; long forms stack on small windows. */
+.settings-body .settings-field { display:grid;grid-template-columns:minmax(144px,1fr) minmax(0,320px);gap:8px 24px;align-items:center; }
+.settings-body .settings-field > :is(.ui-field-label,.ui-field-heading) { grid-column:1;grid-row:1; }
+.settings-body .settings-field > .ui-field-control { grid-column:2;grid-row:1;width:100%; }
+.settings-body .settings-field > .ui-field-error { grid-column:2;grid-row:2; }
+.settings-body .settings-field .ui-input,.settings-body .settings-field .ui-select-wrap { width:100%; }
+.settings-body .settings-field .ui-field-heading { min-height:32px; }
+.settings-body .ui-switch-row { min-height:32px; }
+@media(max-width:600px) { .settings-body .settings-field { grid-template-columns:minmax(0,1fr); } .settings-body .settings-field > .ui-field-control { grid-column:1;grid-row:2; } .settings-body .settings-field > .ui-field-error { grid-column:1;grid-row:3; } .settings-body .settings-field .ui-field-heading { min-height:24px; } }
+
+@media(pointer:coarse) {
+  .desktop-titlebar { height:48px; }
+  .desktop-window-actions button { width:48px; }
+  .desktop-profile,.desktop-profile .ui-select-wrap { width:48px; }
+  .desktop-profile .ui-select { width:48px;min-width:48px;height:48px; }
+  .desktop-workspace .ui-btn,.desktop-workspace .ui-icon-btn,.desktop-workspace .ui-select { min-height:48px; }
+  .desktop-workspace .ui-icon-btn { min-width:48px; }
+  #root .desktop-commandbar .shell-link { min-height:48px; }
+  #root .desktop-workspace .settings-link { min-height:48px; }
 }

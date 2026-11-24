@@ -82,7 +82,7 @@ describe("History list", () => {
     expect(within(list).getByText("Interview · Northwind technical")).toBeInTheDocument();
     expect(within(list).getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
     expect(within(list).getByText("Processing")).toBeInTheDocument();
-    expect(screen.getByText(/150 connected minutes in October \(UTC\) · 2 calls/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Account usage" })).toHaveTextContent(/150 connected minutes in October \(UTC\) · 2 calls/);
     await waitFor(() => expect(screen.getByRole("group", { name: "Lifetime account usage" })).toHaveTextContent("300.0 total minutes used"));
     expect(screen.queryByText(/estimated cost/)).not.toBeInTheDocument();
 

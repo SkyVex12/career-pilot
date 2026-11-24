@@ -771,15 +771,15 @@ describe("Call", () => {
     expect(start?.args.request).toMatchObject({ mode: "interview", interview_id: null, job_id: "a1", store_transcript: true });
   });
 
-  it("offers only For interviews and For work and ignores old coding setup preferences", async () => {
+  it("offers only Interview and Work and ignores old coding setup preferences", async () => {
     callRoutes();
     ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_mode: "assessment", coding_language: "C" } }));
     wrap(<CallScreen {...callProps()} />);
     await screen.findByRole("option", { name: /Northwind · Backend/, hidden: true });
-    const types = screen.getByRole("radiogroup", { name: "Session type" });
+    const types = screen.getByRole("radiogroup", { name: "Call type" });
     expect(within(types).getAllByRole("radio")).toHaveLength(2);
-    expect(within(types).getByRole("radio", { name: "For interviews" })).toBeChecked();
-    expect(within(types).getByRole("radio", { name: "For work" })).not.toBeChecked();
+    expect(within(types).getByRole("radio", { name: "Interview" })).toBeChecked();
+    expect(within(types).getByRole("radio", { name: "Work" })).not.toBeChecked();
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
     expect(ipc.calls.find((c) => c.cmd === "start_session")?.args.request).toMatchObject({ mode: "interview", no_call: false, platform: "other", job_id: "a1" });
     expect(ipc.calls.find((c) => c.cmd === "set_coding_prefs")).toBeUndefined();

@@ -2358,6 +2358,9 @@ pub fn run() {
             // asked for only while a guest talks, needs no WebView2 prompt.
             if let Some(main) = app.get_webview_window("main") {
                 voice::allow_microphone(&main);
+                if let Err(error) = workspace_window::fit_initial_window(&main) {
+                    tracing::warn!("Initial workspace size: {error}");
+                }
             }
             // Both windows exist now. A saved stealth choice excludes them from capture.
             // The overlay stays hidden here, so applying stealth does not paint it.
@@ -2375,6 +2378,14 @@ pub fn run() {
                 if on { "on" } else { "off" }
             );
             stealth::apply(app.handle(), on, &name);
+            // Size the initially hidden workspace before presenting it. Background launches
+            // remain hidden; normal launches use the existing capture-aware show path.
+            if !background::background_start_requested()
+                && let Some(main) = app.get_webview_window("main")
+                && let Err(error) = stealth::show(&main)
+            {
+                tracing::warn!("Show workspace: {error}");
+            }
             // Task Manager reads the program file, not the window title. Write the saved name
             // now; it shows up the next time this program starts.
             if let Err(e) = program_name::install(&name) {

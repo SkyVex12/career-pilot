@@ -54,7 +54,7 @@ html[data-window="overlay"] #root {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 36px;
+  min-height: 40px;
   padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
   border-bottom: 1px solid var(--ov-line);
   cursor: move;
@@ -500,7 +500,7 @@ html[data-window="overlay"] #root {
   display: inline-block;
   width: 0.5em;
   height: 1em;
-  margin-left: 2px;
+  margin-left: 8px;
   vertical-align: -0.12em;
   background: currentColor;
   opacity: 0.7;
@@ -547,7 +547,7 @@ html[data-window="overlay"] #root {
 }
 .ov-thumb {
   min-width: 32px;
-  min-height: 28px;
+  min-height: 32px;
   border: 1px solid var(--ov-line);
   border-radius: var(--radius-md);
   background: transparent;
@@ -818,7 +818,7 @@ button.ov-watching[aria-expanded="true"] {
   border-top: 1px solid var(--ov-line);
 }
 .ov-talk-btn {
-  min-height: 34px;
+  min-height: 40px;
   padding: 0 var(--space-5);
   border: 1px solid rgb(91 208 138 / 0.5);
   border-radius: var(--radius-md);
@@ -891,7 +891,7 @@ button.ov-watching[aria-expanded="true"] {
   overflow: hidden;
 }
 .ov-seg-btn {
-  min-height: 30px;
+  min-height: 32px;
   padding: 0 var(--space-3);
   border: 0;
   background: transparent;
@@ -945,7 +945,7 @@ button.ov-watching[aria-expanded="true"] {
   position: absolute;
   left: 3px;
   bottom: 2px;
-  padding: 0 4px;
+  padding: 0 8px;
   border-radius: 3px;
   background: rgb(0 0 0 / 0.75);
   color: #fff;
@@ -980,13 +980,13 @@ button.ov-watching[aria-expanded="true"] {
   font-size: var(--fs-meta);
 }
 .screen-task {
-  padding: 1px 8px;
+  padding: 8px 8px;
   border-radius: 10px;
   background: var(--ov-raise);
   color: var(--ov-text-2);
 }
 .screen-task-n {
-  margin-right: 4px;
+  margin-right: 8px;
   color: var(--ov-text-3);
   font-weight: 600;
 }
@@ -1006,7 +1006,7 @@ button.ov-watching[aria-expanded="true"] {
   font-size: 0.92em;
 }
 .code-answer p code {
-  padding: 0 4px;
+  padding: 0 8px;
   border-radius: 3px;
   background: rgb(255 255 255 / 0.08);
 }
@@ -1032,7 +1032,7 @@ button.ov-watching[aria-expanded="true"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px var(--space-2);
+  padding: 8px var(--space-2);
   border-bottom: 1px solid rgb(255 255 255 / 0.08);
   color: var(--ov-text-3);
   font-size: 12px;
@@ -1118,72 +1118,72 @@ button.ov-watching[aria-expanded="true"] {
   --focus: var(--accent);
 }
 .ov { border: 1px solid var(--ov-line); border-radius: 8px; overflow: hidden; background: rgb(var(--ov-panel) / var(--ov-alpha)); }
-.ov-head { min-height: 42px; flex: none; gap: 6px; padding: 5px 8px; }
+.ov-head { min-height: 40px; flex: none; gap: 8px; padding: 4px 12px; }
 .ov-brand { display: inline-flex; flex: none; align-items: center; }
 .ov-brand img { width: 19px; height: 19px; }
 .ov-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.ov-host-name > span { margin-left: 6px; color: var(--ov-text-3); }
-.ov-status { font-size: 12px; font-weight: 400; gap: 6px; }
+.ov-host-name > span { margin-left: 8px; color: var(--ov-text-3); }
+.ov-status { font-size: 12px; font-weight: 400; gap: 8px; }
 .ov-head .ui-icon-btn[aria-pressed=true], .ov-head .ui-icon-btn[aria-expanded=true] { background: var(--ov-raise); color: var(--ov-text); }
-.ov-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--ov-line); }
-.ov-work-tabs, .ov-toolbar-actions, .ov-compact-tools { display: flex; align-items: center; gap: 5px; }
-.ov-work-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 29px; padding: 3px 8px; border: 1px solid transparent; border-radius: 4px; color: var(--ov-text-2); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.ov-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--ov-line); }
+.ov-work-tabs, .ov-toolbar-actions, .ov-compact-tools { display: flex; align-items: center; gap: 8px; }
+.ov-work-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; color: var(--ov-text-2); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .ov-work-tabs > button[aria-selected=true] { border-color: var(--ov-line); color: var(--ov-text); background: var(--ov-raise); }
 .ov-toolbar-actions { margin-left: auto; }
-.ov-compact-tools { padding: 4px 10px; justify-content: flex-end; border-bottom: 1px solid var(--ov-line); }
+.ov-compact-tools { padding: 4px 12px; justify-content: flex-end; border-bottom: 1px solid var(--ov-line); }
 .ov-conversation-workarea { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .ov-conversation-workarea > .ov-body { min-width: 0; width: 100%; }
 .ov-conversation-workarea[hidden], .ov-screen-panel[hidden], .ov-shared-screen-panel[hidden] { display: none; }
 .ov-screen-panel { flex: none; max-height: 44%; min-height: 0; overflow-y: auto; border-bottom: 1px solid var(--ov-line); }
-.ov-shared-screen-panel { display: flex; flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 12px; }
+.ov-shared-screen-panel { display: flex; flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 16px; }
 .ov-shared-screen-panel > .screen-view { min-width: 0; width: 100%; }
 .ov-pane-transcript { flex-basis: 30%; }
-.ov-pane-head { padding: 12px 16px 8px; font-weight: 400; letter-spacing: 0; }
+.ov-pane-head { padding: 16px 16px 8px; font-weight: 400; letter-spacing: 0; }
 .ov-pane-body { padding: 0; }
 .ov-pane-transcript .ov-pane-body { padding: 8px 16px 16px; }
 .ov-cards { gap: 0; }
-.ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 18px 22px; margin: 0; border: 0; border-bottom: 1px solid var(--ov-line); border-radius: 0; box-shadow: none; background: transparent; }
-.ov .question { font-weight: 400; color: var(--ov-text-2); padding-bottom: 10px; border-bottom: 1px solid var(--ov-line); }
+.ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 16px 24px; margin: 0; border: 0; border-bottom: 1px solid var(--ov-line); border-radius: 0; box-shadow: none; background: transparent; }
+.ov .question { font-weight: 400; color: var(--ov-text-2); padding-bottom: 8px; border-bottom: 1px solid var(--ov-line); }
 .ov .points, .ov .points p, .ov .points li { color: var(--ov-text); }
-.ov .tx .line { padding: 10px 0; border: 0; border-bottom: 1px solid var(--ov-line); }
-.ov .tx { gap: 4px; }
+.ov .tx .line { padding: 8px 0; border: 0; border-bottom: 1px solid var(--ov-line); }
+.ov .tx { gap: 8px; }
 .ov .ov-get-deep { border-color: var(--ov-line); color: var(--ov-text-2); font-weight: 400; }
 .ov .ov-get-deep:hover { background: var(--ov-raise); }
 .ov .ov-thumb, .ov .copy { color: var(--ov-text-2); }
 .ov .ov-jump-top { background: var(--action); color: var(--on-action); }
-.ov .ov-ask { gap: 8px; padding: 10px 12px; flex: none; }
-.ov .ov-ask-input { min-width: 0; min-height: 36px; flex-basis: 100px; border-color: var(--ov-line); background: rgb(var(--surface-2-rgb) / var(--ov-alpha)); }
-.ov .ov-ask-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; border-color: var(--ov-line); font-weight: 400; }
-.ov .ov-ask > .ov-ask-btn { min-height: 36px; background: var(--action); border-color: var(--action); color: var(--on-action); }
-.ov .ov-coding { border: 0; padding: 12px; }
-.ov-coding-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12px; }
+.ov .ov-ask { gap: 8px; padding: 8px 16px; flex: none; }
+.ov .ov-ask-input { min-width: 0; min-height: 32px; flex-basis: 100px; border-color: var(--ov-line); background: rgb(var(--surface-2-rgb) / var(--ov-alpha)); }
+.ov .ov-ask-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; border-color: var(--ov-line); font-weight: 400; }
+.ov .ov-ask > .ov-ask-btn { min-height: 32px; padding: 0 12px; background: var(--action); border-color: var(--action); color: var(--on-action); }
+.ov .ov-coding { border: 0; padding: 16px; }
+.ov-coding-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12px; }
 .ov-coding-heading strong { font-weight: 500; }
 .ov-coding-heading > span { color: var(--ov-text-3); }
 .ov .ov-coding-row { flex-wrap: wrap; gap: 8px; }
 .ov .ov-coding-lang { flex: 1 1 120px; min-width: 100px; max-width: 220px; }
 .ov .ov-coding-clear { background: transparent; }
 .ov-sharing-status:empty { display: none; }
-.ov-sharing-status { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 10px; border-bottom: 1px solid var(--ov-line); }
-.ov .ov-screen-chip { display: inline-flex; gap: 5px; align-items: center; border-radius: 4px; font-weight: 400; background: var(--surface-2); }
-.ov .ov-watching { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; border: 1px solid transparent; border-radius: 4px; padding: 3px 7px; color: var(--ov-text-2); font-weight: 400; font-size: 12px; }
+.ov-sharing-status { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--ov-line); }
+.ov .ov-screen-chip { display: inline-flex; gap: 8px; align-items: center; border-radius: 4px; font-weight: 400; background: var(--surface-2); }
+.ov .ov-watching { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; border: 1px solid transparent; border-radius: 4px; padding: 0 8px; color: var(--ov-text-2); font-weight: 400; font-size: 12px; }
 .ov .ov-watching:hover, .ov .ov-watching[aria-expanded=true] { color: var(--ov-text); background: var(--ov-raise); }
-.ov-guest-footer { flex: none; min-width: 0; padding: 10px 12px; border-top: 1px solid var(--ov-line); }
+.ov-guest-footer { flex: none; min-width: 0; padding: 8px 16px; border-top: 1px solid var(--ov-line); }
 .ov-guest-footer .ov-talk, .ov-guest-footer .ov-note-box { padding: 0; border: 0; }
 .ov-guest-footer .ov-talk { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .ov-guest-footer input[type=checkbox] { flex: none; width: 14px; height: 14px; min-width: 14px; min-height: 14px; }
 .ov-guest-footer .ov-note-input { min-width: 0; }
-.ov-menu { z-index: var(--layer-popup); gap: 9px; padding: 12px; border-radius: 6px; overflow-y: auto; color: var(--ov-text); background: rgb(var(--ov-panel)); box-shadow: var(--shadow-2); font-size: 13px; }
+.ov-menu { z-index: var(--layer-popup); gap: 8px; padding: 16px; border-radius: 6px; overflow-y: auto; color: var(--ov-text); background: rgb(var(--ov-panel)); box-shadow: var(--shadow-2); font-size: 13px; }
 .ov-menu .ov-popover-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ov-popover-heading strong { font-size: 13px; font-weight: 500; }
-.ov-menu-row { margin: 0; padding: 2px 0; }
+.ov-menu-row { margin: 0; padding: 8px 0; }
 .ov-menu-label { font-weight: 400; }
 .ov-menu-label output, .ov-menu-text output { color: var(--ov-text-3); font-variant-numeric: tabular-nums; }
 .ov-menu .ui-input, .ov-menu .ui-select { min-width: 0; width: 100%; }
 .ov-menu .ui-switch-label { font-size: 13px; font-weight: 400; }
 .ov-menu .ui-switch-row { align-items: center; }
 .ov-menu .ov-menu-text { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
-.ov-menu .ov-audio-source { display: flex; align-items: center; gap: 9px; padding: 7px 0; }
-.ov-audio-source > div { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.ov-menu .ov-audio-source { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+.ov-audio-source > div { display: flex; flex: 1; flex-direction: column; gap: 8px; min-width: 0; }
 .ov-audio-source strong { font-size: 13px; font-weight: 500; }
 .ov-audio-source > div > span { overflow-wrap: anywhere; color: var(--ov-text-3); font-size: 12px; }
 .ov-audio-source > span { color: var(--ov-text-3); font-size: 12px; }
@@ -1192,11 +1192,11 @@ button.ov-watching[aria-expanded="true"] {
 .ov-summary-choice { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .ov-summary-choice input { width: 15px; height: 15px; }
 @container overlay (max-width: 420px) {
-  .ov-head { gap: 3px; padding: 5px 6px; }
+  .ov-head { gap: 8px; padding: 4px 8px; }
   .ov-status { max-width: 110px; }
-  .ov-toolbar { padding: 6px; }
-  .ov-work-tabs { gap: 1px; }
-  .ov-work-tabs > button { padding: 3px 5px; }
-  .ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 14px 16px; }
+  .ov-toolbar { padding: 4px 8px; }
+  .ov-work-tabs { gap: 8px; }
+  .ov-work-tabs > button { padding: 0 8px; }
+  .ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 16px 16px; }
   .ov-pane-transcript { flex-basis: 130px; }
 }

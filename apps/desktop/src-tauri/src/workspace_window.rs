@@ -1,14 +1,53 @@
-//! Session-only presentation preferences for the main workspace window.
+//! Startup sizing and session-only presentation preferences for the main workspace window.
 
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
 use tauri_plugin_global_shortcut::Shortcut;
 
 use crate::{AppState, OPEN_CALL_EVENT, OverlayHotkeys, OverlayPrefs, Res, hotkeys::Action, layout, stealth};
+
+// Apply once before the first presentation. Page changes and compact-mode transitions
+// must never replace a size chosen by the user.
+const STARTUP_MARGIN: f64 = 24.0;
+
+fn initial_size(preferred: LogicalSize<f64>, available: LogicalSize<f64>) -> LogicalSize<f64> {
+    let fit = |wanted: f64, room: f64, minimum: f64| {
+        let inset = ((room - 2.0 * STARTUP_MARGIN) / 8.0).floor() * 8.0;
+        wanted.min(inset.max(minimum.min(room)))
+    };
+    LogicalSize::new(
+        fit(preferred.width, available.width, 400.0),
+        fit(preferred.height, available.height, 240.0),
+    )
+}
+
+pub(crate) fn fit_initial_window(window: &WebviewWindow) -> Res<()> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or(window.primary_monitor().map_err(|e| e.to_string())?);
+    let Some(monitor) = monitor else { return Ok(()) };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let preferred = window.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(scale);
+    let size = initial_size(preferred, work.size.to_logical::<f64>(scale));
+    // Even an unusually small work area must retain reachable window controls.
+    window
+        .set_min_size(Some(LogicalSize::new(400.0_f64.min(size.width), 240.0_f64.min(size.height))))
+        .map_err(|e| e.to_string())?;
+    window.set_size(size).map_err(|e| e.to_string())?;
+    let physical = size.to_physical::<u32>(scale);
+    window
+        .set_position(PhysicalPosition::new(
+            work.position.x + ((work.size.width.saturating_sub(physical.width)) / 2) as i32,
+            work.position.y + ((work.size.height.saturating_sub(physical.height)) / 2) as i32,
+        ))
+        .map_err(|e| e.to_string())
+}
 
 pub(crate) const EVENT: &str = "copilot://workspace-window";
 
@@ -261,6 +300,28 @@ pub(crate) fn clear_click_through(app: &AppHandle) -> Res<()> {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn startup_size_is_bounded_by_the_usable_display_at_any_scale() {
+        let preferred = LogicalSize::new(800.0, 672.0);
+        for (physical_width, physical_height, scale, width, height) in [
+            (1920, 1040, 1.0, 800.0, 672.0),
+            (1366, 728, 1.0, 800.0, 672.0),
+            (1920, 1040, 1.5, 800.0, 640.0),
+            (1920, 1040, 2.0, 800.0, 472.0),
+            (800, 600, 1.0, 752.0, 552.0),
+            (320, 200, 1.0, 320.0, 200.0),
+        ] {
+            let available = tauri::PhysicalSize::new(physical_width, physical_height).to_logical(scale);
+            assert_eq!(initial_size(preferred, available), LogicalSize::new(width, height));
+        }
+    }
+
+    #[test]
+    fn startup_fitting_never_enlarges_the_configured_window() {
+        let preferred = LogicalSize::new(640.0, 480.0);
+        assert_eq!(initial_size(preferred, LogicalSize::new(1920.0, 1040.0)), preferred);
+    }
 
     #[test]
     fn consent_temporarily_overrides_click_through_without_rewriting_it() {

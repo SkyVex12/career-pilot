@@ -196,7 +196,7 @@ export function Applications({
   return (
     <div className={`apps prep-workspace${practicing ? " is-practicing" : ""}`}>
       <PageHeader title="Interview prep" actions={<>
-        <Button variant={practicing ? "ghost" : "secondary"} onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>
+        {(!selected || practicing) && <Button variant={practicing ? "ghost" : "secondary"} onClick={() => { setPracticing(v => !v); setPracticeOpened(true); }}>{practicing ? "Back to applications" : "Practice interview"}</Button>}
         {!practicing && conn?.connected && <Button onClick={() => setPulling(true)}>Pull from HubRuby…</Button>}
         {!practicing && <Button variant="primary" onClick={() => setAdding(true)}>+ Add application</Button>}
       </>} />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { request as api } from "./api";
-import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea, PageHeader } from "./ui";
+import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea, PageHeader, HelpTip } from "./ui";
 import { useDataActivity } from "./usePolling";
 import { Icon } from "./ui/Icon";
 
@@ -48,10 +48,18 @@ export function MeetingPreparation({ onChoose, standalone = false }: { standalon
   const connected = connections.filter(c => c.connected && !["reauth_required", "error"].includes(c.status)).length;
   return <>{standalone && <PageHeader title="Calendar" meta="Prepare for upcoming meetings and choose a call context." />}<details className={`ui-disclosure meeting-preparation${standalone ? " calendar-page" : ""}`} open={open} onToggle={e => setOpen(e.currentTarget.open)}>
     <summary><Icon name="calendar" size={18} /><span>Meeting preparation</span><span className="ui-disclosure-meta">{connected ? `${connected} calendar${connected === 1 ? "" : "s"} connected` : "Optional calendar"}</span></summary><div className="ui-disclosure-body ui-stack">
-      <p className="ui-field-hint">Bring the next meeting and its notes into your call. Calendar access is read-only.</p>
+      {!standalone && <p className="ui-field-hint">Bring the next meeting and its notes into your call. Calendar access is read-only.</p>}
       {error && <Banner tone="danger" title="Calendar could not be loaded" action={<Button size="sm" disabled={busy || loading} onClick={() => void run(async () => {})}>Retry</Button>}>{error}</Banner>}
       {notice && <Banner tone="info">{notice}</Banner>}
       {loading && !loaded && <SkeletonList rows={2} label="Loading calendars" />}
+      <div className="calendar-layout">
+        <section className="calendar-upcoming" aria-label="Upcoming meetings"><h2 className="ui-section-title">Upcoming meetings</h2>
+      {preparation.items.map(item => <Meeting key={`${item.meeting.account_id}/${item.meeting.calendar_id}/${item.meeting.instance_id}`} item={item}
+        provider={providers[item.meeting.account_id]} applications={preparation.applications ?? item.candidates} sessions={preparation.saved_sessions ?? []}
+        onSaved={reload} onChoose={onChoose} />)}
+      {loaded && !error && !loading && preparation.items.length === 0 && <p className="calendar-empty">{connected ? "No meetings in the next 30 minutes in your selected calendars." : "Calendar is optional. You can start a call whenever you’re ready."}</p>}
+        </section>
+        <aside className="calendar-integrations" aria-label="Calendar connections"><div className="calendar-section-heading"><h2 className="ui-section-title">Calendar connections</h2><HelpTip label="Calendar access">Calendar access is read-only. Choose the calendars to use for meeting preparation.</HelpTip></div>
       {loaded && <div className="calendar-connections">{connections.map(c => <Card className="calendar-connection" key={c.provider} title={c.provider === "google" ? "Google Calendar" : "Outlook Calendar"} actions={<Badge tone={["reauth_required", "error"].includes(c.status) ? "warning" : c.connected ? "success" : "neutral"} icon={false}>{c.status === "reauth_required" ? "Reconnect needed" : c.status === "error" ? "Sync needs attention" : c.connected ? "Connected" : c.available ? "Not connected" : "Setup needed"}</Badge>}>
         {!c.available ? <p className="ui-field-hint">Your server hasn’t enabled this calendar yet. You can choose your call context manually.</p> : !c.connected || c.status === "reauth_required" ? <div className="ui-stack-tight">
           <p className="ui-field-hint">Choose which calendars to use after signing in.</p>
@@ -71,11 +79,9 @@ export function MeetingPreparation({ onChoose, standalone = false }: { standalon
           <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => setDisconnect(c)}>Disconnect</Button>
         </div>}
       </Card>)}</div>}
-      <div className="ui-row-inline"><Button size="sm" loading={loading && loaded} disabled={busy || loading} onClick={() => void run(async () => {})}>Refresh connection status</Button><span className="ui-field-hint">Refresh after connecting in your browser.</span></div>
-      {preparation.items.map(item => <Meeting key={`${item.meeting.account_id}/${item.meeting.calendar_id}/${item.meeting.instance_id}`} item={item}
-        provider={providers[item.meeting.account_id]} applications={preparation.applications ?? item.candidates} sessions={preparation.saved_sessions ?? []}
-        onSaved={reload} onChoose={onChoose} />)}
-      {loaded && !error && !loading && preparation.items.length === 0 && <p className="calendar-empty">{connected ? "No meetings in the next 30 minutes in your selected calendars." : "Calendar is optional. You can start a call whenever you’re ready."}</p>}
+      <div className="calendar-refresh"><Button variant="ghost" size="sm" loading={loading && loaded} disabled={busy || loading} onClick={() => void run(async () => {})}>Refresh connection status</Button><HelpTip label="Refresh calendars">Refresh after connecting in your browser.</HelpTip></div>
+        </aside>
+      </div>
       <ConfirmDialog open={disconnect !== null} onOpenChange={next => { if (!next) setDisconnect(null); }} title="Disconnect calendar?" confirmLabel="Disconnect" onConfirm={async () => {
         if (!disconnect) return;
         const result = await api<{ provider_consent_removal_required: boolean }>("DELETE", `/calendars/${disconnect.provider}`);
@@ -131,14 +137,12 @@ function Meeting({ item, provider, applications, sessions, onSaved, onChoose }: 
       <Field label="Application"><Select aria-label="Meeting application" value={application} disabled={saving} onChange={e => { changed(); setApplication(e.target.value); }}>
         <option value="">No application</option>{applications.map(c => <option key={c.application_id} value={c.application_id}>{c.company} · {c.job_title}</option>)}
       </Select></Field>
-      <Field label="Related saved call"><Select aria-label="Related saved call" value={session} disabled={saving} onChange={e => { changed(); setSession(e.target.value); }}>
+      <Field label="Related saved call" hint="Link a saved call to reuse its notes for this recurring meeting." hintMode="tooltip"><Select aria-label="Related saved call" value={session} disabled={saving} onChange={e => { changed(); setSession(e.target.value); }}>
         <option value="">No saved call linked</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.title} · {new Date(s.started_at).toLocaleDateString()}</option>)}
       </Select></Field>
     </div>
-    <p className="ui-field-hint">Link a saved call to reuse its notes for this recurring meeting.</p>
     {item.previous.some(p => p.notes) && <details><summary>Notes from linked calls</summary>{item.previous.filter(p => p.notes).map((p, i) => <p key={i}>{p.notes}</p>)}</details>}
-    <Field label="Unfinished actions"><Textarea aria-label="Unfinished actions" value={actions} onChange={e => { changed(); setActions(e.target.value); }} maxLength={8000} disabled={saving} /></Field>
-    <p className="ui-field-hint">One action per line. Remove completed actions and save; this replaces the open-action list for future meetings in this series.</p>
+    <Field label="Unfinished actions" hint="One action per line. Remove completed actions and save; this replaces the open-action list for future meetings in this series." hintMode="tooltip"><Textarea aria-label="Unfinished actions" value={actions} onChange={e => { changed(); setActions(e.target.value); }} maxLength={8000} disabled={saving} /></Field>
     <div className="ui-row-inline">
       {provider && <Button disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save meeting context"}</Button>}
       {onChoose && <Button disabled={saving} onClick={() => onChoose(item.meeting.title, application || null)}>Use for call setup</Button>}

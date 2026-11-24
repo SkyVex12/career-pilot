@@ -1,9 +1,9 @@
-.capture-sources { display: grid; gap: 6px; }
-.capture-source.ui-btn { justify-content: flex-start; width: 100%; height: auto; min-height: 60px; padding: 12px; text-align: left; }
-.capture-source .ui-btn-label { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.capture-sources { display: grid; gap: 8px; }
+.capture-source.ui-btn { justify-content: flex-start; width: 100%; height: auto; min-height: 60px; padding: 16px; text-align: left; }
+.capture-source .ui-btn-label { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .capture-source .ui-btn-label > svg { flex: none; color: var(--text-2); }
-.capture-source .ui-btn-label > span { display: grid; gap: 4px; min-width: 0; }
+.capture-source .ui-btn-label > span { display: grid; gap: 8px; min-width: 0; }
 .capture-source strong { font-size: var(--text-md); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .capture-source small { color: var(--text-2); font-size: var(--text-sm); font-weight: 400; }
-.capture-status-note { margin: 6px 0 0; font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.capture-status-note { margin: 8px 0 0; font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
 .capture-status-note.is-error { color: var(--danger); }
