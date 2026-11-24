@@ -121,7 +121,6 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
   #root .desktop-commandbar .shell-link { min-height:30px; }
 }
 
-#root .desktop-workspace .call-design-heading h1 { font-size:20px;line-height:28px;letter-spacing:-.35px;font-weight:650; }
 #root .desktop-workspace .session-start.ui-btn-primary { border-radius:var(--radius-sm);background:var(--action);border-color:var(--action);color:var(--on-action); }
 #root .desktop-workspace .session-start.ui-btn-primary:not(:disabled):hover { background:var(--action-hover);border-color:var(--action-hover); }
 

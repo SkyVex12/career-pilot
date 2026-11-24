@@ -55,9 +55,9 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
   const selection = items.find(item => item.id === value);
   return <details className="call-options ui-disclosure" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary>
-      <Icon name="settings" size={18} /><span>Customize</span>
+      <Icon name="settings" size={16} /><span className="call-options-title">Customize</span>
       <span className="ui-disclosure-meta" role={error && !loading ? "alert" : undefined}>
-        {loading ? "Loading languages…" : error ? <>Language needs attention<span className="ui-visually-hidden">{error}</span></> : `${selection?.name ?? value} · call language`}
+        {loading ? "Loading languages…" : error ? <>Needs attention<span className="ui-visually-hidden">{error}</span></> : `${selection?.name ?? value} · call language`}
       </span>
     </summary>
     <div className="ui-disclosure-body call-customize">

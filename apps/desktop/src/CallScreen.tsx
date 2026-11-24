@@ -243,7 +243,7 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 
 // --- Ready and live -----------------------------------------------------------------------------
 
-function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onWork, onHistory, onOpenLive, preset, active = true }: CallProps) {
+function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onWork, onOpenLive, preset, active = true }: CallProps) {
   const dataActive = useDataActivity(active);
   const mini = useWindowMode(false, active && !session.running);
   const openWorkspaceQuickSettings = useWorkspaceOpenQuickSettings();
@@ -371,7 +371,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     </header>
     <section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
-        <header className="call-design-heading"><h1>Start a call</h1><div className="call-heading-actions"><SegmentedControl label="Session type" value={setupMode} options={MODES} disabled={disabled} onChange={changeMode} /><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></div></header>
+        <header className="call-design-heading call-setup-heading"><h1>Start a call</h1><div className="call-heading-actions"><SegmentedControl label="Session type" value={setupMode} options={MODES} disabled={disabled} onChange={changeMode} /><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></div></header>
         <div className="call-design-body">
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
             {mini.error && <Banner tone="danger">{mini.error}</Banner>}
@@ -379,37 +379,39 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
             {message && <Banner tone="danger">{message}</Banner>}
           </div>
-          <div className={`call-setup-fields${atWork ? "" : " call-interview-context"}`} aria-label="Call context">
-            {atWork ? <>
-              <div className="call-row call-company-row"><label className="call-row-label" htmlFor="call-company">Company</label><div className="call-application-field"><Select id="call-company" aria-describedby="call-company-context" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><span className="call-application-resume" id="call-company-context">{employerId ? <>Work log · {materials.documents ? plural(materials.documents.length, "document") : "Company documents"}</> : "Choose a company to use your work context."}</span></div><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
-              {work.error && <p className="ui-field-error" role="alert">{work.error}</p>}
-              {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
-              {setupMode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
-              {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
-            </> : <>
-              <div className="call-row call-application-row">
-                <label className="call-row-label" htmlFor="call-application">Application</label>
-                <div className="call-application-field">
-                  <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
-                  <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
+          <div className="call-setup-grid">
+            <section className={`call-setup-fields${atWork ? "" : " call-interview-context"}`} aria-label="Call context">
+              {atWork ? <>
+                <div className="call-row call-company-row"><label className="call-row-label" htmlFor="call-company">Company</label><div className="call-application-field"><Select id="call-company" aria-describedby="call-company-context" value={employerId} disabled={disabled} onChange={e => setEmployerId(e.target.value)}><option value="">Choose a company</option>{work.employers?.filter(e => e.status === "active").map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</Select><span className="call-application-resume" id="call-company-context">{employerId ? <>Work log · {materials.documents ? plural(materials.documents.length, "document") : "Company documents"}</> : "Choose a company to use your work context."}</span></div><Button className="call-row-action" size="sm" disabled={!onWork || disabled} onClick={onWork}>Manage</Button></div>
+                {work.error && <p className="ui-field-error" role="alert">{work.error}</p>}
+                {pack && pack.status !== "ready" && <div className="call-row-hint"><PackStateBadge state={pack} /></div>}
+                {setupMode === "meeting" && <div className="call-row call-agenda-row"><label className="call-row-label" htmlFor="call-agenda">Agenda</label><Textarea id="call-agenda" rows={2} placeholder="What are you discussing?" value={agenda} disabled={disabled} onChange={e => setAgenda(e.target.value)} /></div>}
+                {employerId && <details className="call-focus"><summary>Focus on documents{materialIds.length ? ` · ${materialIds.length}` : ""}</summary><MaterialPicker materials={materials} selected={materialIds} onChange={setMaterialIds} /></details>}
+              </> : <>
+                <div className="call-row call-application-row">
+                  <label className="call-row-label" htmlFor="call-application">Application</label>
+                  <div className="call-application-field">
+                    <Select id="call-application" aria-describedby="call-application-resume" value={application?.id ?? ""} disabled={disabled} onChange={e => setTarget(e.target.value ? `job:${e.target.value}` : "")}><option value="">General interview · Base resume</option>{catalog.applications?.map(a => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}</Select>
+                    <div className="call-application-resume" id="call-application-resume"><span>{resumeSummary}</span>{!application && baseResume.resume === null && <Button variant="link" size="sm" disabled={disabled} onClick={onResumes}>Add resume</Button>}</div>
+                  </div>
+                  <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
                 </div>
-                <Button className="call-row-action" size="sm" disabled={disabled} onClick={() => setAddingApplication(true)}>Add</Button>
-              </div>
-              {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
-              <div className="call-jd-row"><div className="call-jd-heading"><span className="call-row-label">Job description</span><Button variant="ghost" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div><div className={`call-jd-preview${detail?.jd_text.trim() ? "" : " is-empty"}`} role="region" aria-label="Job description preview" tabIndex={0}>{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</div></div>
-              {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
-            </>}
-          </div>
-          <div className="call-optional-settings">
-            <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}>
-              <div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullet points or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>
-              <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
-              <div className="customize-row"><span className="customize-label">Transcript<HelpTip label="Transcript">Save a transcript for review after the call, with everyone’s agreement.</HelpTip></span><div className="customize-control"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /></div></div>
-            </CallLanguage>
+                {catalog.error && <p className="ui-field-error" role="alert">{catalog.error}</p>}
+                <div className="call-jd-row"><div className="call-jd-heading"><span className="call-row-label">Job description</span><Button variant="ghost" size="sm" disabled={disabled || !detail} onClick={() => setEditingJd(true)}>{detail?.jd_text ? "Edit" : "Add"}</Button></div><div className={`call-jd-preview${detail?.jd_text.trim() ? "" : " is-empty"}`} role="region" aria-label="Job description preview" tabIndex={0}>{detail?.jd_text.trim() ? detail.jd_text.trim() : application ? detail ? "Add the responsibilities and requirements." : detailError ? "Job description unavailable" : "Loading job description…" : "Choose a role to add a job description."}</div></div>
+                {detailError && <p className="ui-field-error" role="alert">{detailError}</p>}
+              </>}
+            </section>
+            <div className="call-optional-settings">
+              <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}>
+                <div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullet points or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>
+                <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
+                <div className="customize-row"><span className="customize-label">Transcript<HelpTip label="Transcript">Save a transcript for review after the call, with everyone’s agreement.</HelpTip></span><div className="customize-control"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /></div></div>
+              </CallLanguage>
+            </div>
           </div>
           {settings && <AudioSummary settings={settings} onSaved={onSettingsSaved} />}
         </div>
-        <footer className="call-design-footer">{onHistory && <Button variant="ghost" size="sm" onClick={onHistory} disabled={disabled}>Past calls</Button>}<span className="ui-spacer" /><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
+        <footer className="call-design-footer call-start-footer"><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
       </>}
       {quickSettingsOpen && !openWorkspaceQuickSettings && <div className="call-compact-settings"><WorkspaceQuickSettings running={running} open={quickSettingsOpen} hoverOpen={quickSettingsHover} onOpenChange={changeQuickSettings} /></div>}
       <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
@@ -623,7 +625,7 @@ function AudioSummary({ settings, onSaved }: { settings: Settings; onSaved: () =
   const devices = useDevices();
   const name = (list: DeviceInfo[] | undefined, id: string | null) => (id ? (list?.find((d) => d.id === id)?.name ?? "Unknown device") : "System default");
   return (
-    <div className="audio-summary">
+    <div className="audio-summary" role="group" aria-label="Audio devices">
       <div className={`ui-row-inline audio-line${open ? " is-editing" : ""}`}>
         {open ? <DevicePickers settings={settings} disabled={false} onSaved={onSaved} inline /> : <div className="audio-devices">
           <div className="audio-device"><span>Microphone</span><strong>{name(devices?.inputs, settings.mic_device)}</strong></div>
