@@ -114,9 +114,9 @@ it("shows an accepted question and reconnects after the first answer read fails"
   ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
   ipc.api("POST", /^\/ask\/conversations$/, () => conversation);
   ipc.api("POST", /^\/ask\/conversations\/receipt\/messages$/, () => message);
-  ipc.api("GET", /^\/ask\/conversations\/receipt$/, () => {
+  ipc.api("GET", /^\/ask\/conversations\/receipt\/messages\/m$/, () => {
     if (++reads === 1) throw new Error("Temporary outage");
-    return { ...conversation, messages: [{ ...message, status: "done", answer: "DNS maps names to addresses." }] };
+    return { ...message, status: "done", answer: "DNS maps names to addresses." };
   });
   render(<Ask />);
   fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: message.question } });
@@ -138,13 +138,14 @@ it("never overlaps pending answer reads when the server is slow", async () => {
     ipc.api("GET", /^\/ask\/conversations$/, () => ({ conversations: [] }));
     ipc.api("POST", /^\/ask\/conversations$/, () => conversation);
     ipc.api("POST", /^\/ask\/conversations\/slow\/messages$/, () => message);
-    ipc.api("GET", /^\/ask\/conversations\/slow$/, () => new Promise(resolve => { resolveRead = resolve; }));
+    ipc.api("GET", /^\/ask\/conversations\/slow\/messages\/m$/, () => new Promise(resolve => { resolveRead = resolve; }));
     const view = render(<Ask />);
     fireEvent.change(screen.getByLabelText("Ask a question"), { target: { value: message.question } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Ask" })));
     await act(async () => vi.advanceTimersByTimeAsync(5000));
-    expect(ipc.apiCalls("GET").filter(call => call.path === "/ask/conversations/slow")).toHaveLength(1);
-    await act(async () => resolveRead({ ...conversation, messages: [{ ...message, status: "done", answer: "Complete answer" }] }));
+    expect(ipc.apiCalls("GET").filter(call => call.path === "/ask/conversations/slow/messages/m")).toHaveLength(1);
+    expect(ipc.apiCalls("GET").some(call => call.path === "/ask/conversations/slow")).toBe(false);
+    await act(async () => resolveRead({ ...message, status: "done", answer: "Complete answer" }));
     expect(screen.getByText("Complete answer")).toBeVisible();
     view.unmount();
   } finally { vi.useRealTimers(); }

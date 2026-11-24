@@ -4,6 +4,7 @@ export type Call = {
   mode: string;
   status: string;
   started_at: string;
+  revision?: string | number;
   outputs?: Record<string, string>;
   notes?: string;
 };
@@ -92,6 +93,9 @@ export function parseCall(value: unknown): Call {
     mode: text(v.mode),
     status: text(v.status),
     started_at: date(v.started_at),
+    ...(typeof v.revision === "string" || typeof v.revision === "number"
+      ? { revision: v.revision }
+      : {}),
     outputs,
     notes: v.notes == null ? "" : text(v.notes),
   };
@@ -101,6 +105,7 @@ export function parseCalls(value: unknown) {
   return {
     sessions: array(v.sessions).map(parseCall),
     next_before: nullable(v.next_before),
+    next_cursor: nullable(v.next_cursor),
   };
 }
 export function parseTranscript(value: unknown): {

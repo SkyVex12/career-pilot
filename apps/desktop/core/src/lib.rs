@@ -6,6 +6,7 @@ pub mod api;
 pub mod audio;
 pub mod auth;
 pub mod careerossignin;
+pub mod data_cache;
 pub mod emailauth;
 pub mod engine;
 pub mod latency;

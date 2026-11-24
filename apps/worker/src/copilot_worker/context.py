@@ -10,7 +10,7 @@ from uuid import UUID
 
 import asyncpg
 
-from copilot_core import jobs
+from copilot_core import jobs, pack_operations
 from copilot_core.careeros import CareerOsClient
 from copilot_core.careeros import make_client as make_career_os
 from copilot_core.crypto import UserCrypto, make_key_provider
@@ -44,6 +44,10 @@ class Ctx:
     users: UserDirectory | None = None
     # Career-OS, to revoke an account's link when the account is deleted.
     career_os: CareerOsClient | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.queue, pack_operations.ObservedQueue):
+            self.queue = pack_operations.ObservedQueue(self.queue, self.valkey)
 
     @asynccontextmanager
     async def user(self, user_id: UUID) -> AsyncGenerator[Conn]:

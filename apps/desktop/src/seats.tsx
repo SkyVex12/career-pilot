@@ -481,10 +481,10 @@ export function GuestInvites({ running, disabled, onJoined, open: controlledOpen
   const position = useOverlayPopover(open, close, button, panel);
   const load = useCallback(() => {
     if (!inTauri) return;
-    rest.mySeats().then(value => setSeats(value.seats), () => setSeats([]));
+    return rest.mySeats().then(value => setSeats(value.seats), () => { setSeats([]); return false; });
   }, []);
   useEffect(() => { if (!running) load(); }, [running, load]);
-  usePolling(load, 5000, !running);
+  usePolling(load, 5000, !running, { timeoutMs: Infinity });
   const shown = seats.filter(seat => seat.status === "admitted" && !hidden.has(seat.seat_id) && (!seat.expires_at || new Date(seat.expires_at).getTime() > Date.now()));
   useEffect(() => { onCountChange?.(running ? 0 : shown.length); if (running || !shown.length) setOpen(false); }, [shown.length, running, onCountChange, setOpen]);
   useEffect(() => { onBusyChange?.(joining !== null); }, [joining, onBusyChange]);

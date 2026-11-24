@@ -237,7 +237,8 @@ async def test_jobs_interviews_and_their_packs(api: Api) -> None:
     assert (interview["company"], interview["title"]) == (job["company"], job["title"])
     [listed_interview] = (await api.client.get("/v1/interviews", headers=h)).json()["interviews"]
     assert listed_interview["company"] == job["company"]
-    assert listed_interview["pack"] is None  # not built yet
+    assert listed_interview["pack"]["available"] is False
+    assert listed_interview["pack"]["operation_state"] == "queued"
     # A job of another user is not found; a naive start time is refused.
     _, other = api.user()
     r = await api.client.post(

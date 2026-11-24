@@ -238,30 +238,42 @@ export function Ask({ api, visible = true, entry }: { api: Api; visible?: boolea
   useEffect(() => {
     if (!pending || !current || !foreground || !visible) return;
     const id = current.id,
+      messageId = pending.id,
       scope = new RequestScope();
     let active = true,
+      errors = 0,
       timer: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + 5 * 60_000;
     async function poll() {
       try {
         const result = await scope.run((signal) =>
           api
             .request(
-              `/ask/conversations/${encodeURIComponent(id)}`,
+              `/ask/conversations/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}`,
               undefined,
               "GET",
               true,
               signal,
             )
-            .then((v) => parseConversation(v, true)),
+            .then(parseMessage),
         );
         if (active && result && selected.current === id) {
-          setCurrent(result);
+          if (result.id !== messageId) throw new Error("The server returned another answer.");
+          setCurrent(value => value?.id === id ? withMessage(value, result) : value);
           setError("");
+          errors = 0;
+          if (result.status !== "pending") {
+            active = false;
+            api.invalidateCache([`/ask/conversations/${encodeURIComponent(id)}`, "/ask/conversations"]);
+            return;
+          }
         }
       } catch (e) {
+        errors++;
         if (active) setError(`Answer update interrupted. ${e}`);
       } finally {
-        if (active) timer = setTimeout(() => void poll(), 1500);
+        if (active && Date.now() < deadline) timer = setTimeout(() => void poll(), Math.min(30_000, 1500 * 2 ** Math.min(errors, 4)));
+        else if (active) setError("Answer updates paused. Reopen this conversation to check its status.");
       }
     }
     timer = setTimeout(() => void poll(), 1000);

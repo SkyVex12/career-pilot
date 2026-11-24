@@ -1,9 +1,9 @@
 // History: calls still running (open one here, or end it), past calls (open one, delete one)
 // and live minutes this period. The design system's reference screen
 // (docs/design/ui-proposal.md, "History"). Account deletion is in Settings.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Mode } from "@copilot/protocol";
-import { rest, type LiveSession, type SessionItem, type Usage } from "./api";
+import { rest, type ReadPolicy, type LiveSession, type SessionItem, type Usage } from "./api";
 import { useOnShow, when } from "./shared";
 import { SessionDetail } from "./SessionDetail";
 import { LiveNow, minutes, sessionTitle, statusBadge } from "./calls";
@@ -42,6 +42,9 @@ export function History({
 }) {
   const [sessions, setSessions] = useState<SessionItem[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const pages = useRef(1), revision = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [companies, setCompanies] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
@@ -50,33 +53,49 @@ export function History({
   const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState("");
 
-  const load = useCallback(async () => {
+  const read = useCallback(async (policy?: ReadPolicy) => {
     if (!ready) return;
+    const ticket = ++revision.current;
+    setRefreshing(true);
     try {
-      const [s, u, e] = await Promise.all([rest.sessions(), rest.usage(), rest.employers().catch(() => ({ employers: [] }))]);
+      const [s, u, e] = await Promise.all([rest.sessions(undefined, policy), rest.usage(policy), rest.employers(policy).catch(() => ({ employers: [] }))]);
+      const items = [...s.sessions]; let last = s, loaded = 1;
+      while (loaded < pages.current && (last.next_cursor || last.next_before)) {
+        last = await rest.sessions(last.next_before, policy, last.next_cursor);
+        items.push(...last.sessions); loaded++;
+      }
+      if (ticket !== revision.current) return;
+      pages.current = loaded;
       setCompanies(Object.fromEntries(e.employers.map((x) => [x.id, x.name])));
-      setSessions(s.sessions);
-      setNext(s.next_before);
+      setSessions([...new Map(items.map(item => [item.id, item])).values()]);
+      setNext(last.next_before);
+      setCursor(last.next_cursor ?? null);
       setUsage(u);
       setError(null);
     } catch (e) {
-      setError(String(e));
-    }
+      if (ticket === revision.current) setError(String(e));
+    } finally { if (ticket === revision.current) setRefreshing(false); }
   }, [ready]);
+  const load = useCallback(() => read(), [read]);
+  useEffect(() => () => { ++revision.current; }, []);
   useEffect(() => {
     load();
   }, [load]);
   useOnShow(active, load);
 
   const more = async () => {
-    if (!next) return;
+    if ((!next && !cursor) || refreshing || loadingMore) return;
+    const ticket = revision.current;
     setLoadingMore(true);
     try {
-      const s = await rest.sessions(next);
-      setSessions((cur) => [...(cur ?? []), ...s.sessions]);
+      const s = await rest.sessions(next, undefined, cursor);
+      if (ticket !== revision.current) return;
+      pages.current++;
+      setSessions((cur) => [...new Map([...(cur ?? []), ...s.sessions].map(item => [item.id, item])).values()]);
       setNext(s.next_before);
+      setCursor(s.next_cursor ?? null);
     } catch (e) {
-      setError(String(e));
+      if (ticket === revision.current) setError(String(e));
     } finally {
       setLoadingMore(false);
     }
@@ -116,6 +135,7 @@ export function History({
     <div className="history-workspace feature-page">
       <PageHeader
         title="Past calls"
+        actions={<Button size="sm" loading={refreshing} disabled={loadingMore} onClick={() => void read({ refresh: true })}>Refresh</Button>}
         meta={
           usage ? (
             <span className="ui-num">
@@ -131,11 +151,11 @@ export function History({
         <SegmentedControl label="Show" size="sm" value={filter} options={FILTERS} onChange={setFilter} />
         <Input type="search" aria-label="Search past calls" placeholder="Search calls" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
-      {shown && sessions && sessions.length > 0 && <div className="history-list-meta"><span>{shown.length} {shown.length === 1 ? "call" : "calls"}{query.trim() ? " found" : " shown"}</span>{next && <span>Search covers loaded calls</span>}</div>}
+      {shown && sessions && sessions.length > 0 && <div className="history-list-meta"><span>{shown.length} {shown.length === 1 ? "call" : "calls"}{query.trim() ? " found" : " shown"}</span>{(next || cursor) && <span>Search covers loaded calls</span>}</div>}
       <ListState
         items={shown}
         error={error}
-        onRetry={load}
+        onRetry={() => read({ refresh: true })}
         loadingLabel="calls"
         empty={
           <EmptyState icon={<Icon name="history" size={28} />} title={query.trim() ? "No matching calls" : filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`} action={query.trim() ? <Button size="sm" onClick={() => setQuery("")}>Clear search</Button> : filter !== "all" ? <Button size="sm" onClick={() => setFilter("all")}>Show all calls</Button> : undefined}>
@@ -173,9 +193,9 @@ export function History({
           {error}
         </p>
       )}
-      {next && (
+      {(next || cursor) && (
         <div className="history-more">
-          <Button onClick={more} loading={loadingMore}>
+          <Button onClick={more} loading={loadingMore} disabled={refreshing}>
             Load older calls
           </Button>
         </div>

@@ -105,6 +105,23 @@ describe("History list", () => {
     expect(await screen.findByRole("list", { name: "Past calls" })).toBeInTheDocument();
   });
 
+  it("uses opaque older-page cursors and preserves loaded pages during an explicit refresh", async () => {
+    routes([]);
+    ipc.api("GET", /^\/sessions$/, path => path.includes("cursor=opaque") ? {
+      sessions: [call("old", "meeting", "Older call")], next_before: null, next_cursor: null,
+    } : { sessions: [call("new", "meeting", "Newest call")], next_before: null, next_cursor: "opaque" });
+    view();
+    await screen.findByText("Meeting · Newest call");
+    await userEvent.click(screen.getByRole("button", { name: "Load older calls" }));
+    await screen.findByText("Meeting · Older call");
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).not.toBeDisabled());
+    expect(screen.getByText("Meeting · Older call")).toBeVisible();
+    const reads = ipc.calls.filter(call => call.cmd === "api_call" && String(call.args.path).startsWith("/sessions?"));
+    expect(reads.map(call => call.args.path)).toEqual(["/sessions?limit=20", "/sessions?limit=20&cursor=opaque", "/sessions?limit=20", "/sessions?limit=20&cursor=opaque"]);
+    expect(reads.slice(-2).every(call => call.args.refresh === true)).toBe(true);
+  });
+
   it("searches loaded calls and keeps older calls reachable with a filter", async () => {
     routes([call("s1", "interview", "Northwind technical"), call("s2", "standup", null, "ready", "e1")], "cursor");
     view();

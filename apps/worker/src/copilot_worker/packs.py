@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from copilot_core import jobs, keys, resumes, workplace
+from copilot_core import jobs, keys, pack_operations, resumes, workplace
 from copilot_core.ids import uuid7
 from copilot_core.packs import SHORT_ID, Digest, NodeRef, SessionPack, encode_embedding, render_pack
 from copilot_core.valkey_client import Valkey, text
@@ -149,6 +149,19 @@ def stale(ctx: Ctx, pack: SessionPack, digest: Digest) -> bool:
 
 @handler("pack.build")
 async def pack_build(job: Job, ctx: Ctx) -> None:
+    await pack_operations.started(
+        ctx.valkey, job.uid, str(job.payload["context"]), job.idempotency_key
+    )
+    try:
+        await _pack_build(job, ctx)
+    except BaseException:
+        await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, False)
+        raise
+    else:
+        await pack_operations.finished(ctx.valkey, job.uid, job.idempotency_key, True)
+
+
+async def _pack_build(job: Job, ctx: Ctx) -> None:
     uid = job.uid
     mode = str(job.payload.get("mode", "interview"))
     context = str(job.payload["context"])

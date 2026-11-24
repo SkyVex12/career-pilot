@@ -26,6 +26,7 @@ export type WorkLog = {
   day: string;
   text: string;
   status: string;
+  revision?: number;
   attachments: WorkFile[];
   items: MemoryItem[];
 };
@@ -102,11 +103,17 @@ export function parseMemory(value: unknown): MemoryItem {
 }
 export function parseLog(value: unknown): WorkLog {
   const r = record(value);
+  if (
+    r.revision !== undefined &&
+    (!Number.isSafeInteger(r.revision) || Number(r.revision) < 0)
+  )
+    throw new Error("Invalid work log revision. Refresh before editing.");
   return {
     id: text(r.id),
     day: text(r.day),
     text: text(r.text),
     status: text(r.status),
+    ...(typeof r.revision === "number" ? { revision: r.revision } : {}),
     attachments: list(r.attachments, parseWorkFile),
     items: list(r.items, parseMemory),
   };

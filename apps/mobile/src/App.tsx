@@ -22,6 +22,7 @@ import {
   type CareerOsOutcome,
 } from "./careerOs";
 import { secretsFor } from "./secure";
+import { responsePersistence } from "./responsePersistence";
 import { type ImportedQuestion } from "./Practice";
 import { Workspace } from "./Workspace";
 import {
@@ -154,7 +155,8 @@ export default function App() {
           : gatewayInput,
         __DEV__,
       );
-      const client = new Api(base, await secretsFor(base), fetch, __DEV__);
+      const persistence = await responsePersistence(base).catch(() => undefined);
+      const client = new Api(base, await secretsFor(base), fetch, __DEV__, HTTP_TEST_BUILD, 120000, persistence);
       if (ticket !== authScope.current) return;
       const config = await loadAuthConfig(client, controller.signal);
       if (ticket !== authScope.current) return;

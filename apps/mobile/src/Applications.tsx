@@ -10,7 +10,7 @@ import {
   useWorkspaceRequests,
   type WorkspaceRequest,
 } from "./useWorkspaceRequests";
-import { localDay } from "./workspaceData";
+import { list, localDay, record, text } from "./workspaceData";
 import {
   applicationBody,
   afterResumeDeletion,
@@ -27,6 +27,7 @@ import {
   parseDocumentStatuses,
   resumeBody,
   resumeStatus,
+  preparationPending,
   ROUNDS,
   STAGES,
   uploadApplicationDocument,
@@ -130,7 +131,9 @@ export function Applications({
     Record<string, string>
   >({});
   const pendingDocumentsRef = useRef<Record<string, string>>({}),
-    writing = useRef(false);
+    writing = useRef(false),
+    pollingStarted = useRef(0),
+    pollingFailures = useRef(0);
   const uploadRef = useRef<UploadJob | null>(null),
     viewRevision = useRef(0),
     pickerRevision = useRef(0);
@@ -143,7 +146,7 @@ export function Applications({
   const error = actions.error || details.error || catalog.error;
   const busy = actions.busy || hubBusy;
 
-  async function refresh(catalogOnly = false) {
+  async function refresh(catalogOnly = false, fresh = false) {
     if (writing.current || hubWriting.current) return;
     const revision = viewRevision.current;
     const result = await catalog.read(async (request) => {
@@ -169,8 +172,12 @@ export function Applications({
         resume: versionDetail ? parseResume(versionDetail) : null,
         documents: documents ? parseDocumentStatuses(documents) : [],
       };
-    });
-    if (!result) return;
+    }, fresh);
+    if (!result) {
+      pollingFailures.current++;
+      return;
+    }
+    pollingFailures.current = 0;
     setApplications(result.applications);
     setResumes(result.resumes);
     setInterviews(result.interviews);
@@ -235,12 +242,83 @@ export function Applications({
   }, [api, visible]);
   const processing =
     resumes.some((r) => r.status === "extracting") ||
-    applications.some((a) => !a.pack?.available) ||
-    interviews.some((i) => !i.pack?.available) ||
+    applications.some(preparationPending) ||
+    interviews.some(preparationPending) ||
     !!Object.keys(pendingDocuments).length;
+  async function refreshProcessing() {
+    const result = await catalog.read(async (request) => {
+      const status = record(await request("/applications/status"));
+      const state = (value: unknown) => {
+        const r = record(value);
+        return { id: text(r.id), status: text(r.status) };
+      };
+      const packing = (value: unknown) => {
+        const r = record(value),
+          pack = record(r.pack);
+        if (
+          typeof pack.available !== "boolean" ||
+          !["idle", "queued", "running", "succeeded", "failed"].includes(
+            String(pack.operation_state),
+          )
+        )
+          throw new Error("Invalid preparation status.");
+        return {
+          id: text(r.id),
+          available: pack.available,
+          operation_state: String(pack.operation_state),
+        };
+      };
+      return {
+        applications: list(status.applications, packing),
+        interviews: list(status.interviews, packing),
+        resumes: list(status.resumes, state),
+        documents: list(status.documents, state),
+      };
+    });
+    if (!result) {
+      pollingFailures.current++;
+      return;
+    }
+    pollingFailures.current = 0;
+    const changedPack = (
+      rows: (Application | Interview)[],
+      states: typeof result.applications,
+    ) =>
+      rows.some((row) => {
+        const state = states.find((candidate) => candidate.id === row.id);
+        return (
+          !state ||
+          state.available !== !!row.pack?.available ||
+          state.operation_state !== (row.pack?.operation_state ?? "idle")
+        );
+      });
+    const changed =
+      changedPack(applications, result.applications) ||
+      changedPack(interviews, result.interviews) ||
+      resumes.some(
+        (resume) =>
+          result.resumes.find((row) => row.id === resume.id)?.status !==
+          resume.status,
+      ) ||
+      result.documents.some(
+        (doc) =>
+          pendingDocumentsRef.current[doc.id] &&
+          ["ingested", "failed"].includes(doc.status),
+      );
+    if (changed) await refresh(false, true);
+  }
   useEffect(() => {
-    if (!visible || !catalog.foreground || !processing || busy) return;
-    const timer = setTimeout(() => void refresh(), 5000);
+    if (!processing) {
+      pollingStarted.current = 0;
+      return;
+    }
+    if (!visible || !catalog.foreground || busy || catalog.loading) return;
+    if (!pollingStarted.current) pollingStarted.current = Date.now();
+    if (Date.now() - pollingStarted.current > 5 * 60_000) return;
+    const timer = setTimeout(
+      () => void refreshProcessing(),
+      Math.min(30_000, 5000 * 2 ** Math.min(pollingFailures.current, 3)),
+    );
     return () => clearTimeout(timer);
   }, [
     visible,
@@ -250,6 +328,8 @@ export function Applications({
     resumes,
     pendingDocuments,
     busy,
+    catalog.loading,
+    interviews,
   ]);
 
   async function mutate<T>(
@@ -872,7 +952,10 @@ export function Applications({
                 secondary
                 compact
                 disabled={catalog.loading || busy}
-                onPress={() => void refresh()}
+                onPress={() => {
+                  pollingStarted.current = 0;
+                  void refresh(false, true);
+                }}
               />
             )
           }

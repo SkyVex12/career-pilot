@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import type { Api } from "./api";
 import { RequestScope } from "./requestScope";
+import type { CacheMode } from "./dataCache";
 
 export type WorkspaceRequest = <T = unknown>(
   path: string,
   body?: unknown,
   method?: string,
+  cacheMode?: CacheMode,
 ) => Promise<T>;
 /** A mounted workspace belongs to one profile. A late request cannot cross that boundary. */
 export function useWorkspaceRequests(api: Api) {
@@ -39,11 +41,22 @@ export function useWorkspaceRequests(api: Api) {
     };
   }, [api]);
   const reader =
-    (signal: AbortSignal): WorkspaceRequest =>
-    (path, body, method = "GET") =>
-      api.request(path, body, method, true, signal, true, profile);
+    (signal: AbortSignal, fresh = false): WorkspaceRequest =>
+    (path, body, method = "GET", cacheMode = fresh ? "reload" : "default") =>
+      api.request(
+        path,
+        body,
+        method,
+        true,
+        signal,
+        true,
+        profile,
+        undefined,
+        cacheMode,
+      );
   async function read<T>(
-    operation: (request: WorkspaceRequest) => Promise<T>,
+    operation: (request: WorkspaceRequest, signal: AbortSignal) => Promise<T>,
+    fresh = false,
   ): Promise<T | undefined> {
     if (!alive.current || !foregroundRef.current || locked.current)
       return undefined;
@@ -51,7 +64,9 @@ export function useWorkspaceRequests(api: Api) {
     setLoading(true);
     setError("");
     try {
-      return await readScope.current.run((signal) => operation(reader(signal)));
+      return await readScope.current.run((signal) =>
+        operation(reader(signal, fresh), signal),
+      );
     } catch (e) {
       if (alive.current && revision === readRevision.current)
         setError(String(e));

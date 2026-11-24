@@ -17,7 +17,7 @@ export function CompanionDevices({ sessionId }: { sessionId: string | null }) {
     const ticket = ++revision.current;
     setLoading(true); setError(null);
     try {
-      const result = await invoke<{ items: Attachment[] }>("api_call", { method: "GET", path: "/companion/attachments", body: null });
+      const result = await invoke<{ items: Attachment[] }>("api_call", { method: "GET", path: "/companion/attachments", body: null, refresh: true });
       if (alive.current && ticket === revision.current) setItems(result.items.filter(a => a.session_id === sessionId && !a.revoked && new Date(a.expires_at).getTime() > Date.now()));
     } catch (e) { if (alive.current && ticket === revision.current) setError(String(e)); }
     finally { if (alive.current && ticket === revision.current) setLoading(false); }

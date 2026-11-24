@@ -625,8 +625,10 @@ export interface DigestInfo {
 }
 
 export interface PackInfo {
-  pack_id: string;
+  pack_id: string | null;
   available: boolean;
+  operation_state?: "queued" | "running" | "succeeded" | "failed" | "idle";
+  availability?: "current" | "missing" | "expired";
   resume_version_id?: string | null;
   built_at?: string;
   round?: string | null;
@@ -679,6 +681,7 @@ export interface SessionItem {
 export type OutputKind = "summary" | "feedback" | "follow_up_email" | "standup_report";
 
 export interface SessionDetail extends Partial<SessionItem> {
+  revision?: number;
   id: string;
   status: SessionStatus;
   outputs: Partial<Record<OutputKind, string>>;
@@ -846,6 +849,7 @@ export interface Attachment {
 }
 
 export interface WorkLog {
+  revision?: number;
   id: string;
   day: string;
   text: string;
@@ -916,8 +920,12 @@ export interface PackState {
   token_count?: number;
 }
 
-const call = <T>(method: string, path: string, body?: unknown) =>
-  invoke<T>("api_call", { method, path, body: body ?? null });
+export type ReadPolicy = { refresh?: boolean; wake?: boolean };
+export const POLL_READ: ReadPolicy = { refresh: true, wake: false };
+export const request = <T>(method: string, path: string, body?: unknown, policy?: ReadPolicy) =>
+  invoke<T>("api_call", { method, path, body: body ?? null,
+    ...(method === "GET" && typeof document !== "undefined" && document.visibilityState === "hidden" ? { wake: false } : {}), ...policy });
+const call = request;
 
 /** `?q=…&stage=…`, leaving out empty values. */
 export function queryString(query: object): string {
@@ -929,18 +937,24 @@ export function queryString(query: object): string {
 
 export const rest = {
   me: () => call<Me>("GET", "/me"),
-  usage: () => call<Usage>("GET", "/usage"),
+  usage: (policy?: ReadPolicy) => call<Usage>("GET", "/usage", undefined, policy),
   documents: () => call<{ documents: DocumentItem[]; digest: DigestInfo | null }>("GET", "/documents"),
   jobs: () => call<{ jobs: JobItem[] }>("GET", "/jobs"),
-  interviews: () => call<{ interviews: InterviewItem[] }>("GET", "/interviews"),
-  applications: () => call<{ applications: ApplicationItem[] }>("GET", "/applications"),
-  application: (id: string) => call<ApplicationDetail>("GET", `/applications/${id}`),
+  interviews: (policy?: ReadPolicy) => call<{ interviews: InterviewItem[] }>("GET", "/interviews", undefined, policy),
+  applications: (policy?: ReadPolicy) => call<{ applications: ApplicationItem[] }>("GET", "/applications", undefined, policy),
+  catalogStatus: () => call<{
+    applications: { id: string; resume_status: ResumeStatus | null; pack: Pick<PackInfo, "available" | "availability" | "operation_state"> }[];
+    interviews: { id: string; pack: Pick<PackInfo, "available" | "availability" | "operation_state"> }[];
+    resumes: { id: string; status: ResumeStatus }[];
+    documents: { id: string; status: string }[];
+  }>("GET", "/applications/status", undefined, POLL_READ),
+  application: (id: string, policy?: ReadPolicy) => call<ApplicationDetail>("GET", `/applications/${id}`, undefined, policy),
   createApplication: (fields: ApplicationFields & { resume_text?: string | null; resume_label?: string | null }) =>
     call<ApplicationDetail>("POST", "/applications", fields),
   updateApplication: (id: string, fields: Partial<ApplicationFields> & { resume_version_id?: string }) =>
     call<ApplicationDetail>("PATCH", `/applications/${id}`, fields),
   deleteApplication: (id: string) => call<null>("DELETE", `/applications/${id}`),
-  resumes: () => call<{ base: ResumeVersion | null; versions: ResumeVersion[] }>("GET", "/resumes"),
+  resumes: (policy?: ReadPolicy) => call<{ base: ResumeVersion | null; versions: ResumeVersion[] }>("GET", "/resumes", undefined, policy),
   resume: (id: string) => call<ResumeVersion>("GET", `/resumes/${id}`),
   createResume: (body: { kind: "base" | "tailored"; application_id?: string | null; label?: string | null; text: string }) =>
     call<ResumeVersion>("POST", "/resumes", body),
@@ -957,16 +971,17 @@ export const rest = {
     call<ApplicationDetail & { profile_id: string }>("POST", `/career-os/applications/${encodeURIComponent(id)}/pull`),
   scheduleInterview: (jobId: string, round: Round, startsAt: string) =>
     call<InterviewItem>("POST", "/interviews", { job_id: jobId, round, starts_at: startsAt }),
-  sessions: (before?: string | null) =>
-    call<{ sessions: SessionItem[]; next_before: string | null }>(
+  sessions: (before?: string | null, policy?: ReadPolicy, cursor?: string | null) =>
+    call<{ sessions: SessionItem[]; next_before: string | null; next_cursor?: string | null }>(
       "GET",
-      `/sessions?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}`,
+      `/sessions?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : before ? `&before=${encodeURIComponent(before)}` : ""}`, undefined, policy,
     ),
-  liveSessions: () => call<{ sessions: LiveSession[] }>("GET", "/sessions/live"),
-  session: (id: string) => call<SessionDetail>("GET", `/sessions/${id}`),
-  saveSessionNotes: (id: string, text: string) => call<{ notes: string }>("PUT", `/sessions/${id}/notes`, { text }),
+  liveSessions: (policy?: ReadPolicy) => call<{ sessions: LiveSession[] }>("GET", "/sessions/live", undefined, policy),
+  session: (id: string, policy?: ReadPolicy) => call<SessionDetail>("GET", `/sessions/${id}`, undefined, policy),
+  sessionStatus: (id: string) => call<{ id: string; status: SessionDetail["status"]; revision: number }>("GET", `/sessions/${id}/status`, undefined, POLL_READ),
+  saveSessionNotes: (id: string, text: string, expectedRevision?: number) => call<{ notes: string; revision?: number }>("PUT", `/sessions/${id}/notes`, { text, ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }) }),
   transcript: (id: string) => call<{ stored: boolean; segments: Segment[] }>("GET", `/sessions/${id}/transcript`),
-  replay: (id: string) => call<Replay>("GET", `/sessions/${id}/replay`),
+  replay: (id: string, policy?: ReadPolicy) => call<Replay>("GET", `/sessions/${id}/replay`, undefined, policy),
   deleteSession: (id: string) => call<null>("DELETE", `/sessions/${id}`),
   /** Invite with what the guest may do besides watching (`view` is always included). */
   inviteGuest: (sessionId: string, email: string, capabilities: string[]) =>
@@ -981,37 +996,39 @@ export const rest = {
   guestVoice: (seatId: string) => call<{ url: string; token: string }>("POST", `/seats/${seatId}/voice`),
   hostScreen: (sessionId: string) => call<{ url: string; token: string }>("POST", `/sessions/${sessionId}/screen`),
   guestScreen: (seatId: string) => call<{ url: string; token: string; control: boolean }>("POST", `/seats/${seatId}/screen`),
-  mySeats: () => call<{ seats: MySeat[] }>("GET", "/seats"),
+  mySeats: () => call<{ seats: MySeat[] }>("GET", "/seats", undefined, POLL_READ),
   acceptSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/accept`),
   declineSeat: (seatId: string) => call<{ status: string }>("POST", `/seats/${seatId}/decline`),
 
-  employers: () => call<{ employers: Employer[] }>("GET", "/employers"),
+  employers: (policy?: ReadPolicy) => call<{ employers: Employer[] }>("GET", "/employers", undefined, policy),
   createEmployer: (fields: EmployerFields & { name: string }) => call<Employer>("POST", "/employers", fields),
   updateEmployer: (id: string, fields: EmployerFields) => call<Employer>("PATCH", `/employers/${id}`, fields),
   deleteEmployer: (id: string, confirm: string) =>
     call<{ deleted: Record<string, number> }>("DELETE", `/employers/${id}?confirm=${encodeURIComponent(confirm)}`),
-  logs: (employerId: string, before?: string | null) =>
+  workStatus: (employerId: string) => call<{ revision: number; work_logs: { id: string; status: string }[]; documents: { id: string; status: string }[]; pending: boolean }>("GET", `/employers/${employerId}/status`, undefined, POLL_READ),
+  logs: (employerId: string, before?: string | null, policy?: ReadPolicy) =>
     call<{ logs: WorkLog[]; next_before: string | null }>(
       "GET",
-      `/employers/${employerId}/logs${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+      `/employers/${employerId}/logs${before ? `?before=${encodeURIComponent(before)}` : ""}`, undefined, policy,
     ),
-  putLog: (employerId: string, day: string, text: string) => call<WorkLog>("PUT", `/employers/${employerId}/logs/${day}`, { text }),
+  log: (employerId: string, day: string, policy?: ReadPolicy) => call<WorkLog>("GET", `/employers/${employerId}/logs/${day}`, undefined, policy),
+  putLog: (employerId: string, day: string, text: string, expectedRevision?: number) => call<WorkLog>("PUT", `/employers/${employerId}/logs/${day}`, { text, ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }) }),
   deleteLog: (employerId: string, day: string) => call<null>("DELETE", `/employers/${employerId}/logs/${day}`),
-  companyDocuments: (employerId: string) => call<{ documents: CompanyDocument[] }>("GET", `/employers/${employerId}/documents`),
+  companyDocuments: (employerId: string, policy?: ReadPolicy) => call<{ documents: CompanyDocument[] }>("GET", `/employers/${employerId}/documents`, undefined, policy),
   deleteCompanyDocument: (employerId: string, id: string) => call<null>("DELETE", `/employers/${employerId}/documents/${id}`),
   companyDocument: (employerId: string, id: string) => call<DocumentDetail>("GET", `/employers/${employerId}/documents/${id}`),
   askKnowledge: (employerId: string, question: string) => call<AskResult>("POST", `/employers/${employerId}/knowledge/ask`, { question }),
-  askedKnowledge: (employerId: string, askId: string) => call<AskResult>("GET", `/employers/${employerId}/knowledge/ask/${askId}`),
+  askedKnowledge: (employerId: string, askId: string) => call<AskResult>("GET", `/employers/${employerId}/knowledge/ask/${askId}`, undefined, POLL_READ),
   memory: (employerId: string, kind?: WorkplaceKind) =>
     call<{ memory: MemoryItem[] }>("GET", `/employers/${employerId}/memory${kind ? `?kind=${kind}` : ""}`),
   updateMemory: (id: string, fields: { title?: string; summary?: string; body?: Record<string, unknown> }) =>
     call<MemoryItem>("PATCH", `/memory/${id}`, fields),
   archiveMemory: (id: string) => call<null>("DELETE", `/memory/${id}`),
-  proposals: (employerId: string) => call<{ proposals: Proposal[] }>("GET", `/proposals?employer_id=${employerId}`),
+  proposals: (employerId: string, policy?: ReadPolicy) => call<{ proposals: Proposal[] }>("GET", `/proposals?employer_id=${employerId}`, undefined, policy),
   approveProposal: (id: string, edit?: { title?: string; summary?: string }) => call<unknown>("POST", `/proposals/${id}/approve`, edit ?? null),
   rejectProposal: (id: string) => call<unknown>("POST", `/proposals/${id}/reject`),
   decideDocument: (documentId: string, action: "approve" | "reject") =>
     call<{ decided: number }>("POST", "/proposals/bulk", { action, company_document_id: documentId }),
-  packs: (employerId: string) => call<{ packs: PackState[] }>("GET", `/employers/${employerId}/packs`),
+  packs: (employerId: string, policy?: ReadPolicy) => call<{ packs: PackState[] }>("GET", `/employers/${employerId}/packs`, undefined, policy),
   ensurePack: (employerId: string, mode: "standup" | "meeting") => call<PackState>("POST", `/employers/${employerId}/packs/${mode}`),
 };

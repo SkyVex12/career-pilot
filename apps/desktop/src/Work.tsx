@@ -6,9 +6,9 @@ import { Ask, openAsk, type AskEntry } from "./Ask";
 // with a box to test a question against them) and its facts.
 // Standup and meeting calls answer from these (the Call screen picks the company).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, rest, type AskResult, type CompanyDocument, type DocumentDetail, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
+import { api, rest, POLL_READ, type AskResult, type CompanyDocument, type DocumentDetail, type Employer, type MemoryItem, type Proposal, type WorkLog } from "./api";
 import { ACCEPT, TEXT_ACCEPT, plural, useOnShow, when } from "./shared";
-import { usePolling } from "./usePolling";
+import { DataActivity, usePolling } from "./usePolling";
 import { Icon } from "./ui/Icon";
 import { KIND_LABELS, QUESTION_TYPE_LABELS, byKind, itemDetails, itemLine, localDay } from "./workday";
 import {
@@ -151,9 +151,9 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
               value={tab}
               onChange={setTab}
               items={[
-                { value: "log", label: "Work log", content: <LogTab employer={employer} /> },
-                { value: "material", label: "Documents", count: employer.pending_proposals ?? 0, content: <MaterialTab employer={employer} onDecided={load} /> },
-                { value: "facts", label: "Saved facts", content: <FactsTab employer={employer} /> },
+                { value: "log", label: "Work log", content: <DataActivity.Provider value={active && !asking && tab === "log"}><LogTab employer={employer} /></DataActivity.Provider> },
+                { value: "material", label: "Documents", count: employer.pending_proposals ?? 0, content: <DataActivity.Provider value={active && !asking && tab === "material"}><MaterialTab employer={employer} onDecided={load} /></DataActivity.Provider> },
+                { value: "facts", label: "Saved facts", content: <DataActivity.Provider value={active && !asking && tab === "facts"}><FactsTab employer={employer} /></DataActivity.Provider> },
               ]}
             />
           )}
@@ -297,6 +297,9 @@ function LogTab({ employer }: { employer: Employer }) {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [draftRevision, setDraftRevision] = useState<number | undefined>(undefined);
+  const [conflict, setConflict] = useState(false);
+  const [latestLog, setLatestLog] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const file = useRef<HTMLInputElement>(null);
@@ -313,25 +316,37 @@ function LogTab({ employer }: { employer: Employer }) {
   useEffect(() => {
     load();
   }, [load]);
+  useOnShow(true, load);
   const entry = entries?.find((e) => e.day === day) ?? null;
   useEffect(() => {
-    if (!dirty) setText(entry?.text ?? "");
-  }, [entry?.text, day]); // eslint-disable-line react-hooks/exhaustive-deps
-  usePolling(load, 3000, entries?.some((e) => e.status === "extracting") ?? false);
+    if (!dirty) { setText(entry?.text ?? ""); setDraftRevision(entry ? entry.revision : -1); }
+  }, [entry?.text, entry?.revision, day]); // eslint-disable-line react-hooks/exhaustive-deps
+  usePolling(async () => {
+    try {
+      const status = await rest.workStatus(employer.id);
+      if (entries?.some(entry => status.work_logs.find(item => item.id === entry.id)?.status !== entry.status)) {
+        setEntries((await rest.logs(employer.id, undefined, POLL_READ)).logs);
+      }
+      setError(null);
+    } catch (e) { setError(String(e)); return false; }
+  }, 3000, entries?.some((e) => e.status === "extracting") ?? false, { key: employer.id });
 
   const go = (d: string) => {
     setDay(d);
     setDirty(false);
+    setConflict(false); setLatestLog(null); setDraftRevision(-1);
   };
   const save = async () => {
     if (!text.trim()) return;
     setBusy(true);
     try {
-      await rest.putLog(employer.id, day, text);
+      const saved = await rest.putLog(employer.id, day, text, draftRevision);
+      setDraftRevision(saved.revision); setConflict(false); setLatestLog(null);
       setDirty(false);
       await load();
       toast({ tone: "success", text: "Saved. Its facts are being read." });
     } catch (e) {
+      if (String(e).includes("HTTP 409")) setConflict(true);
       toast({ tone: "error", text: String(e) });
     } finally {
       setBusy(false);
@@ -340,15 +355,29 @@ function LogTab({ employer }: { employer: Employer }) {
   const attach = async (f: File) => {
     setBusy(true);
     try {
-      if (dirty || !entry) await rest.putLog(employer.id, day, text);
+      if (dirty || !entry) {
+        const saved = await rest.putLog(employer.id, day, text, draftRevision);
+        setDraftRevision(saved.revision);
+      }
       setDirty(false);
       await api.uploadCompanyFile(`/employers/${employer.id}/logs/${day}/attachments`, f);
       await load();
     } catch (e) {
+      if (String(e).includes("HTTP 409")) setConflict(true);
       toast({ tone: "error", text: `${f.name}: ${e}` });
     } finally {
       setBusy(false);
     }
+  };
+
+  const reloadConflict = async () => {
+    setBusy(true);
+    try {
+      const latest = await rest.log(employer.id, day, { refresh: true });
+      setEntries(current => [latest, ...(current ?? []).filter(item => item.id !== latest.id)]);
+      setDraftRevision(latest.revision); setLatestLog(latest.text); setConflict(false);
+    } catch (e) { toast({ tone: "error", text: String(e) }); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -387,12 +416,13 @@ function LogTab({ employer }: { employer: Employer }) {
             </Button>
           )}
           <span className="ui-spacer" />
-          <Button variant="primary" disabled={!text.trim() || (!dirty && entry?.status !== "failed")} loading={busy} onClick={save}>
+          <Button variant="primary" disabled={conflict || !text.trim() || (!dirty && entry?.status !== "failed")} loading={busy} onClick={save}>
             Save
           </Button>
         </div>
         <Field label="What you worked on" hint="Tasks, decisions, blockers and next steps." hintMode="tooltip">
           <Textarea
+            disabled={busy}
             rows={10}
             placeholder="What moved forward today? Add decisions, blockers, and what comes next."
             value={text}
@@ -402,6 +432,8 @@ function LogTab({ employer }: { employer: Employer }) {
             }}
           />
         </Field>
+        {conflict && <Banner tone="warning" title="This work log changed" action={<Button size="sm" loading={busy} onClick={reloadConflict}>Load latest log</Button>}>Your draft is preserved. Load the saved version before saving again.</Banner>}
+        {latestLog !== null && <Banner tone="warning" title="Latest saved log"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{latestLog || "No saved text."}</div></Banner>}
         {entry && entry.attachments.length > 0 && (
           <ul className="work-files" aria-label="Attachments">
             {entry.attachments.map((a) => (
@@ -500,7 +532,17 @@ function MaterialTab({ employer, onDecided }: { employer: Employer; onDecided: (
   useEffect(() => {
     load();
   }, [load]);
-  usePolling(load, 3000, docs?.some((d) => d.status === "ingesting") ?? false);
+  useOnShow(true, load);
+  usePolling(async () => {
+    try {
+      const status = await rest.workStatus(employer.id);
+      if (docs?.some(doc => status.documents.find(item => item.id === doc.id)?.status !== doc.status)) {
+        const [d, p] = await Promise.all([rest.companyDocuments(employer.id, POLL_READ), rest.proposals(employer.id, POLL_READ)]);
+        setDocs(d.documents); setProposals(p.proposals);
+      }
+      setError(null);
+    } catch (e) { setError(String(e)); return false; }
+  }, 3000, docs?.some((d) => d.status === "ingesting") ?? false, { key: employer.id });
 
   const upload = async (f: File): Promise<boolean> => {
     setBusy(true);
@@ -744,7 +786,7 @@ function DocumentGave({ employer, document, onClose }: { employer: Employer; doc
 }
 
 const ASK_POLL_MS = 1000;
-const ASK_TRIES = 90;
+const ASK_TIMEOUT_MS = 90_000;
 
 /// "Test a question": ask what a teammate might, and see the answer a standup would show,
 /// the type it gets and where each fact came from. A worker answers; the box polls for it.
@@ -753,8 +795,21 @@ function TestQuestion({ employer, ready }: { employer: Employer; ready: boolean 
   const [asking, setAsking] = useState(false);
   const [result, setResult] = useState<AskResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null);
   const run = useRef(0);
   useEffect(() => () => void (run.current += 1), []);
+  usePolling(async () => {
+    if (!pendingAsk) return;
+    const mine = run.current;
+    try {
+      const got = await rest.askedKnowledge(employer.id, pendingAsk);
+      if (mine !== run.current) return;
+      setError(null);
+      if (got.status !== "pending") { setResult(got); setPendingAsk(null); setAsking(false); }
+    } catch (e) { if (mine === run.current) setError(String(e)); return false; }
+  }, ASK_POLL_MS, !!pendingAsk, { key: pendingAsk ?? "", timeoutMs: ASK_TIMEOUT_MS, onTimeout: () => {
+    setPendingAsk(null); setAsking(false); setError("No answer yet. Automatic checks paused; try again when the server is available.");
+  } });
 
   const ask = async () => {
     const text = question.trim();
@@ -765,18 +820,11 @@ function TestQuestion({ employer, ready }: { employer: Employer; ready: boolean 
     setError(null);
     try {
       const started = await rest.askKnowledge(employer.id, text);
-      for (let n = 0; n < ASK_TRIES && run.current === mine; n += 1) {
-        await new Promise((r) => setTimeout(r, ASK_POLL_MS));
-        const got = await rest.askedKnowledge(employer.id, started.ask_id);
-        if (got.status === "pending") continue;
-        if (run.current === mine) setResult(got);
-        return;
-      }
-      if (run.current === mine) setError("No answer yet. The server may be busy; try again.");
+      if (run.current !== mine) return;
+      if (started.status === "pending") setPendingAsk(started.ask_id);
+      else { setResult(started); setAsking(false); }
     } catch (e) {
-      if (run.current === mine) setError(String(e));
-    } finally {
-      if (run.current === mine) setAsking(false);
+      if (run.current === mine) { setError(String(e)); setAsking(false); }
     }
   };
 
@@ -929,6 +977,7 @@ function FactsTab({ employer }: { employer: Employer }) {
   useEffect(() => {
     load();
   }, [load]);
+  useOnShow(true, load);
   return (
     <div className="ui-stack">
       <p className="ui-field-hint">What standups and meetings at {employer.name} can draw on. Work logs add to it; documents add what you approve.</p>

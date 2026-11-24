@@ -16,6 +16,8 @@ until the post-call outputs are written, then `ready` with the outputs. The desk
 it after a call. Text is decrypted in memory only for the response.
 """
 
+import base64
+import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -23,6 +25,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from copilot_api.data_cache import DataCacheRoute, resource_revision
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep
 from copilot_core import keys
 from copilot_core.auth import Principal
@@ -31,7 +34,7 @@ from copilot_core.db import Conn
 from copilot_core.storage import me_audio_key
 from copilot_core.valkey_client import text
 
-router = APIRouter()
+router = APIRouter(route_class=DataCacheRoute)
 
 SESSION_COLUMNS = (
     "id, mode, title, platform, job_id, interview_id, store_transcript, started_at, ended_at,"
@@ -70,30 +73,69 @@ def _session(row: Any) -> dict[str, Any]:
 
 @router.get("/sessions")
 async def list_sessions(
-    svc: SvcDep, user: UserDep, account: AccountDep, limit: int = 20, before: datetime | None = None
+    svc: SvcDep,
+    user: UserDep,
+    account: AccountDep,
+    limit: int = 20,
+    before: datetime | None = None,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     limit = max(1, min(limit, 100))
-    async with svc.tx(user) as conn:
-        rows = await conn.fetch(
-            f"select {SESSION_COLUMNS} from app.sessions where user_id = $1"
-            " and ($2::timestamptz is null or started_at < $2)"
-            " and (private_context_account_id is null or private_context_account_id=$4)"
-            " order by started_at desc limit $3",
-            user.user_id,
-            before,
-            limit,
-            account.user_id,
-        )
-    items: list[dict[str, Any]] = []
-    for row in rows:
+    before_id: UUID | None = None
+    if cursor:
         try:
-            await _privacy(svc, user, account, row["id"])
-        except HTTPException:
-            continue
-        items.append(_session(row))
+            if len(cursor) > 1024:
+                raise ValueError("oversized cursor")
+            value = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+            if value[:2] != [str(account.user_id), str(user.user_id)]:
+                raise ValueError("foreign cursor")
+            before, before_id = datetime.fromisoformat(value[2]), UUID(value[3])
+            if before.tzinfo is None:
+                raise ValueError("cursor timestamp needs a time zone")
+        except (ValueError, TypeError, IndexError, UnicodeError) as error:
+            raise HTTPException(422, "invalid history cursor") from error
+    elif before is not None and before.tzinfo is None:
+        raise HTTPException(422, "before needs a time zone")
+    items: list[dict[str, Any]] = []
+    # Scan until one extra visible row is found. Filtering an unflushed live privacy
+    # marker must not remove pagination merely because the SQL page was full.
+    while len(items) <= limit:
+        async with svc.tx(user) as conn:
+            rows = await conn.fetch(
+                f"select {SESSION_COLUMNS} from app.sessions where user_id = $1"
+                " and ($2::timestamptz is null or started_at < $2"
+                " or ($5::uuid is not null and started_at=$2 and id<$5))"
+                " and (private_context_account_id is null or private_context_account_id=$4)"
+                " order by started_at desc,id desc limit $3",
+                user.user_id,
+                before,
+                limit + 1,
+                account.user_id,
+                before_id,
+            )
+        if not rows:
+            break
+        for row in rows:
+            try:
+                await _privacy(svc, user, account, row["id"])
+            except HTTPException:
+                continue
+            items.append(_session(row))
+            if len(items) > limit:
+                break
+        if len(rows) < limit + 1:
+            break
+        before, before_id = rows[-1]["started_at"], rows[-1]["id"]
+    more = len(items) > limit
+    items = items[:limit]
+    next_cursor = None
+    if more:
+        value = [str(account.user_id), str(user.user_id), items[-1]["started_at"], items[-1]["id"]]
+        next_cursor = base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
     return {
         "sessions": items,
-        "next_before": items[-1]["started_at"] if len(items) == limit else None,
+        "next_before": items[-1]["started_at"] if more else None,
+        "next_cursor": next_cursor,
     }
 
 
@@ -147,11 +189,13 @@ async def _live_owner(svc: Services, user: Principal, sid: UUID) -> dict[str, st
     return state if state.get("user_id") == str(user.user_id) else None
 
 
-async def _lock_private(conn: Conn, account: Principal, sid: UUID) -> None:
+async def _lock_private(conn: Conn, account: Principal, sid: UUID, *, write: bool = False) -> None:
     # Hold the row until response data is collected; a first private generation cannot race
     # a previously authorized reader between its permission check and decrypt queries.
     owner = await conn.fetchval(
-        "select private_context_account_id from app.sessions where id=$1 for share", sid
+        "select private_context_account_id from app.sessions where id=$1"
+        + (" for update" if write else " for share"),
+        sid,
     )
     if owner is not None and owner != account.user_id:
         raise HTTPException(404, "no such session")
@@ -168,6 +212,9 @@ async def _privacy(svc: Services, user: Principal, account: Principal, sid: UUID
     state = await _live_owner(svc, user, sid)
     if state and state.get("private_context_account_id") not in (None, "", str(account.user_id)):
         raise HTTPException(404, "no such session")
+
+
+session_privacy = _privacy
 
 
 @router.get("/sessions/{session_id}")
@@ -219,22 +266,55 @@ async def get_session(
                 row["notes_enc"],
                 row["notes_key_version"],
             )
-    return {**_session(row), "outputs": outputs, "questions": questions, "notes": notes}
+        rev = await resource_revision(conn, user.user_id, "history", "sessions", str(session_id))
+    return {
+        **_session(row),
+        "outputs": outputs,
+        "questions": questions,
+        "notes": notes,
+        "revision": rev,
+    }
+
+
+@router.get("/sessions/{session_id}/status")
+async def get_session_status(
+    session_id: UUID,
+    svc: SvcDep,
+    user: UserDep,
+    account: AccountDep,
+    response: Response,
+) -> dict[str, Any]:
+    await _privacy(svc, user, account, session_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    async with svc.tx(user) as conn:
+        row = await conn.fetchrow(
+            "select ended_at,outputs_ready_at from app.sessions where id=$1", session_id
+        )
+        rev = await resource_revision(conn, user.user_id, "history", "sessions", str(session_id))
+    if row is None:
+        state = await _live_owner(svc, user, session_id)
+        if state is None:
+            raise HTTPException(404, "no such session")
+        status = "live"
+    else:
+        status = status_of(row)
+    return {"id": str(session_id), "status": status, "revision": rev}
 
 
 class SessionNotesIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(max_length=20_000)
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 @router.put("/sessions/{session_id}/notes")
 async def put_session_notes(
     session_id: UUID, body: SessionNotesIn, svc: SvcDep, user: UserDep, account: AccountDep
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Explicitly saved personal notes, encrypted under the active profile's data key."""
     await _privacy(svc, user, account, session_id)
     async with svc.tx(user) as conn:
-        await _lock_private(conn, account, session_id)
+        await _lock_private(conn, account, session_id, write=True)
         row = await conn.fetchrow(
             "select ended_at from app.sessions where id = $1 for update", session_id
         )
@@ -242,6 +322,16 @@ async def put_session_notes(
             raise HTTPException(404, "no such session")
         if row["ended_at"] is None:
             raise HTTPException(409, "the session is still live; end it first")
+        if body.expected_revision is not None:
+            rev = await resource_revision(
+                conn, user.user_id, "history", "sessions", str(session_id)
+            )
+            if rev != body.expected_revision:
+                raise HTTPException(
+                    409,
+                    "This call changed on another device; reload before saving. "
+                    "Your draft was not saved.",
+                )
         sealed, version = None, None
         if body.text:
             sealed, version = await svc.crypto.encrypt(
@@ -253,7 +343,12 @@ async def put_session_notes(
             sealed,
             version,
         )
-    return {"notes": body.text}
+        result: dict[str, Any] = {"notes": body.text}
+        if body.expected_revision is not None:
+            result["revision"] = await resource_revision(
+                conn, user.user_id, "history", "sessions", str(session_id)
+            )
+    return result
 
 
 @router.get("/sessions/{session_id}/transcript")
@@ -384,7 +479,7 @@ async def delete_session(
     if state is not None and state.get("status") != "ended":
         raise HTTPException(409, "the session is still live; end it first")
     async with svc.tx(user) as conn:
-        await _lock_private(conn, account, session_id)
+        await _lock_private(conn, account, session_id, write=True)
         deleted = await conn.fetchval(
             "delete from app.sessions where id = $1 returning id", session_id
         )

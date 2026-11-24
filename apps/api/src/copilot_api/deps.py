@@ -27,13 +27,14 @@ from uuid import UUID
 
 import asyncpg
 import httpx2
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request, Response
 
+from copilot_api.cache_context import snapshot
 from copilot_api.careeros_signin import CareerOsSignIn
 from copilot_api.config import ApiSettings
 from copilot_api.emailauth import EmailSignIn
 from copilot_api.tokens import TokenService
-from copilot_core import careeros, identities, jobs, keys, logs, profiles
+from copilot_core import careeros, identities, jobs, keys, logs, pack_operations, profiles
 from copilot_core.auth import CAREER_OS, AuthError, Principal, TokenVerifier, bearer_token
 from copilot_core.careeros import CareerOsClient
 from copilot_core.crypto import UserCrypto
@@ -59,8 +60,16 @@ class Services:
     cos_sign_in: CareerOsSignIn | None = None  # None: the stage has no Career-OS sign-in
     tokens: TokenService | None = None  # the API's own tokens, when either of the two is on
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.queue, pack_operations.ObservedQueue):
+            self.queue = pack_operations.ObservedQueue(self.queue, self.valkey)
+
     @asynccontextmanager
     async def tx(self, user: Principal) -> AsyncGenerator[Conn]:
+        active = snapshot.get()
+        if active is not None and active.user.user_id == user.user_id:
+            yield active.conn
+            return
         async with user_tx(self.pool, user.user_id) as conn:
             yield conn
 
@@ -96,6 +105,9 @@ async def current_account(
     svc: Annotated[Services, Depends(services)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> Principal:
+    active = snapshot.get()
+    if active is not None and active.authorization == authorization:
+        return active.account
     token = bearer_token(authorization)
     if token is None:
         raise HTTPException(401, "missing bearer token", headers={"WWW-Authenticate": "Bearer"})
@@ -141,13 +153,24 @@ async def current_account(
 async def current_user(
     svc: Annotated[Services, Depends(services)],
     account: Annotated[Principal, Depends(current_account)],
+    response: Response,
     x_copilot_profile: Annotated[str | None, Header()] = None,
 ) -> Principal:
     """The principal the request acts for: the account, or the profile it names."""
-    try:
-        principal = await profiles.resolve(svc.pool, account, x_copilot_profile)
-    except profiles.ProfileError as e:
-        raise HTTPException(404, f"profile: {e}") from e
+    active = snapshot.get()
+    if (
+        active is not None
+        and active.account.user_id == account.user_id
+        and active.profile == x_copilot_profile
+    ):
+        principal = active.user
+    else:
+        try:
+            principal = await profiles.resolve(svc.pool, account, x_copilot_profile)
+        except profiles.ProfileError as e:
+            raise HTTPException(404, f"profile: {e}") from e
+    response.headers["X-Copilot-Account"] = str(account.user_id)
+    response.headers["X-Copilot-Workspace"] = str(principal.user_id)
     if principal is not account:
         logs.set_ids(user_id=principal.user_id)
     return principal

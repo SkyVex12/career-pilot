@@ -1,11 +1,12 @@
 import { openPractice } from "./Practice";
 import { openAsk } from "./Ask";
 // One call after it ended: the Call screen right after it ends, and a past call opened from
-// History. Polls GET /sessions/{id} for up to 5 minutes until the outputs are ready, then shows
+// History. Polls compact status for up to 5 minutes until the outputs are ready, then shows
 // them; when the transcript was stored, also the call as the overlay showed it (Replay) and the
 // plain transcript (Transcript).
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { rest, type Replay, type SessionDetail as Detail } from "./api";
+import { rest, POLL_READ, type Replay, type SessionDetail as Detail } from "./api";
+import { useDataActivity } from "./usePolling";
 import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
@@ -37,13 +38,16 @@ export function SessionDetail({
 }) {
   const [state, setState] = useState<PollState>({ phase: "waiting", session: null, elapsedMs: 0, error: null });
   const [round, setRound] = useState(0); // bumped by "Look again"
+  const [replayRound, setReplayRound] = useState(0);
+  const active = useDataActivity();
   const [transcript, setTranscript] = useState<TranscriptRow[] | null>(null);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
   const [tab, setTab] = useState("primary");
   const [deleting, setDeleting] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
-  const [notes, setNotes] = useState({ id: sessionId, loaded: false, saved: "", draft: "" });
+  const [notes, setNotes] = useState<{ id: string; loaded: boolean; saved: string; draft: string; revision?: number }>({ id: sessionId, loaded: false, saved: "", draft: "" });
+  const [notesReview, setNotesReview] = useState<string | null>(null);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notesSaved, setNotesSaved] = useState(false);
@@ -56,37 +60,45 @@ export function SessionDetail({
     setLeaving(null);
     setNotes({ id: sessionId, loaded: false, saved: "", draft: "" });
     setNotesError(null);
+    setNotesReview(null);
     setNotesSaved(false);
     setSavingNotes(false);
   }, [sessionId]);
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
+    let last: Detail | null = null;
+    pollSession(async () => {
+      if (!last) return last = await rest.session(sessionId, round ? { refresh: true } : undefined);
+      const status = await rest.sessionStatus(sessionId);
+      return last = status.status === "ready" ? await rest.session(sessionId, POLL_READ) : { ...last, status: status.status };
+    }, (s) => !cancelled && setState(s), { cancelled: () => cancelled });
+    return () => { cancelled = true; };
+  }, [sessionId, round, active]);
+
+  useEffect(() => {
     setState({ phase: "waiting", session: null, elapsedMs: 0, error: null });
     setTranscript(null);
     setReplay(null);
     setReplayError(null);
-    pollSession(() => rest.session(sessionId), (s) => !cancelled && setState(s), { cancelled: () => cancelled }).then((final) => {
-      if (cancelled || final.phase !== "ready" || !final.session.store_transcript) return;
-      rest.replay(sessionId).then(
-        (r) => {
-          if (cancelled) return;
-          setReplay(r);
-          setTranscript(transcriptRows(r.segments));
-        },
-        (e) => !cancelled && setReplayError(String(e)),
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId, round]);
+  }, [sessionId]);
 
   const session = state.phase === "gone" ? null : state.session;
   const title = session ? heading(session, companies) : "Call";
   const stored = Boolean(session?.store_transcript);
   const outputs = state.phase === "ready" ? outputsInOrder(state.session) : [];
   const matchingFocus = transcriptFocus?.sessionId === sessionId ? transcriptFocus : undefined;
+  const wantsReplay = session?.id === sessionId && stored && state.phase === "ready" && (tab === "transcript" || tab === "replay" || !!matchingFocus);
+  useEffect(() => {
+    if (!active || !wantsReplay) return;
+    let cancelled = false;
+    setReplayError(null);
+    void rest.replay(sessionId, replayRound ? { refresh: true } : undefined).then(r => {
+      if (!cancelled) { setReplay(r); setTranscript(transcriptRows(r.segments)); }
+    }, e => { if (!cancelled) setReplayError(String(e)); });
+    return () => { cancelled = true; };
+  }, [sessionId, wantsReplay, active, replayRound]);
   const focusKey = useMemo(() => {
     if (!matchingFocus || replay?.session_id !== sessionId) return null;
     if (matchingFocus.channel && Number.isInteger(matchingFocus.segId)) {
@@ -111,8 +123,8 @@ export function SessionDetail({
   useEffect(() => {
     if (session?.id !== sessionId || typeof session.notes !== "string") return;
     const saved = session.notes;
-    setNotes((current) => current.id === sessionId && current.loaded ? current : { id: sessionId, loaded: true, saved, draft: saved });
-  }, [sessionId, session?.id, session?.notes]);
+    setNotes((current) => current.id === sessionId && current.loaded && current.draft !== current.saved ? current : { id: sessionId, loaded: true, saved, draft: saved, revision: session.revision });
+  }, [sessionId, session?.id, session?.notes, session?.revision]);
 
   const leave = (action: () => void) => {
     if (notes.draft !== notes.saved) setLeaving(() => action);
@@ -125,15 +137,28 @@ export function SessionDetail({
     setNotesError(null);
     setNotesSaved(false);
     try {
-      const saved = await rest.saveSessionNotes(sessionId, draft);
+      const saved = await rest.saveSessionNotes(sessionId, draft, notes.revision);
       if (currentId.current !== sessionId) return;
-      setNotes((current) => ({ ...current, saved: saved.notes }));
+      setNotes((current) => ({ ...current, saved: saved.notes, revision: saved.revision ?? current.revision }));
       setNotesSaved(true);
+      setNotesReview(null);
     } catch (e) {
       if (currentId.current === sessionId) setNotesError(String(e));
     } finally {
       if (currentId.current === sessionId) setSavingNotes(false);
     }
+  };
+
+  const reloadNotes = async () => {
+    setSavingNotes(true);
+    try {
+      const latest = await rest.session(sessionId, { refresh: true });
+      if (currentId.current !== sessionId) return;
+      setNotes(current => ({ ...current, saved: latest.notes ?? "", revision: latest.revision }));
+      setNotesReview(latest.notes ?? "");
+      setNotesError(null);
+    } catch (e) { if (currentId.current === sessionId) setNotesError(String(e)); }
+    finally { if (currentId.current === sessionId) setSavingNotes(false); }
   };
 
   const pendingOutput = (
@@ -162,12 +187,13 @@ export function SessionDetail({
           <h2>Your notes</h2><span className="ui-spacer" />
           <span className="ui-field-hint" role="status">{savingNotes ? "Saving…" : notes.draft !== notes.saved ? "Unsaved changes" : notesSaved ? "Saved" : ""}</span>
           <Button size="sm" disabled={savingNotes || notes.draft === notes.saved} onClick={() => { setNotes((n) => ({ ...n, draft: n.saved })); setNotesError(null); setNotesSaved(false); }}>Discard</Button>
-          <Button size="sm" variant="primary" loading={savingNotes} disabled={notes.draft === notes.saved} onClick={saveNotes}>Save notes</Button>
+          <Button size="sm" variant="primary" loading={savingNotes} disabled={notes.draft === notes.saved || notesError?.includes("HTTP 409")} onClick={saveNotes}>Save notes</Button>
         </div>
         <Field label="Call notes" hint="Private notes saved with this call. The transcript setting does not affect these notes." hintMode="tooltip">
           <Textarea rows={12} maxLength={20000} value={notes.draft} disabled={savingNotes} placeholder="Add reminders, questions or next steps…" onChange={(e) => { setNotes((n) => ({ ...n, draft: e.target.value })); setNotesSaved(false); }} />
         </Field>
-        {notesError && <Banner tone="danger" title="Could not save notes" action={<Button size="sm" onClick={saveNotes} loading={savingNotes}>Retry</Button>}>{notesError}</Banner>}
+        {notesError && <Banner tone="danger" title="Could not save notes" action={notesError.includes("HTTP 409") ? <Button size="sm" onClick={reloadNotes} loading={savingNotes}>Load latest notes</Button> : <Button size="sm" onClick={saveNotes} loading={savingNotes}>Retry</Button>}>{notesError}</Banner>}
+        {notesReview !== null && <Banner tone="warning" title="Latest saved notes"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{notesReview || "No saved notes."}</div></Banner>}
       </> : <Banner tone="neutral">Notes are unavailable with this server version.</Banner>}
     </div>
   );
@@ -190,7 +216,7 @@ export function SessionDetail({
   }));
 
   const replayPanel = replayError ? (
-    <Banner tone="danger" title="Could not load the replay" action={<Button size="sm" onClick={() => setRound((r) => r + 1)}>Retry</Button>}>
+    <Banner tone="danger" title="Could not load the replay" action={<Button size="sm" onClick={() => setReplayRound((r) => r + 1)}>Retry</Button>}>
       {replayError}
     </Banner>
   ) : replay ? (

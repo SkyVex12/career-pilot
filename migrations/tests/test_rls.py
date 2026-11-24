@@ -96,6 +96,19 @@ ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
         "email": f"{uuid.uuid4().hex}@example.com",
         "display_name": "Test user",
     },
+    "data_revisions": lambda w, n: {
+        "user_id": w.user_id,
+        "domain": f"test-{n}",
+        "revision": 1,
+    },
+    "data_changes": lambda w, n: {
+        "user_id": w.user_id,
+        "domain": f"test-{n}",
+        "resource": "test",
+        "resource_id": str(uuid.uuid4()),
+        "revision": 1,
+        "deleted": False,
+    },
     # The profile's own users row is not needed: profiles.id has no foreign key.
     "profiles": lambda w, n: {
         "id": uuid.uuid4(),

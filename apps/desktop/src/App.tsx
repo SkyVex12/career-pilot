@@ -7,7 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, inTauri, onOpenCall, onOpenSettings, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type SettingsView, type UpdateState } from "./api";
 import { ServerNotification, UpdateNotification } from "./AppNotifications";
-import { Applications } from "./Applications";
+import { Applications, CatalogProvider } from "./Applications";
+import { DataActivity, useDataActivity } from "./usePolling";
 import { CallScreen } from "./CallScreen";
 import { useSession } from "./session";
 import { startVoice } from "./voice";
@@ -213,7 +214,7 @@ export default function App() {
   const page = (t: Tab, body: ReactNode, wide = false) =>
     keep(t) && (
       <div hidden={tab !== t} className={wide ? "shell-content shell-content-wide" : "shell-content"}>
-        <PageHeadingActive.Provider value={tab === t && t !== "start"}><Suspense fallback={<SkeletonList rows={3} />}>{body}</Suspense></PageHeadingActive.Provider>
+        <DataActivity.Provider value={tab === t}><PageHeadingActive.Provider value={tab === t && t !== "start"}><Suspense fallback={<SkeletonList rows={3} />}>{body}</Suspense></PageHeadingActive.Provider></DataActivity.Provider>
       </div>
     );
 
@@ -233,6 +234,7 @@ export default function App() {
       >
         {/* A profile switch or another account remounts every screen, so each one loads its data. */}
         <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
+          <CatalogProvider enabled={tokenSet && !locked && (tab === "start" || tab === "applications")}>
           {page(
             "start",
             <CallScreen
@@ -293,6 +295,7 @@ export default function App() {
               />
             ),
           )}
+          </CatalogProvider>
         </ProfileContext.Provider>
         {tab === "settings" && view && (
           <div className="shell-content">
@@ -378,18 +381,24 @@ function useCheckNow(update: UpdateState) {
  * requires it and the signed-in account has none. Loaded per account; until it answers, nothing
  * is locked (the server refuses the work anyway). */
 function useLinkRequired(ready: boolean, account: string) {
+  const visible = useDataActivity(ready);
   const [conn, setConn] = useState<CareerOsConnection | null>(null);
+  const generation = useRef(0);
   const reload = useCallback(async () => {
-    if (!ready) return;
+    if (!visible) return;
+    const ticket = generation.current;
     try {
-      setConn(await rest.careerOs());
+      const loaded = await rest.careerOs();
+      if (ticket === generation.current) setConn(loaded);
     } catch {
-      setConn(null);
+      if (ticket === generation.current) setConn(null);
     }
-  }, [ready]);
+  }, [visible]);
   useEffect(() => {
+    generation.current++;
     setConn(null);
-    reload();
-  }, [ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, account]);
+  useEffect(() => { if (visible) void reload(); }, [visible, ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { generation.current++; }, []);
   return { conn, locked: ready && isLocked(conn), reload };
 }

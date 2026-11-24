@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useRef, useState } from "react";
+import { request } from "./api";
 import { Button, Checkbox, Field, Select } from "./ui";
 import { Icon } from "./ui/Icon";
+import { useDataActivity } from "./usePolling";
 
 type Preference = { spoken_language: string };
 export type Language = { id: string; name: string; native_name?: string; direction?: "ltr" | "rtl" };
@@ -17,10 +18,11 @@ export function validCatalog(value: unknown): value is Catalog {
     seen.add(item.id); return true;
   });
 }
-const request = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 
 /** Mounted under the account/profile boundary; a draft never crosses profiles. */
 export function CallLanguage({ value, onChange, disabled = false, onReady }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void }) {
+  const active = useDataActivity();
+  const initialized = useRef(false);
   const [items, setItems] = useState<Catalog["items"]>([{ id: "en", name: "English" }]);
   const [error, setError] = useState<string | null>(null);
   const [remember, setRemember] = useState(false);
@@ -28,15 +30,20 @@ export function CallLanguage({ value, onChange, disabled = false, onReady }: { v
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
+    if (!active) return;
     let alive = true;
     setLoading(true); setLegacyEnglish(false); onReady?.(false);
-    Promise.all([request<Catalog>("GET", "/call-languages"), request<Preference>("GET", "/profile/call-preferences")]).then(([catalog, pref]) => {
+    const policy = revision ? { refresh: true } : undefined;
+    Promise.all([request<Catalog>("GET", "/call-languages", undefined, policy), request<Preference>("GET", "/profile/call-preferences", undefined, policy)]).then(([catalog, pref]) => {
       if (!alive) return;
       if (!validCatalog(catalog) || !pref || typeof pref.spoken_language !== "string") throw new Error("The server returned invalid language settings. Retry or update the server.");
-      setItems(catalog.items); onChange(pref.spoken_language); setError(null); onReady?.(catalog.items.some(item => item.id === pref.spoken_language));
+      const selection = initialized.current ? value : pref.spoken_language;
+      if (!initialized.current) onChange(selection);
+      initialized.current = true;
+      setItems(catalog.items); setError(null); onReady?.(catalog.items.some(item => item.id === selection));
     }).catch(e => { if (alive) { if (String(e).includes("HTTP 404")) { setLegacyEnglish(true); setItems([{ id: "en", name: "English" }]); setRemember(false); setError(null); onChange("en"); onReady?.(true); } else setError(String(e)); } }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [revision]); // Profile switches remount this component.
+  }, [revision, active]); // Profile switches remount this component.
   const change = async (language: string) => {
     onChange(language); onReady?.(items.some(item => item.id === language)); setError(null);
     if (remember) {

@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from copilot_api.deps import Services, SvcDep, UserDep
-from copilot_core import jobs, keys, resumes
+from copilot_core import jobs, keys, pack_operations, resumes
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
 from copilot_core.packs import SessionPack
@@ -76,16 +76,35 @@ class InterviewIn(BaseModel):
     starts_at: AwareDatetime
 
 
-async def pack_info(svc: Services, uid: UUID, pack_id: str | None) -> dict[str, Any] | None:
+async def pack_info(
+    svc: Services,
+    uid: UUID,
+    pack_id: str | None,
+    context: str | None = None,
+    *,
+    summary: bool = True,
+) -> dict[str, Any] | None:
+    operation_state = await pack_operations.state(svc.valkey, uid, context) if context else "idle"
+    base = {"pack_id": pack_id, "operation_state": operation_state}
     if not pack_id:
-        return None
+        if context is None:
+            return None  # preserve the legacy /jobs absent-pack representation
+        return {**base, "available": False, "availability": "missing"}
+    if not summary:
+        available = bool(await svc.valkey.exists(keys.pack(uid, pack_id)))
+        return {
+            **base,
+            "available": available,
+            "availability": "current" if available else "expired",
+        }
     raw = await svc.valkey.get(keys.pack(uid, pack_id))
     if raw is None:
-        return {"pack_id": pack_id, "available": False}
+        return {**base, "available": False, "availability": "expired"}
     pack = SessionPack.model_validate_json(raw)
     return {
-        "pack_id": pack_id,
+        **base,
         "available": True,
+        "availability": "current",
         "built_at": pack.built_at,
         "round": pack.context.round,
         "prepared_answers": len(pack.prepared_answers),
@@ -152,7 +171,9 @@ async def application_out(
         return None
     out = _application(row)
     index = await svc.valkey.hget(keys.pack_index(uid), f"job:{application_id}")
-    out["pack"] = await pack_info(svc, uid, text(index) if index is not None else None)
+    out["pack"] = await pack_info(
+        svc, uid, text(index) if index is not None else None, f"job:{application_id}"
+    )
     if detail:
         out["jd_text"] = await conn.fetchval(
             "select jd_text from app.applications where id = $1", application_id
@@ -192,7 +213,9 @@ async def list_applications(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     out: list[dict[str, Any]] = []
     for r in rows:
         item = _application(r)
-        item["pack"] = await pack_info(svc, user.user_id, by_field.get(f"job:{r['id']}"))
+        item["pack"] = await pack_info(
+            svc, user.user_id, by_field.get(f"job:{r['id']}"), f"job:{r['id']}"
+        )
         out.append(item)
     return {"applications": out}
 
@@ -218,6 +241,64 @@ async def create_application(body: ApplicationIn, svc: SvcDep, user: UserDep) ->
         await svc.queue.send(jobs.resume_extract(uid, *extract))
     assert out is not None
     return out
+
+
+@router.get("/applications/status")
+async def catalog_status(svc: SvcDep, user: UserDep, response: Response) -> dict[str, Any]:
+    """Small operation snapshots; no job descriptions, resumes or prepared-pack JSON."""
+    response.headers["Cache-Control"] = "private, no-store"
+    async with svc.tx(user) as conn:
+        applications = await conn.fetch(
+            "select a.id,v.status as resume_status from app.applications a"
+            " left join app.resume_versions v on v.id=app.paired_resume(a.id) order by a.id"
+        )
+        interviews = await conn.fetch("select id,pack_id from app.interviews order by id")
+        versions = await conn.fetch("select id,status from app.resume_versions order by id")
+        documents = await conn.fetch("select id,status from app.documents order by id")
+    index = await svc.valkey.hgetall(keys.pack_index(user.user_id))
+    by_field = {text(k): text(v) for k, v in index.items()}
+    contexts = {
+        **{f"job:{r['id']}": by_field.get(f"job:{r['id']}") for r in applications},
+        **{f"interview:{r['id']}": str(r["pack_id"]) if r["pack_id"] else None for r in interviews},
+    }
+    operations = await pack_operations.states(svc.valkey, user.user_id, list(contexts))
+    pack_ids = list(dict.fromkeys(pack_id for pack_id in contexts.values() if pack_id))
+    present: dict[str, bool] = {}
+    if pack_ids:
+        async with svc.valkey.pipeline(transaction=False) as pipe:
+            for pack_id in pack_ids:
+                pipe.exists(keys.pack(user.user_id, pack_id))
+            present = dict(zip(pack_ids, map(bool, await pipe.execute()), strict=True))
+    packs = {
+        context: {
+            "pack_id": pack_id,
+            "operation_state": operations[context],
+            "available": present.get(pack_id, False) if pack_id else False,
+            "availability": (
+                "missing" if not pack_id else "current" if present.get(pack_id) else "expired"
+            ),
+        }
+        for context, pack_id in contexts.items()
+    }
+    return {
+        "applications": [
+            {
+                "id": str(r["id"]),
+                "resume_status": r["resume_status"],
+                "pack": packs[f"job:{r['id']}"],
+            }
+            for r in applications
+        ],
+        "interviews": [
+            {
+                "id": str(r["id"]),
+                "pack": packs[f"interview:{r['id']}"],
+            }
+            for r in interviews
+        ],
+        "resumes": [{"id": str(r["id"]), "status": r["status"]} for r in versions],
+        "documents": [{"id": str(r["id"]), "status": r["status"]} for r in documents],
+    }
 
 
 @router.get("/applications/{application_id}")
@@ -412,6 +493,6 @@ async def list_interviews(svc: SvcDep, user: UserDep) -> dict[str, Any]:
     out: list[dict[str, Any]] = []
     for r in rows:
         item = _interview(r)
-        item["pack"] = await pack_info(svc, user.user_id, item["pack_id"])
+        item["pack"] = await pack_info(svc, user.user_id, item["pack_id"], f"interview:{r['id']}")
         out.append(item)
     return {"interviews": out}

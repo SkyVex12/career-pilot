@@ -12,7 +12,8 @@ import { LiveCallLanguage } from "./LiveCallLanguage";
 import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerStyle, Mode } from "@copilot/protocol";
-import { api, rest, type ApplicationDetail, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type ResumeVersion, type Settings } from "./api";
+import { api, rest, POLL_READ, type ApplicationDetail, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type ResumeVersion, type Settings } from "./api";
+import { useDataActivity, usePolling } from "./usePolling";
 import { parseTarget, upcoming } from "./catalog";
 import { AddApplication, useCatalog } from "./Applications";
 import { isTextFile, resumeStatusLabel } from "./pairing";
@@ -243,6 +244,7 @@ function Step({ n, done, title, doneText, disabled, children }: { n: number; don
 // --- Ready and live -----------------------------------------------------------------------------
 
 function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings, onSettingsSaved, onSettings, onResumes, onApplications, onWork, onHistory, onOpenLive, preset, active = true }: CallProps) {
+  const dataActive = useDataActivity(active);
   const mini = useWindowMode(false, active && !session.running);
   const openWorkspaceQuickSettings = useWorkspaceOpenQuickSettings();
   useWorkspaceCompactWindow((mode) => { void mini.change(mode ?? "toolbar"); }, () => mini.change("full"));
@@ -258,9 +260,8 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     return () => window.removeEventListener("storage", changed);
   }, []);
   const shown = useShowCount(active);
-  const catalog = useCatalog(tokenSet);
+  const catalog = useCatalog(tokenSet && active);
   const reloadCatalog = catalog.reload;
-  useEffect(() => { if (tokenSet && shown > 0) reloadCatalog(); }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   const [target, setTarget] = useState("");
   const targetInitialized = useRef(false);
   const [addingApplication, setAddingApplication] = useState(false);
@@ -289,20 +290,20 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
     void invitePlannedGuests(session.sessionId, pending.scope, pending.guests);
   }, [pendingInvites, running, session.sessionId, session.seat, scope]);
 
-  const work = useCompanies(tokenSet, shown);
+  const work = useCompanies(tokenSet && dataActive, shown);
   const [employerId, setEmployerId] = useState("");
   const [agenda, setAgenda] = useState("");
   const setupMode = atWorkMode(mode) ? "meeting" : "interview";
   const atWork = setupMode === "meeting";
-  const materials = useMaterials(atWork && tokenSet ? employerId : "", shown);
+  const materials = useMaterials(atWork && tokenSet && dataActive ? employerId : "", shown);
   const [materialIds, setMaterialIds] = useState<string[]>([]);
-  const baseResume = useBaseResume(tokenSet, shown);
+  const baseResume = useBaseResume(tokenSet && dataActive, shown);
   useEffect(() => setMaterialIds([]), [employerId]);
   useEffect(() => {
     if (materials.documents) setMaterialIds(ids => ids.filter(id => materials.documents!.some(d => d.id === id)));
   }, [materials.documents]);
   useEffect(() => { if (!employerId && work.employers) setEmployerId(defaultEmployer(work.employers, read(LAST_COMPANY))); }, [work.employers]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pack = usePackFor(atWork && !running ? employerId : "", setupMode);
+  const pack = usePackFor(atWork && !running && active ? employerId : "", setupMode);
   const interviews = upcoming(catalog.interviews ?? []);
   useEffect(() => {
     if (!target || !catalog.applications || !catalog.interviews) return;
@@ -807,31 +808,21 @@ function PackStateBadge({ state }: { state: PackState | null }) {
 /// notes; a call never waits for it (the gateway renders one itself if needed).
 function usePackFor(employerId: string, mode: Mode): PackState | null {
   const [state, setState] = useState<PackState | null>(null);
+  const active = useDataActivity();
+  const generation = useRef(0);
   useEffect(() => {
+    const ticket = ++generation.current;
     setState(null);
-    if (!employerId || !atWorkMode(mode)) return;
-    let stop = false;
-    let tries = 0;
-    const poll = async () => {
-      try {
-        const asked = await rest.ensurePack(employerId, mode as "standup" | "meeting");
-        if (stop) return;
-        setState(asked);
-        while (!stop && asked.status !== "ready" && tries++ < 20) {
-          await new Promise((r) => setTimeout(r, 3000));
-          const now = (await rest.packs(employerId)).packs.find((p) => p.mode === mode) ?? null;
-          if (stop) return;
-          setState(now?.status === "ready" ? now : { ...(now ?? asked), status: "building" });
-          if (now?.status === "ready") return;
-        }
-      } catch {
-        if (!stop) setState(null);
-      }
-    };
-    poll();
-    return () => {
-      stop = true;
-    };
-  }, [employerId, mode]);
+    if (!active || !employerId || !atWorkMode(mode)) return;
+    void rest.ensurePack(employerId, mode as "standup" | "meeting").then(asked => {
+      if (generation.current === ticket) setState(asked);
+    }, () => { if (generation.current === ticket) setState(null); });
+    return () => { ++generation.current; };
+  }, [employerId, mode, active]);
+  usePolling(async () => {
+    const ticket = generation.current;
+    const current = (await rest.packs(employerId, POLL_READ)).packs.find(p => p.mode === mode) ?? null;
+    if (generation.current === ticket) setState(current);
+  }, 3000, active && state?.status === "building", { key: `${employerId}/${mode}`, timeoutMs: 60_000 });
   return state;
 }

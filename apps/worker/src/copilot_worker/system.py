@@ -111,7 +111,7 @@ async def _delete_data(ctx: Ctx, uid: UUID) -> tuple[int, int]:
             keys.sess_state(sid), keys.sess_events(sid), keys.sess_log(sid), keys.sess_lease(sid)
         ))  # fmt: skip
     vk += int(await ctx.valkey.delete(keys.digest(uid), keys.user_active_session(uid)))
-    for prefix in ("pack", "qa", "rl", "digest"):  # digest: each resume version's
+    for prefix in ("pack", "pack-operation", "qa", "rl", "digest"):  # digest: each version's
         vk += await _scan_delete(ctx, f"{prefix}:{{{uid}}}:*")
     async with ctx.system() as conn:
         # Data keys go first and explicitly: with them gone, ciphertext is unreadable even if

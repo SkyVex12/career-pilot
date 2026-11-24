@@ -1,18 +1,19 @@
 import { Practice, openPractice, type PracticeEntry } from "./Practice";
 import { openAsk } from "./Ask";
+import { listen } from "@tauri-apps/api/event";
 // Applications: what the user applied to (company, role, stage, JD), each paired with a resume
 // version (ARCHITECTURE.md, "Resume versions"); added by hand or pulled from HubRuby. The
 // application workspace keeps each role, resume and interview context together.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, rest, type ApplicationDetail, type ApplicationFields, type ApplicationItem, type InterviewItem, type Round, type Stage } from "./api";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { api, rest, POLL_READ, type ReadPolicy, type ApplicationDetail, type ApplicationFields, type ApplicationItem, type InterviewItem, type Round, type Stage } from "./api";
 import { STAGES, isTextFile, pairingChoices, pairingValue, resumeStatusLabel } from "./pairing";
 import { upcoming } from "./catalog";
 import { BaseResumeUtility, RenameResume, statusTone } from "./Resumes";
 import "./prep.css";
 import "./feature-pages.css";
 import { PullDialog, useCareerOs } from "./CareerOs";
-import { ACCEPT, PackBadge, useOnShow, when } from "./shared";
-import { usePolling } from "./usePolling";
+import { ACCEPT, PackBadge, when } from "./shared";
+import { DataActivity, useDataActivity, usePolling } from "./usePolling";
 import { Icon } from "./ui/Icon";
 import {
   Badge,
@@ -51,24 +52,52 @@ export interface Catalog {
   includeApplication: (application: ApplicationItem) => void;
 }
 
-/// Applications and interviews from the API, polled while a pack is still being built.
+const CatalogContext = createContext<{ catalog: Catalog; subscribe: () => () => void } | null>(null);
+
+/** One catalog owner inside the account/profile boundary, shared by setup and prep. */
+export function CatalogProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  const [readers, setReaders] = useState(0);
+  const subscribe = useCallback(() => {
+    setReaders(value => value + 1);
+    return () => setReaders(value => value - 1);
+  }, []);
+  const catalog = useOwnedCatalog(enabled && readers > 0);
+  return <CatalogContext.Provider value={{ catalog, subscribe }}>{children}</CatalogContext.Provider>;
+}
+
 export function useCatalog(enabled = true): Catalog {
+  const shared = useContext(CatalogContext);
+  const local = useOwnedCatalog(enabled && !shared);
+  const subscribe = shared?.subscribe;
+  useEffect(() => { if (enabled) return subscribe?.(); }, [enabled, subscribe]);
+  return shared?.catalog ?? local;
+}
+
+function useOwnedCatalog(active: boolean): Catalog {
+  const enabled = useDataActivity(active);
   const [applications, setApplications] = useState<ApplicationItem[] | null>(null);
   const [interviews, setInterviews] = useState<InterviewItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const revision = useRef(0);
-  const reload = useCallback(async () => {
+  const inFlight = useRef<Promise<void> | null>(null);
+  const load = useCallback((policy?: ReadPolicy): Promise<void> => {
+    if (inFlight.current) return inFlight.current;
     const request = ++revision.current;
-    try {
-      const [a, i] = await Promise.all([rest.applications(), rest.interviews()]);
+    const operation = (async () => { try {
+      const [a, i] = await Promise.all([rest.applications(policy), rest.interviews(policy)]);
       if (request !== revision.current) return;
       setApplications(a.applications);
       setInterviews(i.interviews);
       setError(null);
     } catch (e) {
       if (request === revision.current) setError(String(e));
-    }
+      throw e;
+    } })();
+    inFlight.current = operation;
+    void operation.finally(() => { if (inFlight.current === operation) inFlight.current = null; }).catch(() => {});
+    return operation;
   }, []);
+  const reload = useCallback(() => load().catch(() => {}), [load]);
   const includeApplication = useCallback((application: ApplicationItem) => {
     ++revision.current;
     setApplications(items => [application, ...(items ?? []).filter(item => item.id !== application.id)]);
@@ -76,9 +105,42 @@ export function useCatalog(enabled = true): Catalog {
   useEffect(() => {
     if (enabled) reload();
   }, [enabled, reload]);
+  useEffect(() => {
+    if (!enabled) return;
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined;
+    const off = listen<string>("copilot://data-changed", event => {
+      if (!/^\/(applications|interviews|resumes|documents|jobs|career-os)(\/|$)/.test(event.payload)) return;
+      ++revision.current; // A read begun before the write cannot restore its old catalog.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void (async () => {
+          await inFlight.current?.catch(() => {});
+          if (!stopped) await load({ wake: false }).catch(() => {});
+        })();
+      }, 150);
+    });
+    return () => { stopped = true; clearTimeout(timer); void off.then(unlisten => unlisten()); };
+  }, [enabled, load]);
+  useEffect(() => () => { ++revision.current; }, []);
   const building =
-    (applications ?? []).some((a) => !a.pack || a.resume?.status === "extracting") || upcoming(interviews ?? []).some((i) => !i.pack);
-  usePolling(reload, 4000, enabled && building);
+    (applications ?? []).some((a) => ["queued", "running"].includes(a.pack?.operation_state ?? "") || a.resume?.status === "extracting") ||
+    upcoming(interviews ?? []).some((i) => ["queued", "running"].includes(i.pack?.operation_state ?? ""));
+  usePolling(async () => {
+    const ticket = revision.current;
+    const status = await rest.catalogStatus();
+    if (ticket !== revision.current) return;
+    const packState = (pack: ApplicationItem["pack"] | (typeof status.applications)[number]["pack"] | undefined) =>
+      JSON.stringify([pack?.available ?? false, pack?.availability ?? "missing", pack?.operation_state ?? "idle"]);
+    const changed = status.applications.length !== applications?.length || status.interviews.length !== interviews?.length ||
+      status.applications.some(item => {
+        const old = applications?.find(a => a.id === item.id);
+        return !old || (old.resume?.status ?? null) !== item.resume_status || packState(old.pack) !== packState(item.pack);
+      }) || status.interviews.some(item => {
+        const old = interviews?.find(i => i.id === item.id);
+        return !old || packState(old.pack) !== packState(item.pack);
+      });
+    if (changed) await load(POLL_READ);
+  }, 4000, enabled && building);
   return { applications, interviews, error, reload, includeApplication };
 }
 
@@ -118,9 +180,8 @@ export function Applications({
   const [practiceOpened, setPracticeOpened] = useState(false);
   useEffect(() => { if (practiceEntry) { setPracticing(true); setPracticeOpened(true); } }, [practiceEntry?.n]);
   useEffect(() => { if (focus || baseResumeRequest) setPracticing(false); }, [focus?.n, baseResumeRequest]);
-  const { applications, interviews, error, reload } = useCatalog();
-  useOnShow(active, reload);
-  const [selected, setSelected] = useState<string | null>(null);
+  const { applications, interviews, error, reload } = useCatalog(active && !practicing);
+  const [selected, setSelected] = useState<string | null>(focus?.id ?? null);
   const [adding, setAdding] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [q, setQ] = useState("");
@@ -128,7 +189,7 @@ export function Applications({
 
   useEffect(() => { if (focus) setSelected(focus.id); }, [focus]);
   useEffect(() => {
-    if (!selected && applications?.length && window.innerWidth >= 720) setSelected(applications[0].id);
+    if (!focus && !selected && applications?.length && window.innerWidth >= 720) setSelected(applications[0].id);
   }, [applications]); // eslint-disable-line react-hooks/exhaustive-deps
   const shown = useMemo(() => (applications ? filterApplications(applications, q) : null), [applications, q]);
 
@@ -141,7 +202,7 @@ export function Applications({
       </>} />
       {!practicing && error && !!applications?.length && <Banner tone="danger" title="Could not refresh applications" action={<Button size="sm" onClick={reload}>Retry</Button>}>{error}</Banner>}
       {practiceOpened && <div hidden={!practicing} className="prep-practice"><Practice active={active && practicing} running={running} entry={practiceEntry} /></div>}
-      <div hidden={practicing} className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
+      <DataActivity.Provider value={active && !practicing}><div hidden={practicing} className={selected ? "apps-split prep-split has-selection" : "apps-split prep-split"}>
         <section className="apps-list prep-sidebar" aria-label="Applications">
           <h2 className="prep-sidebar-heading">Applications <span>{applications?.length ?? ""}</span></h2>
           <Input type="search" aria-label="Search company or role" placeholder="Search applications" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -166,7 +227,7 @@ export function Applications({
             onDeleted={() => { setSelected(null); void reload(); }}
           /> : applications && applications.length > 0 ? <EmptyState icon={<Icon name="briefcase" size={28} />} title="Choose an application">Its resume and job description stay together here.</EmptyState> : null}
         </section>
-      </div>
+      </div></DataActivity.Provider>
       <AddApplication open={adding} onOpenChange={setAdding} onAdded={(app) => { void reload(); setSelected(app.id); }} />
       <PullDialog open={pulling} onOpenChange={setPulling} onPulled={(app) => { void reload(); setSelected(app.id); }} />
     </div>
@@ -175,7 +236,8 @@ export function Applications({
 
 /** The list's pack state: an icon with its words for screen readers and the tooltip. */
 function PackDot({ pack }: { pack: ApplicationItem["pack"] }) {
-  const [icon, text, tone] = !pack ? ["◌", "Pack building", "warning"] : pack.available ? ["●", "Pack ready", "success"] : ["○", "Pack expired", "neutral"];
+  const pending = ["queued", "running"].includes(pack?.operation_state ?? "");
+  const [icon, text, tone] = pending ? ["◌", "Pack building", "warning"] : pack?.available ? ["●", "Pack ready", "success"] : pack?.operation_state === "failed" ? ["○", "Pack failed", "danger"] : ["○", pack?.availability === "expired" ? "Pack expired" : "Pack unavailable", "neutral"];
   return (
     <span className={`pack-dot ui-tone-${tone}`} title={text}>
       <span aria-hidden="true">{icon}</span>
@@ -341,17 +403,20 @@ function ApplicationView({ id, stamp, interviews, onStartInterview, onBack, onCh
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [scheduling, setScheduling] = useState(false);
-  const load = useCallback(async () => {
-    try { setApp(await rest.application(id)); setError(null); }
-    catch (e) { setError(String(e)); }
+  const load = useCallback(async (policy?: ReadPolicy) => {
+    try { setApp(await rest.application(id, policy)); setError(null); }
+    catch (e) { setError(String(e)); return false; }
   }, [id]);
   useEffect(() => { void load(); }, [load, stamp]);
-  usePolling(load, 3000, !!app && app.versions.some((v) => v.status === "extracting"));
+  usePolling(async () => {
+    const status = await rest.catalogStatus();
+    if (app?.versions.some(version => status.resumes.find(item => item.id === version.id)?.status !== version.status)) return load(POLL_READ);
+  }, 3000, !!app && app.versions.some((v) => v.status === "extracting"), { key: id });
   const saved = (a: ApplicationDetail | null) => { if (a) setApp(a); onChanged(); };
 
   return <div className="app-view prep-document">
     <Button variant="ghost" size="sm" className="apps-back" onClick={onBack}>← Applications</Button>
-    {error && <Banner tone="danger" title="Could not refresh the application" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
+    {error && <Banner tone="danger" title="Could not refresh the application" action={<Button size="sm" onClick={() => void load({ refresh: true })}>Retry</Button>}>{error}</Banner>}
     {app ? <>
       <header className="app-view-head prep-document-head">
         <div className="app-view-title"><h2>{app.company}</h2><p>{app.role}</p></div>
