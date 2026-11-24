@@ -76,6 +76,22 @@ function appRoutes(failSwitch = false) {
 }
 
 describe("profile session boundaries", () => {
+  it("defers profile and link discovery until a hidden startup becomes visible", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      appRoutes();
+      ipc.handle("snapshot", () => [[], false, 0]);
+      render(<App />);
+      await act(async () => {});
+      expect(ipc.apiCalls("GET").filter(call => ["/profiles", "/career-os/connection"].includes(call.path))).toHaveLength(0);
+      expect(ipc.calls.filter(call => call.cmd === "api_call" && call.args.method === "GET").every(call => call.args.wake === false)).toBe(true);
+      await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+      await waitFor(() => expect(screen.getByLabelText("Current profile")).toHaveTextContent("account"));
+      expect(ipc.apiCalls("GET").filter(call => call.path === "/profiles")).toHaveLength(1);
+      expect(ipc.apiCalls("GET").filter(call => call.path === "/career-os/connection")).toHaveLength(1);
+    } finally { visibility.mockRestore(); }
+  });
+
   it("returns to setup after switching profiles without opening the previous profile's ended call", async () => {
     const requestedFor = appRoutes();
     // The review opens only for a call ending in this app lifetime.

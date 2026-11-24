@@ -40,6 +40,7 @@ use copilot_client::audio::vad::{ChannelVad, Silero, VadParams};
 use copilot_client::auth::BoxFuture;
 use copilot_client::auth::{DevTokenProvider, OsSecretStore, SecretStore, TokenProvider};
 use copilot_client::careerossignin::{CareerOsFailure, CareerOsOutcome, CareerOsTokenProvider};
+use copilot_client::data_cache::{DataCache, namespace};
 use copilot_client::emailauth::{ApiBase, CodeSent, EmailFailure, EmailTokenProvider};
 use copilot_client::engine::{AudioParts, Engine, UiEvent};
 use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, ConnectionState, StartParams};
@@ -93,6 +94,7 @@ struct AppState {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
     secrets: Arc<dyn SecretStore>,
+    data_cache: DataCache,
     /// The local stack's dev token. Never used in the cloud environment.
     dev_tokens: Arc<DevTokenProvider>,
     /// The deployed stage's browser sign-in (Google or Cognito), made from `settings.oauth`.
@@ -288,6 +290,7 @@ impl AppState {
 
     /// Drop every sign-in except `keep` (`email`, `career_os`, or `browser`).
     async fn end_other_sign_ins(&self, keep: &str) {
+        self.data_cache.clear();
         if keep != "email"
             && let Some(p) = self.email_signed_in()
         {
@@ -345,12 +348,17 @@ impl AppState {
     /// The API client. `wake`: start the stage's VM if it is not known to run (a call the user
     /// made); otherwise a stopped VM fails the call with SERVER_ASLEEP (background polls).
     async fn api(&self, app: &AppHandle, wake: bool) -> Result<ApiClient, String> {
+        let context = self.data_cache.context();
         let (url, profile) = {
             let s = self.settings.lock().unwrap();
             (s.active_urls().1.to_string(), s.profile.clone())
         };
+        let tokens = self.tokens()?;
         let url = self.fill_url(app, &url, wake).await?;
-        Ok(ApiClient::new(&url, self.tokens()?)
+        if self.data_cache.context() != context {
+            return Err("Workspace changed while connecting; try again.".into());
+        }
+        Ok(ApiClient::new(&url, tokens)
             .map_err(|e| e.to_string())?
             .with_client(self.client.clone())
             .with_profile(profile))
@@ -569,10 +577,18 @@ fn save_settings(
     let (gateway, api) = settings.active_urls();
     check_urls(gateway, api)?;
     settings.display_name = stealth::normalize_display_name(&settings.display_name)?;
+    let token_changed = dev_token.is_some();
     if let Some(token) = dev_token {
         state.dev_tokens.save(&token).map_err(|e| e.to_string())?;
     }
     let kept = state.settings.lock().unwrap().clone();
+    let context_changed = token_changed
+        || settings.environment != kept.environment
+        || settings.active_urls().1 != kept.active_urls().1;
+    if context_changed {
+        state.data_cache.clear();
+        state.forget_server();
+    }
     // The sign-in settings belong to the stage they came from: a new cloud API URL needs a new
     // sign-in.
     let same_stage = settings.cloud_api_url.trim() == kept.cloud_api_url.trim();
@@ -598,6 +614,9 @@ fn save_settings(
             ..settings.clone()
         }
     });
+    if context_changed {
+        state.data_cache.clear();
+    }
     // A waiting update shows the new mode at once.
     #[cfg(feature = "release")]
     release::updater::refresh_ready(&app);
@@ -730,12 +749,61 @@ async fn api_call(
     method: String,
     path: String,
     body: Option<Value>,
+    refresh: Option<bool>,
+    wake: Option<bool>,
 ) -> Res<Value> {
     // The Session screen polls the live calls every ten seconds, and the invites to someone
     // else's call (guest seats); that alone does not keep or start the VM (copilotctl idle
     // ignores both too).
-    let wake = !(method == "GET" && (path == "/sessions/live" || path == "/seats"));
-    state.api(&app, wake).await?.call(&method, &path, body.as_ref()).await.map_err(|e| api_error(&app, e))
+    let is_read = method.eq_ignore_ascii_case("GET");
+    let wake = wake.unwrap_or(!(is_read && (path == "/sessions/live" || path == "/seats")));
+    if !is_read {
+        state.data_cache.invalidate(&path);
+        let result = state.api(&app, wake).await?.call(&method, &path, body.as_ref()).await;
+        state.data_cache.invalidate(&path);
+        let _ = app.emit("copilot://data-changed", &path);
+        return result.map_err(|e| api_error(&app, e));
+    }
+    let context = state.data_cache.context();
+    let (origin, profile) = {
+        let settings = state.settings.lock().unwrap();
+        (settings.active_urls().1.to_string(), settings.profile.clone())
+    };
+    // Refreshing an expired email token can itself use the wake function. Background
+    // intent must be enforced before asking the token provider, not only before HTTP.
+    if !wake && wake::needs_host(&origin) && state.server_host.lock().unwrap().is_none() {
+        return Err(SERVER_ASLEEP.into());
+    }
+    let tokens = state.tokens()?;
+    // This checks local credential expiry even for a memory hit; a cache never becomes
+    // an alternate sign-in mechanism. Cloud wake happens only inside the miss closure.
+    let token = tokens.current().await.map_err(|e| e.to_string())?;
+    if state.data_cache.context() != context {
+        return Err("Workspace changed while loading.".into());
+    }
+    let ns = namespace(&origin, &token.access_token, profile.as_deref());
+    let native = &*state;
+    let handle = &app;
+    native
+        .data_cache
+        .read(&ns, &path, refresh.unwrap_or(false), context, |path, tag| {
+            let tokens = tokens.clone();
+            let origin = origin.clone();
+            let profile = profile.clone();
+            async move {
+                let url = native.fill_url(handle, &origin, wake).await.map_err(ApiError::Invalid)?;
+                if native.data_cache.context() != context {
+                    return Err(ApiError::Invalid("Workspace changed while loading.".into()));
+                }
+                ApiClient::new(&url, tokens)?
+                    .with_client(native.client.clone())
+                    .with_profile(profile)
+                    .get_conditional(&path, tag.as_deref())
+                    .await
+            }
+        })
+        .await
+        .map_err(|e| api_error(&app, e))
 }
 
 /// A resume or job description from the UI: the file's bytes as the raw body, its kind and
@@ -762,12 +830,12 @@ async fn upload_document(app: AppHandle, state: State<'_, AppState>, request: Re
             .map_err(|e| format!("x-target: {e}"))?,
         None => serde_json::Map::new(),
     };
-    state
-        .api(&app, true)
-        .await?
-        .upload_document_for(&kind, &file_name, bytes.clone(), &target)
-        .await
-        .map_err(|e| api_error(&app, e))
+    state.data_cache.invalidate("/documents");
+    let result =
+        state.api(&app, true).await?.upload_document_for(&kind, &file_name, bytes.clone(), &target).await;
+    state.data_cache.invalidate("/documents");
+    let _ = app.emit("copilot://data-changed", "/documents");
+    result.map_err(|e| api_error(&app, e))
 }
 
 /// A company document or work log attachment from the UI: the file's bytes as the raw body,
@@ -787,12 +855,11 @@ async fn upload_company_file(app: AppHandle, state: State<'_, AppState>, request
         return Err(format!("cannot upload to {path}"));
     }
     let file_name = header("x-file-name")?;
-    state
-        .api(&app, true)
-        .await?
-        .upload_raw(&path, &file_name, bytes.clone())
-        .await
-        .map_err(|e| api_error(&app, e))
+    state.data_cache.invalidate(&path);
+    let result = state.api(&app, true).await?.upload_raw(&path, &file_name, bytes.clone()).await;
+    state.data_cache.invalidate(&path);
+    let _ = app.emit("copilot://data-changed", &path);
+    result.map_err(|e| api_error(&app, e))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -961,17 +1028,23 @@ async fn career_os_complete(
 
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
-    if let Some(p) = state.email_signed_in() {
-        p.sign_out().await.map_err(|e| e.to_string())?;
+    state.data_cache.clear();
+    let result = async {
+        if let Some(p) = state.email_signed_in() {
+            p.sign_out().await.map_err(|e| e.to_string())?;
+        }
+        if let Some(p) = state.career_os_signed_in() {
+            p.sign_out().await.map_err(|e| e.to_string())?;
+        }
+        if let Some(p) = state.oauth() {
+            p.sign_out().await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
-    if let Some(p) = state.career_os_signed_in() {
-        p.sign_out().await.map_err(|e| e.to_string())?;
-    }
-    if let Some(p) = state.oauth() {
-        p.sign_out().await.map_err(|e| e.to_string())?;
-    }
+    .await;
+    state.data_cache.clear();
     state.update_settings(|s| s.profile = None);
-    Ok(())
+    result
 }
 
 /// The profile switch (ARCHITECTURE.md, "Profiles"): the profile every API call and the next
@@ -987,10 +1060,12 @@ async fn set_profile(app: AppHandle, state: State<'_, AppState>, profile: Option
     if state.settings.lock().unwrap().profile == profile {
         return Ok(());
     }
+    state.data_cache.clear();
     state.update_settings(|s| {
         s.profile = profile;
         s.last_session_id = None;
     });
+    state.data_cache.clear();
     let reset = state.history.lock().unwrap().reset_context();
     let _ = app.emit(EVENT, reset);
     Ok(())
@@ -1000,7 +1075,9 @@ async fn set_profile(app: AppHandle, state: State<'_, AppState>, profile: Option
 /// the Cognito user); the dev token stays (it is the local gateway's).
 #[tauri::command]
 async fn delete_account(app: AppHandle, state: State<'_, AppState>) -> Res<Value> {
+    state.data_cache.clear();
     let result = state.api(&app, true).await?.delete("/me").await.map_err(|e| api_error(&app, e))?;
+    state.data_cache.clear();
     state.update_settings(|s| s.last_session_id = None);
     if state.settings.lock().unwrap().environment == Environment::Cloud {
         if let Some(p) = state.email_signed_in() {
@@ -1108,6 +1185,7 @@ async fn end_live_session(
     session_id: Uuid,
     profile: Option<String>,
 ) -> Res<String> {
+    state.data_cache.invalidate(&format!("/sessions/{session_id}"));
     let mine = state
         .engine
         .lock()
@@ -1126,6 +1204,8 @@ async fn end_live_session(
     let url = state.fill_url(&app, &url, true).await?;
     let tokens = state.tokens()?;
     let code = client::end_session(&url, tokens.as_ref(), session_id).await?;
+    state.data_cache.invalidate(&format!("/sessions/{session_id}"));
+    let _ = app.emit("copilot://data-changed", format!("/sessions/{session_id}"));
     state.update_settings(|s| {
         if s.last_session_id == Some(session_id) {
             s.last_session_id = None;
@@ -1197,7 +1277,17 @@ async fn launch(
         Arc::new(move |event: UiEvent| {
             if let UiEvent::Connection { state: ConnectionState::Live { session_id, .. } } = &event {
                 let sid = *session_id;
+                app.state::<AppState>().data_cache.invalidate(&format!("/sessions/{sid}"));
+                let _ = app.emit("copilot://data-changed", format!("/sessions/{sid}"));
                 app.state::<AppState>().update_settings(|s| s.last_session_id = Some(sid));
+            }
+            if matches!(&event, UiEvent::Stopped { .. }) {
+                let state = app.state::<AppState>();
+                let sid = state.settings.lock().unwrap().last_session_id;
+                if let Some(sid) = sid {
+                    state.data_cache.invalidate(&format!("/sessions/{sid}"));
+                    let _ = app.emit("copilot://data-changed", format!("/sessions/{sid}"));
+                }
             }
             if let UiEvent::Stopped { reason: StopReason::Ended | StopReason::Replaced } = &event {
                 app.state::<AppState>().update_settings(|s| s.last_session_id = None);
@@ -2171,6 +2261,7 @@ pub fn run() {
                 let _ = secrets.delete(OLD_RECORDING_KEY);
             }
             app.manage(workspace_window::WorkspaceWindowState::default());
+            let data_cache = DataCache::new(app.path().app_cache_dir()?.join("data-v1"), secrets.as_ref());
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 settings_path,
@@ -2180,6 +2271,7 @@ pub fn run() {
                 career_os: Mutex::new(None),
                 handle: app.handle().clone(),
                 secrets,
+                data_cache,
                 engine: Mutex::new(None),
                 seat: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
@@ -2199,8 +2291,8 @@ pub fn run() {
             let _ = (updated, journal);
             background::setup(app.handle(), remote::end)?;
             register_hotkeys(app.handle());
-            // Opening the app starts the stage's VM (it stops itself when idle; wake.rs), then
-            // GET /me checks the sign-in.
+            // Passive startup checks never wake the VM. Foreground data reads and sign-in
+            // still wake it when they need an online response.
             if !background::background_start_requested() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -2209,7 +2301,7 @@ pub fn run() {
                     if needs_auth_config {
                         let state = handle.state::<AppState>();
                         let api_url = state.settings.lock().unwrap().cloud_api_url.clone();
-                        let fetched = match state.fill_url(&handle, &api_url, true).await {
+                        let fetched = match state.fill_url(&handle, &api_url, false).await {
                             Ok(api_url) => oauth::fetch_auth_config(&api_url).await,
                             Err(e) => Err(copilot_client::auth::AuthError::NotSignedIn(e)),
                         };
@@ -2222,7 +2314,7 @@ pub fn run() {
                             Err(e) => tracing::info!("sign-in settings not fetched at startup: {e}"),
                         }
                     }
-                    if let Ok(api) = handle.state::<AppState>().api(&handle, true).await
+                    if let Ok(api) = handle.state::<AppState>().api(&handle, false).await
                         && let Err(e) = api.get("/me").await
                     {
                         tracing::info!("GET /me at startup: {}", api_error(&handle, e));

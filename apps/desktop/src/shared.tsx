@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PackInfo } from "./api";
 import { Badge } from "./ui";
+import { useDataActivity } from "./usePolling";
 
 export function plural(n: number, word: string, many = `${word}s`): string {
   return `${n} ${n === 1 ? word : many}`;
@@ -9,8 +10,9 @@ export function plural(n: number, word: string, many = `${word}s`): string {
 
 /** An interview or application pack: ready (with its prepared answers), building, or expired. */
 export function PackBadge({ pack }: { pack: PackInfo | null | undefined }) {
-  if (!pack) return <Badge tone="warning">Pack building</Badge>;
-  if (!pack.available) return <Badge tone="neutral">Pack expired</Badge>;
+  if (["queued", "running"].includes(pack?.operation_state ?? "")) return <Badge tone="warning">Pack building</Badge>;
+  if (pack?.operation_state === "failed") return <Badge tone="danger">Pack failed</Badge>;
+  if (!pack?.available) return <Badge tone="neutral">{pack?.availability === "expired" ? "Pack expired" : "Pack unavailable"}</Badge>;
   return <Badge tone="success">Pack ready{pack.prepared_answers != null ? ` (${plural(pack.prepared_answers, "answer")})` : ""}</Badge>;
 }
 
@@ -41,16 +43,17 @@ function startOfDay(t: number): number {
   return d.getTime();
 }
 
-/** Calls `f` each time a kept-open tab is shown again (not on the first show: the tab loads
- * on mount), so what it lists is fresh without starting from nothing. */
+/** Revalidate a kept-open tab once on tab or window return. The repository still decides
+ * whether its freshness window permits reuse; this never starts an idle refresh timer. */
 export function useOnShow(active: boolean, f: () => unknown) {
-  const seen = useRef(active);
+  const visible = useDataActivity(active);
+  const seen = useRef(visible);
   const latest = useRef(f);
   latest.current = f;
   useEffect(() => {
-    if (active && !seen.current) latest.current();
-    seen.current = active;
-  }, [active]);
+    if (visible && !seen.current) latest.current();
+    seen.current = visible;
+  }, [visible]);
 }
 
 /** Counts the times a kept-mounted screen has been shown again, for effects that load data:

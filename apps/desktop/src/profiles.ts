@@ -5,6 +5,7 @@
 // and on a sign-in to another account.
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { api, rest, type CareerOsConnection, type Profile, type SettingsView } from "./api";
+import { useDataActivity } from "./usePolling";
 
 export interface ProfileState {
   profiles: Profile[];
@@ -26,10 +27,12 @@ export function isStale(profiles: Profile[], current: string | null): boolean {
   return current !== null && profiles.length > 0 && !profiles.some((p) => !p.me && p.id === current);
 }
 
-/** The signed-in account: the environment and, in the cloud, the email signed in with. */
+/** UI state is scoped to the configured deployment as well as the signed-in account.
+ * The cloud URL retains its host placeholder, so a VM restart keeps the same identity. */
 export function accountOf(view: SettingsView | null): string {
   if (!view) return "";
-  return `${view.settings.environment}:${view.signed_in_as ?? ""}`;
+  const origin = view.settings.environment === "cloud" ? view.settings.cloud_api_url : view.settings.api_url;
+  return JSON.stringify([view.settings.environment, origin?.trim().replace(/\/$/, "") ?? "", view.signed_in_as ?? ""]);
 }
 
 /** Locked until a Career-OS link: the stage requires one and the account has no active link. */
@@ -48,6 +51,7 @@ export function showSwitch(profiles: Profile[]): boolean {
 }
 
 export function useProfiles(ready: boolean, saved: string | null, account: string, onChange?: () => void) {
+  const visible = useDataActivity(ready);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [current, setCurrent] = useState<string | null>(saved);
   const currentRef = useRef(current);
@@ -65,7 +69,7 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
   const generation = useRef(0);
 
   const reload = useCallback(async () => {
-    if (!ready) return;
+    if (!visible) return;
     const gen = generation.current;
     try {
       const out = await rest.profiles();
@@ -89,14 +93,14 @@ export function useProfiles(ready: boolean, saved: string | null, account: strin
         } catch { /* A running call keeps its profile. */ }
       }
     }
-  }, [ready, current, applyCurrent]);
+  }, [visible, current, applyCurrent]);
 
   // Signed out, or another account signed in: forget the old account's profiles, then load.
   useEffect(() => {
     generation.current += 1;
     setProfiles([]);
-    reload();
   }, [ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (visible) void reload(); }, [visible, ready, account]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchTo = async (id: string | null) => {
     const me = profiles.find((p) => p.me);

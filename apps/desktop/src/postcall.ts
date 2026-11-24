@@ -41,14 +41,18 @@ export async function pollSession(
   const started = now();
   let session: SessionDetail | null = null;
   let error: string | null = null;
+  let failures = 0;
   for (;;) {
+    if (cancelled()) return { phase: "waiting", session, elapsedMs: now() - started, error };
     let gone = false;
     try {
       session = await fetch();
       error = null;
+      failures = 0;
     } catch (e) {
       error = String(e);
       gone = isGone(e);
+      failures++;
     }
     if (cancelled()) return { phase: "waiting", session, elapsedMs: now() - started, error };
     if (gone) {
@@ -68,7 +72,7 @@ export async function pollSession(
       return timeout;
     }
     onUpdate({ phase: "waiting", session, elapsedMs, error });
-    await sleep(Math.min(intervalMs, timeoutMs - elapsedMs));
+    await sleep(Math.min(intervalMs * 2 ** Math.min(failures, 4), 30_000, timeoutMs - elapsedMs));
   }
 }
 

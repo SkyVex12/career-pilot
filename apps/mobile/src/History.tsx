@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, AppState, View } from "react-native";
 import { Api } from "./api";
 import { RequestScope } from "./requestScope";
 import {
@@ -59,34 +59,47 @@ export function History({
     [selected, setSelected] = useState<string | null>(null),
     [segments, setSegments] = useState<Segment[]>([]),
     [stored, setStored] = useState(true),
+    [transcriptLoaded, setTranscriptLoaded] = useState(false),
+    [transcriptLoading, setTranscriptLoading] = useState(false),
     [error, setError] = useState(""),
     [before, setBefore] = useState<string | null>(null),
+    [cursor, setCursor] = useState<string | null>(null),
     [loading, setLoading] = useState(false),
     [opening, setOpening] = useState(false),
     [deleting, setDeleting] = useState(false),
-    [query, setQuery] = useState("");
+    [query, setQuery] = useState(""),
+    [foreground, setForeground] = useState(
+      AppState.currentState !== "background" &&
+        AppState.currentState !== "inactive",
+    );
   const listing = useRef(new RequestScope()),
     selection = useRef(new RequestScope()),
+    transcriptRead = useRef(new RequestScope()),
     mutation = useRef(new RequestScope()),
     revision = useRef(0),
     detailRevision = useRef(0),
     alive = useRef(true);
-  async function refresh(more = false) {
+  async function refresh(more = false, fresh = false) {
     const ticket = ++revision.current;
     setLoading(true);
     setError("");
     try {
-      const d = await listing.current.run(async (signal) =>
-        parseCalls(
+      const d = await listing.current.run(async (signal) => {
+        if (!more) await api.syncDomain("history", signal, fresh);
+        return parseCalls(
           await api.request(
-            `/sessions${more && before ? `?before=${encodeURIComponent(before)}` : ""}`,
+            `/sessions${more && cursor ? `?cursor=${encodeURIComponent(cursor)}` : more && before ? `?before=${encodeURIComponent(before)}` : ""}`,
             undefined,
             "GET",
             true,
             signal,
+            true,
+            api.profile,
+            undefined,
+            fresh ? "reload" : "default",
           ),
-        ),
-      );
+        );
+      });
       if (!d) return;
       setCalls((old) =>
         more
@@ -94,6 +107,7 @@ export function History({
           : d.sessions,
       );
       setBefore(d.next_before);
+      setCursor(d.next_cursor);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -103,15 +117,20 @@ export function History({
   function back() {
     detailRevision.current++;
     selection.current.invalidate();
+    transcriptRead.current.invalidate();
     setSelected(null);
     setCall(null);
     setSegments([]);
+    setTranscriptLoaded(false);
+    setTranscriptLoading(false);
     setOpening(false);
     setError("");
   }
   useEffect(() => {
     alive.current = true;
-    void refresh();
+    const subscription = AppState.addEventListener("change", (state) =>
+      setForeground(state === "active"),
+    );
     return () => {
       alive.current = false;
       revision.current++;
@@ -119,50 +138,143 @@ export function History({
       listing.current.invalidate();
       selection.current.invalidate();
       mutation.current.invalidate();
+      transcriptRead.current.invalidate();
+      subscription.remove();
     };
   }, [api]);
-  async function open(id: string) {
+  useEffect(() => {
+    let active = true;
+    if (foreground)
+      void refresh().then(() => {
+        if (active && selected) void open(selected, true);
+      });
+    else {
+      listing.current.invalidate();
+      selection.current.invalidate();
+      transcriptRead.current.invalidate();
+    }
+    return () => {
+      active = false;
+    };
+  }, [api, foreground]);
+  async function open(id: string, fresh = false) {
     const ticket = ++detailRevision.current;
     setSelected(id);
     setCall(null);
     setSegments([]);
+    transcriptRead.current.invalidate();
+    setTranscriptLoaded(false);
+    setTranscriptLoading(false);
     setError("");
     setOpening(true);
     try {
       const result = await selection.current.run(async (signal) => {
-        const [detail, transcript] = await Promise.all([
-          api.request(
-            `/sessions/${encodeURIComponent(id)}`,
-            undefined,
-            "GET",
-            true,
-            signal,
-          ),
-          api.request(
-            `/sessions/${encodeURIComponent(id)}/transcript`,
-            undefined,
-            "GET",
-            true,
-            signal,
-          ),
-        ]);
+        const detail = await api.request(
+          `/sessions/${encodeURIComponent(id)}`,
+          undefined,
+          "GET",
+          true,
+          signal,
+          true,
+          api.profile,
+          undefined,
+          fresh ? "reload" : "default",
+        );
         const parsed = parseCall(detail);
         if (parsed.id !== id)
           throw new Error(
             "The server returned a different saved call. Please retry.",
           );
-        return { detail: parsed, transcript: parseTranscript(transcript) };
+        return parsed;
       });
       if (!result) return;
-      setCall(result.detail);
-      setSegments(result.transcript.segments);
-      setStored(result.transcript.stored);
+      setCall(result);
     } catch (e) {
       setError(String(e));
     } finally {
       if (ticket === detailRevision.current) setOpening(false);
     }
   }
+  async function loadTranscript() {
+    if (!selected || transcriptLoading) return;
+    const id = selected,
+      ticket = detailRevision.current;
+    setTranscriptLoading(true);
+    setError("");
+    try {
+      const result = await transcriptRead.current.run(async (signal) =>
+        parseTranscript(
+          await api.request(
+            `/sessions/${encodeURIComponent(id)}/transcript`,
+            undefined,
+            "GET",
+            true,
+            signal,
+          ),
+        ),
+      );
+      if (result && ticket === detailRevision.current) {
+        setSegments(result.segments);
+        setStored(result.stored);
+        setTranscriptLoaded(true);
+      }
+    } catch (error) {
+      if (ticket === detailRevision.current) setError(String(error));
+    } finally {
+      if (ticket === detailRevision.current) setTranscriptLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (!foreground || !call || !["processing", "live"].includes(call.status))
+      return;
+    const id = call.id,
+      scope = new RequestScope(),
+      deadline = Date.now() + 5 * 60_000;
+    let active = true,
+      timer: ReturnType<typeof setTimeout>,
+      failures = 0;
+    async function poll() {
+      try {
+        const status = await scope.run((signal) =>
+          api.request<{
+            id: string;
+            status: string;
+            revision: number | string;
+          }>(
+            `/sessions/${encodeURIComponent(id)}/status`,
+            undefined,
+            "GET",
+            true,
+            signal,
+          ),
+        );
+        if (active && status) {
+          failures = 0;
+          if (
+            status.status !== call!.status ||
+            (call!.revision !== undefined && status.revision !== call!.revision)
+          ) {
+            await open(id, true);
+            return;
+          }
+        }
+      } catch (error) {
+        failures++;
+        if (active) setError(String(error));
+      }
+      if (active && Date.now() < deadline)
+        timer = setTimeout(
+          () => void poll(),
+          Math.min(30_000, 5000 * 2 ** Math.min(failures, 3)),
+        );
+    }
+    timer = setTimeout(() => void poll(), 5000);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      scope.invalidate();
+    };
+  }, [api, call?.id, call?.status, call?.revision, foreground]);
   async function remove(id: string) {
     setDeleting(true);
     setError("");
@@ -219,7 +331,7 @@ export function History({
               label="Refresh history"
               icon="refresh"
               disabled={loading}
-              onPress={() => void refresh()}
+              onPress={() => void refresh(false, true)}
             />
           ) : undefined
         }
@@ -273,7 +385,14 @@ export function History({
                 <Txt style={heading}>Saved transcript</Txt>
                 <Badge label={`${segments.length} segments`} />
               </Row>
-              {!stored ? (
+              {!transcriptLoaded ? (
+                <Button
+                  label="Load saved transcript"
+                  secondary
+                  loading={transcriptLoading}
+                  onPress={() => void loadTranscript()}
+                />
+              ) : !stored ? (
                 <Notice>This call did not retain a transcript.</Notice>
               ) : !segments.length ? (
                 <Notice>
@@ -376,7 +495,7 @@ export function History({
               </Txt>
             </ActionCard>
           ))}
-          {before ? (
+          {cursor || before ? (
             <Button
               label="Load older calls"
               secondary

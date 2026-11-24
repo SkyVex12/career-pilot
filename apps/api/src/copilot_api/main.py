@@ -38,6 +38,7 @@ from copilot_api.routes import (
     resumes,
     seats,
     sessions,
+    sync,
 )
 from copilot_api.tokens import TokenService
 from copilot_core import __version__, logs, versions
@@ -216,6 +217,7 @@ def create_app(services: Services | None = None) -> FastAPI:
         ask,
         personal_ai,
         practice,
+        sync,
     ):
         app.include_router(module.router, prefix="/v1", dependencies=[Depends(require_link)])
     return app

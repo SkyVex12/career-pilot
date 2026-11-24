@@ -8,18 +8,19 @@ and comes back if they are linked again). When Career-OS cannot be reached, the 
 so far are listed.
 """
 
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from copilot_api.data_cache import DataCacheRoute
 from copilot_api.deps import AccountDep, SvcDep, UserDep
 from copilot_api.routes.career_os import PROVIDER, kind_of, obj, token_of, user_out
 from copilot_core import profiles
 from copilot_core.careeros import CareerOsError
 from copilot_core.languages import CALL_LANGUAGES, recognition_supported, validate_language
 
-router = APIRouter()
+router = APIRouter(route_class=DataCacheRoute)
 
 
 class CallPreference(BaseModel):
@@ -75,7 +76,27 @@ async def save_call_preferences(body: CallPreference, svc: SvcDep, user: UserDep
 
 
 @router.get("/profiles")
-async def list_profiles(svc: SvcDep, account: AccountDep) -> dict[str, Any]:
+async def list_profiles(
+    svc: SvcDep,
+    account: AccountDep,
+    response: Response,
+    x_copilot_profile: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    result = await _list_profiles(svc, account)
+    # Discovery can establish a shared workspace. Bind the requested selection after
+    # those writes, but still return the chooser if that selection no longer exists.
+    response.headers["X-Copilot-Account"] = str(account.user_id)
+    try:
+        canonical = await profiles.resolve(svc.pool, account, x_copilot_profile)
+    except profiles.ProfileError:
+        pass
+    else:
+        response.headers["X-Copilot-Workspace"] = str(canonical.user_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return result
+
+
+async def _list_profiles(svc: SvcDep, account: AccountDep) -> dict[str, Any]:
     async with svc.tx(account) as conn:
         link = await conn.fetchrow(
             "select status, external_id, external_kind from app.integrations where provider = $1",

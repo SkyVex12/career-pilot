@@ -15,6 +15,10 @@ export const ROUNDS = [
 ] as const;
 export type Stage = (typeof STAGES)[number]["value"];
 export type ResumeKind = "base" | "tailored";
+export type PackState = {
+  available: boolean;
+  operation_state: "queued" | "running" | "succeeded" | "failed" | "idle";
+};
 export type ResumeStatus = "saved" | "extracting" | "extracted" | "failed";
 export type ResumeChoice = {
   id: string;
@@ -40,7 +44,7 @@ export type Application = {
   resume:
     (Omit<ResumeChoice, "id"> & { version_id: string; manual: boolean }) | null;
   versions: ResumeChoice[];
-  pack: { available: boolean } | null;
+  pack: PackState | null;
 };
 export type Resume = ResumeChoice & {
   source: string;
@@ -55,7 +59,7 @@ export type Interview = {
   job_id: string;
   round: string;
   starts_at: string;
-  pack: { available: boolean } | null;
+  pack: PackState | null;
 };
 export type ApplicationFields = {
   company: string;
@@ -91,7 +95,23 @@ function pack(value: unknown) {
   const r = record(value);
   if (typeof r.available !== "boolean")
     throw new Error("Invalid interview preparation status.");
-  return { available: r.available };
+  const state = r.operation_state ?? "idle";
+  if (
+    !["queued", "running", "succeeded", "failed", "idle"].includes(
+      String(state),
+    )
+  )
+    throw new Error("Invalid preparation operation state.");
+  return {
+    available: r.available,
+    operation_state: state as PackState["operation_state"],
+  };
+}
+export function preparationPending(value: { pack: PackState | null }): boolean {
+  return (
+    value.pack?.operation_state === "queued" ||
+    value.pack?.operation_state === "running"
+  );
 }
 export function parseResumeChoice(value: unknown): ResumeChoice {
   const r = record(value);

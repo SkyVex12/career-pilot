@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { request as api } from "./api";
 import { Badge, Banner, Button, Card, Checkbox, ConfirmDialog, Field, Select, SkeletonList, Textarea } from "./ui";
 import { Icon } from "./ui/Icon";
 
@@ -13,7 +14,6 @@ type Preparation = {
   linked_session_id?: string | null; unfinished_actions?: string[];
 };
 type PreparationResponse = { items: Preparation[]; connections: { connection_id: string; provider: string }[]; applications?: Application[]; saved_sessions?: SavedSession[] };
-const api = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 
 export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, applicationId: string | null) => void }) {
   const [open, setOpen] = useState(false), [connections, setConnections] = useState<Connection[]>([]);
@@ -24,11 +24,11 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
   const [disconnect, setDisconnect] = useState<Connection | null>(null);
   const revision = useRef(0), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; revision.current++; }; }, []);
-  const reload = async () => {
+  const reload = async (refresh = false) => {
     const ticket = ++revision.current;
     setLoading(true); setError(null);
     try {
-      const [calendars, meetings] = await Promise.all([api<{ items: Connection[] }>("GET", "/calendars"), api<PreparationResponse>("GET", "/meeting-preparation")]);
+      const [calendars, meetings] = await Promise.all([api<{ items: Connection[] }>("GET", "/calendars", undefined, { refresh }), api<PreparationResponse>("GET", "/meeting-preparation", undefined, { refresh })]);
       if (!alive.current || ticket !== revision.current) return false;
       setConnections(calendars.items); setPreparation(meetings); setLoaded(true);
       return true;
@@ -38,7 +38,7 @@ export function MeetingPreparation({ onChoose }: { onChoose?: (title: string, ap
   useEffect(() => { if (open) void reload(); }, [open]);
   const run = async (operation: () => Promise<void>) => {
     setBusy(true); setError(null); setNotice(null);
-    try { await operation(); if (alive.current) await reload(); }
+    try { await operation(); if (alive.current) await reload(true); }
     catch (e) { if (alive.current) setError(String(e)); }
     finally { if (alive.current) setBusy(false); }
   };

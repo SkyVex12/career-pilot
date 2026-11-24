@@ -1,7 +1,8 @@
 // Calls in words, and the profile's calls still running elsewhere ("Live now"), shared by the
 // Call screen and History.
 import { useCallback, useContext, useEffect, useState } from "react";
-import { api, rest, type LiveSession, type SessionItem } from "./api";
+import { api, rest, POLL_READ, type LiveSession, type SessionItem } from "./api";
+import { useDataActivity, usePolling } from "./usePolling";
 import { when } from "./shared";
 import { ProfileContext } from "./profiles";
 import { Banner, Button, ConfirmDialog, type Tone } from "./ui";
@@ -39,6 +40,7 @@ export function LiveNow({
   onEnded?: () => void;
 }) {
   const { current } = useContext(ProfileContext);
+  const active = useDataActivity();
   const [live, setLive] = useState<LiveSession[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -46,16 +48,16 @@ export function LiveNow({
 
   const load = useCallback(async () => {
     try {
-      setLive((await rest.liveSessions()).sessions);
+      setLive((await rest.liveSessions(POLL_READ)).sessions);
     } catch {
       setLive([]); // an older server: no list
+      return false;
     }
   }, []);
   useEffect(() => {
-    load();
-    const t = window.setInterval(load, 10_000);
-    return () => window.clearInterval(t);
-  }, [load]);
+    if (active) void load();
+  }, [load, active]);
+  usePolling(load, 10_000, active, { timeoutMs: Infinity });
 
   if (live.length === 0) return message ? <Banner tone="success">{message}</Banner> : null;
 

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { PageHeadingActive } from "./ui/Layout";
-import { invoke } from "@tauri-apps/api/core";
+import { request, POLL_READ } from "./api";
+import { usePolling } from "./usePolling";
 import { Banner, Button, Card, ConfirmDialog, Field, Input, Select, SkeletonList, Spinner, Textarea } from "./ui";
 import { Icon } from "./ui/Icon";
 import "./feature-pages.css";
@@ -10,7 +11,6 @@ export function openAsk(scope: AskScope) { window.dispatchEvent(new CustomEvent(
 type Source = { id: string; kind: string; label: string; date?: string; start_ms?: number; target_id?: string };
 type Message = { id: string; request_id: string; question: string; answer: string; status: "pending" | "done" | "failed" | "cancelled"; sources: Source[]; error?: string };
 type Conversation = { id: string; title: string; scope: AskScope; messages?: Message[]; retrieval_notice?: string; retention_notice?: string };
-const request = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 const base = "/ask/conversations";
 const SavedCall = lazy(() => import("./SessionDetail").then(m => ({ default: m.SessionDetail })));
 const scopeLabels: Record<AskScope["kind"], string> = { auto: "This profile", all: "All available context", general: "General knowledge", company: "Company", application: "Application", document: "Document", call: "Saved call" };
@@ -42,22 +42,21 @@ export function Ask({ active = true, entry }: { active?: boolean; entry?: AskEnt
   useEffect(() => { alive.current = true; void reload().catch(e => setError(String(e))); return () => { alive.current = false; generation.current++; sourceGeneration.current++; for (const m of currentRef.current?.messages ?? []) if (m.status === "pending") void request("POST", `${base}/${currentRef.current!.id}/messages/${m.id}/cancel`).catch(() => {}); }; }, []);
   useEffect(() => { if (entry) { invalidate(); drafts.current.set(current?.id ?? "new", draft); setCurrent(null); setScope(entry.scope); setDraft(""); setSource(null); setPendingRequest(null); } }, [entry?.n]);
   const pending = current?.messages?.some(m => m.status === "pending");
-  useEffect(() => {
-    if (!active || !current?.id || !pending) return;
-    const ticket = generation.current; let stopped = false, timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const value = await request<Conversation>("GET", `${base}/${current.id}`);
-        if (!stopped && valid(ticket)) { setCurrent(value); setUpdateError(null); }
-      } catch (e) {
-        if (!stopped && valid(ticket)) setUpdateError(`Your question is saved. Reconnecting to the answer… ${String(e)}`);
-      } finally {
-        if (!stopped && valid(ticket)) timer = setTimeout(() => void poll(), 1000);
-      }
-    };
-    void poll();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [active, current?.id, pending]);
+  usePolling(async () => {
+    const conversation = currentRef.current;
+    if (!conversation) return;
+    const ticket = generation.current;
+    try {
+      const messages = await Promise.all((conversation.messages ?? []).filter(m => m.status === "pending").map(m =>
+        request<Message>("GET", `${base}/${conversation.id}/messages/${m.id}`, undefined, POLL_READ)));
+      if (!valid(ticket)) return;
+      setCurrent(previous => previous?.id === conversation.id ? { ...previous, messages: previous.messages?.map(m => messages.find(next => next.id === m.id) ?? m) } : previous);
+      setUpdateError(null);
+    } catch (e) {
+      if (valid(ticket)) setUpdateError(`Your question is saved. Reconnecting to the answer… ${String(e)}`);
+      return false;
+    }
+  }, 1000, active && !!pending, { immediate: true, key: `${current?.id}/${current?.messages?.filter(m => m.status === "pending").map(m => m.id).join(",")}`, onTimeout: () => setUpdateError("Your question is saved. Automatic checks paused; reopen the conversation to check the answer.") });
   useEffect(() => {
     let stopped = false; setOptions([]);
     if (!["auto", "all", "general"].includes(scope.kind)) request<{ options: { id: string; label: string }[] }>("GET", `/ask/context-options?kind=${scope.kind}`).then(data => {

@@ -200,7 +200,7 @@ test("refresh completing after local signout cannot restore credentials", async 
   assert.equal(memory.get(), null);
 });
 
-test("a request keeps its original profile while token refresh is pending", async () => {
+test("switching profile cancels a cached read while token refresh is pending", async () => {
   let finish!: (v: Response) => void;
   const calls: RequestInit[] = [];
   const memory = store({ ...tokens, expires_at: 1 });
@@ -215,13 +215,11 @@ test("a request keeps its original profile while token refresh is pending", asyn
   await api.restore();
   api.profile = "old-profile";
   const waiting = api.request("/sessions");
+  const rejected = assert.rejects(waiting, { name: "AbortError" });
   api.profile = "new-profile";
   finish(new Response(JSON.stringify(tokens)));
-  await waiting;
-  assert.equal(
-    (calls[0].headers as Record<string, string>)["x-copilot-profile"],
-    "old-profile",
-  );
+  await rejected;
+  assert.equal(calls.length, 0);
 });
 
 import { RequestScope } from "../src/requestScope.ts";

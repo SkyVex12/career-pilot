@@ -291,6 +291,10 @@ class Consumer:
             return
         if claim == "done":
             log.info("%s already done; deleting the duplicate", job.idempotency_key)
+            if job.type == "pack.build":
+                from copilot_core import pack_operations
+
+                await pack_operations.finished(self.ctx.valkey, job.uid, job.idempotency_key, True)
             await self.queue.delete(message.receipt)
             return
         if claim == "busy":

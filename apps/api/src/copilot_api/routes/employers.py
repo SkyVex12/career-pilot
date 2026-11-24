@@ -25,6 +25,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from copilot_api.data_cache import DataCacheRoute, resource_revision, revision
 from copilot_api.deps import Services, SvcDep, UserDep
 from copilot_core import jobs, keys, knowledge
 from copilot_core.auth import Principal
@@ -35,7 +36,7 @@ from copilot_core.storage import company_document_key
 from copilot_core.valkey_client import text
 from copilot_core.workplace import WORKPLACE_KINDS, local_today, memory_version
 
-router = APIRouter()
+router = APIRouter(route_class=DataCacheRoute)
 
 CONTENT_TYPES = ("application/pdf", "text/plain", "text/markdown")
 # Engineering context reads text only for now; a work log's attachment may still be a PDF.
@@ -67,6 +68,7 @@ class EmployerPatch(BaseModel):
 class LogIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=MAX_LOG_CHARS)
+    expected_revision: int | None = Field(default=None, ge=-1)
 
 
 class NodePatch(BaseModel):
@@ -116,10 +118,10 @@ def _employer(row: Any) -> dict[str, Any]:
     }
 
 
-async def _require_employer(conn: Conn, employer_id: UUID) -> Any:
+async def _require_employer(conn: Conn, employer_id: UUID, *, write: bool = False) -> Any:
     row = await conn.fetchrow(
         "select id, name, title, team, started_on, ended_on, status, created_at"
-        " from app.employers where id = $1",
+        " from app.employers where id = $1" + (" for no key update" if write else ""),
         employer_id,
     )
     if row is None:
@@ -361,16 +363,23 @@ async def delete_employer(
 
 
 async def _log_entry(
-    svc: Services, conn: Conn, user: Principal, row: Any, with_items: bool = True
+    svc: Services,
+    conn: Conn,
+    user: Principal,
+    row: Any,
+    with_items: bool = True,
+    files: list[Any] | None = None,
+    items: list[Any] | None = None,
 ) -> dict[str, Any]:
     log_text = await svc.crypto.decrypt(
         conn, user.user_id, "work_logs", str(row["id"]), row["text_enc"], row["key_version"]
     )
-    files = await conn.fetch(
-        "select id, name_enc, key_version, content_type, size_bytes, status"
-        " from app.company_documents where work_log_id = $1 order by id",
-        row["id"],
-    )
+    if files is None:
+        files = await conn.fetch(
+            "select id, name_enc, key_version, content_type, size_bytes, status"
+            " from app.company_documents where work_log_id = $1 order by id",
+            row["id"],
+        )
     attachments = [
         {
             "id": str(f["id"]),
@@ -387,18 +396,25 @@ async def _log_entry(
         "status": row["status"],
         "attachments": attachments,
         "updated_at": _iso(row["updated_at"]),
+        "revision": row["revision"],
     }
     if with_items:
-        items = await conn.fetch(
-            f"select {NODE_COLUMNS} from app.memory_nodes where source->>'type' = 'worklog'"
-            " and source->>'ref' = $1 and status = 'active' order by kind, id",
-            str(row["id"]),
-        )
+        if items is None:
+            items = await conn.fetch(
+                f"select {NODE_COLUMNS} from app.memory_nodes where source->>'type' = 'worklog'"
+                " and source->>'ref' = $1 and status = 'active' order by kind, id",
+                str(row["id"]),
+            )
         entry["items"] = [_node(i) for i in items]
     return entry
 
 
-LOG_COLUMNS = "id, day, text_enc, key_version, content_sha256, status, updated_at"
+LOG_COLUMNS = (
+    "id, day, text_enc, key_version, content_sha256, status, updated_at,"
+    " coalesce((select revision from app.data_changes dc where dc.user_id=work_logs.user_id"
+    " and dc.domain='work' and dc.resource='work_logs' and dc.resource_id=work_logs.id::text),0)"
+    " as revision"
+)
 
 
 @router.get("/employers/{employer_id}/logs")
@@ -419,10 +435,57 @@ async def list_logs(
             before,
             limit,
         )
-        entries = [await _log_entry(svc, conn, user, r) for r in rows]
+        ids = [r["id"] for r in rows]
+        files: dict[UUID, list[Any]] = {rid: [] for rid in ids}
+        items: dict[str, list[Any]] = {str(rid): [] for rid in ids}
+        if ids:
+            for file in await conn.fetch(
+                "select id,work_log_id,name_enc,key_version,content_type,size_bytes,status"
+                " from app.company_documents where work_log_id=any($1::uuid[]) order by id",
+                ids,
+            ):
+                files[file["work_log_id"]].append(file)
+            for item in await conn.fetch(
+                f"select {NODE_COLUMNS},source->>'ref' as log_ref from app.memory_nodes"
+                " where source->>'type'='worklog' and source->>'ref'=any($1::text[])"
+                " and status='active' order by kind,id",
+                [str(rid) for rid in ids],
+            ):
+                items[item["log_ref"]].append(item)
+        entries = [
+            await _log_entry(svc, conn, user, r, files=files[r["id"]], items=items[str(r["id"])])
+            for r in rows
+        ]
     return {
         "logs": entries,
         "next_before": entries[-1]["day"] if len(entries) == limit else None,
+    }
+
+
+@router.get("/employers/{employer_id}/status")
+async def employer_status(
+    employer_id: UUID,
+    svc: SvcDep,
+    user: UserDep,
+    response: Response,
+) -> dict[str, Any]:
+    """Small progress response; no log text, file names, facts or pack bodies."""
+    response.headers["Cache-Control"] = "private, no-store"
+    async with svc.tx(user) as conn:
+        await _require_employer(conn, employer_id)
+        rev = await revision(conn, user.user_id, "work")
+        logs = await conn.fetch(
+            "select id,status from app.work_logs where employer_id=$1", employer_id
+        )
+        documents = await conn.fetch(
+            "select id,status from app.company_documents where employer_id=$1", employer_id
+        )
+    return {
+        "revision": rev,
+        "work_logs": [{"id": str(r["id"]), "status": r["status"]} for r in logs],
+        "documents": [{"id": str(r["id"]), "status": r["status"]} for r in documents],
+        "pending": any(r["status"] in ("saved", "extracting") for r in logs)
+        or any(r["status"] in ("uploaded", "ingesting") for r in documents),
     }
 
 
@@ -465,7 +528,9 @@ async def put_log(
     if not log_text:
         raise HTTPException(422, "the log is empty; delete it instead")
     async with svc.tx(user) as conn:
-        await _require_employer(conn, employer_id)
+        # A missing day has no row to lock. Serialize creation on its company so
+        # concurrent devices get a conflict instead of a unique-key failure.
+        await _require_employer(conn, employer_id, write=True)
         row = await conn.fetchrow(
             "select id, content_sha256, status from app.work_logs where employer_id = $1"
             " and day = $2 for update",
@@ -473,6 +538,18 @@ async def put_log(
             day,
         )
         log_id: UUID = row["id"] if row is not None else uuid7()
+        if body.expected_revision is not None:
+            rev = (
+                await resource_revision(conn, user.user_id, "work", "work_logs", str(log_id))
+                if row is not None
+                else -1
+            )
+            if rev != body.expected_revision:
+                raise HTTPException(
+                    409,
+                    "This work log changed on another device; reload before saving. "
+                    "Your draft was not saved.",
+                )
         shas = await _attachment_shas(conn, log_id) if row is not None else []
         sha = content_sha(log_text, shas)
         changed = row is None or row["content_sha256"] != sha

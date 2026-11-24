@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from copilot_api.deps import AccountDep, Services, SvcDep, UserDep, require_link
@@ -206,6 +206,28 @@ async def patch_conversation(
             body.scope.model_dump_json() if body.scope else None,
         )
     return conversation(row)
+
+
+@router.get("/conversations/{cid}/messages/{mid}")
+async def get_message(
+    cid: UUID,
+    mid: UUID,
+    svc: SvcDep,
+    user: UserDep,
+    account: AccountDep,
+    response: Response,
+) -> dict[str, Any]:
+    """Poll one operation without reopening every previous encrypted answer."""
+    response.headers["Cache-Control"] = "private, no-store"
+    async with svc.tx(account) as conn:
+        await require_conversation(conn, cid, user.user_id)
+        await expire(conn, cid)
+        row = await conn.fetchrow(
+            "select * from app.ask_messages where id=$1 and conversation_id=$2", mid, cid
+        )
+        if row is None:
+            raise HTTPException(404, "no such message")
+        return await message(conn, svc, account, row)
 
 
 @router.delete("/conversations/{cid}", status_code=204)

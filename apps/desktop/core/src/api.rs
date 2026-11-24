@@ -12,7 +12,7 @@
 //! an app older than the server supports gets `426` and [`ApiError::Outdated`].
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use reqwest::{Method, StatusCode};
@@ -28,6 +28,30 @@ const JSON_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLIENT_HEADER: &str = "x-copilot-client";
 /// The profile a request acts for (ARCHITECTURE.md, "Profiles"); absent for the account.
 pub const PROFILE_HEADER: &str = "x-copilot-profile";
+
+/// Header metadata is retained for the native repository; webviews still receive JSON.
+#[derive(Debug, Clone, Default)]
+pub struct ReadResponse {
+    pub value: Option<Value>,
+    pub etag: Option<String>,
+    pub cache_control: String,
+    pub account: Option<String>,
+    pub workspace: Option<String>,
+}
+
+fn transport() -> Result<reqwest::Client, ApiError> {
+    // Credentials and profile headers are applied to requests, never to this shared pool.
+    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(http) = HTTP.get() {
+        return Ok(http.clone());
+    }
+    let http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| ApiError::Invalid(e.to_string()))?;
+    let _ = HTTP.set(http);
+    Ok(HTTP.get().expect("transport was initialized").clone())
+}
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ApiError {
@@ -106,10 +130,7 @@ impl ApiClient {
         if !(base.starts_with("http://") || base.starts_with("https://")) {
             return Err(ApiError::Invalid("the API URL needs http:// or https://".into()));
         }
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| ApiError::Invalid(e.to_string()))?;
+        let http = transport()?;
         Ok(Self { base, http, tokens, client: None, profile: None })
     }
 
@@ -216,6 +237,41 @@ impl ApiClient {
         self.request(Method::GET, path, None).await
     }
 
+    /// A conditional read. `value: None` means a 304, never an empty JSON response.
+    pub async fn get_conditional(&self, path: &str, etag: Option<&str>) -> Result<ReadResponse, ApiError> {
+        check_path(path)?;
+        let url = format!("{}{path}", self.base);
+        for attempt in 0..2 {
+            let mut req = self
+                .named(self.http.get(&url))
+                .bearer_auth(self.token(attempt > 0).await?)
+                .timeout(JSON_TIMEOUT);
+            if let Some(tag) = etag {
+                req = req.header(reqwest::header::IF_NONE_MATCH, tag);
+            }
+            let response = req.send().await.map_err(|e| ApiError::Network(network_detail(&self.base, &e)))?;
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                continue;
+            }
+            let header =
+                |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let mut read = ReadResponse {
+                value: None,
+                etag: header("etag"),
+                cache_control: header("cache-control").unwrap_or_default(),
+                account: header("x-copilot-account"),
+                workspace: header("x-copilot-workspace"),
+            };
+            if status != StatusCode::NOT_MODIFIED {
+                let text = response.text().await.map_err(|e| ApiError::Network(e.to_string()))?;
+                read.value = Some(parse_response(status, &text)?);
+            }
+            return Ok(read);
+        }
+        Err(ApiError::Unauthorized)
+    }
+
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
         self.request(Method::POST, path, Some(body)).await
     }
@@ -300,7 +356,7 @@ impl ApiClient {
 
 const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-fn check_path(path: &str) -> Result<(), ApiError> {
+pub(crate) fn check_path(path: &str) -> Result<(), ApiError> {
     if !path.starts_with('/') || path.contains("://") || path.contains("..") {
         return Err(ApiError::Invalid(format!("bad API path {path:?}")));
     }
@@ -422,5 +478,47 @@ mod tests {
         let tokens = Arc::new(crate::auth::StaticTokens::one("t"));
         assert!(ApiClient::new("ws://x/v1", tokens.clone()).is_err());
         assert_eq!(ApiClient::new("http://x/v1/ ", tokens).unwrap().base_url(), "http://x/v1");
+    }
+
+    #[tokio::test]
+    async fn conditional_reads_keep_auth_scope_and_accept_bodyless_304() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for status in [401, 304] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = vec![0; 8192];
+                let mut used = 0;
+                loop {
+                    let n = socket.read(&mut bytes[used..]).await.unwrap();
+                    assert!(n > 0);
+                    used += n;
+                    if bytes[..used].windows(4).any(|b| b == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&bytes[..used]).to_ascii_lowercase();
+                assert!(request.starts_with("get /v1/sessions/id/transcript "));
+                assert!(request.contains("authorization: bearer test-token"));
+                assert!(request.contains("x-copilot-profile: selected"));
+                assert!(request.contains("x-copilot-client: desktop-test"));
+                assert!(request.contains("if-none-match: \"v1\""));
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\nETag: \"v1\"\r\nCache-Control: private, max-age=30\r\nX-Copilot-Account: account\r\nX-Copilot-Workspace: canonical\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let api = ApiClient::new(&url, Arc::new(crate::auth::StaticTokens::one("test-token")))
+            .unwrap()
+            .with_profile(Some("selected".into()))
+            .with_client("desktop-test");
+        let read = api.get_conditional("/sessions/id/transcript", Some("\"v1\"")).await.unwrap();
+        assert!(read.value.is_none());
+        assert_eq!(read.etag.as_deref(), Some("\"v1\""));
+        assert_eq!(read.workspace.as_deref(), Some("canonical"));
+        assert_eq!(read.account.as_deref(), Some("account"));
+        server.await.unwrap();
     }
 }

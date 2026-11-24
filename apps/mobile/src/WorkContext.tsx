@@ -90,10 +90,11 @@ export function WorkContext({
       ],
     );
   }
-  async function refresh() {
-    const result = await work.read(async (request) =>
-      parseEmployers(await request("/employers")),
-    );
+  async function refresh(fresh = false) {
+    const result = await work.read(async (request, signal) => {
+      await api.syncDomain("work", signal, fresh);
+      return parseEmployers(await request("/employers"));
+    }, fresh);
     if (result) setCompanies(result);
   }
   useEffect(() => {
@@ -126,7 +127,7 @@ export function WorkContext({
             label="Refresh companies"
             icon="refresh"
             disabled={work.loading}
-            onPress={() => void refresh()}
+            onPress={() => void refresh(true)}
           />
         }
       />
@@ -347,8 +348,10 @@ function CompanyWorkspace({
     [docText, setDocText] = useState(""),
     [confirmName, setConfirmName] = useState("");
   const [message, setMessage] = useState("");
+  const [conflictLog, setConflictLog] = useState<WorkLog | null>(null);
   const [formState, setFormState] = useState({ dirty: false, busy: false });
   const drafts = useRef(new Map<string, string>()),
+    draftRevisions = useRef(new Map<string, number | undefined>()),
     initial = useRef(true);
   const savedLog = logs.find((log) => log.day === day);
   const editor = useRef({
@@ -364,9 +367,30 @@ function CompanyWorkspace({
     !!docName ||
     !!docText ||
     !!editing;
-  async function refresh(more = false) {
+  async function refresh(more = false, fresh = false) {
+    if (more) {
+      const page = await work.read(async (request) =>
+        parseLogs(
+          await request(
+            `${base}/logs${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+          ),
+        ),
+      );
+      if (page) {
+        setLogs((old) =>
+          [
+            ...new Map(
+              [...old, ...page.logs].map((log) => [log.day, log]),
+            ).values(),
+          ].sort((a, b) => b.day.localeCompare(a.day)),
+        );
+        setBefore(page.next);
+      }
+      return;
+    }
     const baseline = savedLog?.text ?? "";
-    const result = await work.read(async (request) => {
+    const result = await work.read(async (request, signal) => {
+      await api.syncDomain("work", signal, fresh);
       const [
         rawLogs,
         rawDocs,
@@ -375,9 +399,7 @@ function CompanyWorkspace({
         activeLog,
         activeDocument,
       ] = await Promise.all([
-        request(
-          `${base}/logs${more && before ? `?before=${encodeURIComponent(before)}` : ""}`,
-        ),
+        request(`${base}/logs`),
         request(`${base}/documents`),
         request(`${base}/memory`),
         request(`/proposals?employer_id=${encodeURIComponent(company.id)}`),
@@ -404,16 +426,12 @@ function CompanyWorkspace({
         memory: list(record(rawMemory).memory, parseMemory),
         proposals: list(record(rawProposals).proposals, parseProposal),
       };
-    });
+    }, fresh);
     if (!result) return;
     setLogs((old) =>
       [
         ...new Map(
-          [
-            ...(more ? old : []),
-            ...result.logs,
-            ...(result.activeLog ? [result.activeLog] : []),
-          ]
+          [...result.logs, ...(result.activeLog ? [result.activeLog] : [])]
             .filter((log) => log.day !== day || result.activeLog)
             .map((log) => [log.day, log]),
         ).values(),
@@ -438,16 +456,125 @@ function CompanyWorkspace({
     documents.some((doc) =>
       ["ingesting", "indexing", "pending"].includes(doc.status),
     );
+  const pollStarted = useRef(0),
+    pollFailures = useRef(0);
+  async function refreshProcessing() {
+    const result = await work.read(async (request) => {
+      const status = record(await request(`${base}/status`));
+      const states = (value: unknown) =>
+        list(value, (item) => {
+          const state = record(item);
+          if (typeof state.id !== "string" || typeof state.status !== "string")
+            throw new Error("Invalid processing status.");
+          return { id: state.id, status: state.status };
+        });
+      const logStates = states(status.work_logs),
+        docStates = states(status.documents);
+      const changedLogs = logs.filter((log) =>
+        logStates.some(
+          (state) => state.id === log.id && state.status !== log.status,
+        ),
+      );
+      const docsChanged = documents.some((doc) =>
+        docStates.some(
+          (state) => state.id === doc.id && state.status !== doc.status,
+        ),
+      );
+      if (!changedLogs.length && !docsChanged)
+        return {
+          changedLogs: [] as WorkLog[],
+          documents: null,
+          memory: null,
+          proposals: null,
+          activeDocument: null,
+        };
+      const [changed, rawDocs, rawMemory, rawProposals, activeDocument] =
+        await Promise.all([
+          Promise.all(
+            changedLogs.map((log) =>
+              request(
+                `${base}/logs/${log.day}`,
+                undefined,
+                "GET",
+                "reload",
+              ).then(parseLog),
+            ),
+          ),
+          docsChanged
+            ? request(`${base}/documents`, undefined, "GET", "reload")
+            : null,
+          request(`${base}/memory`, undefined, "GET", "reload"),
+          request(
+            `/proposals?employer_id=${encodeURIComponent(company.id)}`,
+            undefined,
+            "GET",
+            "reload",
+          ),
+          docsChanged && document
+            ? request(
+                `${base}/documents/${encodeURIComponent(document.id)}`,
+                undefined,
+                "GET",
+                "reload",
+              ).then(parseDocument)
+            : null,
+        ]);
+      return {
+        changedLogs: changed,
+        documents: rawDocs
+          ? list(record(rawDocs).documents, parseWorkFile)
+          : null,
+        memory: list(record(rawMemory).memory, parseMemory),
+        proposals: list(record(rawProposals).proposals, parseProposal),
+        activeDocument,
+      };
+    });
+    if (!result) {
+      pollFailures.current++;
+      return;
+    }
+    pollFailures.current = 0;
+    if (result.changedLogs.length) {
+      setLogs((old) =>
+        old.map(
+          (log) =>
+            result.changedLogs.find((changed) => changed.id === log.id) ?? log,
+        ),
+      );
+      const active = result.changedLogs.find(
+        (log) => log.day === editor.current.day,
+      );
+      if (active)
+        setLogText((value) =>
+          value === editor.current.savedText ? active.text : value,
+        );
+    }
+    if (result.documents) setDocuments(result.documents);
+    if (result.memory) setMemory(result.memory);
+    if (result.proposals) setProposals(result.proposals);
+    if (result.activeDocument)
+      setDocument((old) =>
+        old?.id === result.activeDocument!.id ? result.activeDocument : old,
+      );
+  }
   useEffect(() => {
     if (visible && work.foreground) void refresh();
     else work.cancelRead();
   }, [api, visible, work.foreground]);
   useEffect(() => {
-    if (!visible || !work.foreground || !processing) return;
-    const timer = setInterval(() => {
-      if (!work.busy && !work.loading) void refresh();
-    }, 5000);
-    return () => clearInterval(timer);
+    if (!processing) {
+      pollStarted.current = 0;
+      pollFailures.current = 0;
+      return;
+    }
+    if (!visible || !work.foreground || work.busy || work.loading) return;
+    if (!pollStarted.current) pollStarted.current = Date.now();
+    if (Date.now() - pollStarted.current > 5 * 60_000) return;
+    const timer = setTimeout(
+      () => void refreshProcessing(),
+      Math.min(30_000, 5000 * 2 ** Math.min(pollFailures.current, 3)),
+    );
+    return () => clearTimeout(timer);
   }, [
     visible,
     work.foreground,
@@ -479,13 +606,17 @@ function CompanyWorkspace({
     const latest = editor.current;
     if (latest.text !== latest.savedText)
       drafts.current.set(latest.day, latest.text);
-    else drafts.current.delete(latest.day);
+    else {
+      drafts.current.delete(latest.day);
+      draftRevisions.current.delete(latest.day);
+    }
     const text = drafts.current.get(nextDay) ?? entry?.text ?? "";
     drafts.current.delete(nextDay);
     setDay(nextDay);
     setDateInput(nextDay);
     setLogText(text);
     setMessage("");
+    setConflictLog(null);
   }
   async function openDay() {
     if (!validDay(dateInput)) {
@@ -512,12 +643,41 @@ function CompanyWorkspace({
     }
   }
   async function saveLog() {
+    const expected = draftRevisions.current.has(day)
+      ? draftRevisions.current.get(day)
+      : savedLog
+        ? savedLog.revision
+        : -1;
     const result = await work.mutate(async (request) => {
       if (!validDay(day) || !logText.trim() || logText.length > 50000)
         throw new Error("Choose a valid day and enter 1–50,000 characters.");
-      return parseLog(
-        await request(`${base}/logs/${day}`, { text: logText }, "PUT"),
-      );
+      try {
+        return parseLog(
+          await request(
+            `${base}/logs/${day}`,
+            {
+              text: logText,
+              ...(expected !== undefined
+                ? { expected_revision: expected }
+                : {}),
+            },
+            "PUT",
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          const latest = await request(
+            `${base}/logs/${day}`,
+            undefined,
+            "GET",
+            "reload",
+          )
+            .then(parseLog)
+            .catch(() => null);
+          if (latest) setConflictLog(latest);
+        }
+        throw error;
+      }
     });
     if (result) {
       setLogs((old) => [
@@ -526,6 +686,8 @@ function CompanyWorkspace({
       ]);
       setLogText(result.value.text);
       drafts.current.delete(result.value.day);
+      draftRevisions.current.delete(result.value.day);
+      setConflictLog(null);
       setMessage("Work log saved.");
     }
   }
@@ -618,7 +780,10 @@ function CompanyWorkspace({
               label="Refresh company context"
               icon="refresh"
               disabled={work.loading || work.busy}
-              onPress={() => void refresh()}
+              onPress={() => {
+                pollStarted.current = 0;
+                void refresh(false, true);
+              }}
             />
           }
         />
@@ -671,12 +836,63 @@ function CompanyWorkspace({
                 accessibilityLabel="Work log"
                 placeholder="What did you work on? Decisions, progress, blockers and next steps…"
                 value={logText}
-                onChangeText={setLogText}
+                onChangeText={(value) => {
+                  if (!draftRevisions.current.has(day))
+                    draftRevisions.current.set(
+                      day,
+                      savedLog ? savedLog.revision : -1,
+                    );
+                  if (value === (savedLog?.text ?? ""))
+                    draftRevisions.current.delete(day);
+                  setLogText(value);
+                }}
                 multiline
                 maxLength={50000}
                 style={{ minHeight: 160 }}
               />
               {savedLog ? <Badge label={savedLog.status} /> : null}
+              {conflictLog?.day === day ? (
+                <Card subtle>
+                  <Txt style={strong}>This log changed on another device</Txt>
+                  <Txt>
+                    Your draft is preserved above. Review the latest saved text
+                    before choosing which version to keep.
+                  </Txt>
+                  <Txt selectable>{conflictLog.text}</Txt>
+                  <Row>
+                    <Button
+                      label="Use saved text"
+                      secondary
+                      compact
+                      onPress={() => {
+                        setLogText(conflictLog.text);
+                        setLogs((old) => [
+                          conflictLog,
+                          ...old.filter((log) => log.day !== day),
+                        ]);
+                        drafts.current.delete(day);
+                        draftRevisions.current.delete(day);
+                        setConflictLog(null);
+                        work.setError("");
+                      }}
+                    />
+                    <Button
+                      label="Keep my draft"
+                      secondary
+                      compact
+                      onPress={() => {
+                        draftRevisions.current.set(day, conflictLog.revision);
+                        setLogs((old) => [
+                          conflictLog,
+                          ...old.filter((log) => log.day !== day),
+                        ]);
+                        setConflictLog(null);
+                        work.setError("");
+                      }}
+                    />
+                  </Row>
+                </Card>
+              ) : null}
               <Row>
                 <Button
                   label={
@@ -686,7 +902,9 @@ function CompanyWorkspace({
                   }
                   compact
                   loading={work.busy}
-                  disabled={work.busy || !logText.trim()}
+                  disabled={
+                    work.busy || !logText.trim() || conflictLog?.day === day
+                  }
                   onPress={() => void saveLog()}
                 />
                 {savedLog ? (
@@ -725,6 +943,8 @@ function CompanyWorkspace({
                                 );
                                 setLogText("");
                                 drafts.current.delete(day);
+                                draftRevisions.current.delete(day);
+                                setConflictLog(null);
                                 void refresh();
                               }
                             }),

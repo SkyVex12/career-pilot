@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { request, POLL_READ } from "./api";
+import { usePolling } from "./usePolling";
 import { Badge, Banner, Button, Card, ConfirmDialog, Field, Input, Select, SkeletonList, Spinner, Textarea } from "./ui";
 import "./feature-pages.css";
 import { PracticeAudio, audioBase64, registerPracticePause } from "./practiceAudio";
@@ -8,7 +9,6 @@ export const openPractice = (entry: Omit<PracticeEntry, "n">) => window.dispatch
 type Feedback = { rubric_version: string; dimensions: Record<string, number | { score: number; reason?: string }>; strengths: string[]; improvements: string[]; excerpts: string[]; uncertainty: string[]; suggested_wording: string };
 type Question = { id: string; text: string; kind: string; source?: { id: string; kind: string; label?: string; start_ms?: number }; hint?: string; sample?: string; saved_for_later: boolean; assistance: string[]; attempts: { id: string; answer: string; assistance: string[]; feedback: Feedback | null; comparison?: { comparable: boolean; note: string; summary?: string; improvements?: string[]; remaining_gaps?: string[]; recurring_gaps?: string[]; evidence?: { previous: string[]; current: string[] }; dimensions: Record<string, { previous: number; current: number }> } }[]; comparison?: unknown };
 type Session = { id: string; status: string; setup: { topic: string; application_id?: string }; current_question_id: string; questions: Question[]; elapsed_seconds: number; sources: { id: string; label: string }[]; spoken_language: string; voice_available?: boolean; speech_available?: boolean; error?: string; retention_notice?: string; rubric?: Record<string, string>; score_scale?: Record<string, string> };
-const request = <T,>(method: string, path: string, body?: unknown) => invoke<T>("api_call", { method, path, body: body ?? null });
 const base = "/practice/sessions";
 export function Practice({ active, running, entry }: { active: boolean; running: boolean; entry?: PracticeEntry | null }) {
   const [loadingSession, setLoadingSession] = useState(false);
@@ -66,11 +66,12 @@ export function Practice({ active, running, entry }: { active: boolean; running:
     })();
     return () => { cancelled = true; };
   }, [entry?.n]);
-  useEffect(() => {
-    if (!active || !current || !["preparing", "processing"].includes(current.status)) return;
-    const ticket = generation.current; let stopped = false; const timer = setInterval(() => void request<Session>("GET", `${base}/${current.id}`).then(v => { if (!stopped && valid(ticket)) setCurrent(v); }).catch(e => { if (!stopped && valid(ticket)) setError(String(e)); }), 1200);
-    return () => { stopped = true; clearInterval(timer); };
-  }, [active, current?.id, current?.status]);
+  usePolling(async () => {
+    const session = state.current; if (!session) return;
+    const ticket = generation.current;
+    try { const next = await request<Session>("GET", `${base}/${session.id}`, undefined, POLL_READ); if (valid(ticket)) setCurrent(previous => previous?.id === session.id ? next : previous); }
+    catch (e) { if (valid(ticket)) setError(String(e)); return false; }
+  }, 1200, active && !!current && ["preparing", "processing"].includes(current.status), { key: `${current?.id}/${current?.status}`, onTimeout: () => setError("Automatic checks paused. Reopen this practice session to check its progress.") });
   useEffect(() => {
     if (!active || current) return;
     let cancelled = false; setContext(null);

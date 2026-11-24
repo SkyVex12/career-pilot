@@ -2,7 +2,7 @@
 // as a file or pasted, with labels; their processing and each one's digest. Interview packs
 // for an application use only the version it is paired with (ARCHITECTURE.md, "Resume versions").
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, rest, type ResumeVersion } from "./api";
+import { api, rest, POLL_READ, type ResumeVersion } from "./api";
 import { isTextFile, resumeStatusLabel } from "./pairing";
 import { ACCEPT, plural, useOnShow, when } from "./shared";
 import { usePolling } from "./usePolling";
@@ -46,7 +46,16 @@ export function Resumes({ active = true, onOpenApplication }: { active?: boolean
     load();
   }, [load]);
   useOnShow(active, load);
-  usePolling(load, 3000, [base, ...(versions ?? [])].some((v) => v?.status === "extracting"));
+  usePolling(async () => {
+    try {
+      const status = await rest.catalogStatus();
+      if ([base, ...(versions ?? [])].some(version => version && status.resumes.find(item => item.id === version.id)?.status !== version.status)) {
+        const r = await rest.resumes(POLL_READ); setBase(r.base); setVersions(r.versions);
+      }
+      setError(null);
+    }
+    catch (e) { setError(String(e)); return false; }
+  }, 3000, active && [base, ...(versions ?? [])].some((v) => v?.status === "extracting"));
 
   const tailored = versions === null ? null : [...versions].sort((a, b) => (a.application?.company ?? "").localeCompare(b.application?.company ?? "") || a.label.localeCompare(b.label));
 
@@ -322,7 +331,14 @@ export function BaseResumeUtility({ active, request = 0, revision = "", onChange
   }, []);
   useEffect(() => { void load(); }, [load, revision]);
   useOnShow(active, load);
-  usePolling(load, 3000, active && base?.status === "extracting");
+  usePolling(async () => {
+    try {
+      const status = await rest.catalogStatus();
+      if (base && status.resumes.find(item => item.id === base.id)?.status !== base.status) setBase((await rest.resumes(POLL_READ)).base);
+      setError(null);
+    }
+    catch (e) { setError(String(e)); return false; }
+  }, 3000, active && base?.status === "extracting");
   useEffect(() => {
     if (request) { setExpanded(true); setReplacing(true); }
   }, [request]);

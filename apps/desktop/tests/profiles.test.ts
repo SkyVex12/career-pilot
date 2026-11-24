@@ -34,6 +34,10 @@ describe("profiles", () => {
     expect(accountOf(view("cloud", "a@x.com"))).not.toBe(accountOf(view("cloud", "b@x.com")));
     expect(accountOf(view("cloud", null))).not.toBe(accountOf(view("cloud", "a@x.com")));
     expect(accountOf(view("local", null))).not.toBe(accountOf(view("cloud", null)));
+    const first = { ...view("cloud", "a@x.com"), settings: { environment: "cloud", cloud_api_url: "https://first.example/v1" } } as SettingsView;
+    const second = { ...first, settings: { ...first.settings, cloud_api_url: "https://second.example/v1" } };
+    expect(accountOf(first)).not.toBe(accountOf(second));
+    expect(accountOf(first)).toBe(accountOf({ ...first, settings: { ...first.settings, cloud_api_url: "https://first.example/v1/" } }));
   });
   it("locks the app only when the stage requires a link and there is none", () => {
     const conn = (over: Partial<CareerOsConnection>): CareerOsConnection => ({ connected: false, available: true, ...over });
