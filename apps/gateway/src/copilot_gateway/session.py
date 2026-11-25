@@ -16,7 +16,7 @@ import logging
 import math
 import time
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast, get_args
@@ -454,6 +454,7 @@ class Session:
         self._stt_tasks: list[asyncio.Task[None]] = []
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
+        self._warm_tasks: set[asyncio.Task[None]] = set()
 
     # Messages to the client.
 
@@ -521,8 +522,7 @@ class Session:
         self.answers.cancel_all()
         for task in (*self._settling, *self._forced, *self._language_changes):
             task.cancel()
-        if self._warm is not None:
-            self._warm.cancel()
+        self._cancel_warm()
         log.error("%s", error)
         self.error(
             "retention_unavailable",
@@ -1737,11 +1737,11 @@ class Session:
             # prepared replacement below then contains no cancellation points.
             await self.turns.change_language(self.spoken_language)
             pending = [*self._settling, *self._forced]
-            if self._warm is not None:
-                pending.append(self._warm)
             for task in pending:
                 task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            warming = list(self._warm_tasks)
+            self._cancel_warm()
+            await asyncio.gather(*pending, *warming, return_exceptions=True)
             await self.answers.change_language()
             await self.conv.cancel_fold()
             # Close both old channels before opening either replacement. If one fails,
@@ -1883,8 +1883,22 @@ class Session:
             await self.router.warm()
             await self.prewarm_prompts()
 
-        task = asyncio.create_task(warm())
-        self._warm = task  # keep a reference until it finishes
+        self._start_warm(warm)
+
+    def _start_warm(self, work: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        if self.ending or self.lost or self._retention_failed:
+            return
+        task = asyncio.create_task(work())
+        self._warm = task
+        self._warm_tasks.add(task)
+        task.add_done_callback(self._warm_tasks.discard)
+
+    def _cancel_warm(self) -> None:
+        # Retain every overlapping mode/prewarm task until it finishes. Do not
+        # interrupt cleanup a second time when more than one stop path runs.
+        for task in self._warm_tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
 
     async def prewarm_prompts(self) -> None:
         """Write the prompt cache for the session's prefix (rules, digest, pack) before the
@@ -2063,6 +2077,7 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
+        self._cancel_warm()
         if not await self.answers.shutdown():
             log.error("session %s answer cancellation exceeded the shutdown deadline", self.sid)
         self.log_entry({"kind": "session.ended", "reason": reason})
@@ -2109,6 +2124,7 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
+        self._cancel_warm()
         if not await self.answers.shutdown(within_s=2):
             log.error("session %s answer cancellation exceeded the abandon deadline", self.sid)
         await self.writer.drain(within_s=2)
@@ -2130,6 +2146,7 @@ class Session:
         log.info("session %s moved to another task", self.sid)
         self.turns.cancel()
         self.answers.cancel_all()
+        self._cancel_warm()
         self.end_task = asyncio.create_task(self._stop_lost(self.ws))
 
     async def _stop_lost(self, ws: WebSocket | None) -> None:
@@ -2138,6 +2155,7 @@ class Session:
         await self._stop()
 
     async def _stop(self) -> None:
+        self._cancel_warm()
         self.manager.forget(self)
         await self.seatdesk.stop()
         await self.companiondesk.stop()
@@ -2271,9 +2289,11 @@ class Session:
                 await self.on_text(data_text)
 
     async def on_audio(self, data: bytes) -> None:
-        if self.ending or self._retention_failed:
+        if self.ending or self.lost or self._retention_failed:
             return
         async with self._language_lock:
+            if self.ending or self.lost or self._retention_failed:
+                return
             await self._on_audio(data)
 
     async def _on_audio(self, data: bytes) -> None:
@@ -2355,7 +2375,7 @@ class Session:
         await self.handle(message)
 
     async def handle(self, message: Any) -> None:
-        if self.ending or self._retention_failed:
+        if self.ending or self.lost or self._retention_failed:
             return
         if isinstance(message, models.SessionSetLanguage):
             # A transport disconnect must not leave the provider transaction half-applied.
@@ -2365,6 +2385,8 @@ class Session:
             await asyncio.shield(task)
             return
         async with self._language_lock:
+            if self.ending or self.lost or self._retention_failed:
+                return
             await self._handle(message)
 
     async def _handle(self, message: Any) -> None:
@@ -2407,7 +2429,7 @@ class Session:
                 self._prompt_ctx = self._build_prompt_ctx()
                 self.writer.set_state(mode=message.mode)
                 self.log_entry({"kind": "mode", "mode": message.mode})
-                self._warm = asyncio.create_task(self._mode_changed(message.mode))
+                self._start_warm(lambda: self._mode_changed(message.mode))
             case models.AnswerStyleSet():
                 self.info.answer_style = message.answer_style
                 if message.response_length is not None:

@@ -19,22 +19,22 @@ async def noop():
 
 
 def host(memory: CompanyMemory | None) -> Session:
-    return cast(
-        Session,
-        SimpleNamespace(
-            company_memory=memory,
-            manager=SimpleNamespace(forget=lambda _: None),
-            seatdesk=SimpleNamespace(stop=noop),
-            companiondesk=SimpleNamespace(stop=noop),
-            _language_changes=set(),
-            conv=SimpleNamespace(close=lambda: None),
-            _settling=set(),
-            send_q=None,
-            core_task=None,
-            stt=None,
-            stt_me=None,
-        ),
+    session = object.__new__(Session)
+    session.__dict__.update(
+        company_memory=memory,
+        manager=SimpleNamespace(forget=lambda _: None),
+        seatdesk=SimpleNamespace(stop=noop),
+        companiondesk=SimpleNamespace(stop=noop),
+        _language_changes=set(),
+        conv=SimpleNamespace(close=lambda: None),
+        _settling=set(),
+        send_q=None,
+        core_task=None,
+        stt=None,
+        stt_me=None,
+        _warm_tasks=set(),
     )
+    return session
 
 
 def memory():
@@ -95,6 +95,7 @@ async def test_shutdown_drain_has_a_bound_even_if_query_delays_cancellation(capl
         assert "drain bound" in caplog.text
     finally:
         release.set()
+        normal.cancel()
         await asyncio.gather(task, normal, return_exceptions=True)
 
 
