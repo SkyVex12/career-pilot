@@ -223,7 +223,18 @@ class LoopLagMonitor:
     """Bounded all-sample histogram; wall time is observed, never corrected away."""
 
     def __init__(self, interval_s: float = 0.05):
+        if not math.isfinite(interval_s) or interval_s <= 0:
+            raise ValueError("Loop monitor interval must be finite and positive")
         self.interval_s = interval_s
+        self.clock_resolution_s = time.get_clock_info("monotonic").resolution
+        # asyncio may release timers one clock-resolution early. A short delay
+        # can otherwise spin on Windows while the ready queue remains busy.
+        self.timer_floor_s = 2 * self.clock_resolution_s
+        self.early_wakeups = 0
+        self.first_observed_s: float | None = None
+        self.last_observed_s: float | None = None
+        self.min_observation_interval_s: float | None = None
+        self.max_observation_interval_s = 0.0
         self.histogram: Counter[int] = Counter()
         self.maximum_ms = self.total_ms = 0.0
         self.samples = 0
@@ -235,6 +246,18 @@ class LoopLagMonitor:
         await asyncio.sleep(0)
 
     def observe(self, lag: float) -> None:
+        now = time.perf_counter()
+        if self.first_observed_s is None:
+            self.first_observed_s = now
+        if self.last_observed_s is not None:
+            interval = now - self.last_observed_s
+            self.min_observation_interval_s = (
+                interval
+                if self.min_observation_interval_s is None
+                else min(self.min_observation_interval_s, interval)
+            )
+            self.max_observation_interval_s = max(self.max_observation_interval_s, interval)
+        self.last_observed_s = now
         self.samples += 1
         self.total_ms += lag
         self.maximum_ms = max(self.maximum_ms, lag)
@@ -243,9 +266,15 @@ class LoopLagMonitor:
     async def _run(self) -> None:
         while True:
             self.next_due = time.perf_counter() + self.interval_s
-            await asyncio.sleep(self.interval_s)
-            self.observe(max(0.0, (time.perf_counter() - self.next_due) * 1000))
-            self.next_due = None
+            while True:
+                remaining = self.next_due - time.perf_counter()
+                if remaining <= 0:
+                    self.observe(-remaining * 1000)
+                    self.next_due = None
+                    break
+                await asyncio.sleep(max(remaining, self.timer_floor_s))
+                if time.perf_counter() < self.next_due:
+                    self.early_wakeups += 1
 
     async def stop(self) -> None:
         # Capture an overdue final tick before cancellation, without adding a tail sleep
@@ -272,6 +301,30 @@ class LoopLagMonitor:
         return {
             "schema": 1,
             "interval_ms": self.interval_s * 1000,
+            "requested_interval_ms": self.interval_s * 1000,
+            "clock_resolution_ms": self.clock_resolution_s * 1000,
+            "timer_floor_ms": self.timer_floor_s * 1000,
+            "early_wakeups": self.early_wakeups,
+            "sampling_policy": (
+                "Requested perf-counter deadline with a clock-resolution sleep floor; "
+                "early timer wakeups are not samples. Overdue time includes OS scheduling "
+                "and the sleep floor, not only application blocking."
+            ),
+            "mean_observation_interval_ms": (
+                (self.last_observed_s - self.first_observed_s) * 1000 / (self.samples - 1)
+                if self.samples > 1
+                and self.last_observed_s is not None
+                and self.first_observed_s is not None
+                else None
+            ),
+            "min_observation_interval_ms": (
+                self.min_observation_interval_s * 1000
+                if self.min_observation_interval_s is not None
+                else None
+            ),
+            "max_observation_interval_ms": (
+                self.max_observation_interval_s * 1000 if self.samples > 1 else None
+            ),
             "samples": self.samples,
             "p50_ms_interval": percentile(0.5),
             "p90_ms_interval": percentile(0.9),

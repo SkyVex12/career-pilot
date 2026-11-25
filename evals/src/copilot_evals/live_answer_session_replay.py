@@ -374,13 +374,14 @@ def question_routes(session: Any) -> list[dict[str, Any]]:
 
 async def wait_started(session: Any, action: dict[str, Any], timeout_s: float) -> None:
     """Observe a real held request plan before ending its synthetic utterance."""
+    poll_s = max(0.01, 2 * time.get_clock_info("monotonic").resolution)
     async with asyncio.timeout(timeout_s):
         # Production question state has no start-event hook; polling is bounded by timeout.
         while not any(  # noqa: ASYNC110
             q.text == action["text"] and action.get("pass", "fast") in q.started_passes
             for q in session.answers.questions.values()
         ):
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(poll_s)
 
 
 def scenarios(cycles: int = 8) -> list[dict[str, Any]]:
@@ -620,6 +621,7 @@ def inspect_events(events: list[dict[str, Any]]) -> list[str]:
 
 
 async def settle(session: Any, timeout_s: float) -> None:
+    poll_s = max(0.01, 2 * time.get_clock_info("monotonic").resolution)
     async with asyncio.timeout(timeout_s):
         quiet_since: float | None = None
         while True:
@@ -636,7 +638,7 @@ async def settle(session: Any, timeout_s: float) -> None:
                 quiet_since = time.monotonic()
             elif time.monotonic() - quiet_since > 0.1:
                 return
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(poll_s)
 
 
 class TimedMessages(list[dict[str, Any]]):
