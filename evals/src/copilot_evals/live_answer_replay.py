@@ -140,6 +140,7 @@ CONFIG_FIELDS = {
     "openai_deep_first_token_timeout_ms",
     "openai_reasoning_headroom_tokens",
     "openai_http2",
+    "openai_http2_cancel_fix",
     "first_token_timeout_ms",
     "llm_keepalive_s",
     "llm_connect_timeout_s",
@@ -1378,6 +1379,7 @@ def provider_configuration_fingerprint(settings: Settings) -> str:
         "openai_base_url",
         "aws_region",
         "openai_http2",
+        "openai_http2_cancel_fix",
         "llm_keepalive_s",
         "llm_connect_timeout_s",
     }

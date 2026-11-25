@@ -214,6 +214,7 @@ def test_schedule_cannot_be_resolved_without_execution_binding(fixture):
         ("openai_base_url", "https://example.invalid/private?credential=fixture-only"),
         ("aws_region", "eu-west-2"),
         ("openai_http2", False),
+        ("openai_http2_cancel_fix", True),
         ("llm_keepalive_s", 17),
         ("llm_connect_timeout_s", 5),
     ],

@@ -35,12 +35,22 @@ def keepalive_limits(settings: CoreSettings) -> httpx2.Limits:
 def openai_client(settings: CoreSettings, timeout_s: float = 30.0) -> openai.AsyncOpenAI:
     assert settings.openai_api_key is not None
     limits = keepalive_limits(settings)
+    http_client: httpx2.AsyncClient
+    if settings.openai_http2 and settings.openai_http2_cancel_fix:
+        # Lazy import keeps disabled/H1 clients independent of private transport hooks.
+        from ._openai_http import make_http_client
+
+        http_client = make_http_client(
+            limits=limits, http2=True, cancellation_fix=True, unsupported_policy="fail"
+        )
+    else:
+        http_client = openai.DefaultAsyncHttpxClient(limits=limits, http2=settings.openai_http2)
     return openai.AsyncOpenAI(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
         max_retries=0,  # the router moves on to the next route instead
         timeout=openai.Timeout(timeout_s, connect=settings.llm_connect_timeout_s),
-        http_client=openai.DefaultAsyncHttpxClient(limits=limits, http2=settings.openai_http2),
+        http_client=http_client,
     )
 
 
