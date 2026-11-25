@@ -17,14 +17,15 @@ import math
 import subprocess
 import time
 import tomllib
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import aclosing
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, get_args
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from copilot_core import prompts
-from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Route
+from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Route, error_chain
 from copilot_core.packs import NodeRef
 from copilot_core.providers import close_providers, make_providers
 from copilot_evals.live_answer_artifacts import DispatchJournal, run_lock, source_archive
@@ -481,12 +482,114 @@ class AuditBudget(Budget):
         return ticket
 
 
+class AdmissionBlocked(Exception):
+    """A local circuit prevented dispatch; no provider request or reservation was made."""
+
+
+class ProviderAdmission:
+    """One experiment-wide gate, shared by every provider, route, hedge and retry."""
+
+    def __init__(self, limit: int, on_stop: Callable[[str], None] | None = None):
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise ValueError("Provider inflight limit must be between one and 32")
+        self.limit, self.on_stop = limit, on_stop
+        self.semaphore = asyncio.Semaphore(limit)
+        self.active = self.peak = self.waiting = self.admitted = self.blocked = 0
+        self.reason: str | None = None
+
+    def stop(self, reason: str) -> None:
+        if self.reason is None:
+            self.reason = reason
+            if self.on_stop is not None:
+                self.on_stop(reason)
+
+    def observe_error(self, error: BaseException) -> None:
+        status = getattr(error, "status_code", None)
+        names = set(error_chain(error))
+        if status == 429 or "RateLimitError" in names:
+            self.stop("rate_limit")
+        elif status in (401, 403) or names & {"AuthenticationError", "PermissionDeniedError"}:
+            self.stop("authentication")
+        elif (isinstance(status, int) and 400 <= status < 500 and status != 408) or names & {
+            "BadRequestError",
+            "NotFoundError",
+            "UnprocessableEntityError",
+        }:
+            self.stop("request_configuration")
+
+    async def enter(self) -> float:
+        started = time.monotonic()
+        if self.reason:
+            self.blocked += 1
+            raise AdmissionBlocked(self.reason)
+        self.waiting += 1
+        try:
+            await self.semaphore.acquire()
+        finally:
+            self.waiting -= 1
+        if self.reason:
+            self.semaphore.release()
+            self.blocked += 1
+            raise AdmissionBlocked(self.reason)
+        self.active += 1
+        self.admitted += 1
+        self.peak = max(self.peak, self.active)
+        return (time.monotonic() - started) * 1000
+
+    def leave(self) -> None:
+        self.active -= 1
+        self.semaphore.release()
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "limit": self.limit,
+            "active": self.active,
+            "peak_active": self.peak,
+            "waiting": self.waiting,
+            "admitted": self.admitted,
+            "blocked_before_reservation": self.blocked,
+            "stop_reason": self.reason,
+            "scope": "shared across all providers, variants, retry and hedge attempts",
+            "queue_timing": "admission_wait_ms is local backpressure, included in route deadlines",
+        }
+
+
+async def bounded_blocks(
+    blocks: list[list[tuple[dict[str, Any], str, int]]],
+    concurrency: int,
+    run_one: Callable[[dict[str, Any], str, int], Awaitable[None]],
+    stopped: Callable[[], bool],
+) -> None:
+    """Keep only a fixed number of workers, with each case's conditions consecutive."""
+    if type(concurrency) is not int or not 1 <= concurrency <= 8:
+        raise ValueError("Trial concurrency must be between one and eight")
+    pending = iter(blocks)
+
+    async def worker() -> None:
+        for block in pending:
+            for case, strategy, rep in block:
+                if stopped():
+                    return
+                await run_one(case, strategy, rep)
+
+    async with asyncio.TaskGroup() as group:
+        for _ in range(min(concurrency, len(blocks))):
+            group.create_task(worker())
+
+
 class AuditProvider(MeteredProvider):
     def __init__(
-        self, provider: Any, budget: AuditBudget, requests: list[dict[str, Any]], directory: Path
+        self,
+        provider: Any,
+        budget: AuditBudget,
+        requests: list[dict[str, Any]],
+        directory: Path,
+        *,
+        admission: ProviderAdmission | None = None,
     ):
         super().__init__(provider, budget)
         self.requests, self.directory = requests, directory
+        self.admission = admission
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
@@ -499,17 +602,42 @@ class AuditProvider(MeteredProvider):
             "request_sha256": fingerprint(asdict(req)),
             "params_sha256": fingerprint(dict(params)),
             "output_limit": req.max_tokens,
-            "status": "started",
+            "status": "queued" if self.admission is not None else "started",
+            "dispatch_admitted": False,
         }
+        admitted = False
         self.requests.append(record)
         save(self.directory / "request-identities.json", self.requests)
         try:
-            async for chunk in super().stream(model, req, params):
-                if isinstance(chunk, LLMDone):
-                    record["status"] = "completed"
-                yield chunk
+            record["admission_wait_ms"] = await self.admission.enter() if self.admission else 0.0
+            admitted = True
+            record.update(status="started", dispatch_admitted=True, admitted_epoch_s=time.time())
+            save(self.directory / "request-identities.json", self.requests)
+            ticket = self.budget.reserve(
+                model,
+                asdict(req),
+                req.max_tokens + int(params.get("max_output_tokens_extra", 0)),
+                str(params.get("service_tier", "standard")),
+            )
+            try:
+                # Hold the slot until the actual provider stream closes, including cancellation.
+                async with aclosing(self.inner.stream(model, req, params)) as stream:
+                    async for chunk in stream:
+                        if isinstance(chunk, LLMDone):
+                            self.budget.finish(ticket, chunk)
+                            record["status"] = "completed"
+                        yield chunk
+            except Exception as error:
+                self.connection_failure(ticket, error)
+                raise
             record["status"] = "completed"
         except BaseException as error:
+            if self.admission is not None:
+                self.admission.observe_error(error)
+                if isinstance(error, BudgetBlocked):
+                    self.admission.stop("budget_blocked")
+            if isinstance(error, AdmissionBlocked):
+                record["admission_blocked_reason"] = str(error)
             if record["status"] != "completed":
                 record["status"] = type(error).__name__
                 causes: list[str] = []
@@ -520,6 +648,9 @@ class AuditProvider(MeteredProvider):
                 record["error_types"] = causes
             raise
         finally:
+            record.setdefault("admission_wait_ms", (time.monotonic() - started) * 1000)
+            if admitted and self.admission is not None:
+                self.admission.leave()
             record["elapsed_s"] = time.monotonic() - started
             save(self.directory / "request-identities.json", self.requests)
 
@@ -693,7 +824,8 @@ async def execute(args: argparse.Namespace) -> None:
         return
     if (
         not 1 <= args.reps <= 10
-        or not 1 <= args.concurrency <= 4
+        or not 1 <= args.concurrency <= 8
+        or not 1 <= getattr(args, "max_provider_inflight", 8) <= 32
         or (args.max_cost is not None and (not math.isfinite(args.max_cost) or args.max_cost <= 0))
         or not math.isfinite(args.timeout)
         or args.timeout <= 0
@@ -735,6 +867,20 @@ async def execute_live(
     circuit = FailureCircuit(getattr(args, "transport_failure_limit", 3))
     if not 1 <= circuit.threshold <= 10:
         raise ValueError("Circuit threshold must be between one and ten")
+
+    admission_stop_path = directory / "provider-admission-stop.json"
+
+    def stop_dispatch(reason: str) -> None:
+        if circuit.reason is None:
+            circuit.reason = reason
+        save(admission_stop_path, {"schema": 1, "reason": circuit.reason})
+
+    admission = ProviderAdmission(getattr(args, "max_provider_inflight", 8), stop_dispatch)
+    if admission_stop_path.exists():
+        previous_stop = json.loads(admission_stop_path.read_text("utf-8"))
+        if previous_stop.get("schema") != 1 or not isinstance(previous_stop.get("reason"), str):
+            raise ValueError("Invalid persisted provider admission stop")
+        admission.stop(previous_stop["reason"])
     blocks = case_blocks(cases, list(strategies.values()), args.reps, args.seed)
     planned = [item for block in blocks for item in block]
     identity = experiment_identity(
@@ -757,6 +903,8 @@ async def execute_live(
     )
     identity["order_design"] = "counterbalanced_case_blocks"
     identity["transport_failure_limit"] = circuit.threshold
+    identity["max_provider_inflight"] = admission.limit
+    identity["provider_admission_policy"] = "bounded-v1-stop-on-rate-auth-config"
     identity["connectivity_check"] = not getattr(args, "skip_connectivity_check", False)
     identity["answer_style"] = getattr(args, "answer_style", "bullets")
     identity["response_length"] = getattr(args, "response_length", "default")
@@ -808,7 +956,10 @@ async def execute_live(
         json.loads(request_path.read_text("utf-8")) if request_path.exists() else []
     )
     raw_providers = make_providers(settings, timeout_s=args.timeout)
-    providers = [AuditProvider(provider, budget, requests, directory) for provider in raw_providers]
+    providers = [
+        AuditProvider(provider, budget, requests, directory, admission=admission)
+        for provider in raw_providers
+    ]
     attempt_path = directory / "attempt-events.json"
     attempt_events: list[dict[str, Any]] = (
         json.loads(attempt_path.read_text("utf-8")) if attempt_path.exists() else []
@@ -843,7 +994,6 @@ async def execute_live(
         {str(row["trial_id"]) for row in requests if row.get("trial_id")}
         | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")},
     )
-    semaphore = asyncio.Semaphore(args.concurrency)
 
     async def run_one(case: dict[str, Any], strategy: str, rep: int) -> None:
         if (case["id"], strategy, rep) in have:
@@ -877,8 +1027,14 @@ async def execute_live(
         )
         attempts = [record for record in requests if record["trial_id"] == trial_id]
         result["request_attempts"] = len(attempts)
-        result["failure_kind"] = classify_failure(result, attempts)
-        circuit.observe(result, attempts)
+        if attempts and all(not record.get("dispatch_admitted", True) for record in attempts):
+            result["status"] = "admission_blocked"
+            result["failure_kind"] = "admission_blocked"
+        else:
+            result["failure_kind"] = classify_failure(result, attempts)
+            circuit.observe(result, attempts)
+        if circuit.reason:
+            admission.stop(circuit.reason)
         results.append(result)
         save(target, results)
         journal.finish(trial_id)
@@ -901,6 +1057,7 @@ async def execute_live(
                     state == "ambiguous" for state in journal.states.values()
                 ),
                 "circuit_reason": circuit.reason,
+                "provider_admission": admission.snapshot(),
             },
         )
 
@@ -910,15 +1067,10 @@ async def execute_live(
         if not health["ready"]:
             circuit.reason = "connectivity_preflight"
 
-    async def run_block(block: list[tuple[dict[str, Any], str, int]]) -> None:
-        async with semaphore:
-            for case, strategy, rep in block:
-                if budget.blocked or circuit.reason:
-                    break
-                await run_one(case, strategy, rep)
-
     try:
-        await asyncio.gather(*(run_block(block) for block in blocks))
+        await bounded_blocks(
+            blocks, args.concurrency, run_one, lambda: budget.blocked or bool(circuit.reason)
+        )
     finally:
         journal.checkpoint()
         await close_providers(raw_providers)
@@ -969,6 +1121,10 @@ async def execute_live(
             ),
             "circuit_reason": circuit.reason,
             "successful_trials": sum(row.get("status") == "completed" for row in results),
+            "admission_blocked_trials": sum(
+                row.get("status") == "admission_blocked" for row in results
+            ),
+            "provider_admission": admission.snapshot(),
         },
     )
     print(
@@ -1065,7 +1221,11 @@ def normalized_runs(
                     "failure": item.get("failure"),
                     "status": item.get("status"),
                     "failure_kind": item.get("failure_kind"),
-                    "failure_kind_reclassified": classify_failure(item, []),
+                    "failure_kind_reclassified": (
+                        "admission_blocked"
+                        if item.get("status") == "admission_blocked"
+                        else classify_failure(item, [])
+                    ),
                     "not_started_reason": item.get("reason"),
                     "evidence": {
                         key: case[key] for key in ("digest", "recent", "memory", "source")
@@ -1160,7 +1320,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--reps", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20261125)
-    parser.add_argument("--concurrency", type=int, default=2)
+    parser.add_argument("--concurrency", type=int, default=2, help="Concurrent case blocks, 1-8")
+    parser.add_argument(
+        "--max-provider-inflight",
+        type=int,
+        default=8,
+        help="Aggregate open provider streams across variants/retries/hedges, 1-32",
+    )
     parser.add_argument(
         "--max-cost",
         type=budget_limit,

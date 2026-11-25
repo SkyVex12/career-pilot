@@ -394,3 +394,216 @@ def test_independent_repetitions_use_trial_identity_not_prior_matching_text():
     trials[1]["question_id"] = trials[0]["question_id"]
     with pytest.raises(ValueError, match="Question ID reused"):
         normalized_runs(trials, cases, {"strategies": {"A": "legacy_dual"}}, [])
+
+
+def admission_budget(path):
+    return AuditBudget(
+        path,
+        SimpleNamespace(
+            model_prices={"offline-model": ModelPrice(input=1, cached=0.1, output=2)},
+            tier_price_multipliers={"standard": 1},
+        ),
+        limit=1,
+    )
+
+
+async def test_shared_provider_gate_bounds_streams_and_cancels_queue_before_reserving(tmp_path):
+    import asyncio
+
+    from copilot_evals.live_answer_replay import AuditProvider, ProviderAdmission
+
+    from copilot_core.llm import LLMRequest
+
+    class HeldProvider:
+        name = "offline"
+        active = 0
+        peak = 0
+        closed = 0
+
+        async def stream(self, *args):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                yield "Answer."
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                self.active -= 1
+                self.closed += 1
+
+    raw, gate, records = HeldProvider(), ProviderAdmission(2), []
+    budget = admission_budget(tmp_path)
+    # Separate wrappers still share one experiment-wide gate.
+    providers = [AuditProvider(raw, budget, records, tmp_path, admission=gate) for _ in range(2)]
+    request = LLMRequest([], "question", 50)
+    streams = [providers[i % 2].stream("offline-model", request, {}) for i in range(3)]
+    assert await anext(streams[0]) == "Answer."
+    assert await anext(streams[1]) == "Answer."
+    queued = asyncio.create_task(anext(streams[2]))
+    await asyncio.sleep(0)
+    assert gate.active == raw.active == gate.peak == 2
+    assert gate.waiting == 1
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    assert len(budget.entries) == 2
+    assert records[-1]["dispatch_admitted"] is False
+    assert records[-1]["admission_wait_ms"] >= 0
+    await streams[0].aclose()
+    assert raw.closed == 1
+    assert gate.active == raw.active == 1
+    await streams[1].aclose()
+    assert gate.active == raw.active == gate.waiting == 0
+    assert raw.peak == 2
+
+
+async def test_rate_limit_stops_queued_dispatch_and_keeps_reservations_distinct(tmp_path):
+    import asyncio
+
+    from copilot_evals.live_answer_replay import AdmissionBlocked, AuditProvider, ProviderAdmission
+
+    from copilot_core.llm import LLMRequest
+
+    release = asyncio.Event()
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class LimitedProvider:
+        name = "offline"
+        calls = 0
+
+        async def stream(self, *args):
+            self.calls += 1
+            await release.wait()
+            raise RateLimitError("bounded synthetic 429")
+            yield "unreachable"
+
+    raw, gate, records = LimitedProvider(), ProviderAdmission(1), []
+    budget = admission_budget(tmp_path)
+    provider = AuditProvider(raw, budget, records, tmp_path, admission=gate)
+    request = LLMRequest([], "question", 50)
+    first = asyncio.create_task(anext(provider.stream("offline-model", request, {})))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(anext(provider.stream("offline-model", request, {})))
+    await asyncio.sleep(0)
+    assert gate.waiting == 1
+    release.set()
+    with pytest.raises(RateLimitError):
+        await first
+    with pytest.raises(AdmissionBlocked, match="rate_limit"):
+        await second
+    with pytest.raises(AdmissionBlocked, match="rate_limit"):
+        await anext(provider.stream("offline-model", request, {}))
+    assert raw.calls == len(budget.entries) == 1
+    assert budget.entries[0]["status"] == "reserved"  # Provider returned no usage.
+    assert gate.active == gate.waiting == 0
+    assert gate.snapshot()["blocked_before_reservation"] == 2
+    assert records[1]["admission_blocked_reason"] == "rate_limit"
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (401, "authentication"),
+        (403, "authentication"),
+        (400, "request_configuration"),
+        (422, "request_configuration"),
+        (429, "rate_limit"),
+        (408, None),
+        (503, None),
+    ],
+)
+def test_gate_immediate_fatal_circuit_is_distinct_from_transient_retry_policy(status, reason):
+    from copilot_evals.live_answer_replay import ProviderAdmission
+
+    class StatusError(Exception):
+        status_code = status
+
+    stopped = []
+    gate = ProviderAdmission(8, stopped.append)
+    gate.observe_error(StatusError())
+    assert gate.reason == reason
+    assert stopped == ([reason] if reason else [])
+
+
+async def test_hedged_attempt_waits_for_actual_cancelled_provider_close(tmp_path):
+    import asyncio
+
+    from copilot_evals.live_answer_replay import AuditProvider, ProviderAdmission
+
+    from copilot_core.llm import LLMRequest, ModelRouter, Route
+
+    class SlowFirstProvider:
+        name = "offline"
+        calls = 0
+        active = 0
+        peak = 0
+
+        async def stream(self, model, req, params):
+            self.calls += 1
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                if self.calls == 1:
+                    await asyncio.sleep(1)
+                yield "Answer."
+                yield LLMDone(LLMUsage(input_tokens=20, output_tokens=2), "stop", self.name, model)
+            finally:
+                await asyncio.sleep(0)
+                self.active -= 1
+
+    raw, gate, records = SlowFirstProvider(), ProviderAdmission(1), []
+    budget = admission_budget(tmp_path)
+    provider = AuditProvider(raw, budget, records, tmp_path, admission=gate)
+    router = ModelRouter(
+        {"fast": [Route(provider, "offline-model"), Route(provider, "offline-model")]},
+        first_token_timeout_s=0.1,
+        hedge_after_s={"fast": 0.05},
+    )
+    text, done = await asyncio.wait_for(router.complete("fast", LLMRequest([], "question", 20)), 2)
+    assert text == "Answer."
+    assert done.hedged
+    assert raw.calls == 2
+    assert raw.peak == gate.peak == 1
+    assert raw.active == gate.active == 0
+    assert records[1]["admission_wait_ms"] > 0
+    assert [entry["status"] for entry in budget.entries] == ["reserved", "usage"]
+
+
+async def test_eight_bounded_workers_preserve_case_blocks_and_stop_remaining_schedule():
+    import asyncio
+
+    from copilot_evals.live_answer_replay import bounded_blocks
+
+    active = peak = 0
+    completed = []
+    release = asyncio.Event()
+    stop = False
+    blocks = [[({"id": case}, variant, 0) for variant in ("A", "D")] for case in range(100)]
+
+    async def run_one(case, variant, rep):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await release.wait()
+        completed.append((case["id"], variant, rep))
+        active -= 1
+
+    task = asyncio.create_task(bounded_blocks(blocks, 8, run_one, lambda: stop))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert active == peak == 8
+    stop = True
+    release.set()
+    await task
+    assert len(completed) == 8  # Inflight drain; no additional condition/case dispatch.
+    assert all(variant == "A" for _, variant, _ in completed)
+    stop = False
+    completed.clear()
+    await bounded_blocks(blocks[:10], 8, run_one, lambda: stop)
+    assert len(completed) == 20
+    for case in range(10):
+        assert [v for c, v, _ in completed if c == case] == ["A", "D"]
+    with pytest.raises(ValueError, match="eight"):
+        await bounded_blocks(blocks, 9, run_one, lambda: False)
