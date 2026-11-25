@@ -93,6 +93,14 @@ const SERVER_ASLEEP: &str = "The server is asleep; it starts when you use the ap
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// The Credential Manager entry older versions kept the recordings' key in.
 const OLD_RECORDING_KEY: &str = "me-audio-key";
+
+fn uses_wake(url: &str) -> bool {
+    let stage_urls = release::config()
+        .filter(|r| r.wake_url.as_ref().is_some_and(|wake| !wake.trim().is_empty()))
+        .map(|r| (r.api_url.as_str(), r.gateway_url.as_str()));
+    wake::uses_wake(url, stage_urls)
+}
+
 struct AppState {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
@@ -123,7 +131,7 @@ struct AppState {
     /// (so the global-shortcut handler can tell which action fired), and a counter that lets a
     /// burst of move or resize events settle before the new frame is saved.
     overlay: OverlayState,
-    /// The stage VM's address while it is known to run (its URLs carry `{host}`; wake.rs).
+    /// The stage VM's address while it is known to run, including stages using fixed domains.
     server_host: Mutex<Option<String>>,
     /// One start at a time; other calls wait for it.
     server_start: tokio::sync::Mutex<()>,
@@ -372,9 +380,9 @@ impl AppState {
             .with_profile(profile))
     }
 
-    /// `url` with the VM's address in place of `{host}` (wake.rs); unchanged if it has none.
+    /// Ensure an on-demand stage is awake; fill legacy `{host}` URLs and preserve fixed domains.
     async fn fill_url(&self, app: &AppHandle, url: &str, wake: bool) -> Res<String> {
-        if !wake::needs_host(url) {
+        if !uses_wake(url) {
             return Ok(url.to_string());
         }
         Ok(wake::fill(url, &self.server_host(app, wake).await?))
@@ -780,7 +788,7 @@ async fn api_call(
     };
     // Refreshing an expired email token can itself use the wake function. Background
     // intent must be enforced before asking the token provider, not only before HTTP.
-    if !wake && wake::needs_host(&origin) && state.server_host.lock().unwrap().is_none() {
+    if !wake && uses_wake(&origin) && state.server_host.lock().unwrap().is_none() {
         return Err(SERVER_ASLEEP.into());
     }
     let tokens = state.tokens()?;

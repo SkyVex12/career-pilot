@@ -1,7 +1,7 @@
 //! The on-demand server (Stage 0 on GCP, infra/gcp/README.md "Running on demand"): the VM
-//! stops itself when nobody uses it, and its address changes at every start. A release build's
-//! URLs carry `{host}`; the wake function (infra/gcp/wake) starts the VM and answers with its
-//! address, and [`start`] waits until the API behind it answers.
+//! stops itself when nobody uses it. The wake function (infra/gcp/wake) starts the VM and
+//! answers with its address, and [`start`] waits until the configured API answers. A stage can
+//! use a fixed HTTPS domain or legacy URLs carrying the VM address placeholder `{host}`.
 
 use std::time::Duration;
 
@@ -18,6 +18,23 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Whether the URL needs the VM's address filled in.
 pub fn needs_host(url: &str) -> bool {
     url.contains(HOST)
+}
+
+/// Whether a URL belongs to the on-demand stage. Match origins so session profile queries
+/// and the derived seat endpoint also wake it, while unrelated local/custom servers do not.
+/// `stage_urls` is present only when the build configures a wake function for those endpoints.
+pub fn uses_wake(url: &str, stage_urls: Option<(&str, &str)>) -> bool {
+    if needs_host(url) {
+        return true;
+    }
+    let Some((api, gateway)) = stage_urls else { return false };
+    let Ok(url) = reqwest::Url::parse(url) else { return false };
+    if !matches!(url.scheme(), "http" | "https" | "ws" | "wss") || !url.has_host() {
+        return false;
+    }
+    [api, gateway]
+        .into_iter()
+        .any(|endpoint| reqwest::Url::parse(endpoint).is_ok_and(|endpoint| endpoint.origin() == url.origin()))
 }
 
 /// The URL with the VM's address in place of `{host}`.
@@ -105,6 +122,68 @@ mod tests {
             fill("ws://{host}/v1/session?profile=ab", "34.1.2.3"),
             "ws://34.1.2.3/v1/session?profile=ab"
         );
+    }
+
+    #[test]
+    fn fixed_stage_urls_use_wake_without_capturing_other_servers() {
+        let stage = Some(("https://coruby.xruby.tech/v1", "wss://coruby.xruby.tech/v1/session"));
+        for url in [
+            "https://coruby.xruby.tech/v1",
+            "https://coruby.xruby.tech:443/v1",
+            "wss://coruby.xruby.tech/v1/session?profile=ab-12",
+            "wss://coruby.xruby.tech/v1/seat",
+        ] {
+            assert!(uses_wake(url, stage), "{url}");
+            assert!(!uses_wake(url, None), "an always-on build must not wake: {url}");
+        }
+        for url in [
+            "http://127.0.0.1:8080/v1",
+            "ws://localhost:8081/v1/session",
+            "https://custom.example/v1",
+            "https://coruby.xruby.tech.example/v1",
+            "https://coruby.xruby.tech:8443/v1",
+            "http://coruby.xruby.tech/v1",
+            "not a URL",
+        ] {
+            assert!(!uses_wake(url, stage), "{url}");
+        }
+        assert!(uses_wake("http://{host}/v1", None));
+    }
+
+    #[tokio::test]
+    async fn fixed_api_is_checked_after_waking_without_replacing_its_host() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        async fn serve(body: &str) -> (String, tokio::task::JoinHandle<String>) {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = [0; 4096];
+                let len = stream.read(&mut bytes).await.unwrap();
+                let request = String::from_utf8_lossy(&bytes[..len]).into_owned();
+                stream.write_all(response.as_bytes()).await.unwrap();
+                request.lines().next().unwrap().to_string()
+            });
+            (url, task)
+        }
+
+        let (wake_url, wake_request) = serve(r#"{"status":"RUNNING","host":"127.0.0.2"}"#).await;
+        let (api_origin, api_request) = serve(r#"{"provider":"google"}"#).await;
+        let api_url = format!("{api_origin}/v1");
+        let host = tokio::time::timeout(Duration::from_secs(5), start(&wake_url, &api_url, |_| {}))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(host, "127.0.0.2");
+        assert_eq!(fill(&api_url, &host), api_url);
+        assert_eq!(wake_request.await.unwrap(), "POST / HTTP/1.1");
+        assert_eq!(api_request.await.unwrap(), "GET /v1/auth/config HTTP/1.1");
     }
 
     #[test]
