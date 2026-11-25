@@ -328,3 +328,47 @@ profiles carry the fixed eligibility labels into before/after comparisons.
 Export timestamps do not establish question-end time; no STT or Sensei
 latency claim is made. Only suggested responses present in the export are observed, so
 Sensei's coverage is 100% by construction, not measured recall over an entire call.
+
+## Live answer architecture replay
+
+`live_answer_replay` exercises the current `AnswerEngine` with frozen original questions
+and source evidence, never previous generated answers. Its default invocation validates
+all four strategies with a scripted provider and makes no billed requests. `--live`
+explicitly enables providers; the persisted reservation budget counts retries, hedges and
+unknown usage. A rejected reservation stops further trial dispatch and is reported as
+`budget_blocked`, separately from provider failures. Keep every artifact outside this repo.
+
+```powershell
+uv run python -m copilot_evals.live_answer_replay --out 'C:\private\answer-run'
+uv run python -m copilot_evals.live_answer_replay --out 'C:\private\answer-run' --live --reps 2 --max-cost 2.50
+```
+
+The default 51-case corpus combines historical question paraphrases with fixed fictional
+context and explicit synthetic coverage. It is not a replay of original private sessions.
+Use `--cases` for an authorized frozen corpus. Exact source/context, code, configuration,
+request hashes, random seed, repetitions, budget reservations and observed usage are saved.
+Question order is randomized and interleaved across legacy dual, adaptive single, independent
+expert hybrid and on-demand expert strategies. A changed identity requires a fresh output.
+
+This is generation-only timing from an already classified, confirmed question; STT, question
+detection, live retrieval search and UI rendering are excluded. A speculative live adaptive
+primary already started on a fast model cannot be upgraded by a later deep classification.
+The hybrid can independently start an expert at confirmation; on-demand depth requires an
+explicit request. Validate those paths with the gateway session replay and desktop tests.
+
+For existing gateway replay artifacts, use the offline analyzer (no provider calls):
+
+```powershell
+uv run python -m copilot_evals.live_answer_eval --trial-run 'C:\private\answer-run' --out 'C:\private\comparison' --review-sample 16 --baseline A
+uv run python -m copilot_evals.live_answer_eval --run A='C:\private\legacy' --run B='C:\private\adaptive' --out 'C:\private\comparison' --review-sample 10 --baseline A
+```
+
+The analyzer reports p50/p90/p95 with observed and missing counts, per-category latency,
+separate measured token usage and estimates, and syntactic sentence timing. First useful
+sentence latency requires a blind reviewer's sentence index. Review `review.json` without
+`review-key.json`, record reviewer provenance, then pass `--reviews` and `--review-key` to
+aggregate assessments. Identical source hashes and fixed labels are required for paired
+reviews. Lexical overlap never assigns semantic redundancy or correctness; unreviewed
+quality remains missing. Expansion flags can overlap and percentages use the reviewed
+eligible denominator. Small or completion-conditioned samples do not establish population
+quality, provider reliability, or production tail latency; AI reviews are not human calibration.

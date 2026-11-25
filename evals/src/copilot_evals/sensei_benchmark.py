@@ -85,6 +85,8 @@ def replay_identity(directory: Path, speed: float) -> None:
         "embedding_model",
         "llm_first_token_timeout_s",
         "llm_total_timeout_s",
+        "answer_architecture",
+        "adaptive_max_tokens",
         "fast_pass_max_tokens",
         "deep_pass_max_tokens",
         "silence_timer_ms",
