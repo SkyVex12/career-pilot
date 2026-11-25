@@ -256,6 +256,15 @@ def is_answer_command(text: str) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class RequestSnapshot:
+    """One generation's immutable question and prompt evidence before async lookup."""
+
+    text: str
+    context: prompts.PromptContext
+    transcript: prompts.CallContext
+
+
 @dataclass
 class Question:
     qid: UUID
@@ -805,7 +814,6 @@ class AnswerEngine:
     async def _run_pass(self, q: Question, pass_: str) -> None:
         q.started_passes.add(pass_)
         host = self.host
-        cache_version = host.cache_version()
         style = host.answer_style()
         response_length = getattr(host, "response_length", lambda: "default")()
         q.preferences[pass_] = (style, response_length)
@@ -1028,13 +1036,17 @@ class AnswerEngine:
                 answer = self._prepared(q) if response_length == "default" else None
                 if answer is not None and await prepared(answer):
                     return  # the match is current at display time: no model call
-            qhash = question_hash(q.text)
+            # Prepared validation can wait for a final or a changed source. Snapshot
+            # only when fresh generation begins, before retrieval/cache awaits.
+            snapshot = self._request_snapshot(q)
+            cache_version = host.cache_version()
+            qhash = question_hash(snapshot.text)
             # A follow has the question's text but continues the user: never the cache. Nor
             # a screenshot: its text says what the screen holds, not what it asks; nor a
             # question while a problem is open: "optimize it" means that problem.
             reuse = (
                 not host.settings.personal_ai_api_url
-                and cacheable(q.text)
+                and cacheable(snapshot.text)
                 and q.qtype != "follow"
                 and q.screen is None
                 and self.open_problem() is None
@@ -1054,13 +1066,13 @@ class AnswerEngine:
                 # answer, and freeze the request so later speech cannot change its key.
                 state["start_at"] = time.monotonic()
                 context_started = time.monotonic()
-                memory, state["memory"] = await host.memory_lines(q.text, memory_pass)
+                memory, state["memory"] = await host.memory_lines(snapshot.text, memory_pass)
                 state["stages"]["context_wait_ms"] = round(
                     (time.monotonic() - context_started) * 1000
                 )
                 if not host.settings.personal_ai_api_url:
                     prompt_started = time.monotonic()
-                    candidate_req = self._request(q, pass_, memory)
+                    candidate_req = self._request(q, pass_, memory, snapshot=snapshot)
                     state["stages"]["prompt_build_ms"] = round(
                         (time.monotonic() - prompt_started) * 1000
                     )
@@ -1105,7 +1117,9 @@ class AnswerEngine:
             if memory is None:
                 context_started = time.monotonic()
                 memory, state["memory"] = (
-                    await host.memory_lines(q.text, memory_pass) if q.screen is None else ([], {})
+                    await host.memory_lines(snapshot.text, memory_pass)
+                    if q.screen is None
+                    else ([], {})
                 )
                 state["stages"]["context_wait_ms"] = round(
                     (time.monotonic() - context_started) * 1000
@@ -1122,7 +1136,7 @@ class AnswerEngine:
                 req = candidate_req
             else:
                 prompt_started = time.monotonic()
-                req = self._request(q, pass_, memory)
+                req = self._request(q, pass_, memory, snapshot=snapshot)
                 state["stages"]["prompt_build_ms"] = round(
                     (time.monotonic() - prompt_started) * 1000
                 )
@@ -1430,8 +1444,15 @@ class AnswerEngine:
             )
         self.host.log_entry(entry)
 
-    def _request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
-        req = self._base_request(q, pass_, memory)
+    def _request(
+        self,
+        q: Question,
+        pass_: str,
+        memory: list[str] | None = None,
+        *,
+        snapshot: RequestSnapshot | None = None,
+    ) -> LLMRequest:
+        req = self._base_request(q, pass_, memory, snapshot=snapshot)
         _, length = self._preferences(q, pass_)
         if length == "default":
             return req
@@ -1451,12 +1472,23 @@ class AnswerEngine:
             getattr(self.host, "response_length", lambda: "default")(),
         )
 
-    def _base_request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
-        s = self.host.settings
-        ctx = self.host.prompt_context()
+    def _request_snapshot(self, q: Question) -> RequestSnapshot:
         transcript = self.host.call_context()
         if q.screen is None and self.open_problem() is None:
             transcript = replace(transcript, suggestions=self._earlier_suggestions(q))
+        return RequestSnapshot(q.text, self.host.prompt_context(), transcript)
+
+    def _base_request(
+        self,
+        q: Question,
+        pass_: str,
+        memory: list[str] | None = None,
+        *,
+        snapshot: RequestSnapshot | None = None,
+    ) -> LLMRequest:
+        s = self.host.settings
+        snapshot = snapshot or self._request_snapshot(q)
+        ctx, transcript, text = snapshot.context, snapshot.transcript, snapshot.text
         memory = memory or []
         if q.screen is not None:
             ask = q.screen
@@ -1484,12 +1516,12 @@ class AnswerEngine:
         problem = self.open_problem()
         if self.strategy(q) != "legacy_dual":
             plan = q.plans.get(pass_) or plan_answer(
-                q.text, q.qtype, q.depth, self.strategy(q), expert=pass_ == "deep"
+                text, q.qtype, q.depth, self.strategy(q), expert=pass_ == "deep"
             )
             return prompts.adaptive_pass(
                 ctx,
                 transcript,
-                q.text,
+                text,
                 None if q.held else q.qtype,
                 min(plan.max_tokens, s.adaptive_max_tokens),
                 memory,
@@ -1502,10 +1534,10 @@ class AnswerEngine:
             qtype = None if q.held else q.qtype
             follow = screen.follow_up(problem, ctx.user_name, deep=False) if problem else None
             return prompts.fast_pass(
-                ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory, problem=follow
+                ctx, transcript, text, qtype, s.fast_pass_max_tokens, memory, problem=follow
             )
         return prompts.deep_pass(
-            ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory,
+            ctx, transcript, text, q.qtype, s.deep_pass_max_tokens, memory,
             style=self._preferences(q, pass_)[0], shown=q.fast_text,
             problem=screen.follow_up(problem, ctx.user_name, deep=True) if problem else None,
             images=screen.shot_blocks(problem.shots) if problem else (),

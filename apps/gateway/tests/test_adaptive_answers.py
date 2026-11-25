@@ -317,7 +317,8 @@ async def test_candidate_context_sources_are_fetched_concurrently(settings_facto
         await sections_started.wait()
         return [], {"memory_wait_ms": 0}
 
-    async def sections(text, deep):
+    async def sections(text, deep, *, call=None):
+        assert call == prompts.CallContext()
         sections_started.set()
         await hits_started.wait()
         return ["Verified source section"]
@@ -328,6 +329,7 @@ async def test_candidate_context_sources_are_fetched_concurrently(settings_facto
         _memory_on=lambda: True,
         _vector=lambda text: None,
         section_lines=sections,
+        call_context=lambda: prompts.CallContext(),
         pack=None,
         _refs={},
     )

@@ -920,6 +920,7 @@ class TurnDetector:
                     cand.detection.cancel()
                     cand = self._redetect(turn, final, cand.match)
                 else:
+                    self._withdraw_shown(turn)
                     cand.cancel()
                     cand = self._start(turn, final)
                 continue
@@ -954,6 +955,12 @@ class TurnDetector:
         turn.first_qid = turn.speculative_qid = qid
         self.host.retype_question(qid, FIRST)  # marked as shown first; typed for now
 
+    def _withdraw_shown(self, turn: _Turn) -> None:
+        if turn.speculative_qid is not None:
+            self.speculative_cancels += 1
+            self.host.cancel_question(turn.speculative_qid)
+            turn.speculative_qid = turn.first_qid = None
+
     async def _turn(self, turn: _Turn) -> None:
         t0 = turn.t0
         early, turn.early = turn.early, None
@@ -983,50 +990,59 @@ class TurnDetector:
                     cand = self._redetect(turn, self.utterance(), cand.match)
             else:
                 cand = self._start(turn, self.utterance())
-            first = asyncio.ensure_future(self._first(turn))
-            try:
-                cand, detection = await self._decide(turn, cand)
-            finally:
-                first.cancel()
-                await asyncio.gather(first, return_exceptions=True)
             while True:
-                recovered = await self._recover(turn, detection)
-                # Recovery waits longer than the normal final deadline. A final arriving
-                # in that interval must replace the stale held answer, not just its label.
-                if self._changed(turn, cand):
+                first = asyncio.ensure_future(self._first(turn))
+                try:
                     cand, detection = await self._decide(turn, cand)
+                finally:
+                    first.cancel()
+                    await asyncio.gather(first, return_exceptions=True)
+                recovered = await self._recover(turn, detection)
+                # Both recovery and the ordinary speech-end waits can outlast the
+                # detector. A final that adds a constraint must replace its generation,
+                # not just relabel a request already based on the interim.
+                if self._changed(turn, cand):
                     continue
                 if recovered is not detection:
                     self.recovered += 1
-                detection = recovered
-                break
-            detection = replace(detection, decided_ms=max(0, int((time.monotonic() - t0) * 1000)))
-            if not detection.fires():
-                self._discard_held(turn)
-                if turn.first_qid is not None:  # shown before the detector said no
-                    self.first_withdrawn += 1
-                    self.host.cancel_question(turn.first_qid)
-                    turn.first_qid = turn.speculative_qid = None
-                if detection.decision != "wait" or not self._carry(turn):
-                    self._done(turn)  # step 5
+                detection = replace(
+                    recovered, decided_ms=max(0, int((time.monotonic() - t0) * 1000))
+                )
+                if not detection.fires():
+                    self._discard_held(turn)
+                    if turn.first_qid is not None:  # shown before the detector said no
+                        self.first_withdrawn += 1
+                        self.host.cancel_question(turn.first_qid)
+                        turn.first_qid = turn.speculative_qid = None
+                    if detection.decision != "wait" or not self._carry(turn):
+                        self._done(turn)
+                    return
+                await self._sleep_until(t0 + self.speculative_s)
+                if self._changed(turn, cand) and not self._extends(cand.text, self._text(turn)):
+                    self._withdraw_shown(turn)
+                    continue
+                qid: UUID | None = turn.first_qid
+                silence_over = time.monotonic() >= t0 + self.silence_s
+                if qid is not None:
+                    self.host.retype_question(qid, detection)
+                elif not (silence_over and turn.flushed.is_set()):
+                    qid = self._show(turn, cand.text, detection, speculative=True, match=cand.match)
+                    turn.speculative_qid = qid
+                    self.speculative_starts += 1
+                await self._turn_end(turn)
+                if self._changed(turn, cand) and not self._extends(cand.text, self._text(turn)):
+                    self._withdraw_shown(turn)
+                    continue
+                final_text = self._text(turn) or cand.text
+                turn_end_ms = int((time.monotonic() - t0) * 1000)
+                if qid is None:
+                    qid = self._show(
+                        turn, final_text, detection, speculative=False, match=cand.match
+                    )
+                turn.speculative_qid = None
+                self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
+                self._done(turn)
                 return
-            await self._sleep_until(t0 + self.speculative_s)
-            qid: UUID | None = turn.first_qid
-            silence_over = time.monotonic() >= t0 + self.silence_s
-            if qid is not None:
-                self.host.retype_question(qid, detection)
-            elif not (silence_over and turn.flushed.is_set()):
-                qid = self._show(turn, cand.text, detection, speculative=True, match=cand.match)
-                turn.speculative_qid = qid
-                self.speculative_starts += 1
-            await self._turn_end(turn)
-            final_text = self._text(turn) or cand.text
-            turn_end_ms = int((time.monotonic() - t0) * 1000)
-            if qid is None:
-                qid = self._show(turn, final_text, detection, speculative=False, match=cand.match)
-            turn.speculative_qid = None
-            self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
-            self._done(turn)
         except asyncio.CancelledError:
             if cand is not None and not turn.taken:
                 cand.cancel()
@@ -1036,8 +1052,5 @@ class TurnDetector:
                     return_exceptions=True,
                 )
             self._discard_held(turn)
-            if turn.speculative_qid is not None:
-                self.speculative_cancels += 1
-                self.host.cancel_question(turn.speculative_qid)
-                turn.speculative_qid = turn.first_qid = None
+            self._withdraw_shown(turn)
             raise

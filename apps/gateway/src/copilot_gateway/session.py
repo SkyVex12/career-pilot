@@ -760,7 +760,9 @@ class Session:
         extra = self.pack.knowledge.names if self.pack.knowledge is not None else []
         return list(dict.fromkeys([*self.pack.keyterms, *extra]))
 
-    async def section_lines(self, text: str, deep: bool) -> list[str]:
+    async def section_lines(
+        self, text: str, deep: bool, *, call: prompts.CallContext | None = None
+    ) -> list[str]:
         """The `<memory>` lines from the company's documents for a pass. Keyword search runs
         in memory, on the question and, when it is short or points back ("which one?"), on
         the question with the company's names said in the last lines of the call. The
@@ -772,7 +774,7 @@ class Session:
         lists = [[c for c, _ in index.search(text, want)]]
         names = self._context_names()
         if knowledge.needs_context(text, names):
-            said = knowledge.context_names(self.conv.context().recent, names)
+            said = knowledge.context_names((call or self.conv.context()).recent, names)
             if said:
                 again = index.search(f"{text} {' '.join(said)}", want)
                 lists.append([c for c, _ in again])
@@ -849,9 +851,11 @@ class Session:
         """The `<memory>` block for a pass: what search found in the chosen company's memory
         within the pass's wait, minus what the pack already shows. Each line cites a short id
         that the session's refs now map, so the answer's citations become memory_refs."""
+        # Keep contextual query expansion tied to this question across lookup waits.
+        call = self.call_context()
         mem = self.company_memory
         if mem is None or not self._memory_on():
-            sections = await self.section_lines(text, pass_ == "deep")
+            sections = await self.section_lines(text, pass_ == "deep", call=call)
             return sections, ({"memory_sections": len(sections)} if sections else {})
         deep = pass_ == "deep"
         s = self.settings
@@ -861,7 +865,8 @@ class Session:
             # Both lookups share the same preloaded embedding, but are independent.
             # Their 150 ms waits overlap instead of serially adding up to 300 ms.
             (hits, stats), sections = await asyncio.gather(
-                mem.hits(text, self._vector(text), deep, wait), self.section_lines(text, deep)
+                mem.hits(text, self._vector(text), deep, wait),
+                self.section_lines(text, deep, call=call),
             )
         else:
             hits, stats = await mem.hits(text, self._vector(text), deep, wait)
@@ -873,7 +878,7 @@ class Session:
         lines = workplace.memory_lines(hits, self._refs, in_pack)
         stats["memory_hits"] = len(lines)
         if sections is None:
-            sections = await self.section_lines(text, deep)
+            sections = await self.section_lines(text, deep, call=call)
         if sections:
             stats["memory_sections"] = len(sections)
         return lines + sections, stats
