@@ -25,6 +25,8 @@ USER_B = UUID("0192f3a9-55c2-7b10-a4e1-1c2d3e4f5a6c")
 def make_settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
         "env": "test",
+        # Test services use only explicitly supplied pools; never inherit a live DB URL.
+        "database_url": None,
         "speculative_start_ms": 100,
         "silence_timer_ms": 250,
         "final_wait_max_ms": 500,
