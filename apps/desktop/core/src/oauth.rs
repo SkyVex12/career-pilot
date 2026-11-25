@@ -428,7 +428,17 @@ impl OAuthTokenProvider {
 
     /// Forget the tokens here and revoke the refresh token at the provider (best effort).
     pub async fn sign_out(&self) -> Result<(), AuthError> {
-        if let Ok(Some(refresh)) = self.store.get(&self.refresh_key()) {
+        let (refresh, cleared) = {
+            // Refresh holds this lock through token rotation. Clear all local credentials
+            // together before revoking, so an in-flight refresh cannot restore the sign-in.
+            let mut cached = self.cached.lock().await;
+            let refresh = self.store.get(&self.refresh_key()).ok().flatten();
+            *cached = None;
+            let refresh_deleted = self.store.delete(&self.refresh_key());
+            let user_deleted = self.store.delete(&self.user_key());
+            (refresh, refresh_deleted.and(user_deleted))
+        };
+        if let Some(refresh) = refresh {
             let body = form(&[("token", &refresh), ("client_id", &self.cfg.client_id)]);
             let _ = self
                 .http
@@ -438,9 +448,7 @@ impl OAuthTokenProvider {
                 .send()
                 .await;
         }
-        *self.cached.lock().await = None;
-        self.store.delete(&self.refresh_key())?;
-        self.store.delete(&self.user_key())
+        cleared
     }
 
     /// The bearer the services take: the access token (Cognito) or the ID token (Google).
@@ -486,7 +494,14 @@ impl OAuthTokenProvider {
         )))
     }
 
-    async fn refresh_now(&self) -> Result<Token, AuthError> {
+    async fn token(&self, force: bool) -> Result<Token, AuthError> {
+        let mut cached = self.cached.lock().await;
+        if !force
+            && let Some(token) = cached.as_ref()
+            && token.expires_at.is_some_and(|at| at > SystemTime::now() + EXPIRY_MARGIN)
+        {
+            return Ok(token.clone());
+        }
         let Some(refresh) = self.store.get(&self.refresh_key())? else {
             return Err(AuthError::NotSignedIn("sign in under Settings".into()));
         };
@@ -497,13 +512,13 @@ impl OAuthTokenProvider {
                     self.store.set(&self.refresh_key(), rotated)?;
                 }
                 let token = self.token_of(&tokens)?;
-                *self.cached.lock().await = Some(token.clone());
+                *cached = Some(token.clone());
                 Ok(token)
             }
             Err(AuthError::NotSignedIn(msg)) if msg.contains("invalid_grant") => {
                 // Expired or revoked (the user was deleted or signed out elsewhere).
                 let _ = self.store.delete(&self.refresh_key());
-                *self.cached.lock().await = None;
+                *cached = None;
                 Err(AuthError::NotSignedIn("the sign-in expired; sign in again under Settings".into()))
             }
             Err(e) => Err(e),
@@ -513,18 +528,11 @@ impl OAuthTokenProvider {
 
 impl TokenProvider for OAuthTokenProvider {
     fn current(&self) -> BoxFuture<'_, Result<Token, AuthError>> {
-        Box::pin(async move {
-            if let Some(token) = self.cached.lock().await.clone()
-                && token.expires_at.is_some_and(|at| at > SystemTime::now() + EXPIRY_MARGIN)
-            {
-                return Ok(token);
-            }
-            self.refresh_now().await
-        })
+        Box::pin(self.token(false))
     }
 
     fn refresh(&self) -> BoxFuture<'_, Result<Token, AuthError>> {
-        Box::pin(self.refresh_now())
+        Box::pin(self.token(true))
     }
 }
 
@@ -773,6 +781,95 @@ mod tests {
             store.get("cognito-refresh:123-abc.apps.googleusercontent.com").unwrap().as_deref(),
             Some("1//rt")
         );
+    }
+
+    #[tokio::test]
+    async fn sign_out_clears_an_in_flight_google_refresh_before_failed_revocation() {
+        async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
+            let mut buf = Vec::new();
+            loop {
+                let mut chunk = [0u8; 4096];
+                let n = stream.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "request closed before its body arrived");
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf);
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        return text.into_owned();
+                    }
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let domain = format!("http://{}", listener.local_addr().unwrap());
+        let refreshed_id = id_token("sam@gmail.com");
+        let response = format!(
+            r#"{{"access_token":"at-2","id_token":"{refreshed_id}","refresh_token":"rt-2","expires_in":3600}}"#
+        );
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (refresh_tx, refresh_rx) = tokio::sync::oneshot::channel();
+        let (revoked_tx, revoked_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert!(read_request(&mut stream).await.starts_with("POST /oauth2/token "));
+            started_tx.send(()).unwrap();
+            refresh_rx.await.unwrap();
+            respond(&mut stream, "200 OK", &response).await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            revoked_tx.send(read_request(&mut stream).await).unwrap();
+            finish_rx.await.unwrap();
+            respond(&mut stream, "503 Unavailable", "").await;
+        });
+        let store = Arc::new(MemorySecretStore::default());
+        let p = Arc::new(OAuthTokenProvider::new(
+            OAuthConfig { provider: "google".into(), id_token_bearer: true, ..cfg(&domain) },
+            store.clone(),
+        ));
+        store.set(&p.refresh_key(), "rt-1").unwrap();
+        store.set(&p.user_key(), "sam@gmail.com").unwrap();
+        let refreshing = {
+            let p = p.clone();
+            tokio::spawn(async move { p.refresh().await })
+        };
+        started_rx.await.unwrap();
+        assert!(p.cached.try_lock().is_err(), "refresh must serialize its writes with sign-out");
+        let mut signing_out = {
+            let p = p.clone();
+            Box::pin(async move { p.sign_out().await })
+        };
+        tokio::select! {
+            biased;
+            result = &mut signing_out => panic!("sign-out did not wait for token rotation: {result:?}"),
+            _ = std::future::ready(()) => {}
+        }
+        let signing_out = tokio::spawn(signing_out);
+        refresh_tx.send(()).unwrap();
+        assert_eq!(refreshing.await.unwrap().unwrap().access_token, refreshed_id);
+
+        let revoke = revoked_rx.await.unwrap();
+        assert!(revoke.starts_with("POST /oauth2/revoke "));
+        assert!(revoke.contains("token=rt-2"));
+        assert!(store.get(&p.refresh_key()).unwrap().is_none());
+        assert!(store.get(&p.user_key()).unwrap().is_none());
+        assert!(p.signed_in_as().is_none());
+        // Revocation is still waiting: local sign-out must already be complete and unlocked.
+        let current = tokio::time::timeout(Duration::from_secs(1), p.current()).await.unwrap();
+        assert!(matches!(current, Err(AuthError::NotSignedIn(_))));
+        finish_tx.send(()).unwrap();
+        signing_out.await.unwrap().unwrap();
+        server.await.unwrap();
+        assert!(matches!(p.current().await, Err(AuthError::NotSignedIn(_))));
     }
 
     #[tokio::test]

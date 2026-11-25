@@ -986,6 +986,7 @@ async fn email_sign_in_verify(
 async fn career_os_sign_in(
     app: AppHandle,
     state: State<'_, AppState>,
+    link_account: Option<bool>,
 ) -> Result<CareerOsOutcome, CareerOsFailure> {
     let provider = state
         .career_os()
@@ -1001,13 +1002,21 @@ async fn career_os_sign_in(
     let Some(option) = cfg.career_os else {
         return Err(CareerOsFailure::new("not_offered", "This server does not offer HubRuby sign-in."));
     };
+    // Only Settings' explicit "Add HubRuby sign-in" may attach the current account.
+    // Capture its proof before opening the browser so a session change during the
+    // browser flow cannot silently choose a different account to link.
+    let bearer = if link_account.unwrap_or(false) {
+        Some(state.proof_token().await.ok_or_else(|| {
+            CareerOsFailure::new("proof_required", "Sign in to the account before adding HubRuby.")
+        })?)
+    } else {
+        None
+    };
     let opener = app.clone();
     let pending = copilot_client::careerossignin::browser_code(&option, move |url| {
         opener.opener().open_url(url, None::<&str>).map_err(|e| format!("could not open the browser: {e}"))
     })
     .await?;
-    // After the browser: a sign-in already on this computer adds Career-OS to that account.
-    let bearer = state.proof_token().await;
     let before = state.signed_in().map(|(who, _)| who);
     let outcome = provider.exchange(&pending, bearer.as_deref()).await?;
     if outcome.name().is_some() {
@@ -1046,22 +1055,39 @@ async fn career_os_complete(
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
     state.data_cache.clear();
-    let result = async {
-        if let Some(p) = state.email_signed_in() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        if let Some(p) = state.career_os_signed_in() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        if let Some(p) = state.oauth() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-    .await;
+    // Clear every provider, including an in-memory token whose saved credentials
+    // are already missing. A failure in one store entry must not skip the others.
+    let email = state.email();
+    let career_os = state.career_os();
+    let browser = state.oauth();
+    let (email_result, career_os_result, browser_result) = tokio::join!(
+        async {
+            match email {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+        async {
+            match career_os {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+        async {
+            match browser {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+    );
     state.data_cache.clear();
     state.update_settings(|s| s.profile = None);
-    result
+    let errors: Vec<_> = [email_result, career_os_result, browser_result]
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|e| e.to_string())
+        .collect();
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
 }
 
 /// The profile switch (ARCHITECTURE.md, "Profiles"): the profile every API call and the next
