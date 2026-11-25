@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from copilot_core import prompts
-from copilot_core.llm import LLMDone, LLMUsage
+from copilot_core.llm import LLMDone, LLMUsage, ModelRouter, Route
 from copilot_gateway.adaptive import SentenceBoundary, plan_answer
 from copilot_gateway.answer import AnswerEngine, AnswerHost, Question, ScreenAsk
 from copilot_gateway.testing import (
@@ -30,7 +30,7 @@ class RecordingRouter:
         self.expert_started = asyncio.Event()
         self.fail = False
 
-    async def stream(self, job, req, on_fallback):
+    async def stream(self, job, req, on_fallback, *, on_attempt=None):
         self.requests.append((job, req))
         if self.fail:
             raise RuntimeError("provider stopped")
@@ -658,7 +658,7 @@ def test_candidate_grounding_contract_preserves_missing_facts_and_task_provenanc
         "still in development; no validation recorded.",
     ]
     req = engine._request(q, pass_, evidence)
-    policy = req.system[0].text
+    policy = " ".join(req.system[0].text.split())
     assert "Missing evidence never establishes either experience or lack of experience." in policy
     assert "unsupported positive or negative personal experience" in policy
     assert "keep that private note separate from the speakable answer" in policy
@@ -698,7 +698,7 @@ async def test_candidate_prompt_revision_invalidates_prior_cached_answer(
         await asyncio.gather(*engine._background)
     assert len(router.requests) == 2
     versions = [row["latency_ms"]["prompt_version"] for row in logs if row["kind"] == "answer"]
-    assert versions == ["prior-candidate", "adaptive-v2-grounding"]
+    assert versions == ["prior-candidate", "adaptive-v3-direct-opening"]
 
 
 @pytest.mark.parametrize("style", ["bullets", "paragraph"])
@@ -816,3 +816,75 @@ async def test_candidate_question_preload_refreshes_completed_memory_and_shares_
     await retrieval.hits("What is the carrier report status?", None, True, 100)
     assert retrieval.lookups["What is the carrier report status?"] is second
     retrieval.close()
+
+
+async def test_stored_timing_separates_preparation_first_chunk_and_sentence(settings_factory):
+    engine, _, events, logs, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+
+    async def memory(text, pass_):
+        await asyncio.sleep(0.012)
+        return ["[n:ab12] Redis cached reads."], {"memory_hits": 1}
+
+    async def cache(key):
+        await asyncio.sleep(0.012)
+        return None
+
+    provider = ScriptedProvider(
+        "openai",
+        lambda job, req: Reply(
+            ["I chose Redis", " for low latency. ", "It cached reads."],
+            first_delay_s=0.012,
+            chunk_delay_s=0.012,
+        ),
+    )
+    engine.host.memory_lines = memory
+    engine.host.qa_get = cache
+    engine.host.router = ModelRouter({"fast": [Route(provider, "gpt-6-luna")]}, 1)
+    q = question(forced=True)
+    engine.add(q)
+    engine.confirm(q.qid, q.text, 0)
+    await engine.wait_idle()
+    answer = next(row for row in logs if row["kind"] == "answer")
+    lat = answer["latency_ms"]
+    for field in (
+        "context_wait_ms", "cache_lookup_ms", "router_first_chunk_ms", "stream_sentence_ms"
+    ):
+        assert lat[field] >= 8
+    assert lat["answer_prepare_ms"] >= lat["context_wait_ms"] + lat["cache_lookup_ms"] - 2
+    assert lat["first_complete_sentence_ms"] >= lat["model_dispatch_ms"]
+    wire = next(fields for name, fields in events if name == "AnswerDone")
+    assert "context_wait_ms" not in wire["latency_ms"]
+    attempts = [row for row in logs if row["kind"] == "provider_attempt"]
+    assert [row["status"] for row in attempts] == ["started", "first_chunk", "completed"]
+    assert {row["question_id"] for row in attempts} == {str(q.qid)}
+    assert len({row["attempt_id"] for row in attempts}) == 1
+    assert all("content" not in row and "question" not in row for row in attempts)
+    assert attempts[-1]["usage_observed"] is True
+    assert attempts[-1]["cost_usd"] == answer["cost_usd"]
+
+
+async def test_cancelled_attempt_has_no_invented_usage_or_cost(settings_factory):
+    engine, _, _, logs, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    started = asyncio.Event()
+
+    def reply(job, req):
+        started.set()
+        return Reply(["An answer."], first_delay_s=30)
+
+    provider = ScriptedProvider("openai", reply)
+    engine.host.router = ModelRouter({"fast": [Route(provider, "gpt-6-luna")]}, 60)
+    q = question(forced=True)
+    engine.add(q)
+    engine.confirm(q.qid, q.text, 0)
+    await started.wait()
+    engine.discard(q.qid)
+    await asyncio.gather(*q.tasks.values(), return_exceptions=True)
+    terminals = [
+        row for row in logs
+        if row["kind"] == "provider_attempt" and row["status"] in {"closed", "cancelled", "failed"}
+    ]
+    assert len(terminals) == 1
+    assert terminals[0]["error_category"] == "caller_cancelled"
+    assert terminals[0]["usage_observed"] is False
+    assert terminals[0]["usage"] is None
+    assert "cost_usd" not in terminals[0]

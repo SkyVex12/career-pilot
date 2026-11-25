@@ -32,7 +32,7 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -42,6 +42,7 @@ from copilot_core.embed import Embedder
 from copilot_core.languages import language_instruction
 from copilot_core.llm import (
     AllRoutesFailedError,
+    AttemptEvent,
     LLMDone,
     LLMRequest,
     LLMUsage,
@@ -619,6 +620,7 @@ class AnswerEngine:
         state: dict[str, Any] = {
             "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
             "stopped": False, "first_sentence_at": None,
+            "stages": {}, "router_started_at": None, "raw_first_chunk_at": None,
             "detector_depth_at_start": q.depth, "question_type_at_start": q.qtype,
         }  # fmt: skip
         boundary = SentenceBoundary()
@@ -677,6 +679,26 @@ class AnswerEngine:
             out.update(state.get("memory") or {})
             return out
 
+        def stage_timings() -> dict[str, int]:
+            # Router wait includes retries, not separately measured DNS/TLS or compute.
+            # Keep these in stored metadata; client receipt and physical paint differ.
+            out = dict(state["stages"])
+            dispatched = state["router_started_at"]
+            first = state["raw_first_chunk_at"]
+            sentence = state["first_sentence_at"]
+            if dispatched is not None:
+                out["answer_prepare_ms"] = max(0, round((dispatched - started) * 1000))
+                out["model_dispatch_ms"] = max(0, round((dispatched - q.t0) * 1000))
+            if first is not None and dispatched is not None:
+                out["router_first_chunk_ms"] = max(0, round((first - dispatched) * 1000))
+            if sentence is not None and first is not None:
+                out["stream_sentence_ms"] = max(0, round((sentence - first) * 1000))
+            if sentence is not None and q.released_at is not None:
+                out["sentence_release_wait_ms"] = max(
+                    0, round((q.released_at - sentence) * 1000)
+                )
+            return out
+
         def done(
             source: str, refs: list[NodeRef], done_info: LLMDone | None, first_token_ms: int | None
         ) -> None:
@@ -719,6 +741,7 @@ class AnswerEngine:
                 }
             stored = {
                 **lat,
+                **stage_timings(),
                 "provider": done_info.provider if done_info else source,
                 "fallback_attempt": done_info.attempt if done_info else 0,
                 "stop_reason": done_info.stop_reason if done_info else None,
@@ -821,9 +844,17 @@ class AnswerEngine:
                 # the same bounded evidence we would generate with before reusing an
                 # answer, and freeze the request so later speech cannot change its key.
                 state["start_at"] = time.monotonic()
+                context_started = time.monotonic()
                 memory, state["memory"] = await host.memory_lines(q.text, memory_pass)
+                state["stages"]["context_wait_ms"] = round(
+                    (time.monotonic() - context_started) * 1000
+                )
                 if not host.settings.personal_ai_api_url:
+                    prompt_started = time.monotonic()
                     candidate_req = self._request(q, pass_, memory)
+                    state["stages"]["prompt_build_ms"] = round(
+                        (time.monotonic() - prompt_started) * 1000
+                    )
                 # Only hashes leave this scope; private text is never part of a cache key.
                 identity = hashlib.sha256(
                     (
@@ -835,7 +866,12 @@ class AnswerEngine:
                     ).encode()
                 ).hexdigest()[:24]
                 slot = f"{strategy}:{plan.depth}:{plan.job}:{slot}:style={style}:{identity}"
+            cache_started = time.monotonic()
             cached = await self._cached(qhash, slot, cache_version) if reuse else None
+            if reuse:
+                state["stages"]["cache_lookup_ms"] = round(
+                    (time.monotonic() - cache_started) * 1000
+                )
             if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -858,15 +894,51 @@ class AnswerEngine:
             if job == "deep_light":
                 self.stats["deep_light"] += 1
             if memory is None:
+                context_started = time.monotonic()
                 memory, state["memory"] = (
                     await host.memory_lines(q.text, memory_pass) if q.screen is None else ([], {})
+                )
+                state["stages"]["context_wait_ms"] = round(
+                    (time.monotonic() - context_started) * 1000
                 )
             if host.settings.personal_ai_api_url:
                 private = getattr(host, "private_memory", None)
                 if private is not None:
+                    context_started = time.monotonic()
                     memory = [*memory, *(await private())]
-            req = candidate_req or self._request(q, pass_, memory)
+                    state["stages"]["private_context_wait_ms"] = round(
+                        (time.monotonic() - context_started) * 1000
+                    )
+            if candidate_req is not None:
+                req = candidate_req
+            else:
+                prompt_started = time.monotonic()
+                req = self._request(q, pass_, memory)
+                state["stages"]["prompt_build_ms"] = round(
+                    (time.monotonic() - prompt_started) * 1000
+                )
             state["req"] = req
+
+            def on_attempt(event: AttemptEvent) -> None:
+                # This ledger includes abandoned retries; do not sum it with answer costs.
+                entry = {
+                    **asdict(event),
+                    "kind": "provider_attempt",
+                    "question_id": str(q.qid),
+                    "pass": pass_,
+                    "answer_strategy": strategy,
+                    "usage_observed": event.usage is not None,
+                }
+                if event.usage is not None:
+                    entry["cost_usd"] = self._cost(
+                        LLMDone(
+                            usage=event.usage,
+                            stop_reason=None,
+                            model=event.model,
+                            service_tier=event.service_tier or "standard",
+                        )
+                    )
+                host.log_entry(entry)
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
                 host.llm_status(False)
@@ -886,19 +958,23 @@ class AnswerEngine:
                         self._on_read(q, reader.reading)
                     return text
 
-                chunks = host.router.stream(job, req, on_fallback)
+                chunks = host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
                 if strategy != "legacy_dual":
                     chunks = bounded_chunks(
                         chunks,
                         host.settings.adaptive_stream_idle_timeout_s,
                         host.settings.adaptive_stream_total_timeout_s,
                     )
+                state["router_started_at"] = time.monotonic()
                 async for chunk in chunks:
                     if isinstance(chunk, LLMDone):
                         finished = chunk
                         state["done"] = chunk
-                    elif text := shown_text(chunk):
-                        delta(text)
+                    else:
+                        if chunk and state["raw_first_chunk_at"] is None:
+                            state["raw_first_chunk_at"] = time.monotonic()
+                        if text := shown_text(chunk):
+                            delta(text)
                 rest = cites.flush() if q.screen is None else (reader.flush() if reader else "")
                 if rest:
                     delta(rest)
@@ -919,6 +995,7 @@ class AnswerEngine:
                     await asyncio.gather(model, return_exceptions=True)
                     self._log_cancelled(q, pass_, state, reason="prepared")
                     state.update(first_delta_at=None, first_sentence_at=None, parts=[])
+                    state.update(router_started_at=None, raw_first_chunk_at=None, stages={})
                     boundary = SentenceBoundary()
                     for key in ("req", "done", "model"):
                         state.pop(key, None)
