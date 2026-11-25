@@ -21,6 +21,7 @@ import sql from "highlight.js/lib/languages/sql";
 import swift from "highlight.js/lib/languages/swift";
 import typescript from "highlight.js/lib/languages/typescript";
 import { COPIED_MS, copyText } from "./follow";
+import { withoutSuggestionMarkers } from "./AnswerText";
 
 const LANGUAGES = { bash, c, cpp, csharp, go, java, javascript, kotlin, python, ruby, rust, sql, swift, typescript };
 for (const [name, lang] of Object.entries(LANGUAGES)) hljs.registerLanguage(name, lang);
@@ -112,17 +113,42 @@ export function splitBlocks(text: string): Block[] {
 }
 
 /** **bold** and `code` inside a line, as React nodes (no HTML is ever injected). */
-export function inline(line: string): ReactNode[] {
+export function inline(line: string, streaming = false): ReactNode[] {
   const out: ReactNode[] = [];
+  const cleanProse = (text: string, tail = false): string => {
+    // Keep code delimiters and their contents literal, including an unfinished streaming tail.
+    const delimiters = /`+/g;
+    let out = "";
+    let last = 0;
+    let opening: RegExpExecArray | null;
+    while ((opening = delimiters.exec(text)) !== null) {
+      out += withoutSuggestionMarkers(text.slice(last, opening.index));
+      let closing: RegExpExecArray | null;
+      do { closing = delimiters.exec(text); } while (closing && closing[0].length !== opening[0].length);
+      if (!closing) return out + text.slice(opening.index);
+      last = closing.index + closing[0].length;
+      out += text.slice(opening.index, last);
+    }
+    return out + withoutSuggestionMarkers(text.slice(last), tail);
+  };
+  const prose = (text: string, tail = false) => {
+    const clean = cleanProse(text, tail);
+    if (clean) out.push(clean);
+  };
   const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(line)) !== null) {
-    if (m.index > last) out.push(line.slice(last, m.index));
-    out.push(m[1] !== undefined ? <strong key={m.index}>{m[1]}</strong> : <code key={m.index}>{m[2]}</code>);
+    if (m.index > last) prose(line.slice(last, m.index));
+    if (m[1] !== undefined) {
+      const text = cleanProse(m[1]);
+      if (text.trim()) out.push(<strong key={m.index}>{text}</strong>);
+    } else {
+      out.push(<code key={m.index}>{m[2]}</code>);
+    }
     last = m.index + m[0].length;
   }
-  if (last < line.length) out.push(line.slice(last));
+  if (last < line.length) prose(line.slice(last), streaming);
   return out;
 }
 
@@ -170,15 +196,19 @@ export function CodeAnswer({ text, streaming = false }: { text: string; streamin
               .filter((l) => l.trim())
               .map((l, j, all) => {
                 const heading = /^#{1,4}\s+(.*)$/.exec(l);
-                const tail = streaming && i === last && j === all.length - 1 && <Caret />;
+                const writing = streaming && i === last && j === all.length - 1;
+                const content = inline(heading?.[1] ?? l.replace(/^\s*[-*]\s+/, ""), writing);
+                if (!content.some((node) => typeof node !== "string" || node.trim())) return null;
+                const tail = writing && <Caret />;
                 return heading ? (
                   <h3 key={j} className="code-task">
-                    {inline(heading[1] ?? "")}
+                    {content}
                     {tail}
                   </h3>
                 ) : (
                   <p key={j}>
-                    {inline(l.replace(/^\s*[-*]\s+/, "• "))}
+                    {/^\s*[-*]\s+/.test(l) && "• "}
+                    {content}
                     {tail}
                   </p>
                 );
