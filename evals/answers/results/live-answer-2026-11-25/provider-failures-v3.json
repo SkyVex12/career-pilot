@@ -1,0 +1,317 @@
+{
+  "source": "comparison-v3 retained artifacts; read-only analysis; no new provider calls",
+  "source_sha256": {
+    "trials.json": "896b7fbdb4b65249a5e78ab2286594847147fd415b3698b5b93dbab52387a57a",
+    "request-identities.json": "abd079d4fbfc292bd43f321b5de099c02c9514abf09c74bde58ae2d7ac47391c",
+    "cost.json": "b7ddc5b32dd2a42ea1ffe60427f259ead11b5675bd5080da1284b3dcc46a10ff",
+    "identity.json": "17b504bbb243e2ec7d00f82ff8bc0e08a6031a9d44f15ef473868930dd359b83",
+    "accounting.json": "df04b5f527b50f2a64cc283cca93abbe0d9bf8085174564bfed15f26d0ce81a0"
+  },
+  "trial_status_counts": {
+    "completed": 154,
+    "provider_or_engine_failure": 50
+  },
+  "strategy_counts": {
+    "adaptive": {
+      "trials": 51,
+      "completed": 39,
+      "failed": 12,
+      "completion_rate": 0.7647058823529411,
+      "at_least_one_completed_answer": 39
+    },
+    "adaptive_hybrid": {
+      "trials": 51,
+      "completed": 36,
+      "failed": 15,
+      "completion_rate": 0.7058823529411765,
+      "at_least_one_completed_answer": 40
+    },
+    "adaptive_on_demand": {
+      "trials": 51,
+      "completed": 38,
+      "failed": 13,
+      "completion_rate": 0.7450980392156863,
+      "at_least_one_completed_answer": 38
+    },
+    "legacy_dual": {
+      "trials": 51,
+      "completed": 41,
+      "failed": 10,
+      "completion_rate": 0.803921568627451,
+      "at_least_one_completed_answer": 45
+    }
+  },
+  "failed_trial_cause_groups": {
+    "only_cancellation_and_optional_completed_response_retained": 25,
+    "sdk_connection_error_without_retained_root_cause": 2,
+    "proven_connection_establishment_failure": 23
+  },
+  "failed_trials_with_one_completed_answer": 8,
+  "request_identity_status_counts": {
+    "GeneratorExit": 200,
+    "CancelledError": 114,
+    "APIConnectionError": 8,
+    "APITimeoutError": 33
+  },
+  "cost_ledger_status_counts": {
+    "usage": 200,
+    "reserved": 118,
+    "failed_before_submission": 37
+  },
+  "proven_pre_submission_cause_chains": [
+    {
+      "cause_types": [
+        "APIConnectionError",
+        "ConnectError",
+        "ConnectError"
+      ],
+      "count": 4
+    },
+    {
+      "cause_types": [
+        "APITimeoutError",
+        "ConnectTimeout",
+        "ConnectTimeout"
+      ],
+      "count": 33
+    }
+  ],
+  "retained_answer_error_codes": {
+    "llm_unavailable": 56
+  },
+  "cost_accounting": {
+    "budget_limit_usd": 2.5,
+    "cost_start_usd": 0,
+    "cost_upper_usd": 2.210994,
+    "usage_priced_usd": 0.053409,
+    "unresolved_reserved_usd": 2.157585,
+    "failed_trials": 50,
+    "budget_blocked_trials": 0,
+    "not_started": 0,
+    "completed_trials": 204,
+    "planned_trials": 204
+  },
+  "temporal_completion_groups": [
+    {
+      "record_start": 0,
+      "records": 20,
+      "completed": 19
+    },
+    {
+      "record_start": 20,
+      "records": 20,
+      "completed": 19
+    },
+    {
+      "record_start": 40,
+      "records": 20,
+      "completed": 18
+    },
+    {
+      "record_start": 60,
+      "records": 20,
+      "completed": 20
+    },
+    {
+      "record_start": 80,
+      "records": 20,
+      "completed": 19
+    },
+    {
+      "record_start": 100,
+      "records": 20,
+      "completed": 19
+    },
+    {
+      "record_start": 120,
+      "records": 20,
+      "completed": 20
+    },
+    {
+      "record_start": 140,
+      "records": 20,
+      "completed": 18
+    },
+    {
+      "record_start": 160,
+      "records": 20,
+      "completed": 2
+    },
+    {
+      "record_start": 180,
+      "records": 20,
+      "completed": 0
+    },
+    {
+      "record_start": 200,
+      "records": 4,
+      "completed": 0
+    }
+  ],
+  "successful_primary_latency_ms_unmatched": {
+    "adaptive": {
+      "first_token_ms": {
+        "n": 39,
+        "p50": 859.0,
+        "p90": 1106.4,
+        "p95": 1329.3
+      },
+      "first_delta_ms": {
+        "n": 39,
+        "p50": 875.0,
+        "p90": 1415.2,
+        "p95": 1860.9
+      },
+      "first_complete_sentence_ms": {
+        "n": 39,
+        "p50": 1171.0,
+        "p90": 1983.4,
+        "p95": 2248.6
+      },
+      "total_ms": {
+        "n": 39,
+        "p50": 1766.0,
+        "p90": 2777.2,
+        "p95": 3204.3
+      },
+      "start_ms": {
+        "n": 39,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 1.5
+      },
+      "memory_wait_ms": {
+        "n": 39,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "adaptive_hybrid": {
+      "first_token_ms": {
+        "n": 40,
+        "p50": 983.0,
+        "p90": 1347.8,
+        "p95": 1446.6
+      },
+      "first_delta_ms": {
+        "n": 40,
+        "p50": 983.0,
+        "p90": 1406.0,
+        "p95": 1477.65
+      },
+      "first_complete_sentence_ms": {
+        "n": 40,
+        "p50": 1249.5,
+        "p90": 1734.7,
+        "p95": 1908.95
+      },
+      "total_ms": {
+        "n": 40,
+        "p50": 2046.5,
+        "p90": 3303.2,
+        "p95": 5695.65
+      },
+      "start_ms": {
+        "n": 40,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "memory_wait_ms": {
+        "n": 40,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "adaptive_on_demand": {
+      "first_token_ms": {
+        "n": 38,
+        "p50": 937.0,
+        "p90": 1323.9,
+        "p95": 1665.3
+      },
+      "first_delta_ms": {
+        "n": 38,
+        "p50": 937.0,
+        "p90": 1474.8,
+        "p95": 1665.3
+      },
+      "first_complete_sentence_ms": {
+        "n": 38,
+        "p50": 1281.0,
+        "p90": 1895.0,
+        "p95": 2088.15
+      },
+      "total_ms": {
+        "n": 38,
+        "p50": 2148.0,
+        "p90": 3746.0,
+        "p95": 4041.25
+      },
+      "start_ms": {
+        "n": 38,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 2.25
+      },
+      "memory_wait_ms": {
+        "n": 38,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    },
+    "legacy_dual": {
+      "first_token_ms": {
+        "n": 45,
+        "p50": 875.0,
+        "p90": 1327.6,
+        "p95": 1687.8
+      },
+      "first_delta_ms": {
+        "n": 45,
+        "p50": 937.0,
+        "p90": 1327.6,
+        "p95": 1690.6
+      },
+      "first_complete_sentence_ms": {
+        "n": 44,
+        "p50": 1069.5,
+        "p90": 1543.7,
+        "p95": 1955.45
+      },
+      "total_ms": {
+        "n": 45,
+        "p50": 1406.0,
+        "p90": 2127.8,
+        "p95": 2459.0
+      },
+      "start_ms": {
+        "n": 45,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      },
+      "memory_wait_ms": {
+        "n": 45,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p95": 0.0
+      }
+    }
+  },
+  "limitations": [
+    "GeneratorExit request identities with observed usage are successful completed responses, not failures.",
+    "CancelledError alone cannot distinguish first-token deadline, hedge loser, or caller cancellation; 25 failed trials retain no more specific cause.",
+    "All 33 APITimeoutError records have ConnectTimeout roots. Only four of eight APIConnectionError records retain proven ConnectError roots; the other four retain unknown billing reservations.",
+    "No rate-limit or authentication error is retained. Absence of a retained status is not proof that those errors never occurred.",
+    "The last 44 completion-ordered trial records have only two successes versus 152 in the first 160. Temporal failure clustering confounds unblocked architecture comparisons.",
+    "118 request reservations are unresolved exposure, not measured spend. Known usage charges are reported separately.",
+    "Latency populations are unpaired successful primary answers, including eight trials whose secondary pass failed; these are not speed improvement claims.",
+    "first_token_ms measures the winning route opening; first_delta_ms includes engine/router waiting; first_complete_sentence_ms is a sentence boundary, not human-rated usefulness.",
+    "Generation-only replay starts from confirmed, preclassified questions with fixed context: STT, detector, production retrieval, UI rendering, and tokenization/provider queue/reasoning stages are not individually measured.",
+    "ModelRouter had max_retries=0 in provider SDKs, bounded explicit routes, pooled clients and no retry after streamed text. No evidence supports increasing retries or the existing two-second transport connect default."
+  ]
+}

@@ -175,6 +175,9 @@ class CoreSettings(BaseSettings):
             "llm_keepalive_s", "COPILOT_LLM_KEEPALIVE_S", "COPILOT_OPENAI_KEEPALIVE_S"
         ),
     )
+    # Separate transport connection setup from the router's first-token deadline. Keep the
+    # existing 2 s default; an outage is not evidence that waiting longer improves live latency.
+    llm_connect_timeout_s: float = Field(default=2.0, gt=0)
     # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
     # its first-token timeout cancels only its stream, not the connection the retry needs.
     openai_http2: bool = True

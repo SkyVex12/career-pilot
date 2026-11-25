@@ -261,3 +261,49 @@ async def test_claude_providers_warm_their_connection() -> None:
     await AnthropicProvider("anthropic", direct).warm("claude-haiku-4-5")
     await AnthropicProvider("bedrock", mantle).warm("anthropic.claude-haiku-4-5")
     assert calls == [("models.list", {"limit": 1}), ("count_tokens", "anthropic.claude-haiku-4-5")]
+
+
+async def test_provider_connect_timeout_is_explicit_and_sdk_retries_stay_disabled() -> None:
+    from copilot_core.llm import AnthropicProvider, OpenAIProvider
+    from copilot_core.providers import close_providers, make_providers
+
+    assert settings().llm_connect_timeout_s == 2.0
+
+    for timeout in (2.0, 0.75):
+        s = settings(
+            llm_providers=["openai", "anthropic"],
+            openai_api_key="local-test-key",
+            anthropic_api_key="local-test-key",
+            llm_connect_timeout_s=timeout,
+        )
+        providers = make_providers(s)
+        clients = [
+            provider.client
+            for provider in providers
+            if isinstance(provider, AnthropicProvider | OpenAIProvider)
+        ]
+        assert len(clients) == 2
+        for client in clients:
+            assert isinstance(client.timeout, httpx2.Timeout)
+            assert client.timeout.connect == timeout
+        assert all(client.max_retries == 0 for client in clients)
+        await close_providers(providers)
+        assert all(client.is_closed() for client in clients)
+    with pytest.raises(ValueError, match="llm_connect_timeout_s"):
+        settings(llm_connect_timeout_s=0)
+
+
+async def test_close_providers_deduplicates_shared_clients() -> None:
+    from copilot_core.llm import OpenAIProvider
+    from copilot_core.providers import close_providers
+
+    class Client:
+        closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    client = Client()
+    providers = [OpenAIProvider("openai", client)] * 2  # pyright: ignore[reportArgumentType]
+    await close_providers(providers)
+    assert client.closed == 1

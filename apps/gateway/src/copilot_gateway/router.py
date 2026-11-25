@@ -18,7 +18,7 @@ first token by then, the second route starts alongside the first.
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from copilot_core.llm import FallbackHook, LLMProvider, ModelRouter, Route
+from copilot_core.llm import AttemptHook, FallbackHook, LLMProvider, ModelRouter, Route
 from copilot_core.providers import make_providers, openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import DecisionsRoute
@@ -127,6 +127,7 @@ def build_router(
     settings: Settings,
     providers: Sequence[LLMProvider] | None = None,
     on_fallback: FallbackHook | None = None,
+    on_attempt: AttemptHook | None = None,
 ) -> ModelRouter:
     providers = make_providers(settings) if providers is None else providers
     hedges = {
@@ -139,6 +140,7 @@ def build_router(
         build_routes(settings, providers),
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
         on_fallback=on_fallback,
+        on_attempt=on_attempt,
         hedge_after_s={job: ms / 1000 for job, ms in hedges.items() if ms} or None,
     )
 
