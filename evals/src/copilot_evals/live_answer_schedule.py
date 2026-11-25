@@ -68,14 +68,63 @@ def classify_failure(result: dict[str, Any], attempts: list[dict[str, Any]]) -> 
     return "provider_or_engine"
 
 
+def has_response_progress(result: dict[str, Any], attempts: list[dict[str, Any]]) -> bool:
+    """Operational progress, not a judgment of answer quality or grammatical usefulness."""
+    return (
+        not result.get("failure")
+        or any(
+            row.get("status") == "completed"
+            or (isinstance(row.get("streamed_chars"), int) and row["streamed_chars"] > 0)
+            for row in attempts
+        )
+        or any(
+            entry.get("kind") == "provider_attempt"
+            and entry.get("status") in {"first_chunk", "completed"}
+            for entry in result.get("metadata_logs", [])
+        )
+        or any(
+            event.get("message", {}).get("type") == "answer.delta"
+            and bool(event["message"].get("text"))
+            for event in result.get("events", [])
+        )
+    )
+
+
 @dataclass
 class FailureCircuit:
     threshold: int = 3
     consecutive: int = 0
     reason: str | None = None
+    zero_output_timeout_threshold: int = 8
+    zero_output_timeouts: int = 0
+    last_failure_kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.threshold) is not int or not 1 <= self.threshold <= 10:
+            raise ValueError("Transport circuit threshold must be between one and ten")
+        if (
+            type(self.zero_output_timeout_threshold) is not int
+            or not 1 <= self.zero_output_timeout_threshold <= 100
+        ):
+            raise ValueError("Zero-output timeout threshold must be between one and 100")
 
     def observe(self, result: dict[str, Any], attempts: list[dict[str, Any]]) -> None:
+        if self.reason is not None or result.get("expected_injected_failure"):
+            return
         kind = classify_failure(result, attempts)
+        self.last_failure_kind = kind
+        # A single intentionally short route deadline is not an outage declaration.
+        # Repeated zero-output deadlines are a separate, money-independent stop policy.
+        if has_response_progress(result, attempts):
+            self.zero_output_timeouts = 0
+        elif kind in {"first_token_timeout", "provider_timeout"} or (
+            result.get("failure") == "TimeoutError"
+            and any(row.get("provider_invoked") is True for row in attempts)
+        ):
+            self.zero_output_timeouts += 1
+            if self.zero_output_timeouts >= self.zero_output_timeout_threshold:
+                self.reason = "zero_output_timeout_streak"
+        # Other failed outcomes neither prove delivery progress nor add timeout evidence.
         if kind in {"authentication", "request_configuration"}:
             self.reason = kind
         elif kind in {
@@ -86,10 +135,26 @@ class FailureCircuit:
             "provider_server",
         } and not any(attempt.get("status") == "completed" for attempt in attempts):
             self.consecutive += 1
-            if self.consecutive >= self.threshold:
+            if self.consecutive >= self.threshold and self.reason is None:
                 self.reason = kind
         else:
             self.consecutive = 0
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "transport_threshold": self.threshold,
+            "transport_consecutive": self.consecutive,
+            "zero_output_timeout_threshold": self.zero_output_timeout_threshold,
+            "zero_output_timeouts_since_progress": self.zero_output_timeouts,
+            "last_failure_kind": self.last_failure_kind,
+            "reason": self.reason,
+            "scope": "Trial completion order; operational delivery guard independent of budget",
+            "rationale": (
+                "Repeated first-token/provider deadlines with no observed response progress; "
+                "not a claim of provider outage or answer quality. Text/terminal success resets; "
+                "other failures are neutral. Partial answers do not add timeout evidence."
+            ),
+        }
 
 
 def explicit_case_blocks(

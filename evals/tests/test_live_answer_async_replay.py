@@ -469,8 +469,11 @@ async def test_progress_error_telemetry_is_bounded_and_counts_omissions(tmp_path
 
 @pytest.mark.parametrize("operation", ["stream", "decide", "prewarm"])
 @pytest.mark.parametrize("outer_gate", [False, True])
+@pytest.mark.parametrize(
+    "stop_reason", ["authentication", "external_stop", "zero_output_timeout_streak"]
+)
 async def test_gate_stop_during_durability_wait_prevents_new_raw_entry(
-    tmp_path, operation, outer_gate
+    tmp_path, operation, outer_gate, stop_reason
 ):
     entered, release = threading.Event(), threading.Event()
 
@@ -492,7 +495,7 @@ async def test_gate_stop_during_durability_wait_prevents_new_raw_entry(
     try:
         pending = asyncio.create_task(invoke(provider, operation))
         await wait_thread(entered)
-        gate.stop("authentication")
+        gate.stop(stop_reason)
         release.set()
         with pytest.raises(replay.AdmissionBlocked):
             await pending

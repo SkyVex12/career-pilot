@@ -1,7 +1,7 @@
 """Reproducible generation-only A/B/C/D replay, using the shipped AnswerEngine.
 
 Default invocation performs an offline preflight only. --live explicitly enables the
-configured providers under a persisted hard reservation budget. Output must be private.
+configured providers with a finite schedule and optional reservation budget. Output must be private.
 This isolates generation: classification, STT, retrieval search and UI are not benchmarked.
 """
 
@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import re
+import signal
 import subprocess
 import time
 import tomllib
@@ -839,6 +840,203 @@ async def bounded_blocks(
             group.create_task(worker())
 
 
+class ReplayDrainTimeout(TimeoutError):
+    """An owned task did not drain; no successful finalization may be claimed."""
+
+
+def stop_policy(args: argparse.Namespace) -> dict[str, Any]:
+    drain = getattr(args, "stop_drain_timeout", 30.0)
+    if type(drain) not in (int, float) or not math.isfinite(drain) or not 0 < drain <= 300:
+        raise ValueError("Stop drain timeout must be finite and between zero and 300 seconds")
+    path = getattr(args, "stop_file", None)
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("Stop file must be a filesystem path")
+    return {
+        "policy": "stop-admissions-bounded-drain-v1",
+        "request_file": str(path.resolve()) if path is not None else "$out/stop.request",
+        "poll_seconds": 0.25,
+        "file_stat_timeout_seconds": 1.0,
+        "file_stat_execution": "One off-loop stat; timeout stops admission and polling",
+        "drain_timeout_seconds": float(drain),
+        "cancel_grace_seconds": 5.0,
+        "provider_close_timeout_seconds": 10.0,
+        "signals": ["SIGINT", "SIGTERM"],
+        "unresponsive_actor": "Fail finalization; retain ambiguity; require external supervision",
+    }
+
+
+class ExternalStop:
+    """A payload-free stop file or supported signal requests admission stop, never retries."""
+
+    FILE_STAT_TIMEOUT_S = 1.0
+
+    def __init__(
+        self,
+        path: Path,
+        on_stop: Callable[[str], None],
+        record: Callable[[dict[str, Any]], None],
+    ):
+        self.path, self.on_stop, self.record = path, on_stop, record
+        self.requested_epoch_s: float | None = None
+        self.source: str | None = None
+        self.poll_task: asyncio.Task[None] | None = None
+        self.previous_handlers: dict[int, Any] = {}
+        self.handlers: dict[int, Any] = {}
+        self.drain: dict[str, Any] = {"status": "not_started", "workers_drained": True}
+        self.signals_unavailable = False
+        self.file_stat_failure: str | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "schema": 1,
+            "requested": self.source is not None,
+            "source": self.source,
+            "requested_epoch_s": self.requested_epoch_s,
+            "request_file": str(self.path),
+            "request_contents_read": False,
+            "signals_unavailable": self.signals_unavailable,
+            "file_stat_failure": self.file_stat_failure,
+            "drain": self.drain,
+        }
+
+    def request(self, source: str) -> None:
+        if self.source is not None:
+            return
+        self.source, self.requested_epoch_s = source, time.time()
+        self.on_stop("external_stop" if source != "file_check_error" else "stop_control_error")
+        self.record(self.snapshot())
+
+    async def check_file(self) -> None:
+        if self.source is not None:
+            return
+        try:
+            # A slow filesystem must not block streaming. There is at most one
+            # outstanding read-only stat; a timeout stops polling and admission.
+            exists = await asyncio.wait_for(
+                asyncio.to_thread(self.path.is_file), self.FILE_STAT_TIMEOUT_S
+            )
+            if exists:
+                self.request("file")
+        except (OSError, TimeoutError) as exc:
+            self.file_stat_failure = "timeout" if isinstance(exc, TimeoutError) else "os_error"
+            self.request("file_check_error")
+
+    async def start(self) -> None:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+
+            def handler(_number: int, _frame: Any, name: str = sig.name) -> None:
+                loop.call_soon_threadsafe(self.request, name)
+
+            try:
+                previous = signal.signal(sig, handler)
+            except (ValueError, OSError):
+                self.signals_unavailable = True
+            else:
+                self.previous_handlers[sig] = previous
+                self.handlers[sig] = handler
+        await self.check_file()
+        if self.source is None:
+            self.poll_task = asyncio.create_task(self._poll(), name="live-eval-stop-file")
+
+    async def _poll(self) -> None:
+        while self.source is None:
+            await asyncio.sleep(0.25)
+            await self.check_file()
+
+    async def close(self) -> None:
+        try:
+            if self.poll_task is not None:
+                self.poll_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.poll_task
+        finally:
+            for sig, previous in self.previous_handlers.items():
+                if signal.getsignal(sig) is self.handlers[sig]:
+                    signal.signal(sig, previous)
+
+
+async def bounded_cleanup(
+    work: Awaitable[None], timeout_s: float, cancel_grace_s: float = 5.0
+) -> None:
+    task = asyncio.ensure_future(work)
+    cancelled = False
+    try:
+        done, _ = await asyncio.wait({task}, timeout=timeout_s)
+        if not done:
+            cancelled = True
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=cancel_grace_s)
+            if not done:
+                raise ReplayDrainTimeout(
+                    "Owned cleanup ignored cancellation; finalization unconfirmed"
+                )
+            with suppress(asyncio.CancelledError):
+                task.result()
+            raise ReplayDrainTimeout("Owned cleanup exceeded its drain deadline")
+        task.result()
+    finally:
+        if not task.done() and not cancelled:
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=cancel_grace_s)
+            if done:
+                with suppress(asyncio.CancelledError, Exception):
+                    task.result()
+
+
+async def drain_on_stop(
+    work: Awaitable[None],
+    stop_event: asyncio.Event,
+    drain_timeout_s: float,
+    cancel_grace_s: float = 5.0,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Graceful deadline then cooperative cancellation; never call unknown work complete."""
+    state = state if state is not None else {}
+    state.update(status="active", workers_drained=False)
+    task = asyncio.ensure_future(work)
+    stopped = asyncio.create_task(stop_event.wait())
+    cancelled = False
+    try:
+        await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
+        if not task.done():
+            done, _ = await asyncio.wait({task}, timeout=drain_timeout_s)
+            if not done:
+                cancelled = True
+                task.cancel()
+                done, _ = await asyncio.wait({task}, timeout=cancel_grace_s)
+                if not done:
+                    raise ReplayDrainTimeout(
+                        "Owned trials ignored cancellation; outcomes ambiguous"
+                    )
+        if cancelled and task.cancelled():
+            state.update(status="cancelled_after_grace", workers_drained=True)
+            return state
+        task.result()
+        state.update(
+            status="drained_after_stop" if stop_event.is_set() else "completed",
+            workers_drained=True,
+        )
+        return state
+    finally:
+        state["workers_drained"] = task.done()
+        if not task.done():
+            state["status"] = "unconfirmed"
+        if task.done() and not task.cancelled() and task.exception() is not None:
+            state["status"] = "failed"
+        stopped.cancel()
+        with suppress(asyncio.CancelledError):
+            await stopped
+        if not task.done() and not cancelled:
+            task.cancel()
+            # Cancellation of the caller still owns a bounded cleanup observation.
+            done, _ = await asyncio.wait({task}, timeout=cancel_grace_s)
+            if done:
+                state["workers_drained"] = True
+                with suppress(asyncio.CancelledError, Exception):
+                    task.result()
+
+
 class ProgressSnapshots:
     """Non-authoritative live status must not cancel an otherwise durable paid trial."""
 
@@ -1065,6 +1263,7 @@ class AuditProvider(MeteredProvider):
             "params_sha256": fingerprint(dict(params)),
             "output_limit": req.max_tokens,
             "status": "queued" if self.admission is not None else "started",
+            "streamed_chars": 0,
             "dispatch_admitted": False,
             "provider_invoked": None,
         }
@@ -1115,6 +1314,8 @@ class AuditProvider(MeteredProvider):
                 # Hold the slot until the actual provider stream closes, including cancellation.
                 async with aclosing(self.inner.stream(model, req, params)) as stream:
                     async for chunk in stream:
+                        if isinstance(chunk, str):
+                            record["streamed_chars"] += len(chunk)
                         if isinstance(chunk, LLMDone):
                             self.budget.finish(ticket, chunk)
                             record["status"] = "completed"
@@ -1274,6 +1475,7 @@ def schedule_run_identity(args: argparse.Namespace, identity: dict[str, Any]) ->
         "concurrency": (identity.get("concurrency"), 1, 8),
         "max_provider_inflight": (getattr(args, "max_provider_inflight", 8), 1, 32),
         "transport_failure_limit": (getattr(args, "transport_failure_limit", 3), 1, 10),
+        "zero_output_timeout_limit": (getattr(args, "zero_output_timeout_limit", 8), 1, 100),
     }
     for name, (value, lower, upper) in integer_bounds.items():
         if type(value) is not int or not lower <= value <= upper:
@@ -1321,6 +1523,8 @@ def schedule_run_identity(args: argparse.Namespace, identity: dict[str, Any]) ->
         "concurrency": integer_bounds["concurrency"][0],
         "max_provider_inflight": integer_bounds["max_provider_inflight"][0],
         "transport_failure_limit": integer_bounds["transport_failure_limit"][0],
+        "zero_output_timeout_limit": integer_bounds["zero_output_timeout_limit"][0],
+        "graceful_stop": stop_policy(args),
         "connectivity_check": not skip_connectivity,
         "provider_admission_policy": "bounded-v1-stop-on-rate-auth-config",
         "provider_configuration_sha256": provider_configuration,
@@ -1522,6 +1726,19 @@ async def execute(args: argparse.Namespace) -> None:
     await execute_live(args, cases, settings, rate_identity, custom_variants, directory)
 
 
+def require_replay_directory(directory: Path, stop_file: Path) -> None:
+    """Permit only the declared stop flag in an otherwise new, unidentified output."""
+    if not (directory / "identity.json").exists():
+        names = {path.name for path in directory.iterdir() if path.name != "runner.lock"}
+        if (
+            stop_file.parent.resolve() == directory.resolve()
+            and names == {stop_file.name}
+            and stop_file.is_file()
+        ):
+            return
+    require_async_directory(directory)
+
+
 async def execute_live(
     args: argparse.Namespace,
     cases: list[dict[str, Any]],
@@ -1530,7 +1747,10 @@ async def execute_live(
     custom_variants: dict[str, Variant] | None,
     directory: Path,
 ) -> None:
-    writer = DurableWriter(directory, initialization_guard=require_async_directory)
+    stop_file = (getattr(args, "stop_file", None) or directory / "stop.request").resolve()
+    writer = DurableWriter(
+        directory, initialization_guard=lambda path: require_replay_directory(path, stop_file)
+    )
     try:
         await writer.ready()
         await execute_live_owned(
@@ -1559,18 +1779,23 @@ async def execute_live_owned(
 
     conditions = configured_conditions(args, settings, custom_variants)
     strategies = {variant.label: condition for condition, variant in conditions.items()}
-    circuit = FailureCircuit(getattr(args, "transport_failure_limit", 3))
-    if not 1 <= circuit.threshold <= 10:
-        raise ValueError("Circuit threshold must be between one and ten")
+    circuit = FailureCircuit(
+        getattr(args, "transport_failure_limit", 3),
+        zero_output_timeout_threshold=getattr(args, "zero_output_timeout_limit", 8),
+    )
+    graceful_policy = stop_policy(args)
+    stop_event = asyncio.Event()
 
     admission_stop_path = directory / "provider-admission-stop.json"
 
     def stop_dispatch(reason: str) -> None:
+        stop_event.set()
         if circuit.reason is None:
             circuit.reason = reason
         if not buffered_store.writer.failed:
             buffered_store.snapshot_file(
-                admission_stop_path.name, {"schema": 1, "reason": circuit.reason}
+                admission_stop_path.name,
+                {"schema": 1, "reason": circuit.reason, "failure_circuit": circuit.snapshot()},
             )
 
     admission = ProviderAdmission(getattr(args, "max_provider_inflight", 8), stop_dispatch)
@@ -1611,6 +1836,8 @@ async def execute_live_owned(
         identity["order_design"] = "explicit_case_blocks"
         identity["explicit_schedule"] = explicit_schedule
     identity["transport_failure_limit"] = circuit.threshold
+    identity["zero_output_timeout_limit"] = circuit.zero_output_timeout_threshold
+    identity["graceful_stop"] = graceful_policy
     identity["max_provider_inflight"] = admission.limit
     identity["provider_admission_policy"] = "bounded-v1-stop-on-rate-auth-config"
     identity["connectivity_check"] = not getattr(args, "skip_connectivity_check", False)
@@ -1761,6 +1988,11 @@ async def execute_live_owned(
     )
 
     progress = BufferedProgressSnapshots(directory, buffered_store)
+    stop = ExternalStop(
+        (getattr(args, "stop_file", None) or directory / "stop.request").resolve(),
+        admission.stop,
+        lambda value: buffered_store.snapshot_file("stop-control.json", value),
+    )
 
     def progress_value() -> dict[str, Any]:
         return {
@@ -1776,6 +2008,8 @@ async def execute_live_owned(
                 state == "ambiguous" for state in journal.states.values()
             ),
             "circuit_reason": circuit.reason,
+            "failure_circuit": circuit.snapshot(),
+            "external_stop": stop.snapshot(),
             "provider_admission": admission.snapshot(),
             "progress_snapshot_errors": progress.diagnostics(),
         }
@@ -1829,7 +2063,11 @@ async def execute_live_owned(
         if buffered_store.writer.failed:
             result["failure_kind"] = "checkpoint_failure"
             admission.stop("checkpoint_error")
-        elif attempts and all(not record.get("dispatch_admitted", True) for record in attempts):
+        elif attempts and all(
+            not record.get("dispatch_admitted", True)
+            or (record.get("provider_invoked") is False and record.get("admission_blocked_reason"))
+            for record in attempts
+        ):
             result["status"] = "admission_blocked"
             result["failure_kind"] = "admission_blocked"
         else:
@@ -1842,6 +2080,7 @@ async def execute_live_owned(
             # An expected injection neither increments nor resets the real-outage circuit.
             if not result.get("expected_injected_failure"):
                 circuit.observe(real_result, attempts)
+        result["failure_circuit"] = circuit.snapshot()
         if circuit.reason:
             admission.stop(circuit.reason)
         results.append(result)
@@ -1852,29 +2091,42 @@ async def execute_live_owned(
         journal.finish(trial_id)
         progress.active(progress_value())
 
-    if not getattr(args, "skip_connectivity_check", False):
-        health = await connectivity_check(settings)
-        save(directory / "connectivity.json", health)
-        if not health["ready"]:
-            circuit.reason = "connectivity_preflight"
-
     monitor = AnchoredLoopLagMonitor()
     if store is not None:
         store.phase = "active_workers"
     await monitor.start()
     try:
-        await bounded_blocks(
-            blocks, args.concurrency, run_one, lambda: budget.blocked or bool(circuit.reason)
+        await stop.start()
+        if not circuit.reason and not getattr(args, "skip_connectivity_check", False):
+            health = await connectivity_check(settings)
+            save(directory / "connectivity.json", health)
+            if not health["ready"]:
+                admission.stop("connectivity_preflight")
+        stop.drain = await drain_on_stop(
+            bounded_blocks(
+                blocks, args.concurrency, run_one, lambda: budget.blocked or bool(circuit.reason)
+            ),
+            stop_event,
+            graceful_policy["drain_timeout_seconds"],
+            state=stop.drain,
         )
     finally:
         try:
             try:
+                if not stop.drain["workers_drained"]:
+                    raise ReplayDrainTimeout("Trial drain unconfirmed; retain durable starts")
+                for identifier, state in journal.states.items():
+                    if state == "in_flight":
+                        journal.states[identifier] = "ambiguous"
+                        if isinstance(journal, RecordDispatchJournal):
+                            journal.dirty.add(identifier)
                 journal.checkpoint()
             finally:
                 try:
-                    await close_providers(raw_providers)
+                    await bounded_cleanup(close_providers(raw_providers), 10.0)
                 finally:
                     await monitor.stop()
+                    await stop.close()
             # No provider work remains: compatibility snapshots cannot stall a live answer.
             if store is not None:
                 store.phase = "drained"
@@ -1891,6 +2143,7 @@ async def execute_live_owned(
                     journal.export()
                 save(directory / "checkpoint-write-telemetry.json", store.telemetry())
             save(directory / "event-loop-lag.json", monitor.summary())
+            save(directory / "stop-control.json", stop.snapshot())
         except BaseException as error:
             record_finalization_failure(directory, error)
             raise
@@ -1947,6 +2200,8 @@ async def execute_live_owned(
                 state == "ambiguous" for state in journal.states.values()
             ),
             "circuit_reason": circuit.reason,
+            "failure_circuit": circuit.snapshot(),
+            "external_stop": stop.snapshot(),
             "successful_trials": sum(row.get("status") == "completed" for row in results),
             "expected_injected_failures": sum(
                 bool(r.get("expected_injected_failure")) for r in results
@@ -1968,6 +2223,8 @@ async def execute_live_owned(
             {
                 "status": "partial_budget"
                 if budget.blocked
+                else "partial_stopped"
+                if circuit.reason == "external_stop"
                 else "partial_circuit"
                 if circuit.reason
                 else "partial_ambiguous"
@@ -2209,6 +2466,23 @@ def main(argv: list[str] | None = None) -> int:
         "--response-length", choices=("default", "concise", "detailed"), default="default"
     )
     parser.add_argument("--transport-failure-limit", type=int, default=3)
+    parser.add_argument(
+        "--zero-output-timeout-limit",
+        type=int,
+        default=8,
+        help="Stop after1-100 timeout trials without response progress; independent of cost",
+    )
+    parser.add_argument(
+        "--stop-file",
+        type=Path,
+        help="Creating this file stops admissions; default is OUT/stop.request; contents ignored",
+    )
+    parser.add_argument(
+        "--stop-drain-timeout",
+        type=float,
+        default=30.0,
+        help="Seconds to let active trials finish after a stop, then cancel (0-300)",
+    )
     parser.add_argument("--skip-connectivity-check", action="store_true")
     parser.add_argument(
         "--live", action="store_true", help="Enable billed providers after offline preflight"
@@ -2247,6 +2521,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         logging.disable(previous_logging_threshold)
+    if args.live:
+        accounting = json.loads((args.out / "accounting.json").read_text("utf-8"))
+        if accounting.get("circuit_reason"):
+            return 2
     return 0
 
 
