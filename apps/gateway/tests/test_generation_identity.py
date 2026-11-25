@@ -12,9 +12,8 @@ from apps.gateway.tests import test_late_answer_routing as lab_test
 from apps.gateway.tests import test_prepared_grounding as prepared_test
 from apps.gateway.tests.conftest import Env
 from copilot_core import prompts
-from copilot_gateway.detector import Detection
 from copilot_gateway.session import Session
-from copilot_gateway.turn import TurnDetector, TurnHost, _Candidate, _Turn
+from copilot_gateway.turn import Detection, TurnDetector, TurnHost, _Candidate, _Turn
 
 
 @pytest.fixture
@@ -22,18 +21,14 @@ def env():
     return Env()
 
 
-async def test_material_final_after_completed_detection(
-    env, monkeypatch, record_property
-):
+async def test_material_final_after_completed_detection(env, monkeypatch, record_property):
     env.stt.final_delay_s = 0.06
     await lab_test.test_final_revision_gets_a_new_question_and_does_not_reuse_old_route_future(
         env, monkeypatch, "frozen", True, record_property
     )
 
 
-async def test_generation_snapshot_excludes_later_speaker(
-    env, monkeypatch, record_property
-):
+async def test_generation_snapshot_excludes_later_speaker(env, monkeypatch, record_property):
     await lab_test.test_old_question_keeps_generation_start_conversation(
         env, monkeypatch, "frozen", record_property
     )
@@ -162,9 +157,7 @@ async def test_prompt_profile_stays_with_generation_snapshot(settings_factory):
     assert "Blair" not in request
 
 
-async def test_retrieval_names_use_snapshot_but_next_question_gets_new_context(
-    settings_factory
-):
+async def test_retrieval_names_use_snapshot_but_next_question_gets_new_context(settings_factory):
     entered, released = asyncio.Event(), asyncio.Event()
     searches = []
     recent = "Them: How does Atlas work?"

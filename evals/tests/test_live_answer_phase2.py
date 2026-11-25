@@ -145,7 +145,11 @@ def test_rates_and_clustered_uncertainty_keep_missingness_and_repetitions_explic
     assert all_success["wilson_95"][1] == pytest.approx(1)
     with pytest.raises(ValueError, match="denominator"):
         rate(2, 1)
-    observations = [("question1", -100), ("question1", -100), ("question2", 200)]
+    observations: list[tuple[str, float]] = [
+        ("question1", -100),
+        ("question1", -100),
+        ("question2", 200),
+    ]
     ci = paired_uncertainty(observations)
     assert ci["observed_pairs"] == 3
     assert ci["unique_questions"] == 2

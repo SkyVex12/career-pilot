@@ -186,7 +186,8 @@ async def test_reviewed_binding_passes_preflight_without_any_provider(fixture, m
 def test_repository_source_fingerprint_reads_real_repo_not_private_copy(monkeypatch):
     monkeypatch.setattr(replay, "root_directory", lambda: REPO)
     args = Namespace(max_cost=None)
-    identity = replay.experiment_identity([], Settings(_env_file=None), 1, 20261125, 2, 90)
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+    identity = replay.experiment_identity([], settings, 1, 20261125, 2, 90)
     binding = replay.schedule_run_identity(args, identity)
     assert "evals/src/copilot_evals/live_answer_replay.py" in identity["code"]
     assert "evals/src/copilot_evals/live_answer_schedule.py" in identity["code"]
@@ -268,7 +269,8 @@ def test_provider_configuration_identity_contains_no_raw_endpoint_or_key(monkeyp
         replay, "getproxies", lambda: {"https": "https://proxy-user:private@proxy.invalid"}
     )
     settings = Settings(
-        _env_file=None, openai_base_url="https://user:private@endpoint.invalid/v1?key=secret"
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        openai_base_url="https://user:private@endpoint.invalid/v1?key=secret",
     )
     identity = replay.provider_configuration_fingerprint(settings)
     assert len(identity) == 64

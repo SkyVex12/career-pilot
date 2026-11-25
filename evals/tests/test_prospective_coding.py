@@ -14,6 +14,8 @@ SRC = HERE / "copilot_evals" if (HERE / "copilot_evals").exists() else HERE / "s
 
 def load(name, file):
     spec = importlib.util.spec_from_file_location(name, SRC / file)
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -314,6 +316,7 @@ def test_median_growth_counterexample_is_detected():
 def test_median_wrong_even_fraction_fails():
     def floor(stream, k):
         for value in rolling(stream, k):
+            assert value is not None
             yield int(value)
 
     c = novel("sliding_median", floor, MED)

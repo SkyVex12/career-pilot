@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from copilot_evals.live_answer_checkpoints import RecordDispatchJournal
 from copilot_evals.live_answer_session_replay import (
     CONTROL,
     DispatchGate,
@@ -72,6 +73,32 @@ def test_text_origin_and_boundary_metric_exclude_filler_and_keep_unknown_origins
     assert rows[0]["first_sentence_boundary_from_text_ms"] == 70
     assert rows[0]["complete_from_text_ms"] == 90
     assert rows[1]["first_delta_from_text_ms"] is None
+
+
+@pytest.mark.parametrize(
+    ("chunks", "expected_boundary"),
+    [
+        (["A complete opening. ", "Another sentence. ", "Final sentence."], 20),
+        (["A complete opening."], 80),
+    ],
+)
+def test_primary_boundary_is_first_only_and_final_flush_cannot_overwrite(chunks, expected_boundary):
+    events = [event("question.detected", text="Question?", at_ms=10)]
+    events.extend(
+        event("answer.delta", text=text, at_ms=20 + index * 20, **{"pass": "fast"})
+        for index, text in enumerate(chunks)
+    )
+    events.extend(
+        [
+            event("answer.delta", text="An expert sentence. ", at_ms=70, **{"pass": "deep"}),
+            event("answer.done", at_ms=80, **{"pass": "fast"}),
+            event("answer.done", at_ms=90, **{"pass": "deep"}),
+        ]
+    )
+    rows = timing_rows(events, [{"text": "Question?", "speaker": "them", "at_ms": 0}])
+    assert rows[0]["first_sentence_boundary_at_ms"] == expected_boundary
+    assert rows[0]["first_sentence_boundary_from_text_ms"] == expected_boundary
+    assert rows[0]["complete_at_ms"] == 80
 
 
 async def test_audit_generator_can_be_opened_and_consumed_in_different_router_tasks(tmp_path):
@@ -299,9 +326,9 @@ def test_audit_detects_late_errors_and_events_after_socket_close():
 
 
 def session_args(tmp_path):
-    from types import SimpleNamespace
+    from argparse import Namespace
 
-    return SimpleNamespace(
+    return Namespace(
         out=tmp_path / "session-resume",
         live=False,
         architectures=["D"],
@@ -427,7 +454,7 @@ async def test_durable_result_recovers_crash_before_journal_finish(tmp_path, mon
     freeze_session_test_identity(monkeypatch)
     args = session_args(tmp_path)
     calls = []
-    original_finish = harness.RecordDispatchJournal.finish
+    original_finish = RecordDispatchJournal.finish
 
     async def replay(scenario, settings, providers, *, trial_id, **kwargs):
         calls.append(trial_id)
@@ -437,10 +464,10 @@ async def test_durable_result_recovers_crash_before_journal_finish(tmp_path, mon
         raise RuntimeError("synthetic crash between durable result and finish")
 
     monkeypatch.setattr(harness, "replay_session", replay)
-    monkeypatch.setattr(harness.RecordDispatchJournal, "finish", crash_after_result)
+    monkeypatch.setattr(RecordDispatchJournal, "finish", crash_after_result)
     with pytest.raises(RuntimeError, match="synthetic crash"):
         await harness.execute(args)
-    monkeypatch.setattr(harness.RecordDispatchJournal, "finish", original_finish)
+    monkeypatch.setattr(RecordDispatchJournal, "finish", original_finish)
     summary = await harness.execute(args)
     assert summary["sessions"] == 2
     assert summary["ambiguous_sessions"] == 0
@@ -464,15 +491,23 @@ async def test_eight_workers_bound_sessions_without_scheduling_every_trial(tmp_p
     args.max_inflight = 4
     active = peak = 0
     calls = []
+    first_wave = asyncio.Event()
 
     async def replay(scenario, settings, providers, *, trial_id, **kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         calls.append(trial_id)
-        await asyncio.sleep(0.01)
-        active -= 1
-        return completed_session(scenario, settings, trial_id)
+        if active == args.concurrency:
+            first_wave.set()
+        try:
+            # Durable dispatch barriers can stagger admissions beyond a short sleep.
+            # Hold the first wave until all bounded workers enter, independently of disk speed.
+            async with asyncio.timeout(5):
+                await first_wave.wait()
+            return completed_session(scenario, settings, trial_id)
+        finally:
+            active -= 1
 
     monkeypatch.setattr(harness, "replay_session", replay)
     summary = await harness.execute(args)
@@ -493,6 +528,8 @@ async def test_shared_gate_covers_decisions_and_answers_before_budget_reservatio
     gate = DispatchGate(1)
     provider = LimitedProvider(SessionAuditProvider(raw, budget, records, tmp_path), gate)
     request = LLMRequest([], "Question", 100)
+    assert settings.openai_fast_model is not None
+    assert settings.openai_detector_model is not None
     stream = provider.stream(settings.openai_fast_model, request, {})
     await anext(stream)
     input = [{}, {"content": [{"text": "<utterance>Where are you based?</utterance>"}]}]
@@ -526,6 +563,7 @@ async def test_session_gate_stops_decisions_retry_after_rate_limit_before_new_re
     provider = LimitedProvider(
         SessionAuditProvider(FailingDecisions(), budget, records, tmp_path), gate
     )
+    assert settings.openai_detector_model is not None
     with pytest.raises(RateLimitError):
         await provider.decide(settings.openai_detector_model, [], [])
     assert gate.reason == "rate_limit"

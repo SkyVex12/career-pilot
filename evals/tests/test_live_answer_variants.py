@@ -48,7 +48,7 @@ def test_pinned_prompt_parser_never_executes_code_or_unapproved_expressions():
 
 
 def test_manifest_validates_conditions_and_does_not_mutate_settings(tmp_path):
-    base = Settings(_env_file=None, llm_providers=["openai"], openai_fast_model="base-model")
+    base = Settings(_env_file=None, llm_providers=["openai"], openai_fast_model="base-model")  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
     path = tmp_path / "variants.json"
     path.write_text(
         json.dumps(
@@ -83,7 +83,7 @@ def test_manifest_validates_conditions_and_does_not_mutate_settings(tmp_path):
 async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_context():
     before = prompts.ADAPTIVE_SYSTEM
     settings = Settings(
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
         llm_providers=["openai"],
         answer_architecture="adaptive_on_demand",
         openai_fast_model="offline",
@@ -102,13 +102,14 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
         provider = ScriptedProvider("openai", reply)
         return await trial(case, label, 0, settings, build_router(settings, [provider]), 10, rules)
 
-    results = await asyncio.gather(
-        one("old", "Pinned rules for {user_name} in {mode}."), one("current", None)
+    results = list(
+        await asyncio.gather(
+            one("old", "Pinned rules for {user_name} in {mode}."), one("current", None)
+        )
     )
     assert all(not row["failure"] for row in results)
     assert all(
-        any(event["message"]["type"] == "answer.done" for event in row["events"])
-        for row in results
+        any(event["message"]["type"] == "answer.done" for event in row["events"]) for row in results
     )
     assert before == prompts.ADAPTIVE_SYSTEM
     assert captured["old"]["system"][0]["text"].startswith("Pinned rules")
@@ -149,9 +150,12 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
 @pytest.mark.parametrize("pass_", ["fast", "deep"])
 def test_pinned_prompt_uses_original_request_snapshot_after_context_changes(pass_):
     settings = Settings(
-        _env_file=None, llm_providers=["openai"],
+        _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        llm_providers=["openai"],  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
         answer_architecture="adaptive_on_demand",
-        openai_fast_model="offline", openai_detector_model="offline", openai_deep_model="offline",
+        openai_fast_model="offline",
+        openai_detector_model="offline",
+        openai_deep_model="offline",
     )
     provider = ScriptedProvider("openai")
     case = {
@@ -164,22 +168,34 @@ def test_pinned_prompt_uses_original_request_snapshot_after_context_changes(pass
     host = Host(settings, build_router(settings, [provider]), case)
     engine = EvaluationEngine(host, "Pinned rules for {user_name} in {mode}.")
     question = Question(
-        qid=uuid4(), text=case["question"], qtype="technical", confidence=1,
-        addressed=True, speculative=False, forced=False, t0=time.monotonic(),
-        detector_ms=None, match=None,
+        qid=uuid4(),
+        text=case["question"],
+        qtype="technical",
+        confidence=1,
+        addressed=True,
+        speculative=False,
+        forced=False,
+        t0=time.monotonic(),
+        detector_ms=None,
+        match=None,
     )
     snapshot = engine._request_snapshot(question)
     question.text = "Describe the replacement project."
     case.update(
-        mode="standup", digest="New unrelated profile.",
+        mode="standup",
+        digest="New unrelated profile.",
         recent="New unrelated conversation.",
     )
     request = engine._request(
-        question, pass_, ["Original retrieved evidence."], snapshot=snapshot,
+        question,
+        pass_,
+        ["Original retrieved evidence."],
+        snapshot=snapshot,
     )
     serialized = json.dumps(asdict(request))
     assert request.system[0].text.startswith("Pinned rules for Alex Rivera in an interview.")
     assert snapshot.text in serialized
+    assert snapshot.context.digest_text is not None
     assert snapshot.context.digest_text in serialized
     assert snapshot.transcript.recent in serialized
     assert "Original retrieved evidence." in serialized
@@ -198,17 +214,18 @@ def test_private_draft_is_inert_hashed_and_exclusive_with_commit(tmp_path):
         ],
     }
     path.write_text(json.dumps(data))
-    variant = load_variants(path, Settings(_env_file=None), tmp_path)["D-draft"]
+    variant = load_variants(path, Settings(_env_file=None), tmp_path)["D-draft"]  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
     assert variant.prompt_rules == "Draft rules"
+    assert variant.prompt_identity is not None
     assert len(variant.prompt_identity["source_sha256"]) == 64
     data["variants"][0]["prompt_commit"] = "772f4ce"
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="either"):
-        load_variants(path, Settings(_env_file=None), tmp_path)
+        load_variants(path, Settings(_env_file=None), tmp_path)  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
 
 
 def test_rate_card_merges_without_mutating_base_and_rejects_nonfinite_rates(tmp_path):
-    base = Settings(_env_file=None)
+    base = Settings(_env_file=None)  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
     path = tmp_path / "rates.json"
     data = {
         "schema": 1,
@@ -230,7 +247,7 @@ def test_rate_card_merges_without_mutating_base_and_rejects_nonfinite_rates(tmp_
 
 def test_unpriced_routes_fail_before_billed_schedule():
     settings = Settings(
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
         llm_providers=["openai"],
         openai_fast_model="unpriced",
         openai_detector_model="unpriced",
@@ -243,16 +260,29 @@ def test_unpriced_routes_fail_before_billed_schedule():
 
 def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
     base = Settings(
-        _env_file=None, llm_providers=["openai"],
-        openai_fast_model="gpt-6-luna", openai_detector_model="gpt-6-luna",
+        _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        llm_providers=["openai"],  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        openai_fast_model="gpt-6-luna",
+        openai_detector_model="gpt-6-luna",
         openai_deep_model="gpt-6.1-sol",
     )
     path = tmp_path / "recovery.json"
-    path.write_text(json.dumps({"schema": 1, "variants": [{
-        "label": "E", "architecture": "adaptive_on_demand",
-        "settings": {"adaptive_failure_recovery": True},
-        "expert_tier": "fast", "expert_route_limit": 1,
-    }]}))
+    path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "variants": [
+                    {
+                        "label": "E",
+                        "architecture": "adaptive_on_demand",
+                        "settings": {"adaptive_failure_recovery": True},
+                        "expert_tier": "fast",
+                        "expert_route_limit": 1,
+                    }
+                ],
+            }
+        )
+    )
     variant = load_variants(path, base, tmp_path)["E"]
     assert not base.adaptive_failure_recovery
     assert variant.identity(CONFIG_FIELDS)["settings"]["adaptive_failure_recovery"] is True
@@ -263,8 +293,11 @@ def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
     assert router.routes["answer_recovery"][0].params["service_tier"] == "fast"
     assert "answer_recovery" not in router.hedge_after_s
     # An unpriced recovery cannot hide behind otherwise priced primary/expert routes.
-    router.routes = {**router.routes, "answer_recovery": [
-        replace(router.routes["answer_recovery"][0], model="unpriced-recovery")
-    ]}
+    router.routes = {
+        **router.routes,
+        "answer_recovery": [
+            replace(router.routes["answer_recovery"][0], model="unpriced-recovery")
+        ],
+    }
     with pytest.raises(ValueError, match="rate missing"):
         validate_route_prices(router, variant.settings)
