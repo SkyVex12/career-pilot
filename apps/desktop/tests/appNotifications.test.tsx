@@ -52,10 +52,19 @@ it("does not reopen dismissed download notices for each progress tick, and block
   expect(screen.queryByRole("region", { name: "App update" })).not.toBeInTheDocument();
   const ready = { state: "ready", version: "1.2.3", notes: null, auto: false, install_in_s: null } as const;
   rerender(<UpdateNotification update={ready} running />);
-  expect(await screen.findByRole("button", { name: "Install and restart" })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "Update and restart" })).toBeDisabled();
   rerender(<UpdateNotification update={ready} running={false} />);
   ipc.handle("install_update", () => { throw "Installer unavailable"; });
-  fireEvent.click(screen.getByRole("button", { name: "Install and restart" }));
+  fireEvent.click(screen.getByRole("button", { name: "Update and restart" }));
   expect(await screen.findByText("Installer unavailable")).toBeVisible();
   expect(ipc.calls.filter(c => c.cmd === "install_update")).toHaveLength(1);
+});
+
+it("shows CoRuby progress again when a dismissed download starts installing", async () => {
+  const { rerender } = render(<UpdateNotification update={{ state: "downloading", version: "1.2.3", percent: 90 }} running={false} />);
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss app update notification" }));
+  rerender(<UpdateNotification update={{ state: "installing", version: "1.2.3" }} running={false} />);
+  expect(await screen.findByRole("region", { name: "App update" })).toHaveTextContent("Updating to 1.2.3… CoRuby will restart shortly.");
+  expect(screen.getByRole("progressbar", { name: "App update progress" })).not.toHaveAttribute("aria-valuenow");
+  expect(screen.queryByRole("button", { name: /restart/i })).not.toBeInTheDocument();
 });

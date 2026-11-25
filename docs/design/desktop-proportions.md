@@ -54,7 +54,7 @@ Assistants and Quick settings open on hover without moving keyboard focus. Movin
 
 ## App lifecycle
 
-With Stealth off, the visible workspace or live overlay keeps its taskbar/dock entry. Reopening from the tray or another app instance brings an active hosted/guest call overlay forward. Left-clicking the tray shows Pause/Resume notifications and Exit; right-clicking brings CoRuby forward, with an active call opening its overlay. The pause action controls automatic call-detection notifications. Windows and macOS use a compact menu with a red Exit label; Linux retains its native tray menu.
+With Stealth off, the visible workspace or live overlay keeps its taskbar/dock entry. Reopening from the tray or another app instance brings an active hosted/guest call overlay forward. Left-clicking the tray brings CoRuby forward: the main window when idle, or the overlay during an active hosted/guest call. Right-clicking opens Pause/Resume notifications and Exit. The pause action controls automatic call-detection notifications. Windows and macOS use a compact menu with a red Exit label; Linux retains its native tray menu.
 
 Quit immediately hides app windows and the tray icon, then finishes session shutdown in the background. Local audio stops, the host sends session.end, and the process exits after confirmation. If acknowledgement is lost, retry ending only that exact session with the original account. A failed cleanup restores the app with a retryable notification. Leaving a guest session never ends its host’s call. A simultaneous startup is allowed to settle before cleanup; new starts and updates are blocked during shutdown.
 
@@ -71,3 +71,12 @@ The transparency slider moves from clear on the left (10% opacity / 90% transpar
 Keep on top applies to both native windows and survives restart. Click-through is shared for the current app run, with one recovery shortcut for both windows. Consent prompts temporarily remain interactive and on top without changing those preferences. Native failures are reported; unsuccessful on-top changes roll back both windows.
 
 Answer cards show content and source references without Copy, Copy detailed, or feedback buttons. An empty action footer reserves no space.
+
+Windows updates use the same bottom-right CoRuby progress notice as downloads, followed by
+a silent per-user installation and automatic restart. The release generator pairs NSIS
+currentUser with updater quiet, so it does not open the Windows setup progress window
+or require elevation. The existing signature/version checks and active-call installation
+guard still apply. An older installed version controls its own update handoff, so the
+first update into this version may still show its old setup window; subsequent updates
+use the quiet flow. The progress notice describes the handoff, not file-copy progress
+after the app exits.

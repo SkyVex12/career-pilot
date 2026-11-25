@@ -94,12 +94,12 @@ try {
       await page.getByRole("region", { name: "Server unavailable", exact: true }).waitFor();
       await audit("server-failed");
       await page.evaluate(() => window.__harness.update({ state: "ready", version: "1.2.3", auto: false, install_in_s: null }));
-      await page.getByRole("button", { name: "Install and restart", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Update and restart", exact: true }).waitFor();
       await audit("server-failed-and-update-ready");
       await checkActions("server-failed-and-update-ready");
       await page.evaluate(() => window.__harness.server({ state: "ready", detail: null }));
       await page.getByRole("region", { name: "Server unavailable", exact: true }).waitFor({ state: "hidden" });
-      await page.getByRole("button", { name: "Install and restart", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Update and restart", exact: true }).waitFor();
       await audit("update-ready");
       assert.equal(errors.length, 0, JSON.stringify(errors));
       assert.equal(externalRequests.length, 0, JSON.stringify(externalRequests));

@@ -1743,7 +1743,7 @@ fn update_status(app: AppHandle) -> UpdateState {
     }
 }
 
-/// "Install and restart": the downloaded update, now. Never during a session.
+/// "Update and restart": the downloaded update, now. Never during a session.
 #[tauri::command]
 fn install_update(app: AppHandle) -> Res<()> {
     #[cfg(feature = "release")]
