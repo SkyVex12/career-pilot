@@ -1,6 +1,7 @@
 """Candidate architectures exercised without paid providers or historical-answer leakage."""
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
@@ -1422,3 +1423,66 @@ def test_certificate_verification_vetoes_otherwise_eligible_transport_failure(
         cause_types=("APIConnectionError", "SSLZeroReturnError", certificate),
     )
     assert not _transient_before_text([started, failed])
+
+
+@pytest.mark.parametrize(("start_type", "start_depth"), [("other", None), ("behavioral", "light")])
+@pytest.mark.parametrize(("held", "streaming"), [(True, True), (True, False), (False, True)])
+async def test_cancellation_records_frozen_and_latest_classification_without_text(
+    settings_factory, start_type, start_depth, held, streaming
+):
+    engine, router, events, logs, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    engine.host.store_text = lambda: False
+    if streaming:
+        router.primary_gate = asyncio.Event()
+    q = question("PRIVATE_QUESTION_CONTENT", start_type, depth=start_depth, held=held)
+    engine.add(q)
+    await asyncio.wait_for(router.primary_started.wait(), 1)
+    q.qtype, q.depth = "technical", "deep"
+    if held:
+        engine.discard(q.qid)
+    else:
+        engine.cancel_speculative(q.qid)
+    await engine.wait_idle()
+    [entry] = [row for row in logs if row["kind"] == "pass_cancelled"]
+    assert entry["question_type_at_start"] == start_type
+    assert entry["detector_depth_at_start"] == start_depth
+    assert entry["question_type_at_cancellation"] == "technical"
+    assert entry["detector_depth_at_cancellation"] == "deep"
+    assert entry["model_started"] is True
+    assert entry["request_job"] == "fast"
+    assert len(router.requests) == 1
+    assert not any(kind == "AnswerDone" for kind, _ in events)
+    if held:
+        assert events == []
+    if not streaming:
+        assert entry["output_tokens"] > 0  # Completed provider output remained held.
+    assert "PRIVATE_QUESTION_CONTENT" not in json.dumps(logs)
+    assert "I chose Redis" not in json.dumps(logs)
+    assert "text" not in entry
+
+
+async def test_cancellation_before_request_keeps_unknown_routing_depth(settings_factory):
+    engine, router, _, logs, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    entered = asyncio.Event()
+
+    async def memory(text, pass_):
+        entered.set()
+        await asyncio.Event().wait()
+        return [], {}
+
+    engine.host.memory_lines = memory
+    q = question(qtype="other", held=True)
+    engine.add(q)
+    await asyncio.wait_for(entered.wait(), 1)
+    q.qtype = "technical"
+    engine.discard(q.qid)
+    await engine.wait_idle()
+    [entry] = [row for row in logs if row["kind"] == "pass_cancelled"]
+    assert entry["model_started"] is False
+    assert entry["question_type_at_start"] == "other"
+    assert entry["question_type_at_cancellation"] == "technical"
+    assert entry["detector_depth_at_start"] is None
+    assert entry["detector_depth_at_cancellation"] is None
+    assert router.requests == []

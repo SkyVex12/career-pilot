@@ -162,6 +162,7 @@ class Detector:
             "text_hash": key[:32],
             "decision": detection.decision,
             "type": detection.qtype,
+            "depth": detection.depth,
             "latency_ms": detection.latency_ms,
             "cached": cached,
         }

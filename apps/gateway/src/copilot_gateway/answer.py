@@ -1270,6 +1270,10 @@ class AnswerEngine:
             "answer_strategy": self.strategy(q),
             "response_length": self._preferences(q, pass_)[1],
             "request_job": state.get("job"),
+            "question_type_at_start": state.get("question_type_at_start"),
+            "detector_depth_at_start": state.get("detector_depth_at_start"),
+            "question_type_at_cancellation": q.qtype,
+            "detector_depth_at_cancellation": q.depth,
             **state.get("recovery", {}),
         }
         req = cast(LLMRequest | None, state.get("req"))

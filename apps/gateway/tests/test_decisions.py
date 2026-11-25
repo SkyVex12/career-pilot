@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import httpx2
 import openai
+import pytest
 
 from copilot_core import keys, prompts
 from copilot_core.llm import Decided, LLMUsage, OpenAIProvider
@@ -312,3 +313,28 @@ async def test_a_session_warms_the_light_detailed_answers_cache_too(env) -> None
     assert len(provider.prewarms) == 2
     assert all(model == provider.prewarms[0][0] for model, _ in provider.prewarms)
     assert "talking" not in provider.prewarms[1][1].system[0].text
+
+
+@pytest.mark.parametrize("depth", ["deep", "light", None])
+async def test_detector_reports_depth_on_fresh_and_cached_decisions_without_text(depth):
+    class DepthDecider(FakeDecider):
+        async def decide(self, model, input, questions) -> Decided:
+            result = await super().decide(model, input, questions)
+            return Decided(
+                answers("answer", "technical", depth=depth),
+                result.usage,
+                result.provider,
+                result.model,
+            )
+
+    provider = DepthDecider([0])
+    detector, entries = detector_on(provider, hedge_s=None)
+    private_question = "Private routing question: how did you scale this?"
+    fresh = await detector.detect(private_question, "")
+    cached = await detector.detect(private_question, "")
+    assert fresh.depth == cached.depth == depth
+    assert provider.calls == 1
+    assert [entry["cached"] for entry in entries] == [False, True]
+    assert [entry["depth"] for entry in entries] == [depth, depth]
+    assert all(entry["type"] == "technical" for entry in entries)
+    assert private_question not in json.dumps(entries)
