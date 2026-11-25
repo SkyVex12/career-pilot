@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { emit } from "@tauri-apps/api/event";
 import { expect, it, vi } from "vitest";
 import { TransparencyControl, ReadingSettings } from "../src/WindowSettingControls";
-import { useViewPrefs, useAnswerStyle } from "../src/viewPreferences";
+import { useViewPrefs, useAnswerStyle, useTextScaleKeys } from "../src/viewPreferences";
 import { useWorkspaceWindowOpacity } from "../src/App";
 import { TEXT_SCALE_KEY } from "../src/transcript";
 import { ipc } from "./ipc";
@@ -71,4 +71,17 @@ it("only shares a live answer-format change after the session accepts it", async
   await act(async () => { await host.result.current[1]("paragraph"); });
   expect(other.result.current[0]).toBe("paragraph");
   expect(ipc.calls.filter(call => call.cmd === "set_answer_style")).toHaveLength(2);
+});
+
+it("shares keyboard text-size changes from either window root", () => {
+  const main = renderHook(() => { const view = useViewPrefs(); useTextScaleKeys(view.stepText); return view; });
+  const overlay = renderHook(useViewPrefs);
+  fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+  expect(main.result.current.textScale).toBe(1.1);
+  expect(overlay.result.current.textScale).toBe(1.1);
+  fireEvent.keyDown(window, { key: "0", ctrlKey: true });
+  expect(overlay.result.current.textScale).toBe(1);
+  main.unmount();
+  fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+  expect(overlay.result.current.textScale).toBe(1);
 });

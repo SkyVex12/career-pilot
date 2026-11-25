@@ -28,8 +28,8 @@ import { GuestScreenView, ScreenChip } from "./screenui";
 import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { blockText, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
-import { useViewPrefs, type ViewPrefs } from "./viewPreferences";
-export { useViewPrefs, type ViewPrefs } from "./viewPreferences";
+import { useTextScaleKeys, useViewPrefs, type ViewPrefs } from "./viewPreferences";
+export { textKeyStep, useViewPrefs, type ViewPrefs } from "./viewPreferences";
 import { Banner, ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
 import { LiveCallLanguage } from "./LiveCallLanguage";
@@ -119,15 +119,6 @@ function useOverlayPrefs() {
   return { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop };
 }
 
-/// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
-export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (e.key === "=" || e.key === "+") return 1;
-  if (e.key === "-" || e.key === "_") return -1;
-  if (e.key === "0") return 0;
-  return null;
-}
-
 const STATUS_ICON: Record<string, string> = { ok: "●", degraded: "▲", reconnecting: "◌", off: "○" };
 
 export function StatusBadge({ s }: { s: SessionView }) {
@@ -155,17 +146,7 @@ function OverlayContent() {
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
 
-  // Ctrl+plus / Ctrl+minus / Ctrl+0 size the text while the overlay has focus.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const steps = textKeyStep(e);
-      if (steps === null) return;
-      e.preventDefault();
-      stepText(steps);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [stepText]);
+  useTextScaleKeys(stepText);
 
   const offKey = prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G");
   // Watching someone else's call (a guest seat): read only, nothing acts on the call.

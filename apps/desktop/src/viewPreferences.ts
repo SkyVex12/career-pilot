@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AnswerStyle } from "@copilot/protocol";
 import { api } from "./api";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, loadLayout, loadTextScale, savePref, stepScale, type OverlayLayout } from "./transcript";
@@ -32,4 +32,27 @@ export function useAnswerStyle(running: boolean) {
     savePref(ANSWER_STYLE_KEY, next);
   }, [running]);
   return [value, change] as const;
+}
+
+/// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
+export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  if (e.key === "=" || e.key === "+") return 1;
+  if (e.key === "-" || e.key === "_") return -1;
+  if (e.key === "0") return 0;
+  return null;
+}
+
+/** Install once in each window root, so keyboard and menu controls share the same value. */
+export function useTextScaleKeys(stepText: (steps: number) => void) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const steps = textKeyStep(event);
+      if (steps === null || event.defaultPrevented) return;
+      event.preventDefault();
+      stepText(steps);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stepText]);
 }

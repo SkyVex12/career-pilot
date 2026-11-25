@@ -1,4 +1,4 @@
-import { useViewPrefs } from "./viewPreferences";
+import { useTextScaleKeys, useViewPrefs } from "./viewPreferences";
 import { SessionNoteDrafts } from "./SessionNoteDrafts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -60,7 +60,8 @@ export function useWorkspaceWindowOpacity() {
 
 export default function App() {
   useWorkspaceWindowOpacity();
-  const { textScale } = useViewPrefs();
+  const { textScale, stepText } = useViewPrefs();
+  useTextScaleKeys(stepText);
   useEffect(() => {
     document.documentElement.style.setProperty("--app-text-scale", String(textScale));
     return () => { document.documentElement.style.removeProperty("--app-text-scale"); };
