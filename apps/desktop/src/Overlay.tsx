@@ -593,7 +593,7 @@ const QuestionCard = memo(function QuestionCard({
   const adaptive = isAdaptiveQuestion(q);
   // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
   // Java") in an otherwise spoken answer.
-  const textOf = (text: string) => (screen || text.includes("```") ? CodeAnswer : AnswerText);
+  const textOf = (text: string) => (screen || text.includes("```") || text.includes("~~~") ? CodeAnswer : AnswerText);
   const FastText = textOf(q.fast.text);
   const DeepText = textOf(q.deep.text);
   // A screen's code pass runs only when a task needs code or an exact output: its section
@@ -679,7 +679,7 @@ function AdaptiveAnswer({ q, onExpand, canExpand, compact }: { q: QuestionView; 
   const sameText = expertReady && q.deep.text === q.fast.text;
   const expert = reviewing && expertReady && !sameText;
   const shown = expert ? q.deep : q.fast;
-  const Text = shown.text.includes("```") ? CodeAnswer : AnswerText;
+  const Text = (shown.text.includes("```") || shown.text.includes("~~~")) ? CodeAnswer : AnswerText;
   const expertStarted = q.deepRequested || !!q.deep.text || q.deep.done;
   const permitsExpert = q.answerStrategy === "adaptive_hybrid" || q.answerStrategy === "adaptive_on_demand";
   const requestExpert = async () => {
