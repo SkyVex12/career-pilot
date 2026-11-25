@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, get_args
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+import httpx2
+
 from copilot_core import prompts
 from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Route, error_chain
 from copilot_core.packs import NodeRef
@@ -32,6 +34,7 @@ from copilot_evals.live_answer_artifacts import DispatchJournal, run_lock, sourc
 from copilot_evals.live_answer_eval import Run, fingerprint
 from copilot_evals.live_answer_variants import (
     EvaluationEngine,
+    SyntheticFault,
     Variant,
     load_rate_card,
     load_variants,
@@ -51,6 +54,9 @@ STRATEGIES = {
     "D": "adaptive_on_demand",
 }
 TRIAL = contextvars.ContextVar("live_eval_trial", default="")
+TRIAL_ORIGIN: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "live_eval_trial_origin", default=None
+)
 CASE_FIELDS = {
     "id",
     "question",
@@ -328,6 +334,115 @@ class Host:
         pass
 
 
+class InjectedPreDispatchFailure:
+    """Fail only an explicitly wrapped route; the audited provider is never invoked.
+
+    Router attempt events still exercise real eligibility logic, but are tagged as
+    synthetic in the result. They must never become observed provider outage/cost data.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        spec: SyntheticFault,
+        variant: str,
+        route_index: int,
+        record: Callable[[dict[str, Any]], None],
+    ) -> None:
+        self.inner, self.name = inner, inner.name
+        self.spec, self.variant, self.route_index, self.record = spec, variant, route_index, record
+
+    async def stream(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> AsyncGenerator[str | LLMDone]:
+        origin = TRIAL_ORIGIN.get()
+        started = time.monotonic()
+        entry: dict[str, Any] = {
+            "fault_id": str(uuid4()),
+            "trial_id": TRIAL.get(),
+            "variant": self.variant,
+            "kind": self.spec.kind,
+            "job": "fast",
+            "route_index": self.route_index,
+            "model": model,
+            "request_sha256": fingerprint(asdict(req)),
+            "params_sha256": fingerprint(dict(params)),
+            "scheduled_delay_ms": self.spec.delay_ms,
+            "started_epoch_s": time.time(),
+            "status": "armed",
+            "started_since_generation_ms": (started - origin) * 1000 if origin else None,
+            "provider_dispatched": False,
+            "api_cost_usd": 0.0,
+            "scope": "synthetic pre-dispatch fault; no real provider latency/outage observation",
+        }
+        self.record(entry)
+        try:
+            if self.spec.delay_ms:
+                await asyncio.sleep(self.spec.delay_ms / 1000)
+            entry.update(status="injected", elapsed_ms=(time.monotonic() - started) * 1000)
+            self.record(entry)
+            raise httpx2.ConnectError("explicit synthetic pre-dispatch connection fault")
+            yield ""  # pragma: no cover; async generator interface, never emits text
+        except asyncio.CancelledError:
+            entry.update(
+                status="cancelled_before_injection", elapsed_ms=(time.monotonic() - started) * 1000
+            )
+            self.record(entry)
+            raise
+
+
+def apply_synthetic_fault(
+    router: ModelRouter, variant: Variant, record: Callable[[dict[str, Any]], None]
+) -> None:
+    if variant.synthetic_fault is None:
+        return
+    if not router.routes.get("fast"):
+        raise ValueError("Synthetic fault requires existing primary fast routes")
+    # Copy the fast route list. A recovery route may otherwise share its provider/model.
+    router.routes = {
+        **router.routes,
+        "fast": [
+            replace(
+                route,
+                provider=InjectedPreDispatchFailure(
+                    route.provider, variant.synthetic_fault, variant.label, index, record
+                ),
+            )
+            for index, route in enumerate(router.routes["fast"])
+        ],
+    }
+
+
+def annotate_synthetic_faults(
+    result: dict[str, Any], variant: Variant, records: list[dict[str, Any]]
+) -> None:
+    if variant.synthetic_fault is None:
+        return
+    result["synthetic_fault_condition"] = asdict(variant.synthetic_fault)
+    result["synthetic_faults"] = [dict(row) for row in records]
+    for entry in result["metadata_logs"]:
+        if entry.get("kind") == "provider_attempt" and entry.get("job") == "fast":
+            entry["synthetic_fault"] = True
+            entry["actual_provider_dispatched"] = False
+    result["expected_injected_failure"] = (
+        not variant.settings.adaptive_failure_recovery
+        and result.get("failure") == "llm_unavailable"
+        and bool(records)
+        and all(row["status"] == "injected" for row in records)
+    )
+
+
+def real_failure_evidence(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep real recovery errors for circuits, excluding explicitly synthetic fast attempts."""
+    return {
+        **result,
+        "failure": None if result.get("expected_injected_failure") else result.get("failure"),
+        "metadata_logs": [
+            entry for entry in result.get("metadata_logs", []) if not entry.get("synthetic_fault")
+        ],
+    }
+
+
 async def trial(
     case: dict[str, Any],
     strategy: str,
@@ -365,6 +480,7 @@ async def trial(
         speculative=False,
     )
     failure: str | None = None
+    origin_token = TRIAL_ORIGIN.set(question.t0)
     try:
         engine.add(question)
         engine.confirm(question.qid, question.text, 0)
@@ -379,6 +495,7 @@ async def trial(
     finally:
         engine.cancel_all()
         await engine.wait_idle()
+        TRIAL_ORIGIN.reset(origin_token)
     return {
         "id": case["id"],
         "architecture": strategy,
@@ -441,17 +558,33 @@ async def preflight(
             "openai", lambda job, request: Reply(["A direct answer. ", "Useful context."])
         )
         for case in coverage.values():
+            router = build_router(settings, [provider])
+            faults: dict[str, dict[str, Any]] = {}
+            if variants:
+                variant = variants[strategy]
+                tier_overrides(router, variant)
+                variant.limit_routes(router)
+                apply_synthetic_fault(
+                    router,
+                    variant,
+                    lambda row, faults=faults: faults.update({row["fault_id"]: row}),
+                )
             result = await trial(
                 case,
                 strategy,
                 0,
                 settings,
-                build_router(settings, [provider]),
+                router,
                 10,
                 variants[strategy].prompt_rules if variants else None,
             )
             messages = [event["message"] for event in result["events"]]
-            if result["failure"] or not any(
+            if variants:
+                annotate_synthetic_faults(result, variants[strategy], list(faults.values()))
+            if result.get("expected_injected_failure"):
+                if any(message["type"] == "answer.done" for message in messages):
+                    raise ValueError("Injected primary unexpectedly completed in offline preflight")
+            elif result["failure"] or not any(
                 message["type"] == "answer.done" for message in messages
             ):
                 raise ValueError("Offline host/protocol preflight failed")
@@ -766,8 +899,10 @@ def settings_overrides(args: argparse.Namespace) -> dict[str, Any]:
 def tier_overrides(router: ModelRouter, args: Any) -> None:
     """Apply recorded eval-only tiers to both primary and retry routes, without extra retries."""
     for job, arg in (
-        ("fast", "fast_tier"), ("deep_light", "fast_tier"),
-        ("deep", "expert_tier"), ("answer_recovery", "expert_tier"),
+        ("fast", "fast_tier"),
+        ("deep_light", "fast_tier"),
+        ("deep", "expert_tier"),
+        ("answer_recovery", "expert_tier"),
     ):
         tier = getattr(args, arg, None)
         if tier is None or job not in router.routes:
@@ -959,6 +1094,16 @@ async def execute_live(
     requests: list[dict[str, Any]] = (
         json.loads(request_path.read_text("utf-8")) if request_path.exists() else []
     )
+    fault_path = directory / "synthetic-faults.json"
+    prior_faults: list[dict[str, Any]] = (
+        json.loads(fault_path.read_text("utf-8")) if fault_path.exists() else []
+    )
+    fault_records = {row["fault_id"]: row for row in prior_faults}
+
+    def record_fault(entry: dict[str, Any]) -> None:
+        fault_records[entry["fault_id"]] = dict(entry)
+        save(fault_path, list(fault_records.values()))
+
     raw_providers = make_providers(settings, timeout_s=args.timeout)
     providers = [
         AuditProvider(provider, budget, requests, directory, admission=admission)
@@ -970,7 +1115,12 @@ async def execute_live(
     )
 
     def on_attempt(event: AttemptEvent) -> None:
-        attempt_events.append({"trial_id": TRIAL.get(), **asdict(event)})
+        trial_id = TRIAL.get()
+        entry = {"trial_id": trial_id, **asdict(event)}
+        condition = conditions.get(trial_id.rsplit(":", 2)[1]) if trial_id else None
+        if condition and condition.synthetic_fault is not None and event.job == "fast":
+            entry.update(synthetic_fault=True, actual_provider_dispatched=False)
+        attempt_events.append(entry)
         save(attempt_path, attempt_events)
 
     routers = {
@@ -985,6 +1135,7 @@ async def execute_live(
         tier_overrides(router, conditions[condition])
         conditions[condition].limit_routes(router)
         validate_route_prices(router, conditions[condition].settings)
+        apply_synthetic_fault(router, conditions[condition], record_fault)
     target = directory / "trials.json"
     results: list[dict[str, Any]] = json.loads(target.read_text("utf-8")) if target.exists() else []
     save(target, results)
@@ -996,7 +1147,8 @@ async def execute_live(
         [f"{case['id']}:{strategy}:{rep}" for case, strategy, rep in planned],
         {f"{identifier}:{strategy}:{rep}" for identifier, strategy, rep in have},
         {str(row["trial_id"]) for row in requests if row.get("trial_id")}
-        | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")},
+        | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")}
+        | {str(row["trial_id"]) for row in fault_records.values() if row.get("trial_id")},
     )
 
     async def run_one(case: dict[str, Any], strategy: str, rep: int) -> None:
@@ -1022,9 +1174,16 @@ async def execute_live(
             TRIAL.reset(token)
         result["answer_architecture"] = conditions[strategy].architecture
         result["variant_label"] = conditions[strategy].label
+        annotate_synthetic_faults(
+            result,
+            conditions[strategy],
+            [row for row in fault_records.values() if row["trial_id"] == trial_id],
+        )
         result["status"] = (
             "budget_blocked"
             if trial_id in budget.blocked_trials
+            else "injected_failure"
+            if result.get("expected_injected_failure")
             else "provider_or_engine_failure"
             if result["failure"]
             else "completed"
@@ -1035,8 +1194,15 @@ async def execute_live(
             result["status"] = "admission_blocked"
             result["failure_kind"] = "admission_blocked"
         else:
-            result["failure_kind"] = classify_failure(result, attempts)
-            circuit.observe(result, attempts)
+            real_result = real_failure_evidence(result)
+            result["failure_kind"] = (
+                "synthetic_pre_dispatch"
+                if result.get("expected_injected_failure")
+                else classify_failure(real_result, attempts)
+            )
+            # An expected injection neither increments nor resets the real-outage circuit.
+            if not result.get("expected_injected_failure"):
+                circuit.observe(real_result, attempts)
         if circuit.reason:
             admission.stop(circuit.reason)
         results.append(result)
@@ -1125,6 +1291,15 @@ async def execute_live(
             ),
             "circuit_reason": circuit.reason,
             "successful_trials": sum(row.get("status") == "completed" for row in results),
+            "expected_injected_failures": sum(
+                bool(r.get("expected_injected_failure")) for r in results
+            ),
+            "injected_fault_attempts": sum(
+                r["status"] == "injected" for r in fault_records.values()
+            ),
+            "synthetic_fault_scope": (
+                "pre-dispatch only; zero API cost; not natural-outage prevalence"
+            ),
             "admission_blocked_trials": sum(
                 row.get("status") == "admission_blocked" for row in results
             ),
@@ -1225,10 +1400,15 @@ def normalized_runs(
                     "failure": item.get("failure"),
                     "status": item.get("status"),
                     "failure_kind": item.get("failure_kind"),
+                    "synthetic_fault_condition": item.get("synthetic_fault_condition"),
+                    "expected_injected_failure": item.get("expected_injected_failure", False),
+                    "synthetic_fault_count": len(item.get("synthetic_faults", [])),
                     "failure_kind_reclassified": (
-                        "admission_blocked"
+                        "synthetic_pre_dispatch"
+                        if item.get("expected_injected_failure")
+                        else "admission_blocked"
                         if item.get("status") == "admission_blocked"
-                        else classify_failure(item, [])
+                        else classify_failure(real_failure_evidence(item), [])
                     ),
                     "not_started_reason": item.get("reason"),
                     "evidence": {

@@ -8,7 +8,7 @@ import json
 import math
 import re
 import subprocess
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -48,6 +48,7 @@ VARIANT_FIELDS = {
     "expert_tier",
     "fast_route_limit",
     "expert_route_limit",
+    "synthetic_fault",
 }
 STRATEGIES = {"legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"}
 SOURCE_PATH = "packages/core/src/copilot_core/prompts.py"
@@ -199,6 +200,28 @@ def file_prompt(path: Path) -> tuple[str, dict[str, str], str]:
     )
 
 
+@dataclass(frozen=True)
+class SyntheticFault:
+    """Explicit experiment fault, before provider admission or any billed request."""
+
+    kind: str = "connect_before_dispatch"
+    delay_ms: int = 0
+
+    @classmethod
+    def parse(cls, value: Any) -> SyntheticFault:
+        if not isinstance(value, dict):
+            raise ValueError("Synthetic fault requires a mapping")
+        value = cast(dict[str, Any], value)
+        if set(value) - {"kind", "delay_ms"}:
+            raise ValueError("Synthetic fault requires only kind and optional delay_ms")
+        if value.get("kind") != "connect_before_dispatch":
+            raise ValueError("Only explicit pre-dispatch connection injection is supported")
+        delay = value.get("delay_ms", 0)
+        if type(delay) is not int or not 0 <= delay <= 250:
+            raise ValueError("Synthetic fault delay must be an integer from zero to 250 ms")
+        return cls(delay_ms=delay)
+
+
 @dataclass
 class Variant:
     label: str
@@ -211,6 +234,7 @@ class Variant:
     expert_tier: str | None = None
     fast_route_limit: int | None = None
     expert_route_limit: int | None = None
+    synthetic_fault: SyntheticFault | None = None
 
     def identity(self, config_fields: set[str]) -> dict[str, Any]:
         return {
@@ -226,6 +250,7 @@ class Variant:
             "expert_tier": self.expert_tier,
             "fast_route_limit": self.fast_route_limit,
             "expert_route_limit": self.expert_route_limit,
+            "synthetic_fault": asdict(self.synthetic_fault) if self.synthetic_fault else None,
         }
 
     def limit_routes(self, router: ModelRouter) -> None:
@@ -263,6 +288,10 @@ def load_variants(path: Path, settings: Settings, root: Path) -> dict[str, Varia
             {**settings.model_dump(), **overrides, "answer_architecture": item["architecture"]}
         )
         options: dict[str, Any] = {}
+        if item.get("synthetic_fault") is not None:
+            if item["architecture"] != "adaptive_on_demand":
+                raise ValueError("Recovery fault diagnostics require adaptive_on_demand")
+            options["synthetic_fault"] = SyntheticFault.parse(item["synthetic_fault"])
         for name in ("fast_tier", "expert_tier"):
             value = item.get(name)
             if value not in (None, "default", "priority", "fast", "flex"):
