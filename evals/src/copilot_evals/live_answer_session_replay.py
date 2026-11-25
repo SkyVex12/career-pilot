@@ -352,6 +352,47 @@ class OfflineSessionProvider(ScriptedProvider):
             await stream.aclose()
 
 
+def _prepared_violations(
+    events: list[dict[str, Any]], *, stale_source: bool, legacy: bool
+) -> list[str]:
+    detected: dict[str, int] = {}
+    context_update: int | None = None
+    done: list[tuple[int, dict[str, Any]]] = []
+    for index, event in enumerate(events):
+        message = event["message"]
+        if message["type"] == "question.detected":
+            detected.setdefault(message["question_id"], index)
+        elif message["type"] == "transcript.final" and message.get("channel") == "me":
+            # This fixture has one explicit source-backed personal-context correction.
+            # Event order (not rounded millisecond timestamps) identifies the update.
+            if context_update is None:
+                context_update = index
+        elif message["type"] == "answer.done" and message.get("pass") == "fast":
+            done.append((index, message))
+    violations: list[str] = []
+    initial_qid = next(iter(detected), None)
+    initial_sources = [m.get("source") for _, m in done if m.get("question_id") == initial_qid]
+    if not stale_source and initial_sources[:1] != ["prepared"]:
+        violations.append("missing_initial_prepared_fast_path")
+    if legacy:
+        return violations
+    if stale_source:
+        # The prepared fixture's source version was invalid before any question.
+        invalid = any(m.get("source") == "prepared" for _, m in done)
+    else:
+        # Only a question first detected after the context correction is a new
+        # generation subject to the changed fact. Late completion of the old qid
+        # is not silently reattributed to the new question.
+        invalid = context_update is not None and any(
+            m.get("source") == "prepared"
+            and detected.get(m.get("question_id", ""), -1) > context_update
+            for _, m in done
+        )
+    if invalid:
+        violations.append("stale_prepared_after_source_or_context_update")
+    return violations
+
+
 def question_routes(session: Any) -> list[dict[str, Any]]:
     """Read-only runtime snapshots also cover canceled passes absent from completed logs."""
     return [
@@ -966,12 +1007,13 @@ async def replay_session(
                 and event["message"].get("pass") == "fast"
             ]
             result["prepared_sources"] = sources
-            if not scenario.get("stale_prepared_source") and (
-                not sources or sources[0] != "prepared"
-            ):
-                result["violations"].append("missing_initial_prepared_fast_path")
-            if settings.answer_architecture != "legacy_dual" and sources[-1:] == ["prepared"]:
-                result["violations"].append("stale_prepared_after_source_or_context_update")
+            result["violations"].extend(
+                _prepared_violations(
+                    events,
+                    stale_source=bool(scenario.get("stale_prepared_source")),
+                    legacy=settings.answer_architecture == "legacy_dual",
+                )
+            )
         if scenario.get("must_question") and not any(
             scenario["must_question"] in text for text in confirmed.values()
         ):
