@@ -23,7 +23,6 @@ from copilot_core.llm import (
     RefusedError,
     Route,
 )
-from copilot_core.pricing import cost_usd
 from copilot_core.providers import openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import Detector, parse_detection
@@ -350,14 +349,28 @@ async def test_openai_session_records_model_tokens_and_cost(env) -> None:
     assert answers["fast"]["provider"] == "openai"
     assert answers["fast"]["model"] == "gpt-6-luna"
     assert answers["deep"]["model"] == "gpt-6.1-sol"
-    for entry in answers.values():
+    for pass_, name in (("fast", "openai_fast.sse"), ("deep", "openai_deep.sse")):
+        entry = answers[pass_]
+        usage = events(name)[-1]["response"]["usage"]
+        details = usage["input_tokens_details"]
         assert entry["tier"] == "standard"
-        price = cost_usd(
-            entry["model"], entry["tier"], entry["input_tokens"], entry["cached_tokens"],
-            entry["output_tokens"], settings.model_prices, settings.tier_price_multipliers,
-        )  # fmt: skip
-        assert price is not None
-        assert entry["cost_usd"] == float(price) > 0
+        assert entry["input_tokens"] == usage["input_tokens"]
+        assert entry["cached_tokens"] == details["cached_tokens"]
+        assert entry["output_tokens"] == usage["output_tokens"]
+        assert entry["reasoning_tokens"] == usage["output_tokens_details"]["reasoning_tokens"]
+        assert entry["cache_write_tokens"] == details["cache_write_tokens"]
+        # These historical streams do not include disjoint lifetime write counts.
+        assert entry["cache_write_30m_tokens"] is None
+        assert entry["cache_write_12h_tokens"] is None
+
+    # Fast: 3 ordinary * $0.10 + 1565 cached * $0.01 + 71 output * $0.50 per MTok,
+    # rounded to the persisted six decimal places. Observed zero writes are sufficient.
+    assert answers["fast"]["cache_write_tokens"] == 0
+    assert answers["fast"]["cost_usd"] == 0.000051
+    # Deep reports 1589 writes, but no 30m/12h split: preserve unknown cost rather than
+    # assuming a lifetime from the request or charging those writes as ordinary input.
+    assert answers["deep"]["cache_write_tokens"] == 1589
+    assert answers["deep"]["cost_usd"] is None
 
 
 def test_the_detector_hedge_runs_on_the_priority_tier() -> None:
