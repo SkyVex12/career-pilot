@@ -734,6 +734,8 @@ class Session:
         """Load the company's document sections (a worker opened them into Valkey) and index
         them for keyword search. Without them the call still has the company's digest and
         facts; a worker is asked to open them for next time."""
+        if not self._warm_current():
+            return
         eid = self.info.employer_id
         if eid is None or self.info.mode not in prompts.GROUP_MODES or self.sections is not None:
             return
@@ -743,13 +745,18 @@ class Session:
         except (*UNAVAILABLE, ValidationError, ValueError) as e:
             log.warning("could not load the company's document sections: %s", e)
             return
+        if not self._warm_current():
+            return
         if live is None:
             stamp = datetime.now(UTC).strftime("%Y%m%d%H")
             with contextlib.suppress(Exception):
                 await self.svc.jobs.send(jobs.knowledge_publish(uid, eid, "missing", stamp))
             return
         # Tokenizing a few hundred sections takes tens of ms: off the event loop.
-        self.sections = await asyncio.to_thread(knowledge.Index.build, live.chunks)
+        index = await asyncio.to_thread(knowledge.Index.build, live.chunks)
+        if not self._warm_current():
+            return
+        self.sections = index
         self.sections_total = len(live.chunks)
         log.info("loaded %d document sections of employer %s", len(live.chunks), eid)
 
@@ -1879,8 +1886,14 @@ class Session:
         not pay the handshake (see ModelRouter.warm), then write the prompt cache."""
 
         async def warm() -> None:
+            if not self._warm_current():
+                return
             await self.load_sections()
+            if not self._warm_current():
+                return
             await self.router.warm()
+            if not self._warm_current():
+                return
             await self.prewarm_prompts()
 
         self._start_warm(warm)
@@ -1892,6 +1905,18 @@ class Session:
         self._warm = task
         self._warm_tasks.add(task)
         task.add_done_callback(self._warm_tasks.discard)
+
+    def _warm_current(self) -> bool:
+        """Only the latest live warm task may publish context or start another request."""
+        task = asyncio.current_task()
+        return (
+            task is not None
+            and task is self._warm
+            and not task.cancelling()
+            and not self.ending
+            and not self.lost
+            and not self._retention_failed
+        )
 
     def _cancel_warm(self) -> None:
         # Retain every overlapping mode/prewarm task until it finishes. Do not
@@ -1909,6 +1934,8 @@ class Session:
         questions that follow keep it warm."""
         ctx = self._prompt_ctx
         for job in self.settings.prewarm_jobs:
+            if not self._warm_current():
+                return
             req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
             if job in ("deep", "deep_light"):
                 req = prompts.deep_pass(
@@ -1946,15 +1973,21 @@ class Session:
     async def _mode_changed(self, mode: str) -> None:
         """A switch between standup and meeting at a company loads that company's pack for the
         new mode; then the new prefix is prewarmed."""
+        if not self._warm_current():
+            return
         if self.info.employer_id is not None and mode in ("standup", "meeting"):
             pack = await self.manager.employer_pack(
                 self.principal.user_id, self.info.employer_id, mode, self.info.title,
                 self.info.agenda, self.info.material_ids,
             )  # fmt: skip
+            if not self._warm_current():
+                return
             if pack is not None:
                 self.set_pack(pack)
                 self._prompt_ctx = self._build_prompt_ctx()
             await self.load_sections()
+        if not self._warm_current():
+            return
         await self.prewarm_prompts()
 
     def set_pack(self, pack: SessionPack) -> None:
