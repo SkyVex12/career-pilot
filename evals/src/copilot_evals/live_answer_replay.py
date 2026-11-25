@@ -21,7 +21,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, cast, get_args
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx2
@@ -729,6 +729,88 @@ async def bounded_blocks(
             group.create_task(worker())
 
 
+def sanitized_exception_tree(error: BaseException) -> dict[str, Any]:
+    """Bounded diagnostics without exception messages, local values, or request payloads."""
+    seen: set[int] = set()
+    remaining = 32
+
+    def visit(current: BaseException) -> dict[str, Any]:
+        nonlocal remaining
+        item: dict[str, Any] = {"type": type(current).__name__}
+        if id(current) in seen or remaining == 0:
+            return {**item, "truncated": True}
+        seen.add(id(current))
+        remaining -= 1
+        if isinstance(current, OSError):
+            for name in ("errno", "winerror"):
+                value = getattr(current, name, None)
+                if type(value) is int:
+                    item[name] = value
+        frames: list[dict[str, Any]] = []
+        trace = current.__traceback__
+        while trace is not None:
+            frames.append(
+                {"file": Path(trace.tb_frame.f_code.co_filename).name, "line": trace.tb_lineno}
+            )
+            trace = trace.tb_next
+        if frames:
+            item["frames"] = frames[-8:]
+        if isinstance(current, BaseExceptionGroup):
+            children = cast(BaseExceptionGroup[BaseException], current).exceptions
+            item["children"] = [visit(child) for child in children[:8]]
+            if len(children) > 8:
+                item["omitted_children"] = len(children) - 8
+        if current.__cause__ is not None:
+            item["cause"] = visit(current.__cause__)
+        elif current.__context__ is not None and not current.__suppress_context__:
+            item["context"] = visit(current.__context__)
+        return item
+
+    return visit(error)
+
+
+class ProgressSnapshots:
+    """Non-authoritative live status must not cancel an otherwise durable paid trial."""
+
+    def __init__(self, directory: Path):
+        self.path = directory / "progress.json"
+        self.failure_count = 0
+        self.failures: list[dict[str, Any]] = []
+
+    def _record(self, error: OSError, phase: str) -> None:
+        self.failure_count += 1
+        if len(self.failures) < 16:
+            self.failures.append({"phase": phase, "error": sanitized_exception_tree(error)})
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "failures": self.failure_count,
+            "samples": self.failures,
+            "omitted_samples": self.failure_count - len(self.failures),
+            "scope": "Progress snapshots only; authoritative checkpoint failures remain fatal",
+        }
+
+    def active(self, value: dict[str, Any]) -> None:
+        try:
+            save(self.path, value)
+        except OSError as error:
+            # Windows readers may temporarily deny atomic replacement. No live backoff.
+            self._record(error, "active_workers")
+
+    async def final(self, value: Callable[[], dict[str, Any]]) -> None:
+        """Strict after provider drain; retry only short Windows replacement interference."""
+        delays = (0.01, 0.03, 0.1)
+        for attempt in range(len(delays) + 1):
+            try:
+                save(self.path, value())
+                return
+            except OSError as error:
+                self._record(error, "drained")
+                if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == len(delays):
+                    raise
+                await asyncio.sleep(delays[attempt])
+
+
 class AuditProvider(MeteredProvider):
     def __init__(
         self,
@@ -1217,29 +1299,25 @@ async def execute_live(
         else DispatchJournal(directory, *journal_arguments)
     )
 
-    def write_progress() -> None:
-        save(
-            directory / "progress.json",
-            {
-                "completed": len(results),
-                "total": len(planned),
-                "cost_start_usd": initial_cost,
-                "cost_upper_usd": budget.total,
-                "failures": sum(
-                    row.get("status") == "provider_or_engine_failure" for row in results
-                ),
-                "budget_blocked_trials": sum(
-                    row.get("status") == "budget_blocked" for row in results
-                ),
-                "not_started": sum(state == "not_started" for state in journal.states.values()),
-                "in_flight": sum(state == "in_flight" for state in journal.states.values()),
-                "interrupted_outcome_unknown": sum(
-                    state == "ambiguous" for state in journal.states.values()
-                ),
-                "circuit_reason": circuit.reason,
-                "provider_admission": admission.snapshot(),
-            },
-        )
+    progress = ProgressSnapshots(directory)
+
+    def progress_value() -> dict[str, Any]:
+        return {
+            "completed": len(results),
+            "total": len(planned),
+            "cost_start_usd": initial_cost,
+            "cost_upper_usd": budget.total,
+            "failures": sum(row.get("status") == "provider_or_engine_failure" for row in results),
+            "budget_blocked_trials": sum(row.get("status") == "budget_blocked" for row in results),
+            "not_started": sum(state == "not_started" for state in journal.states.values()),
+            "in_flight": sum(state == "in_flight" for state in journal.states.values()),
+            "interrupted_outcome_unknown": sum(
+                state == "ambiguous" for state in journal.states.values()
+            ),
+            "circuit_reason": circuit.reason,
+            "provider_admission": admission.snapshot(),
+            "progress_snapshot_errors": progress.diagnostics(),
+        }
 
     async def run_one(case: dict[str, Any], strategy: str, rep: int) -> None:
         if (case["id"], strategy, rep) in have:
@@ -1301,7 +1379,7 @@ async def execute_live(
         else:
             save(target, results)
         journal.finish(trial_id)
-        write_progress()
+        progress.active(progress_value())
 
     if not getattr(args, "skip_connectivity_check", False):
         health = await connectivity_check(settings)
@@ -1319,27 +1397,33 @@ async def execute_live(
         )
     finally:
         try:
-            journal.checkpoint()
+            try:
+                journal.checkpoint()
+            finally:
+                try:
+                    await close_providers(raw_providers)
+                finally:
+                    await monitor.stop()
+            # No provider work remains: compatibility snapshots cannot stall a live answer.
+            if store is not None:
+                store.phase = "drained"
+                for kind, filename in (
+                    ("cost", "cost.json"),
+                    ("requests", "request-identities.json"),
+                    ("attempts", "attempt-events.json"),
+                    ("faults", "synthetic-faults.json"),
+                    ("trials", "trials.json"),
+                ):
+                    store.export(kind, filename)
+                if isinstance(journal, RecordDispatchJournal):
+                    journal.export()
+                save(directory / "checkpoint-write-telemetry.json", store.telemetry())
+            save(directory / "event-loop-lag.json", monitor.summary())
         finally:
             try:
-                await close_providers(raw_providers)
+                await progress.final(progress_value)
             finally:
-                await monitor.stop()
-        # No provider work remains: compatibility snapshots cannot stall a live answer.
-        if store is not None:
-            store.phase = "drained"
-            for kind, filename in (
-                ("cost", "cost.json"),
-                ("requests", "request-identities.json"),
-                ("attempts", "attempt-events.json"),
-                ("faults", "synthetic-faults.json"),
-                ("trials", "trials.json"),
-            ):
-                store.export(kind, filename)
-            if isinstance(journal, RecordDispatchJournal):
-                journal.export()
-            save(directory / "checkpoint-write-telemetry.json", store.telemetry())
-        save(directory / "event-loop-lag.json", monitor.summary())
+                save(directory / "progress-write-errors.json", progress.diagnostics())
     completed_ids = {(r["id"], r["architecture"], r["rep"]) for r in results}
     save(
         directory / "not-started.json",
@@ -1402,7 +1486,6 @@ async def execute_live(
             "provider_admission": admission.snapshot(),
         },
     )
-    write_progress()
     print(
         json.dumps(
             {
@@ -1577,6 +1660,36 @@ def normalized_runs(
     return runs
 
 
+def write_failure_report(directory: Path, error: BaseException) -> dict[str, Any]:
+    """Keep diagnostic leaves even when the outer TaskGroup hides their types."""
+    tree = sanitized_exception_tree(error)
+    summary: dict[str, Any] = {"status": "failed", "error_type": type(error).__name__}
+    leaves: list[dict[str, Any]] = []
+    pending = [tree]
+    while pending:
+        item = pending.pop()
+        children = [*item.get("children", [])]
+        children.extend(item[name] for name in ("cause", "context") if name in item)
+        if children:
+            pending.extend(reversed(children))
+        else:
+            leaf = {
+                key: item[key] for key in ("type", "errno", "winerror", "truncated") if key in item
+            }
+            if item.get("frames"):
+                leaf["source"] = item["frames"][-1]
+            leaves.append(leaf)
+    summary["errors"] = leaves
+    try:
+        path = private_directory(directory) / "failure.json"
+        save(path, {"schema": 1, "status": "failed", "error": tree})
+        summary["failure_artifact_written"] = True
+    except (OSError, ValueError) as artifact_error:
+        summary["failure_artifact_written"] = False
+        summary["artifact_error"] = sanitized_exception_tree(artifact_error)
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
@@ -1624,10 +1737,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expert-tier", choices=tiers)
     parser.add_argument("--timeout", type=float, default=60)
     logging.disable(logging.CRITICAL)
+    args = parser.parse_args(argv)
     try:
-        asyncio.run(execute(parser.parse_args(argv)))
+        asyncio.run(execute(args))
     except Exception as error:
-        print(json.dumps({"status": "failed", "error_type": type(error).__name__}))
+        print(json.dumps(write_failure_report(args.out, error)))
         return 1
     return 0
 
