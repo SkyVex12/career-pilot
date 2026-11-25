@@ -676,7 +676,7 @@ function AdaptiveAnswer({ q, onExpand, canExpand, compact }: { q: QuestionView; 
   const [requesting, setRequesting] = useState(false);
   const expertReady = q.deep.done && !q.deep.error && !!q.deep.text.trim();
   // Exact equality is sufficient to hide a literal duplicate; it is not a semantic verdict.
-  const sameText = expertReady && q.deep.text.replace(/\s+/g, " ").trim() === q.fast.text.replace(/\s+/g, " ").trim();
+  const sameText = expertReady && q.deep.text === q.fast.text;
   const expert = reviewing && expertReady && !sameText;
   const shown = expert ? q.deep : q.fast;
   const Text = shown.text.includes("```") ? CodeAnswer : AnswerText;

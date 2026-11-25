@@ -2,8 +2,8 @@
 // for reading at a glance and copying exactly. "### 1. Title" headings split the tasks of one
 // screen, **bold** labels lead each part (Answer, Approach, Code, Complexity), `names` are
 // inline code, and fenced blocks are code: monospace, highlighted, each with its own Copy,
-// which copies the code exactly as written (blank lines and indentation kept). A block still
-// streaming shows as it grows.
+// which copies rendered code with Markdown indentation removed and code indentation kept.
+// A block still streaming shows as it grows.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
@@ -40,29 +40,73 @@ export function languageOf(tag: string): string | null {
 
 export type Block = { kind: "text"; lines: string[] } | { kind: "code"; lang: string; code: string; open: boolean };
 
-/** Text and fenced code, in order. An unclosed fence (still streaming) is an open code block. */
+/** Fences in space-indented lists; no code dedent or algorithm repair.
+ * Full paragraph/list grammar and blockquote containers are outside this subset.
+ */
 export function splitBlocks(text: string): Block[] {
   const out: Block[] = [];
   let text_: string[] = [];
-  let code: { lang: string; lines: string[] } | null = null;
-  for (const line of text.split("\n")) {
-    const fence = /^\s*```\s*([\w+#.-]*)/.exec(line);
-    if (code === null) {
-      if (fence) {
-        if (text_.length) out.push({ kind: "text", lines: text_ });
-        text_ = [];
-        code = { lang: fence[1] ?? "", lines: [] };
-      } else {
-        text_.push(line);
+  const lists: number[] = [];
+  let code: { lang: string; marker: string; width: number; container: number; indent: number; lines: string[]; raw: string[]; unsupported: boolean } | null = null;
+  const spaces = (line: string) => /^ */.exec(line)?.[0].length ?? 0;
+  const thematic = /^( {0,3})(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+  const finish = (open: boolean) => {
+    if (code === null) return;
+    out.push(code.unsupported ? { kind: "text", lines: code.raw }
+      : { kind: "code", lang: code.lang, code: code.lines.join("\n"), open });
+    code = null;
+  };
+  for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
+    if (code !== null) {
+      const leading = spaces(line);
+      if (leading < code.container && line[leading] === "\t") {
+        // Tab-based container indentation is ambiguous here. Keep its source, without Copy.
+        code.unsupported = true;
+        code.raw.push(line);
+        continue;
       }
-    } else if (/^\s*```\s*$/.test(line)) {
-      out.push({ kind: "code", lang: code.lang, code: code.lines.join("\n"), open: false });
-      code = null;
+      if (line.trim() && leading < code.container) {
+        // Leaving a list also ends its fence. Parse this same line outside the container.
+        finish(false);
+      } else {
+        code.raw.push(line);
+        const content = line.slice(Math.min(code.container, leading));
+        const closing = /^ {0,3}(\x60+|~+)[ \t]*$/.exec(content);
+        if (closing && closing[1][0] === code.marker && closing[1].length >= code.width) {
+          finish(false);
+        } else {
+          // Remove only Markdown's container and opening-fence indentation, not Python's.
+          code.lines.push(content.slice(Math.min(code.indent, spaces(content))));
+        }
+        continue;
+      }
+    }
+    if (line.trim()) {
+      while (lists.length && spaces(line) < lists[lists.length - 1]) lists.pop();
+    }
+    let container = lists[lists.length - 1] ?? 0;
+    let content = line.slice(Math.min(container, spaces(line)));
+    let list: RegExpExecArray | null;
+    // A marker contributes its width plus one to four spaces. Tabs/quotes stay plain text.
+    while (!thematic.test(content) && (list = /^( {0,3})([-+*]|\d{1,9}[.)])( {1,4})(?=\S|$)(.*)$/.exec(content)) !== null) {
+      container += list[1].length + list[2].length + list[3].length;
+      lists.push(container);
+      content = list[4];
+    }
+    const fence = /^( {0,3})(\x60{3,}|~{3,})(.*)$/.exec(content);
+    if (fence && !(fence[2][0] === "\x60" && fence[3].includes("\x60"))) {
+      if (text_.length) out.push({ kind: "text", lines: text_ });
+      text_ = [];
+      code = {
+        lang: fence[3].trim().split(/\s+/)[0] ?? "",
+        marker: fence[2][0], width: fence[2].length,
+        container, indent: fence[1].length, lines: [], raw: [line], unsupported: false,
+      };
     } else {
-      code.lines.push(line);
+      text_.push(line);
     }
   }
-  if (code !== null) out.push({ kind: "code", lang: code.lang, code: code.lines.join("\n"), open: true });
+  if (code !== null) finish(true);
   else if (text_.length) out.push({ kind: "text", lines: text_ });
   return out;
 }

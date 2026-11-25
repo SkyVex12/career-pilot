@@ -57,4 +57,19 @@ describe("adaptive answers", () => {
     expect(await screen.findByRole("group", { name: "Answer" })).toHaveTextContent("Austin");
     expect(screen.getByText("Expert response unavailable. The original answer is preserved.")).toBeVisible();
   });
+  it.each([
+    ["Python indentation", "if ready:\n    send()\nlog()", "if ready:\n    send()\n    log()"],
+    ["string literal spacing", 'separator = "a b"', 'separator = "a  b"'],
+  ])("keeps expert changes to %s available for explicit review", async (_name, primary, expert) => {
+    const fence = "`".repeat(3);
+    const fenced = (body: string) => `${fence}python\n${body}\n${fence}`;
+    start("adaptive_hybrid", () => [delta("fast", fenced(primary)), done("fast"), delta("deep", fenced(expert)), done("deep")]);
+    const original = await screen.findByRole("group", { name: "Answer" });
+    expect(original.querySelector("code")?.textContent).toBe(primary);
+    await userEvent.click(screen.getByRole("button", { name: "Review expert response" }));
+    expect(screen.getByRole("group", { name: "Expert response" }).querySelector("code")?.textContent).toBe(expert);
+    await userEvent.click(screen.getByRole("button", { name: "Return to original answer" }));
+    expect(screen.getByRole("group", { name: "Answer" }).querySelector("code")?.textContent).toBe(primary);
+  });
+
 });
