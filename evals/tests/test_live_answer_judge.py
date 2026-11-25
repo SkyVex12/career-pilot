@@ -120,6 +120,7 @@ class FakeProvider:
         self.known_usage = known_usage
         self.delay = delay
         self.payloads: list[dict[str, Any]] = []
+        self.two_started = asyncio.Event()
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
@@ -128,6 +129,8 @@ class FakeProvider:
         assert isinstance(req.content, str)
         assert req.json_schema
         self.calls += 1
+        if self.calls >= 2:
+            self.two_started.set()
         self.active += 1
         self.maximum_active = max(self.maximum_active, self.active)
         payload = json.loads(req.content)
@@ -323,7 +326,7 @@ async def test_ambiguous_started_request_is_never_redispatched_or_priced_zero(
     tmp_path: Path,
 ) -> None:
     args = arguments(tmp_path, count=1, live=False)
-    args.reps = 1
+    args.reps, args.retries = 1, 2
     await judge.execute(args, settings=fixture_settings())
     job = json.loads((args.out / "plan.json").read_text("utf-8"))[0]
     folder = args.out / "jobs" / job["id"]
@@ -333,7 +336,8 @@ async def test_ambiguous_started_request_is_never_redispatched_or_priced_zero(
     provider = FakeProvider()
     summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
     assert provider.calls == 0
-    assert summary["failed_jobs"] == 1
+    assert summary["failed_jobs"] == 0
+    assert summary["interrupted_jobs"] == 1
     assert summary["cost_usd"] is None
     assert summary["cost_upper_usd"] is None
     assert summary["unmetered_interrupted_requests"] == 1
@@ -428,3 +432,244 @@ def test_missing_units_schema_never_contains_invalid_empty_enum() -> None:
     schema = judge.output_schema(judge.blind_payload(item, ["A", "B"]))
     assert '"enum": []' not in json.dumps(schema)
     assert schema["properties"]["A"]["properties"]["unit_grammar"]["maxItems"] == 0
+
+
+class MockAPIStatusError(Exception):
+    def __init__(self, status: int):
+        super().__init__("Synthetic provider failure")
+        self.status_code = status
+
+
+def sdk_error(status: int) -> Exception:
+    return MockAPIStatusError(status)
+
+
+class FaultProvider(FakeProvider):
+    def __init__(self, failure: Any, *, delay: float = 0.005):
+        super().__init__(delay=delay)
+        self.failure = failure
+
+    async def stream(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> AsyncGenerator[str | LLMDone]:
+        index = self.calls
+        self.calls += 1
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        assert isinstance(req.content, str)
+        payload = json.loads(req.content)
+        self.payloads.append(payload)
+        try:
+            await asyncio.sleep(self.delay)
+            error = self.failure(index)
+            if error is not None:
+                raise error
+            yield json.dumps(valid_response(payload))
+            yield LLMDone(
+                LLMUsage(input_tokens=1000, output_tokens=400, cache_write_tokens=0),
+                "end_turn",
+                model=model,
+                provider="openai",
+            )
+        finally:
+            self.active -= 1
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (400, "request_configuration"),
+        (401, "authentication"),
+        (403, "permission"),
+        (404, "request_configuration"),
+        (422, "request_configuration"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_configuration_failure_stops_queue_and_retries_persistently(
+    tmp_path: Path, status: int, reason: str
+) -> None:
+    args = arguments(tmp_path, count=6)
+    args.reps, args.concurrency, args.retries = 1, 1, 2
+    provider = FaultProvider(lambda _: sdk_error(status))
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 1
+    assert summary["failed_jobs"] == 1
+    assert summary["not_started_jobs"] == 5
+    assert summary["interrupted_jobs"] == 0
+    assert summary["circuit_reason"] == reason
+    assert summary["cost_usd"] is None  # No usage was observed for the failed request.
+    assert len(list(args.out.glob("jobs/*/attempt-*.started.json"))) == 1
+    remaining = json.loads((args.out / "remaining.json").read_text("utf-8"))
+    assert len(remaining) == 5
+    assert {row["status"] for row in remaining} == {"not_started"}
+    assert not any((args.out / "jobs" / row["id"]).exists() for row in remaining)
+    recovered = FakeProvider()
+    assert await judge.execute(args, settings=fixture_settings(), provider=recovered) == summary
+    assert recovered.calls == 0  # A sticky stop never silently restarts a known-bad run.
+
+
+@pytest.mark.parametrize("kind", ["rate_limit", "connection", "server", "timeout"])
+@pytest.mark.asyncio
+async def test_repeated_provider_failure_stops_at_bounded_threshold(
+    tmp_path: Path, kind: str
+) -> None:
+    def failure(_: int) -> Exception:
+        if kind == "connection":
+            return ConnectionError("Synthetic connection failure")
+        if kind == "timeout":
+            return TimeoutError()
+        return sdk_error(429 if kind == "rate_limit" else 503)
+
+    args = arguments(tmp_path, count=8)
+    args.reps, args.concurrency = 1, 1
+    provider = FaultProvider(failure)
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 3
+    assert summary["failed_jobs"] == 3
+    assert summary["not_started_jobs"] == 5
+    assert summary["interrupted_jobs"] == 0
+    assert (
+        summary["circuit_reason"]
+        == {
+            "rate_limit": "rate_limit",
+            "connection": "transport",
+            "server": "provider_server",
+            "timeout": "provider_timeout",
+        }[kind]
+    )
+
+
+@pytest.mark.asyncio
+async def test_circuit_checks_each_retry_before_dispatch(tmp_path: Path) -> None:
+    args = arguments(tmp_path, count=4)
+    args.reps, args.concurrency, args.retries = 1, 1, 2
+    args.transport_failure_limit = 2
+    provider = FaultProvider(lambda _: sdk_error(429))
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 2
+    assert summary["failed_jobs"] == 1
+    assert summary["not_started_jobs"] == 3
+    assert summary["circuit_reason"] == "rate_limit"
+
+
+@pytest.mark.asyncio
+async def test_open_circuit_preserves_other_inflight_answer_and_usage(tmp_path: Path) -> None:
+    args = arguments(tmp_path, count=8)
+    args.reps, args.concurrency = 1, 2
+    provider = FaultProvider(lambda index: sdk_error(400) if index == 0 else None)
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 2
+    assert summary["failed_jobs"] == 1
+    assert summary["validated_jobs"] == 1
+    assert summary["not_started_jobs"] == 6
+    assert summary["in_flight_jobs"] == 0
+    assert summary["known_cost_usd"] == pytest.approx(0.003)
+    assert summary["cost_usd"] is None
+
+
+def test_circuit_counts_per_judge_and_does_not_reobserve_checkpoint(tmp_path: Path) -> None:
+    circuit = judge.JudgeCircuit(tmp_path, 3)
+    bad = {"id": "failed-one", "judge": "model-one"}
+    record = {"status": "failed", "failure_kind": "transport", "attempt": 0}
+    circuit.observe(bad, record)
+    circuit = judge.JudgeCircuit(tmp_path, 3)
+    circuit.observe(bad, record)
+    assert circuit.state["global_consecutive"] == 1
+    for i in range(2):
+        circuit.observe(
+            {"id": f"healthy-{i}", "judge": "model-two"},
+            {
+                "status": "validated",
+                "attempt": 0,
+            },
+        )
+        circuit.observe({"id": f"failed-{i}", "judge": "model-one"}, record)
+    assert circuit.reason == "transport"
+    assert circuit.state["global_consecutive"] == 1
+    assert circuit.state["consecutive_by_judge"]["model-one"] == 3
+
+
+@pytest.mark.asyncio
+async def test_bad_judgment_content_does_not_open_provider_circuit(tmp_path: Path) -> None:
+    args = arguments(tmp_path, count=5)
+    args.reps, args.concurrency = 1, 1
+    provider = FakeProvider(invalid=True)
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 5
+    assert summary["failed_jobs"] == 5
+    assert summary["not_started_jobs"] == 0
+    assert summary["circuit_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_missing_answer_uncertainty_does_not_stop_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, count=5)
+    args.reps = 1
+    review = json.loads(args.review.read_text("utf-8"))
+    for item in review["items"]:
+        item["A"].update(initial="", expanded="", boundary_units=[], has_expansion=False)
+    args.review.write_text(json.dumps(review), encoding="utf-8")
+    original = valid_response
+
+    def uncertain(payload: dict[str, Any]) -> dict[str, Any]:
+        response = original(payload)
+        response.update(preference="uncertain", uncertainty="One answer was not delivered.")
+        return response
+
+    monkeypatch.setattr(
+        __import__(__name__, fromlist=["valid_response"]), "valid_response", uncertain
+    )
+    provider = FakeProvider()
+    summary = await judge.execute(args, settings=fixture_settings(), provider=provider)
+    assert provider.calls == 5
+    assert summary["validated_jobs"] == 5
+    assert summary["circuit_reason"] is None
+    for result in args.out.glob("jobs/*/result.json"):
+        assert json.loads(result.read_text("utf-8"))["judgment"]["preference"] == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_retains_unstarted_vs_ambiguous_and_resume_skips_ambiguous(
+    tmp_path: Path,
+) -> None:
+    args = arguments(tmp_path, count=5)
+    args.reps, args.concurrency, args.retries = 1, 2, 2
+    provider = FakeProvider(delay=1)
+    task = asyncio.create_task(judge.execute(args, settings=fixture_settings(), provider=provider))
+    await asyncio.wait_for(provider.two_started.wait(), timeout=10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert provider.calls == 2
+    assert provider.active == 0
+    remaining = json.loads((args.out / "remaining.json").read_text("utf-8"))
+    assert sum(row["status"] == "interrupted" for row in remaining) == 2
+    assert sum(row["status"] == "not_started" for row in remaining) == 3
+    progress = json.loads((args.out / "progress.json").read_text("utf-8"))
+    assert progress["cost_usd"] is None
+    recovered = FakeProvider(delay=0)
+    summary = await judge.execute(args, settings=fixture_settings(), provider=recovered)
+    assert recovered.calls == 3
+    assert summary["validated_jobs"] == 3
+    assert summary["interrupted_jobs"] == 2
+    assert summary["failed_jobs"] == 0
+    assert summary["not_started_jobs"] == 0
+    assert summary["cost_usd"] is None
+
+
+def test_nested_configuration_exception_keeps_only_safe_failure_metadata() -> None:
+    try:
+        raise sdk_error(404)
+    except Exception as cause:
+        wrapped = RuntimeError("SECRET raw provider details")
+        wrapped.__cause__ = cause
+    record = judge.failure_details(wrapped)
+    assert record == {
+        "failure_kind": "request_configuration",
+        "http_status": 404,
+        "error_type": "RuntimeError",
+    }
+    assert "SECRET" not in json.dumps(record)

@@ -407,6 +407,108 @@ def plan(review: dict[str, Any], judges: list[Judge], reps: int, seed: int) -> l
     return jobs
 
 
+def failure_details(error: Exception) -> dict[str, Any]:
+    """Classify SDK/status errors without persisting provider messages or credentials."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    status = next(
+        (
+            value
+            for item in chain
+            for value in [getattr(item, "status_code", None)]
+            if type(value) is int
+        ),
+        None,
+    )
+    names = {type(item).__name__ for item in chain}
+    if status == 401 or "AuthenticationError" in names:
+        kind = "authentication"
+    elif status == 403 or "PermissionDeniedError" in names:
+        kind = "permission"
+    elif status == 429 or "RateLimitError" in names:
+        kind = "rate_limit"
+    elif status in (408, 504) or names & {"APITimeoutError", "TimeoutError"}:
+        kind = "provider_timeout"
+    elif status == 409:
+        kind = "provider_conflict"
+    elif (status is not None and 400 <= status < 500) or names & {
+        "BadRequestError",
+        "NotFoundError",
+        "UnprocessableEntityError",
+    }:
+        kind = "request_configuration"
+    elif status is not None and status >= 500:
+        kind = "provider_server"
+    elif names & {"APIConnectionError", "ConnectError", "ConnectTimeout", "ReadError"} or any(
+        isinstance(item, (ConnectionError, OSError)) for item in chain
+    ):
+        kind = "transport"
+    elif isinstance(error, ValueError):
+        # A malformed/uncertain judgment is a per-pair issue, never an API outage.
+        kind = "judgment_invalid"
+    else:
+        kind = "unexpected_error"
+    return {"failure_kind": kind, "http_status": status, "error_type": type(error).__name__}
+
+
+class JudgeCircuit:
+    """Sticky run-level stop; in-flight calls finish, queued calls remain undispatched."""
+
+    def __init__(self, directory: Path, threshold: int):
+        self.path = directory / "circuit.json"
+        self.state: dict[str, Any] = (
+            json.loads(self.path.read_text("utf-8"))
+            if self.path.exists()
+            else {
+                "schema": 1,
+                "threshold": threshold,
+                "global_consecutive": 0,
+                "consecutive_by_judge": {},
+                "observed_attempts": [],
+                "reason": None,
+                "trigger": None,
+            }
+        )
+        if self.state.get("schema") != 1 or self.state.get("threshold") != threshold:
+            raise ValueError("Failure circuit differs from the immutable run policy")
+
+    @property
+    def reason(self) -> str | None:
+        return self.state["reason"]
+
+    def observe(self, job: dict[str, Any], record: dict[str, Any]) -> None:
+        if self.reason:
+            return
+        observation = f"{job['id']}:{record['attempt']}"
+        if observation in self.state["observed_attempts"]:
+            return
+        self.state["observed_attempts"].append(observation)
+        kind = record.get("failure_kind")
+        counts = self.state["consecutive_by_judge"]
+        if record["status"] == "validated" or kind == "judgment_invalid":
+            self.state["global_consecutive"] = 0
+            counts[job["judge"]] = 0
+        elif record["status"] == "failed":
+            counts[job["judge"]] = counts.get(job["judge"], 0) + 1
+            self.state["global_consecutive"] += 1
+            if (
+                kind in ("authentication", "permission", "request_configuration")
+                or max(self.state["global_consecutive"], counts[job["judge"]])
+                >= self.state["threshold"]
+            ):
+                self.state["reason"] = kind or "unexpected_error"
+                self.state["trigger"] = {
+                    "job_id": job["id"],
+                    "judge": job["judge"],
+                    "attempt": record["attempt"],
+                    "http_status": record.get("http_status"),
+                }
+        save(self.path, self.state)
+
+
 class JudgeBudget(Budget):
     def __init__(self, directory: Path, settings: Any, limit: float):
         super().__init__(directory, settings, limit)
@@ -581,13 +683,17 @@ def archive(directory: Path, identity: dict[str, Any]) -> None:
 
 
 def interrupted_without_usage(directory: Path, budget: Budget) -> int:
-    """A start marker without a ledger entry may have submitted; never price it as zero."""
+    """An unmatched start may have submitted; never price an unknown request as zero."""
     metered = {(entry.get("job_id"), entry.get("attempt")) for entry in budget.entries}
     missing = 0
-    for checkpoint in directory.glob("jobs/*/attempt-*.result.json"):
-        record = json.loads(checkpoint.read_text("utf-8"))
-        if record.get("status") == "interrupted":
-            missing += (checkpoint.parent.name, record["attempt"]) not in metered
+    for started in directory.glob("jobs/*/attempt-*.started.json"):
+        attempt = int(started.name.split("-")[1].split(".")[0])
+        checkpoint = started.with_name(f"attempt-{attempt}.result.json")
+        record: dict[str, Any] = (
+            json.loads(checkpoint.read_text("utf-8")) if checkpoint.exists() else {}
+        )
+        if record.get("status") in (None, "interrupted"):
+            missing += (started.parent.name, attempt) not in metered
     return missing
 
 
@@ -604,6 +710,9 @@ async def execute(
         raise ValueError("Invalid timeout or total output-token cap")
     if len({judge.id for judge in args.judge}) != len(args.judge):
         raise ValueError("Judge settings must be distinct")
+    failure_limit = getattr(args, "transport_failure_limit", 3)
+    if not 1 <= failure_limit <= 10:
+        raise ValueError("Failure-stop threshold must be between 1 and 10")
     review, review_hash = load_review(args.review)
     if settings is None:
         from copilot_core.dotenv import load_dotenv
@@ -629,6 +738,13 @@ async def execute(
         "seed": args.seed,
         "concurrency": args.concurrency,
         "retries": args.retries,
+        "failure_stop_policy": {
+            "version": 1,
+            "transient_threshold": failure_limit,
+            "scope": "global_or_per_judge_consecutive",
+            "configuration_failures": "immediate",
+            "resume": "sticky_stop",
+        },
         "timeout": args.timeout,
         "max_output_tokens": args.max_output_tokens,
         "tier": args.tier,
@@ -670,6 +786,47 @@ async def execute(
         judges = {judge.id: judge for judge in args.judge}
         semaphore = asyncio.Semaphore(args.concurrency)
         results: dict[str, dict[str, Any]] = {}
+        active: set[str] = set()
+        circuit = JudgeCircuit(directory, failure_limit)
+
+        def checkpoint() -> dict[str, Any]:
+            remaining: list[dict[str, Any]] = []
+            counts: dict[str, int] = defaultdict(int)
+            for job in jobs:
+                result = results.get(job["id"])
+                if result is not None:
+                    status = result["status"]
+                elif job["id"] in active:
+                    status = "in_flight"
+                elif any((directory / "jobs" / job["id"]).glob("attempt-*.started.json")):
+                    status = "interrupted"
+                else:
+                    status = "not_started"
+                counts[status] += 1
+                if status in ("not_started", "interrupted", "in_flight"):
+                    remaining.append(
+                        {
+                            **job,
+                            "status": status,
+                            "reason": "prior_dispatch_unresolved"
+                            if status == "interrupted"
+                            else circuit.reason or status,
+                        }
+                    )
+            save(directory / "remaining.json", remaining)
+            progress = {
+                "planned_jobs": len(jobs),
+                "validated_jobs": counts["validated"],
+                "failed_jobs": counts["failed"],
+                "interrupted_jobs": counts["interrupted"],
+                "not_started_jobs": counts["not_started"],
+                "in_flight_jobs": counts["in_flight"],
+                "budget_blocked_jobs": counts["budget_blocked"],
+                "circuit_reason": circuit.reason,
+                **accounting(budget, interrupted_without_usage(directory, budget)),
+            }
+            save(directory / "progress.json", progress)
+            return progress
 
         async def one(job: dict[str, Any]) -> None:
             folder = directory / "jobs" / job["id"]
@@ -688,12 +845,21 @@ async def execute(
                     end = folder / f"attempt-{attempt}.result.json"
                     if end.exists():
                         record = json.loads(end.read_text("utf-8"))
+                        circuit.observe(job, record)
                     elif start.exists():
+                        # Unknown completion may already be billed. Never use an extra
+                        # configured retry as permission to redispatch this pair.
                         record = {"status": "interrupted", "attempt": attempt}
                         immutable(end, record)
                     elif budget.blocked:
                         record = {"status": "budget_blocked", "attempt": attempt}
                         immutable(end, record)
+                    elif circuit.reason:
+                        record = {
+                            "status": "not_started",
+                            "attempt": attempt,
+                            "reason": circuit.reason,
+                        }
                     else:
                         immutable(
                             start,
@@ -703,6 +869,7 @@ async def execute(
                                 "started_epoch_s": time.time(),
                             },
                         )
+                        active.add(job["id"])
                         token = TASK.set({"job_id": job["id"], "attempt": attempt})
                         try:
                             judgment = await judge_pair(
@@ -717,21 +884,28 @@ async def execute(
                             record = {
                                 "status": "budget_blocked" if budget.blocked else "failed",
                                 "attempt": attempt,
-                                "error_type": type(error).__name__,
+                                **failure_details(error),
                             }
                         finally:
+                            active.discard(job["id"])
                             TASK.reset(token)
                         immutable(end, record)
+                        circuit.observe(job, record)
                     result = {**job, **record}
-                    if record["status"] in ("validated", "budget_blocked"):
+                    if (
+                        record["status"]
+                        in ("validated", "interrupted", "budget_blocked", "not_started")
+                        or circuit.reason
+                    ):
                         break
-                immutable(final, result)
+                # Never-started work remains a schedule entry, not a terminal failure.
+                if result["status"] != "not_started":
+                    immutable(final, result)
                 results[job["id"]] = result
-                if len(results) % 10 == 0:
-                    save(
-                        directory / "progress.json",
-                        {"completed": len(results), "planned": len(jobs), **accounting(budget)},
-                    )
+                if len(results) % 10 == 0 or (
+                    circuit.reason and circuit.state["trigger"]["job_id"] == job["id"]
+                ):
+                    checkpoint()
 
         tasks = [asyncio.create_task(one(job)) for job in jobs]
         try:
@@ -742,6 +916,7 @@ async def execute(
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
         finally:
+            checkpoint()
             if owned:
                 await close_providers([raw_provider])
         for judge in args.judge:
@@ -761,9 +936,7 @@ async def execute(
             "status": "complete"
             if all(r["status"] == "validated" for r in results.values())
             else "partial",
-            "planned_jobs": len(jobs),
-            "validated_jobs": sum(r["status"] == "validated" for r in results.values()),
-            "failed_jobs": sum(r["status"] != "validated" for r in results.values()),
+            **checkpoint(),
             "human_review_outstanding": True,
             **accounting(budget, interrupted_without_usage(directory, budget)),
         }
@@ -790,6 +963,15 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument("--concurrency", type=int, default=2)
     cli.add_argument(
         "--retries", type=int, default=0, help="Extra calls per pair after failure, max2"
+    )
+    cli.add_argument(
+        "--transport-failure-limit",
+        type=int,
+        default=3,
+        help=(
+            "Stop queued calls after this many consecutive provider failures; "
+            "auth/config stops immediately"
+        ),
     )
     cli.add_argument("--timeout", type=float, default=120)
     cli.add_argument(
