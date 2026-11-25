@@ -1,0 +1,2952 @@
+{
+  "schema": 1,
+  "plan_sha256": "255ae25a10e0b64b36806e5898eea3d10b1803f8f3af00d454ee80f174621ae3",
+  "source_vectors_sha256": "6a7b4de38d5bbafa2eb58ef6f1d2c37fc1a33fddb7a34f6c36cc0c12c421e09c",
+  "cases": {
+    "escaped_path": [
+      {
+        "id": "literal-0",
+        "scope": "mandatory",
+        "input": {
+          "path": ""
+        },
+        "expected": [
+          ""
+        ]
+      },
+      {
+        "id": "literal-1",
+        "scope": "mandatory",
+        "input": {
+          "path": "."
+        },
+        "expected": [
+          "",
+          ""
+        ]
+      },
+      {
+        "id": "literal-2",
+        "scope": "mandatory",
+        "input": {
+          "path": ".."
+        },
+        "expected": [
+          "",
+          "",
+          ""
+        ]
+      },
+      {
+        "id": "literal-3",
+        "scope": "mandatory",
+        "input": {
+          "path": "a.b"
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "literal-4",
+        "scope": "mandatory",
+        "input": {
+          "path": "a\\.b..c."
+        },
+        "expected": [
+          "a.b",
+          "",
+          "c",
+          ""
+        ]
+      },
+      {
+        "id": "literal-5",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\."
+        },
+        "expected": [
+          "."
+        ]
+      },
+      {
+        "id": "literal-6",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\"
+        },
+        "expected": [
+          "\\"
+        ]
+      },
+      {
+        "id": "literal-7",
+        "scope": "mandatory",
+        "input": {
+          "path": "a\\q.b"
+        },
+        "expected": [
+          "aq",
+          "b"
+        ]
+      },
+      {
+        "id": "literal-8",
+        "scope": "mandatory",
+        "input": {
+          "path": "é.🙂"
+        },
+        "expected": [
+          "é",
+          "🙂"
+        ]
+      },
+      {
+        "id": "literal-9",
+        "scope": "mandatory",
+        "input": {
+          "path": " a . b "
+        },
+        "expected": [
+          " a ",
+          " b "
+        ]
+      },
+      {
+        "id": "literal-10",
+        "scope": "mandatory",
+        "input": {
+          "path": "x\\"
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "literal-11",
+        "scope": "mandatory",
+        "input": {
+          "path": "a\\\\.b"
+        },
+        "expected": [
+          "a\\",
+          "b"
+        ]
+      },
+      {
+        "id": "roundtrip-0",
+        "scope": "mandatory",
+        "input": {
+          "path": ".baéb\\\\.\\\\.é\\.\\\\\\."
+        },
+        "expected": [
+          "",
+          "baéb\\",
+          "\\",
+          "é.\\."
+        ]
+      },
+      {
+        "id": "roundtrip-1",
+        "scope": "mandatory",
+        "input": {
+          "path": "ébb..bé\\.a\\\\"
+        },
+        "expected": [
+          "ébb",
+          "",
+          "bé.a\\"
+        ]
+      },
+      {
+        "id": "roundtrip-2",
+        "scope": "mandatory",
+        "input": {
+          "path": "a🙂b."
+        },
+        "expected": [
+          "a🙂b",
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-3",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\éaa "
+        },
+        "expected": [
+          "\\éaa "
+        ]
+      },
+      {
+        "id": "roundtrip-4",
+        "scope": "mandatory",
+        "input": {
+          "path": ""
+        },
+        "expected": [
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-5",
+        "scope": "mandatory",
+        "input": {
+          "path": "aab\\\\b.\\\\b\\\\\\\\é.\\."
+        },
+        "expected": [
+          "aab\\b",
+          "\\b\\\\é",
+          "."
+        ]
+      },
+      {
+        "id": "roundtrip-6",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\éb.aaaé.🙂 a\\\\.é "
+        },
+        "expected": [
+          "\\éb",
+          "aaaé",
+          "🙂 a\\",
+          "é "
+        ]
+      },
+      {
+        "id": "roundtrip-7",
+        "scope": "mandatory",
+        "input": {
+          "path": "a.\\.🙂🙂\\\\ \\..\\.abbb"
+        },
+        "expected": [
+          "a",
+          ".🙂🙂\\ .",
+          ".abbb"
+        ]
+      },
+      {
+        "id": "roundtrip-8",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\é🙂.a"
+        },
+        "expected": [
+          "\\é🙂",
+          "a"
+        ]
+      },
+      {
+        "id": "roundtrip-9",
+        "scope": "mandatory",
+        "input": {
+          "path": "b🙂é \\\\b"
+        },
+        "expected": [
+          "b🙂é \\b"
+        ]
+      },
+      {
+        "id": "roundtrip-10",
+        "scope": "mandatory",
+        "input": {
+          "path": ".aé .  .aa\\.🙂a.\\\\\\.a"
+        },
+        "expected": [
+          "",
+          "aé ",
+          "  ",
+          "aa.🙂a",
+          "\\.a"
+        ]
+      },
+      {
+        "id": "roundtrip-11",
+        "scope": "mandatory",
+        "input": {
+          "path": " a"
+        },
+        "expected": [
+          " a"
+        ]
+      },
+      {
+        "id": "roundtrip-12",
+        "scope": "mandatory",
+        "input": {
+          "path": "aa🙂.bb \\\\🙂 .\\\\\\\\aé"
+        },
+        "expected": [
+          "aa🙂",
+          "bb \\🙂 ",
+          "\\\\aé"
+        ]
+      },
+      {
+        "id": "roundtrip-13",
+        "scope": "mandatory",
+        "input": {
+          "path": "aéb\\.. b🙂\\\\é\\..🙂a.é a.\\.aa 🙂a"
+        },
+        "expected": [
+          "aéb.",
+          " b🙂\\é.",
+          "🙂a",
+          "é a",
+          ".aa 🙂a"
+        ]
+      },
+      {
+        "id": "roundtrip-14",
+        "scope": "mandatory",
+        "input": {
+          "path": "ab.a.b🙂éa. b\\\\.éb"
+        },
+        "expected": [
+          "ab",
+          "a",
+          "b🙂éa",
+          " b\\",
+          "éb"
+        ]
+      },
+      {
+        "id": "roundtrip-15",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\..\\.\\\\\\.\\\\ .éé\\\\.aé\\\\éa\\."
+        },
+        "expected": [
+          ".",
+          ".\\.\\ ",
+          "éé\\",
+          "aé\\éa."
+        ]
+      },
+      {
+        "id": "roundtrip-16",
+        "scope": "mandatory",
+        "input": {
+          "path": ".🙂.🙂ébaaa.b.🙂é b"
+        },
+        "expected": [
+          "",
+          "🙂",
+          "🙂ébaaa",
+          "b",
+          "🙂é b"
+        ]
+      },
+      {
+        "id": "roundtrip-17",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\.. bb.a."
+        },
+        "expected": [
+          "\\",
+          "",
+          " bb",
+          "a",
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-18",
+        "scope": "mandatory",
+        "input": {
+          "path": " a."
+        },
+        "expected": [
+          " a",
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-19",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\.a\\\\"
+        },
+        "expected": [
+          ".a\\"
+        ]
+      },
+      {
+        "id": "roundtrip-20",
+        "scope": "mandatory",
+        "input": {
+          "path": "b é🙂"
+        },
+        "expected": [
+          "b é🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-21",
+        "scope": "mandatory",
+        "input": {
+          "path": "a🙂.é\\\\bé.ébaab"
+        },
+        "expected": [
+          "a🙂",
+          "é\\bé",
+          "ébaab"
+        ]
+      },
+      {
+        "id": "roundtrip-22",
+        "scope": "mandatory",
+        "input": {
+          "path": "éé\\."
+        },
+        "expected": [
+          "éé."
+        ]
+      },
+      {
+        "id": "roundtrip-23",
+        "scope": "mandatory",
+        "input": {
+          "path": "éa.b\\\\. \\. \\.\\.. \\\\a🙂🙂."
+        },
+        "expected": [
+          "éa",
+          "b\\",
+          " . ..",
+          " \\a🙂🙂",
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-24",
+        "scope": "mandatory",
+        "input": {
+          "path": "aa🙂"
+        },
+        "expected": [
+          "aa🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-25",
+        "scope": "mandatory",
+        "input": {
+          "path": "ébb.ab.🙂🙂\\."
+        },
+        "expected": [
+          "ébb",
+          "ab",
+          "🙂🙂."
+        ]
+      },
+      {
+        "id": "roundtrip-26",
+        "scope": "mandatory",
+        "input": {
+          "path": ""
+        },
+        "expected": [
+          ""
+        ]
+      },
+      {
+        "id": "roundtrip-27",
+        "scope": "mandatory",
+        "input": {
+          "path": "é\\..\\\\🙂a..é"
+        },
+        "expected": [
+          "é.",
+          "\\🙂a",
+          "",
+          "é"
+        ]
+      },
+      {
+        "id": "roundtrip-28",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\. .a a🙂b"
+        },
+        "expected": [
+          ". ",
+          "a a🙂b"
+        ]
+      },
+      {
+        "id": "roundtrip-29",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\.🙂 . b\\.éaé.\\.b. 🙂.🙂b "
+        },
+        "expected": [
+          ".🙂 ",
+          " b.éaé",
+          ".b",
+          " 🙂",
+          "🙂b "
+        ]
+      },
+      {
+        "id": "roundtrip-30",
+        "scope": "mandatory",
+        "input": {
+          "path": "éé\\.\\.aé.a .é\\\\\\\\b..b\\\\ "
+        },
+        "expected": [
+          "éé..aé",
+          "a ",
+          "é\\\\b",
+          "",
+          "b\\ "
+        ]
+      },
+      {
+        "id": "roundtrip-31",
+        "scope": "mandatory",
+        "input": {
+          "path": ".\\\\ aaé..a\\. .🙂"
+        },
+        "expected": [
+          "",
+          "\\ aaé",
+          "",
+          "a. ",
+          "🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-32",
+        "scope": "mandatory",
+        "input": {
+          "path": ". b\\.🙂b.éa\\\\bé"
+        },
+        "expected": [
+          "",
+          " b.🙂b",
+          "éa\\bé"
+        ]
+      },
+      {
+        "id": "roundtrip-33",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\. 🙂\\.\\\\é.b .\\...béb🙂🙂\\."
+        },
+        "expected": [
+          ". 🙂.\\é",
+          "b ",
+          ".",
+          "",
+          "béb🙂🙂."
+        ]
+      },
+      {
+        "id": "roundtrip-34",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\.bb.🙂\\\\.aé🙂"
+        },
+        "expected": [
+          ".bb",
+          "🙂\\",
+          "aé🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-35",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\a 🙂.\\.🙂🙂"
+        },
+        "expected": [
+          "\\a 🙂",
+          ".🙂🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-36",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\\\\\.\\\\"
+        },
+        "expected": [
+          "\\.\\"
+        ]
+      },
+      {
+        "id": "roundtrip-37",
+        "scope": "mandatory",
+        "input": {
+          "path": "\\. \\.a🙂...\\\\🙂 🙂"
+        },
+        "expected": [
+          ". .a🙂",
+          "",
+          "",
+          "\\🙂 🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-38",
+        "scope": "mandatory",
+        "input": {
+          "path": "  \\.ab..🙂"
+        },
+        "expected": [
+          "  .ab",
+          "",
+          "🙂"
+        ]
+      },
+      {
+        "id": "roundtrip-39",
+        "scope": "mandatory",
+        "input": {
+          "path": "éaa.\\.baé .ab🙂a"
+        },
+        "expected": [
+          "éaa",
+          ".baé ",
+          "ab🙂a"
+        ]
+      }
+    ],
+    "lazy_merge": [
+      {
+        "id": "finite-0",
+        "scope": "mandatory",
+        "input": {
+          "streams": []
+        },
+        "expected": []
+      },
+      {
+        "id": "finite-1",
+        "scope": "mandatory",
+        "input": {
+          "streams": [
+            []
+          ]
+        },
+        "expected": []
+      },
+      {
+        "id": "finite-2",
+        "scope": "mandatory",
+        "input": {
+          "streams": [
+            [],
+            [],
+            []
+          ]
+        },
+        "expected": []
+      },
+      {
+        "id": "finite-3",
+        "scope": "mandatory",
+        "input": {
+          "streams": [
+            [
+              1
+            ]
+          ]
+        },
+        "expected": [
+          1
+        ]
+      },
+      {
+        "id": "finite-4",
+        "scope": "mandatory",
+        "input": {
+          "streams": [
+            [
+              1,
+              1,
+              4
+            ],
+            [
+              1,
+              2,
+              2
+            ],
+            [
+              -2,
+              4
+            ],
+            []
+          ]
+        },
+        "expected": [
+          -2,
+          1,
+          1,
+          1,
+          2,
+          2,
+          4,
+          4
+        ]
+      },
+      {
+        "id": "finite-5",
+        "scope": "mandatory",
+        "input": {
+          "streams": [
+            [
+              -4,
+              -1,
+              9
+            ],
+            [
+              -5,
+              0,
+              8
+            ],
+            [
+              0,
+              0,
+              0
+            ]
+          ]
+        },
+        "expected": [
+          -5,
+          -4,
+          -1,
+          0,
+          0,
+          0,
+          0,
+          8,
+          9
+        ]
+      },
+      {
+        "id": "bounded-infinite-prefix",
+        "scope": "mandatory_instrumented",
+        "input": {
+          "streams": [
+            "3*n",
+            "3*n+1",
+            "3*n+2"
+          ],
+          "take": 20
+        },
+        "expected": {
+          "output": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "pending_per_source_max": 1,
+          "observe_after_each_yield": true
+        }
+      }
+    ],
+    "run_length": [
+      {
+        "id": "roundtrip-0",
+        "scope": "mandatory",
+        "input": {
+          "text": ""
+        },
+        "expected": {
+          "decode_encode": "",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-1",
+        "scope": "mandatory",
+        "input": {
+          "text": "a"
+        },
+        "expected": {
+          "decode_encode": "a",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-2",
+        "scope": "mandatory",
+        "input": {
+          "text": "aaabcc"
+        },
+        "expected": {
+          "decode_encode": "aaabcc",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-3",
+        "scope": "mandatory",
+        "input": {
+          "text": "  \t\n\u0000\u0000 "
+        },
+        "expected": {
+          "decode_encode": "  \t\n\u0000\u0000 ",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-4",
+        "scope": "mandatory",
+        "input": {
+          "text": "éé🙂🙂東京"
+        },
+        "expected": {
+          "decode_encode": "éé🙂🙂東京",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-5",
+        "scope": "mandatory",
+        "input": {
+          "text": "éé"
+        },
+        "expected": {
+          "decode_encode": "éé",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-6",
+        "scope": "mandatory",
+        "input": {
+          "text": "\r\n\r\n"
+        },
+        "expected": {
+          "decode_encode": "\r\n\r\n",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "roundtrip-7",
+        "scope": "mandatory",
+        "input": {
+          "text": "aAaA"
+        },
+        "expected": {
+          "decode_encode": "aAaA",
+          "record_counts": "positive_integers",
+          "exact_code_points": true
+        }
+      },
+      {
+        "id": "decode-0",
+        "scope": "mandatory",
+        "input": {
+          "records": []
+        },
+        "expected": ""
+      },
+      {
+        "id": "decode-1",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              2
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        "expected": "aab"
+      },
+      {
+        "id": "decode-2",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "é",
+              1
+            ],
+            [
+              "🙂",
+              3
+            ]
+          ]
+        },
+        "expected": "é🙂🙂🙂"
+      },
+      {
+        "id": "decode-3",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "x",
+              1
+            ],
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        "expected": "xxx"
+      },
+      {
+        "id": "decode-4",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "\u0000",
+              2
+            ],
+            [
+              "\n",
+              1
+            ]
+          ]
+        },
+        "expected": "\u0000\u0000\n"
+      },
+      {
+        "id": "invalid-count-0",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              0
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "invalid-count-1",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              -1
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "invalid-count-2",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              1.5
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "invalid-count-3",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              "2"
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "invalid-count-4",
+        "scope": "mandatory",
+        "input": {
+          "records": [
+            [
+              "a",
+              null
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_rejection"
+        }
+      },
+      {
+        "id": "bool-count",
+        "scope": "declared_policy",
+        "input": {
+          "records": [
+            [
+              "a",
+              true
+            ]
+          ]
+        },
+        "expected": {
+          "bool_policy": "review_before_testing"
+        }
+      }
+    ],
+    "dependency_order": [
+      {
+        "id": "graph-0",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": []
+      },
+      {
+        "id": "graph-1",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "alone"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "alone"
+        ]
+      },
+      {
+        "id": "graph-2",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "b",
+              "a"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "b",
+          "c",
+          "a",
+          "d"
+        ]
+      },
+      {
+        "id": "graph-3",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "fetch",
+            "compile",
+            "link",
+            "alone"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "fetch",
+              "compile"
+            ],
+            [
+              "compile",
+              "link"
+            ]
+          ]
+        },
+        "expected": [
+          "alone",
+          "fetch",
+          "compile",
+          "link"
+        ]
+      },
+      {
+        "id": "graph-4",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "a",
+              "b"
+            ],
+            [
+              "b",
+              "c"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_cycle_error"
+        }
+      },
+      {
+        "id": "graph-5",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "a",
+              "a"
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_cycle_error"
+        }
+      },
+      {
+        "id": "graph-6",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "x",
+            "y"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "a",
+              "b"
+            ],
+            [
+              "x",
+              "y"
+            ],
+            [
+              "y",
+              "x"
+            ]
+          ]
+        },
+        "expected": {
+          "error": "explicit_cycle_error"
+        }
+      },
+      {
+        "id": "graph-7",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "b"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "c",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-8",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-9",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "a",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-10",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "b",
+          "c",
+          "a"
+        ]
+      },
+      {
+        "id": "graph-11",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "d",
+              "c"
+            ],
+            [
+              "c",
+              "b"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "d",
+          "c",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-12",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a"
+        ]
+      },
+      {
+        "id": "graph-13",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "d",
+              "c"
+            ],
+            [
+              "d",
+              "a"
+            ],
+            [
+              "d",
+              "b"
+            ],
+            [
+              "a",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "d",
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "id": "graph-14",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "e",
+              "f"
+            ],
+            [
+              "a",
+              "c"
+            ],
+            [
+              "a",
+              "f"
+            ],
+            [
+              "c",
+              "b"
+            ],
+            [
+              "f",
+              "d"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "c",
+          "b",
+          "e",
+          "f",
+          "d"
+        ]
+      },
+      {
+        "id": "graph-15",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "e",
+              "f"
+            ],
+            [
+              "e",
+              "c"
+            ],
+            [
+              "e",
+              "b"
+            ],
+            [
+              "f",
+              "c"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "d",
+          "e",
+          "b",
+          "f",
+          "c",
+          "a"
+        ]
+      },
+      {
+        "id": "graph-16",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-17",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "a",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-18",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "b",
+              "a"
+            ],
+            [
+              "b",
+              "c"
+            ]
+          ]
+        },
+        "expected": [
+          "b",
+          "a",
+          "c"
+        ]
+      },
+      {
+        "id": "graph-19",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "d",
+              "b"
+            ],
+            [
+              "b",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "c",
+          "d",
+          "b",
+          "a",
+          "e",
+          "f"
+        ]
+      },
+      {
+        "id": "graph-20",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "e",
+              "d"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "b",
+          "c",
+          "e",
+          "d"
+        ]
+      },
+      {
+        "id": "graph-21",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "b"
+            ],
+            [
+              "d",
+              "f"
+            ],
+            [
+              "d",
+              "b"
+            ],
+            [
+              "f",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "c",
+          "d",
+          "e",
+          "f",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-22",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-23",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "d"
+            ],
+            [
+              "d",
+              "e"
+            ],
+            [
+              "a",
+              "e"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ]
+      },
+      {
+        "id": "graph-24",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "b",
+              "a"
+            ],
+            [
+              "c",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "b",
+          "c",
+          "a",
+          "d"
+        ]
+      },
+      {
+        "id": "graph-25",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-26",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "f",
+              "e"
+            ],
+            [
+              "f",
+              "a"
+            ],
+            [
+              "f",
+              "c"
+            ],
+            [
+              "f",
+              "b"
+            ],
+            [
+              "e",
+              "a"
+            ],
+            [
+              "e",
+              "d"
+            ],
+            [
+              "e",
+              "c"
+            ],
+            [
+              "e",
+              "b"
+            ],
+            [
+              "a",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "f",
+          "e",
+          "a",
+          "b",
+          "c",
+          "d"
+        ]
+      },
+      {
+        "id": "graph-27",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b"
+          ],
+          "edges_prerequisite_to_dependent": []
+        },
+        "expected": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "id": "graph-28",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "d"
+            ],
+            [
+              "c",
+              "a"
+            ],
+            [
+              "e",
+              "d"
+            ],
+            [
+              "d",
+              "b"
+            ]
+          ]
+        },
+        "expected": [
+          "c",
+          "a",
+          "e",
+          "d",
+          "b",
+          "f"
+        ]
+      },
+      {
+        "id": "graph-29",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "c",
+              "a"
+            ],
+            [
+              "d",
+              "f"
+            ],
+            [
+              "d",
+              "b"
+            ],
+            [
+              "d",
+              "a"
+            ],
+            [
+              "e",
+              "b"
+            ],
+            [
+              "e",
+              "a"
+            ]
+          ]
+        },
+        "expected": [
+          "c",
+          "d",
+          "e",
+          "a",
+          "b",
+          "f"
+        ]
+      },
+      {
+        "id": "graph-30",
+        "scope": "declared_orientation",
+        "input": {
+          "nodes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "edges_prerequisite_to_dependent": [
+            [
+              "d",
+              "e"
+            ],
+            [
+              "a",
+              "e"
+            ],
+            [
+              "b",
+              "e"
+            ],
+            [
+              "c",
+              "e"
+            ]
+          ]
+        },
+        "expected": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ]
+      }
+    ],
+    "sliding_median": [
+      {
+        "id": "median-0",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [],
+          "k": 1
+        },
+        "expected": {
+          "mean": {
+            "partial": [],
+            "full_only": [],
+            "sentinel_until_full": []
+          },
+          "lower": {
+            "partial": [],
+            "full_only": [],
+            "sentinel_until_full": []
+          },
+          "upper": {
+            "partial": [],
+            "full_only": [],
+            "sentinel_until_full": []
+          }
+        }
+      },
+      {
+        "id": "median-1",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            4
+          ],
+          "k": 1
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              4
+            ],
+            "full_only": [
+              4
+            ],
+            "sentinel_until_full": [
+              4
+            ]
+          },
+          "lower": {
+            "partial": [
+              4
+            ],
+            "full_only": [
+              4
+            ],
+            "sentinel_until_full": [
+              4
+            ]
+          },
+          "upper": {
+            "partial": [
+              4
+            ],
+            "full_only": [
+              4
+            ],
+            "sentinel_until_full": [
+              4
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-2",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            1,
+            2
+          ],
+          "k": 2
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              1,
+              1.5
+            ],
+            "full_only": [
+              1.5
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              1.5
+            ]
+          },
+          "lower": {
+            "partial": [
+              1,
+              1
+            ],
+            "full_only": [
+              1
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              1
+            ]
+          },
+          "upper": {
+            "partial": [
+              1,
+              2
+            ],
+            "full_only": [
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              2
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-3",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            5,
+            1,
+            9,
+            2,
+            2,
+            -1,
+            8
+          ],
+          "k": 3
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              5,
+              3.0,
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "full_only": [
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              5,
+              2,
+              2,
+              2,
+              2
+            ]
+          },
+          "lower": {
+            "partial": [
+              5,
+              1,
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "full_only": [
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              5,
+              2,
+              2,
+              2,
+              2
+            ]
+          },
+          "upper": {
+            "partial": [
+              5,
+              5,
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "full_only": [
+              5,
+              2,
+              2,
+              2,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              5,
+              2,
+              2,
+              2,
+              2
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-4",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            4,
+            4,
+            4,
+            4,
+            4
+          ],
+          "k": 4
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              4,
+              4.0,
+              4,
+              4.0,
+              4.0
+            ],
+            "full_only": [
+              4.0,
+              4.0
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              4.0,
+              4.0
+            ]
+          },
+          "lower": {
+            "partial": [
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "full_only": [
+              4,
+              4
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              4,
+              4
+            ]
+          },
+          "upper": {
+            "partial": [
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "full_only": [
+              4,
+              4
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              4,
+              4
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-5",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            9,
+            1,
+            4
+          ],
+          "k": 5
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              9,
+              5.0,
+              4
+            ],
+            "full_only": [],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              }
+            ]
+          },
+          "lower": {
+            "partial": [
+              9,
+              1,
+              4
+            ],
+            "full_only": [],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              }
+            ]
+          },
+          "upper": {
+            "partial": [
+              9,
+              9,
+              4
+            ],
+            "full_only": [],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-6",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            -2,
+            -1,
+            0,
+            3,
+            3,
+            -4
+          ],
+          "k": 2
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              -2,
+              -1.5,
+              -0.5,
+              1.5,
+              3.0,
+              -0.5
+            ],
+            "full_only": [
+              -1.5,
+              -0.5,
+              1.5,
+              3.0,
+              -0.5
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              -1.5,
+              -0.5,
+              1.5,
+              3.0,
+              -0.5
+            ]
+          },
+          "lower": {
+            "partial": [
+              -2,
+              -2,
+              -1,
+              0,
+              3,
+              -4
+            ],
+            "full_only": [
+              -2,
+              -1,
+              0,
+              3,
+              -4
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              -2,
+              -1,
+              0,
+              3,
+              -4
+            ]
+          },
+          "upper": {
+            "partial": [
+              -2,
+              -1,
+              0,
+              3,
+              3,
+              3
+            ],
+            "full_only": [
+              -1,
+              0,
+              3,
+              3,
+              3
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              -1,
+              0,
+              3,
+              3,
+              3
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-7",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "k": 4
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              0,
+              0.5,
+              1,
+              1.5,
+              2.5,
+              3.5,
+              4.5,
+              5.5,
+              6.5,
+              7.5,
+              8.5,
+              9.5
+            ],
+            "full_only": [
+              1.5,
+              2.5,
+              3.5,
+              4.5,
+              5.5,
+              6.5,
+              7.5,
+              8.5,
+              9.5
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              1.5,
+              2.5,
+              3.5,
+              4.5,
+              5.5,
+              6.5,
+              7.5,
+              8.5,
+              9.5
+            ]
+          },
+          "lower": {
+            "partial": [
+              0,
+              0,
+              1,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "full_only": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ]
+          },
+          "upper": {
+            "partial": [
+              0,
+              1,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "full_only": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ]
+          }
+        }
+      },
+      {
+        "id": "median-8",
+        "scope": "declared_even_and_warmup",
+        "input": {
+          "stream": [
+            12,
+            11,
+            10,
+            9,
+            8,
+            7,
+            6,
+            5,
+            4,
+            3,
+            2,
+            1,
+            0
+          ],
+          "k": 5
+        },
+        "expected": {
+          "mean": {
+            "partial": [
+              12,
+              11.5,
+              11,
+              10.5,
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "full_only": [
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ]
+          },
+          "lower": {
+            "partial": [
+              12,
+              11,
+              11,
+              10,
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "full_only": [
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ]
+          },
+          "upper": {
+            "partial": [
+              12,
+              12,
+              11,
+              11,
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "full_only": [
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ],
+            "sentinel_until_full": [
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              {
+                "declared_sentinel": true
+              },
+              10,
+              9,
+              8,
+              7,
+              6,
+              5,
+              4,
+              3,
+              2
+            ]
+          }
+        }
+      },
+      {
+        "id": "fixed-window-growth",
+        "scope": "instrumented_memory_witness",
+        "input": {
+          "k": 17,
+          "streams": [
+            "increasing",
+            "decreasing",
+            "all_equal",
+            "alternating_extremes"
+          ],
+          "prefix_lengths": [
+            128,
+            1024,
+            8192
+          ]
+        },
+        "expected": {
+          "semantic_oracle": "last-k sorted window under declared policies",
+          "retained_state": "linear obsolete-state growth is counterexample; finite plateau not proof"
+        }
+      }
+    ],
+    "dependency_invalidation": [
+      {
+        "id": "reverse-0",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {},
+          "changed": "missing"
+        },
+        "expected": {
+          "downstream_excluding_root": [],
+          "exclude_root": [],
+          "include_root": [
+            "missing"
+          ]
+        }
+      },
+      {
+        "id": "reverse-1",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "src": [
+              "a"
+            ],
+            "a": [
+              "b"
+            ]
+          },
+          "changed": "src"
+        },
+        "expected": {
+          "downstream_excluding_root": [
+            "a",
+            "b"
+          ],
+          "exclude_root": [
+            "a",
+            "b"
+          ],
+          "include_root": [
+            "a",
+            "b",
+            "src"
+          ]
+        }
+      },
+      {
+        "id": "reverse-2",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "src": [
+              "a",
+              "b"
+            ],
+            "a": [
+              "c"
+            ],
+            "b": [
+              "c"
+            ],
+            "other": [
+              "x"
+            ]
+          },
+          "changed": "src"
+        },
+        "expected": {
+          "downstream_excluding_root": [
+            "a",
+            "b",
+            "c"
+          ],
+          "exclude_root": [
+            "a",
+            "b",
+            "c"
+          ],
+          "include_root": [
+            "a",
+            "b",
+            "c",
+            "src"
+          ]
+        }
+      },
+      {
+        "id": "reverse-3",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "src": [
+              "a"
+            ],
+            "a": [
+              "src",
+              "b"
+            ],
+            "b": [
+              "a"
+            ]
+          },
+          "changed": "src"
+        },
+        "expected": {
+          "downstream_excluding_root": [
+            "a",
+            "b"
+          ],
+          "exclude_root": [
+            "a",
+            "b"
+          ],
+          "include_root": [
+            "a",
+            "b",
+            "src"
+          ]
+        }
+      },
+      {
+        "id": "reverse-4",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "src": [
+              "src"
+            ]
+          },
+          "changed": "src"
+        },
+        "expected": {
+          "downstream_excluding_root": [],
+          "exclude_root": [],
+          "include_root": [
+            "src"
+          ]
+        }
+      },
+      {
+        "id": "reverse-5",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "src": [
+              "a",
+              "a",
+              "b"
+            ],
+            "a": [
+              "b"
+            ]
+          },
+          "changed": "src"
+        },
+        "expected": {
+          "downstream_excluding_root": [
+            "a",
+            "b"
+          ],
+          "exclude_root": [
+            "a",
+            "b"
+          ],
+          "include_root": [
+            "a",
+            "b",
+            "src"
+          ]
+        }
+      },
+      {
+        "id": "reverse-6",
+        "scope": "mandatory_downstream_and_declared_root",
+        "input": {
+          "reverse_dependencies": {
+            "a": [
+              "b"
+            ]
+          },
+          "changed": "missing"
+        },
+        "expected": {
+          "downstream_excluding_root": [],
+          "exclude_root": [],
+          "include_root": [
+            "missing"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -24,10 +24,25 @@ from pathlib import Path
 from typing import Any, cast
 
 IMAGE = "sha256:85d4cb1afa769a7338e095b927bee941cf5ec92266c7424b3f6c0f2748567248"
+CONTRACTS_SHA256 = "04a488b6c337631c8cd3b92dc25362c8a2e8c37a0bd1eeaa7c4d50a4baf805f9"
+BOOTSTRAP = (
+    "import json,sys;"
+    " envelope=json.load(sys.stdin);"
+    ' ns={"__name__":"trusted_grader"};'
+    ' exec(compile(envelope["worker"],"<trusted-grader>","exec"),ns);'
+    ' print(json.dumps(ns["run"](envelope["payload"])))'
+)
+
 MAX_CODE_BYTES = 65_536
 MAX_OUTPUT_BYTES = 65_536
 TIMEOUT_S = 15
 CASES = {
+    "novel-mosaic-coding-dependency-invalidation": "dependency_invalidation",
+    "novel-mosaic-coding-sliding-median": "sliding_median",
+    "novel-mosaic-coding-dependency-order": "dependency_order",
+    "novel-cedar-coding-run-length": "run_length",
+    "novel-cedar-coding-lazy-merge": "lazy_merge",
+    "novel-cedar-coding-escaped-path": "escaped_path",
     "coverage-first_unique": "first_unique",
     "stress-coding-expiring-lru": "expiring_lru",
     "stress-coding-intervals": "intervals",
@@ -350,6 +365,52 @@ ADAPTER_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 
+ADAPTER_TEMPLATES.update(
+    {
+        "escaped_path": {
+            "entrypoint": "",
+            "call": {"args": ["path"]},
+            "rejection": {"kind": "exception", "types": []},
+        },
+        "lazy_merge": {"entrypoint": "", "call_shape": None, "call": {"args": ["streams"]}},
+        "run_length": {
+            "entrypoint": "",
+            "decode_entrypoint": "",
+            "encode_call": {"args": ["text"]},
+            "decode_call": {"args": ["records"]},
+            "character_unit": None,
+            "rejection": {"kind": "exception", "types": []},
+        },
+        "dependency_order": {
+            "entrypoint": "",
+            "call": {"args": ["graph"]},
+            "orientation": None,
+            "orientation_reviewed": False,
+            "cycle_error": {"kind": "exception", "types": []},
+        },
+        "sliding_median": {
+            "entrypoint": "",
+            "interface": None,
+            "call": {"args": ["stream", "k"]},
+            "even": None,
+            "even_policy_stated": False,
+            "warmup": None,
+            "warmup_reviewed": False,
+        },
+        "dependency_invalidation": {
+            "entrypoint": "",
+            "call": {"args": ["root", "reverse"]},
+            "root_policy": None,
+            "root_policy_reviewed": False,
+        },
+    }
+)
+ADAPTER_TEMPLATES["first_unique"]["character_unit"] = None
+ADAPTER_TEMPLATES["expiring_lru"].update(expires_at_boundary=None, boundary_policy_reviewed=False)
+ADAPTER_TEMPLATES["bounded_workers"]["result"] = None
+ADAPTER_TEMPLATES["utf8_stream"].update(delimiter_mode=None, delimiter_policy_reviewed=False)
+
+
 def fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -433,7 +494,7 @@ def prepare(trials: list[dict[str, Any]]) -> dict[str, Any]:
                 e["message"] for e in trial.get("events", []) if e["message"].get("pass") == pass_
             ]
             text = "".join(m.get("text", "") for m in messages if m["type"] == "answer.delta")
-            if not text:
+            if pass_ == "deep" and not messages:
                 continue
             entries.append(
                 {
@@ -444,6 +505,8 @@ def prepare(trials: list[dict[str, Any]]) -> dict[str, Any]:
                     "pass": pass_,
                     "answer": text,
                     "answer_sha256": fingerprint(text),
+                    "code_requested": case_id != "coverage-first_unique",
+                    "delivery": "text_present" if text else "no_answer",
                     "completed": any(m["type"] == "answer.done" for m in messages),
                     "fences": blocks(text),
                     "selected_blocks": [],
@@ -499,7 +562,7 @@ def selected_code(entry: dict[str, Any]) -> tuple[str, list[str]]:
     return code, errors + screen(code)
 
 
-def docker_command(image: str, name: str, worker: str) -> list[str]:
+def docker_command(image: str, name: str) -> list[str]:
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
         raise ValueError("A locally inspected immutable image ID is required")
     return [
@@ -533,7 +596,7 @@ def docker_command(image: str, name: str, worker: str) -> list[str]:
         "-I",
         "-B",
         "-c",
-        worker,
+        BOOTSTRAP,
     ]
 
 
@@ -543,7 +606,16 @@ def isolated_run(payload: dict[str, Any], image: str = IMAGE) -> dict[str, Any]:
         return {"status": "blocked", "reason": "Docker unavailable; no host fallback"}
     worker = Path(__file__).with_name("live_answer_coding_runner.py").read_text("utf-8")
     name = "career-pilot-coding-" + uuid.uuid4().hex
-    cmd = docker_command(image, name, worker)
+    try:
+        raw_contracts = Path(__file__).with_name("live_answer_coding_contracts.json").read_bytes()
+        # Git may convert line endings on Windows; the reviewed UTF-8 content is identical.
+        if hashlib.sha256(raw_contracts.replace(b"\r\n", b"\n")).hexdigest() != CONTRACTS_SHA256:
+            return {"status": "blocked", "reason": "prospective contract fingerprint mismatch"}
+        contracts = json.loads(raw_contracts)
+    except (OSError, ValueError):
+        return {"status": "blocked", "reason": "prospective contracts unavailable"}
+    payload = {**payload, "vectors": contracts["cases"].get(payload.get("case"), [])}
+    cmd = docker_command(image, name)
     started = time.monotonic()
     output = bytearray()
     overflow = threading.Event()
@@ -572,7 +644,7 @@ def isolated_run(payload: dict[str, Any], image: str = IMAGE) -> dict[str, Any]:
 
         def feed() -> None:
             try:
-                pipe.write(json.dumps(payload).encode("utf-8"))
+                pipe.write(json.dumps({"worker": worker, "payload": payload}).encode("utf-8"))
             except (OSError, ValueError):
                 pass
             finally:
@@ -667,6 +739,9 @@ def evaluate(entry: dict[str, Any], image: str = IMAGE) -> dict[str, Any]:
         adapter=entry.get("adapter"),
         generation_completed=entry.get("completed"),
         evaluator_sha256=fingerprint(Path(__file__).read_text("utf-8")),
+    )
+    identity["contracts_sha256"] = fingerprint(
+        Path(__file__).with_name("live_answer_coding_contracts.json").read_text("utf-8")
     )
     identity["worker_sha256"] = fingerprint(
         Path(__file__).with_name("live_answer_coding_runner.py").read_text("utf-8")

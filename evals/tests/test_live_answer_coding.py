@@ -99,7 +99,12 @@ def records(chunks):
         yield pending
 """
 ADAPTERS: dict[str, dict[str, Any]] = {
-    "coverage-first_unique": {"entrypoint": "first", "result": "character", "missing": None},
+    "coverage-first_unique": {
+        "entrypoint": "first",
+        "result": "character",
+        "missing": None,
+        "character_unit": "code_points",
+    },
     "stress-coding-intervals": {"entrypoint": "merge"},
     "stress-coding-expiring-lru": {
         "entrypoint": "Cache",
@@ -107,6 +112,8 @@ ADAPTERS: dict[str, dict[str, Any]] = {
         "put": {"name": "put", "args": ["key", "value", "ttl"]},
         "get": {"name": "get", "args": ["key"]},
         "missing": {"kind": "value", "value": None},
+        "expires_at_boundary": True,
+        "boundary_policy_reviewed": True,
     },
     "stress-coding-dedup-window": {
         "entrypoint": "Dedup",
@@ -119,6 +126,7 @@ ADAPTERS: dict[str, dict[str, Any]] = {
     },
     "stress-coding-bounded-workers": {
         "entrypoint": "bounded",
+        "result": "awaitable",
         "call": {"args": ["operation", "items"]},
     },
     "stress-coding-utf8-stream": {
@@ -126,6 +134,8 @@ ADAPTERS: dict[str, dict[str, Any]] = {
         "call": {"args": ["chunks"]},
         "invalid_bytes": "strict",
         "invalid_policy_stated": True,
+        "delimiter_mode": "stripped",
+        "delimiter_policy_reviewed": True,
     },
 }
 FIXTURES = list(zip(ADAPTERS, (FIRST, INTERVALS, LRU, DEDUP, WORKERS, UTF8), strict=True))
@@ -179,7 +189,7 @@ def test_trusted_correct_fixtures_pass_isolated_suites(
         (
             "stress-coding-expiring-lru",
             LRU.replace("expiry <= self.clock()", "expiry < self.clock()"),
-            "ttl_exact_expiry",
+            "declared_expiry_equality",
         ),
         (
             "stress-coding-dedup-window",
@@ -218,7 +228,9 @@ def test_obsolete_records_are_observed(container: None) -> None:
         "self.data[key] = now + 60\n        self.obsolete.append((key, now))",
     )
     result = coding.evaluate(entry("stress-coding-dedup-window", code))
-    assert result["status"] == "failed", result
+    assert result["status"] == "partially_scored", result
+    assert result["functional_status"] == "passed"
+    assert result["memory_review_required"] is True
     assert result["measurements"]["retained_container_slots_after_updates"]["8192"] > 20_000
     assert any(
         check["name"] == "obsolete_expiry_record_growth" and not check["passed"]
@@ -290,7 +302,7 @@ def test_extraction_preserves_original_code_and_requires_selection() -> None:
 
 
 def test_container_command_has_no_host_mounts_network_or_pull() -> None:
-    cmd = coding.docker_command(coding.IMAGE, "test-name", "trusted-runner")
+    cmd = coding.docker_command(coding.IMAGE, "test-name")
     for required in (
         "--network=none",
         "--read-only",
@@ -308,7 +320,7 @@ def test_container_command_has_no_host_mounts_network_or_pull() -> None:
     assert "--mount" not in cmd
     assert "--privileged" not in cmd
     with pytest.raises(ValueError, match="immutable"):
-        coding.docker_command("python:latest", "test", "worker")
+        coding.docker_command("python:latest", "test")
 
 
 def test_missing_docker_does_not_execute_on_host(monkeypatch: pytest.MonkeyPatch) -> None:
