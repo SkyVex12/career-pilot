@@ -555,6 +555,7 @@ type PassState = { icon: string; text: string; tone: "wait" | "live" | "done" | 
 /** What a pass is doing, in words. */
 export function passState(p: PassView, kind: "fast" | "deep"): PassState {
   if (p.error === "cancelled") return { icon: "⏹", text: "Stopped for a newer question", tone: "warn" };
+  if (p.error === "incomplete_stream" || p.error === "stream_order") return { icon: "⚠", text: "Answer incomplete · some content did not arrive", tone: "warn" };
   if (p.error) return { icon: "⚠", text: `Failed (${p.error})`, tone: "warn" };
   if (p.done) return { icon: "✓", text: p.source === "prepared" ? "Done · prepared" : "Done", tone: "done" };
   if (p.text) return { icon: "◌", text: "Writing", tone: "live" };
@@ -581,6 +582,7 @@ function QuestionCard({
 }) {
   // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
   const screen = isScreenQuestion(q);
+  const adaptive = !screen && q.answerStrategy !== undefined && q.answerStrategy !== "legacy_dual";
   // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
   // Java") in an otherwise spoken answer.
   const textOf = (text: string) => (screen || text.includes("```") ? CodeAnswer : AnswerText);
@@ -612,6 +614,7 @@ function QuestionCard({
       {screen && <ShotStrip questionId={q.id} />}
       {q.screen && <ScreenTasks reading={q.screen} />}
 
+      {adaptive ? <AdaptiveAnswer q={q} onExpand={onExpand} canExpand={!past && !readOnly} compact={compact} /> : <>
       <div role="group" className={cx("points pass pass-fast", holdFast && "is-held", screen && "is-code")} aria-label={screen ? "Answer" : "Talking points"}>
         {q.fast.text && <FastText text={q.fast.text} streaming={!q.fast.done} />}
         <PassStatus state={fast} />
@@ -644,7 +647,9 @@ function QuestionCard({
         )
       )}
 
-      {!compact && q.fast.refs.length > 0 && (
+      </>}
+
+      {!adaptive && !compact && q.fast.refs.length > 0 && (
         <footer className="card-tools">
           <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
@@ -653,6 +658,48 @@ function QuestionCard({
       )}
     </article>
   );
+}
+
+/** One reading surface. An independent expert response is reviewed explicitly; it never
+ * silently overwrites or splices potentially conflicting claims into the answer. */
+function AdaptiveAnswer({ q, onExpand, canExpand, compact }: { q: QuestionView; onExpand: () => void; canExpand: boolean; compact: boolean }) {
+  const [reviewing, setReviewing] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const expertReady = q.deep.done && !q.deep.error && !!q.deep.text.trim();
+  // Exact equality is sufficient to hide a literal duplicate; it is not a semantic verdict.
+  const sameText = expertReady && q.deep.text.replace(/\s+/g, " ").trim() === q.fast.text.replace(/\s+/g, " ").trim();
+  const expert = reviewing && expertReady && !sameText;
+  const shown = expert ? q.deep : q.fast;
+  const Text = shown.text.includes("```") ? CodeAnswer : AnswerText;
+  const expertStarted = q.deepRequested || !!q.deep.text || q.deep.done;
+  const permitsExpert = q.answerStrategy === "adaptive_hybrid" || q.answerStrategy === "adaptive_on_demand";
+  const requestExpert = async () => {
+    if (requesting) return;
+    setRequesting(true);
+    setRequestError(null);
+    onExpand();
+    try { await api.expandAnswer(q.id); }
+    catch { setRequestError("Could not request an expert response. Try again."); }
+    finally { setRequesting(false); }
+  };
+  return <>
+    <div role="group" className="points pass pass-fast pass-adaptive" aria-label={expert ? "Expert response" : "Answer"}>
+      {expert && <span className="pass-title">Independent expert response</span>}
+      {shown.text && <Text text={shown.text} streaming={!shown.done} />}
+      <PassStatus state={passState(shown, "fast")} />
+    </div>
+    <div className={permitsExpert ? "ov-expert-controls" : undefined}>
+    {expertReady && !sameText && <button type="button" className="ov-get-deep" aria-pressed={expert} onClick={() => setReviewing(!expert)}>
+      {expert ? "Return to original answer" : "Review expert response"}
+    </button>}
+    {permitsExpert && canExpand && q.fast.done && (!expertStarted || requestError) && <button type="button" className="ov-get-deep" disabled={requesting} onClick={() => void requestExpert()}>Get an expert response</button>}
+    {expertStarted && !q.deep.done && !requestError && <p className="pass-status" role="status">Preparing expert response…</p>}
+    {q.deep.error && <p className="pass-status pass-state-warn">Expert response unavailable. The original answer is preserved.</p>}
+    {requestError && <p className="pass-status pass-state-warn" role="alert">{requestError}</p>}
+    </div>
+    {!compact && shown.refs.length > 0 && <footer className="card-tools"><span className="refs" title={shown.refs.map(r => r.label).join("\n")}>from {shown.refs.map(r => r.label).join(", ")}</span></footer>}
+  </>;
 }
 
 /** The shots a screenshot question was asked with, small; one opens large on a click. */

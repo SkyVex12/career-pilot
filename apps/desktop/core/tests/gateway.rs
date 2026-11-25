@@ -39,6 +39,7 @@ fn start_params() -> StartParams {
         client_version: "test".into(),
         store_transcript: true,
         answer_style: Some(copilot_protocol::AnswerStyle::Paragraph),
+        response_length: Some(copilot_protocol::ResponseLength::Concise),
         no_call: false,
     }
 }
@@ -225,6 +226,9 @@ async fn repeated_startup_errors_back_off_until_the_session_is_ready() {
             let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
             let start = ws.next().await.unwrap().unwrap().into_text().unwrap();
             assert!(start.contains("session.start"));
+            let start: serde_json::Value = serde_json::from_str(&start).unwrap();
+            assert_eq!(start["answer_style"], "paragraph");
+            assert_eq!(start["response_length"], "concise");
             ws.send(Message::text(
                 r#"{"type":"error","seq":1,"code":"unavailable","message":"Preparing context","fatal":true}"#,
             ))

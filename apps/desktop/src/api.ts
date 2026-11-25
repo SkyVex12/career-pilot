@@ -4,7 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CodeSent } from "./emailCode";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AnswerStyle, Channel, LatencyMs, Mode, QuestionType, ServerMessage } from "@copilot/protocol";
+import type { AnswerStyle, Channel, LatencyMs, Mode, ResponseLength, QuestionType, ServerMessage } from "@copilot/protocol";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -252,6 +252,7 @@ export interface StartRequest {
   store_transcript: boolean;
   /** How the detailed answer is written (the Session tab). */
   answer_style?: AnswerStyle;
+  response_length?: ResponseLength;
   /** An online test with no call (coding mode): no audio, nothing transcribed. */
   no_call?: boolean;
 }
@@ -402,7 +403,7 @@ export const api = {
     invoke<void>("send_feedback", { questionId, up, reason: null }),
   setMode: (mode: Mode) => invoke<void>("set_mode", { mode }),
   setSpokenLanguage: (language: string, requestId: string) => invoke<void>("set_spoken_language", { language, requestId }),
-  setAnswerStyle: (style: AnswerStyle) => invoke<void>("set_answer_style", { style }),
+  setAnswerStyle: (style: AnswerStyle, responseLength?: ResponseLength) => invoke<void>("set_answer_style", { style, responseLength }),
   // Guest seats (ARCHITECTURE.md, "Guest seats"). The host: Ask AI on a note, and pause or
   // resume what guests see. The guest: join an admitted seat, leave it, send a note.
   askNote: (noteId: string, text: string) => invoke<void>("ask_note", { noteId, text }),
@@ -413,7 +414,7 @@ export const api = {
   // Guest seats' voice: what Windows says each output device is (the window plays voice).
   voiceDevices: () => invoke<VoiceDevice[]>("voice_devices"),
   /** The session's events so far (compacted), whether one is running, and the next event's n. */
-  snapshot: () => invoke<[Numbered[], boolean, number]>("snapshot"),
+  snapshot: () => invoke<[Numbered[], boolean, number, number?]>("snapshot"),
   liveStatus: () => invoke<LiveStatus>("live_status"),
   showOverlay: (show: boolean) => invoke<void>("show_overlay", { show }),
   /** Preferences for the main workspace window. The live overlay remains independent. */
@@ -467,6 +468,8 @@ export function onOpenCall(handler: () => void): Promise<UnlistenFn> {
 /// `n` numbers events within a session, from 0.
 export interface Numbered {
   n: number;
+  /** Native session generation; absent in older desktop cores. */
+  epoch?: number;
   event: UiEvent;
 }
 
@@ -759,6 +762,7 @@ export interface ReplayPass {
 
 /** A question the overlay showed, timed from the start of the call. */
 export interface ReplayQuestion {
+  answer_strategy?: "legacy_dual" | "adaptive" | "adaptive_hybrid" | "adaptive_on_demand";
   id: string;
   text: string;
   type: string;

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import type { AnswerStyle } from "@copilot/protocol";
+import type { AnswerStyle, ResponseLength } from "@copilot/protocol";
 import { api } from "./api";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, loadLayout, loadTextScale, savePref, stepScale, type OverlayLayout } from "./transcript";
 
 export const PREFERENCE_EVENT = "copilot:preferences";
 const ANSWER_STYLE_KEY = "copilot.answerStyle";
+const RESPONSE_LENGTH_KEY = "copilot.responseLength";
+export const RESPONSE_LENGTHS = [["default", "Default"], ["concise", "Concise"], ["detailed", "Detailed"]] as const;
 function subscribe(notify: () => void) {
   window.addEventListener("storage", notify);
   window.addEventListener(PREFERENCE_EVENT, notify);
@@ -25,12 +27,32 @@ function loadAnswerStyle(): AnswerStyle {
   try { return localStorage.getItem(ANSWER_STYLE_KEY) === "paragraph" ? "paragraph" : "bullets"; }
   catch { return "bullets"; }
 }
+function loadResponseLength(): ResponseLength {
+  try { const value = localStorage.getItem(RESPONSE_LENGTH_KEY); return value === "concise" || value === "detailed" ? value : "default"; }
+  catch { return "default"; }
+}
+let answerPreferenceChange: Promise<void> = Promise.resolve();
+function changeAnswerPreference(running: boolean, key: string, value: AnswerStyle | ResponseLength) {
+  const apply = async () => {
+    // Read the other setting inside the lock, so two windows cannot overwrite a newer choice.
+    const style = key === ANSWER_STYLE_KEY ? value as AnswerStyle : loadAnswerStyle();
+    const length = key === RESPONSE_LENGTH_KEY ? value as ResponseLength : loadResponseLength();
+    if (running) await api.setAnswerStyle(style, length);
+    savePref(key, value);
+  };
+  const change = () => navigator.locks ? navigator.locks.request("copilot.answerPreferences", apply) : apply();
+  const pending = answerPreferenceChange.then(change, change);
+  answerPreferenceChange = pending.catch(() => undefined);
+  return pending;
+}
 export function useAnswerStyle(running: boolean) {
   const value = useSyncExternalStore(subscribe, loadAnswerStyle);
-  const change = useCallback(async (next: AnswerStyle) => {
-    if (running) await api.setAnswerStyle(next);
-    savePref(ANSWER_STYLE_KEY, next);
-  }, [running]);
+  const change = useCallback((next: AnswerStyle) => changeAnswerPreference(running, ANSWER_STYLE_KEY, next), [running]);
+  return [value, change] as const;
+}
+export function useResponseLength(running: boolean) {
+  const value = useSyncExternalStore(subscribe, loadResponseLength);
+  const change = useCallback((next: ResponseLength) => changeAnswerPreference(running, RESPONSE_LENGTH_KEY, next), [running]);
   return [value, change] as const;
 }
 

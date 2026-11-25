@@ -19,7 +19,7 @@ it after a call. Text is decrypted in memory only for the response.
 import base64
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
@@ -423,7 +423,7 @@ async def get_replay(
             by_id[q["id"]] = item
         answers = await conn.fetch(
             "select a.id, a.question_id, a.pass, a.model, a.text_enc, a.key_version,"
-            " a.memory_node_ids, a.expanded, a.feedback from app.answers a"
+            " a.memory_node_ids, a.expanded, a.feedback, a.latency_ms from app.answers a"
             " where a.session_id = $1",
             session_id,
         )
@@ -446,6 +446,18 @@ async def get_replay(
                 a_text = await svc.crypto.decrypt(
                     conn, user.user_id, "answers", str(a["id"]), a["text_enc"], a["key_version"]
                 )
+            # Strategy lives in existing answer metadata; old sessions keep the legacy UI.
+            metadata = a["latency_ms"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            strategy = (
+                cast(dict[str, Any], metadata).get("answer_strategy")
+                if isinstance(metadata, dict) else None
+            )
+            if a["pass"] == "fast" and isinstance(strategy, str) and strategy in {
+                "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand",
+            }:
+                found["answer_strategy"] = strategy
             found[a["pass"]] = {
                 "text": a_text,
                 "source": "prepared" if a["model"] == "prepared" else "model",

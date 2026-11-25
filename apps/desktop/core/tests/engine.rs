@@ -57,6 +57,7 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
             client_version: "test".into(),
             store_transcript: false,
             answer_style: None,
+            response_length: None,
             no_call: false,
         },
     );

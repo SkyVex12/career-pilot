@@ -193,11 +193,19 @@ mod tests {
             confidence,
             speculative,
             screen: None,
+            answer_strategy: None,
         })
     }
 
     fn delta(pass: Pass, text: &str) -> ServerMessage {
-        ServerMessage::AnswerDelta(AnswerDelta { seq: 2, question_id: qid(), pass, text: text.into() })
+        ServerMessage::AnswerDelta(AnswerDelta {
+            seq: 2,
+            question_id: qid(),
+            pass,
+            text: text.into(),
+            sequence: None,
+            sequence_end: None,
+        })
     }
 
     #[test]
@@ -276,11 +284,13 @@ mod tests {
             memory_refs: vec![],
             usage: Usage { input_tokens: 1, cached_tokens: 0, output_tokens: 1 },
             source: None,
+            delta_count: None,
             latency_ms: Some(LatencyMs {
                 turn_end_ms: Some(410),
                 detector_ms: None,
                 first_token_ms: Some(300),
                 first_delta_ms: Some(700),
+                first_complete_sentence_ms: Some(900),
                 total_ms: Some(1_400),
                 final_ms: None,
                 start_ms: None,
@@ -296,6 +306,8 @@ mod tests {
         });
         let r = l.on_message(&done, t0).unwrap();
         assert_eq!(r.anchor, Anchor::Unknown);
-        assert_eq!(r.fast_gateway.unwrap().first_delta_ms, Some(700));
+        let timing = r.fast_gateway.unwrap();
+        assert_eq!(timing.first_delta_ms, Some(700));
+        assert_eq!(timing.first_complete_sentence_ms, Some(900));
     }
 }

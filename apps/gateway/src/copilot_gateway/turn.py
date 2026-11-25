@@ -508,6 +508,7 @@ class TurnDetector:
         carry_gap_ms: int = 0,
         first_show_min_words: int | None = None,
         keep_added_words: int | None = None,
+        strict_extensions: bool = False,
         early_all_modes: bool = False,
         spoken_language: str = "en",
     ) -> None:
@@ -539,6 +540,7 @@ class TurnDetector:
         # prepared match restart on the new text (module doc, "Kept on a longer final").
         # None: every change restarts the pass too.
         self.keep_added_words = keep_added_words
+        self.strict_extensions = strict_extensions
         # Early decision in every call, not only group calls.
         self.early_all_modes = early_all_modes
         self.speaking = False
@@ -859,7 +861,15 @@ class TurnDetector:
         if n is None:
             return False
         before, after = _words(checked), _words(text)
-        return bool(before) and after[: len(before)] == before and len(after) - len(before) <= n
+        added = after[len(before) :]
+        if self.strict_extensions and any(
+            word not in {"please", "thanks", "um", "uh"} for word in added
+        ):
+            # Even one word can name a different system; "not" and "without X" can
+            # reverse the answer. Candidate streams retain only punctuation/filler
+            # extensions, never substantive words the generation has not seen.
+            return False
+        return bool(before) and after[: len(before)] == before and len(added) <= n
 
     def _redetect(self, turn: _Turn, text: str, match: "asyncio.Task[object] | None") -> _Candidate:
         """The detector on the longer text; the held pass and its prepared match stay."""

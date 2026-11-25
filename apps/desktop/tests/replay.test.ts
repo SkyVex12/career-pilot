@@ -43,3 +43,9 @@ describe("fromReplay", () => {
     expect(s.running).toBe(false);
   });
 });
+
+
+it("retains the generation strategy when replaying an adaptive answer", () => {
+  const candidate: Replay = { ...replay, questions: replay.questions.map(q => ({ ...q, answer_strategy: "adaptive_on_demand" })) };
+  expect(fromReplay(candidate).questions.every(q => q.answerStrategy === "adaptive_on_demand")).toBe(true);
+});

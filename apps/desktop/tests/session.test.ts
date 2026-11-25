@@ -104,3 +104,73 @@ describe("session id", () => {
     expect(s.sessionId).toBe(QID);
   });
 });
+
+
+describe("answer stream identity and ordering", () => {
+  const chunk = (sequence: number, text: string, id = QID) => server({ type: "answer.delta", question_id: id, pass: "fast", sequence, text });
+  const finish = (deltaCount: number) => server({ type: "answer.done", question_id: QID, pass: "fast", delta_count: deltaCount, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } });
+
+  it("orders chunk gaps, ignores duplicates, and does not mix consecutive questions", () => {
+    const s = run([detected(QID), detected(QID2), chunk(1, "world."), chunk(1, "duplicate"), chunk(0, "Hello "), chunk(0, "Second answer.", QID2), finish(2), chunk(2, "late"), chunk(0, "unknown", "missing")]);
+    expect(s.questions[0].fast).toMatchObject({ text: "Hello world.", done: true, error: null });
+    expect(s.questions[1].fast.text).toBe("Second answer.");
+    expect(s.questions).toHaveLength(2);
+  });
+
+  it("reports a missing chunk at completion and repairs only the expected gap", () => {
+    let s = run([detected(QID), chunk(1, "sentence."), finish(2)]);
+    expect(s.questions[0].fast).toMatchObject({ text: "", done: true, error: "incomplete_stream" });
+    s = run([chunk(2, "outside final range"), chunk(0, "First ")], s);
+    expect(s.questions[0].fast).toMatchObject({ text: "First sentence.", done: true, error: null });
+  });
+
+  it("resumes a compacted range at the next live sequence", () => {
+    const s = run([detected(QID), server({ type: "answer.delta", question_id: QID, pass: "fast", sequence: 0, sequence_end: 3, text: "Three chunks. " }), chunk(3, "Another."), finish(4)]);
+    expect(s.questions[0].fast).toMatchObject({ text: "Three chunks. Another.", done: true, error: null });
+  });
+
+  it("never revives a cancelled question or a failed pass with late events", () => {
+    const s = run([detected(QID, "technical", true), chunk(0, "Old"), server({ type: "question.cancelled", question_id: QID }), detected(QID, "technical", false), chunk(1, "stale"), detected(QID2), server({ type: "answer.error", question_id: QID2, pass: "fast", code: "timeout" }), chunk(0, "late", QID2)]);
+    expect(s.questions[0]).toMatchObject({ cancelled: true, fast: { text: "Old" } });
+    expect(s.questions[1].fast).toMatchObject({ text: "", done: true, error: "timeout" });
+  });
+
+  it("bounds an unrecoverable chunk gap without an endless spinner", () => {
+    const s = run([detected(QID), chunk(129, "far ahead")]);
+    expect(s.questions[0].fast).toMatchObject({ text: "", done: true, error: "stream_order" });
+  });
+
+  it("does not replace a final transcript with an old partial", () => {
+    const s = run([server({ type: "transcript.final", channel: "them", seg_id: 0, text: "Final.", start_ms: 0, end_ms: 500 }), server({ type: "transcript.partial", channel: "them", seg_id: 0, text: "Earlier" })]);
+    expect(s.transcript[0]).toMatchObject({ text: "Final.", final: true });
+  });
+
+  it("does not predict a second answer for a single adaptive stream", () => {
+    const s = run([server({ type: "question.detected", question_id: QID, text: "Design a notification system.", question_type: "system_design", confidence: 0.9, speculative: false, answer_strategy: "adaptive" })]);
+    expect(s.questions[0]).toMatchObject({ answerStrategy: "adaptive", deepRequested: false });
+  });
+});
+
+
+it("keeps a cancellation tombstone when detection arrives late", () => {
+  const s = run([server({ type: "question.cancelled", question_id: QID }), detected(QID), server({ type: "answer.delta", question_id: QID, pass: "fast", sequence: 0, text: "Stale" })]);
+  expect(s.questions).toEqual([]);
+});
+
+it("does not repair an incomplete answer after the pass was cancelled", () => {
+  const s = run([
+    detected(QID),
+    server({ type: "answer.done", question_id: QID, pass: "fast", delta_count: 1, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } }),
+    server({ type: "answer.error", question_id: QID, pass: "fast", code: "cancelled" }),
+    server({ type: "answer.delta", question_id: QID, pass: "fast", sequence: 0, text: "Late repair" }),
+  ]);
+  expect(s.questions[0].fast).toMatchObject({ text: "", done: true, error: "cancelled" });
+});
+
+
+it("does not schedule another render for duplicate or unknown answer chunks", () => {
+  const event = server({ type: "answer.delta", question_id: QID, pass: "fast", sequence: 0, text: "One sentence." });
+  const s = run([detected(QID), event]);
+  expect(run([event], s)).toBe(s);
+  expect(run([server({ type: "answer.delta", question_id: "unknown", pass: "fast", sequence: 0, text: "Old" })], s)).toBe(s);
+});

@@ -24,6 +24,7 @@ pub const HISTORY_MAX: usize = 50_000;
 pub struct History {
     entries: Vec<Value>,
     next: u64,
+    epoch: u64,
     /// Where the entry for a key (a segment, an answer pass, a channel's VAD, ...) is.
     slots: HashMap<String, usize>,
 }
@@ -77,9 +78,34 @@ fn replaced_by_snapshot(entry: &Value) -> bool {
         )
 }
 
+/// A compacted delta covers [sequence, sequence_end). Keep gaps, duplicates and
+/// reordered chunks separate so the UI can use the same sequence checks as live.
+fn contiguous_delta(previous: &Value, incoming: &Value) -> bool {
+    match (previous["sequence"].as_u64(), incoming["sequence"].as_u64()) {
+        (None, None) => true,
+        (Some(start), Some(next)) => previous["sequence_end"].as_u64().unwrap_or(start + 1) == next,
+        _ => false,
+    }
+}
+
 impl History {
     /// Store an event; returns its number `n`.
     pub fn push(&mut self, event: Value) -> u64 {
+        if str_of(&event, "kind") == "server" {
+            let message = &event["message"];
+            let question = str_of(message, "question_id");
+            match str_of(message, "type") {
+                // Late chunks must stay after the terminal event in a reopened window.
+                "answer.done" | "answer.error" => {
+                    self.slots.remove(&format!("delta:{question}:{}", str_of(message, "pass")));
+                }
+                "question.cancelled" => {
+                    self.slots.remove(&format!("delta:{question}:fast"));
+                    self.slots.remove(&format!("delta:{question}:deep"));
+                }
+                _ => {}
+            }
+        }
         if str_of(&event, "kind") == "server" && str_of(&event["message"], "type") == "seat.snapshot" {
             // Later deltas must not merge into an answer from before the snapshot, which the
             // snapshot replaces: start the conversation over from it.
@@ -95,6 +121,7 @@ impl History {
         self.next += 1;
         if let Some((key, merge)) = slot(&event)
             && let Some(&i) = self.slots.get(&key)
+            && (!merge || contiguous_delta(&self.entries[i]["event"]["message"], &event["message"]))
         {
             let entry = &mut self.entries[i];
             if merge {
@@ -102,7 +129,13 @@ impl History {
                 if let Some(Value::String(text)) = entry.pointer_mut("/event/message/text") {
                     text.push_str(&more);
                 }
-            } else {
+                if let Some(sequence) = event["message"]["sequence"].as_u64() {
+                    let end = event["message"]["sequence_end"].as_u64().unwrap_or(sequence + 1);
+                    entry["event"]["message"]["sequence_end"] = end.into();
+                }
+            } else if !(str_of(&entry["event"]["message"], "type") == "transcript.final"
+                && str_of(&event["message"], "type") == "transcript.partial")
+            {
                 entry["event"] = event;
             }
             entry["n"] = n.into();
@@ -114,7 +147,7 @@ impl History {
         if let Some((key, _)) = slot(&event) {
             self.slots.insert(key, self.entries.len());
         }
-        self.entries.push(serde_json::json!({ "n": n, "event": event }));
+        self.entries.push(serde_json::json!({ "n": n, "epoch": self.epoch, "event": event }));
         n
     }
 
@@ -123,18 +156,25 @@ impl History {
         (self.entries.clone(), self.next)
     }
 
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     pub fn clear(&mut self) {
+        let epoch = self.epoch + 1;
         *self = Self::default();
+        self.epoch = epoch;
     }
 
     /// Forget the previous profile's call while preserving the event watermark. Windows
     /// already subscribed skip old events still in flight and apply this reset in order.
     pub fn reset_context(&mut self) -> Value {
+        self.epoch += 1;
         self.entries.clear();
         self.slots.clear();
         let event = serde_json::json!({ "kind": "context_reset" });
         let n = self.push(event.clone());
-        serde_json::json!({ "n": n, "event": event })
+        serde_json::json!({ "n": n, "epoch": self.epoch, "event": event })
     }
 }
 
@@ -259,12 +299,50 @@ mod tests {
         h.push(json!({ "kind": "connection", "state": { "state": "live", "session_id": "old" } }));
         h.push(json!({ "kind": "stopped", "reason": "ended" }));
         let reset = h.reset_context();
-        assert_eq!(reset, json!({ "n": 2, "event": { "kind": "context_reset" } }));
+        assert_eq!(reset, json!({ "n": 2, "epoch": 1, "event": { "kind": "context_reset" } }));
         assert_eq!(h.snapshot(), (vec![reset], 3));
+        assert_eq!(h.epoch(), 1);
         h.clear(); // A real new session still starts its usual sequence from zero.
+        assert_eq!(h.epoch(), 2);
         assert_eq!(
             h.push(json!({ "kind": "connection", "state": { "state": "connecting", "attempt": 0 } })),
             0
         );
+    }
+
+    #[test]
+    fn sequenced_deltas_compact_only_contiguous_ranges_and_preserve_late_tokens() {
+        let mut h = History::default();
+        let chunk = |sequence: u64, text: &str| {
+            server(json!({
+                "type": "answer.delta", "seq": sequence, "question_id": "q", "pass": "fast",
+                "sequence": sequence, "text": text
+            }))
+        };
+        h.push(chunk(0, "First "));
+        h.push(chunk(1, "sentence."));
+        h.push(chunk(3, "last."));
+        h.push(chunk(2, " Then "));
+        h.push(server(
+            json!({ "type": "answer.done", "question_id": "q", "pass": "fast", "delta_count": 4 }),
+        ));
+        h.push(chunk(4, "stale"));
+        let (entries, _) = h.snapshot();
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[0]["event"]["message"]["text"], "First sentence.");
+        assert_eq!(entries[0]["event"]["message"]["sequence_end"], 2);
+        assert_eq!(entries[1]["event"]["message"]["sequence"], 3);
+        assert_eq!(entries[2]["event"]["message"]["sequence"], 2);
+        assert_eq!(entries[4]["event"]["message"]["text"], "stale");
+    }
+
+    #[test]
+    fn late_partial_does_not_replace_finalized_transcript_in_snapshot() {
+        let mut h = History::default();
+        h.push(server(
+            json!({ "type": "transcript.final", "channel": "them", "seg_id": 0, "text": "Final." }),
+        ));
+        h.push(partial("them", 0, "Older partial"));
+        assert_eq!(texts(&h), vec!["transcript.final:Final."]);
     }
 }

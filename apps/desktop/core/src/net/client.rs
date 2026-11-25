@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM, encode_frame};
 use copilot_protocol::{
-    AnswerStyle, AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ServerMessage,
-    SessionEnd, SessionResume, SessionStart, parse_server,
+    AnswerStyle, AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ResponseLength,
+    ServerMessage, SessionEnd, SessionResume, SessionStart, parse_server,
 };
 use futures_util::{SinkExt, StreamExt};
 use rand::SeedableRng;
@@ -78,6 +78,8 @@ pub struct StartParams {
     pub store_transcript: bool,
     /// How the detailed answer is written (the Session tab); None: the gateway's default.
     pub answer_style: Option<AnswerStyle>,
+    /// Preferred answer depth; absent keeps the gateway default.
+    pub response_length: Option<ResponseLength>,
     /// An online test with no call: no audio is sent, nothing is transcribed.
     pub no_call: bool,
 }
@@ -98,6 +100,7 @@ impl StartParams {
             consent: Consent { store_transcript: self.store_transcript },
             audio: AudioFormat { sample_rate: 16_000, encoding: "pcm16".into() },
             answer_style: self.answer_style,
+            response_length: self.response_length,
             no_call: self.no_call.then_some(true),
         })
     }

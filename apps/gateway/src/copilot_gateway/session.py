@@ -158,6 +158,7 @@ class SessionInfo:
     resume_is_base: bool = False
     # How the detailed answer is written: "bullets" or "paragraph" (answer_style.set).
     answer_style: str = "bullets"
+    response_length: str = "default"
     # An online test with no call (coding mode): no audio, nothing transcribed.
     no_call: bool = False
     spoken_language: str = "en"
@@ -358,6 +359,7 @@ class Session:
             carry_gap_ms=self.settings.continuation_gap_ms,
             first_show_min_words=self.settings.first_show_min_words,
             keep_added_words=self.settings.held_keep_added_words,
+            strict_extensions=self.settings.answer_architecture != "legacy_dual",
             early_all_modes=self.settings.early_decision_all_modes,
         )
         self.answers = AnswerEngine(self)
@@ -455,6 +457,18 @@ class Session:
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
         qid = fields.get("question_id")
+        if cls is models.QuestionDetected:
+            q = self.answers.questions.get(qid) if isinstance(qid, UUID) else None
+            fields.setdefault(
+                "answer_strategy",
+                (
+                    self.answers.strategy(q)
+                    if q is not None
+                    else "legacy_dual"
+                    if fields.get("screen") is not None or self.answers.open_problem()
+                    else self.settings.answer_architecture
+                ),
+            )
         automatic = self._automatic_questions.get(qid) if isinstance(qid, UUID) else None
         pass_ = fields.get("pass")
         if automatic is not None and isinstance(pass_, str):
@@ -819,7 +833,15 @@ class Session:
         deep = pass_ == "deep"
         s = self.settings
         wait = s.memory_deep_wait_ms if deep else s.memory_fast_wait_ms
-        hits, stats = await mem.hits(text, self._vector(text), deep, wait)
+        sections: list[str] | None = None
+        if deep and s.answer_architecture != "legacy_dual":
+            # Both lookups share the same preloaded embedding, but are independent.
+            # Their 150 ms waits overlap instead of serially adding up to 300 ms.
+            (hits, stats), sections = await asyncio.gather(
+                mem.hits(text, self._vector(text), deep, wait), self.section_lines(text, deep)
+            )
+        else:
+            hits, stats = await mem.hits(text, self._vector(text), deep, wait)
         if not deep:
             hits = hits[: s.memory_fast_hits]
         in_pack = {i.node_id for i in pack_items(self.pack)} if self.pack else set[UUID]()
@@ -827,13 +849,17 @@ class Session:
             in_pack |= {r.node_id for r in self.pack.knowledge.refs.values()}
         lines = workplace.memory_lines(hits, self._refs, in_pack)
         stats["memory_hits"] = len(lines)
-        sections = await self.section_lines(text, deep)
+        if sections is None:
+            sections = await self.section_lines(text, deep)
         if sections:
             stats["memory_sections"] = len(sections)
         return lines + sections, stats
 
     def answer_style(self) -> str:
         return self.info.answer_style
+
+    def response_length(self) -> str:
+        return self.info.response_length
 
     def cache_extra(self) -> dict[str, str]:
         """Stored with exact-repeat answers, so deleting a company deletes its answers."""
@@ -1543,6 +1569,8 @@ class Session:
 
     def deep_auto_types(self) -> list[str]:
         s = self.settings
+        if s.answer_architecture != "legacy_dual":
+            return []  # Candidate experts are chosen per question, never by UI type guesses.
         # The client knows no "follow": a follow card reaches it as "other". Nor the types
         # used at work, which reach it as the protocol types of prompts.WIRE_TYPES.
         types = [t for t in s.deep_pass_auto_types if t in prompts.QUESTION_TYPES]
@@ -1570,6 +1598,7 @@ class Session:
             "agenda": self.info.agenda or "",
             "material_ids": ",".join(str(i) for i in self.info.material_ids),
             "answer_style": self.info.answer_style,
+            "response_length": self.info.response_length,
             "resume_version_id": str(self.info.resume_version_id)
             if self.info.resume_version_id
             else "",
@@ -2316,8 +2345,18 @@ class Session:
                 self._warm = asyncio.create_task(self._mode_changed(message.mode))
             case models.AnswerStyleSet():
                 self.info.answer_style = message.answer_style
-                self.writer.set_state(answer_style=message.answer_style)
-                self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
+                if message.response_length is not None:
+                    self.info.response_length = message.response_length
+                self.writer.set_state(
+                    answer_style=message.answer_style, response_length=self.info.response_length
+                )
+                self.log_entry(
+                    {
+                        "kind": "answer_style",
+                        "answer_style": message.answer_style,
+                        "response_length": self.info.response_length,
+                    }
+                )
             case models.SharingSet():
                 if message.on and self.private_context_account_id:
                     self.error(
@@ -2516,6 +2555,7 @@ class Session:
             question_type=q.qtype,
             confidence=1.0,
             speculative=False,
+            answer_strategy="legacy_dual",
         )
         self.answers.add(q)
         self.answers.confirm(qid, q.text, None)
@@ -3103,6 +3143,7 @@ class SessionManager:
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
             answer_style=msg.answer_style or "bullets",
+            response_length=msg.response_length or "default",
             no_call=bool(msg.no_call),
             spoken_language=spoken_language,
         )
@@ -3397,6 +3438,7 @@ class SessionManager:
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
             answer_style=state.get("answer_style") or "bullets",
+            response_length=state.get("response_length") or "default",
             no_call=state.get("no_call") == "1",
             spoken_language=state.get("spoken_language") or "en",
         )

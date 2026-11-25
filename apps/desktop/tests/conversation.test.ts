@@ -152,9 +152,51 @@ describe("rebuild after a reload or reconnect", () => {
     expect(q2?.fast.text).toBe("- Even load\n- Hot accounts split\n");
   });
 
-  it("starts over when a new session's numbering starts again", () => {
+  it("starts over when an older core reports a different session identity", () => {
     const { entries, next } = compact(call());
-    const s = rebuild(entries, next, [{ n: 0, event: final("them", 0, "A new call") }]);
+    const s = rebuild(entries, next, [
+      { n: 0, event: server({ type: "session.ready", session_id: "new-session", limits: { max_minutes: 60 } }) },
+      { n: 1, event: final("them", 0, "A new call") },
+    ]);
     expect(conversation(s)).toEqual([{ kind: "them", key: "them:0", text: "A new call", final: true }]);
   });
+});
+
+
+it("repairs reordered answer chunks after the desktop watermark has advanced", () => {
+  let state: SessionView = initial;
+  const applier = snapshotApplier(a => { state = reduce(state, a); });
+  applier.snapshot([], true, 0);
+  const event = (message: Record<string, unknown>): UiEvent => ({ kind: "server", message: message as never });
+  applier.live({ n: 0, event: event({ type: "question.detected", seq: 1, question_id: "ordered", text: "Explain", question_type: "other", confidence: 1, speculative: false }) });
+  applier.live({ n: 2, event: event({ type: "answer.delta", seq: 3, question_id: "ordered", pass: "fast", sequence: 1, text: "sentence." }) });
+  applier.live({ n: 3, event: event({ type: "answer.done", seq: 4, question_id: "ordered", pass: "fast", delta_count: 2, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } }) });
+  const first = { n: 1, event: event({ type: "answer.delta", seq: 2, question_id: "ordered", pass: "fast", sequence: 0, text: "First " }) };
+  applier.live(first);
+  applier.live(first);
+  expect(state.questions[0].fast).toMatchObject({ text: "First sentence.", done: true, error: null });
+});
+
+
+it("ignores duplicate event zero and old epochs without resetting the current answer", () => {
+  let state: SessionView = initial;
+  const applier = snapshotApplier(a => { state = reduce(state, a); });
+  const first: Numbered = { epoch: 1, n: 0, event: detected("first") };
+  applier.snapshot([first, { epoch: 1, n: 1, event: delta("first", "fast", "First answer") }], true, 2, 1);
+  applier.live(first);
+  expect(state.questions[0].fast.text).toBe("First answer");
+  applier.live({ epoch: 2, n: 0, event: detected("current") });
+  applier.live({ epoch: 2, n: 1, event: delta("current", "fast", "Current answer") });
+  applier.live(first);
+  applier.live({ epoch: 1, n: 20, event: final("them", 0, "Stale transcript") });
+  expect(state.questions.map(q => q.id)).toEqual(["current"]);
+  expect(state.questions[0].fast.text).toBe("Current answer");
+  expect(state.transcript).toEqual([]);
+});
+
+it("ignores an older core's duplicate ready event numbered zero", () => {
+  const events = call();
+  const { entries, next } = compact(events);
+  const state = rebuild(entries, next, [{ n: 0, event: events[0] }]);
+  expect(state.questions.map(q => q.id)).toEqual(["q1", "q2", "q3"]);
 });

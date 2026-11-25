@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use copilot_protocol::{
     AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerMode, AnswerStyle, AnswerStyleSet, Channel,
-    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ScreenImage, Screenshot,
+    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ResponseLength, ScreenImage, Screenshot,
     SessionSetLanguage, SharingSet,
 };
 use serde::Serialize;
@@ -262,8 +262,8 @@ impl Engine {
     }
 
     /// The Session tab's detailed-answer style, changed mid-call: applies to the next answers.
-    pub async fn set_answer_style(&self, answer_style: AnswerStyle) {
-        self.send(ClientMessage::AnswerStyleSet(AnswerStyleSet { answer_style })).await;
+    pub async fn set_answer_style(&self, answer_style: AnswerStyle, response_length: Option<ResponseLength>) {
+        self.send(ClientMessage::AnswerStyleSet(AnswerStyleSet { answer_style, response_length })).await;
     }
 
     /// Test hook: drop the socket as a network failure would.

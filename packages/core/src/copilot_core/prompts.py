@@ -12,7 +12,7 @@ every line, never touches the cached prefix.
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from typing import Any
 
@@ -617,9 +617,9 @@ data_block = _data
 MODE_PHRASES = {"interview": "an interview", "standup": "a standup", "meeting": "a meeting"}
 
 
-def _system(rules: str, ctx: PromptContext) -> list[SystemBlock]:
+def _system(rules: str, ctx: PromptContext, *, strict: bool = False) -> list[SystemBlock]:
     mode = MODE_PHRASES.get(ctx.mode, f"a {ctx.mode}")
-    p = policy(ctx.mode)
+    p = STRICT if strict else policy(ctx.mode)
     rules = (
         rules.replace("{facts_rule}", p.facts_rule)
         .replace("{suggest_rule}", p.suggest_rule)
@@ -666,6 +666,116 @@ def fast_pass(
     parts += [*_call_blocks(transcript), asked]
     user = "\n\n".join(parts)
     return LLMRequest(system=_system(FAST_SYSTEM, ctx), content=user, max_tokens=max_tokens)
+
+
+ADAPTIVE_PROMPT_VERSION = "adaptive-v2-grounding"
+
+ADAPTIVE_SYSTEM = (
+    "You help {user_name} answer live in {mode}. Produce one coherent, speakable answer.\n"
+    + _RULES
+    + "\nStart with a direct, useful complete sentence answering the question. Never begin "
+    "with generic acknowledgement, praise for the question, or a description of your plan. "
+    "Continue only with information the question needs, and stop when it is answered. "
+    "The first sentence and the rest are one answer: do not repeat an outline as a second answer. "
+    "Use real supplied evidence for personal experience. Never invent personal actions, "
+    "metrics, employers, or incidents, even as a plausible suggestion marked [~]. "
+    "Missing evidence never establishes either experience or lack of experience. Never "
+    "assert unsupported positive or negative personal experience: 'I have worked with X' "
+    "and 'I have never worked with X' both require evidence. A technology omitted from "
+    "a profile is an unknown, not a negative fact. For an unconfirmed "
+    "direct yes/no fact, add a brief separate 'Note to you:' asking the user to confirm the "
+    "specific fact; keep that private note separate from the speakable answer. Offer "
+    "supported adjacent experience and a clearly hypothetical approach, without suggesting "
+    "the missing experience is either present or absent. With no matching personal story, "
+    "do not manufacture a story or a denial; offer a clearly prospective approach or a "
+    "related factual example without claiming it is the requested experience.\n"
+    "Preserve source provenance: bind every claim to its own project, task, speaker, time "
+    "and environment. Do not transfer ownership, implementation status, tests, deployments "
+    "or outcomes between them. A validation result for one task does not establish "
+    "that another task was validated in the same environment. Nearby facts "
+    "in a summary are not evidence of a relationship. If attribution is ambiguous, keep "
+    "the uncertainty explicit or omit the claim. These grounding rules take precedence "
+    "over general advice to sound familiar with a named platform or to hide a context gap.\n"
+)
+
+ADAPTIVE_DEPTHS = {
+    "brief": "One direct sentence; a second only when essential. No story or unsolicited advice.",
+    "standard": "Usually 2 to 5 complete sentences: direct answer, relevant reason, and only "
+    "the supporting detail needed. Shorter is appropriate when the question is resolved.",
+    "narrative": "A connected personal response, usually 5 to 9 sentences. For a real story, "
+    "give the relevant situation, the user's actual actions, and the evidenced result. "
+    "For an introduction, connect background and relevant strengths to the role.",
+    "expert": "Answer directly first, then develop the mechanisms, constraints, failure modes "
+    "and trade-offs the question warrants. State assumptions and distinguish known evidence "
+    "from proposed designs. Use short paragraphs or compact bullets; depth is not repetition.",
+}
+
+
+def adaptive_pass(
+    ctx: PromptContext,
+    transcript: CallContext | str,
+    question: str,
+    qtype: str | None,
+    max_tokens: int,
+    memory: Sequence[str] = (),
+    *,
+    depth: str = "standard",
+    style: str = "bullets",
+    expert: bool = False,
+) -> LLMRequest:
+    """One original-evidence answer; an expert request never receives the primary answer."""
+    parts = [_data("memory", "\n".join(memory))] if memory else []
+    parts.extend(_call_blocks(transcript))
+    parts.append(f"Question ({qtype or 'unclassified'}): {question}")
+    parts.append(ADAPTIVE_DEPTHS.get(depth, ADAPTIVE_DEPTHS["standard"]))
+    parts.append(
+        "Use connected paragraphs."
+        if style == "paragraph"
+        else "Write the answer as complete-sentence bullets. Use one bullet for a brief answer; "
+        "add bullets only for distinct needed points."
+    )
+    if expert:
+        parts.append(
+            "Give an independent expert response using the original question and evidence "
+            "above. Verify the reasoning from those sources. Do not assume another generated "
+            "answer is correct or invent facts to complete a story."
+        )
+    return LLMRequest(
+        system=_system(ADAPTIVE_SYSTEM, ctx, strict=True),
+        content="\n\n".join(parts),
+        max_tokens=max_tokens,
+    )
+
+
+def with_response_length(
+    request: LLMRequest, response_length: str, *, max_tokens: int | None = None
+) -> LLMRequest:
+    """Apply an explicit user preference without changing the default prompt or budget."""
+    instructions = {
+        "concise": "Give a short, direct answer: retain the answer, its essential reason and "
+        "any critical qualification. Omit secondary examples and repeated explanation. "
+        "For a story retain the real action and result; for a design retain the key mechanism "
+        "and trade-off. Do not omit required code or compromise correctness to shorten it.",
+        "detailed": "Develop the answer with relevant explanation, concrete supported "
+        "examples, reasoning and trade-offs when the question warrants them. Simple factual "
+        "questions still need only one or two sentences. Do not add filler, repeat points "
+        "or invent personal experience, metrics or unsupported facts to make it longer.",
+    }
+    instruction = instructions.get(response_length)
+    if instruction is None:
+        return request
+    return replace(
+        request,
+        system=[
+            *request.system,
+            SystemBlock(
+                f"User response-length preference: {response_length}. This overrides general "
+                "length and sentence-count guidance while preserving the requested format, "
+                f"evidence rules and correctness. {instruction}"
+            ),
+        ],
+        max_tokens=request.max_tokens if max_tokens is None else max_tokens,
+    )
 
 
 def deep_pass(

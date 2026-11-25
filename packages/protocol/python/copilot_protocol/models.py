@@ -51,6 +51,10 @@ class LatencyMs(BaseModel):
     detector_ms: Annotated[int | None, Field(ge=0)] = None
     first_token_ms: Annotated[int | None, Field(ge=0)] = None
     first_delta_ms: Annotated[int | None, Field(ge=0)] = None
+    first_complete_sentence_ms: Annotated[int | None, Field(ge=0)] = None
+    """
+    First sentence boundary observed in emitted text; a syntactic proxy, not a semantic usefulness score.
+    """
     total_ms: Annotated[int | None, Field(ge=0)] = None
     final_ms: Annotated[int | None, Field(ge=0)] = None
     start_ms: Annotated[int | None, Field(ge=0)] = None
@@ -140,6 +144,10 @@ class SessionStart(BaseModel):
     answer_style: Literal["bullets", "paragraph"] | None = None
     """
     The detailed answer's style; absent means bullets.
+    """
+    response_length: Literal["default", "concise", "detailed"] | None = None
+    """
+    Answer length preference; absent means default.
     """
     no_call: bool | None = None
     """
@@ -345,7 +353,7 @@ class ModeSet(BaseModel):
 
 class AnswerStyleSet(BaseModel):
     """
-    User switches the detailed answer's style mid-call; applies to the next answers.
+    User changes answer presentation preferences mid-call; applies to the next answers.
     """
 
     model_config = ConfigDict(
@@ -355,6 +363,10 @@ class AnswerStyleSet(BaseModel):
     answer_style: Literal["bullets", "paragraph"]
     """
     How the detailed (deep) answer is written: bullets = short lines to speak from, deeper than the talking points; paragraph = connected spoken prose. The talking points stay bullets either way.
+    """
+    response_length: Literal["default", "concise", "detailed"] | None = None
+    """
+    Optional length preference; omitted leaves the current preference unchanged.
     """
 
 
@@ -514,6 +526,13 @@ class QuestionDetected(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    answer_strategy: (
+        Literal["legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"]
+        | None
+    ) = None
+    """
+    Live-answer strategy. Missing means the legacy dual-answer presentation.
+    """
     type: Literal["question.detected"]
     seq: Annotated[int, Field(ge=1)]
     """
@@ -572,6 +591,14 @@ class AnswerDelta(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    sequence: Annotated[int | None, Field(ge=0)] = None
+    """
+    Zero-based chunk sequence within this question and pass.
+    """
+    sequence_end: Annotated[int | None, Field(ge=1)] = None
+    """
+    Exclusive chunk sequence end for a compacted snapshot chunk.
+    """
     type: Literal["answer.delta"]
     seq: Annotated[int, Field(ge=1)]
     """
@@ -596,6 +623,10 @@ class AnswerDone(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    delta_count: Annotated[int | None, Field(ge=0)] = None
+    """
+    Total number of chunks sent for this question and pass.
+    """
     type: Literal["answer.done"]
     seq: Annotated[int, Field(ge=1)]
     """

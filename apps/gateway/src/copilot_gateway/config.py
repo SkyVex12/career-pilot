@@ -136,6 +136,13 @@ class Settings(CoreSettings):
         default_factory=lambda: dict(DEFAULT_PREPARED_THRESHOLDS)
     )
     prepared_answer_min_similarity: float = 0.85
+    # Default remains the measured baseline until paired evaluations approve rollout.
+    answer_architecture: Literal[
+        "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"
+    ] = "legacy_dual"
+    adaptive_max_tokens: int = Field(default=1200, ge=100, le=4000)
+    adaptive_stream_idle_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    adaptive_stream_total_timeout_s: float = Field(default=90.0, gt=0, le=300)
     fast_pass_max_tokens: int = 250
     fast_pass_priority: bool = False
     deep_pass_max_tokens: int = 800

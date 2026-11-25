@@ -406,6 +406,14 @@ html[data-window="overlay"] #root {
   /* Held for three lines of talking points while they are written. */
   min-height: calc(var(--fs-fast) * 1.45 * 3);
 }
+.ov-expert-controls {
+  min-height: 28px;
+}
+.pass-adaptive {
+  /* Hold one sentence through completion; short answers stay short. */
+  min-height: calc(var(--fs-fast) * 1.45);
+  margin-bottom: var(--space-2);
+}
 .pass-title {
   display: block;
   margin-bottom: var(--space-1);
