@@ -311,11 +311,7 @@ fn apply_latest(app: &AppHandle) {
 
 fn present_latest(label: &str, window: &WebviewWindow, current: &CapturePolicy) {
     if presentation_changed(label, current.stealth, &current.display_name) {
-        if label == "overlay" {
-            let _ = window.set_title(&current.display_name);
-        } else {
-            present(label, window, current.stealth, &current.display_name);
-        }
+        present(label, window, current.stealth, &current.display_name);
     }
 }
 
@@ -376,10 +372,10 @@ fn refresh_overlay(app: &AppHandle) {
     }
 }
 
-/// The taskbar button and the main window title. The window stays open either way.
-/// The overlay is not handled here: touching it while it is hidden paints a white rectangle.
+/// Visible workspace and live overlay both have a taskbar button unless Stealth is on.
+/// present_latest/show call this only at the safe presentation boundary.
 fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
-    if label != "main" {
+    if label != "main" && label != "overlay" {
         if on {
             let _ = window.set_skip_taskbar(true);
             let _ = window.set_title(display_name);

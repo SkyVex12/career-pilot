@@ -1,3 +1,5 @@
+import { QuitNotification } from "./AppNotifications";
+import { ToastProvider } from "./ui/Overlays";
 // The always-on-top overlay (docs/design/ui-proposal.md, "Overlay rules"). It is read
 // mid-sentence, so:
 // - the newest question ("Now") is always in the same place: the top of the answers pane (split
@@ -17,7 +19,7 @@ import { api, inTauri, onOverlayPrefs, rest, type OverlayPrefs, type SessionDeta
 import { Icon } from "./ui/Icon";
 import { AnswerText } from "./AnswerText";
 import { CodeAnswer } from "./CodeAnswer";
-import { CodingBar, shotTitle } from "./CodingBar";
+import { CodingBar, shotTitle, useScreenshotTray } from "./CodingBar";
 import { copier, Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestLeaveButton, GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane } from "./seats";
@@ -26,9 +28,8 @@ import { GuestScreenView, ScreenChip } from "./screenui";
 import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
 import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
-import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
+import { Banner, ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
-import { OverlayAudio } from "./OverlayAudio";
 import { LiveCallLanguage } from "./LiveCallLanguage";
 import { LiveUsage } from "./Usage";
 import { OverlayQuickSettings } from "./OverlayQuickSettings";
@@ -165,6 +166,10 @@ export function StatusBadge({ s }: { s: SessionView }) {
 }
 
 export default function Overlay() {
+  return <ToastProvider persistent={<QuitNotification />}><OverlayContent /></ToastProvider>;
+}
+
+function OverlayContent() {
   const [s, dispatch] = useSession();
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
@@ -227,19 +232,15 @@ export default function Overlay() {
       <GuestNotice s={s} />
       {!guest && <div className="ov-sharing-status"><ScreenChip s={s} /></div>}
       {!compact && <div className="ov-toolbar">
-        <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
+        {guest && <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
           <button type="button" role="tab" id="ov-conversation-tab" aria-controls="ov-conversation-panel" aria-selected={!screenOpen} onClick={() => setTab("conversation")}>Conversation</button>
           {canViewScreen && <button type="button" role="tab" id="ov-screen-tab" aria-controls="ov-screen-panel" aria-selected={screenOpen} onClick={() => setTab("screen")}><Icon name="monitor" size={14} />{guest ? "Shared screen" : "Screen tools"}</button>}
-        </div>
-        {!guest && <div className="ov-toolbar-actions">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
+        </div>}
+        {!guest && <div className="ov-toolbar-actions">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
       </div>}
-      {!guest && compact && <div className="ov-compact-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
-      {/* Keep capture subscriptions and the conversation mounted when switching tools. */}
-      {!guest && <div id="ov-screen-panel" className="ov-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}>
-        <CodingBar running={s.running} onActivity={() => setTab("screen")} />
-      </div>}
+      {!guest && compact && <div className="ov-compact-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
       {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} window="overlay" /></div>}
-      <div id="ov-conversation-panel" className="ov-conversation-workarea" role="tabpanel" aria-labelledby={compact ? undefined : "ov-conversation-tab"} hidden={guest && screenOpen}>
+      <div id="ov-conversation-panel" className="ov-conversation-workarea" role={guest ? "tabpanel" : undefined} aria-labelledby={guest && !compact ? "ov-conversation-tab" : undefined} hidden={guest && screenOpen}>
       <ConversationView
         s={s}
         compact={compact}
@@ -794,38 +795,28 @@ function CopyButton({ text, label, short }: { text: string; label: string; short
 
 function AskBox({ disabled }: { disabled: boolean }) {
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const send = (value: string | null, respond = false) => {
-    setError(null);
-    (respond ? api.respond(value) : api.forceQuestion(value)).then(
-      () => setText(""),
-      (e) => setError(String(e)),
-    );
+  const shots = useScreenshotTray(!disabled);
+  const inFlight = useRef(false);
+  const run = async (action: () => Promise<unknown>, clear = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(null);
+    try { await action(); if (clear) setText(""); }
+    catch (e) { setError(String(e)); }
+    finally { inFlight.current = false; setBusy(false); }
   };
-  return (
-    <form
-      className="ov-ask"
-      onSubmit={(e) => {
-        e.preventDefault();
-        send(text.trim() || null, !text.trim());
-      }}
-    >
-      <input
-        className="ov-ask-input"
-        aria-label="Question"
-        value={text}
-        disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={disabled ? "No call running" : "Ask anything…"}
-      />
-      <button type="submit" className="ov-ask-btn" disabled={disabled}>
-        {text.trim() ? "Ask" : "Answer"}
-      </button>
-      {error && (
-        <span className="ov-ask-error" role="alert">
-          {error}
-        </span>
-      )}
+  return <div className="ov-composer">
+    <CodingBar shots={shots} disabled={busy} />
+    <form className="ov-ask" onSubmit={e => {
+      e.preventDefault(); if (disabled) return;
+      const value = text.trim();
+      void run(() => value ? api.forceQuestion(value) : shots.length ? api.codingSolve() : api.respond(null), true);
+    }}>
+      <IconButton label="Capture screenshot" icon={<Icon name="monitor" size={16} />} size="sm" disabled={disabled || busy || shots.length >= 6} onClick={() => void run(api.codingAddShot)} />
+      <input className="ov-ask-input" aria-label="Question" value={text} disabled={disabled || busy} onChange={e => setText(e.target.value)} placeholder={disabled ? "No call running" : "Ask anything…"} />
+      <button type="submit" className="ov-ask-btn" disabled={disabled || busy} title={!text.trim() && shots.length ? "Answer from screenshots" : undefined}>{text.trim() ? "Ask" : "Answer"}</button>
+      {error && <Banner tone="danger">{error}</Banner>}
     </form>
-  );
+  </div>;
 }

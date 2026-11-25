@@ -44,7 +44,7 @@ const twoQuestions = () => {
 };
 
 describe("the overlay's answers", () => {
-  it("keeps the live transcript and answers visible together, with screen tools on demand", async () => {
+  it("keeps the live transcript and answers visible together, without a separate screen-tools tab", async () => {
     start([...twoQuestions(), srv({ type: "transcript.partial", channel: "them", seg_id: 0, text: "What would you monitor?" })]);
     const answers = await screen.findByRole("region", { name: "Suggestions" });
     const transcript = screen.getByRole("region", { name: "Transcript" });
@@ -56,8 +56,8 @@ describe("the overlay's answers", () => {
     await act(() => emit("copilot://event", delta("q2", "fast", " Track latency")));
     expect(within(transcript).getByText("What would you monitor first?")).toBeVisible();
     expect(within(answers).getByText("Track latency")).toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "Screen tools" }));
-    expect(screen.getByRole("button", { name: "Solve" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Screen tools" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Capture screenshot" })).toBeVisible();
   });
 
   it("links a transcript question to its visible answer without changing the layout", async () => {

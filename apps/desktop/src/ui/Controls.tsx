@@ -11,6 +11,7 @@ export function SegmentedControl<T extends string>({
   label,
   size = "md",
   disabled,
+  equal = false,
 }: {
   value: T;
   options: readonly (readonly [T, ReactNode])[];
@@ -19,11 +20,13 @@ export function SegmentedControl<T extends string>({
   label: string;
   size?: "sm" | "md";
   disabled?: boolean;
+  /** Fill the available width with equal-sized choices. */
+  equal?: boolean;
 }) {
   const name = useId();
   const refs = useRef<(HTMLInputElement | null)[]>([]);
   return (
-    <div className={cx("ui-segmented", `ui-segmented-${size}`)} role="radiogroup" aria-label={label}>
+    <div className={cx("ui-segmented", `ui-segmented-${size}`, equal && "ui-segmented-equal")} role="radiogroup" aria-label={label}>
       {options.map(([v, text], i) => (
         <label key={v} className={cx("ui-segment", value === v && "is-on", disabled && "is-disabled")}>
           <input

@@ -1,9 +1,11 @@
 // Status and feedback pieces: badge, banner, empty state, skeleton, spinner, and the three states
 // every list has (loading, error, empty).
-import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "./Button";
 import { Icon } from "./Icon";
+import { NotificationOutlet, NotificationVisibility } from "./NotificationScope";
+import { DataActivity } from "../usePolling";
 
 export type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -19,6 +21,13 @@ export function Badge({ tone = "neutral", icon, children, className }: { tone?: 
   );
 }
 
+function noticeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(noticeText).join(" ");
+  if (isValidElement<{ children?: ReactNode }>(node)) return noticeText(node.props.children);
+  return "";
+}
+
 export function Banner({
   tone = "info",
   title,
@@ -32,8 +41,14 @@ export function Banner({
   action?: ReactNode;
   className?: string;
 }) {
-  return (
-    <div className={cx("ui-banner", `ui-tone-${tone}`, className)} role={tone === "danger" ? "alert" : "status"}>
+  const outlet = useContext(NotificationOutlet);
+  const active = useContext(DataActivity);
+  const visible = useContext(NotificationVisibility);
+  const identity = tone + ":" + noticeText(title) + ":" + noticeText(children);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  if (!active || !visible || dismissed === identity) return null;
+  const notice = (
+    <div className={cx("ui-banner", outlet && "ui-floating-notice", `ui-tone-${tone}`, className)} role={tone === "danger" ? "alert" : "status"}>
       <span className="ui-banner-icon" aria-hidden="true">
         {TONE_ICON[tone]}
       </span>
@@ -42,8 +57,10 @@ export function Banner({
         {children && <div className="ui-banner-text">{children}</div>}
       </div>
       {action && <div className="ui-banner-action">{action}</div>}
+      {outlet && <button type="button" className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost ui-notice-dismiss" aria-label="Dismiss notification" onClick={() => setDismissed(identity)}><Icon name="close" size={14} /></button>}
     </div>
   );
+  return outlet ? createPortal(notice, outlet) : notice;
 }
 
 export function EmptyState({ icon = <Icon name="document" size={28} />, title, children, action }: { icon?: ReactNode; title: ReactNode; children?: ReactNode; action?: ReactNode }) {

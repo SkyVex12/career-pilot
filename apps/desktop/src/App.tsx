@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 // the Call screen walks through them, and the other screens wait.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, inTauri, onOpenCall, onOpenSettings, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type SettingsView, type UpdateState } from "./api";
-import { ServerNotification, UpdateNotification } from "./AppNotifications";
+import { QuitNotification, ServerNotification, UpdateNotification } from "./AppNotifications";
 import { Applications, CatalogProvider } from "./Applications";
 import { DataActivity, useDataActivity } from "./usePolling";
 import { MeetingPreparation } from "./MeetingPreparation";
@@ -220,7 +220,7 @@ export default function App() {
     );
 
   return (
-    <ToastProvider persistent={<><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
+    <ToastProvider persistent={<><QuitNotification /><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
       <HostControlRequests s={session} />
       <Shell
         tab={tab}

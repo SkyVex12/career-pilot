@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { request } from "./api";
-import { Field, HelpTip, Select } from "./ui";
+import { Banner, Field, HelpTip, Select } from "./ui";
 import { Icon } from "./ui/Icon";
 import { useDataActivity } from "./usePolling";
 
@@ -55,11 +55,12 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, answe
   }}>
     <summary>
       <Icon name="settings" size={16} /><span className="call-options-title">Customize</span>
-      <span className="ui-disclosure-meta" role={error && !loading ? "alert" : undefined}>
-        {loading ? "Loading languages…" : error ? <>Needs attention<span className="ui-visually-hidden">{error}</span></> : `${selection?.name ?? value} · call language`}
+      <span className="ui-disclosure-meta">
+        {loading ? "Loading languages…" : error ? "Needs attention" : `${selection?.name ?? value} · call language`}
       </span>
     </summary>
     <div className="ui-disclosure-body call-customize">
+      {error && <Banner tone="danger" title="Call languages unavailable">{error}</Banner>}
       <div className="customize-group">
         <div className="customize-row">
           <span className="customize-label">Language<HelpTip label={error ? "Language error" : "Language"}>{error && <>{error} Reopen Customize to try again. </>}Spoken language for transcription and answers.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>

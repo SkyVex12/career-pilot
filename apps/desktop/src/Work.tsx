@@ -433,7 +433,7 @@ function LogTab({ employer }: { employer: Employer }) {
           </Button>
         </div>
         {conflict && <Banner tone="warning" title="This work log changed" action={<Button size="sm" loading={busy} onClick={reloadConflict}>Load latest log</Button>}>Your draft is preserved. Load the saved version before saving again.</Banner>}
-        {latestLog !== null && <Banner tone="warning" title="Latest saved log"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{latestLog || "No saved text."}</div></Banner>}
+        {latestLog !== null && <Card title="Latest saved log"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{latestLog || "No saved text."}</div></Card>}
         {entry && entry.attachments.length > 0 && (
           <ul className="work-files" aria-label="Attachments">
             {entry.attachments.map((a) => (

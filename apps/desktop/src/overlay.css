@@ -1200,3 +1200,13 @@ button.ov-watching[aria-expanded="true"] {
   .ov .card, .ov .card.is-now, .ov .card.is-earlier { padding: 16px 16px; }
   .ov-pane-transcript { flex-basis: 130px; }
 }
+
+/* Screenshot attachments float above the composer without shifting the conversation. */
+.ov-composer { position:relative;flex:none; }
+.ov-screenshot-tray { position:absolute;left:12px;bottom:calc(100% + 8px);z-index:8;display:flex;gap:8px;max-width:calc(100% - 24px);margin:0;padding:8px;list-style:none;overflow-x:auto;background:rgb(var(--ov-panel));border:1px solid var(--ov-line);border-radius:8px;box-shadow:var(--shadow-2); }
+.ov-screenshot-tray .ov-shot { flex:0 0 104px;width:104px;height:64px;margin:0; }
+.ov-screenshot-tray .ov-shot img { width:100%;height:100%;object-fit:cover;border-radius:4px; }
+.ov-screenshot-tray .ov-shot-x { opacity:0;transition:opacity .12s; }
+.ov-screenshot-tray .ov-shot:hover .ov-shot-x, .ov-screenshot-tray .ov-shot:focus-within .ov-shot-x { opacity:1; }
+@media (hover:none) { .ov-screenshot-tray .ov-shot-x { opacity:1; } }
+.ov-toolbar-actions { margin-left:auto; }

@@ -1,0 +1,32 @@
+/* Scroll naturally everywhere, without native tracks or reserved scrollbar gutters. */
+* { scrollbar-width: none !important; scrollbar-gutter: auto !important; }
+*::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+.ui-scroll-cues { position: fixed; inset: 0; z-index: 1000; pointer-events: none; overflow: hidden; }
+.ui-scroll-cue {
+  position: absolute;
+  pointer-events: none;
+  --scroll-cue-direction: to bottom;
+  background: linear-gradient(var(--scroll-cue-direction), var(--scroll-cue-surface), transparent);
+  color: var(--text-2);
+}
+.ui-scroll-cue::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+}
+.ui-scroll-cue[data-scroll-edge="top"]::after { top: 6px; left: calc(50% - 3px); transform: rotate(225deg); }
+.ui-scroll-cue[data-scroll-edge="bottom"] { --scroll-cue-direction: to top; }
+.ui-scroll-cue[data-scroll-edge="bottom"]::after { bottom: 6px; left: calc(50% - 3px); transform: rotate(45deg); }
+.ui-scroll-cue[data-scroll-edge="left"] { --scroll-cue-direction: to right; }
+.ui-scroll-cue[data-scroll-edge="left"]::after { left: 6px; top: calc(50% - 3px); transform: rotate(135deg); }
+.ui-scroll-cue[data-scroll-edge="right"] { --scroll-cue-direction: to left; }
+.ui-scroll-cue[data-scroll-edge="right"]::after { right: 6px; top: calc(50% - 3px); transform: rotate(-45deg); }
+@media (forced-colors: active) {
+  .ui-scroll-cue { background: none; color: CanvasText; }
+  .ui-scroll-cue::after { background: Canvas; outline: 3px solid Canvas; }
+}
+
+[data-scroll-cue-focus]:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

@@ -24,6 +24,7 @@ async function setup(applications: ReturnType<typeof app>[] = []) {
   ipc.handle("plugin:window|scale_factor", () => 1);
   ipc.handle("plugin:window|is_decorated", () => false);
   ipc.handle("plugin:window|is_maximized", () => false);
+  ipc.handle("plugin:window|is_focused", () => true);
   ipc.handle("plugin:window|is_minimized", () => false);
   ipc.handle("plugin:window|is_resizable", () => true);
   ipc.handle("set_compact_window_shape", () => true);
@@ -45,6 +46,7 @@ async function compact(mode: "toolbar" | "dot") {
   const ruby = await screen.findByRole("button", { name: "Keep medium window open" });
   await waitFor(() => expect(ruby.closest("header")).not.toHaveAttribute("inert"));
   if (mode === "dot") {
+    await act(() => emit("tauri://blur"));
     fireEvent.pointerLeave(ruby.closest(".session-window")!);
     await screen.findByRole("button", { name: "Expand compact toolbar" });
     await waitFor(() => expect(ruby.closest("header")).not.toHaveAttribute("inert"));

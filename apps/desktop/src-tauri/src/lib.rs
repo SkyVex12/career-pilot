@@ -20,7 +20,9 @@ mod remote;
 mod remote_macos;
 mod settings;
 mod shots;
+mod shutdown;
 mod stealth;
+mod tray_menu;
 mod voice;
 mod window_drag;
 mod window_visibility;
@@ -144,7 +146,6 @@ const SENT_SHOTS_KEPT: usize = 10;
 #[derive(Default)]
 struct OverlayState {
     click_through: AtomicBool,
-    temporary_taskbar: AtomicBool,
     geom_gen: AtomicU64,
     shortcuts: Mutex<Vec<(Shortcut, Action)>>,
 }
@@ -188,6 +189,9 @@ impl AppState {
     /// For the installer: true if no session runs or starts, and none can start from now on.
     #[cfg_attr(not(feature = "release"), allow(dead_code))]
     fn claim_for_install(&self) -> bool {
+        if shutdown::pending(&self.handle) {
+            return false;
+        }
         let running = self.engine.lock().unwrap().is_some();
         self.gate.claim_install(running)
     }
@@ -195,6 +199,9 @@ impl AppState {
     /// For start_session: refuse while an update installs, else mark a session as starting
     /// until the returned guard drops.
     fn begin_start(&self) -> Res<Starting<'_>> {
+        if shutdown::pending(&self.handle) {
+            return Err("Finish ending the current call before starting another.".into());
+        }
         let running = self.engine.lock().unwrap().is_some();
         self.gate.begin_start(running).map_err(str::to_string)
     }
@@ -1766,35 +1773,18 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     }
 }
 
-/// The overlay's minimize button. The overlay has no taskbar button, so it gets one while it is
-/// minimized; otherwise there would be nothing to click to bring it back. Restoring it removes
-/// that button again (the overlay's window events, in run).
+/// Minimize keeps the normal taskbar entry; Stealth uses the show hotkey to restore.
 #[tauri::command]
 fn minimize_overlay(app: AppHandle) -> Res<()> {
     let w = overlay_window(&app).ok_or("no overlay window")?;
-    // A temporary taskbar button is how a minimized overlay is restored. Stealth keeps that
-    // button hidden; the show hotkey brings the overlay back.
-    let stealth = app.state::<AppState>().settings.lock().unwrap().stealth;
-    if !stealth {
-        w.set_skip_taskbar(false).map_err(|e| e.to_string())?;
-        app.state::<AppState>().overlay.temporary_taskbar.store(true, Ordering::SeqCst);
-    }
-    if let Err(error) = w.minimize() {
-        if app.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst) {
-            let _ = w.set_skip_taskbar(true);
-        }
-        return Err(error.to_string());
-    }
-    Ok(())
+    w.minimize().map_err(|e| e.to_string())
 }
-
 /// Show the overlay, restoring it if it was minimized, and focus it.
 fn bring_back_overlay(w: &WebviewWindow) {
     let _ = stealth::show(w);
     if matches!(w.is_minimized(), Ok(true)) {
         let _ = w.unminimize();
     }
-    let _ = w.set_skip_taskbar(true);
     let _ = w.set_focus();
 }
 
@@ -2143,8 +2133,8 @@ fn open_log_file() -> Option<std::fs::File> {
 
 /// The overlay's "Quit": close the whole app.
 #[tauri::command]
-fn quit_app(app: AppHandle) {
-    app.exit(0);
+async fn quit_app(app: AppHandle) -> Res<()> {
+    shutdown::quit(&app).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2290,7 +2280,9 @@ pub fn run() {
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
-            background::setup(app.handle(), remote::end)?;
+            app.manage(shutdown::QuitState::default());
+            tray_menu::setup(app.handle());
+            background::setup(app.handle())?;
             register_hotkeys(app.handle());
             // Passive startup checks never wake the VM. Foreground data reads and sign-in
             // still wake it when they need an online response.
@@ -2345,14 +2337,6 @@ pub fn run() {
                 if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
                     schedule_remember(&handle);
                 }
-                // Restored from its taskbar button after a minimize: drop that button again.
-                if matches!(event, WindowEvent::Focused(true))
-                    && let Some(w) = overlay_window(&handle)
-                    && matches!(w.is_minimized(), Ok(false))
-                    && handle.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst)
-                {
-                    let _ = w.set_skip_taskbar(true);
-                }
             });
             // Reopen where it was last left, recovering onto a monitor that still exists.
             place_overlay(app.handle());
@@ -2399,6 +2383,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_calendar_authorization,
+            tray_menu::tray_menu_ready,
+            tray_menu::tray_menu_action,
             background::background_status,
             background::background_detection_status,
             background::background_hushed_devices,

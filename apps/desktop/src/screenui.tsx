@@ -38,7 +38,7 @@ import {
   type ViewStats,
 } from "./screen";
 import type { SessionView } from "./session";
-import { Button, Dialog, Select, cx } from "./ui";
+import { Banner, Button, Dialog, Select, cx } from "./ui";
 import { Icon } from "./ui/Icon";
 import { useScreenViewer, type ViewerWindow } from "./screenViewer";
 import "./sharing.css";
@@ -139,7 +139,7 @@ function ControlDecision({ s, request, controller }: { s: SessionView; request: 
     footer={<><Button disabled={busy} onClick={() => void decide(false)}>Decline</Button><Button variant="primary" disabled={busy} onClick={() => void decide(true)}>{busy ? "Updating…" : "Approve control"}</Button></>}>
     <p>Access ends when they disconnect, release control, or you stop sharing. Press {STOP_CONTROL_KEY} to stop control immediately.</p>
     {controller && <p>Approving replaces {controller.name}’s current control.</p>}
-    {error && <p role="alert" className="seat-error">{error}</p>}
+    {error && <Banner tone="danger">{error}</Banner>}
   </Dialog>;
 }
 
@@ -172,7 +172,7 @@ export function HostScreenSection({ s }: { s: SessionView }) {
     {status.controller && <div className="host-control-status"><Icon name="mouse" size={15} /><span><strong>{status.controller.name} has control</strong><small>{STOP_CONTROL_KEY} to stop anytime</small></span><Button size="sm" variant="danger" onClick={() => void action(endControl)}>Stop control</Button></div>}
     {on && controllers.length > 0 && !whole && <p className="host-screen-detail">Remote control needs an entire display. Stop sharing to choose a display.</p>}
     {asking && <div className="host-control-status"><span>{asking.name} requests control. Respond to the approval prompt.</span></div>}
-    {(status.error || error) && <p className="seat-error" role="alert">{error || status.error}</p>}
+    {(status.error || error) && <Banner tone="danger">{error || status.error}</Banner>}
   </section>;
 }
 
@@ -420,6 +420,6 @@ export function GuestScreenView({ s, active = true, window: viewerWindow = "main
       </div>}
     </div>
     <footer className="remote-footer"><span>{controlling ? `Click the screen to use mouse and keyboard · ${STOP_CONTROL_KEY} releases control` : watching ? (state.asked ? "Waiting for host approval" : "View only | request control when needed") : "Your notes and voice remain available below"}</span>{watching && stats && <span className="remote-quality" title={statsLine(stats)}>{dimensions.width > 0 ? `${dimensions.width} × ${dimensions.height}` : "Connected"}{stats.fps !== null ? ` · ${stats.fps} fps` : ""}{stats.networkMs !== null ? ` · ${stats.networkMs} ms` : ""}</span>}</footer>
-    {(error || state.error || state.qualityError) && <p className="remote-error" role="alert">{error || state.error || state.qualityError}</p>}
+    {(error || state.error || state.qualityError) && <Banner tone="danger">{error || state.error || state.qualityError}</Banner>}
   </section>;
 }

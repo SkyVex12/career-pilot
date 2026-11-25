@@ -26,7 +26,7 @@ The workspace opens at 800 × 672 logical pixels. At launch, fit it to the curre
 
 Size short selectors for their content: Company is at most 352px; Application is at most 528px for the combined company and role. Keep Add/Manage 8px beside the field. Both shrink with narrow windows. Reading and editing areas can still use the full content width.
 
-Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop, using five columns for Call type and seven for context below an 800px content width; stack below a 680px content width. Status messages belong directly beneath their selector. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
+Shared segmented controls use an accent outline and tint for their selected option in both themes. Call type uses compact outlined choices with icons, a visible radio indicator, and an accent border/tint for selection. Keep it beside Application/Company on desktop, using five columns for Call type and seven for context below an 800px content width; stack below a 680px content width. Field labels and descriptive metadata stay beside their controls; operational notifications float in the bottom-right notification stack. Empty job descriptions are a short text hint; populated descriptions grow to a bounded scroll region. Agenda starts at 96px instead of stretching to fill the page.
 
 Application details give company, role, and pack status their own full-width block. Place actions in a separate compact row so they cannot squeeze the title. Keep the same page inset on narrow screens. Past-call filters use All / Interviews / Work; Work includes stored standup and meeting calls. Transcripts have one top-right Copy action for the complete, time-ordered conversation, with no per-entry practice controls.
 
@@ -39,3 +39,19 @@ Quick settings in medium mode open below its 280 × 56px toolbar. Extend only th
 The assistant picker opens with a search field and a compact selection count. Show matching people or necessary input guidance as the user types; avoid repeating the help text from the parent control.
 
 Visual verification should include populated, empty, and failed-loading pages, 400/920/1280px windows, both themes, touch emulation, dialog alignment, keyboard focus, and expanded Customize. At the 800 × 672 default size and font scale, Call should fit without scrolling its body.
+
+## Scrolling and overlay interactions
+
+Hide scrollbar tracks and their gutters throughout the app, including dialogs, menus, transcript panes, and text editors. Overflow keeps native wheel, touch, and keyboard scrolling. A subtle surface fade and directional chevron at each unfinished edge indicate more content; remove the cue at the corresponding boundary. Clip cues to their actual scroll region and hide them behind modal surfaces. Overflow containers without their own keyboard interaction gain a visible focus stop.
+
+Operational errors, session warnings, and success notices share the bottom-right stack and never add rows to a form. A notice can be dismissed, and hidden pages do not continue showing their notifications. Dialogs own a notification outlet inside the focus trap, positioned at the window edge so retry actions stay keyboard-accessible. Field validation and saved document content remain with their fields.
+
+The host overlay keeps conversation content visible without a Screen tools tab or a read-only Live audio popover. Pending screenshots appear as a floating strip immediately above Ask anything, with only thumbnails and individual remove actions. The composer capture icon and existing shortcuts add screenshots; Answer sends pending screenshots when the text input is empty. Typed questions retain their existing behavior. Guest shared-screen viewing remains available when permitted.
+
+Assistants and Quick settings open on hover without moving keyboard focus. Moving into the panel keeps it open; leaving closes hover-opened panels, while click-opened panels remain until dismissed. Answer-format choices have equal widths within the settings panel.
+
+## App lifecycle
+
+With Stealth off, the visible workspace or live overlay keeps its taskbar/dock entry. Reopening from the tray or another app instance brings an active hosted/guest call overlay forward. Left-clicking the tray opens CoRuby; right-clicking shows Pause/Resume suggestions and Exit. Windows and macOS use a compact menu with a red Exit label; Linux retains its native tray menu.
+
+Quit immediately hides app windows and the tray icon, then finishes session shutdown in the background. Local audio stops, the host sends session.end, and the process exits after confirmation. If acknowledgement is lost, retry ending only that exact session with the original account. A failed cleanup restores the app with a retryable notification. Leaving a guest session never ends its host’s call. A simultaneous startup is allowed to settle before cleanup; new starts and updates are blocked during shutdown.

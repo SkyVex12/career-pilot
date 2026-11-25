@@ -216,3 +216,20 @@ body:has(.shell-content:not([hidden]) .session-window:not([data-mini="full"])) .
   #root .desktop-commandbar .shell-link { min-height:48px; }
   #root .desktop-workspace .settings-link { min-height:48px; }
 }
+
+/* Center dialogs without a transform so their notification scope stays viewport-anchored. */
+.ui-dialog { inset:0;margin:auto;height:fit-content;transform:none; }
+.ui-toast-viewport { z-index:110; }
+.ui-toast-viewport:empty { display:none; }
+.ui-floating-notice { position:relative;flex:none;pointer-events:auto;padding:12px 40px 12px 16px;gap:8px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);box-shadow:var(--shadow-2);border-radius:8px; }
+.ui-floating-notice.ui-tone-danger { border-left-color:var(--danger); }
+.ui-floating-notice.ui-tone-warning { border-left-color:var(--warning); }
+.ui-floating-notice.ui-tone-success { border-left-color:var(--success); }
+.ui-floating-notice .ui-banner-icon { color:var(--text-2); }
+.ui-floating-notice.ui-tone-danger .ui-banner-icon { color:var(--danger); }
+.ui-floating-notice .ui-banner-body { flex-basis:240px;min-width:0;overflow-wrap:anywhere; }
+.ui-floating-notice .ui-banner-action { margin-left:auto; }
+.ui-notice-dismiss { position:absolute;top:8px;right:8px; }
+
+/* Modal notifications own the visible stack and remain inside the dialog focus trap. */
+body:has(.ui-dialog) .ui-toast-viewport:not(.ui-dialog .ui-toast-viewport) { visibility:hidden; }
