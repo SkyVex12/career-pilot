@@ -329,6 +329,9 @@ class AnswerEngine:
             "deep_light": 0,
         }  # fmt: skip
         self._background: set[asyncio.Task[None]] = set()
+        # Keep ownership after speculative cards are discarded or history is evicted.
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._closing = False
         # The last screen's problem, for the follow-ups after it (copilot_core.screen.Problem).
         self.problem: screen.Problem | None = None
 
@@ -518,8 +521,24 @@ class AnswerEngine:
             q.client.setdefault(pass_, {}).update(fields)
 
     def cancel_all(self) -> None:
-        for q in self.questions.values():
-            self._cancel_tasks(q)
+        for task in self._tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+
+    async def shutdown(self, *, within_s: float = 5) -> bool:
+        """Finish cancellation telemetry before the session releases its writer lease."""
+        self._closing = True
+        self.cancel_all()
+        pending: set[asyncio.Task[Any]] = set(self._tasks) | set(self._background)
+        pending.update(q.match for q in self.questions.values() if q.match is not None)
+        for task in pending:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        if not pending:
+            return True
+        # wait_for would inject a second cancellation into provider cleanup on timeout.
+        _, unfinished = await asyncio.wait(pending, timeout=within_s)
+        return not unfinished
 
     async def change_language(self) -> None:
         """Keep completed cards while stopping language-dependent pending generation."""
@@ -573,13 +592,16 @@ class AnswerEngine:
 
     def _cancel_tasks(self, q: Question) -> None:
         for task in q.tasks.values():
-            if not task.done():
+            if not task.done() and not task.cancelling():
                 task.cancel()
 
     def start_pass(self, q: Question, pass_: str) -> None:
-        if pass_ in q.tasks or q.cancelled or q.discarded or q.superseded:
+        if self._closing or pass_ in q.tasks or q.cancelled or q.discarded or q.superseded:
             return
-        q.tasks[pass_] = asyncio.create_task(self._run_pass(q, pass_))
+        task = asyncio.create_task(self._run_pass(q, pass_))
+        q.tasks[pass_] = task
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def strategy(self, q: Question) -> Architecture:
         # Screenshot reading/code and follow-ups retain their specialized prompts.
@@ -602,9 +624,7 @@ class AnswerEngine:
 
     async def wait_idle(self) -> None:
         # Completion of a primary may enqueue a dependent legacy deep pass.
-        while tasks := [
-            t for q in self.questions.values() for t in q.tasks.values() if not t.done()
-        ]:
+        while tasks := [task for task in self._tasks if not task.done()]:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     # One pass.

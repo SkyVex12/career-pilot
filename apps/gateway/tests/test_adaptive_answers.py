@@ -888,3 +888,61 @@ async def test_cancelled_attempt_has_no_invented_usage_or_cost(settings_factory)
     assert terminals[0]["usage_observed"] is False
     assert terminals[0]["usage"] is None
     assert "cost_usd" not in terminals[0]
+
+
+async def test_shutdown_awaits_discarded_pass_cleanup_without_recancelling(settings_factory):
+    engine, _, _, logs, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    cleaning, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class SlowCloseRouter(RecordingRouter):
+        async def stream(self, job, req, on_fallback, *, on_attempt=None):
+            self.primary_started.set()
+            try:
+                yield "An initial answer. "
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await release.wait()
+                closed.set()
+
+    router = SlowCloseRouter()
+    engine.host.router = router
+    q = question(forced=True)
+    engine.add(q)
+    await router.primary_started.wait()
+    engine.discard(q.qid)
+    await cleaning.wait()
+    draining = asyncio.create_task(engine.shutdown())
+    await asyncio.sleep(0)
+    assert not draining.done()
+    assert q.qid not in engine.questions
+    release.set()
+    assert await draining is True
+    assert closed.is_set()
+    assert all(task.done() for task in q.tasks.values())
+    assert any(row["kind"] == "pass_cancelled" for row in logs)
+    next_q = question()
+    engine.add(next_q)
+    assert next_q.tasks == {}  # No dependent pass can restart during shutdown.
+
+
+async def test_shutdown_deadline_reports_unfinished_cleanup(settings_factory):
+    engine, _, _, _, _ = make_engine(settings_factory())
+    cleaning, release = asyncio.Event(), asyncio.Event()
+
+    async def cleanup():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release.wait()
+
+    task = asyncio.create_task(cleanup())
+    engine._background.add(task)
+    await asyncio.sleep(0)
+    task.cancel()
+    await cleaning.wait()
+    assert await engine.shutdown(within_s=0.01) is False
+    assert not task.done()
+    release.set()
+    await asyncio.gather(task, return_exceptions=True)

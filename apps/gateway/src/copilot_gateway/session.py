@@ -2016,7 +2016,8 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
-        self.answers.cancel_all()
+        if not await self.answers.shutdown():
+            log.error("session %s answer cancellation exceeded the shutdown deadline", self.sid)
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
         log.info(
@@ -2061,7 +2062,8 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
-        self.answers.cancel_all()
+        if not await self.answers.shutdown(within_s=2):
+            log.error("session %s answer cancellation exceeded the abandon deadline", self.sid)
         await self.writer.drain(within_s=2)
         with contextlib.suppress(*UNAVAILABLE):
             await self.svc.store.release_lease(self.sid, self.svc.task_id)
