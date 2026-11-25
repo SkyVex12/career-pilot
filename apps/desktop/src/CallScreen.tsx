@@ -425,7 +425,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             </section>
             <div className="call-optional-settings">
               <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}
-                answerFormat={<div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullet points or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>}
+                answerFormat={<div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullets or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullets"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>}
               >
                 <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
                 <div className="customize-row"><span className="customize-label">Transcript<HelpTip label="Transcript">Save a transcript for review after the call, with everyone’s agreement.</HelpTip></span><div className="customize-control"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /></div></div>

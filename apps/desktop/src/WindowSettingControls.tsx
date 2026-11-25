@@ -28,7 +28,7 @@ export function ReadingSettings({ running, guest = false, busy, run }: {
       <IconButton label="Larger text (Ctrl+plus)" icon="A+" size="sm" onClick={() => view.stepText(1)} />
     </div></div>
     {!guest && <div className="window-answer-format"><span>Answer format</span>
-      <SegmentedControl equal label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const}
+      <SegmentedControl equal label="Answer format" value={answerStyle} options={[["bullets", "Bullets"], ["paragraph", "Paragraphs"]] as const}
         size="sm" disabled={busy} onChange={value => run(() => changeAnswerStyle(value))} />
     </div>}
   </div>;

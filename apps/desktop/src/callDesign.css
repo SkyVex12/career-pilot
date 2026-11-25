@@ -52,7 +52,7 @@
 .call-customize .customize-control { display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0; }
 .call-customize .customize-control > .ui-field { width:100%;max-width:256px;margin:0; }
 .call-customize .ui-field-control,.call-customize .ui-select { width:100%; }
-.call-customize .customize-language-control > .ui-field { max-width:208px; }
+.call-customize .customize-language-control > .ui-field,.call-customize .ui-segmented { max-width:208px; }
 .call-customize .ui-check { min-height:32px;align-items:center;font-size:13px;line-height:16px; }
 .call-design .ui-checkbox { margin:0; }
 .call-design .ui-help-tip { width:24px;height:24px; }
@@ -60,10 +60,11 @@
 .call-design .ui-segmented { min-height:28px;height:28px;padding:0;gap:0;flex-wrap:nowrap; }
 .call-design .ui-segmented .ui-segment { flex:1;min-width:0;min-height:0;justify-content:center;padding:0 8px;font-size:13px;line-height:16px; }
 .call-customize .ui-select { min-height:32px;height:32px;font-size:13px;line-height:16px; }
-.call-customize .ui-segmented { width:100%;max-width:256px;min-height:32px;height:32px; }
+.call-customize .ui-segmented { width:100%;min-height:32px;height:32px; }
 .call-customize .ui-btn { min-height:32px;padding-inline:8px;font-size:13px; }
 .call-customize .call-guest-selection { min-height:32px; }
 .call-customize .call-guest-selection > .ui-btn { max-width:100%; }
+.call-guest-selection > .ui-btn > .ui-btn-label { display:inline-flex;align-items:center;gap:8px; }
 .call-row { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 16px;min-width:0; }
 .call-row > * { min-width:0; }
 .call-row-label { display:flex;align-items:center;min-height:20px;color:var(--text);font-size:13px;font-weight:600;line-height:24px; }
