@@ -15,7 +15,7 @@ import math
 import time
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,7 +25,7 @@ from fakeredis import FakeAsyncValkey, FakeServer
 
 from copilot_core import keys
 from copilot_core.jobs import MemoryJobQueue
-from copilot_core.llm import Decided, LLMChunk, LLMRequest, error_chain
+from copilot_core.llm import Decided, LLMChunk, LLMDone, LLMRequest, LLMUsage, error_chain
 from copilot_core.packs import (
     PREPARED_DIGEST_POLICY,
     Digest,
@@ -33,6 +33,7 @@ from copilot_core.packs import (
     SessionPack,
     encode_embedding,
 )
+from copilot_core.pricing import ModelPrice
 from copilot_core.providers import close_providers, make_providers
 from copilot_evals.live_answer_artifacts import DispatchJournal, immutable, run_lock, source_archive
 from copilot_evals.live_answer_eval import distribution, fingerprint
@@ -41,6 +42,7 @@ from copilot_evals.live_answer_replay import (
     TRIAL,
     AuditBudget,
     AuditProvider,
+    ProviderAdmission,
     budget_limit,
     connectivity_check,
     experiment_identity,
@@ -184,6 +186,7 @@ class FaultProvider:
         is_answer = req.json_schema is None and job_of(req) != "summary"
         if is_answer and control.get("outage"):
             control["injected_failures"] = control.get("injected_failures", 0) + 1
+            control["connection_outages"] = control.get("connection_outages", 0) + 1
             raise httpx2.ConnectError("synthetic session replay connection outage")
         stream = self.inner.stream(model, req, params)
         try:
@@ -191,19 +194,15 @@ class FaultProvider:
                 yield chunk
                 if is_answer and isinstance(chunk, str) and control.get("stream_timeout"):
                     await asyncio.sleep(control.get("timeout_delay_s", 0.2))
+                    control["injected_failures"] = control.get("injected_failures", 0) + 1
+                    control["stream_timeouts"] = control.get("stream_timeouts", 0) + 1
                     raise TimeoutError("synthetic session replay stream timeout")
         finally:
             await stream.aclose()
 
 
-@dataclass
-class DispatchGate:
-    limit: int
-    active: int = 0
-    peak: int = 0
-
-    def __post_init__(self) -> None:
-        self.semaphore = asyncio.Semaphore(self.limit)
+class DispatchGate(ProviderAdmission):
+    """Shared fatal-status circuit; outer session admission also covers Decisions calls."""
 
 
 class LimitedProvider:
@@ -211,34 +210,42 @@ class LimitedProvider:
         self.inner, self.name, self.gate = inner, inner.name, gate
 
     async def warm(self, model: str) -> None:
-        async with self.gate.semaphore:
+        await self.gate.enter()
+        try:
             await self.inner.warm(model)
+        except BaseException as error:
+            self.gate.observe_error(error)
+            raise
+        finally:
+            self.gate.leave()
 
     async def decide(self, model: str, input: Any, questions: Any) -> Decided:
-        async with self.gate.semaphore:
-            self.gate.active += 1
-            self.gate.peak = max(self.gate.peak, self.gate.active)
-            try:
-                return await self.inner.decide(model, input, questions)
-            finally:
-                self.gate.active -= 1
+        await self.gate.enter()
+        try:
+            return await self.inner.decide(model, input, questions)
+        except BaseException as error:
+            self.gate.observe_error(error)
+            raise
+        finally:
+            self.gate.leave()
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> AsyncGenerator[LLMChunk]:
         # Queueing before the audit wrapper never reserves a request that was not dispatched.
-        async with self.gate.semaphore:
-            self.gate.active += 1
-            self.gate.peak = max(self.gate.peak, self.gate.active)
-            stream = self.inner.stream(model, req, params)
+        await self.gate.enter()
+        stream = self.inner.stream(model, req, params)
+        try:
+            async for chunk in stream:
+                yield chunk
+        except BaseException as error:
+            self.gate.observe_error(error)
+            raise
+        finally:
             try:
-                async for chunk in stream:
-                    yield chunk
+                await stream.aclose()
             finally:
-                try:
-                    await stream.aclose()
-                finally:
-                    self.gate.active -= 1
+                self.gate.leave()
 
 
 def offline_reply(job: str, req: LLMRequest) -> Reply:
@@ -255,11 +262,159 @@ def offline_reply(job: str, req: LLMRequest) -> Reply:
     )
 
 
+class OfflineSessionProvider(ScriptedProvider):
+    """Fictional, deterministic Decisions results through the genuine detector API path.
+
+    Delays and answer text are test controls, not measurements of provider quality or speed.
+    The delayed decision lets held generation start naturally before depth is available.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("openai", offline_reply)
+        self.decisions: list[dict[str, Any]] = []
+        self.routed_requests: list[tuple[str, LLMRequest]] = []
+
+    async def decide(self, model: str, input: Any, questions: Any) -> Decided:
+        text = str(input[1]["content"][0]["text"])
+        utterance = text.split("<utterance>")[-1].split("</utterance>")[0].strip()
+        lowered = utterance.lower()
+        turn = "answer" if utterance.endswith("?") else "none"
+        qtype = (
+            "system_design"
+            if "design" in lowered
+            else "standup_status"
+            if "alex, what is the status" in lowered
+            else "behavioral"
+            if "incident" in lowered
+            else "technical"
+            if lowered.startswith(("how", "why", "what is the current"))
+            else "other"
+        )
+        depth = (
+            "deep"
+            if any(term in lowered for term in ("design", "exactly-once", "incident"))
+            else "light"
+        )
+        self.decisions.append({"utterance": utterance, "turn": turn, "type": qtype, "depth": depth})
+        self.calls.append(("detector_decisions", model))
+        await asyncio.sleep(0.06)
+        return Decided(
+            [
+                {"type": "choice", "name": name, "choice": value, "confidence": 0.9}
+                for name, value in (("turn", turn), ("type", qtype), ("depth", depth))
+            ],
+            LLMUsage(1300, cache_write_tokens=0, reasoning_tokens=0),
+            self.name,
+            model,
+        )
+
+    async def stream(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> AsyncGenerator[LLMChunk]:
+        self.routed_requests.append((model, req))
+        stream = super().stream(model, req, params)
+        try:
+            async for chunk in stream:
+                if isinstance(chunk, LLMDone):
+                    chunk = replace(
+                        chunk, usage=replace(chunk.usage, cache_write_tokens=0, reasoning_tokens=0)
+                    )
+                yield chunk
+        finally:
+            await stream.aclose()
+
+
+def question_routes(session: Any) -> list[dict[str, Any]]:
+    """Read-only runtime snapshots also cover canceled passes absent from completed logs."""
+    return [
+        {
+            "question_id": str(q.qid),
+            "text": q.text,
+            "question_type": q.qtype,
+            "detector_depth": q.depth,
+            "held": q.held,
+            "confirmed": q.confirmed,
+            "cancelled": q.cancelled,
+            "discarded": q.discarded,
+            "early_ms": q.early_ms,
+            "started_passes": sorted(q.started_passes),
+            "plans": {name: asdict(plan) for name, plan in q.plans.items()},
+        }
+        for q in session.answers.questions.values()
+    ]
+
+
+async def wait_started(session: Any, action: dict[str, Any], timeout_s: float) -> None:
+    """Observe a real held request plan before ending its synthetic utterance."""
+    async with asyncio.timeout(timeout_s):
+        # Production question state has no start-event hook; polling is bounded by timeout.
+        while not any(  # noqa: ASYNC110
+            q.text == action["text"] and action.get("pass", "fast") in q.started_passes
+            for q in session.answers.questions.values()
+        ):
+            await asyncio.sleep(0.01)
+
+
 def scenarios(cycles: int = 8) -> list[dict[str, Any]]:
     def ask(text: str, **extra: Any) -> dict[str, Any]:
         return {"op": "say", "text": text, **extra}
 
+    technical = (
+        "How do you preserve exactly-once effects when a worker crashes after commit "
+        "but before acknowledgement?"
+    )
+    design = (
+        "How would you design a distributed notification system with per-recipient ordering "
+        "and regional failover?"
+    )
     return [
+        *[
+            {
+                "id": identifier,
+                "actions": [
+                    {"op": "partial", "text": question, "start": True},
+                    {"op": "wait_started", "text": question},
+                    {"op": "end"},
+                    {"op": "settle"},
+                ],
+                "routing_fixture": "synthetic deep decision arrives after initial held plan",
+            }
+            for identifier, question in (
+                ("early-technical-depth", technical),
+                ("early-system-design", design),
+            )
+        ],
+        {
+            "id": "missing-personal-context",
+            "profile": "Alex is an interview candidate. No employers or incident stories supplied.",
+            "actions": [
+                ask("Can you describe a production incident you handled at Northwind?"),
+                {"op": "settle"},
+            ],
+        },
+        {
+            "id": "prepared-source-mismatch",
+            "prepared_fixture": True,
+            "stale_prepared_source": True,
+            "actions": [ask("Where are you based?"), {"op": "settle"}],
+        },
+        {
+            "id": "standup-source-ownership",
+            "mode": "standup",
+            "max_confirmed": 1,
+            "actions": [
+                ask("Priya here. I deployed the carrier preview to production.", speaker="priya"),
+                {"op": "settle"},
+                ask(
+                    "My retry logging passed staging. Morgan's review is pending; "
+                    "I have not deployed it to production.",
+                    speaker="me",
+                ),
+                {"op": "wait", "type": "transcript.final", "channel": "me"},
+                ask("Alex, what is the status of your retry logging?"),
+                {"op": "settle"},
+            ],
+        },
         {
             "id": "partial-revision",
             "actions": [
@@ -574,8 +729,9 @@ async def replay_session(
     user: UUID = uuid4()
     server = FakeServer()
     client_db = FakeAsyncValkey(server=server)
+    profile = scenario.get("profile", PROFILE)
     digest = Digest.model_validate(
-        {"version": Digest.version_of(PROFILE), "text": PROFILE, "refs": {}}
+        {"version": Digest.version_of(profile), "text": profile, "refs": {}}
     )
     await client_db.set(keys.digest(user), digest.model_dump_json(by_alias=True))
     them, me = TextSTTControl(final_delay_s=0.12), TextSTTControl(final_delay_s=0.01)
@@ -601,6 +757,9 @@ async def replay_session(
         "status": "completed",
         "events": events,
         "injections": injected,
+        "route_observations": [],
+        "profile_sha256": fingerprint(profile),
+        "fixture_provenance": "checked-in fictional controlled scenario; no historical audio",
         "scope": "text injection through synthetic STT, real Session/TurnDetector/AnswerEngine",
     }
     session = None
@@ -628,7 +787,11 @@ async def replay_session(
                                 talking_points=["I am based in Chicago."],
                                 embedding_b64=encode_embedding([1.0, 0.0]),
                                 grounding_policy=PREPARED_DIGEST_POLICY,
-                                evidence_version=digest.version,
+                                evidence_version=(
+                                    "stale-fictional-source"
+                                    if scenario.get("stale_prepared_source")
+                                    else digest.version
+                                ),
                             )
                         ],
                     )
@@ -668,6 +831,15 @@ async def replay_session(
                         if op == "say":
                             await protocol.frame(channel, 2, b"", capture_ms)
                             capture_ms += 6000
+                    elif op == "wait_started":
+                        await wait_started(session, action, timeout_s)
+                        result["route_observations"].append(
+                            {
+                                "stage": "partial_before_end",
+                                "at_ms": round((time.monotonic() - started) * 1000),
+                                "questions": question_routes(session),
+                            }
+                        )
                     elif op == "end":
                         await protocol.frame(0, 2, b"", capture_ms)
                         capture_ms += 6000
@@ -694,7 +866,10 @@ async def replay_session(
                             {**action, "at_ms": round((time.monotonic() - started) * 1000)}
                         )
                     elif op == "pause":
-                        await asyncio.sleep(float(action["seconds"]))
+                        seconds = float(action["seconds"])
+                        if not math.isfinite(seconds) or not 0 <= seconds <= 1:
+                            raise ValueError("Replay pauses must be finite and at most one second")
+                        await asyncio.sleep(seconds)
                     elif op == "stop":
                         break
                     else:
@@ -720,10 +895,14 @@ async def replay_session(
             ]
         result["elapsed_s"] = round(time.monotonic() - started, 4)
         result["synthetic_faults"] = control["injected_failures"]
+        result["synthetic_fault_types"] = {
+            name: control.get(name, 0) for name in ("connection_outages", "stream_timeouts")
+        }
         result["violations"] = inspect_events(events)
         result["questions"] = timing_rows(events, injected)
         result["late_events_after_close"] = sum(bool(event.get("after_close")) for event in events)
         if session is not None:
+            result["routing"] = question_routes(session)
             result["pending_after_close"] = sum(
                 not task.done()
                 for q in session.answers.questions.values()
@@ -753,10 +932,12 @@ async def replay_session(
                 and event["message"].get("pass") == "fast"
             ]
             result["prepared_sources"] = sources
-            if not sources or sources[0] != "prepared":
+            if not scenario.get("stale_prepared_source") and (
+                not sources or sources[0] != "prepared"
+            ):
                 result["violations"].append("missing_initial_prepared_fast_path")
             if settings.answer_architecture != "legacy_dual" and sources[-1:] == ["prepared"]:
-                result["violations"].append("stale_prepared_after_context_update")
+                result["violations"].append("stale_prepared_after_source_or_context_update")
         if scenario.get("must_question") and not any(
             scenario["must_question"] in text for text in confirmed.values()
         ):
@@ -832,8 +1013,19 @@ def replay_settings(live: bool, strategy: str) -> Settings:
     }
     if not live:
         overrides.update(
-            llm_providers=["anthropic"],
-            detector_api="responses",
+            llm_providers=["openai"],
+            openai_detector_model="gpt-6-luna",
+            openai_detector_reasoning="none",
+            openai_fast_model="gpt-6-luna",
+            openai_fast_reasoning="none",
+            openai_deep_model="gpt-6.1-sol",
+            openai_deep_reasoning="low",
+            detector_api="decisions",
+            model_prices={
+                **settings.model_prices,
+                "gpt-6-luna": ModelPrice(input=0.1, cached=0.01, output=0.5),
+                "gpt-6.1-sol": ModelPrice(input=2.0, cached=0.1, output=10.0),
+            },
             speculative_start_ms=50,
             silence_timer_ms=150,
             final_wait_max_ms=500,
@@ -851,8 +1043,8 @@ def replay_settings(live: bool, strategy: str) -> Settings:
 async def execute(args: argparse.Namespace) -> dict[str, Any]:
     if not (
         1 <= args.reps <= 100
-        and 1 <= args.concurrency <= 4
-        and 1 <= args.max_inflight <= 16
+        and 1 <= args.concurrency <= 8
+        and 1 <= args.max_inflight <= 32
         and 1 <= args.cycles <= 100
         and 1 <= args.timeout <= 600
     ):
@@ -924,7 +1116,12 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         limitations=[
             "Synthetic scenarios and fictional profile, not original historical audio.",
             "No STT recognition, remote-speaker diarization, or physical UI paint measurement.",
-            "In-memory storage and fixed digest; external retrieval and embeddings disabled.",
+            "In-memory storage and fictional digest; external retrieval disabled; "
+            "fake prepared vectors.",
+            "Offline Decisions labels and answer text are scripted, not quality evaluations.",
+            "One shared admission gate covers detector and answer calls before cost reservation.",
+            "Session admission waits count toward router deadlines; per-request gate waits are "
+            "not recorded by the inner audit wrapper. Rate/auth/config errors stop new dispatches.",
             "Follow-user and prewarming disabled; summaries retain configured behavior.",
             "Offline timers are accelerated; live mode retains configured production turn timers.",
             "First complete sentence is a boundary metric; human usefulness is not established.",
@@ -986,6 +1183,12 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")},
     )
     circuit = FailureCircuit(3)
+    gate_path = directory / "session-admission-stop.json"
+    gate = DispatchGate(
+        args.max_inflight, on_stop=lambda reason: save(gate_path, {"reason": reason})
+    )
+    if gate_path.exists():
+        gate.stop(json.loads(gate_path.read_text("utf-8"))["reason"])
 
     def checkpoint() -> None:
         save(directory / "sessions.json", results)
@@ -999,7 +1202,8 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                     "dispatch_state": journal.states[row["trial_id"]],
                     "reason": "prior_session_dispatch_has_no_durable_result"
                     if journal.states[row["trial_id"]] == "ambiguous"
-                    else circuit.reason
+                    else gate.reason
+                    or circuit.reason
                     or ("budget_exhausted" if budget.blocked else "not_dispatched"),
                 }
                 for row in scheduled
@@ -1025,12 +1229,11 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         (
             make_providers(settings, timeout_s=args.timeout)
             if args.live
-            else [ScriptedProvider("anthropic", offline_reply)]
+            else [OfflineSessionProvider()]
         )
         if pending
         else []
     )
-    gate = DispatchGate(args.max_inflight)
     providers = [
         LimitedProvider(SessionAuditProvider(FaultProvider(p), budget, requests, directory), gate)
         for p in raw
@@ -1043,7 +1246,13 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         async with semaphore:
             try:
                 trial = f"{scenario['id']}:{STRATEGIES[label]}:{rep}"
-                if aborting or budget.blocked or circuit.reason or not journal.start(trial):
+                if (
+                    aborting
+                    or budget.blocked
+                    or gate.reason
+                    or circuit.reason
+                    or not journal.start(trial)
+                ):
                     return
                 result = await replay_session(
                     scenario,
@@ -1055,7 +1264,14 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 )
                 result["rep"] = rep
                 trial_requests = [r for r in requests if r["trial_id"] == trial]
-                circuit.observe({"failure": result["status"] != "completed"}, trial_requests)
+                # Successful detector/primary calls cannot mask an exhausted answer failure.
+                circuit.observe(
+                    {
+                        "failure": result["status"] != "completed",
+                        "metadata_logs": result.get("metadata_logs", []),
+                    },
+                    [row for row in trial_requests if row.get("status") != "completed"],
+                )
                 results.append(result)
                 # Durable results precede journal completion. A crash between these writes
                 # is recovered from the completed result and cannot repeat billed work.
@@ -1066,7 +1282,15 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 aborting = True
                 raise
 
-    tasks = [asyncio.create_task(one(*item)) for item in schedule]
+    remaining = iter(schedule)
+
+    async def worker() -> None:
+        for item in remaining:
+            if aborting or budget.blocked or gate.reason or circuit.reason:
+                return
+            await one(*item)
+
+    tasks = [asyncio.create_task(worker()) for _ in range(min(args.concurrency, len(schedule)))]
     try:
         await asyncio.gather(*tasks)
     except BaseException:
@@ -1096,7 +1320,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         "dispatch_states": dict(states),
         "remaining_sessions": states["not_started"],
         "ambiguous_sessions": states["ambiguous"],
-        "circuit_reason": circuit.reason,
+        "circuit_reason": gate.reason or circuit.reason,
         "statuses": dict(Counter(r["status"] for r in results)),
         "invariant_violations": sum(len(r.get("violations", [])) for r in results),
         "provider_dispatches": len(requests),
@@ -1105,6 +1329,19 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         "observed_cost_usd": None if unresolved or states["ambiguous"] else known,
         "unresolved_reserved_usd": round(sum(float(e["charged_usd"]) for e in unresolved), 8),
         "usage_source": "provider-reported" if args.live else "synthetic mock usage; no API spend",
+        "completion_scope": (
+            "Replay protocol completion; not semantic answer completeness or quality"
+        ),
+        "admission_scope": {
+            "max_sessions": args.concurrency,
+            "max_provider_inflight": args.max_inflight,
+            "includes": ["answer streams", "Responses detector", "Decisions detector", "retries"],
+            "cost_reserved_after_admission": True,
+            "queued_time_counts_toward_router_deadline": True,
+            "immediate_rate_auth_stop": True,
+            "per_request_queue_wait_ms": None,
+            "circuit_scope": "completed sessions; bounded existing provider retry routes",
+        },
         "cost_statuses": dict(Counter(e["status"] for e in budget.entries)),
         "text_injection_latency_ms": latency_summary(results),
     }

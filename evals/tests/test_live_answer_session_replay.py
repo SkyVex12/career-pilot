@@ -8,6 +8,7 @@ from copilot_evals.live_answer_session_replay import (
     DispatchGate,
     FaultProvider,
     LimitedProvider,
+    OfflineSessionProvider,
     SessionAuditProvider,
     SessionBudget,
     inspect_events,
@@ -114,7 +115,9 @@ async def test_gate_cancels_queued_work_without_dispatch_or_reserving_cost(tmp_p
     assert budget.entries[0]["status"] == "reserved"
 
 
-@pytest.mark.parametrize("architecture", ["legacy_dual", "adaptive_on_demand"])
+@pytest.mark.parametrize(
+    "architecture", ["legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"]
+)
 @pytest.mark.parametrize("scenario", scenarios(cycles=3), ids=lambda row: row["id"])
 async def test_real_session_scenarios_preserve_question_and_terminal_invariants(
     architecture, scenario, tmp_path
@@ -122,7 +125,7 @@ async def test_real_session_scenarios_preserve_question_and_terminal_invariants(
     settings = replay_settings(False, architecture)
     budget = SessionBudget(tmp_path, settings, 10)
     records, attempts = [], []
-    raw = ScriptedProvider("anthropic", offline_reply)
+    raw = OfflineSessionProvider()
     gate = DispatchGate(4)
     providers = [
         LimitedProvider(SessionAuditProvider(FaultProvider(raw), budget, records, tmp_path), gate)
@@ -150,6 +153,58 @@ async def test_real_session_scenarios_preserve_question_and_terminal_invariants(
     assert budget.entries
     assert all(record["status"] != "started" for record in records)
     assert all(entry.get("trial_id") == result["trial_id"] for entry in budget.entries)
+    assert result["fixture_provenance"].startswith("checked-in fictional")
+    assert raw.decisions
+    assert not any(job == "detector" for job, _ in raw.calls)
+    if scenario["id"].startswith("early-"):
+        before = result["route_observations"][0]["questions"][0]
+        assert before["detector_depth"] is None
+        assert before["held"]
+        assert not before["confirmed"]
+        route = next(row for row in result["routing"] if row["confirmed"])
+        assert route["detector_depth"] == "deep"
+        complete = [r for r in result["metadata_logs"] if r["kind"] == "answer"]
+        fast = next(r for r in complete if r["pass"] == "fast")["latency_ms"]
+        assert fast.get("detector_depth_at_start") is None
+        assert fast["detector_depth_at_completion"] == "deep"
+        if architecture == "adaptive":
+            # A model request cannot be upgraded after it has begun. Text-only planning
+            # recognizes explicit design, but late detector depth cannot upgrade technical.
+            expected = "deep" if scenario["id"] == "early-system-design" else "fast"
+            assert fast["request_job"] == expected
+            assert route["started_passes"] == ["fast"]
+        if architecture == "adaptive_hybrid":
+            assert route["started_passes"] == ["deep", "fast"]
+            assert {r["pass"] for r in complete} == {"fast", "deep"}
+            expert = next(
+                r for model, r in raw.routed_requests if model == settings.openai_deep_model
+            )
+            assert "shown_cues" not in str(expert.content)
+            assert "I would make each operation idempotent." not in str(expert.content)
+        if architecture == "legacy_dual":
+            expert = next(
+                r for model, r in raw.routed_requests if model == settings.openai_deep_model
+            )
+            assert "shown_cues" in str(expert.content)
+            assert "I would make each operation idempotent." in str(expert.content)
+        if architecture == "adaptive_on_demand":
+            assert route["started_passes"] == ["fast"]
+    if scenario["id"] == "missing-personal-context":
+        requests = [request for _, request in raw.requests if request.json_schema is None]
+        assert requests
+        assert all("No employers or incident stories supplied" in str(r.system) for r in requests)
+        assert all("Chicago" not in str(r.system) for r in requests)
+        assert all("production incident" in str(r.content) for r in requests)
+    if scenario["id"] == "standup-source-ownership":
+        requests = [request for _, request in raw.requests if request.json_schema is None]
+        content = str(requests[-1].content)
+        assert "Priya here. I deployed the carrier preview to production." in content
+        assert "Morgan's review is pending" in content
+        assert "I have not deployed it to production" in content
+        assert "Them:" in content
+        assert "Alex:" in content
+    if scenario["id"] == "prepared-source-mismatch" and architecture != "legacy_dual":
+        assert result["prepared_sources"] == ["model"]
     if scenario["id"] == "changing-context":
         assert any(
             "three retries with jitter" in str(request.content)
@@ -164,6 +219,10 @@ async def test_real_session_scenarios_preserve_question_and_terminal_invariants(
     if scenario["id"] == "outage-recovery":
         assert result["synthetic_faults"] > 0
         assert any(entry["status"] == "failed_before_submission" for entry in budget.entries)
+    if scenario["id"] == "stream-timeout":
+        assert result["synthetic_faults"] > 0
+        assert result["synthetic_fault_types"]["stream_timeouts"] > 0
+        assert result["synthetic_fault_types"]["connection_outages"] == 0
     if scenario["id"] == "session-interrupt":
         assert any(entry["kind"] == "pass_cancelled" for entry in result["metadata_logs"])
         assert any(entry["status"] == "reserved" for entry in budget.entries)
@@ -386,3 +445,125 @@ async def test_durable_result_recovers_crash_before_journal_finish(tmp_path, mon
     assert summary["sessions"] == 2
     assert summary["ambiguous_sessions"] == 0
     assert len(set(calls)) == len(calls) == 2
+
+
+@pytest.mark.parametrize("value", [0, -1, 33])
+def test_provider_admission_rejects_unbounded_or_invalid_limits(value):
+    with pytest.raises(ValueError, match="between one and 32"):
+        DispatchGate(value)
+
+
+async def test_eight_workers_bound_sessions_without_scheduling_every_trial(tmp_path, monkeypatch):
+    from copilot_evals import live_answer_session_replay as harness
+
+    freeze_session_test_identity(monkeypatch)
+    args = session_args(tmp_path)
+    args.architectures = ["A", "B", "C", "D"]
+    args.reps = 3
+    args.concurrency = 8
+    args.max_inflight = 4
+    active = peak = 0
+    calls = []
+
+    async def replay(scenario, settings, providers, *, trial_id, **kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        calls.append(trial_id)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return completed_session(scenario, settings, trial_id)
+
+    monkeypatch.setattr(harness, "replay_session", replay)
+    summary = await harness.execute(args)
+    assert summary["planned_sessions"] == summary["sessions"] == 24
+    assert peak == 8
+    assert active == 0
+    assert len(calls) == len(set(calls)) == 24
+    args.concurrency = 9
+    with pytest.raises(ValueError, match="finite concurrency"):
+        await harness.execute(args)
+
+
+async def test_shared_gate_covers_decisions_and_answers_before_budget_reservation(tmp_path):
+    settings = replay_settings(False, "adaptive")
+    budget = SessionBudget(tmp_path, settings, 1)
+    records = []
+    raw = OfflineSessionProvider()
+    gate = DispatchGate(1)
+    provider = LimitedProvider(SessionAuditProvider(raw, budget, records, tmp_path), gate)
+    request = LLMRequest([], "Question", 100)
+    stream = provider.stream(settings.openai_fast_model, request, {})
+    await anext(stream)
+    input = [{}, {"content": [{"text": "<utterance>Where are you based?</utterance>"}]}]
+    queued = asyncio.create_task(provider.decide(settings.openai_detector_model, input, []))
+    await asyncio.sleep(0)
+    assert len(budget.entries) == 1
+    assert not raw.decisions
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    await stream.aclose()
+    assert gate.peak == 1
+    assert gate.active == 0
+    assert len(records) == 1
+
+
+async def test_session_gate_stops_decisions_retry_after_rate_limit_before_new_reservation(tmp_path):
+    from copilot_evals.live_answer_replay import AdmissionBlocked
+
+    class RateLimitError(Exception):
+        pass
+
+    class FailingDecisions(OfflineSessionProvider):
+        async def decide(self, model, input, questions):
+            raise RateLimitError("synthetic rate limit")
+
+    settings = replay_settings(False, "adaptive")
+    budget = SessionBudget(tmp_path, settings, 1)
+    records = []
+    gate = DispatchGate(1)
+    provider = LimitedProvider(
+        SessionAuditProvider(FailingDecisions(), budget, records, tmp_path), gate
+    )
+    with pytest.raises(RateLimitError):
+        await provider.decide(settings.openai_detector_model, [], [])
+    assert gate.reason == "rate_limit"
+    assert len(records) == len(budget.entries) == 1
+    with pytest.raises(AdmissionBlocked):
+        await provider.decide(settings.openai_detector_model, [], [])
+    assert len(records) == len(budget.entries) == 1
+    assert gate.active == 0
+
+
+async def test_successful_detector_cannot_mask_answer_outage_circuit(tmp_path, monkeypatch):
+    from copilot_evals import live_answer_session_replay as harness
+
+    freeze_session_test_identity(monkeypatch)
+    args = session_args(tmp_path)
+    args.reps = 5
+    calls = []
+
+    async def replay(scenario, settings, providers, *, trial_id, **kwargs):
+        calls.append(trial_id)
+        audit = providers[0].inner
+        audit.requests.extend(
+            [
+                {"trial_id": trial_id, "status": "completed", "purpose": "detector_decisions"},
+                {
+                    "trial_id": trial_id,
+                    "status": "APIConnectionError",
+                    "error_types": ["ConnectError"],
+                },
+            ]
+        )
+        return {
+            **completed_session(scenario, settings, trial_id),
+            "status": "provider_or_engine_failure",
+        }
+
+    monkeypatch.setattr(harness, "replay_session", replay)
+    summary = await harness.execute(args)
+    assert len(calls) == 3
+    assert summary["remaining_sessions"] == 7
+    assert summary["circuit_reason"] == "transport"
