@@ -44,7 +44,8 @@ class Budget:
     """Reserve before dispatch, including hedges; unknown usage keeps its reservation.
 
     UTF-8 byte count plus schema/transport allowance bounds text input tokens.
-    Unknown/cancelled calls are conservatively charged their entire reservation.
+    Unknown/cancelled calls retain their reservation for budget admission.
+    This bookkeeping total is neither billed spend nor a proved spending upper bound.
     One ledger is shared by preparation, replay and judging; run these sequentially.
     """
 
@@ -143,6 +144,22 @@ class Budget:
                 charged_usd=float(value), status="usage", pricing_missing=False
             )
         self.checkpoint(ticket)
+
+
+def budget_reporting(budget: Budget) -> dict[str, Any]:
+    """Label ledger bookkeeping without claiming a provider billing upper bound."""
+    priced = sum(e["charged_usd"] for e in budget.entries if e["status"] == "usage")
+    reserved = sum(
+        e["charged_usd"] for e in budget.entries if e["status"] in ("reserved", "usage_unpriced")
+    )
+    return {
+        "recorded_price_subtotal_usd": round(priced, 8),
+        "reservation_usd": round(reserved, 8),
+        "accounting_total_usd": round(budget.total, 8),
+        "cost_upper_usd": None,
+        "actual_billed_cost_usd": None,
+        "cost_basis": "recorded_usage_at_configured_rates_not_invoice",
+    }
 
 
 class MeteredProvider:
@@ -421,7 +438,7 @@ async def replay(directory: Path, turns: list[dict[str, Any]], *, speed: float =
                     "sent": len(sent),
                     "total": len(turns),
                     "elapsed_s": at,
-                    "cost_upper_usd": budget.total,
+                    **budget_reporting(budget),
                 },
             )
             save(directory / "replay.json", {"speed": speed, "sent": sent, "events": events})
@@ -438,7 +455,7 @@ async def replay(directory: Path, turns: list[dict[str, Any]], *, speed: float =
                 "events": events,
                 "metadata_logs": decoded,
                 "complete": True,
-                "cost_upper_usd": budget.total,
+                **budget_reporting(budget),
             },
         )
     await valkey.aclose()

@@ -10,7 +10,7 @@ import statistics
 from pathlib import Path
 from typing import Any, cast
 
-from copilot_evals.sensei_runtime import Budget, save
+from copilot_evals.sensei_runtime import Budget, budget_reporting, save
 
 RUBRIC = ("relevance", "grounding", "specificity", "structure", "speakability", "first_two_lines")
 SEED = 20261119
@@ -413,7 +413,7 @@ async def judge_run(directory: Path, turns: list[dict[str, Any]]) -> None:
                 {
                     "judgments": len(grades),
                     "total": 2 * sum(r["needs_answer"] for r in rows),
-                    "cost_upper_usd": budget.total,
+                    **budget_reporting(budget),
                 },
             )
 

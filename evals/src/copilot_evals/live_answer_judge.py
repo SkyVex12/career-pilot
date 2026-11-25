@@ -37,7 +37,13 @@ from copilot_evals.live_answer_eval import (
     review_content,
 )
 from copilot_evals.sensei_judge import RUBRIC
-from copilot_evals.sensei_runtime import Budget, MeteredProvider, private_directory, save
+from copilot_evals.sensei_runtime import (
+    Budget,
+    MeteredProvider,
+    budget_reporting,
+    private_directory,
+    save,
+)
 
 PROMPT = """Independently compare two anonymous live interview/standup answers.
 Recorded per-answer response_preferences are user requirements for style and depth.
@@ -677,7 +683,7 @@ def accounting(budget: Budget, missing_usage: int = 0) -> dict[str, Any]:
         "unpriced_or_unresolved_requests": len(unresolved) + missing_usage,
         "unmetered_interrupted_requests": missing_usage,
         "unresolved_reserved_usd": round(sum(e["charged_usd"] for e in unresolved), 8),
-        "cost_upper_usd": None if missing_usage else round(budget.total, 8),
+        **budget_reporting(budget),
         "requests": len(budget.entries),
     }
 

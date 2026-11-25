@@ -67,7 +67,13 @@ from copilot_evals.live_answer_variants import (
     validate_route_prices,
 )
 from copilot_evals.sensei_judge import collect_answers
-from copilot_evals.sensei_runtime import Budget, MeteredProvider, private_directory, save
+from copilot_evals.sensei_runtime import (
+    Budget,
+    MeteredProvider,
+    budget_reporting,
+    private_directory,
+    save,
+)
 from copilot_gateway.answer import AnswerEngine, Question
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
@@ -1761,7 +1767,7 @@ async def execute_live_owned(
             "completed": len(results),
             "total": len(planned),
             "cost_start_usd": initial_cost,
-            "cost_upper_usd": budget.total,
+            **budget_reporting(budget),
             "failures": sum(row.get("status") == "provider_or_engine_failure" for row in results),
             "budget_blocked_trials": sum(row.get("status") == "budget_blocked" for row in results),
             "not_started": sum(state == "not_started" for state in journal.states.values()),
@@ -1921,7 +1927,7 @@ async def execute_live_owned(
         {
             "budget_limit_usd": args.max_cost,
             "cost_start_usd": initial_cost,
-            "cost_upper_usd": budget.total,
+            **budget_reporting(budget),
             "usage_priced_usd": sum(
                 e["charged_usd"] for e in budget.entries if e["status"] == "usage"
             ),
@@ -1968,7 +1974,7 @@ async def execute_live_owned(
                 if any(state == "ambiguous" for state in journal.states.values())
                 else "complete",
                 "trials": len(results),
-                "cost_upper_usd": budget.total,
+                **budget_reporting(budget),
             }
         )
     )
