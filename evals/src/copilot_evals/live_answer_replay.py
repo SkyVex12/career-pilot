@@ -1025,11 +1025,14 @@ def normalized_runs(
         turns: list[dict[str, Any]] = []
         sent: list[dict[str, Any]] = []
         logs: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
+        seen_qids: set[str] = set()
         selected = sorted(
             (item for item in [*trials, *pending] if item["architecture"] == strategy),
             key=lambda item: (item["id"], item["rep"]),
         )
         for index, item in enumerate(selected):
+            event_start = len(events)
             case = by_case[item["id"]]
             if (
                 item["question"] != case["question"]
@@ -1045,6 +1048,10 @@ def normalized_runs(
                 ),
                 None,
             )
+            if qid is not None:
+                if str(qid) in seen_qids:
+                    raise ValueError("Question ID reused across independent trials")
+                seen_qids.add(str(qid))
             turns.append(
                 {
                     "id": identifier,
@@ -1087,6 +1094,18 @@ def normalized_runs(
                 for event in item["events"]
             )
             logs.extend(item["metadata_logs"])
+            # Generation trials have explicit case/repetition ownership. Reconstruct each
+            # independently; text matching across prior trials creates false ambiguity for
+            # repeated questions and can mix cards when question texts are identical.
+            rows.extend(
+                collect_answers(
+                    {
+                        "sent": sent[-1:] if item.get("status") != "not_started" else [],
+                        "events": events[event_start:],
+                    },
+                    turns[-1:],
+                )
+            )
         replay = {
             "sent": sent,
             "events": events,
@@ -1095,7 +1114,6 @@ def normalized_runs(
             "origin": "confirmed_question_generation_start",
             "generation_only": True,
         }
-        rows = collect_answers(replay, turns)
         runs.append(
             Run(
                 label,

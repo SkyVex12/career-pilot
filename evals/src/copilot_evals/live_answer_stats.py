@@ -5,7 +5,26 @@ from __future__ import annotations
 import math
 import random
 from collections import defaultdict
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from typing import Any
+
+_BOOTSTRAPS: ContextVar[dict[tuple[Any, ...], dict[str, Any]] | None] = ContextVar(
+    "live_answer_bootstraps", default=None
+)
+
+
+@contextmanager
+def bootstrap_scope() -> Generator[None]:
+    """Reuse identical deterministic bootstrap inputs only within one analysis invocation."""
+    token = _BOOTSTRAPS.set({}) if _BOOTSTRAPS.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _BOOTSTRAPS.reset(token)
 
 
 def rate(successes: int, total: int) -> dict[str, Any]:
@@ -28,6 +47,18 @@ def rate(successes: int, total: int) -> dict[str, Any]:
 
 
 def paired_uncertainty(
+    observations: list[tuple[str, float]], seed: int = 20261125, replicates: int = 1000
+) -> dict[str, Any]:
+    cache = _BOOTSTRAPS.get()
+    if cache is None:
+        return _paired_uncertainty(observations, seed, replicates)
+    key = (tuple(observations), seed, replicates)
+    if key not in cache:
+        cache[key] = _paired_uncertainty(observations, seed, replicates)
+    return deepcopy(cache[key])
+
+
+def _paired_uncertainty(
     observations: list[tuple[str, float]], seed: int = 20261125, replicates: int = 1000
 ) -> dict[str, Any]:
     groups: dict[str, list[float]] = defaultdict(list)

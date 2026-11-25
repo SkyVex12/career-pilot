@@ -1,6 +1,7 @@
 """Offline comparison guards: attribution, missing telemetry, cost provenance, blinding."""
 
 from copy import deepcopy
+from typing import Any
 
 import pytest
 from copilot_evals.live_answer_eval import (
@@ -475,7 +476,10 @@ def test_useful_fragment_is_not_a_complete_sentence_and_expansion_can_be_first()
         ]
         is None
     )
-    judgment = {"first_useful_cue": "fast:1", "first_useful_complete_sentence": "deep:1"}
+    judgment: dict[str, Any] = {
+        "first_useful_cue": "fast:1",
+        "first_useful_complete_sentence": "deep:1",
+    }
     assert metrics(record, record.rows[0], judgment)["first_useful_complete_sentence_ms"] is None
     judgment["unit_grammar"] = {"fast:1": False, "deep:1": True}
     result = metrics(record, record.rows[0], judgment)
@@ -654,3 +658,150 @@ def test_one_per_question_and_fixed_repetition_are_mutually_exclusive(tmp_path):
             ]
         )
     assert error.value.code == 2
+
+
+def test_scoped_analysis_preserves_exact_summaries_pairs_and_blind_outputs():
+    import copilot_evals.live_answer_eval as evaluation
+
+    left, right = run("A"), run("D")
+    for record in (left, right):
+        record.replay["metadata_logs"] = [
+            {
+                "kind": "answer",
+                "question_id": "current",
+                "pass": "fast",
+                "input_tokens": 17,
+                "output_tokens": 4,
+                "cost_usd": 0.01,
+                "latency_ms": {"model_dispatch_ms": 7, "router_first_chunk_ms": 90},
+            },
+            {"kind": "pass_cancelled", "question_id": "cancelled", "input_tokens_est": 20},
+        ]
+        record.replay["events"].extend(
+            [
+                {
+                    "at": 1.6,
+                    "message": {
+                        "type": "answer.delta",
+                        "question_id": "current",
+                        "pass": "deep",
+                        "text": "A complete explanation. Final tail",
+                        "sequence": 0,
+                    },
+                },
+                {
+                    "at": 2.5,
+                    "message": {
+                        "type": "answer.done",
+                        "question_id": "current",
+                        "pass": "deep",
+                        "delta_count": 1,
+                    },
+                },
+            ]
+        )
+    judgments = {
+        "A": {"1:0": {"first_useful_cue": "fast:1"}},
+        "D": {
+            "1:0": {"first_useful_complete_sentence": "deep:1", "unit_grammar": {"deep:1": True}}
+        },
+    }
+    expected = {
+        "summary": evaluation._summarize(left, judgments["A"]),
+        "pairs": {
+            scope: evaluation._paired_complete_cases(left, right, judgments, scope=scope)
+            for scope in ("full_answer_complete", "all_started", "primary_available")
+        },
+        "review": evaluation._blind_pairs([left, right], 1, 42),
+    }
+    with evaluation.analysis_scope(left, right):
+        actual = {
+            "summary": summarize(left, judgments["A"]),
+            "pairs": {
+                scope: paired_complete_cases(left, right, judgments, scope=scope)
+                for scope in ("full_answer_complete", "all_started", "primary_available")
+            },
+            "review": blind_pairs([left, right], 1, 42),
+        }
+    assert actual == expected
+
+
+def test_analysis_indexes_once_and_scoped_cache_isolates_results_judgments_and_invocations(
+    monkeypatch,
+):
+    import copilot_evals.live_answer_eval as evaluation
+
+    class CountedEvents(list):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    record = run()
+    events = CountedEvents(record.replay["events"])
+    record.replay["events"] = events
+    parsed = []
+    original = evaluation._sentence_events
+
+    def count(*args, **kwargs):
+        parsed.append((args[2], kwargs.get("terminal_tail")))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(evaluation, "_sentence_events", count)
+    judgment = {"first_useful_sentence": 1}
+    with evaluation.analysis_scope(record):
+        first = metrics(record, record.rows[0], judgment)
+        first["first_useful_sentence_ms"] = -99
+        assert metrics(record, record.rows[0], judgment)[
+            "first_useful_sentence_ms"
+        ] == pytest.approx(400)
+        units = boundary_units(record, record.rows[0])
+        units[0]["text"] = "Caller mutation"
+        assert boundary_units(record, record.rows[0])[0]["text"] != "Caller mutation"
+        judgment["first_useful_sentence"] = 2
+        assert metrics(record, record.rows[0], judgment)[
+            "first_useful_sentence_ms"
+        ] == pytest.approx(800)
+        summarize(record)
+        with evaluation.analysis_scope(record):
+            summarize(record)
+        assert parsed == [("fast", False), ("fast", True), ("deep", True)]
+        assert events.iterations == 1
+    # Low-level calls outside a scope and later invocations must see source changes.
+    record.replay["events"][2]["at"] = 1.5
+    assert metrics(record, record.rows[0], {"first_useful_sentence": 1})[
+        "first_useful_sentence_ms"
+    ] == pytest.approx(500)
+    with evaluation.analysis_scope(record):
+        assert metrics(record, record.rows[0], {"first_useful_sentence": 1})[
+            "first_useful_sentence_ms"
+        ] == pytest.approx(500)
+    assert events.iterations == 5  # One index, three direct parsers, one fresh index.
+
+
+def test_scoped_bootstrap_reuse_preserves_rng_statistics_and_defensive_copy(monkeypatch):
+    import copilot_evals.live_answer_stats as stats
+
+    observations = [("one", -2.0), ("one", 3.0), ("two", 1.0), ("three", 7.0)]
+    expected = stats.paired_uncertainty(observations, seed=21, replicates=50)
+    calls = []
+    original = stats._paired_uncertainty
+
+    def count(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(stats, "_paired_uncertainty", count)
+    with stats.bootstrap_scope():
+        first = stats.paired_uncertainty(observations, seed=21, replicates=50)
+        assert first == expected
+        first["mean_difference_95"][0] = -100
+        with stats.bootstrap_scope():
+            assert stats.paired_uncertainty(observations, seed=21, replicates=50) == expected
+        assert len(calls) == 1
+        stats.paired_uncertainty(observations, seed=22, replicates=50)
+        assert len(calls) == 2
+    with stats.bootstrap_scope():
+        assert stats.paired_uncertainty(observations, seed=21, replicates=50) == expected
+    assert len(calls) == 3

@@ -1,5 +1,6 @@
 """Controlled generation replay: offline protocol validation and leakage/cost guards."""
 
+from argparse import Namespace
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -273,9 +274,7 @@ def test_explicit_no_currency_cutoff_keeps_finite_default_and_rejects_invalid_va
     for value in ("inf", "nan", "-1", "0"):
         with pytest.raises(argparse.ArgumentTypeError):
             budget_limit(value)
-    assert settings_overrides(
-        SimpleNamespace(fast_model="configured-model", expert_reasoning="low")
-    ) == {
+    assert settings_overrides(Namespace(fast_model="configured-model", expert_reasoning="low")) == {
         "openai_fast_model": "configured-model",
         "openai_deep_reasoning": "low",
     }
@@ -359,7 +358,7 @@ async def test_live_entry_holds_exclusive_lock_but_offline_preflight_does_not(
 
     monkeypatch.setattr(harness, "preflight", offline)
     monkeypatch.setattr(harness, "execute_live", live)
-    args = SimpleNamespace(
+    args = Namespace(
         cases=None, live=True, out=target, reps=1, concurrency=1, max_cost=None, timeout=10
     )
     await harness.execute(args)
@@ -369,3 +368,29 @@ async def test_live_entry_holds_exclusive_lock_but_offline_preflight_does_not(
     args.live = False
     await harness.execute(args)
     assert checked == ["offline-unlocked", "paid-locked", "offline-unlocked"]
+
+
+def test_independent_repetitions_use_trial_identity_not_prior_matching_text():
+    cases = load_cases()[:1]
+    trials = []
+    for rep in range(4):
+        trial = recorded_trial(cases[0], "legacy_dual")
+        trial["rep"] = rep
+        trial["question_id"] = f"question-{rep}"
+        for event in trial["events"]:
+            event["message"]["question_id"] = trial["question_id"]
+            event["at"] += rep / 10
+        trial["events"][0]["message"]["text"] = f"Repetition {rep}. "
+        trial["metadata_logs"][0]["question_id"] = trial["question_id"]
+        trials.append(trial)
+    record = normalized_runs(trials, cases, {"strategies": {"A": "legacy_dual"}}, [])[0]
+    assert len(record.rows) == 4
+    for rep, row in enumerate(record.rows):
+        assert row["attribution_ambiguities"] == []
+        assert row["selected_card"] == f"question-{rep}"
+        assert row["fast"] == f"Repetition {rep}. "
+        assert row["latency"]["fast_done_s"] == pytest.approx(0.5 + rep / 10)
+        assert row["card_audit"][0]["attribution"][0]["candidate_turn_ids"] == [row["id"]]
+    trials[1]["question_id"] = trials[0]["question_id"]
+    with pytest.raises(ValueError, match="Question ID reused"):
+        normalized_runs(trials, cases, {"strategies": {"A": "legacy_dual"}}, [])

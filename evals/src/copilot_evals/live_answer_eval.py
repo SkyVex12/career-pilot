@@ -17,12 +17,16 @@ import math
 import random
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from copilot_core.pricing import openai_cache_write_pricing
-from copilot_evals.live_answer_stats import paired_uncertainty, rate
+from copilot_evals.live_answer_stats import bootstrap_scope, paired_uncertainty, rate
 from copilot_evals.sensei_judge import RUBRIC, collect_answers, remove_citations
 from copilot_evals.sensei_runtime import private_directory, save
 
@@ -111,6 +115,89 @@ class Run:
     ledger: list[dict[str, Any]]
 
 
+class _RunAnalysis:
+    """Invocation-local indexes over immutable replay input; preserve original event order."""
+
+    def __init__(self, run: Run) -> None:
+        self.run = run  # Retain the object so its identity cannot be reused inside the scope.
+        self.sent = {str(item["id"]): item["at"] for item in run.replay.get("sent", [])}
+        self.events: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+        self.logs: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
+        self.ledger: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self.cache: dict[tuple[Any, ...], Any] = {}
+        for event in run.replay.get("events", []):
+            self.events[event.get("message", {}).get("question_id")].append(event)
+        for index, entry in enumerate(run.replay.get("metadata_logs", [])):
+            self.logs[str(entry.get("question_id"))].append((index, entry))
+        for entry in run.ledger:
+            self.ledger[str(entry.get("trial_id"))].append(entry)
+
+
+_ANALYSIS: ContextVar[dict[int, _RunAnalysis] | None] = ContextVar(
+    "live_answer_analysis", default=None
+)
+
+
+@contextmanager
+def analysis_scope(*runs: Run) -> Generator[None]:
+    """Reuse parsing only during one read-only analysis; never persist cache across invocations.
+
+    Replay inputs must remain immutable within the scope. Results are defensive copies;
+    changed judgments have distinct cache keys. Nested analyses share their outer indexes.
+    """
+    current = _ANALYSIS.get()
+    token = _ANALYSIS.set({}) if current is None else None
+    try:
+        for run in runs:
+            _analysis(run)
+        with bootstrap_scope():
+            yield
+    finally:
+        if token is not None:
+            _ANALYSIS.reset(token)
+
+
+def _analysis(run: Run) -> _RunAnalysis | None:
+    current = _ANALYSIS.get()
+    if current is None:
+        return None
+    key = id(run)
+    if key not in current:
+        current[key] = _RunAnalysis(run)
+    return current[key]
+
+
+def _cached[T](run: Run, key: tuple[Any, ...], calculate: Callable[[], T]) -> T:
+    analysis = _analysis(run)
+    if analysis is None:
+        return calculate()
+    if key not in analysis.cache:
+        analysis.cache[key] = calculate()
+    return deepcopy(cast(T, analysis.cache[key]))
+
+
+def _logs(run: Run, ids: set[str]) -> list[dict[str, Any]]:
+    analysis = _analysis(run)
+    if analysis is None:
+        return [
+            entry
+            for entry in run.replay.get("metadata_logs", [])
+            if str(entry.get("question_id")) in ids
+        ]
+    # Multiple cards may interleave; preserve summation and attribution order exactly.
+    matched = [item for qid in ids for item in analysis.logs.get(qid, [])]
+    return [entry for _, entry in sorted(matched, key=lambda item: item[0])]
+
+
+def _trial_ledger(run: Run, row: dict[str, Any]) -> list[dict[str, Any]]:
+    condition = run.identity.get("condition_id", run.identity.get("answer_architecture"))
+    trial_id = f"{row.get('original_id')}:{condition}:{row.get('rep', 0)}"
+    analysis = _analysis(run)
+    if analysis is None:
+        return [entry for entry in run.ledger if entry.get("trial_id") == trial_id]
+    return analysis.ledger.get(trial_id, [])
+
+
 def load_run(architecture: str, directory: Path) -> Run:
     if architecture not in ARCHITECTURES:
         raise ValueError("Architecture must be A, B, C, or D")
@@ -149,7 +236,8 @@ def comparable(left: Run, right: Run) -> dict[str, Any]:
     if (
         not left.profile
         or not right.profile
-        or fingerprint(left.profile) != fingerprint(right.profile)
+        or _cached(left, ("profile",), lambda: fingerprint(left.profile))
+        != _cached(right, ("profile",), lambda: fingerprint(right.profile))
     ):
         reasons.append("missing or different fixed evidence profile")
 
@@ -158,7 +246,9 @@ def comparable(left: Run, right: Run) -> dict[str, Any]:
             (row_id(r), r["question"], r.get("type"), r.get("needs_answer")) for r in run.rows
         )
 
-    if questions(left) != questions(right):
+    if _cached(left, ("questions",), lambda: questions(left)) != _cached(
+        right, ("questions",), lambda: questions(right)
+    ):
         reasons.append("different questions, repetitions, or frozen labels")
     if not left.identity or not right.identity:
         reasons.append("missing code/settings replay identity")
@@ -168,6 +258,16 @@ def comparable(left: Run, right: Run) -> dict[str, Any]:
 
 
 def sentence_events(
+    run: Run, row: dict[str, Any], pass_: str = "fast", *, terminal_tail: bool = False
+) -> list[dict[str, Any]]:
+    return _cached(
+        run,
+        ("sentences", id(row), pass_, terminal_tail),
+        lambda: _sentence_events(run, row, pass_, terminal_tail=terminal_tail),
+    )
+
+
+def _sentence_events(
     run: Run, row: dict[str, Any], pass_: str = "fast", *, terminal_tail: bool = False
 ) -> list[dict[str, Any]]:
     """Reconstruct syntactic boundary units with the UI's chunk-range semantics.
@@ -180,7 +280,12 @@ def sentence_events(
     from copilot_gateway.adaptive import SentenceBoundary
 
     qid = row.get("selected_card") or (row.get("cards") or [None])[0]
-    sent = {str(item["id"]): item["at"] for item in run.replay.get("sent", [])}
+    analysis = _analysis(run)
+    sent = (
+        analysis.sent
+        if analysis is not None
+        else {str(item["id"]): item["at"] for item in run.replay.get("sent", [])}
+    )
     origin = sent.get(str(row["id"]))
     if qid is None or not numeric(origin):
         return []
@@ -191,7 +296,8 @@ def sentence_events(
     done, failed = False, False
     expected: int | None = None
 
-    for event in run.replay.get("events", []):
+    events = analysis.events.get(qid, []) if analysis is not None else run.replay.get("events", [])
+    for event in events:
         msg = event.get("message", {})
         if msg.get("question_id") != qid or not numeric(event.get("at")) or event["at"] < origin:
             continue
@@ -273,6 +379,10 @@ def sentence_events(
 
 
 def boundary_units(run: Run, row: dict[str, Any]) -> list[dict[str, Any]]:
+    return _cached(run, ("units", id(row)), lambda: _boundary_units(run, row))
+
+
+def _boundary_units(run: Run, row: dict[str, Any]) -> list[dict[str, Any]]:
     """Initial and expansion units, ordered by visibility; grammar is a review judgment."""
     units = [
         {"id": f"{pass_}:{index}", "pass": pass_, "index": index, **event}
@@ -283,6 +393,12 @@ def boundary_units(run: Run, row: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def metrics(run: Run, row: dict[str, Any], judgment: dict[str, Any]) -> dict[str, Any]:
+    return _cached(
+        run, ("metrics", id(row), fingerprint(judgment)), lambda: _metrics(run, row, judgment)
+    )
+
+
+def _metrics(run: Run, row: dict[str, Any], judgment: dict[str, Any]) -> dict[str, Any]:
     latency = row.get("latency", {})
 
     def seconds(key: str) -> float | None:
@@ -349,7 +465,7 @@ def latency_components(run: Run, row: dict[str, Any], judgment: dict[str, Any]) 
     stages: dict[str, Any] = next(
         (
             entry.get("latency_ms", {})
-            for entry in run.replay.get("metadata_logs", [])
+            for entry in _logs(run, {str(qid)})
             if entry.get("kind") == "answer"
             and entry.get("pass") == "fast"
             and entry.get("question_id") == qid
@@ -412,7 +528,7 @@ def question_usage(run: Run, row: dict[str, Any]) -> dict[str, Any]:
         ids.add(str(row["selected_card"]))
     entries = [
         entry
-        for entry in run.replay.get("metadata_logs", [])
+        for entry in _logs(run, ids)
         if entry.get("kind") in ("answer", "pass_cancelled")
         and str(entry.get("question_id")) in ids
         and entry.get("model_started", True)
@@ -430,9 +546,7 @@ def question_usage(run: Run, row: dict[str, Any]) -> dict[str, Any]:
     result["models"] = sorted({str(entry["model"]) for entry in entries if entry.get("model")})
     result["cancelled_records"] = sum(entry["kind"] == "pass_cancelled" for entry in entries)
     # Request reservations include retries and hedge losers absent from winning-answer logs.
-    condition = run.identity.get("condition_id", run.identity.get("answer_architecture"))
-    trial_id = f"{row.get('original_id')}:{condition}:{row.get('rep', 0)}"
-    ledger = [entry for entry in run.ledger if entry.get("trial_id") == trial_id]
+    ledger = _trial_ledger(run, row)
     result["all_request_ledger"] = ledger_summary(ledger) if ledger else None
     return result
 
@@ -520,6 +634,11 @@ def ledger_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, Any]:
+    with analysis_scope(run):
+        return _summarize(run, judgments)
+
+
+def _summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, Any]:
     judgments = judgments or {}
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in run.rows:
@@ -661,6 +780,17 @@ def paired_complete_cases(
     *,
     scope: str = "full_answer_complete",
 ) -> dict[str, Any]:
+    with analysis_scope(left, right):
+        return _paired_complete_cases(left, right, judgments, scope=scope)
+
+
+def _paired_complete_cases(
+    left: Run,
+    right: Run,
+    judgments: dict[str, dict[str, Any]] | None = None,
+    *,
+    scope: str = "full_answer_complete",
+) -> dict[str, Any]:
     """Compare matched question/repetition pairs with an explicitly chosen inclusion scope."""
     if scope not in ("full_answer_complete", "all_started", "primary_available"):
         raise ValueError("Unknown paired inclusion scope")
@@ -675,9 +805,7 @@ def paired_complete_cases(
         groups["all"].append(pair)
 
     def costs(run: Run, row: dict[str, Any]) -> dict[str, Any]:
-        condition = run.identity.get("condition_id", run.identity.get("answer_architecture"))
-        trial_id = f"{row.get('original_id')}:{condition}:{row.get('rep', 0)}"
-        entries = [entry for entry in run.ledger if entry.get("trial_id") == trial_id]
+        entries = _trial_ledger(run, row)
         known = [entry for entry in entries if priced_usage(entry)]
         measured = [
             entry for entry in entries if entry.get("status") in ("usage", "usage_unpriced")
@@ -845,14 +973,17 @@ def paired_complete_cases(
 def paired_stream_cases(
     left: Run, right: Run, judgments: dict[str, dict[str, Any]] | None = None
 ) -> dict[str, Any]:
-    return {
-        scope: paired_complete_cases(left, right, judgments, scope=scope)
-        for scope in ("all_started", "primary_available")
-    }
+    with analysis_scope(left, right):
+        return {
+            scope: paired_complete_cases(left, right, judgments, scope=scope)
+            for scope in ("all_started", "primary_available")
+        }
 
 
 def run_identity(run: Run) -> str:
-    return fingerprint([run.inputs, run.profile, run.identity, run.rows])
+    return _cached(
+        run, ("identity",), lambda: fingerprint([run.inputs, run.profile, run.identity, run.rows])
+    )
 
 
 def review_content(item: dict[str, Any]) -> dict[str, Any]:
@@ -879,6 +1010,18 @@ def review_content(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def blind_pairs(
+    runs: list[Run],
+    sample: int,
+    seed: int,
+    baseline: str | None = None,
+    repetition: int | None = None,
+    one_per_question: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with analysis_scope(*runs):
+        return _blind_pairs(runs, sample, seed, baseline, repetition, one_per_question)
+
+
+def _blind_pairs(
     runs: list[Run],
     sample: int,
     seed: int,
@@ -1193,58 +1336,60 @@ def main(argv: list[str] | None = None) -> int:
             or (args.review_rep is not None and args.review_rep < 0)
         ):
             raise ValueError("Invalid review arguments")
-        judgments: dict[str, dict[str, Any]] = {}
-        review: dict[str, Any] = {}
-        prefs: dict[str, Any] = {}
-        if args.reviews:
-            review = json.loads(args.reviews.read_text("utf-8"))
-            key = json.loads(args.review_key.read_text("utf-8"))
-            if key["runs"] != {run.architecture: run_identity(run) for run in runs}:
-                raise ValueError("Reviews belong to different run outputs")
-            judgments = read_judgments(review, key)
-            prefs = preferences(review, key)
-        summary = {
-            "schema": 1,
-            "runs": {
-                run.architecture: summarize(run, judgments.get(run.architecture)) for run in runs
-            },
-            "comparability": {
-                left.architecture + ":" + right.architecture: comparable(left, right)
-                for left, right in itertools.combinations(runs, 2)
-            },
-            "paired_complete_cases": {
-                runs[0].architecture + ":" + other.architecture: paired_complete_cases(
-                    runs[0], other, judgments
+        with analysis_scope(*runs):
+            judgments: dict[str, dict[str, Any]] = {}
+            review: dict[str, Any] = {}
+            prefs: dict[str, Any] = {}
+            if args.reviews:
+                review = json.loads(args.reviews.read_text("utf-8"))
+                key = json.loads(args.review_key.read_text("utf-8"))
+                if key["runs"] != {run.architecture: run_identity(run) for run in runs}:
+                    raise ValueError("Reviews belong to different run outputs")
+                judgments = read_judgments(review, key)
+                prefs = preferences(review, key)
+            summary = {
+                "schema": 1,
+                "runs": {
+                    run.architecture: summarize(run, judgments.get(run.architecture))
+                    for run in runs
+                },
+                "comparability": {
+                    left.architecture + ":" + right.architecture: comparable(left, right)
+                    for left, right in itertools.combinations(runs, 2)
+                },
+                "paired_complete_cases": {
+                    runs[0].architecture + ":" + other.architecture: paired_complete_cases(
+                        runs[0], other, judgments
+                    )
+                    for other in runs[1:]
+                },
+                "paired_stream_cases": {
+                    runs[0].architecture + ":" + other.architecture: paired_stream_cases(
+                        runs[0], other, judgments
+                    )
+                    for other in runs[1:]
+                },
+                "blind_preferences": prefs,
+                "reviewer_kind": review.get("reviewer_kind") if args.reviews else None,
+                "reviewer_id": review.get("reviewer_id") if args.reviews else None,
+            }
+            save(directory / "live-answer-summary.json", summary)
+            if args.review_sample:
+                review, key = blind_pairs(
+                    runs,
+                    args.review_sample,
+                    args.seed,
+                    args.baseline,
+                    args.review_rep,
+                    args.review_one_per_question,
                 )
-                for other in runs[1:]
-            },
-            "paired_stream_cases": {
-                runs[0].architecture + ":" + other.architecture: paired_stream_cases(
-                    runs[0], other, judgments
-                )
-                for other in runs[1:]
-            },
-            "blind_preferences": prefs,
-            "reviewer_kind": review.get("reviewer_kind") if args.reviews else None,
-            "reviewer_id": review.get("reviewer_id") if args.reviews else None,
-        }
-        save(directory / "live-answer-summary.json", summary)
-        if args.review_sample:
-            review, key = blind_pairs(
-                runs,
-                args.review_sample,
-                args.seed,
-                args.baseline,
-                args.review_rep,
-                args.review_one_per_question,
-            )
-            if (directory / "review.json").exists() or (directory / "review-key.json").exists():
-                raise ValueError("Refusing to overwrite an existing blind review")
-            save(directory / "review.json", review)
-            save(directory / "review-key.json", key)
-            from copilot_evals.live_answer_review import review_html
+                if (directory / "review.json").exists() or (directory / "review-key.json").exists():
+                    raise ValueError("Refusing to overwrite an existing blind review")
+                save(directory / "review.json", review)
+                save(directory / "review-key.json", key)
+                from copilot_evals.live_answer_review import review_html
 
-            (directory / "human-review.html").write_text(review_html(review), encoding="utf-8")
+                (directory / "human-review.html").write_text(review_html(review), encoding="utf-8")
         print(
             json.dumps(
                 {"status": "complete", "runs": len(runs), "questions": [len(r.rows) for r in runs]}

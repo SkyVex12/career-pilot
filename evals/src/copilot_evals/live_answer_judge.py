@@ -52,9 +52,17 @@ Boundary units include initial/expanded text and unpunctuated terminal tails, or
 by observed visibility. Select the earliest useful cue by unit ID; it may be a fragment.
 Independently select the earliest useful COMPLETE grammatical sentence. 'Based in Austin'
 is a cue, not a complete sentence. Punctuation proves neither usefulness nor grammar.
-A substantive complete sentence may be unpunctuated. Inspect fast AND deep units;
-do not assume the first is useful. Mark the selected complete unit complete=true in
-unit_grammar. Never concatenate separate units to manufacture a sentence. Set each
+A confident personal/company claim unsupported by the supplied evidence is not a useful
+cue or sentence, even if it sounds fluent. A substantive complete sentence may be
+unpunctuated. Inspect fast AND deep units;
+do not assume the first is useful. Private coaching such as 'Note to you: confirm your
+city' may be a useful cue, but it is not a speakable answer sentence to the other person.
+When a necessary personal fact is absent, do not reward an invented answer for producing
+a sentence quickly: leave the complete-answer selection null if only private guidance
+exists, and explain the missing evidence. A useful spoken clarification of the other
+person's requirements can count; asking the interviewer for the candidate's own history
+cannot. Mark the selected complete unit complete=true in unit_grammar. Never concatenate
+separate units to manufacture a sentence. Set each
 *_assessed flag true only if evaluated, including when no useful unit exists (null).
 Leave uncertain selections null and explain the uncertainty.
 
