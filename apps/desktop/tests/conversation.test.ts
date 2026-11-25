@@ -200,3 +200,24 @@ it("ignores an older core's duplicate ready event numbered zero", () => {
   const state = rebuild(entries, next, [{ n: 0, event: events[0] }]);
   expect(state.questions.map(q => q.id)).toEqual(["q1", "q2", "q3"]);
 });
+
+
+it("blocks same-epoch queued answer events after stop and accepts the next epoch", () => {
+  let state: SessionView = initial;
+  const applier = snapshotApplier(a => { state = reduce(state, a); });
+  applier.snapshot([
+    { epoch: 8, n: 0, event: detected("finished-session") },
+    { epoch: 8, n: 1, event: delta("finished-session", "fast", "Original text.") },
+  ], true, 2, 8);
+  applier.live({ epoch: 8, n: 5, event: { kind: "stopped", reason: "ended" } });
+  const stopped = state;
+  applier.live({ epoch: 8, n: 2, event: server({ type: "answer.delta", question_id: "finished-session", pass: "fast", sequence: 1, text: "Late chunk." }) });
+  applier.live({ epoch: 8, n: 6, event: server({ type: "answer.done", question_id: "finished-session", pass: "fast", delta_count: 2, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } }) });
+  applier.live({ epoch: 8, n: 7, event: server({ type: "answer.error", question_id: "finished-session", pass: "fast", code: "timeout" }) });
+  expect(state).toBe(stopped);
+  expect(state.questions[0].fast).toMatchObject({ text: "Original text.", done: true, error: "cancelled" });
+  applier.live({ epoch: 9, n: 0, event: detected("new-session") });
+  applier.live({ epoch: 9, n: 1, event: delta("new-session", "fast", "New text.") });
+  expect(state.questions.map(q => q.id)).toEqual(["new-session"]);
+  expect(state.questions[0].fast.text).toBe("New text.");
+});

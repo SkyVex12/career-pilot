@@ -174,3 +174,88 @@ it("does not schedule another render for duplicate or unknown answer chunks", ()
   expect(run([event], s)).toBe(s);
   expect(run([server({ type: "answer.delta", question_id: "unknown", pass: "fast", sequence: 0, text: "Old" })], s)).toBe(s);
 });
+
+
+describe("transport closure and terminal session events", () => {
+  const chunk = (text: string, sequence: number, id = QID) => server({
+    type: "answer.delta", question_id: id, pass: "fast", text, sequence,
+  });
+  const done = (id = QID, deltaCount = 1) => server({
+    type: "answer.done", question_id: id, pass: "fast", delta_count: deltaCount,
+    memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 },
+  });
+  const late = () => [
+    chunk("Stale text.", 1),
+    done(),
+    server({ type: "answer.error", question_id: QID, pass: "fast", code: "timeout" }),
+    server({ type: "question.cancelled", question_id: QID }),
+    detected(QID2),
+  ];
+
+  it.each<UiEvent>([
+    { kind: "stopped", reason: "ended" },
+    { kind: "connection", state: { state: "stopped", reason: "ended" } },
+  ])("keeps completed text and terminalizes unfinished passes after $kind", terminal => {
+    const before = run([live, detected(QID), chunk("Partial answer.", 0), detected(QID2), chunk("Completed answer.", 0, QID2), done(QID2)]);
+    const stopped = run([terminal], before);
+    expect(stopped.running).toBe(false);
+    expect(stopped.questions[0].fast).toMatchObject({ text: "Partial answer.", done: true, error: "cancelled", stream: undefined });
+    expect(stopped.questions[1].fast).toMatchObject({ text: "Completed answer.", done: true, error: null });
+    expect(run(late(), stopped)).toBe(stopped);
+    expect(run([live], stopped)).toBe(stopped); // queued live cannot revive this epoch
+  });
+
+  it("blocks late delta, completion and error on closed transport, then resumes the same stream", () => {
+    const before = run([live, detected(QID), chunk("First ", 0)]);
+    const closed = run([{ kind: "closed", code: 1006, reason: "network interrupted" }], before);
+    expect(run(late(), closed)).toBe(closed);
+    expect(closed.questions[0].fast).toMatchObject({ text: "First ", done: false, error: null });
+    const resumed = run([
+      { kind: "connection", state: { state: "reconnecting", attempt: 0, in_ms: 250, close_code: 1006 } },
+      { kind: "connection", state: { state: "live", session_id: QID, resumed: true } },
+      chunk("sentence.", 1), done(QID, 2),
+    ], closed);
+    expect(resumed.socketClosed).toBe(false);
+    expect(resumed.questions[0].fast).toMatchObject({ text: "First sentence.", done: true, error: null });
+  });
+
+  it("does not repair a completed gap after stop and accepts a fresh reset", () => {
+    const stopped = run([live, detected(QID), done(QID, 1), { kind: "stopped", reason: "ended" }]);
+    expect(stopped.questions[0].fast.error).toBe("incomplete_stream");
+    expect(run([chunk("Late repair.", 0)], stopped)).toBe(stopped);
+    const fresh = reduce(stopped, { type: "reset", running: true });
+    const next = run([live, detected(QID2), chunk("New session.", 0, QID2)], fresh);
+    expect(next.questions).toHaveLength(1);
+    expect(next.questions[0].fast.text).toBe("New session.");
+  });
+});
+
+
+it("leaves an unused adaptive expert idle after its completed answer stops", () => {
+  const before = run([
+    live,
+    server({ type: "question.detected", question_id: QID, text: "Where are you based?", question_type: "small_talk", confidence: 1, speculative: false, answer_strategy: "adaptive_on_demand" }),
+    server({ type: "answer.delta", question_id: QID, pass: "fast", text: "I am based in Chicago.", sequence: 0 }),
+    server({ type: "answer.done", question_id: QID, pass: "fast", delta_count: 1, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } }),
+  ]);
+  const stopped = run([{ kind: "stopped", reason: "ended" }], before);
+  expect(stopped.questions[0].fast).toMatchObject({ text: "I am based in Chicago.", done: true, error: null });
+  expect(stopped.questions[0].deep).toBe(before.questions[0].deep);
+  expect(stopped.questions[0].deep).toMatchObject({ text: "", done: false, error: null });
+  expect(stopped.questions[0].deepRequested).toBe(false);
+  expect(reduce(stopped, { type: "deep_requested", id: QID })).toBe(stopped);
+  const requested = reduce(before, { type: "deep_requested", id: QID });
+  expect(run([{ kind: "stopped", reason: "ended" }], requested).questions[0].deep).toMatchObject({ done: true, error: "cancelled" });
+});
+
+it.each<UiEvent>([
+  { kind: "stopped", reason: "ended" },
+  { kind: "connection", state: { state: "stopped", reason: "ended" } },
+])("does not revive speaking indicators after $kind", terminal => {
+  const speaking: UiEvent = { kind: "vad", channel: "them", speaking: true, edge_ms: 30 };
+  const stopped = run([live, speaking, terminal]);
+  expect(stopped.speaking).toEqual({ them: false, me: false });
+  expect(run([speaking, { ...speaking, channel: "me" }], stopped)).toBe(stopped);
+  const fresh = reduce(stopped, { type: "reset", running: true });
+  expect(run([live, speaking], fresh).speaking.them).toBe(true);
+});

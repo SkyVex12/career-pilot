@@ -66,3 +66,17 @@ describe("stream rendering", () => {
     expect(answer.querySelector(".ov-caret")).toBeNull();
   });
 });
+
+
+it("stopping a complete adaptive answer does not report an unrequested expert as unavailable", async () => {
+  start();
+  await screen.findByRole("article", { name: "Now: Why Redis?" });
+  await act(() => emit("copilot://event", done("live")));
+  await act(() => emit("copilot://event", { epoch: 1, n: n++, event: { kind: "stopped", reason: "ended" } } satisfies Numbered));
+  const answer = within(screen.getByRole("article", { name: "Now: Why Redis?" })).getByRole("group", { name: "Answer" });
+  expect(answer).toHaveTextContent("I chose Redis");
+  expect(answer.querySelector(".ov-caret")).toBeNull();
+  expect(screen.queryByText(/Expert response unavailable/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Preparing expert response/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Stopped for a newer question/)).not.toBeInTheDocument();
+});
