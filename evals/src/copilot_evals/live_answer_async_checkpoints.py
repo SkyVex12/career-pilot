@@ -32,7 +32,7 @@ READ_KINDS = (
     "dispatch",
     "dispatch-plan",
 )
-ASYNC_POLICY = "atomic-records-async-writer-v1"
+ASYNC_POLICY = "atomic-records-async-request-fence-v2"
 
 
 class CheckpointUnavailable(RuntimeError):
@@ -56,6 +56,24 @@ class Receipt:
 @dataclass(frozen=True)
 class DispatchPermit:
     sequence: int
+
+
+REQUEST_FENCE_POLICY = "request-reservation-fence-v1"
+
+
+@dataclass(frozen=True)
+class RequestDispatchFence:
+    owner: object
+    request_key: str
+    request_receipt: Receipt
+    reservation_key: str
+    reservation_receipt: Receipt
+    target: Receipt
+
+
+@dataclass(frozen=True)
+class RequestDispatchPermit:
+    fence: RequestDispatchFence
 
 
 @dataclass(frozen=True)
@@ -114,6 +132,10 @@ class DurableWriter:
         self._reason: str | None = None
         self._closing = False
         self._last: Receipt | None = None
+        self._dispatch_owner = object()
+        self._record_receipts: dict[tuple[str, str], Receipt] = {}
+        self._request_barriers: list[dict[str, Any]] = []
+        self._omitted_request_barriers = 0
         self._committed = 0
         self._pending_count = self._pending_bytes = 0
         self.peak_count = self.peak_bytes = 0
@@ -220,12 +242,107 @@ class DurableWriter:
             (self._last.sequence if self._last else 0) + 1, concurrent.futures.Future()
         )
         self._last = receipt
+        if operation == "record":
+            self._record_receipts[(kind, key)] = receipt
         self._commands.put_nowait(
             Command(
                 receipt, kind, key, payload, encoded, (encoded - started) * 1000, operation, phase
             )
         )
         return receipt
+
+    def capture_request_dispatch(
+        self, request_key: str, reservation_key: str
+    ) -> RequestDispatchFence:
+        """Capture both accepted versions synchronously after intent and reserve writes."""
+        self.assert_initialized()
+        if self._closing:
+            raise CheckpointUnavailable("checkpoint_writer_closing")
+        if (
+            type(request_key) is not str
+            or not request_key
+            or type(reservation_key) is not str
+            or not reservation_key
+        ):
+            raise StaleDurabilityBarrier("Request and reservation keys are required")
+        request = self._record_receipts.get(("requests", request_key))
+        reservation = self._record_receipts.get(("cost", reservation_key))
+        if request is None or reservation is None:
+            raise StaleDurabilityBarrier("Request and reservation must have accepted writes")
+        target = max((request, reservation), key=lambda receipt: receipt.sequence)
+        return RequestDispatchFence(
+            self._dispatch_owner, request_key, request, reservation_key, reservation, target
+        )
+
+    def _validate_request_fence(self, fence: RequestDispatchFence) -> None:
+        self.assert_initialized()
+        if self._closing:
+            raise CheckpointUnavailable("checkpoint_writer_closing")
+        if type(fence) is not RequestDispatchFence or fence.owner is not self._dispatch_owner:
+            raise StaleDurabilityBarrier("Request fence belongs to another writer")
+        if (
+            type(fence.request_key) is not str
+            or type(fence.reservation_key) is not str
+            or type(fence.request_receipt) is not Receipt
+            or type(fence.reservation_receipt) is not Receipt
+            or type(fence.target) is not Receipt
+            or (
+                self._record_receipts.get(("requests", fence.request_key))
+                is not fence.request_receipt
+            )
+            or (
+                self._record_receipts.get(("cost", fence.reservation_key))
+                is not fence.reservation_receipt
+            )
+        ):
+            raise StaleDurabilityBarrier("A bound request or reservation version changed")
+        target = max(
+            (fence.request_receipt, fence.reservation_receipt),
+            key=lambda receipt: receipt.sequence,
+        )
+        if fence.target is not target:
+            raise StaleDurabilityBarrier("Request fence has an invalid FIFO target")
+
+    async def wait_request_dispatch(self, fence: RequestDispatchFence) -> RequestDispatchPermit:
+        self._validate_request_fence(fence)
+        started = time.perf_counter()
+        outcome = "pending"
+        try:
+            await self._await(fence.target.future)
+            permit = RequestDispatchPermit(fence)
+            self.assert_request_dispatch_ready(permit)
+            outcome = "ready"
+            return permit
+        except BaseException as error:
+            outcome = type(error).__name__
+            raise
+        finally:
+            sample = {
+                "policy": REQUEST_FENCE_POLICY,
+                "outcome": outcome,
+                "target_committed": self._committed >= fence.target.sequence,
+                "at_s": started - self.anchor["perf_counter_s"],
+                "wait_ms": (time.perf_counter() - started) * 1000,
+                "request_key_sha256": hashlib.sha256(fence.request_key.encode()).hexdigest(),
+                "reservation_key_sha256": hashlib.sha256(
+                    fence.reservation_key.encode()
+                ).hexdigest(),
+                "request_sequence": fence.request_receipt.sequence,
+                "reservation_sequence": fence.reservation_receipt.sequence,
+                "target_sequence": fence.target.sequence,
+                "failure_reason": self._reason,
+            }
+            if len(self._request_barriers) < 50000:
+                self._request_barriers.append(sample)
+            else:
+                self._omitted_request_barriers += 1
+
+    def assert_request_dispatch_ready(self, permit: RequestDispatchPermit) -> None:
+        if type(permit) is not RequestDispatchPermit:
+            raise StaleDurabilityBarrier("A request dispatch permit is required")
+        self._validate_request_fence(permit.fence)
+        if self._committed < permit.fence.target.sequence:
+            raise StaleDurabilityBarrier("Request fence is not durably committed")
 
     async def barrier(self) -> DispatchPermit:
         self.assert_initialized()
@@ -357,6 +474,9 @@ class DurableWriter:
                     "anchor": self.anchor,
                     "writes": self._samples,
                     "barriers": self._barriers,
+                    "request_dispatch_policy": REQUEST_FENCE_POLICY,
+                    "request_barriers": self._request_barriers,
+                    "omitted_request_barriers": self._omitted_request_barriers,
                     "omitted_writes": self._omitted_samples,
                     "omitted_barriers": self._omitted_barriers,
                     "peak_pending_records": self.peak_count,
@@ -378,6 +498,9 @@ class DurableWriter:
             "anchor": dict(self.anchor),
             "writes": list(self._samples),
             "barriers": list(self._barriers),
+            "request_dispatch_policy": REQUEST_FENCE_POLICY,
+            "request_barriers": list(self._request_barriers),
+            "omitted_request_barriers": self._omitted_request_barriers,
             "omitted_writes": self._omitted_samples,
             "omitted_barriers": self._omitted_barriers,
             "peak_pending_records": self.peak_count,

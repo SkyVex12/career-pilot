@@ -46,6 +46,7 @@ from copilot_evals.live_answer_async_checkpoints import (
     ASYNC_POLICY,
     AnchoredLoopLagMonitor,
     BufferedRecordStore,
+    CheckpointUnavailable,
     DurableWriter,
     require_async_directory,
 )
@@ -1004,8 +1005,24 @@ class AuditProvider(MeteredProvider):
             if isinstance(self.store, BufferedRecordStore):
                 waiting = time.perf_counter()
                 try:
-                    permit = await self.store.flush()
-                    self.store.writer.assert_dispatch_ready(permit)
+                    if (
+                        not isinstance(self.budget, AuditBudget)
+                        or self.budget.store is not self.store
+                    ):
+                        raise CheckpointUnavailable(
+                            "Request and reservation must share one durable store"
+                        )
+                    fence = self.store.writer.capture_request_dispatch(
+                        record["request_id"], str(ticket)
+                    )
+                    record["durability_fence"] = {
+                        "policy": "request-reservation-fence-v1",
+                        "request_sequence": fence.request_receipt.sequence,
+                        "reservation_sequence": fence.reservation_receipt.sequence,
+                        "target_sequence": fence.target.sequence,
+                    }
+                    permit = await self.store.writer.wait_request_dispatch(fence)
+                    self.store.writer.assert_request_dispatch_ready(permit)
                 finally:
                     record["durability_wait_ms"] = (time.perf_counter() - waiting) * 1000
             self.check_dispatch_open()
@@ -1101,8 +1118,24 @@ class AuditProvider(MeteredProvider):
             if isinstance(self.store, BufferedRecordStore):
                 waiting = time.perf_counter()
                 try:
-                    permit = await self.store.flush()
-                    self.store.writer.assert_dispatch_ready(permit)
+                    if (
+                        not isinstance(self.budget, AuditBudget)
+                        or self.budget.store is not self.store
+                    ):
+                        raise CheckpointUnavailable(
+                            "Request and reservation must share one durable store"
+                        )
+                    fence = self.store.writer.capture_request_dispatch(
+                        record["request_id"], str(ticket)
+                    )
+                    record["durability_fence"] = {
+                        "policy": "request-reservation-fence-v1",
+                        "request_sequence": fence.request_receipt.sequence,
+                        "reservation_sequence": fence.reservation_receipt.sequence,
+                        "target_sequence": fence.target.sequence,
+                    }
+                    permit = await self.store.writer.wait_request_dispatch(fence)
+                    self.store.writer.assert_request_dispatch_ready(permit)
                 finally:
                     record["durability_wait_ms"] = (time.perf_counter() - waiting) * 1000
             self.check_dispatch_open()
