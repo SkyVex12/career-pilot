@@ -26,7 +26,7 @@ pub struct ReleaseConfig {
     /// The update manifest (latest.json) in the public releases bucket.
     pub update_url: String,
     /// The wake function (infra/gcp/wake): it starts the stage's VM, which stops itself when
-    /// idle, and gives its address for the `{host}` in the URLs above (copilot_client::wake).
+    /// idle. Works with fixed domains and legacy `{host}` URLs (copilot_client::wake).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wake_url: Option<String>,
 }
