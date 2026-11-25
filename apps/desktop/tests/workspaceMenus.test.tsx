@@ -60,7 +60,7 @@ it("opens Quick settings on hover without stealing the draft focus, including af
   expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
   await advance(1);
   expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeInTheDocument();
-  expect(screen.getByRole("slider", { name: "Transparency" })).toHaveValue("20");
+  expect(screen.getByRole("slider", { name: "Transparency" })).toHaveValue("80");
   expect(note).toHaveFocus();
 });
 

@@ -1,4 +1,4 @@
-//! Per-monitor overlay layout: where the overlay sits, how big, how see-through, and which
+//! Per-monitor overlay layout: where the overlay sits, how big, and which
 //! view, remembered for each monitor and brought back onto a monitor that still exists when
 //! the one it was on is unplugged. Pure geometry, so it is tested without a window; the Tauri
 //! glue in lib.rs reads the real monitors (their work areas, in physical pixels) and calls in
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 /// The faintest the overlay may go, so a stray opacity step can never dim it to invisible with
 /// no obvious way back.
-pub const MIN_OPACITY: f64 = 0.3;
+pub const MIN_OPACITY: f64 = 0.1;
 pub const MAX_OPACITY: f64 = 1.0;
 pub const OPACITY_STEP: f64 = 0.1;
 
@@ -36,13 +36,14 @@ pub fn step_opacity(v: f64, steps: i32) -> f64 {
 }
 
 /// What the overlay remembers for one monitor: its frame (physical pixels, the monitor's own
-/// coordinates), how see-through it is, and whether it is in compact view.
+/// coordinates) and whether it is in compact view. Opacity remains only for migration.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct MonitorLayout {
     pub x: i32,
     pub y: i32,
     pub w: u32,
     pub h: u32,
+    /// Legacy per-monitor opacity; shared settings now own this preference.
     pub opacity: f64,
     pub compact: bool,
 }
@@ -170,6 +171,8 @@ mod tests {
 
     #[test]
     fn opacity_is_clamped_and_steps_reverse() {
+        assert_eq!(clamp_opacity(0.1), 0.1);
+        assert_eq!(step_opacity(0.2, -1), 0.1);
         assert_eq!(clamp_opacity(2.0), MAX_OPACITY);
         assert_eq!(clamp_opacity(0.0), MIN_OPACITY);
         assert_eq!(clamp_opacity(f64::NAN), MAX_OPACITY);

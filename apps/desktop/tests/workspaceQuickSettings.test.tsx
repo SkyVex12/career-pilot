@@ -28,14 +28,14 @@ async function open() {
   await screen.findByRole("switch", { name: "Stealth mode" });
 }
 
-it("uses the main-window controls and refreshes their state after each change", async () => {
+it("edits shared window controls and refreshes after each change", async () => {
   routes();
   render(<WorkspaceQuickSettings running={false} />);
   await open();
   const dialog = screen.getByRole("dialog", { name: "Quick settings" });
-  expect(within(dialog).getByRole("region", { name: "This window" })).toBeInTheDocument();
-  expect(screen.getByRole("slider", { name: "Transparency" })).toHaveValue("20");
-  expect(screen.getByRole("switch", { name: "Click-through" })).toHaveAccessibleDescription("Clicks pass through this window. Ctrl+Shift+G turns it off.");
+  expect(within(dialog).getByRole("region", { name: "Both windows" })).toBeInTheDocument();
+  expect(screen.getByRole("slider", { name: "Transparency" })).toHaveValue("80");
+  expect(screen.getByRole("switch", { name: "Click-through" })).toHaveAccessibleDescription("Clicks pass through both windows. Ctrl+Shift+G turns it off.");
   await userEvent.click(screen.getByRole("switch", { name: "Keep on top" }));
   await waitFor(() => expect(screen.getByRole("switch", { name: "Keep on top" })).toHaveAttribute("aria-checked", "false"));
   await userEvent.click(screen.getByRole("switch", { name: "Click-through" }));
@@ -43,7 +43,7 @@ it("uses the main-window controls and refreshes their state after each change", 
   const slider = screen.getByRole("slider", { name: "Transparency" });
   fireEvent.change(slider, { target: { value: "40" } });
   fireEvent.pointerUp(slider);
-  await waitFor(() => expect(ipc.calls.find(call => call.cmd === "set_window_opacity")?.args).toEqual({ value: 0.6 }));
+  await waitFor(() => expect(ipc.calls.find(call => call.cmd === "set_window_opacity")?.args).toEqual({ value: 0.4 }));
   expect(ipc.calls.find(call => call.cmd === "set_window_on_top")?.args).toEqual({ on: false });
   expect(ipc.calls.find(call => call.cmd === "set_window_click_through")?.args).toEqual({ on: true });
 });

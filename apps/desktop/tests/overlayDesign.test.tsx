@@ -44,6 +44,15 @@ describe("the approved overlay interactions", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument());
   });
 
+  it("keeps the shared on-top value when a native window rejects the change", async () => {
+    start();
+    ipc.handle("set_overlay_on_top", () => { throw "Window update failed"; });
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Keep on top" }));
+    expect((await screen.findByText("Window update failed")).closest('[role="alert"]')).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Keep on top" })).toBeChecked();
+  });
+
   it("saves Stealth with freshly read settings, preserving unrelated changes", async () => {
     start();
     let current = { ...SETTINGS, stealth: false, mic_device: "first" };

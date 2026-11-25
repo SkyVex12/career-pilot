@@ -1,6 +1,6 @@
 /* The overlay (Overlay.tsx) and History's replay of a call, drawn the same way. Always dark: it
    floats over whatever is on screen. Tokens only (ui/tokens.css, the --ov-* set).
-   Opacity: --ov-alpha (the setting, 0.3 to 1) fades the window's background only; all text
+   Opacity: --ov-alpha (the setting, 0.1 to 1) fades the window's background only; all text
    stays opaque, and each answer card keeps a backing of at least 62%, so it stays readable over light
    content (docs/design/ui-proposal.md, "Overlay rules", 4). Type: --ov-scale (A-/A+) multiplies
    every size through calc(), so wrapping is computed at the real size; nothing is under 12 px. */
@@ -544,25 +544,6 @@ html[data-window="overlay"] #root {
 }
 .ov-get-deep:hover {
   background: rgb(212 213 214 / 0.12);
-}
-.ov-thumb {
-  min-width: 32px;
-  min-height: 32px;
-  border: 1px solid var(--ov-line);
-  border-radius: var(--radius-md);
-  background: transparent;
-  font-size: 14px;
-  cursor: pointer;
-}
-.ov-thumb[aria-pressed="true"] {
-  border-color: var(--ov-fast);
-  background: rgb(255 155 130 / 0.16);
-}
-.ov-thumb:disabled {
-  cursor: default;
-}
-.ov-thumb:disabled:not([aria-pressed="true"]) {
-  opacity: 0.4;
 }
 .refs {
   min-width: 0;
@@ -1161,7 +1142,7 @@ button.ov-watching[aria-expanded="true"] {
 .ov .tx { gap: 8px; }
 .ov .ov-get-deep { border-color: var(--ov-line); color: var(--ov-text-2); font-weight: 400; }
 .ov .ov-get-deep:hover { background: var(--ov-raise); }
-.ov .ov-thumb, .ov .copy { color: var(--ov-text-2); }
+.ov .copy { color: var(--ov-text-2); }
 .ov .ov-jump-top { background: var(--action); color: var(--on-action); }
 .ov .ov-ask { gap: 8px; padding: 8px 16px; flex: none; }
 .ov .ov-ask-input { min-width: 0; min-height: 32px; flex-basis: 100px; border-color: var(--ov-line); background: rgb(var(--surface-2-rgb) / var(--ov-alpha)); }

@@ -2,6 +2,7 @@ import { CaptureProtectionStatus } from "./captureProtection";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, onSettingsChanged, onWorkspaceWindowPrefs, type OverlayPrefs } from "./api";
+import { ReadingSettings, TransparencyControl } from "./WindowSettingControls";
 import { prettyKey } from "./hotkeys";
 import { isMac } from "./platform";
 import { Banner, Button, ConfirmDialog, IconButton, Switch } from "./ui";
@@ -11,9 +12,10 @@ import "./workspaceQuickSettings.css";
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabindex="0"]';
 
-/** Quick controls for this workspace window, alongside the app-wide actions. */
-export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenChange, compact = false }: {
+/** Shared settings, edited from the workspace or its compact toolbar. */
+export function WorkspaceQuickSettings({ running, guest = false, open: controlledOpen, onOpenChange, compact = false }: {
   running: boolean;
+  guest?: boolean;
   /** Reserve a narrow menu below the medium toolbar without restoring the setup page. */
   compact?: boolean;
   open?: boolean;
@@ -216,7 +218,6 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     void loadSettings();
   };
   const busy = saving !== null;
-  const transparency = prefs ? Math.round((1 - prefs.opacity) * 100) : 0;
 
   return <>
     <IconButton ref={gear} label="Quick settings" className="workspace-quick-settings-trigger" icon={<Icon name="settings" size={16} />} size="sm"
@@ -227,24 +228,18 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     {open && createPortal(<div ref={panel} id={id} role="dialog" aria-label="Quick settings" tabIndex={-1} className="workspace-quick-settings" style={position} onKeyDown={onKeyDown}
       onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} onPointerDown={() => { openedByHover.current = false; }}>
       <section aria-labelledby={`${id}-window`} className="workspace-quick-settings-group">
-        <h2 id={`${id}-window`}>This window</h2>
+        <h2 id={`${id}-window`}>Both windows</h2>
         {!prefs && !prefsError && <p role="status">Loading window settings…</p>}
         {prefs && <>
-          <div className="workspace-quick-settings-slider">
-            <label htmlFor={`${id}-transparency`}>Transparency <output aria-hidden="true">{transparency}%</output></label>
-            <input id={`${id}-transparency`} type="range" min={0} max={70} step={5} value={transparency} disabled={busy} aria-valuetext={`${transparency}% transparent`}
-              aria-describedby={`${id}-transparency-hint`} onChange={event => {
-                const opacity = 1 - Number(event.target.value) / 100;
-                setPrefs(current => current && { ...current, opacity });
-                opacityPending.current = opacity;
-                if (opacityTimer.current) clearTimeout(opacityTimer.current);
-                opacityTimer.current = setTimeout(flushOpacity, 160);
-              }} onPointerUp={flushOpacity} onBlur={flushOpacity} />
-            <p id={`${id}-transparency-hint`}>The background fades; text stays solid.</p>
-          </div>
+          <TransparencyControl opacity={prefs.opacity} disabled={busy} onChange={opacity => {
+            setPrefs(current => current && { ...current, opacity });
+            opacityPending.current = opacity;
+            if (opacityTimer.current) clearTimeout(opacityTimer.current);
+            opacityTimer.current = setTimeout(flushOpacity, 160);
+          }} onCommit={flushOpacity} />
           <Switch label="Keep on top" checked={prefs.on_top} disabled={busy} onChange={on => void run("on-top", async () => { await api.setWindowOnTop(on); await loadPrefs(); })} />
           <Switch label="Click-through" checked={prefs.click_through} disabled={busy}
-            hint={<>Clicks pass through this window. {prefs.hotkeys.click_through_off && <>{prettyKey(prefs.hotkeys.click_through_off)} turns it off.</>}</>}
+            hint={<>Clicks pass through both windows. {prefs.hotkeys.click_through_off && <>{prettyKey(prefs.hotkeys.click_through_off)} turns it off.</>}</>}
             onChange={on => void run("click-through", async () => { await api.setWindowClickThrough(on); await loadPrefs(); })} />
         </>}
         {prefsError && <Banner tone="danger">{prefsError}</Banner>}
@@ -261,6 +256,9 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
         {settingsError && <Banner tone="danger">{settingsError}</Banner>}
         {(prefsError || settingsError) && <Button size="sm" variant="ghost" onClick={retry} disabled={busy}>Retry settings</Button>}
       </section>
+      <section className="workspace-quick-settings-group" aria-label="Reading settings">
+        <ReadingSettings running={running} guest={guest} busy={busy} run={action => void run("reading", action)} />
+      </section>
       {actionError && <Banner tone="danger">{actionError}</Banner>}
       <div className="workspace-quick-settings-actions">
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run("settings", async () => { await api.openMainSettings(); changeOpen(false, true); })}>All settings…</Button>
@@ -270,8 +268,8 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
         }}>Quit CoRuby</Button>
       </div>
     </div>, document.body)}
-    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit CoRuby" onConfirm={() => api.quitApp()}>
-      The call stops here. It can be opened again from History while it is still running.
+    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title={guest ? "Stop assisting and quit CoRuby?" : "Quit during a call?"} confirmLabel="Quit CoRuby" onConfirm={() => api.quitApp()}>
+      {guest ? "You’ll stop assisting. The other person’s call will continue." : "Your call will end and CoRuby will close."}
     </ConfirmDialog>
   </>;
 }

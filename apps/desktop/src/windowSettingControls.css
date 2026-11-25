@@ -1,0 +1,7 @@
+.window-transparency, .window-reading-settings, .window-answer-format { display: grid; gap: 8px; }
+.window-transparency input { width: 100%; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.window-transparency input:disabled { cursor: default; opacity: .55; }
+.window-transparency-ends { display: flex; justify-content: space-between; color: var(--text-3); font-size: 12px; line-height: 16px; }
+.window-reading-settings { gap: 16px; }
+.window-text-size, .window-text-size > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.window-text-size .ui-btn { padding-inline: 8px; min-width: 28px; }

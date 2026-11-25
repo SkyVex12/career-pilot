@@ -1,3 +1,4 @@
+import { useAnswerStyle } from "./viewPreferences";
 import { NotificationVisibility } from "./ui/NotificationScope";
 import { CompanionDevices } from "./CompanionDevices";
 import { prepareForRealCall } from "./practiceAudio";
@@ -67,7 +68,6 @@ const ANSWER_STYLES = [
 ] as const;
 
 const LAST_COMPANY = "copilot.lastCompany";
-const LAST_ANSWER_STYLE = "copilot.answerStyle";
 
 function read(key: string): string | null {
   try {
@@ -268,12 +268,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const [meetingTitle, setMeetingTitle] = useState<string | null>(null);
   const [spokenLanguage, setSpokenLanguage] = useState("en");
   const [languageReady, setLanguageReady] = useState(false);
-  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>(() => read(LAST_ANSWER_STYLE) === "paragraph" ? "paragraph" : "bullets");
-  useEffect(() => {
-    const changed = (event: StorageEvent) => { if (event.key === LAST_ANSWER_STYLE) setAnswerStyle(event.newValue === "paragraph" ? "paragraph" : "bullets"); };
-    window.addEventListener("storage", changed);
-    return () => window.removeEventListener("storage", changed);
-  }, []);
+  const [answerStyle, setAnswerStyle] = useAnswerStyle(running);
   const shown = useShowCount(active);
   const catalog = useCatalog(tokenSet && active);
   const reloadCatalog = catalog.reload;
@@ -340,7 +335,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   }, [application?.id, shown]);
   const savedDetail = (value: ApplicationDetail) => { setDetail(value); catalog.includeApplication(value); };
   const changeMode = (value: Mode) => { setMode(value); if (running) api.setMode(value).catch(() => undefined); };
-  const changeStyle = (value: AnswerStyle) => { setAnswerStyle(value); write(LAST_ANSWER_STYLE, value); if (running) api.setAnswerStyle(value).catch(() => undefined); };
+  const changeStyle = (value: AnswerStyle) => { void setAnswerStyle(value).catch(error => setMessage(String(error))); };
   const start = async () => {
     if (busy || joining) return;
     if (!languageReady) { toast({ tone: "error", text: "Choose an available language in Customize before starting." }); return; }

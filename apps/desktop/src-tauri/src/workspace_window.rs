@@ -1,14 +1,11 @@
-//! Startup sizing and session-only presentation preferences for the main workspace window.
+//! Main-window geometry and temporary consent overrides for the shared window preferences.
 
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Mutex, atomic::Ordering};
 
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
 use tauri_plugin_global_shortcut::Shortcut;
 
-use crate::{AppState, OPEN_CALL_EVENT, OverlayHotkeys, OverlayPrefs, Res, hotkeys::Action, layout, stealth};
+use crate::{AppState, OPEN_CALL_EVENT, OverlayPrefs, Res, hotkeys::Action, stealth};
 
 // Apply once before the first presentation. Page changes and compact-mode transitions
 // must never replace a size chosen by the user.
@@ -52,8 +49,6 @@ pub(crate) fn fit_initial_window(window: &WebviewWindow) -> Res<()> {
 pub(crate) const EVENT: &str = "copilot://workspace-window";
 
 pub(crate) struct WorkspaceWindowState {
-    opacity: Mutex<f64>,
-    click_through: AtomicBool,
     control_prompt: Mutex<Option<ControlPrompt>>,
 }
 
@@ -64,11 +59,7 @@ struct ControlPrompt {
 
 impl Default for WorkspaceWindowState {
     fn default() -> Self {
-        Self {
-            opacity: Mutex::new(1.0),
-            click_through: AtomicBool::new(false),
-            control_prompt: Mutex::new(None),
-        }
+        Self { control_prompt: Mutex::new(None) }
     }
 }
 
@@ -85,40 +76,17 @@ fn registered_recovery(shortcuts: &[(Shortcut, Action)]) -> Option<Shortcut> {
     shortcuts.iter().find(|(_, action)| *action == Action::ClickThroughOff).map(|(shortcut, _)| *shortcut)
 }
 
-fn recovery_shortcut(app: &AppHandle) -> Option<Shortcut> {
+pub(crate) fn recovery_shortcut(app: &AppHandle) -> Option<Shortcut> {
     let state = app.state::<AppState>();
     registered_recovery(&state.overlay.shortcuts.lock().unwrap())
 }
 
 fn prefs(window: &WebviewWindow) -> Res<OverlayPrefs> {
     require_workspace(window)?;
-    let state = window.state::<WorkspaceWindowState>();
-    let opacity = *state.opacity.lock().unwrap();
-    let click_through = state.click_through.load(Ordering::SeqCst);
-    let saved_on_top = state.control_prompt.lock().unwrap().as_ref().map(|prompt| prompt.restore_on_top);
-    let on_top = match saved_on_top {
-        Some(value) => value,
-        None => window.is_always_on_top().map_err(|error| error.to_string())?,
-    };
-    Ok(OverlayPrefs {
-        opacity,
-        compact: false,
-        click_through,
-        on_top,
-        // The other shortcuts still control the separate live overlay.
-        hotkeys: OverlayHotkeys {
-            toggle_overlay: String::new(),
-            click_through: String::new(),
-            click_through_off: recovery_shortcut(window.app_handle())
-                .map(|shortcut| shortcut.to_string())
-                .unwrap_or_default(),
-            opacity_up: String::new(),
-            opacity_down: String::new(),
-        },
-    })
+    Ok(crate::build_prefs(window.app_handle(), false))
 }
 
-fn emit_prefs(window: &WebviewWindow) -> Res<()> {
+pub(crate) fn emit_prefs(window: &WebviewWindow) -> Res<()> {
     window.emit_to(window.label(), EVENT, prefs(window)?).map_err(|error| error.to_string())
 }
 
@@ -130,14 +98,18 @@ pub(crate) fn window_prefs(window: WebviewWindow) -> Res<OverlayPrefs> {
 #[tauri::command]
 pub(crate) fn set_window_opacity(window: WebviewWindow, value: f64) -> Res<()> {
     require_workspace(&window)?;
-    *window.state::<WorkspaceWindowState>().opacity.lock().unwrap() = layout::clamp_opacity(value);
-    // The transparent WebView paints its surfaces using this alpha; text remains opaque.
-    emit_prefs(&window)
+    crate::set_overlay_opacity(window.app_handle().clone(), value);
+    Ok(())
 }
 
 #[tauri::command]
 pub(crate) fn set_window_on_top(window: WebviewWindow, on: bool) -> Res<()> {
     require_workspace(&window)?;
+    crate::set_overlay_on_top(window.app_handle().clone(), on)
+}
+
+/// Consent stays interactive and above other windows while preserving the shared choice.
+pub(crate) fn apply_on_top(window: &WebviewWindow, on: bool) -> Res<()> {
     let state = window.state::<WorkspaceWindowState>();
     let prompt = {
         let mut active = state.control_prompt.lock().unwrap();
@@ -146,26 +118,29 @@ pub(crate) fn set_window_on_top(window: WebviewWindow, on: bool) -> Res<()> {
         }
         active.is_some()
     };
-    window.set_always_on_top(on || prompt).map_err(|error| error.to_string())?;
-    emit_prefs(&window)
+    window.set_always_on_top(on || prompt).map_err(|error| error.to_string())
 }
 
-fn apply_click_through(window: &WebviewWindow, on: bool) -> Res<()> {
-    require_workspace(window)?;
-    if on && recovery_shortcut(window.app_handle()).is_none() {
-        return Err(
-            "Click-through needs a working recovery shortcut. Set a Click-through off key in Settings first."
-                .into(),
-        );
+pub(crate) fn apply_click_through(window: &WebviewWindow, on: bool) -> Res<()> {
+    let prompt = window.state::<WorkspaceWindowState>().control_prompt.lock().unwrap().is_some();
+    window.set_ignore_cursor_events(effective_click_through(on, prompt)).map_err(|error| error.to_string())
+}
+
+/// Attempt both native windows even when one fails. Recovery must still reach the other.
+pub(crate) fn update_both(
+    previous: bool,
+    next: bool,
+    rollback: bool,
+    mut apply: impl FnMut(&str, bool) -> Res<()>,
+) -> Res<()> {
+    let main = apply("main", next);
+    let overlay = apply("overlay", next);
+    let result = main.and(overlay);
+    if result.is_err() && rollback {
+        let _ = apply("main", previous);
+        let _ = apply("overlay", previous);
     }
-    let state = window.state::<WorkspaceWindowState>();
-    // Never hold application locks while calling into the native event loop.
-    let prompt = state.control_prompt.lock().unwrap().is_some();
-    window
-        .set_ignore_cursor_events(effective_click_through(on, prompt))
-        .map_err(|error| error.to_string())?;
-    state.click_through.store(on, Ordering::SeqCst);
-    emit_prefs(window)
+    result
 }
 
 fn effective_click_through(preference: bool, prompt: bool) -> bool {
@@ -184,7 +159,9 @@ fn finish_control_prompt(window: &WebviewWindow, key: &str) -> Res<()> {
     let previous = take_matching_prompt(&mut state.control_prompt.lock().unwrap(), key);
     if let Some(previous) = previous {
         // Restore both latest preferences, including a recovery hotkey used during the prompt.
-        let clicks = window.set_ignore_cursor_events(state.click_through.load(Ordering::SeqCst));
+        let clicks = window.set_ignore_cursor_events(
+            window.state::<AppState>().overlay.click_through.load(Ordering::SeqCst),
+        );
         let top = window.set_always_on_top(previous.restore_on_top);
         clicks.map_err(|e| e.to_string())?;
         top.map_err(|e| e.to_string())?;
@@ -282,24 +259,59 @@ pub(crate) async fn screen_control_prompt(
 
 #[tauri::command]
 pub(crate) fn set_window_click_through(window: WebviewWindow, on: bool) -> Res<()> {
-    apply_click_through(&window, on)
+    require_workspace(&window)?;
+    crate::apply_click_through(window.app_handle(), on)
 }
 
 /// The existing global recovery key clears both the workspace and live overlay.
 /// Also call this before shortcuts are re-registered, so a failed binding cannot strand it.
 pub(crate) fn clear_click_through(app: &AppHandle) -> Res<()> {
-    let Some(state) = app.try_state::<WorkspaceWindowState>() else { return Ok(()) };
-    if !state.click_through.load(Ordering::SeqCst) {
+    let Some(state) = app.try_state::<AppState>() else { return Ok(()) };
+    if !state.overlay.click_through.load(Ordering::SeqCst) {
         return Ok(());
     }
-    let window = app.get_webview_window("main").ok_or("No main workspace window.")?;
-    apply_click_through(&window, false)
+    crate::apply_click_through(app, false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn shared_flags_apply_to_both_windows_and_roll_back_a_failed_change() {
+        let mut values = [false, false];
+        update_both(false, true, true, |label, on| {
+            values[usize::from(label == "overlay")] = on;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(values, [true, true]);
+        let result = update_both(true, false, true, |label, on| {
+            if label == "overlay" && !on {
+                return Err("native failure".into());
+            }
+            values[usize::from(label == "overlay")] = on;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(values, [true, true]);
+    }
+
+    #[test]
+    fn click_through_recovery_still_reaches_overlay_when_main_fails() {
+        let mut reached_overlay = false;
+        let result = update_both(true, false, false, |label, on| {
+            assert!(!on);
+            if label == "main" {
+                return Err("main unavailable".into());
+            }
+            reached_overlay = true;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(reached_overlay);
+    }
 
     #[test]
     fn startup_size_is_bounded_by_the_usable_display_at_any_scale() {

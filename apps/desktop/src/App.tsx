@@ -1,3 +1,4 @@
+import { useTextScaleKeys, useViewPrefs } from "./viewPreferences";
 import { SessionNoteDrafts } from "./SessionNoteDrafts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -39,7 +40,7 @@ export function useWorkspaceWindowOpacity() {
     let revision = 0;
     let unlisten: (() => void) | undefined;
     const apply = (opacity: number) => {
-      if (!disposed && Number.isFinite(opacity)) document.documentElement.style.setProperty("--workspace-opacity", String(Math.max(0.3, Math.min(1, opacity))));
+      if (!disposed && Number.isFinite(opacity)) document.documentElement.style.setProperty("--workspace-opacity", String(Math.max(0.1, Math.min(1, opacity))));
     };
     const load = async () => {
       try {
@@ -59,6 +60,12 @@ export function useWorkspaceWindowOpacity() {
 
 export default function App() {
   useWorkspaceWindowOpacity();
+  const { textScale, stepText } = useViewPrefs();
+  useTextScaleKeys(stepText);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-text-scale", String(textScale));
+    return () => { document.documentElement.style.removeProperty("--app-text-scale"); };
+  }, [textScale]);
   const [session, dispatch] = useSession();
   // Guest seats' voice lives in this window alone (voice.ts); the overlay drives it by events.
   useEffect(() => (inTauri ? startVoice() : undefined), []);

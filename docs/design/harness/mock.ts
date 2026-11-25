@@ -6,7 +6,7 @@ import { productionCommand } from "./production";
 //   data     full (default) | empty | loading | error | long | locked | signedout
 //   call     none (default) | midcall | stream | ended | degraded | reconnecting | session_active
 //   update   none (default) | downloading | ready
-//   opacity  the overlay's opacity, 0.3 to 1        compact=1   click-through: ct=1
+//   opacity  shared window opacity, 0.1 to 1        compact=1   click-through: ct=1
 //   layout   split (default) | stacked              scale       text size, e.g. 1.3
 //   dev=1    a development build (shows the environment and dev token settings)
 //
@@ -34,6 +34,26 @@ try {
   // a private window: defaults
 }
 
+// Simulate the shared native preference broadcasts across two browser windows.
+let windowPrefs = {
+  opacity: Number(q.get("opacity") ?? 1), compact: q.get("compact") === "1",
+  click_through: q.get("ct") === "1", on_top: true,
+  hotkeys: { toggle_overlay: "CommandOrControl+Shift+O", click_through: "CommandOrControl+Shift+T", click_through_off: "CommandOrControl+Shift+G", opacity_up: "CommandOrControl+Shift+Up", opacity_down: "CommandOrControl+Shift+Down" },
+};
+const preferenceChannel = new BroadcastChannel("coruby-harness-window-settings");
+const broadcastWindowPrefs = async () => {
+  await emit("copilot://workspace-window", windowPrefs);
+  await emit("copilot://overlay", windowPrefs);
+};
+preferenceChannel.onmessage = event => {
+  windowPrefs = { ...windowPrefs, ...event.data };
+  void broadcastWindowPrefs();
+};
+async function updateWindowPrefs(next: Partial<typeof windowPrefs>) {
+  windowPrefs = { ...windowPrefs, ...next };
+  preferenceChannel.postMessage(next);
+  await broadcastWindowPrefs();
+}
 // --- The session's event stream --------------------------------------------------------------
 
 let n = 0;
@@ -275,14 +295,13 @@ mockIPC(
       case "live_status":
         return { running: call !== "none" && call !== "ended", session_id: "live-1", levels: { them_rms: 0.08, me_rms: 0.02, them_speech: 0.9, me_speech: 0.1, them_underruns: 0, me_underruns: 0 }, stats: null };
       case "window_prefs":
-      case "overlay_prefs":
-        return {
-          opacity: Number(q.get("opacity") ?? 1),
-          compact: q.get("compact") === "1",
-          click_through: q.get("ct") === "1",
-          on_top: true,
-          hotkeys: { toggle_overlay: "CommandOrControl+Shift+O", click_through: "CommandOrControl+Shift+T", click_through_off: "CommandOrControl+Shift+G", opacity_up: "CommandOrControl+Shift+Up", opacity_down: "CommandOrControl+Shift+Down" },
-        };
+      case "overlay_prefs": return { ...windowPrefs };
+      case "set_window_opacity":
+      case "set_overlay_opacity": return updateWindowPrefs({ opacity: Number(a.value) });
+      case "set_window_on_top":
+      case "set_overlay_on_top": return updateWindowPrefs({ on_top: Boolean(a.on) });
+      case "set_window_click_through":
+      case "set_click_through": return updateWindowPrefs({ click_through: Boolean(a.on) });
       case "api_call":
         return rest(String(a.method), String(a.path), a.body);
       default:
