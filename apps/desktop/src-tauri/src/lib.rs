@@ -9,6 +9,7 @@
 mod background;
 mod call_window;
 mod compact_window;
+mod event_delivery;
 mod history;
 mod hotkeys;
 mod layout;
@@ -54,6 +55,7 @@ use copilot_client::protocol::{
     AnswerMode, AnswerStyle, Mode, ResponseLength, ScreenImage, ScreenImageMediaType,
 };
 use copilot_client::wake::{self, Progress};
+use event_delivery::OrderedDelivery;
 use history::History;
 use hotkeys::Action;
 use layout::MonitorLayout;
@@ -114,6 +116,7 @@ struct AppState {
     /// A guest seat on someone else's call (net/seat.rs); never at the same time as `engine`.
     seat: Mutex<Option<SeatHandle>>,
     history: Arc<Mutex<History>>,
+    event_delivery: Arc<OrderedDelivery<Value>>,
     /// `desktop-<version>`: the gateway's client_version and the API's x-copilot-client.
     client: String,
     /// The app's clock for the update schedule (release::schedule), and what the user did.
@@ -1077,8 +1080,13 @@ async fn set_profile(app: AppHandle, state: State<'_, AppState>, profile: Option
         s.last_session_id = None;
     });
     state.data_cache.clear();
-    let reset = state.history.lock().unwrap().reset_context();
-    let _ = app.emit(EVENT, reset);
+    let elected = {
+        let mut history = state.history.lock().unwrap();
+        state.event_delivery.enqueue(history.reset_context())
+    };
+    if elected {
+        drain_events(&app, &state.event_delivery);
+    }
     Ok(())
 }
 
@@ -1129,16 +1137,33 @@ struct StartRequest {
 
 /// Events are numbered per session (`n`), so a window that replays the snapshot applies only
 /// the live events after it.
-fn emit(app: &AppHandle, history: &Mutex<History>, epoch: u64, event: &UiEvent) {
+fn drain_events(app: &AppHandle, delivery: &OrderedDelivery<Value>) {
+    delivery.drain(|event| {
+        let _ = app.emit(EVENT, event);
+    });
+}
+
+fn emit(
+    app: &AppHandle,
+    history: &Mutex<History>,
+    delivery: &OrderedDelivery<Value>,
+    epoch: u64,
+    event: &UiEvent,
+) {
     let Ok(event) = serde_json::to_value(event) else { return };
-    let n = {
+    let elected = {
         let mut history = history.lock().unwrap();
         if history.epoch() != epoch {
             return;
         }
-        history.push(event.clone())
+        let n = history.push(event.clone());
+        // Number assignment and enqueue are atomic across audio and network sinks.
+        delivery.enqueue(serde_json::json!({ "n": n, "epoch": epoch, "event": event }))
     };
-    let _ = app.emit(EVENT, serde_json::json!({ "n": n, "epoch": epoch, "event": event }));
+    // Tauri invokes native listeners synchronously. Never hold history while emitting.
+    if elected {
+        drain_events(app, delivery);
+    }
 }
 
 /// The server's message when the stage requires a Career-OS link (copilot_core.careeros).
@@ -1299,6 +1324,7 @@ async fn launch(
     let sink = {
         let app = app.clone();
         let history = state.history.clone();
+        let delivery = state.event_delivery.clone();
         Arc::new(move |event: UiEvent| {
             if history.lock().unwrap().epoch() != epoch {
                 return;
@@ -1323,7 +1349,7 @@ async fn launch(
             if let UiEvent::Stopped { reason: StopReason::Outdated } = &event {
                 outdated(&app, "the gateway closed the session with 4426");
             }
-            emit(&app, &history, epoch, &event);
+            emit(&app, &history, &delivery, epoch, &event);
         })
     };
     let engine = Engine::start(config, tokens, parts, sink).map_err(|e| e.to_string())?;
@@ -1652,7 +1678,8 @@ async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoin
     let sink = {
         let app = app.clone();
         let history = state.history.clone();
-        Arc::new(move |event: UiEvent| emit(&app, &history, epoch, &event))
+        let delivery = state.event_delivery.clone();
+        Arc::new(move |event: UiEvent| emit(&app, &history, &delivery, epoch, &event))
     };
     let params = SeatParams {
         url,
@@ -2309,6 +2336,7 @@ pub fn run() {
                 engine: Mutex::new(None),
                 seat: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
+                event_delivery: Arc::new(OrderedDelivery::default()),
                 client: format!("desktop-{version}"),
                 started: Instant::now(),
                 activity: Mutex::new(Activity::default()),
