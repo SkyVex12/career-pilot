@@ -244,6 +244,7 @@ export function Shell({
               </CompactWindowRegistration.Provider>
             </ProfileSwitchContext.Provider>
           </div>
+          {version && <footer className="workspace-version" aria-label="App version"><span>v{version}</span></footer>}
         </div>
       </main>
     </div>
