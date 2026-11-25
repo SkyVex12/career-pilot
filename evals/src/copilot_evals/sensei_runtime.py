@@ -61,9 +61,15 @@ class Budget:
             if (directory / "budget-limit.json").exists()
             else 2.95
         )
-        self.entries: list[dict[str, Any]] = (
-            json.loads(self.path.read_text("utf-8")) if self.path.exists() else []
-        )
+        self.entries: list[dict[str, Any]] = self.load_entries()
+
+    def load_entries(self) -> list[dict[str, Any]]:
+        """Load the authoritative ledger; legacy runners retain their JSON array."""
+        return json.loads(self.path.read_text("utf-8")) if self.path.exists() else []
+
+    def checkpoint(self, ticket: int) -> None:
+        """Persist a changed ticket; specialized runners may use atomic individual records."""
+        save(self.path, self.entries)
 
     @property
     def total(self) -> float:
@@ -111,8 +117,9 @@ class Budget:
                 else "uncached input with existing provider allowance",
             }
         )
-        save(self.path, self.entries)
-        return len(self.entries) - 1
+        ticket = len(self.entries) - 1
+        self.checkpoint(ticket)
+        return ticket
 
     def finish(self, ticket: int, done: LLMDone) -> None:
         u = done.usage
@@ -135,7 +142,7 @@ class Budget:
             self.entries[ticket].update(
                 charged_usd=float(value), status="usage", pricing_missing=False
             )
-        save(self.path, self.entries)
+        self.checkpoint(ticket)
 
 
 class MeteredProvider:
@@ -155,7 +162,7 @@ class MeteredProvider:
             self.budget.entries[ticket].update(
                 charged_usd=0.0, status="failed_before_submission", error_types=causes
             )
-            save(self.budget.path, self.budget.entries)
+            self.budget.checkpoint(ticket)
 
     async def warm(self, model: str) -> None:
         await self.inner.warm(model)

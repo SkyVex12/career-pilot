@@ -31,6 +31,12 @@ from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Rou
 from copilot_core.packs import NodeRef
 from copilot_core.providers import close_providers, make_providers
 from copilot_evals.live_answer_artifacts import DispatchJournal, run_lock, source_archive
+from copilot_evals.live_answer_checkpoints import (
+    POLICY,
+    LoopLagMonitor,
+    RecordDispatchJournal,
+    RecordStore,
+)
 from copilot_evals.live_answer_eval import Run, fingerprint
 from copilot_evals.live_answer_variants import (
     EvaluationEngine,
@@ -597,7 +603,10 @@ class BudgetBlocked(ValueError):
 
 
 class AuditBudget(Budget):
-    def __init__(self, directory: Path, settings: Any, limit: float):
+    def __init__(
+        self, directory: Path, settings: Any, limit: float, *, store: RecordStore | None = None
+    ):
+        self.store = store
         super().__init__(directory, settings, limit)
         self.blocked_trials: set[str] = set()
         self.blocked = False
@@ -611,9 +620,18 @@ class AuditBudget(Budget):
                 self.blocked_trials.add(TRIAL.get())
                 raise BudgetBlocked("Budget prevented dispatch") from error
             raise
-        self.entries[ticket].update(trial_id=TRIAL.get(), purpose="answer")
-        save(self.path, self.entries)
         return ticket
+
+    def load_entries(self) -> list[dict[str, Any]]:
+        return self.store.read("cost") if self.store is not None else super().load_entries()
+
+    def checkpoint(self, ticket: int) -> None:
+        self.entries[ticket].setdefault("trial_id", TRIAL.get())
+        self.entries[ticket].setdefault("purpose", "answer")
+        if self.store is not None:
+            self.store.put("cost", str(ticket), self.entries[ticket])
+        else:
+            super().checkpoint(ticket)
 
 
 class AdmissionBlocked(Exception):
@@ -720,16 +738,24 @@ class AuditProvider(MeteredProvider):
         directory: Path,
         *,
         admission: ProviderAdmission | None = None,
+        store: RecordStore | None = None,
     ):
         super().__init__(provider, budget)
         self.requests, self.directory = requests, directory
-        self.admission = admission
+        self.admission, self.store = admission, store
+
+    def checkpoint(self, record: dict[str, Any]) -> None:
+        if self.store is not None:
+            self.store.put("requests", record["request_id"], record)
+        else:
+            save(self.directory / "request-identities.json", self.requests)
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> AsyncGenerator[str | LLMDone]:
         started = time.monotonic()
         record: dict[str, Any] = {
+            "request_id": str(uuid4()),
             "started_epoch_s": time.time(),
             "trial_id": TRIAL.get(),
             "model": model,
@@ -741,12 +767,12 @@ class AuditProvider(MeteredProvider):
         }
         admitted = False
         self.requests.append(record)
-        save(self.directory / "request-identities.json", self.requests)
+        self.checkpoint(record)
         try:
             record["admission_wait_ms"] = await self.admission.enter() if self.admission else 0.0
             admitted = True
             record.update(status="started", dispatch_admitted=True, admitted_epoch_s=time.time())
-            save(self.directory / "request-identities.json", self.requests)
+            self.checkpoint(record)
             ticket = self.budget.reserve(
                 model,
                 asdict(req),
@@ -786,7 +812,7 @@ class AuditProvider(MeteredProvider):
             if admitted and self.admission is not None:
                 self.admission.leave()
             record["elapsed_s"] = time.monotonic() - started
-            save(self.directory / "request-identities.json", self.requests)
+            self.checkpoint(record)
 
 
 def experiment_identity(
@@ -1048,6 +1074,11 @@ async def execute_live(
     identity["answer_style"] = getattr(args, "answer_style", "bullets")
     identity["response_length"] = getattr(args, "response_length", "default")
     identity_path = directory / "identity.json"
+    use_records = (
+        directory / "checkpoint-records" / "manifest.json"
+    ).exists() or not identity_path.exists()
+    if use_records:
+        identity["checkpoint_policy"] = POLICY
     if identity_path.exists():
         previous_identity = json.loads(identity_path.read_text("utf-8"))
         if not previous_identity.get("source_archive"):
@@ -1086,32 +1117,53 @@ async def execute_live(
             for block in blocks
         ],
     )
+    store = RecordStore(directory) if use_records else None
+    if store is not None:
+        store.on_error = lambda: admission.stop("checkpoint_error")
     budget = AuditBudget(
-        directory, settings, limit=math.inf if args.max_cost is None else args.max_cost
+        directory,
+        settings,
+        limit=math.inf if args.max_cost is None else args.max_cost,
+        store=store,
     )
     initial_cost = budget.total
     request_path = directory / "request-identities.json"
     requests: list[dict[str, Any]] = (
-        json.loads(request_path.read_text("utf-8")) if request_path.exists() else []
+        store.read("requests")
+        if store is not None
+        else json.loads(request_path.read_text("utf-8"))
+        if request_path.exists()
+        else []
     )
     fault_path = directory / "synthetic-faults.json"
     prior_faults: list[dict[str, Any]] = (
-        json.loads(fault_path.read_text("utf-8")) if fault_path.exists() else []
+        store.read("faults")
+        if store is not None
+        else json.loads(fault_path.read_text("utf-8"))
+        if fault_path.exists()
+        else []
     )
     fault_records = {row["fault_id"]: row for row in prior_faults}
 
     def record_fault(entry: dict[str, Any]) -> None:
         fault_records[entry["fault_id"]] = dict(entry)
-        save(fault_path, list(fault_records.values()))
+        if store is not None:
+            store.put("faults", entry["fault_id"], entry)
+        else:
+            save(fault_path, list(fault_records.values()))
 
     raw_providers = make_providers(settings, timeout_s=args.timeout)
     providers = [
-        AuditProvider(provider, budget, requests, directory, admission=admission)
+        AuditProvider(provider, budget, requests, directory, admission=admission, store=store)
         for provider in raw_providers
     ]
     attempt_path = directory / "attempt-events.json"
     attempt_events: list[dict[str, Any]] = (
-        json.loads(attempt_path.read_text("utf-8")) if attempt_path.exists() else []
+        store.read("attempts")
+        if store is not None
+        else json.loads(attempt_path.read_text("utf-8"))
+        if attempt_path.exists()
+        else []
     )
 
     def on_attempt(event: AttemptEvent) -> None:
@@ -1121,7 +1173,10 @@ async def execute_live(
         if condition and condition.synthetic_fault is not None and event.job == "fast":
             entry.update(synthetic_fault=True, actual_provider_dispatched=False)
         attempt_events.append(entry)
-        save(attempt_path, attempt_events)
+        if store is not None:
+            store.put("attempts", f"{event.attempt_id}:{event.status}", entry)
+        else:
+            save(attempt_path, attempt_events)
 
     routers = {
         strategy: build_router(
@@ -1137,19 +1192,54 @@ async def execute_live(
         validate_route_prices(router, conditions[condition].settings)
         apply_synthetic_fault(router, conditions[condition], record_fault)
     target = directory / "trials.json"
-    results: list[dict[str, Any]] = json.loads(target.read_text("utf-8")) if target.exists() else []
-    save(target, results)
+    results: list[dict[str, Any]] = (
+        store.read("trials")
+        if store is not None
+        else json.loads(target.read_text("utf-8"))
+        if target.exists()
+        else []
+    )
+    if store is None:
+        save(target, results)
     have = {(result["id"], result["architecture"], result["rep"]) for result in results}
     if len(have) != len(results):
         raise ValueError("Duplicate completed trial identity")
-    journal = DispatchJournal(
-        directory,
+    journal_arguments = (
         [f"{case['id']}:{strategy}:{rep}" for case, strategy, rep in planned],
         {f"{identifier}:{strategy}:{rep}" for identifier, strategy, rep in have},
         {str(row["trial_id"]) for row in requests if row.get("trial_id")}
         | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")}
         | {str(row["trial_id"]) for row in fault_records.values() if row.get("trial_id")},
     )
+    journal = (
+        RecordDispatchJournal(store, *journal_arguments)
+        if store is not None
+        else DispatchJournal(directory, *journal_arguments)
+    )
+
+    def write_progress() -> None:
+        save(
+            directory / "progress.json",
+            {
+                "completed": len(results),
+                "total": len(planned),
+                "cost_start_usd": initial_cost,
+                "cost_upper_usd": budget.total,
+                "failures": sum(
+                    row.get("status") == "provider_or_engine_failure" for row in results
+                ),
+                "budget_blocked_trials": sum(
+                    row.get("status") == "budget_blocked" for row in results
+                ),
+                "not_started": sum(state == "not_started" for state in journal.states.values()),
+                "in_flight": sum(state == "in_flight" for state in journal.states.values()),
+                "interrupted_outcome_unknown": sum(
+                    state == "ambiguous" for state in journal.states.values()
+                ),
+                "circuit_reason": circuit.reason,
+                "provider_admission": admission.snapshot(),
+            },
+        )
 
     async def run_one(case: dict[str, Any], strategy: str, rep: int) -> None:
         if (case["id"], strategy, rep) in have:
@@ -1206,30 +1296,12 @@ async def execute_live(
         if circuit.reason:
             admission.stop(circuit.reason)
         results.append(result)
-        save(target, results)
+        if store is not None:
+            store.put("trials", trial_id, result)
+        else:
+            save(target, results)
         journal.finish(trial_id)
-        save(
-            directory / "progress.json",
-            {
-                "completed": len(results),
-                "total": len(planned),
-                "cost_start_usd": initial_cost,
-                "cost_upper_usd": budget.total,
-                "failures": sum(
-                    row.get("status") == "provider_or_engine_failure" for row in results
-                ),
-                "budget_blocked_trials": sum(
-                    row.get("status") == "budget_blocked" for row in results
-                ),
-                "not_started": sum(state == "not_started" for state in journal.states.values()),
-                "in_flight": sum(state == "in_flight" for state in journal.states.values()),
-                "interrupted_outcome_unknown": sum(
-                    state == "ambiguous" for state in journal.states.values()
-                ),
-                "circuit_reason": circuit.reason,
-                "provider_admission": admission.snapshot(),
-            },
-        )
+        write_progress()
 
     if not getattr(args, "skip_connectivity_check", False):
         health = await connectivity_check(settings)
@@ -1237,13 +1309,37 @@ async def execute_live(
         if not health["ready"]:
             circuit.reason = "connectivity_preflight"
 
+    monitor = LoopLagMonitor()
+    if store is not None:
+        store.phase = "active_workers"
+    await monitor.start()
     try:
         await bounded_blocks(
             blocks, args.concurrency, run_one, lambda: budget.blocked or bool(circuit.reason)
         )
     finally:
-        journal.checkpoint()
-        await close_providers(raw_providers)
+        try:
+            journal.checkpoint()
+        finally:
+            try:
+                await close_providers(raw_providers)
+            finally:
+                await monitor.stop()
+        # No provider work remains: compatibility snapshots cannot stall a live answer.
+        if store is not None:
+            store.phase = "drained"
+            for kind, filename in (
+                ("cost", "cost.json"),
+                ("requests", "request-identities.json"),
+                ("attempts", "attempt-events.json"),
+                ("faults", "synthetic-faults.json"),
+                ("trials", "trials.json"),
+            ):
+                store.export(kind, filename)
+            if isinstance(journal, RecordDispatchJournal):
+                journal.export()
+            save(directory / "checkpoint-write-telemetry.json", store.telemetry())
+        save(directory / "event-loop-lag.json", monitor.summary())
     completed_ids = {(r["id"], r["architecture"], r["rep"]) for r in results}
     save(
         directory / "not-started.json",
@@ -1306,6 +1402,7 @@ async def execute_live(
             "provider_admission": admission.snapshot(),
         },
     )
+    write_progress()
     print(
         json.dumps(
             {
