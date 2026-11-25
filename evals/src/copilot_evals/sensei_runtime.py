@@ -17,7 +17,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from copilot_core import keys
 from copilot_core.llm import Decided, LLMDone, LLMRequest
-from copilot_core.pricing import ModelPrice, cost_usd, model_key
+from copilot_core.pricing import ModelPrice, cost_usd, model_key, openai_cache_write_pricing
 
 UID = uuid5(NAMESPACE_URL, "sensei-benchmark/sergio")
 APP = uuid5(UID, "turncare")
@@ -74,15 +74,43 @@ class Budget:
         if model_key(model) not in prices:
             raise ValueError("Model price missing; refusing billed call")
         tokens = len(json.dumps(payload, ensure_ascii=False, default=str).encode()) + 1024
+        write_bound = (
+            {
+                "cache_write_tokens": tokens,
+                "cache_write_30m_tokens": 0,
+                "cache_write_12h_tokens": tokens,
+            }
+            if openai_cache_write_pricing(model)
+            else {}
+        )
         value = cost_usd(
-            model, tier, tokens, 0, output, prices, self.settings.tier_price_multipliers
+            model,
+            tier,
+            tokens,
+            0,
+            output,
+            prices,
+            self.settings.tier_price_multipliers,
+            **write_bound,
         )
         if value is None:
             raise ValueError("Tier price missing; refusing billed call")
         upper = float(value) * (1.25 if model.startswith("claude") else 1.0)
         if self.total + upper > self.limit:
             raise ValueError("Benchmark budget exhausted before dispatch")
-        self.entries.append({"model": model, "charged_usd": upper, "status": "reserved"})
+        self.entries.append(
+            {
+                "model": model,
+                "charged_usd": upper,
+                "status": "reserved",
+                "pricing_version": "cache-writes-v1",
+                "reservation_input_tokens": tokens,
+                "reservation_output_tokens": output,
+                "reservation_assumption": "all input is 12h cache writes"
+                if write_bound
+                else "uncached input with existing provider allowance",
+            }
+        )
         save(self.path, self.entries)
         return len(self.entries) - 1
 
@@ -96,12 +124,17 @@ class Budget:
             u.output_tokens,
             self.settings.model_prices,
             self.settings.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )
+        self.entries[ticket].update(usage=asdict(u), tier=done.service_tier)
         if value is None:
-            return
-        self.entries[ticket].update(
-            charged_usd=float(value), status="usage", usage=asdict(u), tier=done.service_tier
-        )
+            self.entries[ticket].update(status="usage_unpriced", pricing_missing=True)
+        else:
+            self.entries[ticket].update(
+                charged_usd=float(value), status="usage", pricing_missing=False
+            )
         save(self.path, self.entries)
 
 

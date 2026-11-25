@@ -6,13 +6,17 @@ import pytest
 from copilot_evals.live_answer_eval import (
     Run,
     blind_pairs,
+    boundary_units,
     comparable,
     distribution,
     judgment_rates,
     ledger_summary,
     lexical_overlap,
     load_run,
+    main,
     metrics,
+    paired_complete_cases,
+    paired_stream_cases,
     preferences,
     question_usage,
     read_judgments,
@@ -432,3 +436,221 @@ def test_paired_complete_cases_match_questions_and_preserve_signed_differences()
     assert result["cost"]["fully_reconciled_pairs"] == 0
     assert result["cost"]["baseline"]["observed_usage_priced_usd"] is None
     assert result["latency_ms"]["first_useful_sentence_ms"]["paired_observed"] == 0
+
+
+def test_useful_fragment_is_not_a_complete_sentence_and_expansion_can_be_first():
+    record = run()
+    record.replay["events"] = [
+        {
+            "at": 1.2,
+            "message": {
+                "type": "answer.delta",
+                "question_id": "current",
+                "pass": "fast",
+                "text": "- Four squads\n- Platform ownership",
+            },
+        },
+        {"at": 1.5, "message": {"type": "answer.done", "question_id": "current", "pass": "fast"}},
+        {
+            "at": 2.0,
+            "message": {
+                "type": "answer.delta",
+                "question_id": "current",
+                "pass": "deep",
+                "text": "I lead four squads. ",
+            },
+        },
+        {"at": 2.2, "message": {"type": "answer.done", "question_id": "current", "pass": "deep"}},
+    ]
+    units = boundary_units(record, record.rows[0])
+    assert [(u["id"], u["text"]) for u in units] == [
+        ("fast:1", "- Four squads"),
+        ("fast:2", "- Platform ownership"),
+        ("deep:1", "I lead four squads."),
+    ]
+    assert units[1]["ms"] == pytest.approx(500)
+    assert (
+        metrics(record, record.rows[0], {"first_useful_sentence": 1})[
+            "first_useful_complete_sentence_ms"
+        ]
+        is None
+    )
+    judgment = {"first_useful_cue": "fast:1", "first_useful_complete_sentence": "deep:1"}
+    assert metrics(record, record.rows[0], judgment)["first_useful_complete_sentence_ms"] is None
+    judgment["unit_grammar"] = {"fast:1": False, "deep:1": True}
+    result = metrics(record, record.rows[0], judgment)
+    assert result["first_useful_cue_ms"] == pytest.approx(200)
+    assert result["first_useful_complete_sentence_ms"] == pytest.approx(1000)
+
+
+def test_strict_review_requires_explicit_complete_grammar_and_preserves_old_sources():
+    review, key = blind_pairs([run(), run("B")], 1, 4)
+    side = review["items"][0]["A"]
+    side["first_useful_cue"] = "fast:1"
+    side["first_useful_complete_sentence"] = "fast:2"
+    with pytest.raises(ValueError, match="explicit grammatical"):
+        read_judgments(review, key)
+    side["unit_grammar"] = {"fast:1": False, "fast:2": True}
+    assert read_judgments(review, key)
+    side["first_useful_cue"] = "deep:999"
+    with pytest.raises(ValueError, match="observed boundary"):
+        read_judgments(review, key)
+
+
+def test_unpunctuated_tail_waits_for_done_and_cancelled_tail_is_not_invented():
+    record = run()
+    record.replay["events"] = [
+        {
+            "at": 1.2,
+            "message": {
+                "type": "answer.delta",
+                "question_id": "current",
+                "pass": "fast",
+                "text": "An incomplete tail",
+            },
+        },
+        {"at": 1.4, "message": {"type": "question.cancelled", "question_id": "current"}},
+        {"at": 1.5, "message": {"type": "answer.done", "question_id": "current", "pass": "fast"}},
+    ]
+    assert boundary_units(record, record.rows[0]) == []
+
+
+def test_old_modern_model_cost_is_partial_and_old_reservation_is_not_a_verified_bound():
+    result = ledger_summary(
+        [
+            {
+                "model": "gpt-6-sol",
+                "status": "usage",
+                "charged_usd": 0.02,
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            },
+            {"model": "gpt-6-sol", "status": "reserved", "charged_usd": 0.1},
+            {
+                "model": "gpt-6-sol",
+                "status": "usage_unpriced",
+                "charged_usd": 0.2,
+                "pricing_version": "cache-writes-v1",
+                "usage": {"input_tokens": 100},
+            },
+        ]
+    )
+    assert result["provider_usage_calls"] == 2
+    assert result["provider_usage_priced_calls"] == 0
+    assert result["provider_usage_unpriced_calls"] == 2
+    assert result["provider_usage_priced_usd"] == 0
+    assert result["recorded_usage_price_unverified_usd"] == 0.02
+    assert result["unresolved_reserved_upper_usd"] is None
+    assert result["verified_reserved_upper_subtotal_usd"] == 0.2
+    assert result["unverified_reservation_calls"] == 1
+
+
+def test_useful_primary_survives_expert_failure_in_started_and_available_pair_scopes():
+    left, right = run("A"), run("D")
+    left.rows[0]["deep"] = ""
+    left.rows[0]["latency"].pop("deep_done_s")
+    left.rows[0]["errors"] = [{"stage": "deep", "code": "timeout"}]
+    left.rows[0]["failure"] = "RuntimeError"
+    judgments = {
+        label: {
+            "1:0": {
+                "first_useful_cue": "fast:1",
+                "first_useful_complete_sentence": "fast:1",
+                "unit_grammar": {"fast:1": True},
+            }
+        }
+        for label in ("A", "D")
+    }
+    full = paired_complete_cases(left, right, judgments)
+    assert full["groups"]["all"]["completed_pairs"] == 0
+    for scope, result in paired_stream_cases(left, right, judgments).items():
+        group = result["groups"]["all"]
+        assert result["scope"] == scope
+        assert group["included_pairs"] == 1
+        assert group["latency_ms"]["first_useful_complete_sentence_ms"]["paired_observed"] == 1
+        assert group["latency_ms"]["complete_ms"]["paired_observed"] == 0
+
+
+def test_late_error_excludes_full_completion_even_when_done_timestamps_exist():
+    left, right = run("A"), run("D")
+    left.rows[0]["errors"] = [{"stage": "deep", "code": "late_failure"}]
+    assert paired_complete_cases(left, right)["groups"]["all"]["completed_pairs"] == 0
+    assert summarize(left)["groups"]["all"]["success_rate_started"]["successes"] == 0
+    assert paired_stream_cases(left, right)["all_started"]["groups"]["all"]["included_pairs"] == 1
+
+
+def repeated_review_run(label):
+    record = run(label)
+    original = record.rows[0]
+    record.rows = [
+        {
+            **deepcopy(original),
+            "id": f"case-{case}:r{rep}",
+            "original_id": f"case-{case}",
+            "rep": rep,
+            "question": f"Question {case}?",
+            "category": "rare" if case == 0 else "common",
+        }
+        for case in range(12)
+        for rep in range(4)
+    ]
+    record.replay = {"sent": [], "events": [], "speed": 1}
+    return record
+
+
+def selected_review_rows(records, key):
+    lookup = {
+        record.architecture: {str(row["id"]) + ":" + str(row["rep"]): row for row in record.rows}
+        for record in records
+    }
+    selected = {}
+    for pair in key["pairs"].values():
+        for assignment in pair["assignment"].values():
+            label = assignment["architecture"]
+            row = lookup[label][assignment["id"]]
+            selected.setdefault((label, row["original_id"]), set()).add(row["rep"])
+    return selected
+
+
+def test_one_per_question_uses_same_outcome_blind_repetition_across_variants():
+    records = [repeated_review_run(label) for label in ("A", "B", "D")]
+    review, key = blind_pairs(records, 118, 20261125, "A", one_per_question=True)
+    assert len(review["items"]) == 24  # Twelve unique questions for each comparison.
+    assert review["selection"]["mode"] == "one_per_question"
+    selected = selected_review_rows(records, key)
+    for case in range(12):
+        choices = [selected[(label, f"case-{case}")] for label in ("A", "B", "D")]
+        assert choices[0] == choices[1] == choices[2]
+        assert len(choices[0]) == 1
+    for record in records:
+        record.rows.reverse()
+        for row in record.rows:
+            row.update(fast="", deep="", failure="provider_failure", status="failed", latency={})
+    failed_review, failed_key = blind_pairs(records, 118, 20261125, "A", one_per_question=True)
+    assert selected_review_rows(records, failed_key) == selected
+    assert all(
+        item[side]["delivery"]["failure"] for item in failed_review["items"] for side in ("A", "B")
+    )
+    again, again_key = blind_pairs(records, 118, 20261125, "A", one_per_question=True)
+    assert (again, again_key) == (failed_review, failed_key)
+
+
+def test_one_per_question_and_fixed_repetition_are_mutually_exclusive(tmp_path):
+    records = [repeated_review_run(label) for label in ("A", "D")]
+    fixed, key = blind_pairs(records, 118, 7, "A", repetition=2)
+    assert len(fixed["items"]) == 12
+    assert all(reps == {2} for reps in selected_review_rows(records, key).values())
+    with pytest.raises(ValueError, match="not both"):
+        blind_pairs(records, 118, 7, "A", repetition=2, one_per_question=True)
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "--trial-run",
+                "unused",
+                "--out",
+                str(tmp_path),
+                "--review-rep",
+                "0",
+                "--review-one-per-question",
+            ]
+        )
+    assert error.value.code == 2

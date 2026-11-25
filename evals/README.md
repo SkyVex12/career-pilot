@@ -344,11 +344,39 @@ uv run python -m copilot_evals.live_answer_replay --out 'C:\private\answer-run' 
 ```
 
 The default 51-case corpus combines historical question paraphrases with fixed fictional
-context and explicit synthetic coverage. It is not a replay of original private sessions.
-Use `--cases` for an authorized frozen corpus. Exact source/context, code, configuration,
-request hashes, random seed, repetitions, budget reservations and observed usage are saved.
-Question order is randomized and interleaved across legacy dual, adaptive single, independent
-expert hybrid and on-demand expert strategies. A changed identity requires a fresh output.
+context and explicit synthetic coverage. `--corpus representative` expands it to 118 cases;
+`--write-cases` freezes it without provider calls. Historical paraphrases and fictional source
+evidence are labeled; expected answers, prior generated answers and grading facts are withheld.
+Use the same `--cases` file across conditions. This is not original private-session replay.
+
+```powershell
+uv run python -m copilot_evals.live_answer_replay --corpus representative --write-cases 'C:\private\cases.json' --out 'C:\private\preflight'
+uv run python -m copilot_evals.live_answer_replay --cases 'C:\private\cases.json' --architectures A D --reps 4 --concurrency 2 --max-cost none --live --out 'C:\private\answer-run'
+```
+
+The default comparison is A/D; select `--architectures A B C D` to compare every strategy.
+Cases are randomized in blocks and condition positions rotate across repetitions. Concurrency
+is bounded at four blocks, repetitions at ten. `--max-cost none` explicitly removes the currency
+cutoff for that finite schedule; the default remains $2.50. A transport probe and failure circuit
+stop connectivity failure cascades. Never-started, budget-blocked, interrupted-outcome-unknown
+and provider-failed trials are distinct. All-attempt ledgers include retries and hedge losers.
+
+New runs save immutable Python source archives, safe configuration, dependency names/versions,
+request hashes and a durable dispatch journal. Explicit pinned/private prompt source and resolved
+instructions are preserved in immutable snapshots by hash. Identical inputs/code/settings are required to
+resume. A previously dispatched trial without a durable result is never silently redispatched.
+Older runs lacking source archives cannot establish exact code reconstruction. Archives identify
+dependencies but do not vendor their binaries. Keep all private artifacts outside the repository.
+
+Use `--variants` for a schema-1 manifest containing `variants`: each has a unique `label`, actual
+`architecture`, optional allowed model/reasoning/token/deadline `settings`, `fast_tier`,
+`expert_tier`, and existing-route limits. `prompt_commit` selects a pinned Git SHA; `prompt_file`
+selects an eval-only literal `ADAPTIVE_SYSTEM` definition. The AST reader never executes it.
+Only the adaptive instruction block changes; current evidence, depth and formatting remain.
+Prompt sources and actual requests are hashed. Per-condition transport settings are unsupported
+because clients are pooled. Explicit model/reasoning/tier CLI overrides also remain available.
+`--rate-card` accepts a dated schema-1 record with `verified_at`, HTTPS `sources`, `model_prices`
+and `tier_price_multipliers`; it merges configured rates and validates possible answer routes.
 
 This is generation-only timing from an already classified, confirmed question; STT, question
 detection, live retrieval search and UI rendering are excluded. A speculative live adaptive
@@ -356,19 +384,35 @@ primary already started on a fast model cannot be upgraded by a later deep class
 The hybrid can independently start an expert at confirmation; on-demand depth requires an
 explicit request. Validate those paths with the gateway session replay and desktop tests.
 
-For existing gateway replay artifacts, use the offline analyzer (no provider calls):
+For existing replay artifacts, use the offline analyzer (no provider calls):
 
 ```powershell
 uv run python -m copilot_evals.live_answer_eval --trial-run 'C:\private\answer-run' --out 'C:\private\comparison' --review-sample 16 --baseline A
 uv run python -m copilot_evals.live_answer_eval --run A='C:\private\legacy' --run B='C:\private\adaptive' --out 'C:\private\comparison' --review-sample 10 --baseline A
 ```
 
-The analyzer reports p50/p90/p95 with observed and missing counts, per-category latency,
-separate measured token usage and estimates, and syntactic sentence timing. First useful
-sentence latency requires a blind reviewer's sentence index. Review `review.json` without
-`review-key.json`, record reviewer provenance, then pass `--reviews` and `--review-key` to
-aggregate assessments. Identical source hashes and fixed labels are required for paired
-reviews. Lexical overlap never assigns semantic redundancy or correctness; unreviewed
-quality remains missing. Expansion flags can overlap and percentages use the reviewed
-eligible denominator. Small or completion-conditioned samples do not establish population
-quality, provider reliability, or production tail latency; AI reviews are not human calibration.
+The analyzer reports overall coverage, failures, p50/p90/p95 and missing counts by category,
+matched full-completion comparisons, and separate all-started/primary-available paired scopes,
+with question-cluster bootstrap intervals. A failed expert does not exclude an observed useful
+primary answer from those latter scopes; each metric reports its own paired observed count. Completion-only
+latencies are conditional, and temporal outages or small category samples limit tail claims.
+Stored preparation/dispatch/stream stages overlap and must not be summed as independent work.
+Usage tokens, priced costs and unresolved reservations remain separate. Modern-model usage
+without required cache-write categories is unpriced; older estimates lacking these fields are
+partial, and old reservations are not verified upper bounds. Reasoning tokens are already part
+of output tokens and are never added twice. Rate-card estimates are not invoices.
+
+Use `--review-rep 0` to preselect one repetition per case for review.
+Open the generated `human-review.html` locally for blinded evidence/answer review, autosave and
+JSON export. It requires a reviewer ID and explicit human attestation; no AI result is presented
+as human calibration. `review-key.json` stays separate. Schema 2 distinguishes the first useful
+cue (which may be a fragment) from the first useful complete sentence, which requires explicit
+grammatical completeness. Namespaced initial/expansion boundary units include final tails;
+syntactic punctuation does not establish usefulness or grammatical completeness. Legacy sentence
+indices measure unverified cue timing only. Reviewed-none and unreviewed annotations stay distinct.
+
+Pass the exported file with `--reviews` and `--review-key` to aggregate judgments. Identical source
+hashes and fixed labels are required. Conflicting repeated-answer judgments require explicit
+adjudication. Lexical overlap never establishes redundancy or correctness. Expansion flags can
+overlap; percentages use reviewed eligible denominators. AI reviews remain provisional until
+human calibration. No architecture improvement follows from a small selected sample alone.

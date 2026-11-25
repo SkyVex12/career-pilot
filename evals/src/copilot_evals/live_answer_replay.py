@@ -14,21 +14,28 @@ import hashlib
 import json
 import logging
 import math
-import random
 import subprocess
 import time
 import tomllib
 from collections.abc import AsyncGenerator, Mapping
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, get_args
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from copilot_core import prompts
-from copilot_core.llm import LLMDone, LLMRequest, ModelRouter
+from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Route
 from copilot_core.packs import NodeRef
-from copilot_core.providers import make_providers
+from copilot_core.providers import close_providers, make_providers
+from copilot_evals.live_answer_artifacts import DispatchJournal, run_lock, source_archive
 from copilot_evals.live_answer_eval import Run, fingerprint
+from copilot_evals.live_answer_variants import (
+    EvaluationEngine,
+    Variant,
+    load_rate_card,
+    load_variants,
+    validate_route_prices,
+)
 from copilot_evals.sensei_judge import collect_answers
 from copilot_evals.sensei_runtime import Budget, MeteredProvider, private_directory, save
 from copilot_gateway.answer import AnswerEngine, Question
@@ -56,6 +63,8 @@ CASE_FIELDS = {
     "depth",
     "refs",
     "context_sha256",
+    "answer_style",
+    "response_length",
 }
 CONFIG_FIELDS = {
     "llm_providers",
@@ -79,6 +88,7 @@ CONFIG_FIELDS = {
     "openai_http2",
     "first_token_timeout_ms",
     "llm_keepalive_s",
+    "llm_connect_timeout_s",
     "haiku_model",
     "sonnet_model",
     "bedrock_haiku_model",
@@ -279,6 +289,9 @@ class Host:
     def prompt_context(self) -> prompts.PromptContext:
         return prompts.PromptContext("Alex Rivera", self.case["mode"], self.case["digest"], None)
 
+    def prepared_source_version(self, policy: str) -> str | None:
+        return None  # Generation-only cases have no prepared answer cache.
+
     def refs(self) -> dict[str, NodeRef]:
         return {
             key: NodeRef(node_id=uuid5(NAMESPACE_URL, key), label=value)
@@ -292,10 +305,10 @@ class Host:
         return "controlled-generation-eval"
 
     def answer_style(self) -> str:
-        return "bullets"
+        return self.case.get("answer_style", "bullets")
 
     def response_length(self) -> str:
-        return "default"
+        return self.case.get("response_length", "default")
 
     def cache_extra(self) -> dict[str, str]:
         return {}
@@ -320,9 +333,12 @@ async def trial(
     settings: Settings,
     router: ModelRouter,
     timeout_s: float,
+    prompt_rules: str | None = None,
 ) -> dict[str, Any]:
     host = Host(settings, router, case)
-    engine = AnswerEngine(host)
+    engine = (
+        EvaluationEngine(host, prompt_rules) if prompt_rules is not None else AnswerEngine(host)
+    )
     question = Question(
         qid=uuid4(),
         text=case["question"],
@@ -342,7 +358,7 @@ async def trial(
         models.QuestionDetected,
         question_id=question.qid,
         text=question.text,
-        question_type=question.qtype,
+        question_type=prompts.WIRE_TYPES.get(question.qtype, question.qtype),
         confidence=1,
         speculative=False,
     )
@@ -386,34 +402,59 @@ async def trial(
     }
 
 
-async def preflight(cases: list[dict[str, Any]]) -> None:
+async def preflight(
+    cases: list[dict[str, Any]], variants: dict[str, Variant] | None = None
+) -> None:
     from copilot_gateway.testing import Reply, ScriptedProvider
 
-    for strategy in STRATEGIES.values():
-        settings = Settings(
-            _env_file=None,  # pyright: ignore[reportCallIssue]
-            llm_providers=["openai"],
-            answer_architecture=strategy,  # pyright: ignore[reportArgumentType]
-            openai_detector_model="offline-fast",
-            openai_fast_model="offline-fast",
-            openai_deep_model="offline-expert",
-            openai_summary_model="offline-fast",
-            openai_detector_reasoning="none",
-            openai_fast_reasoning="none",
-            openai_deep_reasoning="low",
-            openai_summary_reasoning="none",
+    coverage = {
+        (
+            case["type"],
+            case["mode"],
+            case.get("depth"),
+            case.get("answer_style"),
+            case.get("response_length"),
+        ): case
+        for case in cases
+    }
+    for strategy in variants if variants else STRATEGIES.values():
+        settings = (
+            variants[strategy].settings
+            if variants
+            else Settings(
+                _env_file=None,  # pyright: ignore[reportCallIssue]
+                llm_providers=["openai"],
+                answer_architecture=strategy,  # pyright: ignore[reportArgumentType]
+                openai_detector_model="offline-fast",
+                openai_fast_model="offline-fast",
+                openai_deep_model="offline-expert",
+                openai_summary_model="offline-fast",
+                openai_detector_reasoning="none",
+                openai_fast_reasoning="none",
+                openai_deep_reasoning="low",
+                openai_summary_reasoning="none",
+            )
         )
         provider = ScriptedProvider(
             "openai", lambda job, request: Reply(["A direct answer. ", "Useful context."])
         )
-        result = await trial(
-            cases[0], strategy, 0, settings, build_router(settings, [provider]), 10
-        )
-        messages = [event["message"] for event in result["events"]]
-        if result["failure"] or not any(message["type"] == "answer.done" for message in messages):
-            raise ValueError("Offline host/protocol preflight failed")
-        if [message["seq"] for message in messages] != list(range(1, len(messages) + 1)):
-            raise ValueError("Offline preflight found invalid event sequence")
+        for case in coverage.values():
+            result = await trial(
+                case,
+                strategy,
+                0,
+                settings,
+                build_router(settings, [provider]),
+                10,
+                variants[strategy].prompt_rules if variants else None,
+            )
+            messages = [event["message"] for event in result["events"]]
+            if result["failure"] or not any(
+                message["type"] == "answer.done" for message in messages
+            ):
+                raise ValueError("Offline host/protocol preflight failed")
+            if [message["seq"] for message in messages] != list(range(1, len(messages) + 1)):
+                raise ValueError("Offline preflight found invalid event sequence")
 
 
 class BudgetBlocked(ValueError):
@@ -539,11 +580,110 @@ def experiment_identity(
     }
 
 
+async def connectivity_check(settings: Settings) -> dict[str, Any]:
+    """Verify transport availability without credentials or billed inference."""
+    import httpx2
+
+    if "openai" not in settings.llm_providers:
+        return {"ready": True, "checked": False, "reason": "provider probe unavailable"}
+    started = time.monotonic()
+    base = settings.openai_base_url or "https://api.openai.com/v1"
+    try:
+        async with httpx2.AsyncClient(timeout=5.0, http2=settings.openai_http2) as client:
+            response = await client.get(base.rstrip("/") + "/models")
+        return {
+            "ready": response.status_code < 500 and response.status_code not in (408, 429),
+            "checked": True,
+            "http_status": response.status_code,
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+            "scope": "unauthenticated transport probe; credentials/model access remain unverified",
+        }
+    except Exception as error:
+        return {
+            "ready": False,
+            "checked": True,
+            "error_type": type(error).__name__,
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        }
+
+
+def budget_limit(value: str) -> float | None:
+    """An explicit 'none' opts into a finite schedule without a currency cutoff."""
+    if value.casefold() == "none":
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("Budget must be positive finite dollars or 'none'")
+    return parsed
+
+
+def settings_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    fields = {
+        "fast_model": "openai_fast_model",
+        "expert_model": "openai_deep_model",
+        "fast_reasoning": "openai_fast_reasoning",
+        "expert_reasoning": "openai_deep_reasoning",
+    }
+    return {
+        field: value
+        for arg, field in fields.items()
+        if (value := getattr(args, arg, None)) is not None
+    }
+
+
+def tier_overrides(router: ModelRouter, args: Any) -> None:
+    """Apply recorded eval-only tiers to both primary and retry routes, without extra retries."""
+    for job, arg in (("fast", "fast_tier"), ("deep_light", "fast_tier"), ("deep", "expert_tier")):
+        tier = getattr(args, arg, None)
+        if tier is None:
+            continue
+        routes: list[Route] = []
+        for route in router.routes[job]:
+            if route.provider.name != "openai":
+                routes.append(route)
+                continue
+            params = dict(route.params)
+            if tier == "default":
+                params.pop("service_tier", None)
+            else:
+                params["service_tier"] = tier
+            routes.append(replace(route, params=params))
+        router.routes = {**router.routes, job: routes}
+
+
 async def execute(args: argparse.Namespace) -> None:
+    from copilot_evals.live_answer_corpus import representative_cases
+
     cases = (
         validate_cases(json.loads(args.cases.read_text("utf-8"))) if args.cases else load_cases()
     )
-    await preflight(cases)
+    if not args.cases and getattr(args, "corpus", "original") == "representative":
+        cases = validate_cases(representative_cases(cases, root_directory()))
+    for case in cases:
+        case["answer_style"] = getattr(args, "answer_style", "bullets")
+        case["response_length"] = getattr(args, "response_length", "default")
+    settings = Settings(
+        openai_detector_retry_tier=None,
+        openai_fast_retry_tier=None,
+        openai_deep_retry_tier=None,
+        **settings_overrides(args),
+    )
+    rate_identity = None
+    if getattr(args, "rate_card", None):
+        settings, rate_identity = load_rate_card(settings, args.rate_card)
+    custom_variants: dict[str, Variant] | None = None
+    if getattr(args, "variants", None):
+        custom_variants = load_variants(args.variants, settings, root_directory())
+        for variant in custom_variants.values():
+            variant.fast_tier = variant.fast_tier or getattr(args, "fast_tier", None)
+            variant.expert_tier = variant.expert_tier or getattr(args, "expert_tier", None)
+    await preflight(cases, custom_variants)
+    if getattr(args, "write_cases", None):
+        target = args.write_cases.resolve()
+        private_directory(target.parent)
+        if target.exists():
+            raise ValueError("Refusing to overwrite frozen cases")
+        save(target, cases)
     if not args.live:
         print(
             json.dumps(
@@ -554,103 +694,234 @@ async def execute(args: argparse.Namespace) -> None:
     if (
         not 1 <= args.reps <= 10
         or not 1 <= args.concurrency <= 4
-        or not math.isfinite(args.max_cost)
+        or (args.max_cost is not None and (not math.isfinite(args.max_cost) or args.max_cost <= 0))
         or not math.isfinite(args.timeout)
-        or args.max_cost <= 0
         or args.timeout <= 0
     ):
         raise ValueError("Invalid finite replay bounds")
     directory = private_directory(args.out)
-    settings = Settings(
-        openai_detector_retry_tier=None, openai_fast_retry_tier=None, openai_deep_retry_tier=None
-    )
+    with run_lock(directory):
+        await execute_live(args, cases, settings, rate_identity, custom_variants, directory)
+
+
+async def execute_live(
+    args: argparse.Namespace,
+    cases: list[dict[str, Any]],
+    settings: Settings,
+    rate_identity: dict[str, Any] | None,
+    custom_variants: dict[str, Variant] | None,
+    directory: Path,
+) -> None:
+    from copilot_evals.live_answer_schedule import FailureCircuit, case_blocks, classify_failure
+
+    labels = getattr(args, "architectures", ["A", "D"])
+    if (
+        not labels
+        or len(set(labels)) != len(labels)
+        or any(label not in STRATEGIES for label in labels)
+    ):
+        raise ValueError("Select distinct architecture labels")
+    conditions = custom_variants or {
+        STRATEGIES[label]: Variant(
+            label,
+            STRATEGIES[label],
+            settings.model_copy(update={"answer_architecture": STRATEGIES[label]}),
+            fast_tier=getattr(args, "fast_tier", None),
+            expert_tier=getattr(args, "expert_tier", None),
+        )
+        for label in labels
+    }
+    strategies = {variant.label: condition for condition, variant in conditions.items()}
+    circuit = FailureCircuit(getattr(args, "transport_failure_limit", 3))
+    if not 1 <= circuit.threshold <= 10:
+        raise ValueError("Circuit threshold must be between one and ten")
+    blocks = case_blocks(cases, list(strategies.values()), args.reps, args.seed)
+    planned = [item for block in blocks for item in block]
     identity = experiment_identity(
         cases, settings, args.reps, args.seed, args.concurrency, args.timeout
     )
+    identity["rate_card"] = rate_identity
     identity["budget_limit_usd"] = args.max_cost
+    identity["currency_cutoff_disabled"] = args.max_cost is None
+    identity["provider_overrides"] = {
+        **settings_overrides(args),
+        "fast_tier": getattr(args, "fast_tier", None),
+        "expert_tier": getattr(args, "expert_tier", None),
+    }
+    identity["strategies"] = strategies
+    identity["variants"] = {key: value.identity(CONFIG_FIELDS) for key, value in conditions.items()}
+    identity["variant_manifest_sha256"] = (
+        fingerprint(json.loads(args.variants.read_text("utf-8")))
+        if getattr(args, "variants", None)
+        else None
+    )
+    identity["order_design"] = "counterbalanced_case_blocks"
+    identity["transport_failure_limit"] = circuit.threshold
+    identity["connectivity_check"] = not getattr(args, "skip_connectivity_check", False)
+    identity["answer_style"] = getattr(args, "answer_style", "bullets")
+    identity["response_length"] = getattr(args, "response_length", "default")
     identity_path = directory / "identity.json"
+    if identity_path.exists():
+        previous_identity = json.loads(identity_path.read_text("utf-8"))
+        if not previous_identity.get("source_archive"):
+            raise ValueError(
+                "Legacy run lacks a source archive; preserve it and use a fresh output"
+            )
+        if {
+            key: value for key, value in previous_identity.items() if key != "source_archive"
+        } != identity:
+            raise ValueError(
+                "Run code, configuration, or source changed; use a fresh private output"
+            )
+    identity["source_archive"] = source_archive(
+        directory,
+        root_directory(),
+        identity["code"],
+        identity,
+        {
+            f"{label}:{kind}": text
+            for label, variant in conditions.items()
+            for kind, text in (variant.prompt_sources or {}).items()
+        },
+    )
     if identity_path.exists() and json.loads(identity_path.read_text("utf-8")) != identity:
-        raise ValueError("Run code, configuration, or source changed; use a fresh private output")
+        raise ValueError("Archived source or dependencies changed; use a fresh private output")
     save(identity_path, identity)
     save(directory / "budget-limit.json", args.max_cost)
     save(directory / "cases.json", cases)
-    budget = AuditBudget(directory, settings, limit=args.max_cost)
+    save(
+        directory / "schedule.json",
+        [
+            [
+                {"id": case["id"], "architecture": strategy, "rep": rep}
+                for case, strategy, rep in block
+            ]
+            for block in blocks
+        ],
+    )
+    budget = AuditBudget(
+        directory, settings, limit=math.inf if args.max_cost is None else args.max_cost
+    )
     initial_cost = budget.total
     request_path = directory / "request-identities.json"
     requests: list[dict[str, Any]] = (
         json.loads(request_path.read_text("utf-8")) if request_path.exists() else []
     )
-    providers = [
-        AuditProvider(provider, budget, requests, directory)
-        for provider in make_providers(settings, timeout_s=args.timeout)
-    ]
+    raw_providers = make_providers(settings, timeout_s=args.timeout)
+    providers = [AuditProvider(provider, budget, requests, directory) for provider in raw_providers]
+    attempt_path = directory / "attempt-events.json"
+    attempt_events: list[dict[str, Any]] = (
+        json.loads(attempt_path.read_text("utf-8")) if attempt_path.exists() else []
+    )
+
+    def on_attempt(event: AttemptEvent) -> None:
+        attempt_events.append({"trial_id": TRIAL.get(), **asdict(event)})
+        save(attempt_path, attempt_events)
+
     routers = {
         strategy: build_router(
-            settings.model_copy(update={"answer_architecture": strategy}), providers
+            conditions[strategy].settings,
+            providers,
+            on_attempt=on_attempt,
         )
-        for strategy in STRATEGIES.values()
+        for strategy in strategies.values()
     }
-    planned = [
-        (case, strategy, rep)
-        for rep in range(args.reps)
-        for case in cases
-        for strategy in STRATEGIES.values()
-    ]
-    random.Random(args.seed).shuffle(planned)
+    for condition, router in routers.items():
+        tier_overrides(router, conditions[condition])
+        conditions[condition].limit_routes(router)
+        validate_route_prices(router, conditions[condition].settings)
     target = directory / "trials.json"
     results: list[dict[str, Any]] = json.loads(target.read_text("utf-8")) if target.exists() else []
+    save(target, results)
     have = {(result["id"], result["architecture"], result["rep"]) for result in results}
     if len(have) != len(results):
         raise ValueError("Duplicate completed trial identity")
+    journal = DispatchJournal(
+        directory,
+        [f"{case['id']}:{strategy}:{rep}" for case, strategy, rep in planned],
+        {f"{identifier}:{strategy}:{rep}" for identifier, strategy, rep in have},
+        {str(row["trial_id"]) for row in requests if row.get("trial_id")}
+        | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")},
+    )
     semaphore = asyncio.Semaphore(args.concurrency)
 
     async def run_one(case: dict[str, Any], strategy: str, rep: int) -> None:
         if (case["id"], strategy, rep) in have:
             return
-        async with semaphore:
-            if budget.blocked:
-                return
-            trial_id = f"{case['id']}:{strategy}:{rep}"
-            token = TRIAL.set(f"{case['id']}:{strategy}:{rep}")
-            try:
-                result = await trial(
-                    case,
-                    strategy,
-                    rep,
-                    settings.model_copy(update={"answer_architecture": strategy}),
-                    routers[strategy],
-                    args.timeout,
-                )
-            finally:
-                TRIAL.reset(token)
-            result["status"] = (
-                "budget_blocked"
-                if trial_id in budget.blocked_trials
-                else "provider_or_engine_failure"
-                if result["failure"]
-                else "completed"
+        if budget.blocked or circuit.reason:
+            return
+        trial_id = f"{case['id']}:{strategy}:{rep}"
+        if not journal.start(trial_id):
+            return
+        token = TRIAL.set(f"{case['id']}:{strategy}:{rep}")
+        try:
+            result = await trial(
+                case,
+                strategy,
+                rep,
+                conditions[strategy].settings,
+                routers[strategy],
+                args.timeout,
+                conditions[strategy].prompt_rules,
             )
-            result["request_attempts"] = sum(r["trial_id"] == trial_id for r in requests)
-            results.append(result)
-            save(target, results)
-            save(
-                directory / "progress.json",
-                {
-                    "completed": len(results),
-                    "total": len(planned),
-                    "cost_start_usd": initial_cost,
-                    "cost_upper_usd": budget.total,
-                    "failures": sum(
-                        row.get("status") == "provider_or_engine_failure" for row in results
-                    ),
-                    "budget_blocked_trials": sum(
-                        row.get("status") == "budget_blocked" for row in results
-                    ),
-                    "not_started": len(planned) - len(results),
-                },
-            )
+        finally:
+            TRIAL.reset(token)
+        result["answer_architecture"] = conditions[strategy].architecture
+        result["variant_label"] = conditions[strategy].label
+        result["status"] = (
+            "budget_blocked"
+            if trial_id in budget.blocked_trials
+            else "provider_or_engine_failure"
+            if result["failure"]
+            else "completed"
+        )
+        attempts = [record for record in requests if record["trial_id"] == trial_id]
+        result["request_attempts"] = len(attempts)
+        result["failure_kind"] = classify_failure(result, attempts)
+        circuit.observe(result, attempts)
+        results.append(result)
+        save(target, results)
+        journal.finish(trial_id)
+        save(
+            directory / "progress.json",
+            {
+                "completed": len(results),
+                "total": len(planned),
+                "cost_start_usd": initial_cost,
+                "cost_upper_usd": budget.total,
+                "failures": sum(
+                    row.get("status") == "provider_or_engine_failure" for row in results
+                ),
+                "budget_blocked_trials": sum(
+                    row.get("status") == "budget_blocked" for row in results
+                ),
+                "not_started": sum(state == "not_started" for state in journal.states.values()),
+                "in_flight": sum(state == "in_flight" for state in journal.states.values()),
+                "interrupted_outcome_unknown": sum(
+                    state == "ambiguous" for state in journal.states.values()
+                ),
+                "circuit_reason": circuit.reason,
+            },
+        )
 
-    await asyncio.gather(*(run_one(case, strategy, rep) for case, strategy, rep in planned))
+    if not getattr(args, "skip_connectivity_check", False):
+        health = await connectivity_check(settings)
+        save(directory / "connectivity.json", health)
+        if not health["ready"]:
+            circuit.reason = "connectivity_preflight"
+
+    async def run_block(block: list[tuple[dict[str, Any], str, int]]) -> None:
+        async with semaphore:
+            for case, strategy, rep in block:
+                if budget.blocked or circuit.reason:
+                    break
+                await run_one(case, strategy, rep)
+
+    try:
+        await asyncio.gather(*(run_block(block) for block in blocks))
+    finally:
+        journal.checkpoint()
+        await close_providers(raw_providers)
     completed_ids = {(r["id"], r["architecture"], r["rep"]) for r in results}
     save(
         directory / "not-started.json",
@@ -659,7 +930,14 @@ async def execute(args: argparse.Namespace) -> None:
                 "id": case["id"],
                 "architecture": strategy,
                 "rep": rep,
-                "reason": "budget_blocked" if budget.blocked else "not_run",
+                "status": "interrupted_outcome_unknown"
+                if journal.states[f"{case['id']}:{strategy}:{rep}"] == "ambiguous"
+                else "not_started",
+                "reason": "prior_dispatch_unresolved"
+                if journal.states[f"{case['id']}:{strategy}:{rep}"] == "ambiguous"
+                else "budget_blocked"
+                if budget.blocked
+                else circuit.reason or "not_run",
             }
             for case, strategy, rep in planned
             if (case["id"], strategy, rep) not in completed_ids
@@ -675,21 +953,34 @@ async def execute(args: argparse.Namespace) -> None:
                 e["charged_usd"] for e in budget.entries if e["status"] == "usage"
             ),
             "unresolved_reserved_usd": sum(
-                e["charged_usd"] for e in budget.entries if e["status"] == "reserved"
+                e["charged_usd"]
+                for e in budget.entries
+                if e["status"] in ("reserved", "usage_unpriced")
             ),
             "failed_trials": sum(
                 row.get("status") == "provider_or_engine_failure" for row in results
             ),
             "budget_blocked_trials": sum(row.get("status") == "budget_blocked" for row in results),
-            "not_started": len(planned) - len(results),
+            "not_started": sum(state == "not_started" for state in journal.states.values()),
             "completed_trials": len(results),
             "planned_trials": len(planned),
+            "interrupted_outcome_unknown": sum(
+                state == "ambiguous" for state in journal.states.values()
+            ),
+            "circuit_reason": circuit.reason,
+            "successful_trials": sum(row.get("status") == "completed" for row in results),
         },
     )
     print(
         json.dumps(
             {
-                "status": "partial_budget" if budget.blocked else "complete",
+                "status": "partial_budget"
+                if budget.blocked
+                else "partial_circuit"
+                if circuit.reason
+                else "partial_ambiguous"
+                if any(state == "ambiguous" for state in journal.states.values())
+                else "complete",
                 "trials": len(results),
                 "cost_upper_usd": budget.total,
             }
@@ -702,22 +993,40 @@ def normalized_runs(
     cases: list[dict[str, Any]],
     identity: dict[str, Any],
     ledger: list[dict[str, Any]],
+    not_started: list[dict[str, Any]] | None = None,
 ) -> list[Run]:
     """Adapt current generation-only trials without changing the private source artifacts."""
+    from copilot_evals.live_answer_schedule import classify_failure
+
     by_case = {case["id"]: case for case in cases}
     ids = {(row["id"], row["architecture"], row["rep"]) for row in trials}
     if len(ids) != len(trials):
         raise ValueError("Duplicate trial identity")
-    if any(row["architecture"] not in STRATEGIES.values() for row in trials):
+    allowed = set(identity.get("strategies", STRATEGIES).values())
+    if any(row["architecture"] not in allowed for row in trials):
         raise ValueError("Unknown trial architecture")
+    pending: list[dict[str, Any]] = [
+        {
+            **item,
+            "question": by_case[item["id"]]["question"],
+            "context_sha256": by_case[item["id"]]["context_sha256"],
+            "status": item.get("status", "not_started"),
+            "events": [],
+            "metadata_logs": [],
+        }
+        for item in (not_started or [])
+    ]
+    pending_ids = {(row["id"], row["architecture"], row["rep"]) for row in pending}
+    if ids & pending_ids or len(pending_ids) != len(pending):
+        raise ValueError("Started and not-started trial identities must be distinct")
     runs: list[Run] = []
-    for label, strategy in STRATEGIES.items():
+    for label, strategy in identity.get("strategies", STRATEGIES).items():
         events: list[dict[str, Any]] = []
         turns: list[dict[str, Any]] = []
         sent: list[dict[str, Any]] = []
         logs: list[dict[str, Any]] = []
         selected = sorted(
-            (item for item in trials if item["architecture"] == strategy),
+            (item for item in [*trials, *pending] if item["architecture"] == strategy),
             key=lambda item: (item["id"], item["rep"]),
         )
         for index, item in enumerate(selected):
@@ -748,12 +1057,16 @@ def normalized_runs(
                     "mode": case["mode"],
                     "failure": item.get("failure"),
                     "status": item.get("status"),
+                    "failure_kind": item.get("failure_kind"),
+                    "failure_kind_reclassified": classify_failure(item, []),
+                    "not_started_reason": item.get("reason"),
                     "evidence": {
                         key: case[key] for key in ("digest", "recent", "memory", "source")
                     },
                 }
             )
-            sent.append({"id": identifier, "at": origin})
+            if item.get("status") != "not_started":
+                sent.append({"id": identifier, "at": origin})
             if qid and not any(
                 event["message"]["type"] == "question.detected" for event in item["events"]
             ):
@@ -788,7 +1101,13 @@ def normalized_runs(
                 label,
                 rows,
                 replay,
-                {**identity, "answer_architecture": strategy},
+                {
+                    **identity,
+                    "condition_id": strategy,
+                    "answer_architecture": identity.get("variants", {})
+                    .get(strategy, {})
+                    .get("architecture", strategy),
+                },
                 {"case_sha256": fingerprint(cases)},
                 {"authorized_cases": cases},
                 [entry for entry in ledger if entry["trial_id"].rsplit(":", 2)[1] == strategy]
@@ -803,13 +1122,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
+    parser.add_argument("--variants", type=Path, help="Explicit eval-only variant manifest")
+    parser.add_argument(
+        "--rate-card", type=Path, help="Dated rates with source URLs; merges configured rates"
+    )
+    parser.add_argument("--corpus", choices=("original", "representative"), default="original")
+    parser.add_argument(
+        "--write-cases", type=Path, help="Freeze the selected corpus without billed calls"
+    )
+    parser.add_argument("--architectures", nargs="+", choices=tuple(STRATEGIES), default=["A", "D"])
+    parser.add_argument("--answer-style", choices=("bullets", "paragraph"), default="bullets")
+    parser.add_argument(
+        "--response-length", choices=("default", "concise", "detailed"), default="default"
+    )
+    parser.add_argument("--transport-failure-limit", type=int, default=3)
+    parser.add_argument("--skip-connectivity-check", action="store_true")
     parser.add_argument(
         "--live", action="store_true", help="Enable billed providers after offline preflight"
     )
     parser.add_argument("--reps", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20261125)
     parser.add_argument("--concurrency", type=int, default=2)
-    parser.add_argument("--max-cost", type=float, default=2.50)
+    parser.add_argument(
+        "--max-cost",
+        type=budget_limit,
+        default=2.50,
+        help="Positive dollar cap, or explicit 'none' for a finite uncapped schedule",
+    )
+    parser.add_argument("--fast-model")
+    parser.add_argument("--expert-model")
+    efforts = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    parser.add_argument("--fast-reasoning", choices=efforts)
+    parser.add_argument("--expert-reasoning", choices=efforts)
+    tiers = ("default", "priority", "fast", "flex")
+    parser.add_argument("--fast-tier", choices=tiers)
+    parser.add_argument("--expert-tier", choices=tiers)
     parser.add_argument("--timeout", type=float, default=60)
     logging.disable(logging.CRITICAL)
     try:

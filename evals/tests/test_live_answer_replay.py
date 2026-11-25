@@ -16,6 +16,7 @@ from copilot_evals.live_answer_replay import (
     validate_cases,
 )
 
+from copilot_core.llm import LLMDone, LLMUsage
 from copilot_core.pricing import ModelPrice
 
 
@@ -167,7 +168,7 @@ async def test_budget_rejection_stops_dispatch_and_is_not_provider_failure(tmp_p
     provider = ScriptedProvider("openai")
     monkeypatch.setattr(replay, "Settings", settings)
     monkeypatch.setattr(replay, "make_providers", lambda *a, **k: [provider])
-    monkeypatch.setattr(replay, "experiment_identity", lambda *a: {"test": "frozen"})
+    monkeypatch.setattr(replay, "experiment_identity", lambda *a: {"test": "frozen", "code": {}})
     source = tmp_path / "input.json"
     source.write_text(json.dumps(load_cases()[:1]), encoding="utf-8")
     out = tmp_path / "run"
@@ -178,6 +179,7 @@ async def test_budget_rejection_stops_dispatch_and_is_not_provider_failure(tmp_p
         reps=1,
         seed=3,
         concurrency=2,
+        skip_connectivity_check=True,
         max_cost=0.00000001,
         timeout=10,
     )
@@ -259,3 +261,111 @@ def test_trial_costs_include_hedge_reservations_but_are_not_invented_actual_cost
     costs = question_usage(adaptive, adaptive.rows[0])["all_request_ledger"]
     assert costs["provider_usage_priced_usd"] == 0.01
     assert costs["unresolved_reserved_upper_usd"] == 0.1
+
+
+def test_explicit_no_currency_cutoff_keeps_finite_default_and_rejects_invalid_values():
+    import argparse
+
+    from copilot_evals.live_answer_replay import budget_limit, settings_overrides
+
+    assert budget_limit("none") is None
+    assert budget_limit("2.50") == 2.5
+    for value in ("inf", "nan", "-1", "0"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            budget_limit(value)
+    assert settings_overrides(
+        SimpleNamespace(fast_model="configured-model", expert_reasoning="low")
+    ) == {
+        "openai_fast_model": "configured-model",
+        "openai_deep_reasoning": "low",
+    }
+
+
+def test_tier_override_changes_both_attempts_without_adding_routes():
+    from copilot_evals.live_answer_replay import tier_overrides
+
+    from copilot_core.llm import ModelRouter, Route
+    from copilot_gateway.testing import ScriptedProvider
+
+    provider = ScriptedProvider("openai")
+    router = ModelRouter(
+        {
+            job: [Route(provider, "model"), Route(provider, "model")]
+            for job in ("fast", "deep_light", "deep")
+        },
+        3,
+    )
+    tier_overrides(router, SimpleNamespace(fast_tier="priority", expert_tier="default"))
+    assert len(router.routes["fast"]) == 2
+    assert all(route.params["service_tier"] == "priority" for route in router.routes["fast"])
+    assert all("service_tier" not in route.params for route in router.routes["deep"])
+
+
+def test_unknown_cache_write_usage_retains_reservation_and_reasoning_is_not_double_counted(
+    tmp_path,
+):
+    settings = SimpleNamespace(
+        model_prices={"gpt-6-sol": ModelPrice(input=2, cached=0.2, output=10)},
+        tier_price_multipliers={"standard": 1},
+    )
+    budget = AuditBudget(tmp_path, settings, 1)
+    ticket = budget.reserve("gpt-6-sol", "payload", 50)
+    upper = budget.entries[ticket]["charged_usd"]
+    assert budget.entries[ticket]["reservation_assumption"] == "all input is 12h cache writes"
+    budget.finish(
+        ticket,
+        LLMDone(
+            LLMUsage(input_tokens=100, output_tokens=30, reasoning_tokens=20),
+            "stop",
+            "openai",
+            "gpt-6-sol",
+        ),
+    )
+    assert budget.entries[ticket]["status"] == "usage_unpriced"
+    assert budget.entries[ticket]["charged_usd"] == upper
+    assert budget.entries[ticket]["usage"]["reasoning_tokens"] == 20
+    budget.finish(
+        ticket,
+        LLMDone(
+            LLMUsage(input_tokens=100, output_tokens=30, cache_write_tokens=0, reasoning_tokens=20),
+            "stop",
+            "openai",
+            "gpt-6-sol",
+        ),
+    )
+    assert budget.entries[ticket]["status"] == "usage"
+    assert budget.entries[ticket]["charged_usd"] == pytest.approx(0.0005)
+
+
+async def test_live_entry_holds_exclusive_lock_but_offline_preflight_does_not(
+    tmp_path, monkeypatch
+):
+    from copilot_evals import live_answer_replay as harness
+    from copilot_evals.live_answer_artifacts import run_lock
+
+    target = tmp_path / "locked-run"
+    target.mkdir()
+    checked = []
+
+    async def offline(cases, variants):
+        with run_lock(target):
+            checked.append("offline-unlocked")
+
+    async def live(args, cases, settings, rate_identity, variants, directory):
+        assert directory == target
+        with pytest.raises(ValueError, match="Another runner"), run_lock(directory):
+            pytest.fail("Concurrent paid resume was allowed")
+        checked.append("paid-locked")
+
+    monkeypatch.setattr(harness, "preflight", offline)
+    monkeypatch.setattr(harness, "execute_live", live)
+    args = SimpleNamespace(
+        cases=None, live=True, out=target, reps=1, concurrency=1, max_cost=None, timeout=10
+    )
+    await harness.execute(args)
+    assert checked == ["offline-unlocked", "paid-locked"]
+    with run_lock(target):
+        pass
+    args.live = False
+    await harness.execute(args)
+    assert checked == ["offline-unlocked", "paid-locked", "offline-unlocked"]
