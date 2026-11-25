@@ -37,6 +37,10 @@ pub(crate) fn show(app: &AppHandle, point: PhysicalPosition<f64>) -> Res<()> {
             .always_on_top(true)
             .visible(false)
             .focused(false)
+            // This popup shares WebView2's profile with the main window. Different browser
+            // arguments make Windows reject its creation before it can report readiness.
+            .additional_browser_args(crate::BROWSER_ARGS)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
             .build()
             .map_err(|e| e.to_string())?;
     }

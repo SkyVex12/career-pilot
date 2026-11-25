@@ -193,14 +193,19 @@ impl EmailTokenProvider {
     /// Forget the tokens here and revoke the sign-in at the API (best effort: a server that is
     /// asleep is not woken for it, and the refresh token is gone from this computer either way).
     pub async fn sign_out(&self) -> Result<(), AuthError> {
-        let refresh = self.store.get(&self.refresh_key()).ok().flatten();
-        *self.cached.lock().await = None;
-        self.store.delete(&self.refresh_key())?;
-        self.store.delete(&self.user_key())?;
+        let (refresh, cleared) = {
+            // Wait for any token rotation, then forget access, refresh and user together.
+            let mut cached = self.cached.lock().await;
+            let refresh = self.store.get(&self.refresh_key()).ok().flatten();
+            *cached = None;
+            let refresh_deleted = self.store.delete(&self.refresh_key());
+            let user_deleted = self.store.delete(&self.user_key());
+            (refresh, refresh_deleted.and(user_deleted))
+        };
         if let Some(refresh) = refresh {
             let _ = self.post("signout", serde_json::json!({ "refresh_token": refresh })).await;
         }
-        Ok(())
+        cleared
     }
 
     /// `force`: the caller's token was refused, so a cached one is no good unless it is newer
@@ -433,13 +438,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sign_out_revokes_the_latest_refresh_and_stays_signed_out_when_revocation_fails() {
+        let (url, seen) = fake_api(vec![(200, tokens("at-1", "rt-1", 3600)), (503, String::new())]).await;
+        let (p, store) = provider(&url);
+        p.verify("sam@example.com", "123456").await.unwrap();
+
+        // A refresh owns this lock while the server rotates the saved refresh token.
+        let cached = p.cached.lock().await;
+        let mut signing_out = Box::pin(p.sign_out());
+        tokio::select! {
+            biased;
+            result = &mut signing_out => panic!("sign-out did not wait for token rotation: {result:?}"),
+            _ = std::future::ready(()) => {}
+        }
+        store.set(&p.refresh_key(), "rt-2").unwrap();
+        drop(cached);
+        signing_out.await.unwrap();
+
+        assert!(seen.lock().unwrap()[1].contains("\"refresh_token\":\"rt-2\""));
+        assert!(store.get(&p.refresh_key()).unwrap().is_none());
+        assert!(store.get(&p.user_key()).unwrap().is_none());
+        assert!(p.signed_in_as().is_none());
+        assert!(matches!(p.current().await, Err(AuthError::NotSignedIn(_))));
+    }
+
+    #[tokio::test]
     async fn sign_out_forgets_the_tokens_and_tells_the_server() {
         let (url, seen) = fake_api(vec![(200, tokens("at-1", "rt-1", 3600)), (204, String::new())]).await;
         let (p, store) = provider(&url);
         p.verify("sam@example.com", "123456").await.unwrap();
         p.sign_out().await.unwrap();
         assert!(p.signed_in_as().is_none());
-        assert!(store.get("email-refresh:http://{host}/v1").unwrap().is_none());
+        assert!(store.get(&p.refresh_key()).unwrap().is_none());
+        assert!(store.get(&p.user_key()).unwrap().is_none());
         assert!(matches!(p.current().await, Err(AuthError::NotSignedIn(_))));
         let seen = seen.lock().unwrap();
         assert!(seen[1].starts_with("POST /v1/auth/email/signout "));

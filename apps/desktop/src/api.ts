@@ -331,8 +331,8 @@ export const api = {
   emailSignInStart: (email: string) => invoke<CodeSent>("email_sign_in_start", { email }),
   /** Email sign-in: the code for the sign-in. Resolves to the address; rejects like the above. */
   emailSignInVerify: (email: string, code: string) => invoke<string>("email_sign_in_verify", { email, code }),
-  /** Career-OS sign-in: the browser page, then either a sign-in or a choice the screen shows. */
-  careerOsSignIn: () => invoke<CareerOsOutcome>("career_os_sign_in"),
+  /** Career-OS sign-in. Only explicit account linking reuses the current sign-in. */
+  careerOsSignIn: (linkAccount = false) => invoke<CareerOsOutcome>("career_os_sign_in", { linkAccount }),
   /** The answer to a Career-OS choice. `existing` uses the sign-in now on this computer as proof. */
   careerOsComplete: (ticket: string, choice: "existing" | "new", accountId: string | null) =>
     invoke<CareerOsOutcome>("career_os_complete", { ticket, choice, accountId }),

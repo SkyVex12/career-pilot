@@ -449,7 +449,7 @@ function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChan
           onClick={async () => {
             setBusy(true);
             try {
-              const out = await api.careerOsSignIn();
+              const out = await api.careerOsSignIn(true);
               if (out.status === "added" || out.status === "signed_in") {
                 toast({ tone: "success", text: "HubRuby sign-in added." });
                 reload();
