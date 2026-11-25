@@ -210,18 +210,58 @@ async def generate(router: Any, settings: Any, ctx: Any, item: Item, pass_: str)
     return cast(str, text).strip(), done
 
 
-def call_cost(settings: Any, done: Any) -> float:
-    """A call's cost in USD from its usage and the configured prices (0 without a price)."""
+def call_cost(settings: Any, done: Any) -> float | None:
+    """A call's token cost, or None when its rates or required usage are unknown."""
     from copilot_core.pricing import cost_usd
 
     if done is None:
-        return 0.0
+        return None
     u = done.usage
     cost = cost_usd(
         done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
         settings.model_prices, settings.tier_price_multipliers,
+        cache_write_tokens=getattr(u, "cache_write_tokens", None),
+        cache_write_30m_tokens=getattr(u, "cache_write_30m_tokens", None),
+        cache_write_12h_tokens=getattr(u, "cache_write_12h_tokens", None),
     )  # fmt: skip
-    return float(cost or 0)
+    return float(cost) if cost is not None else None
+
+
+def summarize_costs(rows: list[dict[str, Any]], key: str = "cost_usd") -> dict[str, Any]:
+    """Retain the priced subtotal; any unpriced entry makes the total unknown.
+
+    Entries may be individual calls or an existing aggregate. The missing count
+    measures entries, not inferred provider attempts hidden inside older records.
+    """
+    known = 0.0
+    unpriced = 0
+    for row in rows:
+        value = row.get(key)
+        subtotal = row.get("known_cost_usd", value)
+        if subtotal is not None:
+            known += float(subtotal)
+        unpriced += int(row.get("unpriced_cost_entries", int(value is None)))
+    return {
+        "cost_usd": None if unpriced else round(known, 6),
+        "known_cost_usd": round(known, 6),
+        "unpriced_cost_entries": unpriced,
+    }
+
+
+def add_cost(row: dict[str, Any], cost: float | None, key: str = "cost_usd") -> None:
+    previous = row if key in row else {key: 0.0}
+    total = summarize_costs([previous, {key: cost}], key)
+    row[key] = total.pop("cost_usd")
+    row.update(total)
+
+
+def format_cost(summary: dict[str, Any]) -> str:
+    if summary.get("cost_usd") is not None:
+        return f"${summary['cost_usd']:.6f}"
+    return (
+        f"unknown (known subtotal ${summary.get('known_cost_usd', 0):.6f}; "
+        f"{summary.get('unpriced_cost_entries', 1)} unpriced entries)"
+    )
 
 
 def grader_input(digest: str, pack: str, item: Item, pass_: str, answer: str) -> str:
@@ -320,7 +360,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             uncovered[pass_] = _pass_summary(un)
     if uncovered:
         out["uncovered"] = uncovered
-    out["cost_usd"] = round(sum(r.get("cost_usd", 0.0) for r in rows), 4)
+    out.update(summarize_costs(rows))
     return out
 
 
@@ -438,8 +478,9 @@ async def cmd_run(args: argparse.Namespace) -> int:
             }  # fmt: skip
             try:
                 row["answer"], done = await generate(router, settings, ctx, item, pass_)
-                row["cost_usd"] += call_cost(settings, done)
+                add_cost(row, call_cost(settings, done))
             except Exception as e:
+                add_cost(row, None)
                 row["answer"], row["error"] = "", f"{type(e).__name__}: {e}"
                 return row
             row["metrics"] = text_metrics(row["answer"], known)
@@ -448,9 +489,10 @@ async def cmd_run(args: argparse.Namespace) -> int:
                     row["grade"], done = await grade(
                         grader, args.grader, digest, pack_text, item, pass_, row["answer"]
                     )
-                    row["cost_usd"] += call_cost(settings, done)
+                    add_cost(row, call_cost(settings, done))
                     break
                 except Exception as e:
+                    add_cost(row, None)
                     row["grade_error"] = f"{type(e).__name__}: {e}"
                     if attempt:
                         break
@@ -464,7 +506,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
     if "uncovered" in summary:
         print("\nQuestions the profile does not cover:")
         print(summary_table({args.label: summary["uncovered"]}))
-    print(f"\nCost: ${summary['cost_usd']:.2f}")
+    print(f"\nCost: {format_cost(summary)}")
     errors = [r for r in rows if r.get("error") or not r.get("grade")]
     if errors:
         print(f"{len(errors)} answers without a grade: {[r['id'] for r in errors]}")
@@ -498,9 +540,11 @@ async def cmd_regrade(args: argparse.Namespace) -> int:
                     row["grade"], done = await grade(
                         grader, args.grader, digest, pack_text, item, row["pass"], row["answer"]
                     )
-                    row["cost_usd"] = row.get("cost_usd", 0.0) + call_cost(settings, done)
+                    row.setdefault("cost_usd", None)
+                    add_cost(row, call_cost(settings, done))
                     return
                 except Exception as e:
+                    add_cost(row, None)
                     row["grade_error"] = f"{type(e).__name__}: {e}"
                     if attempt:
                         return

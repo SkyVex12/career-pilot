@@ -66,12 +66,155 @@ def test_openai_fast_alias_uses_model_specific_rate(tier: str) -> None:
     prices = {"gpt-6-luna": ModelPrice(input=0.1, cached=0.01, output=0.5)}
     # Include cache reads and output; a generic 1.75x rate would undercount.
     assert cost_usd(
-        "gpt-6-luna-2026-09-01", tier, 1_000_000, 100_000, 100_000, prices, DEFAULT_TIERS
+        "gpt-6-luna-2026-09-01",
+        tier,
+        1_000_000,
+        100_000,
+        100_000,
+        prices,
+        DEFAULT_TIERS,
+        cache_write_tokens=0,
     ) == Decimal("0.282000")
     custom = {**DEFAULT_TIERS, f"gpt-6-luna:{tier}": 3.0}
-    assert cost_usd("gpt-6-luna", tier, 1_000_000, 0, 0, prices, custom) == Decimal("0.300000")
+    assert cost_usd(
+        "gpt-6-luna", tier, 1_000_000, 0, 0, prices, custom, cache_write_tokens=0
+    ) == Decimal("0.300000")
 
 
 def test_fast_does_not_guess_price_for_an_unverified_model() -> None:
     prices = {"custom-model": ModelPrice(input=1, cached=0.1, output=5)}
     assert cost_usd("custom-model", "fast", 100, 0, 10, prices, DEFAULT_TIERS) is None
+
+
+@pytest.mark.parametrize(
+    ("written", "short", "long", "expected"),
+    [
+        (0, None, None, "0.008500"),
+        (0, 0, 0, "0.008500"),
+        (7000, 7000, 0, "0.010250"),
+        (7000, 0, 7000, "0.019000"),
+        (7000, 3000, 4000, "0.015250"),
+    ],
+)
+def test_openai_write_categories_are_disjoint_not_added_to_ordinary_input(
+    written: int, short: int | None, long: int | None, expected: str
+) -> None:
+    # Official mixed-TTL example: 12,000 input, 4,000 reads, 7,000 writes.
+    # 1,000 ordinary + 400 read + 3,750 short + 10,000 long + 100 output dollars/MTok.
+    prices = {"gpt-6-luna": ModelPrice(input=1, cached=0.1, output=5)}
+    assert cost_usd(
+        "gpt-6-luna",
+        "standard",
+        12000,
+        4000,
+        20,
+        prices,
+        DEFAULT_TIERS,
+        cache_write_tokens=written,
+        cache_write_30m_tokens=short,
+        cache_write_12h_tokens=long,
+    ) == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("written", "short", "long"),
+    [
+        (None, None, None),
+        (None, 3000, 4000),
+        (7000, None, None),
+        (7000, 3000, None),
+        (7000, None, 4000),
+        (7000, 3000, 3000),
+        (9000, 5000, 4000),
+        (0, 1, 0),
+        (-1, 0, 0),
+        (0, -1, 0),
+        (True, 1, 0),
+        (7000, 3000.0, 4000),
+    ],
+)
+def test_unknown_or_inconsistent_openai_write_usage_stays_unpriced(
+    written: int | None, short: int | None, long: int | None
+) -> None:
+    prices = {"gpt-6-luna": ModelPrice(input=1, cached=0.1, output=5)}
+    assert (
+        cost_usd(
+            "gpt-6-luna",
+            "standard",
+            12000,
+            4000,
+            20,
+            prices,
+            DEFAULT_TIERS,
+            cache_write_tokens=written,
+            cache_write_30m_tokens=short,
+            cache_write_12h_tokens=long,
+        )
+        is None
+    )
+
+
+def test_fast_tier_multiplies_all_disjoint_token_categories_once() -> None:
+    prices = {"gpt-6-luna": ModelPrice(input=1, cached=0.1, output=5)}
+    assert cost_usd(
+        "gpt-6-luna-2026-09-01",
+        "fast",
+        12000,
+        4000,
+        20,
+        prices,
+        DEFAULT_TIERS,
+        cache_write_tokens=7000,
+        cache_write_30m_tokens=3000,
+        cache_write_12h_tokens=4000,
+    ) == Decimal("0.030500")
+
+
+def test_legacy_openai_does_not_require_new_write_telemetry() -> None:
+    prices = {"gpt-5.4-mini": ModelPrice(input=1, cached=0.1, output=5)}
+    assert cost_usd(
+        "gpt-5.4-mini",
+        "standard",
+        12000,
+        4000,
+        20,
+        prices,
+        DEFAULT_TIERS,
+    ) == Decimal("0.008500")
+
+
+@pytest.mark.parametrize(
+    ("model", "billed"),
+    [
+        ("gpt-5.4-mini", False),
+        ("gpt-5.5-pro", False),
+        ("gpt-5.6", True),
+        ("gpt-6-luna-2026-09-01", True),
+        ("gpt-6.1-sol", True),
+        ("gpt-6.2-astra", True),
+        ("claude-sonnet-5-5", False),
+        ("custom-model", False),
+    ],
+)
+def test_cache_write_pricing_model_boundary(model: str, billed: bool) -> None:
+    from copilot_core.pricing import openai_cache_write_pricing
+
+    assert openai_cache_write_pricing(model) is billed
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6.2-sol", "gpt-6.2-astra"])
+@pytest.mark.parametrize("tier", ["fast", "priority"])
+def test_verified_new_model_fast_prices(model: str, tier: str) -> None:
+    prices = {model: ModelPrice(input=1, cached=0.1, output=5)}
+    assert cost_usd(
+        model,
+        tier,
+        12000,
+        4000,
+        20,
+        prices,
+        DEFAULT_TIERS,
+        cache_write_tokens=7000,
+        cache_write_30m_tokens=3000,
+        cache_write_12h_tokens=4000,
+    ) == Decimal("0.030500")

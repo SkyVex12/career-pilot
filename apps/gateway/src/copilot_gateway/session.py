@@ -630,8 +630,13 @@ class Session:
             {
                 "kind": "summary",
                 "model": done.model,
+                "tier": done.service_tier,
                 "input_tokens": done.usage.input_tokens,
                 "cached_tokens": done.usage.cached_tokens,
+                "reasoning_tokens": done.usage.reasoning_tokens,
+                "cache_write_tokens": done.usage.cache_write_tokens,
+                "cache_write_30m_tokens": done.usage.cache_write_30m_tokens,
+                "cache_write_12h_tokens": done.usage.cache_write_12h_tokens,
                 "output_tokens": done.usage.output_tokens,
                 "stop_reason": done.stop_reason,
                 "cost_usd": self._cost(done),
@@ -894,6 +899,9 @@ class Session:
         cost = cost_usd(
             done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
             s.model_prices, s.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )  # fmt: skip
         return None if cost is None else float(cost)
 
@@ -1875,8 +1883,13 @@ class Session:
                     "kind": "prewarm",
                     "pass": job,
                     "model": done.model,
+                    "tier": done.service_tier,
                     "input_tokens": done.usage.input_tokens,
                     "cached_tokens": done.usage.cached_tokens,
+                    "reasoning_tokens": done.usage.reasoning_tokens,
+                    "cache_write_tokens": done.usage.cache_write_tokens,
+                    "cache_write_30m_tokens": done.usage.cache_write_30m_tokens,
+                    "cache_write_12h_tokens": done.usage.cache_write_12h_tokens,
                     "cost_usd": self._cost(done),
                     "latency_ms": ms,
                 }

@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid5
 
+from copilot_evals.answer_eval import add_cost, call_cost, format_cost, summarize_costs
+
 SESSIONS = Path(__file__).resolve().parents[2] / "sessions"
 RESULTS = SESSIONS / "results"
 EVAL_USER = UUID("0192f3a9-55c2-7b10-a4e1-5e55105e5a11")
@@ -396,7 +398,7 @@ def score_flow(fx: Fixture, cards: list[Card]) -> dict[str, Any]:
 
 async def detect_line(
     provider: Any, model: str, fx: Fixture, line: Line, user_name: str, settings: Any
-) -> tuple[Any, float, float]:
+) -> tuple[Any, float, float | None]:
     """One detector call as the gateway sends it: (detection, ms, cost in USD)."""
     from copilot_core import prompts
     from copilot_core.llm import LLMDone
@@ -426,8 +428,15 @@ async def detect_line(
         price = cost_usd(
             settings.decisions_model, "standard", u.input_tokens, u.cached_tokens, 0,
             settings.model_prices, settings.tier_price_multipliers,
+            cache_write_tokens=getattr(u, "cache_write_tokens", None),
+            cache_write_30m_tokens=getattr(u, "cache_write_30m_tokens", None),
+            cache_write_12h_tokens=getattr(u, "cache_write_12h_tokens", None),
         )  # fmt: skip
-        return detection_from(decided.answers, fx.mode)[0], ms, float(price or 0)
+        return (
+            detection_from(decided.answers, fx.mode)[0],
+            ms,
+            (float(price) if price is not None else None),
+        )
     req = prompts.detector(
         user_name,
         transcript_before(fx, line, user_name),
@@ -440,17 +449,10 @@ async def detect_line(
     params: dict[str, Any] = {} if effort is None else {"reasoning": {"effort": effort}}
     started = time.monotonic()
     parts: list[str] = []
-    cost = 0.0
+    cost: float | None = None
     async for chunk in provider.stream(model, req, params):
         if isinstance(chunk, LLMDone):
-            u = chunk.usage
-            cost = float(
-                cost_usd(
-                    chunk.model, chunk.service_tier, u.input_tokens, u.cached_tokens,
-                    u.output_tokens, settings.model_prices, settings.tier_price_multipliers,
-                )
-                or 0
-            )  # fmt: skip
+            cost = call_cost(settings, chunk)
         else:
             parts.append(chunk)
     return parse_detection("".join(parts)), (time.monotonic() - started) * 1000, cost
@@ -471,7 +473,7 @@ async def run_detect(fixtures: list[Fixture], user_name: str, reps: int) -> dict
     false_by: dict[str, list[int]] = {}
     wrong: list[str] = []
     latencies: list[float] = []
-    cost = 0.0
+    cost = summarize_costs([])
     for _ in range(reps):
         for fx in fixtures:
             for line in fx.lines:
@@ -479,7 +481,7 @@ async def run_detect(fixtures: list[Fixture], user_name: str, reps: int) -> dict
                     continue
                 detection, ms, c = await detect_line(provider, model, fx, line, user_name, settings)
                 latencies.append(ms)
-                cost += c
+                add_cost(cost, c)
                 should = line.expect == "answer" and not line.unfinished
                 got = detection.fires()
                 where = f"{fx.id} line {line.index}: {detection.decision}/{detection.qtype}"
@@ -512,7 +514,7 @@ async def run_detect(fixtures: list[Fixture], user_name: str, reps: int) -> dict
         "type": [type_right, type_total],
         "latency_p50_ms": round(latencies[len(latencies) // 2]) if latencies else None,
         "calls": len(latencies),
-        "cost_usd": round(cost, 4),
+        **cost,
         "wrong": wrong,
     }
 
@@ -543,7 +545,6 @@ async def run_answers(
 ) -> dict[str, Any]:
     from copilot_core import prompts
     from copilot_core.dotenv import load_dotenv
-    from copilot_evals.answer_eval import call_cost
     from copilot_gateway.config import Settings
     from copilot_gateway.router import build_router
 
@@ -552,7 +553,7 @@ async def run_answers(
     router = build_router(settings)
     await router.warm()
     passed = total = 0
-    cost = 0.0
+    cost = summarize_costs([])
     failed: list[dict[str, str]] = []
     per_pass: dict[str, list[int]] = {}
     for rep in range(reps):
@@ -565,7 +566,7 @@ async def run_answers(
                 question = question_text(fx, line)
                 req = prompts.fast_pass(ctx, call, question, None, settings.fast_pass_max_tokens)
                 fast, done = await router.complete("fast", req)
-                cost += call_cost(settings, done)
+                add_cost(cost, call_cost(settings, done))
                 answers = {"fast": str(fast).strip()}
                 if deep:
                     req = prompts.deep_pass(
@@ -573,7 +574,7 @@ async def run_answers(
                         shown=answers["fast"],
                     )  # fmt: skip
                     text, done = await router.complete("deep", req)
-                    cost += call_cost(settings, done)
+                    add_cost(cost, call_cost(settings, done))
                     answers["deep"] = str(text).strip()
                 for pass_, answer in answers.items():
                     tally = per_pass.setdefault(pass_, [0, 0])
@@ -591,7 +592,7 @@ async def run_answers(
         "reps": reps,
         "checks": [passed, total],
         "by_pass": per_pass,
-        "cost_usd": round(cost, 4),
+        **cost,
         "failed": failed,
     }
 
@@ -634,7 +635,7 @@ def summary_rows(s: dict[str, Any]) -> list[tuple[str, str]]:
         rows.append(("Answers: checks passed", ratio(ans["checks"])))
         for pass_, pair in cast(dict[str, Any], ans["by_pass"]).items():
             rows.append((f"Answers: {pass_}", ratio(pair)))
-    rows.append(("Cost (USD)", f"{s.get('cost_usd', 0):.3f}"))
+    rows.append(("Cost (USD)", format_cost(s)))
     return rows
 
 
@@ -673,11 +674,11 @@ async def cmd_run(args: argparse.Namespace) -> int:
         summary["flow"] = flow
     if "detect" in parts:
         summary["detect"] = await run_detect(fixtures, user_name, args.reps)
-        summary["cost_usd"] += summary["detect"]["cost_usd"]
     if "answers" in parts:
         summary["answers"] = await run_answers(fixtures, user_name, args.reps, args.deep)
-        summary["cost_usd"] += summary["answers"]["cost_usd"]
-    summary["cost_usd"] = round(summary["cost_usd"], 4)
+    summary.update(
+        summarize_costs([summary[part] for part in ("detect", "answers") if part in summary])
+    )
     out = RESULTS / args.label
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", "utf-8")

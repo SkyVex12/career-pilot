@@ -49,6 +49,8 @@ from openai.types.responses import (
     ResponseTextDeltaEvent,
 )
 
+from copilot_core.pricing import openai_cache_write_pricing
+
 log = logging.getLogger(__name__)
 
 
@@ -72,6 +74,12 @@ class LLMUsage:
     input_tokens: int = 0  # all input tokens, cached ones included
     cached_tokens: int = 0  # read from the prompt cache
     output_tokens: int = 0
+    # OpenAI GPT-5.6+ reports writes separately from reads. None means unobserved,
+    # not zero; older SDKs retain the TTL breakdown as extra response fields.
+    cache_write_tokens: int | None = None
+    cache_write_30m_tokens: int | None = None
+    cache_write_12h_tokens: int | None = None
+    reasoning_tokens: int | None = None  # already included in output_tokens; never add to cost
 
 
 @dataclass(frozen=True)
@@ -308,14 +316,11 @@ def openai_content(content: str | Sequence[Mapping[str, Any]]) -> list[dict[str,
     return out
 
 
-_CACHE_OPTIONS_MODEL = re.compile(r"^gpt-(?:5\.(?:[6-9]|\d{2,})|[6-9]|\d{2,})(?:[.\-]|$)")
-
-
 def supports_cache_options(model: str) -> bool:
     """`prompt_cache_breakpoint` and `prompt_cache_options` exist from GPT-5.6 on; older models
     reject both with a 400 (checked October 2026: gpt-5.4-mini rejects them, gpt-6-luna and
     gpt-6.1-sol accept them)."""
-    return bool(_CACHE_OPTIONS_MODEL.match(model))
+    return openai_cache_write_pricing(model)
 
 
 def prompt_cache_key(blocks: Sequence[SystemBlock]) -> str | None:
@@ -329,6 +334,38 @@ def prompt_cache_key(blocks: Sequence[SystemBlock]) -> str | None:
         h.update(b.text.encode("utf-8"))
         h.update(b"\0")
     return "pfx-" + base64.urlsafe_b64encode(h.digest()[:18]).decode("ascii")
+
+
+def _openai_usage(raw: Any, *, include_output: bool = True) -> LLMUsage:
+    """Read SDK objects or raw usage without inventing cache-write counters.
+
+    SDK 3.26 exposes aggregate writes as a typed field and retains the documented
+    TTL breakdown as an extra dict. A future typed breakdown works the same way.
+    Request TTL/defaults are deliberately not used to fill absent response usage.
+    """
+
+    def value(obj: Any, name: str) -> Any:
+        return (
+            cast(Mapping[str, Any], obj).get(name)
+            if isinstance(obj, Mapping)
+            else getattr(obj, name, None)
+        )
+
+    def counter(obj: Any, name: str) -> int | None:
+        observed = value(obj, name)
+        return observed if type(observed) is int and observed >= 0 else None
+
+    details = value(raw, "input_tokens_details")
+    writes = value(details, "cache_write_tokens_details")
+    return LLMUsage(
+        input_tokens=counter(raw, "input_tokens") or 0,
+        cached_tokens=counter(details, "cached_tokens") or 0,
+        output_tokens=(counter(raw, "output_tokens") or 0) if include_output else 0,
+        cache_write_tokens=counter(details, "cache_write_tokens"),
+        cache_write_30m_tokens=counter(writes, "ttl_30m_tokens"),
+        cache_write_12h_tokens=counter(writes, "ttl_12h_tokens"),
+        reasoning_tokens=counter(value(raw, "output_tokens_details"), "reasoning_tokens"),
+    )
 
 
 class OpenAIProvider:
@@ -393,21 +430,20 @@ class OpenAIProvider:
     ) -> "LLMDone | None":
         """Write the prompt cache for `req`'s system blocks without generating output
         (`prompt_cache_options.prewarm`, GPT-5.6 and later; None on older models, which lack
-        it). Cache writes are billed at 1.25x the input rate."""
+        it). Writes are billed at the rate for their reported cache lifetime."""
         if not supports_cache_options(model) or not any(b.cache for b in req.system):
             return None
         kwargs = self.request(model, req, params)
         kwargs["extra_body"] = {"prompt_cache_options": {"mode": "explicit", "prewarm": True}}
         response = cast(Response, await self.client.responses.create(**kwargs))
         u = response.usage
+        tier = str(response.service_tier or "default")
         return LLMDone(
-            usage=LLMUsage(
-                input_tokens=u.input_tokens if u else 0,
-                cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
-            ),
+            usage=_openai_usage(u),
             stop_reason="prewarm",
             provider=self.name,
             model=model,
+            service_tier=_OPENAI_TIERS.get(tier, tier),
         )
 
     async def decide(
@@ -425,11 +461,7 @@ class OpenAIProvider:
             questions=cast(Any, list(questions)),
         )
         u = d.usage
-        details = u.input_tokens_details if u else None
-        usage = LLMUsage(
-            input_tokens=u.input_tokens if u else 0,
-            cached_tokens=(details.cached_tokens or 0) if details else 0,
-        )
+        usage = _openai_usage(u, include_output=False)
         return Decided([a.model_dump() for a in d.answers], usage, self.name, model)
 
     async def stream(
@@ -480,11 +512,7 @@ class OpenAIProvider:
         u = final.usage
         tier = str(final.service_tier or "default")
         yield LLMDone(
-            usage=LLMUsage(
-                input_tokens=u.input_tokens if u else 0,  # cached tokens included
-                cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
-                output_tokens=u.output_tokens if u else 0,  # reasoning tokens included
-            ),
+            usage=_openai_usage(u),
             stop_reason=stop_reason,
             provider=self.name,
             model=model,

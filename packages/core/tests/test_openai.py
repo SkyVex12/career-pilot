@@ -123,8 +123,20 @@ def test_openai_model_names_in_pricing_and_routing() -> None:
     assert model_family("us.anthropic.claude-sonnet-5-5") == "claude-sonnet-5-5"
     prices = {"gpt-6-luna": ModelPrice(input=0.1, cached=0.01, output=0.5)}
     assert missing_prices(["gpt-6-luna", "gpt-6.1-sol"], prices) == ["gpt-6.1-sol"]
-    # 1,568 input of which 1,565 cached, 71 output (the recorded fast pass).
+    # The historical token summary omitted writes; it cannot prove the billed cost.
     cost = cost_usd("gpt-6-luna", "standard", 1568, 1565, 71, prices, {"standard": 1.0})
+    assert cost is None
+    # A response that explicitly reports no writes has a complete token estimate.
+    cost = cost_usd(
+        "gpt-6-luna",
+        "standard",
+        1568,
+        1565,
+        71,
+        prices,
+        {"standard": 1.0},
+        cache_write_tokens=0,
+    )
     assert cost is not None
     assert float(cost) == pytest.approx((3 * 0.1 + 1565 * 0.01 + 71 * 0.5) / 1e6, abs=1e-6)
 

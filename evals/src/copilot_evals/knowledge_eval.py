@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, cast
 
-from copilot_evals.answer_eval import call_cost
+from copilot_evals.answer_eval import add_cost, call_cost, summarize_costs
 from copilot_evals.benchdata import BENCH_DIR, load_profile
 from copilot_evals.company_eval import (
     EVAL_EMPLOYER,
@@ -56,7 +56,7 @@ DOCS = KNOWLEDGE_DIR / "docs"
 QUESTIONS = KNOWLEDGE_DIR / "questions.toml"
 RESULTS = KNOWLEDGE_DIR / "results"
 HAS_KNOWLEDGE = importlib.util.find_spec("copilot_core.knowledge") is not None
-# The extraction's tokens: its model may have no price configured, so its cost is shown as 0.
+# Extraction token counts remain visible even when missing billing details leave cost unknown.
 TOKENS: dict[str, Any] = {"model": "", "input": 0, "output": 0}
 SAFE = re.compile(r"confirm|follow up|check|get back|look (it|that) up", re.I)
 
@@ -129,10 +129,9 @@ async def seed_items(conn: Any, items: list[dict[str, Any]], today: date) -> Non
         )
 
 
-async def extract_documents(conn: Any, user: str, company: str) -> tuple[list[Any], float]:
+async def extract_documents(conn: Any, user: str, company: str) -> tuple[list[Any], dict[str, Any]]:
     """Run this checkout's own document extraction over the fixture documents and write its
     facts. Returns the sections (none before engineering context) and the cost."""
-    from copilot_core.pricing import cost_usd
     from copilot_core.providers import make_providers
     from copilot_worker.config import WorkerSettings
     from copilot_worker.llm import build_router
@@ -141,22 +140,15 @@ async def extract_documents(conn: Any, user: str, company: str) -> tuple[list[An
     wprompts: Any = importlib.import_module("copilot_worker.prompts")
     settings = WorkerSettings()
     router = build_router(settings, make_providers(settings, settings.llm_timeout_s))
-    cost = 0.0
+    cost = summarize_costs([])
 
     async def complete(job: str, req: Any) -> dict[str, Any]:
-        nonlocal cost
         text, done = await router.complete(job, req)
         u = done.usage
         TOKENS["model"] = done.model
         TOKENS["input"] += u.input_tokens
         TOKENS["output"] += u.output_tokens
-        cost += float(
-            cost_usd(
-                done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
-                settings.model_prices, settings.tier_price_multipliers,
-            )
-            or 0
-        )  # fmt: skip
+        add_cost(cost, call_cost(settings, done))
         return cast(dict[str, Any], json.loads(text))
 
     chunks: list[Any] = []
@@ -209,7 +201,7 @@ async def extract_documents(conn: Any, user: str, company: str) -> tuple[list[An
 
 
 async def prepare(conn: Any, label: str, items: list[dict[str, Any]], user: str, company: str,
-                  today: date) -> tuple[list[Any], float]:  # fmt: skip
+                  today: date) -> tuple[list[Any], dict[str, Any]]:  # fmt: skip
     """The company's memory for this label: extracted now, or loaded from the last run."""
     path = RESULTS / label / "prepared.json"
     await seed_items(conn, items, today)
@@ -225,7 +217,7 @@ async def prepare(conn: Any, label: str, items: list[dict[str, Any]], user: str,
                 n["summary"], n["body"], n["source"],
                 date.fromisoformat(n["valid_from"]) if n["valid_from"] else None,
             )  # fmt: skip
-        return saved["chunks"], 0.0
+        return saved["chunks"], summarize_costs([])
     chunks, cost = await extract_documents(conn, user, company)
     rows = await conn.fetch(
         "select id, kind, title, summary, body, source, valid_from from app.memory_nodes"
@@ -332,7 +324,7 @@ async def run_question(q: Question, env: dict[str, Any]) -> dict[str, Any]:
     lines = transcript(q, first)
     req = prompts.detector(user, lines, q.text, 80, "standup", turn_taking(q, user))
     text, done, ms = await timed(router, "detector", req)
-    row["cost"] += call_cost(settings, done)
+    add_cost(row, call_cost(settings, done), "cost")
     found = parse_detection(text)
     row.update(detected=found.qtype if found.decision == "answer" else found.decision,
                fired=found.fires(), type_ok=found.fires() and found.qtype in q.types,
@@ -370,14 +362,14 @@ async def run_question(q: Question, env: dict[str, Any]) -> dict[str, Any]:
     call = prompts.CallContext(recent=lines)
     req = prompts.fast_pass(ctx, call, q.text, None, settings.fast_pass_max_tokens, memory["fast"])
     fast, done, ms = await timed(router, "fast", req)
-    row["cost"] += call_cost(settings, done)
+    add_cost(row, call_cost(settings, done), "cost")
     row.update(fast=fast.strip(), fast_first_ms=ms, fast_input_tokens=done.usage.input_tokens)
     req = prompts.deep_pass(
         ctx, call, q.text, found.qtype, settings.deep_pass_max_tokens, memory["deep"],
         shown=fast.strip(),
     )  # fmt: skip
     deep, done, ms = await timed(router, "deep", req)
-    row["cost"] += call_cost(settings, done)
+    add_cost(row, call_cost(settings, done), "cost")
     row.update(deep=deep.strip(), deep_first_ms=ms)
     row.update(fast_ok=check(q, row["fast"]), deep_ok=check(q, row["deep"]))
     return row
@@ -414,7 +406,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "short_first_token_ms_p50": p50("fast_first_ms"),
         "detailed_first_token_ms_p50": p50("deep_first_ms"),
         "short_prompt_tokens_p50": p50("fast_input_tokens"),
-        "cost_usd": round(sum(float(r["cost"]) for r in rows), 4),
+        **summarize_costs(rows, "cost"),
     }
 
 
@@ -478,7 +470,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
         finally:
             await conn.close()
     summary = summarize(rows)
-    summary["prepare_cost_usd"] = round(prepared_cost, 4)
+    summary.update({f"prepare_{key}": value for key, value in prepared_cost.items()})
     summary["prepare_tokens"] = dict(TOKENS)
     summary["engineering_context"] = HAS_KNOWLEDGE
     summary["digest_chars"] = len(digest.text) if digest is not None else 0
@@ -506,6 +498,8 @@ ROWS = [
     ("detailed_first_token_ms_p50", "Detailed answer's first token, ms (p50)"),
     ("short_prompt_tokens_p50", "Short answer's prompt, tokens (p50)"),
     ("cost_usd", "Cost of the run, USD"),
+    ("known_cost_usd", "Known token-cost subtotal, USD"),
+    ("unpriced_cost_entries", "Unpriced cost entries"),
 ]
 
 

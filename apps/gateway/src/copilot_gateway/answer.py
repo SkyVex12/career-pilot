@@ -587,6 +587,9 @@ class AnswerEngine:
         cost = cost_usd(
             done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
             s.model_prices, s.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )  # fmt: skip
         return None if cost is None else float(cost)
 
@@ -714,9 +717,7 @@ class AnswerEngine:
             if sentence is not None and first is not None:
                 out["stream_sentence_ms"] = max(0, round((sentence - first) * 1000))
             if sentence is not None and q.released_at is not None:
-                out["sentence_release_wait_ms"] = max(
-                    0, round((q.released_at - sentence) * 1000)
-                )
+                out["sentence_release_wait_ms"] = max(0, round((q.released_at - sentence) * 1000))
             return out
 
         def done(
@@ -800,6 +801,10 @@ class AnswerEngine:
                     "input_tokens": usage.input_tokens if usage else 0,
                     "cached_tokens": usage.cached_tokens if usage else 0,
                     "output_tokens": usage.output_tokens if usage else 0,
+                    "reasoning_tokens": usage.reasoning_tokens if usage else None,
+                    "cache_write_tokens": usage.cache_write_tokens if usage else None,
+                    "cache_write_30m_tokens": usage.cache_write_30m_tokens if usage else None,
+                    "cache_write_12h_tokens": usage.cache_write_12h_tokens if usage else None,
                     "cost_usd": self._cost(done_info),
                     "latency_ms": stored,
                     "memory_node_ids": [str(r.node_id) for r in refs],
@@ -1115,6 +1120,10 @@ class AnswerEngine:
                 input_tokens=u.input_tokens,
                 cached_tokens=u.cached_tokens,
                 output_tokens=u.output_tokens,
+                reasoning_tokens=u.reasoning_tokens,
+                cache_write_tokens=u.cache_write_tokens,
+                cache_write_30m_tokens=u.cache_write_30m_tokens,
+                cache_write_12h_tokens=u.cache_write_12h_tokens,
                 cost_usd=self._cost(finished),
             )
         elif req is not None and routes:

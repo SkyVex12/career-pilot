@@ -99,7 +99,13 @@ async def test_the_openai_provider_decides_through_the_decisions_endpoint() -> N
     assert [q["name"] for q in body["questions"]] == ["turn", "type", "depth"]
     assert got.answers[0]["choice"] == "answer"
     # Only input is billed: the recorded call read 1,327 tokens and wrote none.
-    assert got.usage == LLMUsage(input_tokens=1327, cached_tokens=0, output_tokens=0)
+    assert got.usage == LLMUsage(
+        input_tokens=1327,
+        cached_tokens=0,
+        output_tokens=0,
+        cache_write_tokens=0,
+        reasoning_tokens=0,
+    )
 
 
 class FakeDecider:
@@ -121,7 +127,9 @@ class FakeDecider:
         await asyncio.sleep(self.delays[i])
         if i < len(self.errors) and self.errors[i]:
             raise RuntimeError("Decision inference is unavailable.")
-        return Decided(answers("answer", "technical"), LLMUsage(1300), "openai", model)
+        return Decided(
+            answers("answer", "technical"), LLMUsage(1300, cache_write_tokens=0), "openai", model
+        )
 
 
 def detector_on(decider: FakeDecider, hedge_s: float | None = 0.2) -> tuple[Detector, list[Any]]:
@@ -189,7 +197,9 @@ class OpenAIScripted(ScriptedProvider):
         utterance = text.split("<utterance>")[-1].split("</utterance>")[0].strip()
         self.decisions.append(utterance)
         turn = "answer" if utterance.endswith("?") else "none"
-        return Decided(answers(turn, "technical"), LLMUsage(1300), "openai", model)
+        return Decided(
+            answers(turn, "technical"), LLMUsage(1300, cache_write_tokens=0), "openai", model
+        )
 
 
 async def test_a_session_decides_on_the_decisions_api_alone(env) -> None:
@@ -268,7 +278,10 @@ async def test_a_session_routes_the_detailed_answer_by_its_depth(env) -> None:
             text = str(input[1]["content"][0]["text"])
             depth = "deep" if "design" in text.split("<utterance>")[-1] else "light"
             return Decided(
-                answers("answer", "technical", depth=depth), LLMUsage(1300), "openai", model
+                answers("answer", "technical", depth=depth),
+                LLMUsage(1300, cache_write_tokens=0),
+                "openai",
+                model,
             )
 
     provider = Routed()
