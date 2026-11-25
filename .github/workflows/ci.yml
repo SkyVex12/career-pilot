@@ -237,6 +237,7 @@ jobs:
         run: >-
           cargo test -p copilot-protocol -p copilot-client
           --lib --test contract --test pipeline --test gateway --test engine
+          --test completion --test refresh_live
 
   rust-windows:
     name: rust (desktop shell, Windows)

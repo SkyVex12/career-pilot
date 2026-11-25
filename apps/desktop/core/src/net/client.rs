@@ -41,7 +41,7 @@ use super::backoff::Backoff;
 use super::close::{self, CloseAction, CloseContext, Delay, StopReason};
 use super::ring::{FrameRing, RingFrame};
 use crate::audio::OutFrame;
-use crate::auth::{AuthError, Token, TokenProvider};
+use crate::auth::{AuthError, BoxFuture, Token, TokenProvider};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -519,14 +519,21 @@ impl Client {
         Ok(())
     }
 
-    async fn refresh_token(&mut self, ws: &mut Ws) {
-        match self.tokens.refresh().await {
+    fn refresh_future(&self) -> BoxFuture<'static, Result<Token, AuthError>> {
+        let tokens = self.tokens.clone();
+        Box::pin(async move { tokens.refresh().await })
+    }
+
+    async fn finish_refresh(&mut self, ws: Option<&mut Ws>, result: Result<Token, AuthError>) {
+        match result {
             Ok(Token { access_token, expires_at }) => {
                 self.token_expires_at = expires_at;
                 self.stats().token_refreshes += 1;
-                let msg = ClientMessage::AuthRefresh(AuthRefresh { access_token });
-                if let Err(e) = Self::send_json(ws, &msg).await {
-                    self.emit(ClientEvent::Warning { message: format!("auth.refresh not sent: {e}") });
+                if let Some(ws) = ws {
+                    let msg = ClientMessage::AuthRefresh(AuthRefresh { access_token });
+                    if let Err(e) = Self::send_json(ws, &msg).await {
+                        self.emit(ClientEvent::Warning { message: format!("auth.refresh not sent: {e}") });
+                    }
                 }
             }
             Err(e @ AuthError::NotSignedIn(_)) | Err(e @ AuthError::Store(_)) => {
@@ -577,8 +584,9 @@ impl Client {
             self.config.ping_interval,
         );
         let mut end_deadline: Option<tokio::time::Instant> = None;
+        let mut refreshing: Option<BoxFuture<'static, Result<Token, AuthError>>> = None;
         let far = tokio::time::Instant::now() + Duration::from_secs(365 * 24 * 3600);
-        loop {
+        let outcome = loop {
             let stable_at = tokio::time::Instant::from_std(connected_at + STABLE_AFTER);
             let ready_by = tokio::time::Instant::from_std(connected_at + READY_TIMEOUT);
             let refresh_at = self.refresh_due().unwrap_or(far);
@@ -622,7 +630,7 @@ impl Client {
                                 self.state(ConnectionState::Live { session_id: ready.session_id, resumed: false });
                                 // Audio captured since the start waited in the ring.
                                 if let Err(e) = self.resend_ring(&mut ws).await {
-                                    return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                                    break Outcome::Closed { code: None, reason: e, retry_after_ms };
                                 }
                             }
                             ServerMessage::ServerError(err) => {
@@ -635,7 +643,9 @@ impl Client {
                             }
                             ServerMessage::AuthExpiring(_) => {
                                 self.emit(ClientEvent::Server { message: message.clone() });
-                                self.refresh_token(&mut ws).await;
+                                if refreshing.is_none() {
+                                    refreshing = Some(self.refresh_future());
+                                }
                                 continue;
                             }
                             _ => {}
@@ -646,17 +656,17 @@ impl Client {
                         let (code, reason) = frame.map_or((None, String::new()), |f| (Some(u16::from(f.code)), f.reason.to_string()));
                         // Let tungstenite finish the closing handshake.
                         let _ = tokio::time::timeout(Duration::from_millis(500), ws.close(None)).await;
-                        return Outcome::Closed { code, reason, retry_after_ms };
+                        break Outcome::Closed { code, reason, retry_after_ms };
                     }
                     Some(Ok(_)) => {} // binary, ping (answered by tungstenite), pong
-                    Some(Err(e)) => return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms },
-                    None => return Outcome::Closed { code: None, reason: "connection closed".into(), retry_after_ms },
+                    Some(Err(e)) => break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms },
+                    None => break Outcome::Closed { code: None, reason: "connection closed".into(), retry_after_ms },
                 },
                 cmd = self.rx.recv() => match cmd {
                     Some(Command::Frame(f)) => {
                         if let Some(bytes) = self.buffer(f) && live {
                             if let Err(e) = ws.send(Message::binary(bytes)).await {
-                                return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
+                                break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
                             }
                             self.stats().frames_sent += 1;
                         }
@@ -665,31 +675,31 @@ impl Client {
                         if !live {
                             self.emit(ClientEvent::Warning { message: format!("session not ready; {} not sent", m.type_name()) });
                         } else if let Err(e) = Self::send_json(&mut ws, &m).await {
-                            return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                            break Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                     }
                     Some(Command::End { summarize }) => {
                         self.ending = true;
                         if self.session_id.is_none() {
                             let _ = ws.close(None).await;
-                            return Outcome::Shutdown;
+                            break Outcome::Shutdown;
                         }
                         if let Err(e) = Self::send_json(&mut ws, &ClientMessage::SessionEnd(SessionEnd { summarize: Some(summarize) })).await {
-                            return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                            break Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                         end_deadline = Some(tokio::time::Instant::now() + END_TIMEOUT);
                     }
                     Some(Command::Shutdown) | None => {
                         let _ = tokio::time::timeout(Duration::from_secs(1), ws.close(None)).await;
-                        return Outcome::Shutdown;
+                        break Outcome::Shutdown;
                     }
                     Some(Command::DropConnection) => {
-                        return Outcome::Closed { code: None, reason: "dropped (test hook)".into(), retry_after_ms };
+                        break Outcome::Closed { code: None, reason: "dropped (test hook)".into(), retry_after_ms };
                     }
                 },
                 _ = ping.tick() => {
                     if let Err(e) = ws.send(Message::Ping(Vec::new().into())).await {
-                        return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
+                        break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
                     }
                     self.stats().pings_sent += 1;
                 }
@@ -703,16 +713,28 @@ impl Client {
                 }
                 _ = tokio::time::sleep_until(ready_by), if !live => {
                     // No session.ready: treat as a dead connection and retry.
-                    return Outcome::Closed { code: None, reason: "no session.ready".into(), retry_after_ms };
+                    break Outcome::Closed { code: None, reason: "no session.ready".into(), retry_after_ms };
                 }
-                _ = tokio::time::sleep_until(refresh_at), if self.token_expires_at.is_some() => {
-                    self.refresh_token(&mut ws).await;
+                result = async { refreshing.as_mut().expect("guarded refresh").await }, if refreshing.is_some() => {
+                    refreshing = None;
+                    self.finish_refresh(Some(&mut ws), result).await;
+                }
+                _ = tokio::time::sleep_until(refresh_at), if self.token_expires_at.is_some() && refreshing.is_none() => {
+                    refreshing = Some(self.refresh_future());
                 }
                 _ = tokio::time::sleep_until(end_deadline.unwrap_or(far)), if end_deadline.is_some() => {
-                    return Outcome::Shutdown;
+                    break Outcome::Shutdown;
                 }
             }
+        };
+        drop(ws);
+        if let Some(refresh) = refreshing {
+            // A refresh may rotate credentials remotely. Settle the accepted operation
+            // before reconnect/Stop returns; never write its result to a closed socket.
+            // This keeps the existing provider completion bound, not a new hard deadline.
+            self.finish_refresh(None, refresh.await).await;
         }
+        outcome
     }
 }
 
