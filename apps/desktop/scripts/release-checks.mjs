@@ -33,6 +33,18 @@ test("Mac config selects DMG and app; preview does not require an updater key", 
   assert.notEqual(run("config", "--version", "1.2.3", "--platform", "typo", "--out", out).status, 0);
 });
 
+test("Windows updates install silently into the current user profile", (t) => {
+  const { dir, run } = fixture(t);
+  const out = join(dir, "windows.json");
+  const result = run("config", "--version", "1.2.3", "--platform", "windows-x86_64", "--out", out);
+  assert.equal(result.status, 0, result.stderr);
+  const cfg = JSON.parse(readFileSync(out));
+  // Quiet updates cannot request elevation: keep the installer per-user.
+  assert.equal(cfg.bundle.windows.nsis.installMode, "currentUser");
+  assert.equal(cfg.plugins.updater.windows.installMode, "quiet");
+  assert.equal(cfg.plugins.updater.requireSignedVersion, true);
+});
+
 test("packages both Mac architectures and Windows, merging all signed updater entries", (t) => {
   const { dir, run } = fixture(t);
   const manifests = [];

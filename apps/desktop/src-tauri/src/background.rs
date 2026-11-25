@@ -120,6 +120,19 @@ pub(crate) fn second_instance(app: &AppHandle, args: &[String]) {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum TrayClickAction {
+    Open,
+    Menu,
+}
+
+fn tray_click_action(button: MouseButton, state: MouseButtonState) -> Option<TrayClickAction> {
+    match (button, state) {
+        (MouseButton::Left, MouseButtonState::Up) => Some(TrayClickAction::Open),
+        (MouseButton::Right, MouseButtonState::Up) => Some(TrayClickAction::Menu),
+        _ => None,
+    }
+}
 pub(crate) fn setup(app: &AppHandle) -> Result<(), String> {
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("background.json");
     let preferences = load(&path).unwrap_or_else(|error| {
@@ -154,18 +167,15 @@ pub(crate) fn setup(app: &AppHandle) -> Result<(), String> {
         .tooltip("CoRuby")
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button, button_state: MouseButtonState::Up, position, .. } = event {
+            if let TrayIconEvent::Click { button, button_state, position, .. } = event {
                 let app = tray.app_handle();
-                match button {
-                    MouseButton::Right => {
-                        let _ = open(app);
-                    }
-                    MouseButton::Left => {
-                        if let Err(error) = crate::tray_menu::show(app, position) {
-                            tracing::warn!("Tray menu: {error}");
-                        }
-                    }
-                    _ => {}
+                let result = match tray_click_action(button, button_state) {
+                    Some(TrayClickAction::Open) => open(app),
+                    Some(TrayClickAction::Menu) => crate::tray_menu::show(app, position),
+                    None => return,
+                };
+                if let Err(error) = result {
+                    tracing::warn!("Tray click: {error}");
                 }
             }
         });
@@ -532,6 +542,20 @@ pub(crate) fn foreground_external_process_id() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn left_click_opens_coruby_and_right_click_opens_the_menu() {
+        assert_eq!(tray_click_action(MouseButton::Left, MouseButtonState::Up), Some(TrayClickAction::Open));
+        assert_eq!(tray_click_action(MouseButton::Right, MouseButtonState::Up), Some(TrayClickAction::Menu));
+    }
+
+    #[test]
+    fn tray_press_and_unassigned_buttons_do_not_trigger_duplicate_actions() {
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            assert_eq!(tray_click_action(button, MouseButtonState::Down), None);
+        }
+        assert_eq!(tray_click_action(MouseButton::Middle, MouseButtonState::Up), None);
+    }
 
     #[test]
     fn changed_emulator_during_scan_does_not_strand_a_previous_prompt() {

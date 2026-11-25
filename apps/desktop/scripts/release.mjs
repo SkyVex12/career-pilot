@@ -83,7 +83,8 @@ function writeConfig(a) {
         // The signature's trusted comment carries the version it was built for, so a doctored
         // latest.json cannot pair a newer version number with an older signed installer.
         requireSignedVersion: true,
-        windows: { installMode: "passive" },
+        // Per-user installs can update silently; CoRuby shows progress before restarting.
+        windows: { installMode: "quiet" },
         ...(local ? { dangerousInsecureTransportProtocol: true } : {}),
       },
     },
