@@ -17,7 +17,6 @@ Prepared answers carry vectors from the worker's embedder, and the pack names it
 
 import asyncio
 import logging
-import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -25,7 +24,15 @@ from uuid import UUID
 
 from copilot_core import jobs, keys, pack_operations, resumes, workplace
 from copilot_core.ids import uuid7
-from copilot_core.packs import SHORT_ID, Digest, NodeRef, SessionPack, encode_embedding, render_pack
+from copilot_core.packs import (
+    PREPARED_DIGEST_POLICY,
+    SHORT_ID,
+    Digest,
+    NodeRef,
+    SessionPack,
+    encode_embedding,
+    render_pack,
+)
 from copilot_core.valkey_client import Valkey, text
 from copilot_worker import prompts
 from copilot_worker.context import Ctx
@@ -380,6 +387,8 @@ async def build_interview_pack(
                 "question": str(answer["question"]),
                 "talking_points": points,
                 "node_ids": [str(refs[s].node_id) for s in cited],
+                "grounding_policy": PREPARED_DIGEST_POLICY,
+                "evidence_version": Digest.version_of(digest.text) if digest else None,
             }
         )
     version = paired.resume_version_id
@@ -447,10 +456,13 @@ def short_id(value: object) -> str:
 
 
 def _keep_known_citations(point: str, refs: dict[str, NodeRef]) -> str:
-    """Drop citations of short ids the digest does not have (they would point nowhere)."""
-    return re.sub(
-        r"\s*\[(n:[0-9a-z]{2,8})\]", lambda m: m.group(0) if m.group(1) in refs else "", point
-    ).strip()
+    """Reject a point with an unknown citation, rather than keeping its unlinked claim.
+
+    Known IDs establish source linkage only; they do not verify what the model claimed.
+    """
+    if any(short_id not in refs for short_id in SHORT_ID.findall(point)):
+        return ""
+    return point.strip()
 
 
 async def embed_prepared(ctx: Ctx, pack: SessionPack) -> None:

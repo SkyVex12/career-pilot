@@ -65,11 +65,19 @@ class RankedStory(_Model):
     competencies: list[str] = []
 
 
+# These record how the points were produced, not human approval or semantic verification.
+PREPARED_DIGEST_POLICY = "digest_generated.v2"
+PREPARED_STANDUP_POLICY = "standup_compiled.v2"
+
+
 class PreparedAnswer(_Model):
     question: str
     embedding_b64: str | None = None
     talking_points: list[str]
     node_ids: list[UUID] = []
+    # Optional for old packs; candidates require a recognized policy and current source.
+    grounding_policy: str | None = None
+    evidence_version: str | None = None
 
     def embedding(self) -> list[float] | None:
         if not self.embedding_b64:
@@ -291,8 +299,12 @@ def cited_refs(text: str, refs: dict[str, NodeRef]) -> list[NodeRef]:
     return out
 
 
-def render_pack(pack: SessionPack) -> str:
-    """The `<session_pack>` prompt block body. Embeddings are left out."""
+def render_pack(pack: SessionPack, *, include_prepared: bool = True) -> str:
+    """The `<session_pack>` prompt block body. Embeddings are left out.
+
+    Live candidate prompts omit generated prepared points so they cannot masquerade as
+    source facts after the direct prepared shortcut has rejected their provenance.
+    """
     lines: list[str] = [f"Mode: {pack.mode}"]
     ctx = pack.context
     for label, value in (
@@ -310,7 +322,7 @@ def render_pack(pack: SessionPack) -> str:
         for s in pack.ranked_stories:
             comps = f" Competencies: {', '.join(s.competencies)}." if s.competencies else ""
             lines.append(f"[{s.short_id}] {s.title}: {s.one_liner}{comps}")
-    if pack.prepared_answers:
+    if include_prepared and pack.prepared_answers:
         lines.append("## Prepared answers")
         for a in pack.prepared_answers:
             lines.append(f"Q: {a.question}")

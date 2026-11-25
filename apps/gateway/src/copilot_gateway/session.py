@@ -48,6 +48,8 @@ from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
 from copilot_core.llm import LLMDone, ModelRouter
 from copilot_core.packs import (
+    PREPARED_DIGEST_POLICY,
+    PREPARED_STANDUP_POLICY,
     Digest,
     FocusMaterial,
     MeetingContext,
@@ -658,6 +660,17 @@ class Session:
     def prompt_context(self) -> prompts.PromptContext:
         return self._prompt_ctx
 
+    def prepared_source_version(self, policy: str) -> str | None:
+        if policy == PREPARED_DIGEST_POLICY:
+            return Digest.version_of(self.digest.text) if self.digest is not None else None
+        if policy == PREPARED_STANDUP_POLICY:
+            # Live company memory can change after the pack is loaded. Until lookup gives
+            # a change-token proof, a pack hash alone cannot establish current workplace facts.
+            if self.company_memory is not None or self.pack is None or self.pack.standup is None:
+                return None
+            return Digest.version_of(self.pack.standup.model_dump_json())
+        return None
+
     def _build_prompt_ctx(self) -> prompts.PromptContext:
         employer = self.pack.employer if self.pack is not None else None
         at_work = employer is not None and employer.id == self.info.employer_id
@@ -666,7 +679,12 @@ class Session:
             spoken_language=self.spoken_language,
             mode=self.info.mode,
             digest_text=self.digest.text if self.digest else None,
-            pack_text=render_pack(self.pack) if self.pack else None,
+            pack_text=(
+                render_pack(
+                    self.pack, include_prepared=self.settings.answer_architecture == "legacy_dual"
+                )
+                if self.pack else None
+            ),
             company=employer.name if at_work and employer else None,
             role=(employer.title or None) if at_work and employer else None,
             company_digest=(

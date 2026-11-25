@@ -297,6 +297,10 @@ class AnswerHost(Protocol):
 
     def refs(self) -> dict[str, NodeRef]: ...
 
+    def prepared_source_version(self, policy: str) -> str | None:
+        """Current prepared source, or None when its freshness cannot be established."""
+        return None
+
     def llm_status(self, ok: bool) -> None: ...
 
     def cache_version(self) -> str: ...
@@ -831,19 +835,25 @@ class AnswerEngine:
                 {"kind": "answer_error", "question_id": str(q.qid), "pass": pass_, "code": code}
             )
 
-        async def prepared(answer: PreparedAnswer) -> None:
+        async def prepared(answer: PreparedAnswer) -> bool:
+            if strategy != "legacy_dual":
+                # Nothing prepared enters held_text: release must first expose the latest
+                # transcript/source state. A changed fact falls through to fresh generation.
+                await shown()
+                if self._prepared(q) is not answer:
+                    return False
             self.stats["prepared_hits"] += 1
             delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
             await shown()
             done("prepared", self._refs_for_nodes(answer), None, None)
+            return True
 
         try:
             if pass_ == "fast":
                 state["start_at"] = time.monotonic()
                 answer = self._prepared(q) if response_length == "default" else None
-                if answer is not None:  # the match is already in: no model call
-                    await prepared(answer)
-                    return
+                if answer is not None and await prepared(answer):
+                    return  # the match is current at display time: no model call
             qhash = question_hash(q.text)
             # A follow has the question's text but continues the user: never the cache. Nor
             # a screenshot: its text says what the screen holds, not what it asks; nor a
@@ -1009,7 +1019,12 @@ class AnswerEngine:
             model = asyncio.ensure_future(stream())
             state["model"] = model
             match = q.match
-            if pass_ == "fast" and match is not None and not match.done():
+            if (
+                strategy == "legacy_dual" and pass_ == "fast"
+                and match is not None and not match.done()
+            ):
+                # Candidates keep already-dispatched model progress rather than cancel it
+                # for a late prepared hit that could become stale before held release.
                 # The model does not wait for the prepared match (a forced question's match
                 # starts with it; an OpenAI embedding takes 0.5 s or more). A hit that comes
                 # before any of the model's text reached the client takes the slot over.
@@ -1313,8 +1328,30 @@ class AnswerEngine:
         result = self._match_result(q)
         answer = result.answer if result is not None else None
         if answer is not None:
-            if self.strategy(q) != "legacy_dual" and any("[~]" in p for p in answer.talking_points):
-                return None  # Older interview packs can contain explicitly speculative facts.
+            if self.strategy(q) != "legacy_dual":
+                # Citation IDs and a question match do not establish semantic grounding.
+                # Versioned provenance narrows eligibility; it is not human verification.
+                version_for = getattr(self.host, "prepared_source_version", None)
+                if (
+                    any("[~]" in p for p in answer.talking_points)
+                    or not answer.grounding_policy
+                    or not answer.evidence_version
+                    or version_for is None
+                    or version_for(answer.grounding_policy) != answer.evidence_version
+                ):
+                    return None
+                # The pack predates this conversation. Any earlier evidence must be
+                # reconciled by live generation, even if no lexical contradiction is found.
+                call = self.host.call_context()
+                if call.summary.strip() or call.answers.strip():
+                    return None
+                for line in call.recent.splitlines():
+                    line = re.sub(r"^\[\d+:\d+\]\s*", "", line.strip())
+                    if line and (
+                        not line.startswith("Them: ")
+                        or normalize_question(line[6:]) != normalize_question(q.text)
+                    ):
+                        return None
             text = "\n".join(f"- {p}" for p in answer.talking_points)
             if self._repeats_cues(q, text):
                 return None
