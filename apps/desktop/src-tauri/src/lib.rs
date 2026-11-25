@@ -616,7 +616,8 @@ fn save_settings(
             pending_update: kept.pending_update,
             layouts: kept.layouts,
             overlay_monitor: kept.overlay_monitor,
-            overlay_on_top: kept.overlay_on_top,
+            overlay_on_top: s.overlay_on_top,
+            window_opacity: s.window_opacity,
             coding_mode: kept.coding_mode,
             coding_language: kept.coding_language,
             ..settings.clone()
@@ -1827,11 +1828,12 @@ fn dispatch(app: &AppHandle, action: Action) {
         Action::ToggleStealth => toggle_stealth(app),
         Action::ClickThrough => {
             let on = !app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
-            apply_click_through(app, on);
+            if let Err(error) = apply_click_through(app, on) {
+                tracing::warn!("click-through: {error}");
+            }
         }
         Action::ClickThroughOff => {
-            apply_click_through(app, false);
-            if let Err(error) = workspace_window::clear_click_through(app) {
+            if let Err(error) = apply_click_through(app, false) {
                 tracing::warn!("workspace click-through recovery: {error}");
             }
         }
@@ -1923,16 +1925,15 @@ fn store_layout(app: &AppHandle, key: &str, l: MonitorLayout) {
     });
 }
 
-/// Push the overlay's current prefs to the overlay window (opacity and view it renders, and
-/// whether to show the click-through indicator).
-/// The overlay's current prefs for the given opacity and view: click-through and on-top from
-/// the live window state, the hotkeys from settings.
-fn build_prefs(app: &AppHandle, opacity: f64, compact: bool) -> OverlayPrefs {
+/// Both windows read the same appearance and interaction preferences; only compact view
+/// belongs to the overlay. Geometry and monitor changes cannot override appearance.
+fn build_prefs(app: &AppHandle, compact: bool) -> OverlayPrefs {
     let state = app.state::<AppState>();
     let click_through = state.overlay.click_through.load(Ordering::SeqCst);
-    let (on_top, hotkeys) = {
+    let (opacity, on_top, hotkeys) = {
         let s = state.settings.lock().unwrap();
         (
+            s.window_opacity(),
             s.overlay_on_top,
             OverlayHotkeys {
                 toggle_overlay: s.toggle_overlay_hotkey.trim().to_string(),
@@ -1947,7 +1948,7 @@ fn build_prefs(app: &AppHandle, opacity: f64, compact: bool) -> OverlayPrefs {
 }
 
 fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
-    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, l.opacity, l.compact));
+    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, l.compact));
 }
 
 fn toggle_overlay(app: &AppHandle) {
@@ -1960,32 +1961,42 @@ fn toggle_overlay(app: &AppHandle) {
     }
 }
 
-/// Let clicks pass through the overlay to the window underneath, or stop that. Turning it on
-/// also shows the overlay, so the indicator and its "off" key are on screen; turning it off is
-/// always reachable from the keyboard (hotkeys.rs), the escape hatch from a click-through state.
-fn apply_click_through(app: &AppHandle, on: bool) {
-    let Some(w) = overlay_window(app) else { return };
-    if on {
-        bring_back_overlay(&w);
+/// Notify both renderers, including a hidden window waiting for the next call.
+fn emit_window_prefs(app: &AppHandle) {
+    let compact = current_layout(app).is_some_and(|(_, layout)| layout.compact);
+    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, compact));
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = workspace_window::emit_prefs(&main);
     }
-    let _ = w.set_ignore_cursor_events(on);
+}
+
+/// One click-through preference, with a temporary exception for main-window consent.
+fn apply_click_through(app: &AppHandle, on: bool) -> Res<()> {
+    if on && workspace_window::recovery_shortcut(app).is_none() {
+        return Err(
+            "Click-through needs a working recovery shortcut. Set a Click-through off key in Settings first."
+                .into(),
+        );
+    }
+    let previous = app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
+    workspace_window::update_both(previous, on, on, |label, value| {
+        let Some(window) = app.get_webview_window(label) else { return Ok(()) };
+        if label == "main" {
+            workspace_window::apply_click_through(&window, value)
+        } else {
+            window.set_ignore_cursor_events(value).map_err(|error| error.to_string())
+        }
+    })?;
     app.state::<AppState>().overlay.click_through.store(on, Ordering::SeqCst);
-    let l = current_layout(app).map(|(_, l)| l).unwrap_or(MonitorLayout {
-        x: 0,
-        y: 0,
-        w: layout::DEFAULT_W,
-        h: layout::DEFAULT_H,
-        opacity: layout::MAX_OPACITY,
-        compact: false,
-    });
-    emit_prefs(app, l);
+    emit_window_prefs(app);
+    Ok(())
 }
 
 fn nudge_opacity(app: &AppHandle, steps: i32) {
-    let Some((key, mut l)) = current_layout(app) else { return };
-    l.opacity = layout::step_opacity(l.opacity, steps);
-    store_layout(app, &key, l);
-    emit_prefs(app, l);
+    app.state::<AppState>().update_settings(|settings| {
+        settings.window_opacity = Some(layout::step_opacity(settings.window_opacity(), steps));
+    });
+    emit_window_prefs(app);
 }
 
 /// Debounced save of the overlay's frame as it is dragged or resized: a burst of events bumps
@@ -2002,8 +2013,7 @@ fn schedule_remember(app: &AppHandle) {
 }
 
 /// File the overlay's current frame under the monitor it now sits on, keeping that monitor's
-/// remembered opacity and view. When it has crossed to a different monitor, that monitor's
-/// saved opacity and view are applied so each screen keeps its own feel.
+/// remembered view. Background opacity is shared and never changes when switching monitors.
 fn remember_geometry(app: &AppHandle) {
     let Some(w) = overlay_window(app) else { return };
     // Minimized, Windows parks the window off screen: not a place to remember.
@@ -2051,18 +2061,16 @@ fn place_overlay(app: &AppHandle) {
 /// The overlay's starting prefs, which the overlay window asks for as it mounts.
 #[tauri::command]
 fn overlay_prefs(app: AppHandle) -> OverlayPrefs {
-    let (opacity, compact) =
-        current_layout(&app).map(|(_, l)| (l.opacity, l.compact)).unwrap_or((layout::MAX_OPACITY, false));
-    build_prefs(&app, opacity, compact)
+    let compact = current_layout(&app).is_some_and(|(_, layout)| layout.compact);
+    build_prefs(&app, compact)
 }
 
-/// The opacity slider in settings, and the overlay's opacity hotkeys through `nudge_opacity`.
+/// Both window sliders and the opacity hotkeys update this shared preference.
 #[tauri::command]
 fn set_overlay_opacity(app: AppHandle, value: f64) {
-    let Some((key, mut l)) = current_layout(&app) else { return };
-    l.opacity = layout::clamp_opacity(value);
-    store_layout(&app, &key, l);
-    emit_prefs(&app, l);
+    app.state::<AppState>()
+        .update_settings(|settings| settings.window_opacity = Some(layout::clamp_opacity(value)));
+    emit_window_prefs(&app);
 }
 
 /// The overlay's compact toggle: remember the view for the monitor it is on.
@@ -2075,22 +2083,26 @@ fn set_overlay_view(app: AppHandle, compact: bool) {
 
 /// The overlay's click-through button (turning it on; the off switch is a hotkey).
 #[tauri::command]
-fn set_click_through(app: AppHandle, on: bool) {
-    apply_click_through(&app, on);
+fn set_click_through(app: AppHandle, on: bool) -> Res<()> {
+    apply_click_through(&app, on)
 }
 
-/// The overlay's "Keep on top" toggle: stay above other windows, remembered between runs.
+/// Both windows stay above other applications, remembered between runs.
 #[tauri::command]
-fn set_overlay_on_top(app: AppHandle, on: bool) {
-    if let Some(w) = overlay_window(&app) {
-        let _ = w.set_always_on_top(on);
-    }
+fn set_overlay_on_top(app: AppHandle, on: bool) -> Res<()> {
+    let previous = app.state::<AppState>().settings.lock().unwrap().overlay_on_top;
+    workspace_window::update_both(previous, on, true, |label, value| {
+        let Some(window) = app.get_webview_window(label) else { return Ok(()) };
+        if label == "main" {
+            workspace_window::apply_on_top(&window, value)
+        } else {
+            window.set_always_on_top(value).map_err(|error| error.to_string())
+        }
+    })?;
     app.state::<AppState>().update_settings(|s| s.overlay_on_top = on);
-    if let Some((_, l)) = current_layout(&app) {
-        emit_prefs(&app, l);
-    }
+    emit_window_prefs(&app);
+    Ok(())
 }
-
 /// The overlay's "All settings…": bring the main window forward on its Settings screen.
 #[tauri::command]
 fn open_main_settings(app: AppHandle) -> Res<()> {
@@ -2329,6 +2341,9 @@ pub fn run() {
                     .additional_browser_args(BROWSER_ARGS)
                     .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                     .build()?;
+            if let Some(main) = app.get_webview_window("main") {
+                workspace_window::apply_on_top(&main, overlay_on_top)?;
+            }
             window_drag::setup(app.handle())?;
             window_visibility::setup(app.handle())?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).

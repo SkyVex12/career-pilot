@@ -88,7 +88,9 @@ export interface Settings {
    * the settings screen sends them back unchanged. */
   layouts: Record<string, MonitorLayout>;
   overlay_monitor: string | null;
-  /** The overlay stays above other windows ("Keep on top"). */
+  /** Shared background opacity; absent in older settings files. */
+  window_opacity?: number | null;
+  /** Both windows stay above other applications ("Keep on top"). */
   overlay_on_top: boolean;
   /** Leave every app window out of screen capture while it stays visible here. */
   stealth: boolean;

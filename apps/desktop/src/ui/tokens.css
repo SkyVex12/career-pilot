@@ -78,18 +78,18 @@
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
-  --text-2xl: 24px;
-  --lh-xs: 16px;
-  --lh-sm: 20px;
-  --lh-md: 20px;
-  --lh-lg: 24px;
-  --lh-xl: 28px;
-  --lh-2xl: 32px;
+  --text-xs: calc(12px * var(--app-text-scale, 1));
+  --text-sm: calc(13px * var(--app-text-scale, 1));
+  --text-md: calc(14px * var(--app-text-scale, 1));
+  --text-lg: calc(16px * var(--app-text-scale, 1));
+  --text-xl: calc(20px * var(--app-text-scale, 1));
+  --text-2xl: calc(24px * var(--app-text-scale, 1));
+  --lh-xs: calc(16px * var(--app-text-scale, 1));
+  --lh-sm: calc(20px * var(--app-text-scale, 1));
+  --lh-md: calc(20px * var(--app-text-scale, 1));
+  --lh-lg: calc(24px * var(--app-text-scale, 1));
+  --lh-xl: calc(28px * var(--app-text-scale, 1));
+  --lh-2xl: calc(32px * var(--app-text-scale, 1));
 
   /* 4px optical spacing within controls; 8px rhythm between groups. */
   --space-1: 4px;

@@ -11,23 +11,25 @@ import { ToastProvider } from "./ui/Overlays";
 // - the opacity setting fades the window's background only; all text stays opaque, and the
 //   answers keep a backing, so they stay readable over whatever is behind.
 // The transcript pane (split) keeps following its newest line. Text size steps with A-/A+ or
-// Ctrl+plus/minus/0; compact shows the answers only; hotkeys, click-through, keep on top, copy,
-// thumbs, the typed question (Ask) and the reply button (Answer) are as before.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+// Ctrl+plus/minus/0; compact shows the answers only. Window comfort settings are shared with
+// the main workspace; Ask and Answer remain available below the conversation.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, rest, type OverlayPrefs, type SessionDetail } from "./api";
 import { Icon } from "./ui/Icon";
 import { AnswerText } from "./AnswerText";
 import { CodeAnswer } from "./CodeAnswer";
 import { CodingBar, shotTitle, useScreenshotTray } from "./CodingBar";
-import { copier, Follower } from "./follow";
+import { Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestLeaveButton, GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane } from "./seats";
 import { startScreenHost } from "./screen";
 import { GuestScreenView, ScreenChip } from "./screenui";
 import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
-import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
+import { blockText, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
+import { useViewPrefs, type ViewPrefs } from "./viewPreferences";
+export { useViewPrefs, type ViewPrefs } from "./viewPreferences";
 import { Banner, ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
 import { LiveCallLanguage } from "./LiveCallLanguage";
@@ -61,8 +63,7 @@ const NO_HOTKEYS: OverlayPrefs["hotkeys"] = {
   opacity_down: "",
 };
 
-/** The overlay's comfort prefs, kept by the Rust core per monitor: opacity and view, and whether
- * clicks pass through. The core pushes changes (a hotkey, a move to another monitor); the overlay
+/** The overlay's comfort prefs, kept by the Rust core: shared appearance and a per-monitor compact view. The core pushes changes (a hotkey, a move to another monitor); the overlay
  * asks once on mount. `compact` keeps a localStorage copy so the first paint matches. */
 function useOverlayPrefs() {
   const [opacity, setOpacity] = useState(1);
@@ -102,45 +103,21 @@ function useOverlayPrefs() {
     saveCompact(on);
     if (inTauri) api.setOverlayView(on).catch(() => undefined);
   };
-  const setOpacityLive = (v: number) => {
+  const setOpacityLive = async (v: number) => {
     setOpacity(v);
-    if (inTauri) api.setOverlayOpacity(v).catch(() => undefined);
+    if (!inTauri) return;
+    try { await api.setOverlayOpacity(v); }
+    catch (error) {
+      await api.overlayPrefs().then(prefs => setOpacity(prefs.opacity)).catch(() => undefined);
+      throw error;
+    }
   };
-  const setOnTop = (on: boolean) => {
+  const setOnTop = async (on: boolean) => {
+    if (inTauri) await api.setOverlayOnTop(on);
     setOnTopState(on);
-    if (inTauri) api.setOverlayOnTop(on).catch(() => undefined);
   };
   return { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop };
 }
-
-/** Text size and layout, shared by the overlay and History's replay (the same localStorage),
- * and kept in step between the two windows. */
-export function useViewPrefs() {
-  const [textScale, setScale] = useState(loadTextScale);
-  const [layout, setLayoutState] = useState<OverlayLayout>(loadLayout);
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === TEXT_SCALE_KEY) setScale(loadTextScale());
-      if (e.key === LAYOUT_KEY) setLayoutState(loadLayout());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-  const stepText = useCallback((steps: number) => {
-    setScale((v) => {
-      const next = steps === 0 ? 1 : stepScale(v, steps);
-      savePref(TEXT_SCALE_KEY, String(next));
-      return next;
-    });
-  }, []);
-  const setLayout = useCallback((l: OverlayLayout) => {
-    setLayoutState(l);
-    savePref(LAYOUT_KEY, l);
-  }, []);
-  return { textScale, layout, stepText, setLayout };
-}
-
-export type ViewPrefs = ReturnType<typeof useViewPrefs>;
 
 /// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
 export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
@@ -611,17 +588,16 @@ function QuestionCard({
   past,
   readOnly = false,
 }: {
-  /** A guest's view: no expand, no thumbs; the host's choices show as they come. */
+  /** A guest's view: no expand; the host's choices show as they come. */
   readOnly?: boolean;
   q: QuestionView;
   /** The newest question: the largest type, in the fixed place. */
   now: boolean;
   compact: boolean;
   onExpand: () => void;
-  /** A past call (History): nothing can be asked or rated any more. */
+  /** A past call (History): nothing can be asked any more. */
   past: { rating: "up" | "down" | null } | null;
 }) {
-  const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
   // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
   const screen = isScreenQuestion(q);
   // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
@@ -644,11 +620,6 @@ function QuestionCard({
   const expand = () => {
     onExpand();
     api.expandAnswer(q.id).catch(() => undefined);
-  };
-  const rate = (up: boolean) => {
-    if (past) return;
-    setRating(up ? "up" : "down");
-    api.sendFeedback(q.id, up).catch(() => undefined);
   };
 
   return (
@@ -692,25 +663,13 @@ function QuestionCard({
         )
       )}
 
-      <footer className="card-tools">
-        {!screen && <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />}
-        {!screen && deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
-        {!readOnly && (
-          <>
-            <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
-              <Icon name="thumbUp" size={14} />
-            </button>
-            <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
-              <Icon name="thumbDown" size={14} />
-            </button>
-          </>
-        )}
-        {!compact && q.fast.refs.length > 0 && (
+      {!compact && q.fast.refs.length > 0 && (
+        <footer className="card-tools">
           <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
           </span>
-        )}
-      </footer>
+        </footer>
+      )}
     </article>
   );
 }
@@ -781,17 +740,6 @@ function PassStatus({ state }: { state: PassState }) {
       {shown && <span aria-hidden="true">{state.icon} </span>}
       {state.text}
     </p>
-  );
-}
-
-function CopyButton({ text, label, short }: { text: string; label: string; short: string }) {
-  const [copied, setCopied] = useState(false);
-  const c = useMemo(() => copier(setCopied), []);
-  useEffect(() => () => c.dispose(), [c]);
-  return (
-    <button type="button" className="copy" disabled={!text} onClick={() => c.copy(text)} aria-label={label} title="Copy as plain text">
-      {copied ? "Copied" : short}
-    </button>
   );
 }
 

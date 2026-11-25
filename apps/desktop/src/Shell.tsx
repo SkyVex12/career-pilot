@@ -218,7 +218,7 @@ export function Shell({
               <div className="desktop-title-actions">
                 <div className="desktop-command-tools">
                   <ProfileSwitch state={profiles} running={live || callBusy} onSwitch={onSwitchProfile} error={profileError} inline avatar />
-                  <WorkspaceQuickSettings running={live} open={quickSettingsOpen} onOpenChange={setQuickSettingsOpen} />
+                  <WorkspaceQuickSettings running={live} guest={Boolean(session.seat)} open={quickSettingsOpen} onOpenChange={setQuickSettingsOpen} />
                 </div>
                 <div className="desktop-window-actions">
                   <button type="button" aria-label="Medium window" title="Medium window" disabled={!windowActions || live || callBusy} onClick={() => { onTab("start"); windowActions?.compact("toolbar"); }}><Icon name="chevronUp" size={16} /></button>

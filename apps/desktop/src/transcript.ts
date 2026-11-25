@@ -92,6 +92,7 @@ export function loadLayout(store: Pick<Storage, "getItem"> | null = safeStorage(
 export function savePref(key: string, value: string, store: Pick<Storage, "setItem"> | null = safeStorage()): void {
   try {
     store?.setItem(key, value);
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("copilot:preferences"));
   } catch {
     // A per-computer convenience only.
   }

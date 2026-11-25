@@ -61,3 +61,13 @@ Quit immediately hides app windows and the tray icon, then finishes session shut
 ## Returning to tabs
 
 Leaving Past calls closes the open detail, so returning shows the list. Leaving an ended-call review returns Call to Start a call; a running call stays live. Unfinished call-note drafts stay in memory for the current account/profile and reappear when that call is opened again, without being saved automatically.
+
+## Shared window settings
+
+Main and overlay use one set of Transparency, Keep on top, Click-through, Stealth, Text size, and Answer format preferences. A change in either quick-settings panel updates the other window even while it is hidden. Text size also applies to workspace typography and History replay; answer-format changes update Customize and live suggestions.
+
+The transparency slider moves from clear on the left (10% opacity / 90% transparency) to solid on the right. Show Clear and Solid endpoints without a numeric readout. Text stays opaque. Save opacity once for both windows, migrating the last overlay monitor’s value for existing installs; moving monitors never changes it. Geometry and compact view remain specific to each window.
+
+Keep on top applies to both native windows and survives restart. Click-through is shared for the current app run, with one recovery shortcut for both windows. Consent prompts temporarily remain interactive and on top without changing those preferences. Native failures are reported; unsuccessful on-top changes roll back both windows.
+
+Answer cards show content and source references without Copy, Copy detailed, or feedback buttons. An empty action footer reserves no space.
