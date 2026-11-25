@@ -59,6 +59,8 @@ export function History({
   const [usage, setUsage] = useState<Usage | null>(null);
   const [companies, setCompanies] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
+  // Returning to this tab always starts at the list; cached data and filters stay ready.
+  useEffect(() => { if (!active) setOpen(null); }, [active]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [loadingMore, setLoadingMore] = useState(false);

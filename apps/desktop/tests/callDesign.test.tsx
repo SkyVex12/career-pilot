@@ -364,6 +364,34 @@ describe("guest contact privacy and delivery", () => {
   });
 });
 describe("workspace startup after a call", () => {
+  it("returns to Start call after leaving the ended-call review", async () => {
+    routes();
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", status: "ready", mode: "interview", store_transcript: false, questions: 1, outputs: { summary: "The call is complete." }, notes: "" }));
+    const live = { ...initial, running: true, sessionId: "s1" };
+    const ended = { ...initial, sessionId: "s1", stopped: "ended" as const };
+    const view = render(tree({ session: live }));
+    // Moving between tabs must not disturb an active call.
+    view.rerender(tree({ session: live, active: false }));
+    view.rerender(tree({ session: live, active: true }));
+    expect(await screen.findByRole("button", { name: "End call…" })).toBeInTheDocument();
+    view.rerender(tree({ session: ended }));
+    await screen.findByText("The call is complete.");
+    view.rerender(tree({ session: ended, active: false }));
+    view.rerender(tree({ session: ended, active: true }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(screen.queryByText("The call is complete.")).not.toBeInTheDocument();
+    expect(ipc.calls.some(c => c.cmd === "end_session")).toBe(false);
+  });
+  it("returns to Start call when the call ended while another tab was open", async () => {
+    routes();
+    const view = render(tree({ session: { ...initial, running: true, sessionId: "s1" }, active: false }));
+    const ended = { ...initial, sessionId: "s1", stopped: "ended" as const };
+    view.rerender(tree({ session: ended, active: false }));
+    view.rerender(tree({ session: ended, active: true }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(ipc.apiCalls().some(c => c.path === "/sessions/s1")).toBe(false);
+  });
+
   it("opens Start call when a previous ended session is restored, without loading its review", async () => {
     routes();
     render(tree({ session: { ...initial, sessionId: "s1", stopped: "ended" } }));

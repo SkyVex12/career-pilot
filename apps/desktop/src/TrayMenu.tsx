@@ -31,7 +31,7 @@ export function TrayMenu() {
     if (next >= 0) { e.preventDefault(); items[next]?.focus(); }
   };
   return <div ref={menu} className="tray-menu" role="menu" aria-label="CoRuby" onKeyDown={key}>
-    <button type="button" role="menuitem" disabled={busy} onClick={() => void act("pause")}><span aria-hidden="true">{paused ? "▶" : "Ⅱ"}</span>{error ? <span className="tray-error" role="alert" title={error}>Try again</span> : paused ? "Resume suggestions" : "Pause suggestions"}</button>
+    <button type="button" role="menuitem" disabled={busy} onClick={() => void act("pause")}><span aria-hidden="true">{paused ? "▶" : "Ⅱ"}</span>{error ? <span className="tray-error" role="alert" title={error}>Try again</span> : paused ? "Resume notifications" : "Pause notifications"}</button>
     <button type="button" role="menuitem" className="tray-exit" disabled={busy} onClick={() => void act("exit")}><Icon name="power" size={14} />Exit</button>
   </div>;
 }

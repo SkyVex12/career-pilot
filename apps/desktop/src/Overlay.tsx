@@ -200,29 +200,33 @@ function OverlayContent() {
   const screenOpen = tab === "screen" && canViewScreen && !compact;
   return (
     <div className={cx("ov", compact && "is-compact", guest && "is-guest")} style={{ "--ov-alpha": opacity } as CSSProperties}>
-      <header className="ov-head" data-native-drag-region>
-        <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
-        {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
-        {!guest && <LiveUsage session={s} compact />}
-        <span className="ov-spacer" data-native-drag-region />
-        <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
-        <OverlayQuickSettings
-          opacity={opacity}
-          onOpacity={setOpacityLive}
-          onTop={onTop}
-          onToggleOnTop={setOnTop}
-          clickThrough={clickThrough}
-          hotkeys={hotkeys}
-          running={s.running}
-          guest={guest}
-          sessionId={s.sessionId}
-          view={view}
-          compact={compact}
-          onCompact={setCompact}
-        />
-        {guest
-          ? <><IconButton label="Hide overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} /><GuestLeaveButton s={s} /></>
-          : <><IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} /><OverlayPower running={s.running} sessionId={s.sessionId} /></>}
+      <header className="ov-head ov-call-head" data-native-drag-region="header">
+        <div className="ov-head-status" data-native-drag-region="header">
+          <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
+          {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
+          {!guest && <LiveUsage session={s} compact />}
+        </div>
+        {!guest && <div className="ov-call-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
+        <div className="ov-window-actions">
+          <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
+          <OverlayQuickSettings
+            opacity={opacity}
+            onOpacity={setOpacityLive}
+            onTop={onTop}
+            onToggleOnTop={setOnTop}
+            clickThrough={clickThrough}
+            hotkeys={hotkeys}
+            running={s.running}
+            guest={guest}
+            sessionId={s.sessionId}
+            view={view}
+            compact={compact}
+            onCompact={setCompact}
+          />
+          {guest
+            ? <><IconButton label="Hide overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} /><GuestLeaveButton s={s} /></>
+            : <><IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} /><OverlayPower running={s.running} sessionId={s.sessionId} /></>}
+        </div>
       </header>
       {clickThrough && (
         <div className="ov-clickthrough" role="status">
@@ -231,14 +235,12 @@ function OverlayContent() {
       )}
       <GuestNotice s={s} />
       {!guest && <div className="ov-sharing-status"><ScreenChip s={s} /></div>}
-      {!compact && <div className="ov-toolbar">
-        {guest && <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
+      {guest && !compact && <div className="ov-toolbar">
+        <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
           <button type="button" role="tab" id="ov-conversation-tab" aria-controls="ov-conversation-panel" aria-selected={!screenOpen} onClick={() => setTab("conversation")}>Conversation</button>
           {canViewScreen && <button type="button" role="tab" id="ov-screen-tab" aria-controls="ov-screen-panel" aria-selected={screenOpen} onClick={() => setTab("screen")}><Icon name="monitor" size={14} />{guest ? "Shared screen" : "Screen tools"}</button>}
-        </div>}
-        {!guest && <div className="ov-toolbar-actions">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
+        </div>
       </div>}
-      {!guest && compact && <div className="ov-compact-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
       {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} window="overlay" /></div>}
       <div id="ov-conversation-panel" className="ov-conversation-workarea" role={guest ? "tabpanel" : undefined} aria-labelledby={guest && !compact ? "ov-conversation-tab" : undefined} hidden={guest && screenOpen}>
       <ConversationView

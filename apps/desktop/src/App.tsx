@@ -1,3 +1,4 @@
+import { SessionNoteDrafts } from "./SessionNoteDrafts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 // The main window: the app shell (Shell.tsx) around the Call screen, Interview prep, Work,
@@ -235,6 +236,7 @@ export default function App() {
       >
         {/* A profile switch or another account remounts every screen, so each one loads its data. */}
         <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
+          <SessionNoteDrafts>
           <CatalogProvider enabled={tokenSet && !locked && (tab === "start" || tab === "applications")}>
           {page(
             "start",
@@ -301,6 +303,7 @@ export default function App() {
             ),
           )}
           </CatalogProvider>
+          </SessionNoteDrafts>
         </ProfileContext.Provider>
         {tab === "settings" && view && (
           <div className="shell-content">

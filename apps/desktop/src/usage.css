@@ -3,3 +3,4 @@
 .usage-note { color: var(--text-2); font-size: 12px; }
 .usage-total { white-space: nowrap; }
 .ov-usage { flex: 0 0 auto; color: var(--ov-text-2); font-size: 12px; white-space: nowrap; }
+.ov-usage[role="timer"] { min-width: 5ch; font-variant-numeric: tabular-nums; }

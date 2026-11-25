@@ -1119,6 +1119,20 @@ button.ov-watching[aria-expanded="true"] {
 }
 .ov { border: 1px solid var(--ov-line); border-radius: 8px; overflow: hidden; background: rgb(var(--ov-panel) / var(--ov-alpha)); }
 .ov-head { min-height: 40px; flex: none; gap: 8px; padding: 4px 12px; }
+/* Status, call tools, and window actions share one compact row. */
+.ov-call-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+.ov-head-status { display: flex; align-items: center; gap: 8px; min-width: 0; align-self: stretch; }
+.ov-head-status .ov-status { flex: 0 1 auto; }
+.ov-status-icon { flex: none; }
+.ov-call-tools, .ov-window-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ov-window-actions { grid-column: 3; grid-row: 1; }
+.ov-call-tools .live-call-language.is-compact { width: 136px; }
+.ov-call-tools .ui-field-hint { position: absolute; top: calc(100% + 4px); right: 0; width: max-content; max-width: 240px; padding: 8px; border: 1px solid var(--ov-line); border-radius: 4px; background: rgb(var(--ov-panel)); box-shadow: var(--shadow-2); }
+@container overlay (max-width: 600px) {
+  .ov-call-head { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .ov-window-actions { grid-column: 2; }
+  .ov-call-tools { grid-column: 1 / -1; grid-row: 2; justify-self: end; }
+}
 .ov-brand { display: inline-flex; flex: none; align-items: center; }
 .ov-brand img { width: 19px; height: 19px; }
 .ov-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
@@ -1126,11 +1140,9 @@ button.ov-watching[aria-expanded="true"] {
 .ov-status { font-size: 12px; font-weight: 400; gap: 8px; }
 .ov-head .ui-icon-btn[aria-pressed=true], .ov-head .ui-icon-btn[aria-expanded=true] { background: var(--ov-raise); color: var(--ov-text); }
 .ov-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--ov-line); }
-.ov-work-tabs, .ov-toolbar-actions, .ov-compact-tools { display: flex; align-items: center; gap: 8px; }
+.ov-work-tabs { display: flex; align-items: center; gap: 8px; }
 .ov-work-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; color: var(--ov-text-2); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .ov-work-tabs > button[aria-selected=true] { border-color: var(--ov-line); color: var(--ov-text); background: var(--ov-raise); }
-.ov-toolbar-actions { margin-left: auto; }
-.ov-compact-tools { padding: 4px 12px; justify-content: flex-end; border-bottom: 1px solid var(--ov-line); }
 .ov-conversation-workarea { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .ov-conversation-workarea > .ov-body { min-width: 0; width: 100%; }
 .ov-conversation-workarea[hidden], .ov-screen-panel[hidden], .ov-shared-screen-panel[hidden] { display: none; }
@@ -1209,4 +1221,3 @@ button.ov-watching[aria-expanded="true"] {
 .ov-screenshot-tray .ov-shot-x { opacity:0;transition:opacity .12s; }
 .ov-screenshot-tray .ov-shot:hover .ov-shot-x, .ov-screenshot-tray .ov-shot:focus-within .ov-shot-x { opacity:1; }
 @media (hover:none) { .ov-screenshot-tray .ov-shot-x { opacity:1; } }
-.ov-toolbar-actions { margin-left:auto; }

@@ -8,7 +8,7 @@ import { ipc } from "./ipc";
 it("opens with two concise actions and supports keyboard exit", async () => {
   ipc.handle("tray_menu_ready", () => false);
   render(<TrayMenu />);
-  await waitFor(() => expect(screen.getByRole("menuitem", {name:"Pause suggestions"})).toHaveFocus());
+  await waitFor(() => expect(screen.getByRole("menuitem", {name:"Pause notifications"})).toHaveFocus());
   expect(screen.getAllByRole("menuitem")).toHaveLength(2);
   expect(screen.queryByText("Open CoRuby")).not.toBeInTheDocument();
   await userEvent.keyboard("{ArrowDown}{Enter}");
@@ -18,9 +18,9 @@ it("opens with two concise actions and supports keyboard exit", async () => {
 it("refreshes paused state when reopened and Escape dismisses without quitting", async () => {
   ipc.handle("tray_menu_ready", () => false);
   render(<TrayMenu />);
-  await waitFor(() => expect(screen.getByRole("menuitem", {name:"Pause suggestions"})).toHaveFocus());
+  await waitFor(() => expect(screen.getByRole("menuitem", {name:"Pause notifications"})).toHaveFocus());
   await act(() => emit("copilot://tray-menu", true));
-  expect(screen.getByRole("menuitem", {name:"Resume suggestions"})).toHaveFocus();
+  expect(screen.getByRole("menuitem", {name:"Resume notifications"})).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   expect(ipc.calls.filter(c => c.cmd === "tray_menu_action").map(c => c.args)).toEqual([{action:"dismiss"}]);
 });

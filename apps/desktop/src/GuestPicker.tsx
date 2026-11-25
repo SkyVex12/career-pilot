@@ -33,7 +33,7 @@ export function GuestPicker({ scope, selected, onChange, disabled }: { scope: st
       <div className="guest-picker-search"><Input ref={input} aria-label="Find assistant by name or email" placeholder="Name or email" value={search} onChange={e => setSearch(e.target.value)} /><span className="guest-picker-count" aria-label={`${selected.length} of 2 assistants selected`}>{selected.length}/2</span></div>
       <div className="guest-picker-people">{people.length ? people.map(p => {
         const chosen = selected.find(g => g.email === p.email);
-        return <div className="guest-picker-person" key={p.email}><Checkbox checked={!!chosen} disabled={!chosen && selected.length >= 2} onChange={on => toggle(p, on)} label={<span className="guest-person-name"><strong>{p.name || p.email}</strong>{p.name && <small>{p.email}</small>}</span>} />
+        return <div className="guest-picker-person" key={p.email}><Checkbox checked={!!chosen} disabled={!chosen && selected.length >= 2} onChange={on => toggle(p, on)} label={<span className="guest-person-name" title={p.name ? p.name + " · " + p.email : p.email}><strong>{p.name || p.email}</strong>{p.name && <small>{p.email}</small>}</span>} />
           {chosen && <div className="guest-permissions"><Checkbox checked={chosen.screen} onChange={on => permission(p.email, "screen", on)} label="View my shared screen" /><Checkbox checked={chosen.control} onChange={on => permission(p.email, "control", on)} label="Control my mouse and keyboard" /></div>}
         </div>;
       }) : query ? <p className="ui-muted">Enter a complete email address.</p> : null}</div>
