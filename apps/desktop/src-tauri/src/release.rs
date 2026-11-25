@@ -196,7 +196,7 @@ pub mod schedule {
     /// wins, and the other is refused until it is done. (`running`: an engine is live.)
     #[derive(Debug, Default)]
     pub struct Gate {
-        inner: std::sync::Mutex<(bool, bool)>, // (starting, installing)
+        inner: std::sync::Mutex<(bool, bool, bool)>, // (starting, installing, quitting)
     }
 
     /// Marks a session as starting until dropped (start_session's whole run).
@@ -208,13 +208,27 @@ pub mod schedule {
         }
     }
 
+    pub struct Quitting<'a>(&'a Gate);
+    impl Drop for Quitting<'_> {
+        fn drop(&mut self) {
+            self.0.inner.lock().unwrap().2 = false;
+        }
+    }
+
     impl Gate {
+        pub fn begin_quit(&self) -> Quitting<'_> {
+            self.inner.lock().unwrap().2 = true;
+            Quitting(self)
+        }
         pub fn starting(&self) -> bool {
             self.inner.lock().unwrap().0
         }
 
         pub fn begin_start(&self, running: bool) -> Result<Starting<'_>, &'static str> {
             let mut g = self.inner.lock().unwrap();
+            if g.2 {
+                return Err("CoRuby is ending the current call.");
+            }
             if running || g.0 {
                 return Err("a session is already running");
             }
@@ -229,7 +243,7 @@ pub mod schedule {
         /// [`Gate::install_failed`].
         pub fn claim_install(&self, running: bool) -> bool {
             let mut g = self.inner.lock().unwrap();
-            if running || g.0 || g.1 {
+            if running || g.0 || g.1 || g.2 {
                 return false;
             }
             g.1 = true;

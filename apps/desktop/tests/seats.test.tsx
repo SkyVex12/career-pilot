@@ -380,7 +380,7 @@ describe("the guest panel", () => {
     expect(savedInviteCaps()).toEqual(["note", "voice", "device.view"]);
   });
 
-  it("shows a screen permission error by the affected guest", async () => {
+  it("floats a screen permission error with the affected guest identified", async () => {
     ipc.api("GET", /^\/sessions\/s1\/seats$/, () => ({ seats: [], voice: true, screen: true }));
     ipc.api("PATCH", /^\/sessions\/s1\/seats\/.+$/, () => {
       throw "Screen access could not be updated. (HTTP 422)";
@@ -390,7 +390,9 @@ describe("the guest panel", () => {
     const card = (await screen.findByRole("group", { name: "What Blue Angel may do" })).closest("li") as HTMLElement;
     await userEvent.click(await within(card).findByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "View screen" }));
-    expect(await within(card).findByRole("alert")).toHaveTextContent("Screen access could not be updated.");
+    const notice = (await screen.findByText("Could not update access for Blue Angel")).closest("[role=alert]")!;
+    expect(notice).toHaveTextContent("Screen access could not be updated.");
+    expect(notice.closest(".ui-toast-viewport")).not.toBeNull();
   });
 
   it("the host's Stop takes the guest's Control away, so it stays stopped until given again", async () => {

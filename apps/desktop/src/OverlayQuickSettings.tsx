@@ -6,7 +6,7 @@ import { api, onSettingsChanged, type OverlayPrefs } from "./api";
 import { prettyKey } from "./hotkeys";
 import type { ViewPrefs } from "./Overlay";
 import { useOverlayPopover } from "./overlayPopover";
-import { Button, ConfirmDialog, IconButton, SegmentedControl, Switch } from "./ui";
+import { Banner, Button, ConfirmDialog, IconButton, SegmentedControl, Switch } from "./ui";
 import { Icon } from "./ui/Icon";
 
 import { useHoverMenu } from "./ui/useHoverMenu";
@@ -43,9 +43,10 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
     setBusy(true); setError(null);
     try { await action(); } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
-  const quit = async () => { if (guest && running) await api.seatLeave(); await api.quitApp(); };
+  const quit = () => api.quitApp();
   return <>
     <IconButton onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} ref={gear} label="Quick settings" icon={<Icon name="settings" size={16} />} size="sm" aria-expanded={open} aria-haspopup="dialog" onClick={() => { hover.cancel(); hoverOpened.current = false; setOpen(v => !v); }} />
+    {error && <Banner tone="danger">{error}</Banner>}
     {open && createPortal(<div onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} ref={panel} className="ov-menu ov-quick-settings" role="dialog" aria-label="Quick settings" style={position}>
       <div className="ov-popover-heading"><strong>Quick settings</strong><IconButton label="Close quick settings" icon={<Icon name="close" size={14} />} size="sm" onClick={() => { close(); gear.current?.focus(); }} /></div>
       <label className="ov-menu-row ov-range"><span className="ov-menu-label">Transparency <output>{Math.round((1 - opacity) * 100)}%</output></span>
@@ -66,15 +67,14 @@ export function OverlayQuickSettings({ opacity, onOpacity, onTop, onToggleOnTop,
         <IconButton label="Larger text (Ctrl+plus)" icon="A+" size="sm" onClick={() => view.stepText(1)} />
       </div></div>
       {!guest && <>
-        <div className="ov-menu-row"><span className="ov-menu-label">Answer format</span><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} size="sm" disabled={busy} onChange={value => void run(async () => { if (running) await api.setAnswerStyle(value); setAnswerStyle(value); try { localStorage.setItem("copilot.answerStyle", value); } catch { /* Convenience preference. */ } })} /></div>
+        <div className="ov-menu-row"><span className="ov-menu-label">Answer format</span><SegmentedControl equal label="Answer format" value={answerStyle} options={[["bullets", "Bullet points"], ["paragraph", "Paragraphs"]] as const} size="sm" disabled={busy} onChange={value => void run(async () => { if (running) await api.setAnswerStyle(value); setAnswerStyle(value); try { localStorage.setItem("copilot.answerStyle", value); } catch { /* Convenience preference. */ } })} /></div>
       </>}
-      {error && <p className="ov-ask-error" role="alert">{error}</p>}
       <div className="ov-menu-sep" />
       {!guest && <Button variant="ghost" size="sm" className="ov-menu-item" onClick={() => { void api.openMainSettings().then(close, e => setError(String(e))); }}>All settings…</Button>}
       <Button variant="danger-ghost" size="sm" className="ov-menu-item" disabled={busy} onClick={() => { if (running) { close(); setQuitting(true); } else void run(quit); }}>Quit CoRuby</Button>
     </div>, document.body)}
     <ConfirmDialog open={quitting} onOpenChange={setQuitting} title={guest ? "Stop assisting and quit CoRuby?" : "Quit during a call?"} confirmLabel={guest ? "Stop assisting & quit" : "Quit CoRuby"} onConfirm={quit}>
-      {guest ? "You’ll stop assisting. The other person’s call will continue." : "The call stops on this computer."}
+      {guest ? "You’ll stop assisting. The other person’s call will continue." : "Your call will end and CoRuby will close."}
     </ConfirmDialog>
   </>;
 }

@@ -4,6 +4,8 @@ import * as RadixDialog from "@radix-ui/react-dialog";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, cx } from "./Button";
 import { Input } from "./Field";
+import { NotificationScope } from "./NotificationScope";
+import { Banner } from "./Feedback";
 
 /** Remembers what had focus when a dialog opened, and gives it back when it closes (the dialogs
  * open from our own buttons, not from a Radix trigger). */
@@ -44,6 +46,7 @@ export function Dialog({
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="ui-scrim" />
         <RadixDialog.Content className={cx("ui-dialog", "ui-dialog-window", `ui-dialog-${size}`)} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
+          <NotificationScope>
           <div className="ui-dialog-head">
             <RadixDialog.Title className="ui-dialog-title">{title}</RadixDialog.Title>
             <RadixDialog.Close className="ui-icon-btn ui-icon-btn-sm ui-icon-btn-ghost" aria-label="Close">
@@ -57,6 +60,7 @@ export function Dialog({
           )}
           <div className="ui-dialog-body">{children}</div>
           {footer && <div className="ui-dialog-foot">{footer}</div>}
+          </NotificationScope>
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>
@@ -129,6 +133,7 @@ export function ConfirmDialog({
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="ui-scrim" />
         <AlertDialog.Content className={cx("ui-dialog", "ui-confirm", extra || secondaryAction ? "ui-dialog-md" : "ui-dialog-sm")} onCloseAutoFocus={returnFocus} onEscapeKeyDown={e => { if (document.querySelector('[role="combobox"][aria-expanded="true"]')) e.preventDefault(); }}>
+          <NotificationScope>
           <AlertDialog.Title className="ui-dialog-title">{title}</AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className="ui-dialog-desc">{children}</div>
@@ -142,9 +147,7 @@ export function ConfirmDialog({
             </div>
           )}
           {error && (
-            <p className="ui-field-error" role="alert">
-              {error}
-            </p>
+            <Banner tone="danger">{error}</Banner>
           )}
           <div className="ui-dialog-foot">
             <AlertDialog.Cancel asChild>
@@ -162,6 +165,7 @@ export function ConfirmDialog({
               {confirmLabel}
             </Button>
           </div>
+          </NotificationScope>
         </AlertDialog.Content>
       </AlertDialog.Portal>
     </AlertDialog.Root>
@@ -195,8 +199,7 @@ export function ToastProvider({ children, persistent }: { children: ReactNode; p
   const remove = useCallback((id: number) => setItems((cur) => cur.filter((t) => t.id !== id)), []);
   return (
     <ToastContext.Provider value={push}>
-      {children}
-      <section className="ui-toast-viewport" aria-label="Notifications">
+      <NotificationScope notices={<>
         {persistent}
         <div aria-live="polite" className="ui-toast-region">
           {items
@@ -212,7 +215,9 @@ export function ToastProvider({ children, persistent }: { children: ReactNode; p
               <Toast key={t.id} item={t} onClose={() => remove(t.id)} />
             ))}
         </div>
-      </section>
+      </>}>
+        {children}
+      </NotificationScope>
     </ToastContext.Provider>
   );
 }

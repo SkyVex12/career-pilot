@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { validCatalog, type Catalog, type Language } from "./CallLanguage";
 import type { SessionView } from "./session";
-import { Button, Select } from "./ui";
+import { Banner, Button, Select } from "./ui";
 import "./liveCallLanguage.css";
 
 /** One selected language applies to both incoming speech and new answers. Existing text stays. */
@@ -64,6 +64,6 @@ export function LiveCallLanguage({ session, compact = false }: { session: Sessio
       {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
     </Select>
     {(pending || !compact) && <span className="ui-field-hint" role={pending ? "status" : undefined}>{hint}</span>}
-    {(loadError || error) && <p className="live-call-language-error" role="alert">{loadError ?? error}{loadError && <> <Button size="sm" onClick={() => setRevision(value => value + 1)}>Retry languages</Button></>}</p>}
+    {(loadError || error) && <Banner tone="danger">{loadError ?? error}{loadError && <> <Button size="sm" onClick={() => setRevision(value => value + 1)}>Retry languages</Button></>}</Banner>}
   </div>;
 }

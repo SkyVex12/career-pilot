@@ -733,7 +733,7 @@ describe("Call", () => {
     expect(await screen.findByRole("combobox", { name: "Application" })).toHaveValue("a1");
   });
 
-  it("keeps full-page notices inside the card and hidden throughout compact transitions without remounting data", async () => {
+  it("floats notices outside the card and hides them throughout compact transitions without remounting data", async () => {
     callRoutes();
     ipc.api("GET", /^\/resumes$/, () => ({ base: null, versions: [] }));
     mockWindows("main");
@@ -746,10 +746,10 @@ describe("Call", () => {
     let settingsOpened = false;
     wrapCallWindow(<CallScreen {...callProps({ session: { ...initial, stopped: "unauthorized" }, onSettings: () => { settingsOpened = true; } })} />);
     const resumeNotice = await screen.findByText("Sign-in rejected");
-    const authNotice = screen.getByText("Sign-in rejected");
-    const surface = resumeNotice.closest(".session-window")!;
-    const card = resumeNotice.closest(".call-design")!;
-    const notices = resumeNotice.closest(".call-notices")!;
+    const surface = document.querySelector(".session-window")!;
+    const card = surface.querySelector(".call-design")!;
+    expect(resumeNotice.closest(".ui-toast-viewport")).not.toBeNull();
+    expect(resumeNotice.closest(".call-design")).toBeNull();
     expect(card).not.toBeNull();
     expect(card.firstElementChild).toHaveClass("call-design-heading");
     expect(resumeNotice).toBeVisible();
@@ -759,9 +759,9 @@ describe("Call", () => {
     await waitFor(() => expect(ipc.calls.some(call => call.cmd === "plugin:window|set_size")).toBe(true));
     try {
       expect(surface).toHaveAttribute("data-mini", "full");
-      expect(notices).toHaveAttribute("hidden");
-      expect(resumeNotice).not.toBeVisible();
-      expect(authNotice).not.toBeVisible();
+
+      expect(screen.queryByText("Sign-in rejected")).not.toBeInTheDocument();
+
     } finally {
       await act(async () => { completeResize(); await resize; });
     }
@@ -769,8 +769,8 @@ describe("Call", () => {
     expect(card).toHaveAttribute("hidden");
     fireEvent.pointerLeave(surface);
     await screen.findByRole("button", { name: "Expand compact toolbar" });
-    expect(resumeNotice).not.toBeVisible();
-    expect(authNotice).not.toBeVisible();
+    expect(screen.queryByText("Sign-in rejected")).not.toBeInTheDocument();
+
 
     await userEvent.click(screen.getByRole("button", { name: "Expand compact toolbar" }));
     resize = new Promise<void>(resolve => { completeResize = resolve; });
@@ -779,14 +779,13 @@ describe("Call", () => {
     await userEvent.click(screen.getByRole("button", { name: "Expand setup" }));
     await waitFor(() => expect(ipc.calls.filter(call => call.cmd === "plugin:window|set_size")).toHaveLength(priorResizes + 1));
     try {
-      expect(notices).toHaveAttribute("hidden");
-      expect(resumeNotice).not.toBeVisible();
+
+      expect(screen.queryByText("Sign-in rejected")).not.toBeInTheDocument();
     } finally {
       await act(async () => { completeResize(); await resize; });
     }
     await screen.findByRole("button", { name: "Medium window" });
-    expect(resumeNotice).toBeVisible();
-    expect(authNotice).toBeVisible();
+    expect(await screen.findByText("Sign-in rejected")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
     expect(ipc.apiCalls("GET").filter(call => call.path === "/sessions/live")).toHaveLength(liveLoads);
     await userEvent.click(screen.getByRole("button", { name: "Open settings" }));

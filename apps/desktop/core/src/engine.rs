@@ -10,7 +10,7 @@ use copilot_protocol::{
     SessionSetLanguage, SharingSet,
 };
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::audio::aec::EchoCanceller;
@@ -74,7 +74,7 @@ pub struct Engine {
     audio: Mutex<Option<AudioThread>>,
     latency: Arc<Mutex<LatencyTracker>>,
     levels: Option<Arc<Mutex<Levels>>>,
-    client_task: Mutex<Option<tokio::task::JoinHandle<StopReason>>>,
+    completion: watch::Receiver<Option<StopReason>>,
     session_id: Arc<Mutex<Option<Uuid>>>,
 }
 
@@ -164,12 +164,13 @@ impl Engine {
             });
         }
 
+        let completion = completion_of(task);
         Ok(Arc::new(Self {
             client,
             audio: Mutex::new(Some(audio_thread)),
             latency,
             levels,
-            client_task: Mutex::new(Some(task)),
+            completion,
             session_id,
         }))
     }
@@ -290,11 +291,7 @@ impl Engine {
 
     /// Wait for the client to stop on its own (1000, 4410, ...), then stop the audio.
     pub async fn finish(&self) -> Option<StopReason> {
-        let task = self.client_task.lock().unwrap().take();
-        let reason = match task {
-            Some(t) => t.await.ok(),
-            None => None,
-        };
+        let reason = wait_for_completion(self.completion.clone()).await;
         self.stop_audio();
         reason
     }
@@ -303,5 +300,61 @@ impl Engine {
         if let Some(mut a) = self.audio.lock().unwrap().take() {
             a.stop();
         }
+    }
+}
+
+// All callers must await the same client completion. The desktop already has a cleanup
+// waiter when Quit asks to end; taking a JoinHandle let the second waiter return early.
+fn completion_of(task: tokio::task::JoinHandle<StopReason>) -> watch::Receiver<Option<StopReason>> {
+    let (done, result) = watch::channel(None);
+    tokio::spawn(async move {
+        if let Ok(reason) = task.await {
+            let _ = done.send(Some(reason));
+        }
+    });
+    result
+}
+async fn wait_for_completion(mut result: watch::Receiver<Option<StopReason>>) -> Option<StopReason> {
+    loop {
+        if let Some(reason) = *result.borrow_and_update() {
+            return Some(reason);
+        }
+        if result.changed().await.is_err() {
+            return None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    #[tokio::test]
+    async fn quit_and_cleanup_both_wait_for_the_gateway_to_finish() {
+        let (ack, received) = tokio::sync::oneshot::channel();
+        let result = completion_of(tokio::spawn(async {
+            received.await.unwrap();
+            StopReason::Ended
+        }));
+        let cleanup = tokio::spawn(wait_for_completion(result.clone()));
+        let quit = tokio::spawn(wait_for_completion(result.clone()));
+        tokio::task::yield_now().await;
+        assert!(!cleanup.is_finished());
+        assert!(!quit.is_finished());
+        ack.send(()).unwrap();
+        assert_eq!(cleanup.await.unwrap(), Some(StopReason::Ended));
+        assert_eq!(quit.await.unwrap(), Some(StopReason::Ended));
+        assert_eq!(wait_for_completion(result).await, Some(StopReason::Ended));
+    }
+    #[tokio::test]
+    async fn cancelled_waiter_does_not_lose_completion() {
+        let (ack, received) = tokio::sync::oneshot::channel();
+        let result = completion_of(tokio::spawn(async {
+            received.await.unwrap();
+            StopReason::Ended
+        }));
+        let first = tokio::spawn(wait_for_completion(result.clone()));
+        first.abort();
+        ack.send(()).unwrap();
+        assert_eq!(wait_for_completion(result).await, Some(StopReason::Ended));
     }
 }

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { api, onSettingsChanged, onWorkspaceWindowPrefs, type OverlayPrefs } from "./api";
 import { prettyKey } from "./hotkeys";
 import { isMac } from "./platform";
-import { Button, ConfirmDialog, IconButton, Switch } from "./ui";
+import { Banner, Button, ConfirmDialog, IconButton, Switch } from "./ui";
 import { useHoverMenu, WORKSPACE_MENU_OPEN } from "./ui/useHoverMenu";
 import { Icon } from "./ui/Icon";
 import "./workspaceQuickSettings.css";
@@ -149,6 +149,7 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     if (!open) return;
     if (!openedByHover.current) panel.current?.focus({ preventScroll: true });
     const outside = (event: Event) => {
+      if ((event.target as Element | null)?.closest?.(".ui-toast-viewport")) return;
       if (!panel.current?.contains(event.target as Node) && !gear.current?.contains(event.target as Node)) changeOpen(false);
     };
     const escape = (event: globalThis.KeyboardEvent) => {
@@ -246,7 +247,7 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
             hint={<>Clicks pass through this window. {prefs.hotkeys.click_through_off && <>{prettyKey(prefs.hotkeys.click_through_off)} turns it off.</>}</>}
             onChange={on => void run("click-through", async () => { await api.setWindowClickThrough(on); await loadPrefs(); })} />
         </>}
-        {prefsError && <p role="alert" className="workspace-quick-settings-error">{prefsError}</p>}
+        {prefsError && <Banner tone="danger">{prefsError}</Banner>}
       </section>
       <section className="workspace-quick-settings-group" aria-label="App settings">
         {stealth === null && !settingsError ? <p role="status">Loading app settings…</p> : <Switch label={isMac() ? "Stealth mode (experimental)" : "Stealth mode"}
@@ -257,10 +258,10 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
             await loadSettings();
           })} />}
         <CaptureProtectionStatus active={open} enabled={stealth} />
-        {settingsError && <p role="alert" className="workspace-quick-settings-error">{settingsError}</p>}
+        {settingsError && <Banner tone="danger">{settingsError}</Banner>}
         {(prefsError || settingsError) && <Button size="sm" variant="ghost" onClick={retry} disabled={busy}>Retry settings</Button>}
       </section>
-      {actionError && <p role="alert" className="workspace-quick-settings-error">{actionError}</p>}
+      {actionError && <Banner tone="danger">{actionError}</Banner>}
       <div className="workspace-quick-settings-actions">
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run("settings", async () => { await api.openMainSettings(); changeOpen(false, true); })}>All settings…</Button>
         <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => {

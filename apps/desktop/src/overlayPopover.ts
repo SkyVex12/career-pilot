@@ -38,7 +38,7 @@ export function useOverlayPopover(
     if (!open) return;
     const outside = (event: PointerEvent) => {
       const target = event.target as Element;
-      if (panel.current?.contains(target) || trigger.current?.contains(target) || target.closest?.(".ui-select-menu")) return;
+      if (panel.current?.contains(target) || trigger.current?.contains(target) || target.closest?.(".ui-select-menu, .ui-toast-viewport")) return;
       close();
     };
     const escape = (event: KeyboardEvent) => {

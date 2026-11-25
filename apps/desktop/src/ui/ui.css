@@ -1345,3 +1345,6 @@ select option:disabled { color: var(--text-3); }
 .ui-select-search .ui-input { width: 100%; min-width: 0; }
 .ui-select-results { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .ui-select-result-count { flex: none; margin: 0; padding: 8px 8px 8px; color: var(--text-3); font-size: var(--text-xs); line-height: var(--lh-xs); }
+
+.ui-segmented.ui-segmented-equal { display:flex;flex-wrap:nowrap;width:100%; }
+.ui-segmented-equal > .ui-segment { flex:1 1 0;min-width:0;justify-content:center; }

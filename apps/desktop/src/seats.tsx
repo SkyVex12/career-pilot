@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayPopover } from "./overlayPopover";
+import { useHoverMenu } from "./ui/useHoverMenu";
 import { GUESTS_CHANGED, guestScope, invitePlannedGuests, inviteProgress, learnGuestNames, recentGuests, rememberGuest, validGuestEmail, type InviteProgress } from "./guestStorage";
 import { Icon } from "./ui/Icon";
 import "./callDesign.css";
@@ -73,14 +74,22 @@ export function GuestsButton({ s }: { s: SessionView }) {
   useGuestVoice(s);
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
+  const hoverOpened = useRef(false);
+  const cancelHover = useRef(() => {});
+  const close = useCallback(() => { cancelHover.current(); hoverOpened.current = false; setOpen(false); }, []);
+  const hover = useHoverMenu({
+    onOpen: () => { if (!open) { hoverOpened.current = true; setOpen(true); } },
+    onClose: () => { if (hoverOpened.current) close(); },
+    keepOpen: () => Boolean(panel.current?.contains(document.activeElement)),
+  });
+  cancelHover.current = hover.cancel;
   const position = useOverlayPopover(open, close, button, panel);
   if (!s.running || s.seat) return null;
   const count = openSeats(s.seats).length;
   const paused = !s.sharing && count > 0;
   return <span className="ov-menu-wrap">
-    <button ref={button} type="button" className={cx("ov-watching", paused && "is-paused")} aria-expanded={open} aria-haspopup="dialog" title={paused ? "Sharing paused · Manage assistants" : "Manage assistants"} onClick={() => setOpen(value => !value)}><Icon name="users" size={15} /> Assistants{count > 0 && <span className="call-count">{count}</span>}</button>
-    {open && createPortal(<div ref={panel} className="ov-menu ov-guests call-popover" role="dialog" aria-label="Assistants" style={position}><GuestPanel s={s} /></div>, document.body)}
+    <button ref={button} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} type="button" className={cx("ov-watching", paused && "is-paused")} aria-expanded={open} aria-haspopup="dialog" title={paused ? "Sharing paused · Manage assistants" : "Manage assistants"} onClick={() => { hover.cancel(); hoverOpened.current = false; setOpen(value => !value); }}><Icon name="users" size={15} /> Assistants{count > 0 && <span className="call-count">{count}</span>}</button>
+    {open && createPortal(<div ref={panel} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} className="ov-menu ov-guests call-popover" role="dialog" aria-label="Assistants" style={position}><GuestPanel s={s} /></div>, document.body)}
   </span>;
 }
 /** The guests' notes, apart from the answers: a small chat that scrolls, newest at the bottom
@@ -127,9 +136,9 @@ export function NotesLane({ s, dispatch }: { s: SessionView; dispatch: Dispatche
         ))}
       </ol>
       {error && (
-        <p className="ov-ask-error" role="alert">
+        <Banner tone="danger">
           {error}
-        </p>
+        </Banner>
       )}
     </section>
   );
@@ -299,7 +308,7 @@ export function GuestPanel({ s }: { s: SessionView }) {
       <header className="assistant-panel-head"><strong>Assistants</strong><span>{openSeats(s.seats).filter(isWatching).length} connected</span></header>
       <HostScreenSection s={s} />
       {progress && progress.pending > 0 && <p className="seat-hint" role="status">Sending invitations…</p>}
-      {progress && progress.failures.length > 0 && <div className="seat-error" role="alert"><p>{progress.failures.map(f => f.guest.name || f.guest.email).join(", ")}: invitation could not be sent.</p><p>{progress.failures[0].error}</p><Button size="sm" disabled={busy} onClick={() => guarded(() => invitePlannedGuests(sid, progress.scope, progress.failures.map(f => f.guest)))}>Retry invitations</Button></div>}
+      {progress && progress.failures.length > 0 && <Banner tone="danger"><p>{progress.failures.map(f => f.guest.name || f.guest.email).join(", ")}: invitation could not be sent.</p><p>{progress.failures[0].error}</p><Button size="sm" disabled={busy} onClick={() => guarded(() => invitePlannedGuests(sid, progress.scope, progress.failures.map(f => f.guest)))}>Retry invitations</Button></Banner>}
       <section className="seat-section" aria-label="Invite an assistant">
         <form
           className="seat-invite"
@@ -314,10 +323,10 @@ export function GuestPanel({ s }: { s: SessionView }) {
           </Button>
         </form>
         {mediaError && (
-          <div className="seat-error" role="alert">
+          <Banner tone="danger">
             Assistant options could not be loaded. {" "}
             <Button size="sm" variant="ghost" onClick={() => setMediaAttempt((attempt) => attempt + 1)}>Retry</Button>
-          </div>
+          </Banner>
         )}
         <PermChips label="What a new assistant may do" caps={caps} media={media} disabled={busy} onToggle={(cap, on) => setCaps((c) => withCapability(c, cap, on))} />
         {scope && recentGuests(scope).find(p => p.email === email.trim().toLowerCase())?.name && <p className="seat-hint">{recentGuests(scope).find(p => p.email === email.trim().toLowerCase())?.name}</p>}
@@ -326,9 +335,9 @@ export function GuestPanel({ s }: { s: SessionView }) {
         {showConsent && <p className="seat-hint">Invite people with the call participants' agreement.</p>}
         {message && <p className="seat-hint">{message}</p>}
         {error && (
-          <p className="seat-error" role="alert">
+          <Banner tone="danger">
             {error}
-          </p>
+          </Banner>
         )}
       </section>
       {seats.length > 0 && (
@@ -353,9 +362,9 @@ export function GuestPanel({ s }: { s: SessionView }) {
               </div>
               {x.status === "admitted" && <PermChips label={`What ${x.name} may do`} caps={x.capabilities} media={media} disabled={busy} onToggle={(cap, on) => toggle(x, cap, on)} />}
               {seatErrors[x.seat_id] && (
-                <p className="seat-error" role="alert">
+                <Banner tone="danger" title={"Could not update access for " + x.name}>
                   {seatErrors[x.seat_id]}
-                </p>
+                </Banner>
               )}
             </li>
           ))}
@@ -394,7 +403,7 @@ export function GuestLeaveButton({ s }: { s: SessionView }) {
     catch (err) { setError(String(err)); }
     finally { setBusy(false); }
   };
-  return <span className="guest-leave"><button type="button" className="ov-ask-btn" disabled={busy} onClick={leave}>{busy ? "Stopping…" : "Stop assisting"}</button>{error && <span className="seat-error" role="alert">{error}</span>}</span>;
+  return <span className="guest-leave"><button type="button" className="ov-ask-btn" disabled={busy} onClick={leave}>{busy ? "Stopping…" : "Stop assisting"}</button>{error && <Banner tone="danger">{error}</Banner>}</span>;
 }
 /** The guest's notes to the host, when the host allows them. */
 export function GuestNoteBox({ s, dispatch }: { s: SessionView; dispatch: Dispatcher }) {
@@ -441,9 +450,9 @@ export function GuestNoteBox({ s, dispatch }: { s: SessionView; dispatch: Dispat
         </span>
       )}
       {error && (
-        <span className="ov-ask-error" role="alert">
+        <Banner tone="danger">
           {error}
-        </span>
+        </Banner>
       )}
     </form>
   );
@@ -501,7 +510,7 @@ export function GuestInvites({ running, disabled, onJoined, open: controlledOpen
     <Button ref={button} size="sm" disabled={disabled || joining !== null} aria-haspopup="dialog" aria-expanded={open} title="Invitations to assist" onClick={() => setOpen(!open)}>Assist a call<span className="call-count">{shown.length}</span><Icon name="chevronDown" size={14} /></Button>
     {open && createPortal(<div ref={panel} className="call-popover call-join-menu" role="dialog" aria-label="Invitations to assist" style={position}>
       {shown.map(seat => <section key={seat.seat_id} className="call-invitation"><strong>{seat.host_name}</strong><p>{seat.title || MODE_LABEL[seat.mode] || seat.mode}</p><div className="ui-row-inline"><Button size="sm" variant="primary" loading={joining === seat.seat_id} disabled={joining !== null} onClick={() => void join(seat)}>Assist</Button><Button size="sm" variant="ghost" disabled={joining !== null} onClick={() => setHidden(old => new Set(old).add(seat.seat_id))}>Not now</Button></div></section>)}
-      {error && <p className="seat-error" role="alert">{error}</p>}
+      {error && <Banner tone="danger">{error}</Banner>}
     </div>, document.body)}
   </span>;
 }
@@ -576,12 +585,12 @@ export function HostVoice({ s }: { s: SessionView }) {
     <section className="seat-section seat-voice" aria-label="Assistants' voice">
       {status.host === "checking" && <span className="seat-hint">Connecting assistant audio…</span>}
       {status.host === "off" && status.error && (
-        <p className="seat-error" role="alert">
+        <Banner tone="danger">
           {status.error}{" "}
           <Button size="sm" variant="ghost" onClick={() => void voiceCommand({ cmd: "host_on", sessionId: sid, allowed: wanted })}>
             Try again
           </Button>
-        </p>
+        </Banner>
       )}
     </section>
   );
@@ -635,9 +644,9 @@ export function GuestTalk({ s }: { s: SessionView }) {
       </label>
       {status.guest === "connecting" && <span className="ov-note-result">Connecting voice…</span>}
       {status.error && (
-        <span className="ov-ask-error" role="alert">
+        <Banner tone="danger">
           {status.error}
-        </span>
+        </Banner>
       )}
     </div>
   );

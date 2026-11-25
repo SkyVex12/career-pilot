@@ -62,12 +62,22 @@ async fn speech_from_the_fake_source_reaches_the_gateway() {
     );
     let engine = Engine::start(config, Arc::new(StaticTokens::one(TOKEN)), parts, sink).unwrap();
 
+    // The desktop already waits for completion before Quit asks to end this call.
+    let cleanup_engine = engine.clone();
+    let cleanup = tokio::spawn(async move { cleanup_engine.finish().await });
+
     // Play the clip (about 9 s), then a typed question to check answers render.
     tokio::time::sleep(Duration::from_millis(them.len() as u64 / 16 + 1_000)).await;
     engine.force_question(Some("How would you shard the ledger table?".into())).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     let stats = engine.stats();
     assert_eq!(engine.end().await, Some(StopReason::Ended));
+    assert_eq!(cleanup.await.unwrap(), Some(StopReason::Ended));
+    assert_eq!(
+        engine.stats().close_codes.last(),
+        Some(&Some(1000)),
+        "Quit must wait for the gateway end acknowledgement even with another completion waiter"
+    );
 
     let events = events.lock().unwrap();
     let vad = |ch: Channel, speaking: bool| {

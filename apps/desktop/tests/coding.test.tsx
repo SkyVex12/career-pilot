@@ -9,7 +9,6 @@ import type { Numbered, ShotView, UiEvent } from "../src/api";
 import { CodeAnswer, inline, languageOf, splitBlocks } from "../src/CodeAnswer";
 import { CodingBar } from "../src/CodingBar";
 import Overlay from "../src/Overlay";
-import { SETTINGS } from "./fixtures";
 import { ipc } from "./ipc";
 
 const CODE = "**Approach:** two pointers.\n```python\ndef f(a):\n\n    return a[n:]  # keep\n```\n**Complexity:** O(n)";
@@ -142,34 +141,19 @@ describe("a screenshot's card", () => {
 
 
 
-describe("the coding bar", () => {
-  it("adds, shows, removes and solves shots, with the mode and language kept", async () => {
-    ipc.handle("get_settings", () => ({ settings: { ...SETTINGS, coding_mode: "assessment", coding_language: "Java" } }));
-    ipc.handle("coding_shots", () => [shot(1, "Problem - Chrome")]);
-    render(<CodingBar running />);
-    const shots = await screen.findByRole("list", { name: "Shots to solve" });
-    expect(within(shots).getByRole("img", { name: "Shot 1: Problem - Chrome" })).toBeInTheDocument();
-    expect(within(shots).getByRole("listitem")).toHaveAttribute("title", "Problem - Chrome · 1568×882 · 60 KB · 210 ms");
-    await waitFor(() => expect(screen.getByRole("radio", { name: "Test" })).toBeChecked());
-    expect(screen.getByRole("combobox", { name: "Code language" })).toHaveValue("Java");
-
-    await userEvent.click(screen.getByRole("button", { name: "Add shot" }));
-    expect(ipc.calls.some((c) => c.cmd === "coding_add_shot")).toBe(true);
-    await act(() => emit("copilot://coding-shots", [shot(1, "Problem - Chrome"), shot(2, "solution.py")]));
-    expect(await screen.findByRole("button", { name: "Solve 2" })).toBeEnabled();
-    await userEvent.click(screen.getByRole("button", { name: "Remove shot 2" }));
-    expect(ipc.calls.find((c) => c.cmd === "coding_remove_shot")?.args).toEqual({ id: 2 });
-
-    await userEvent.click(screen.getByRole("radio", { name: "Interview" }));
-    expect(ipc.calls.find((c) => c.cmd === "set_coding_prefs")?.args).toEqual({ mode: "interview", language: "Java" });
-    await userEvent.click(screen.getByRole("button", { name: "Solve 2" }));
-    expect(ipc.calls.some((c) => c.cmd === "coding_solve")).toBe(true);
+describe("the screenshot tray", () => {
+  it("shows only thumbnails and removes exactly the selected screenshot", async () => {
+    render(<CodingBar shots={[shot(1, "Problem - Chrome"), shot(2, "solution.py")]} />);
+    const shots = screen.getByRole("list", { name:"Screenshots ready to answer" });
+    expect(within(shots).getByRole("img", { name:"Screenshot 1: Problem - Chrome" })).toBeInTheDocument();
+    expect(within(shots).getAllByRole("listitem")[0]).toHaveAttribute("title", "Problem - Chrome · 1568×882 · 60 KB · 210 ms");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name:"Remove screenshot 2" }));
+    expect(ipc.calls.find(c => c.cmd === "coding_remove_shot")?.args).toEqual({id:2});
   });
-
-  it("Solve waits for a session, and a hotkey's failure shows in the bar", async () => {
-    render(<CodingBar running={false} />);
-    expect(screen.getByRole("button", { name: "Solve" })).toBeDisabled();
-    await act(() => emit("copilot://coding-error", "6 shots at most: solve these, or remove one"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("6 shots at most");
+  it("occupies no space when there are no pending screenshots", () => {
+    const {container} = render(<CodingBar shots={[]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

@@ -1,3 +1,4 @@
+import { NotificationVisibility } from "./ui/NotificationScope";
 import { CompanionDevices } from "./CompanionDevices";
 import { prepareForRealCall } from "./practiceAudio";
 // The Call screen (docs/design/ui-proposal.md, "Call"): one screen in four states.
@@ -284,6 +285,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   useWorkspaceCallBusy(busy || joining);
   const [joinOpen, setJoinOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(0);
+  const toast = useToast();
   const [message, setMessage] = useState<string | null>(null);
   const scope = guestScope(settings, signedInAs, environment);
   const [guests, setGuests] = useState<PlannedGuest[]>([]);
@@ -340,7 +342,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const changeStyle = (value: AnswerStyle) => { setAnswerStyle(value); write(LAST_ANSWER_STYLE, value); if (running) api.setAnswerStyle(value).catch(() => undefined); };
   const start = async () => {
     if (busy || joining) return;
-    if (!languageReady) { setMessage("Load an available call language under Customize before starting."); return; }
+    if (!languageReady) { toast({ tone: "error", text: "Choose an available language in Customize before starting." }); return; }
     setBusy(true); setMessage(null); setPendingInvites(null);
     const planned = guests.map(g => ({ ...g }));
     const beforeId = session.sessionId;
@@ -375,7 +377,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
       {mini.mode === "toolbar" && <><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button>
         <WorkspaceQuickSettings running={running} compact open={mini.menuOpen} onOpenChange={open => { void mini.setMenuOpen(open); }} /></>}
     </header>
-    <section className="call-design" hidden={mini.mode !== "full"}>
+    <NotificationVisibility.Provider value={mini.mode === "full" && !mini.busy}><section className="call-design" hidden={mini.mode !== "full"}>
       {editingJd && detail ? <CallJdEditor app={detail} onBack={() => setEditingJd(false)} onSaved={savedDetail} /> : <>
         <header className="call-design-heading call-setup-heading"><h1>Start a call</h1><div className="call-heading-actions"><GuestInvites running={running} disabled={busy} open={joinOpen} onOpenChange={setJoinOpen} onCountChange={setInviteCount} onBusyChange={setJoining} /></div></header>
         <div className="call-design-body">
@@ -439,12 +441,12 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
         <footer className="call-design-footer call-start-footer"><Button className="session-start" variant="primary" loading={busy} disabled={joining} onClick={start}>Start call<Icon name="arrow" size={16} /></Button></footer>
       </>}
       <AddApplication open={addingApplication} onOpenChange={setAddingApplication} onAdded={app => { catalog.includeApplication(app); setTarget(`job:${app.id}`); void reloadCatalog(); }} />
-    </section>
+    </section></NotificationVisibility.Provider>
   </div>;
 }
 
 function ContextLoadError({ label, detail, onSettings }: { label: string; detail: string; onSettings: () => void }) {
-  return <div className="call-context-error" role="alert"><span>{label} unavailable</span><HelpTip label={label + " error"}>{detail}</HelpTip><Button variant="ghost" size="sm" onClick={onSettings}>Settings</Button></div>;
+  return <Banner tone="danger" title={label + " unavailable"} action={<Button variant="ghost" size="sm" onClick={onSettings}>Settings</Button>}>{detail}</Banner>;
 }
 
 function CallJdEditor({ app, onBack, onSaved }: { app: ApplicationDetail; onBack: () => void; onSaved: (app: ApplicationDetail) => void }) {
@@ -718,7 +720,7 @@ export function DevicePickers({ settings, disabled, onSaved, inline = false }: {
         </DeviceTest>
         {!inline && <p className="ui-field-hint">{isMac() ? "Assistant audio and test tone. Transcription captures system audio from all apps." : "The speakers or headset the call plays on; captured in loopback."}</p>}
       </div>
-      {error && <p className="ui-field-error">{error}</p>}
+      {error && <Banner tone="danger">{error}</Banner>}
     </div>
   );
 }
@@ -810,7 +812,7 @@ function MaterialPicker({ materials, selected, onChange }: { materials: { docume
       <legend className="ui-field-label">
         Focus on <span className="ui-field-optional">(optional)</span>
       </legend>
-      {error && <p className="ui-field-error">{error}</p>}
+      {error && <Banner tone="danger">{error}</Banner>}
       {documents === null && !error && <Spinner size="sm" label="Loading the company's material" />}
       {documents?.length === 0 && <EmptyState icon={<Icon name="document" size={28} />} title="No documents read yet">Upload or paste some under Work, Engineering context.</EmptyState>}
       {documents?.map((d) => (

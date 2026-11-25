@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, onServer, type ServerState, type UpdateState } from "./api";
 import { bar } from "./updates";
@@ -50,4 +51,11 @@ export function UpdateNotification({ update, running }: { update: UpdateState; r
     {error && <p className="ui-field-error">{error}</p>}
     {status.progress !== undefined && <span className={`update-track${status.progress === null ? " moving" : ""}`} role="progressbar" aria-label="App update progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.progress ?? undefined}><span className="update-fill" style={status.progress === null ? undefined : { width: `${status.progress}%` }} /></span>}
   </Notification>;
+}
+
+export function QuitNotification() {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { const off = listen<string>("copilot://quit-error", e => setError(e.payload)); return () => { void off.then(stop => stop()); }; }, []);
+  if (!error) return null;
+  return <Notification title="Could not end the call" tone="danger" onDismiss={() => setError(null)} actions={<Button size="sm" onClick={() => { setError(null); void api.quitApp().catch(e => setError(String(e))); }}>Try Exit again</Button>}>{error}</Notification>;
 }

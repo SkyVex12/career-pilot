@@ -85,8 +85,7 @@ describe("the Call setup design", () => {
     render(tree({ onSettings }));
     await userEvent.click(screen.getByRole("radio", { name: mode }));
     expect(await screen.findByText(label + " unavailable")).toBeVisible();
-    act(() => screen.getByRole("button", { name: "About " + label + " error" }).focus());
-    expect(await screen.findByRole("tooltip", { name: error })).toBeVisible();
+    expect(screen.getByText(error)).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(onSettings).toHaveBeenCalledOnce();
   });

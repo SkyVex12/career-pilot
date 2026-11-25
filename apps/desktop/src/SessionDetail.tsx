@@ -10,7 +10,7 @@ import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
 import { OUTPUT_TITLES, isSummaryNotice, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
-import { Banner, Button, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
+import { Banner, Button, Card, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
 import { MODE_LABEL } from "./calls";
 import { Icon } from "./ui/Icon";
 
@@ -192,7 +192,7 @@ export function SessionDetail({
           <Textarea rows={12} maxLength={20000} value={notes.draft} disabled={savingNotes} placeholder="Add reminders, questions or next steps…" onChange={(e) => { setNotes((n) => ({ ...n, draft: e.target.value })); setNotesSaved(false); }} />
         </Field>
         {notesError && <Banner tone="danger" title="Could not save notes" action={notesError.includes("HTTP 409") ? <Button size="sm" onClick={reloadNotes} loading={savingNotes}>Load latest notes</Button> : <Button size="sm" onClick={saveNotes} loading={savingNotes}>Retry</Button>}>{notesError}</Banner>}
-        {notesReview !== null && <Banner tone="warning" title="Latest saved notes"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{notesReview || "No saved notes."}</div></Banner>}
+        {notesReview !== null && <Card title="Latest saved notes"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{notesReview || "No saved notes."}</div></Card>}
       </> : <Banner tone="neutral">Notes are unavailable with this server version.</Banner>}
     </div>
   );
