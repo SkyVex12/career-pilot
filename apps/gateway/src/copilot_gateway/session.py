@@ -1224,6 +1224,8 @@ class Session:
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
+        if self.ending or self.lost:
+            return
         self._latest_them_result_ms = max(self._latest_them_result_ms, r.end_ms)
         if r.text:
             if r.is_final:
@@ -1255,6 +1257,8 @@ class Session:
         self.turns.on_result(r)
 
     def _on_stt_status(self, state: str, message: str) -> None:
+        if self.ending or self.lost:
+            return
         self.set_status("stt", state, message)
 
     # The user's own words (live STT of the mic).
@@ -1267,6 +1271,8 @@ class Session:
         return any(a <= hi and b >= lo for a, b in self.them_spans)
 
     async def _on_me_stt(self, r: TimedResult) -> None:
+        if self.ending or self.lost:
+            return
         if not r.text:
             return
         if not r.is_final:
@@ -1301,6 +1307,8 @@ class Session:
             if covered or (self.them_open is None and not self.turns.interim):
                 break
             await asyncio.sleep(0.05)
+        if self.ending or self.lost:
+            return
         heard = self.conv.them_text_between(
             line.start_ms - ECHO_TEXT_MS, line.end_ms + ECHO_TEXT_MS
         )
@@ -1311,6 +1319,8 @@ class Session:
             self._accept_me(seg, line)
 
     def _accept_me(self, seg: int, line: Line) -> None:
+        if self.ending or self.lost:
+            return
         self.emit(
             models.TranscriptFinal,
             channel="me",
