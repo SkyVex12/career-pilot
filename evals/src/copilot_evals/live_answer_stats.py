@@ -42,7 +42,33 @@ def rate(successes: int, total: int) -> dict[str, Any]:
         "successes": successes,
         "rate": proportion,
         "wilson_95": [max(0, center - half), min(1, center + half)],
-        "caveat": "Descriptive interval; temporally correlated failures violate independence.",
+        "caveat": "Descriptive Wilson interval; repeated questions and temporally correlated "
+        "failures violate independent-trial assumptions.",
+    }
+
+
+def clustered_rate(
+    observations: list[tuple[str, bool]], seed: int = 20261125, replicates: int = 1000
+) -> dict[str, Any]:
+    """Keep the trial-weighted rate, with whole-question resampling for uncertainty."""
+    if any(type(value) is not bool for _, value in observations):
+        raise ValueError("Rate outcomes must be booleans; missing outcomes need a separate scope")
+    uncertainty = paired_uncertainty(
+        [(question, float(value)) for question, value in observations], seed, replicates
+    )
+    return {
+        **rate(sum(value for _, value in observations), len(observations)),
+        "question_clustered": {
+            "observed_trials": uncertainty["observed_pairs"],
+            "unique_questions": uncertainty["unique_questions"],
+            "method": uncertainty["method"],
+            "seed": seed,
+            "replicates": replicates,
+            "rate_95": uncertainty["mean_difference_95"],
+            "caveat": "Empirical percentile interval, conditional on the stated outcome scope. "
+            "All-identical outcomes yield a degenerate interval, not population certainty. "
+            "Resampling questions does not correct temporal correlation or missingness.",
+        },
     }
 
 
@@ -61,6 +87,8 @@ def paired_uncertainty(
 def _paired_uncertainty(
     observations: list[tuple[str, float]], seed: int = 20261125, replicates: int = 1000
 ) -> dict[str, Any]:
+    if type(replicates) is not int or replicates < 1:
+        raise ValueError("Bootstrap replicates must be a positive integer")
     groups: dict[str, list[float]] = defaultdict(list)
     for question, difference in observations:
         if not math.isfinite(difference):

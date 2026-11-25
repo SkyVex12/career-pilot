@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from copilot_core.pricing import openai_cache_write_pricing
-from copilot_evals.live_answer_stats import bootstrap_scope, paired_uncertainty, rate
+from copilot_evals.live_answer_stats import bootstrap_scope, clustered_rate, paired_uncertainty
 from copilot_evals.sensei_judge import RUBRIC, collect_answers, remove_citations
 from copilot_evals.sensei_runtime import private_directory, save
 
@@ -102,6 +102,16 @@ def lexical_overlap(initial: str, detailed: str) -> dict[str, Any]:
 
 def row_id(row: dict[str, Any]) -> str:
     return str(row["id"]) + ":" + str(row.get("rep", 0))
+
+
+def question_cluster_id(row: dict[str, Any]) -> str:
+    """Normalized replays retain original_id; ordinary repeated rows share their id."""
+    original = row.get("original_id")
+    return str(row["id"] if original is None else original)
+
+
+def full_answer_completed(row: dict[str, Any], measured: dict[str, Any]) -> bool:
+    return measured["complete_ms"] is not None and not (row.get("failure") or row.get("errors"))
 
 
 @dataclass
@@ -476,6 +486,8 @@ def latency_components(run: Run, row: dict[str, Any], judgment: dict[str, Any]) 
         key: stages.get(key) if numeric(stages.get(key)) else None for key in STAGES
     }
     measured = metrics(run, row, judgment)
+    # Compatibility aliases below are the deprecated, primary-only cue measurement.
+    # They must not inherit strict schema2 sentence selections or change historical meaning.
     useful, emitted = measured["first_useful_sentence_ms"], measured["first_text_ms"]
     out["first_useful_after_first_emission_ms"] = (
         max(0, useful - emitted) if numeric(useful) and numeric(emitted) else None
@@ -486,6 +498,38 @@ def latency_components(run: Run, row: dict[str, Any], judgment: dict[str, Any]) 
         if numeric(useful) and numeric(dispatch) and numeric(wait)
         else None
     )
+    latency = row.get("latency", {})
+    emitted_times = [
+        latency[name] * 1000
+        for name in ("fast_first_s", "deep_first_s")
+        if numeric(latency.get(name))
+    ]
+    first_emission = min(emitted_times) if emitted_times else None
+    for label, field in (
+        ("useful_cue", "first_useful_cue"),
+        ("useful_complete_sentence", "first_useful_complete_sentence"),
+    ):
+        selected = judgment.get(field)
+        selected_pass = selected.partition(":")[0] if isinstance(selected, str) else None
+        selected_stages: dict[str, Any] = next(
+            (
+                entry.get("latency_ms", {})
+                for entry in _logs(run, {str(qid)})
+                if entry.get("kind") == "answer" and entry.get("pass") == selected_pass
+            ),
+            dict[str, Any](),
+        )
+        useful = measured[field + "_ms"]
+        dispatch = selected_stages.get("model_dispatch_ms")
+        wait = selected_stages.get("router_first_chunk_ms")
+        out[label + "_after_first_emission_ms"] = (
+            max(0, useful - first_emission) if numeric(useful) and numeric(first_emission) else None
+        )
+        out[label + "_after_router_first_chunk_ms"] = (
+            max(0, useful - dispatch - wait)
+            if numeric(useful) and numeric(dispatch) and numeric(wait)
+            else None
+        )
     return out
 
 
@@ -651,10 +695,15 @@ def _summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, A
         measured = [metrics(run, row, judgments.get(row_id(row), {})) for row in rows]
         components = [latency_components(run, row, judgments.get(row_id(row), {})) for row in rows]
         started = sum(row.get("status") != "not_started" for row in rows)
-        completed = sum(
-            item["complete_ms"] is not None and not (row.get("failure") or row.get("errors"))
+        completion_outcomes = [
+            (question_cluster_id(row), full_answer_completed(row, item))
             for row, item in zip(rows, measured, strict=True)
-        )
+        ]
+        started_outcomes = [
+            outcome
+            for row, outcome in zip(rows, completion_outcomes, strict=True)
+            if row.get("status") != "not_started"
+        ]
         result[category] = {
             "questions": len(rows),
             "planned": len(rows),
@@ -663,8 +712,8 @@ def _summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, A
             "interrupted_outcome_unknown": sum(
                 row.get("status") == "interrupted_outcome_unknown" for row in rows
             ),
-            "success_rate_started": rate(completed, started),
-            "completion_coverage_planned": rate(completed, len(rows)),
+            "success_rate_started": clustered_rate(started_outcomes),
+            "completion_coverage_planned": clustered_rate(completion_outcomes),
             "failure_kinds": dict(
                 Counter(
                     row.get("failure_kind_reclassified")
@@ -698,6 +747,10 @@ def _summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, A
                     *STAGES,
                     "first_useful_after_first_emission_ms",
                     "first_useful_after_router_first_chunk_ms",
+                    "useful_cue_after_first_emission_ms",
+                    "useful_cue_after_router_first_chunk_ms",
+                    "useful_complete_sentence_after_first_emission_ms",
+                    "useful_complete_sentence_after_router_first_chunk_ms",
                 )
             },
             "usefulness_review": {
@@ -764,6 +817,16 @@ def _summarize(run: Run, judgments: dict[str, Any] | None = None) -> dict[str, A
             "dispatch is relative to the question origin; "
             "router wait includes retries and transport. "
             "Do not sum overlapping stages or equate router wait with model compute.",
+            "Useful stage aliases first_useful_after_* retain the deprecated primary-only cue "
+            "index. Strict useful_cue_after_* and useful_complete_sentence_after_* use schema2 "
+            "selections: first emission is the earliest emitted fast/deep text; router origin "
+            "is the selected unit's pass. A missing pass-stage record remains unmeasured.",
+            "Completion means every attempted answer pass completed without errors. A failed "
+            "primary with successful deep output, or a useful primary with failed deep output, "
+            "can still supply reviewed useful content in the all_started paired scope.",
+            "Completion-rate Wilson intervals are descriptive independent-trial intervals. "
+            "Question-cluster intervals keep repetitions together; neither corrects temporal "
+            "correlation or makes all-success finite samples certain.",
             "Small category samples do not establish tail reliability; inspect each sample count.",
             "Repeat and alternate architecture order to measure provider variability.",
             "Detailed flags can overlap; rates describe reviewed answers only.",
@@ -847,20 +910,21 @@ def _paired_complete_cases(
     result: dict[str, Any] = {}
     for category, pairs in groups.items():
         completed: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        reliability: list[tuple[str, bool, bool]] = []
         for a, b in pairs:
             ma = metrics(left, a, judgments.get(left.architecture, {}).get(row_id(a), {}))
             mb = metrics(right, b, judgments.get(right.architecture, {}).get(row_id(b), {}))
-            full_complete = (
-                ma["complete_ms"] is not None
-                and mb["complete_ms"] is not None
-                and not (a.get("failure") or a.get("errors") or b.get("failure") or b.get("errors"))
-            )
+            a_complete, b_complete = full_answer_completed(a, ma), full_answer_completed(b, mb)
+            both_started = a.get("status") != "not_started" and b.get("status") != "not_started"
+            if both_started:
+                reliability.append((question_cluster_id(a), a_complete, b_complete))
+            full_complete = a_complete and b_complete
             include = (
                 full_complete
                 if scope == "full_answer_complete"
                 else bool(a.get("fast") and b.get("fast"))
                 if scope == "primary_available"
-                else a.get("status") != "not_started" and b.get("status") != "not_started"
+                else both_started
             )
             if include:
                 completed.append((a, b, ma, mb))
@@ -880,7 +944,7 @@ def _paired_complete_cases(
             ]
             differences = [b - a for a, b in values]
             clusters = [
-                (str(a.get("original_id", row_id(a))), mb[field] - ma[field])
+                (question_cluster_id(a), mb[field] - ma[field])
                 for a, _, ma, mb in completed
                 if numeric(ma[field]) and numeric(mb[field])
             ]
@@ -942,6 +1006,23 @@ def _paired_complete_cases(
                 else {}
             ),
             "latency_ms": latencies,
+            "full_answer_completion_comparison": {
+                "scope": "Both trials started, independently of the latency inclusion scope; "
+                "completion requires all attempted passes without failures/errors.",
+                "eligible_pairs": len(pairs),
+                "started_pairs": len(reliability),
+                "not_started_either": len(pairs) - len(reliability),
+                "baseline": clustered_rate([(qid, a) for qid, a, _ in reliability]),
+                "candidate": clustered_rate([(qid, b) for qid, _, b in reliability]),
+                "candidate_minus_baseline": {
+                    "mean": sum(int(b) - int(a) for _, a, b in reliability) / len(reliability)
+                    if reliability
+                    else None,
+                    "uncertainty": paired_uncertainty(
+                        [(qid, float(int(b) - int(a))) for qid, a, b in reliability]
+                    ),
+                },
+            },
             "cost": {"fully_reconciled_pairs": len(reconciled), **totals},
         }
     return {
