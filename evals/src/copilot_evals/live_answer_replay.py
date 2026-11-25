@@ -14,6 +14,8 @@ import hashlib
 import json
 import logging
 import math
+import os
+import re
 import subprocess
 import time
 import tomllib
@@ -22,6 +24,7 @@ from contextlib import aclosing
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast, get_args
+from urllib.request import getproxies
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx2
@@ -897,6 +900,47 @@ class AuditProvider(MeteredProvider):
             self.checkpoint(record)
 
 
+def provider_configuration_fingerprint(settings: Settings) -> str:
+    """Hash consumed provider configuration; never archive URLs, headers or secrets.
+
+    SDK environment names are verified against the installed client constructors.
+    HTTPX also reads OS/environment proxies and TLS certificate path overrides.
+    This binds configuration, not DNS, trust-store contents, credentials or network state.
+    """
+    fields = {
+        "llm_providers",
+        "openai_base_url",
+        "aws_region",
+        "openai_http2",
+        "llm_keepalive_s",
+        "llm_connect_timeout_s",
+    }
+    environment = (
+        "OPENAI_BASE_URL",
+        "OPENAI_ORG_ID",
+        "OPENAI_PROJECT_ID",
+        "OPENAI_CUSTOM_HEADERS",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    )
+    return fingerprint(
+        {
+            "schema": 1,
+            "settings": settings.model_dump(mode="json", include=fields),
+            "environment": {name: os.environ.get(name) for name in environment},
+            "proxies": getproxies(),
+            "credential_presence": {
+                "openai": settings.openai_api_key is not None,
+                "anthropic": settings.anthropic_api_key is not None,
+                "bedrock_bearer": settings.bedrock_api_key is not None,
+            },
+        }
+    )
+
+
 def experiment_identity(
     cases: list[dict[str, Any]],
     settings: Settings,
@@ -943,6 +987,7 @@ def experiment_identity(
         "timeout_s": timeout_s,
         "strategies": STRATEGIES,
         "settings": settings.model_dump(mode="json", include=CONFIG_FIELDS),
+        "provider_configuration_sha256": provider_configuration_fingerprint(settings),
         "code": code,
         "git_head": head.stdout.decode().strip(),
         "git_diff_sha256": hashlib.sha256(diff.stdout).hexdigest(),
@@ -950,6 +995,78 @@ def experiment_identity(
             "Paraphrases and fictional evidence are not original historical sessions.",
             "No STT, detector, live retrieval, network-display or UI latency measurement.",
         ],
+    }
+
+
+def schedule_run_identity(args: argparse.Namespace, identity: dict[str, Any]) -> dict[str, Any]:
+    """Bind execution using the same repository identity as live replay.
+
+    Generate only after reviewed code is integrated and frozen. The source map
+    comes from experiment_identity/root_directory, never a private manifest or
+    copy of this module. The seed is recorded but cannot reorder explicit blocks.
+    """
+    integer_bounds = {
+        "concurrency": (identity.get("concurrency"), 1, 8),
+        "max_provider_inflight": (getattr(args, "max_provider_inflight", 8), 1, 32),
+        "transport_failure_limit": (getattr(args, "transport_failure_limit", 3), 1, 10),
+    }
+    for name, (value, lower, upper) in integer_bounds.items():
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError(f"Invalid explicit schedule execution control: {name}")
+    seed = identity.get("seed")
+    timeout = identity.get("timeout_s")
+    skip_connectivity = getattr(args, "skip_connectivity_check", False)
+    budget = getattr(args, "max_cost", 2.50)
+    if (
+        type(seed) is not int
+        or not isinstance(timeout, (int, float))
+        or isinstance(timeout, bool)
+        or not math.isfinite(timeout)
+        or timeout <= 0
+        or type(skip_connectivity) is not bool
+        or (
+            budget is not None
+            and (type(budget) not in (int, float) or not math.isfinite(budget) or budget <= 0)
+        )
+    ):
+        raise ValueError("Invalid explicit schedule seed, timeout, connectivity or budget")
+    code = identity.get("code")
+    source_fields = (identity.get("git_head"), identity.get("git_diff_sha256"))
+    provider_configuration = identity.get("provider_configuration_sha256")
+    if (
+        not isinstance(code, dict)
+        or not code
+        or any(
+            not isinstance(path, str)
+            or not path.endswith(".py")
+            or not isinstance(value, str)
+            or re.fullmatch(r"[a-f0-9]{64}", value) is None
+            for path, value in cast(dict[object, object], code).items()
+        )
+        or not isinstance(source_fields[0], str)
+        or re.fullmatch(r"[a-f0-9]{40,64}", source_fields[0]) is None
+        or not isinstance(source_fields[1], str)
+        or re.fullmatch(r"[a-f0-9]{64}", source_fields[1]) is None
+        or not isinstance(provider_configuration, str)
+        or re.fullmatch(r"[a-f0-9]{64}", provider_configuration) is None
+    ):
+        raise ValueError("Explicit schedule requires the complete repository source identity")
+    return {
+        "timeout_s": float(timeout),
+        "concurrency": integer_bounds["concurrency"][0],
+        "max_provider_inflight": integer_bounds["max_provider_inflight"][0],
+        "transport_failure_limit": integer_bounds["transport_failure_limit"][0],
+        "connectivity_check": not skip_connectivity,
+        "provider_admission_policy": "bounded-v1-stop-on-rate-auth-config",
+        "provider_configuration_sha256": provider_configuration,
+        "seed": seed,
+        "seed_effect": "recorded only; explicit block order is unchanged",
+        "budget_limit_usd": None if budget is None else float(budget),
+        "source": {
+            "code_sha256": fingerprint(code),
+            "git_head": source_fields[0],
+            "git_diff_sha256": source_fields[1],
+        },
     }
 
 
@@ -1029,6 +1146,54 @@ def tier_overrides(router: ModelRouter, args: Any) -> None:
         router.routes = {**router.routes, job: routes}
 
 
+def configured_conditions(
+    args: argparse.Namespace,
+    settings: Settings,
+    custom_variants: dict[str, Variant] | None,
+) -> dict[str, Variant]:
+    labels = getattr(args, "architectures", ["A", "D"])
+    if (
+        not labels
+        or len(set(labels)) != len(labels)
+        or any(label not in STRATEGIES for label in labels)
+    ):
+        raise ValueError("Select distinct architecture labels")
+    return custom_variants or {
+        STRATEGIES[label]: Variant(
+            label,
+            STRATEGIES[label],
+            settings.model_copy(update={"answer_architecture": STRATEGIES[label]}),
+            fast_tier=getattr(args, "fast_tier", None),
+            expert_tier=getattr(args, "expert_tier", None),
+        )
+        for label in labels
+    }
+
+
+def replay_blocks(
+    args: argparse.Namespace,
+    cases: list[dict[str, Any]],
+    conditions: dict[str, Variant],
+    *,
+    execution: dict[str, Any] | None = None,
+) -> tuple[list[list[tuple[dict[str, Any], str, int]]], dict[str, Any] | None]:
+    from copilot_evals.live_answer_schedule import case_blocks, explicit_case_blocks
+
+    strategies = {variant.label: condition for condition, variant in conditions.items()}
+    if path := getattr(args, "schedule_file", None):
+        if execution is None:
+            raise ValueError("Explicit schedule requires bound execution controls and source")
+        return explicit_case_blocks(
+            path,
+            cases,
+            strategies,
+            {key: value.identity(CONFIG_FIELDS) for key, value in conditions.items()},
+            args.reps,
+            execution,
+        )
+    return case_blocks(cases, list(strategies.values()), args.reps, args.seed), None
+
+
 async def execute(args: argparse.Namespace) -> None:
     from copilot_evals.live_answer_corpus import representative_cases
 
@@ -1055,6 +1220,16 @@ async def execute(args: argparse.Namespace) -> None:
         for variant in custom_variants.values():
             variant.fast_tier = variant.fast_tier or getattr(args, "fast_tier", None)
             variant.expert_tier = variant.expert_tier or getattr(args, "expert_tier", None)
+    if getattr(args, "schedule_file", None):
+        identity = experiment_identity(
+            cases, settings, args.reps, args.seed, args.concurrency, args.timeout
+        )
+        replay_blocks(
+            args,
+            cases,
+            configured_conditions(args, settings, custom_variants),
+            execution=schedule_run_identity(args, identity),
+        )
     await preflight(cases, custom_variants)
     if getattr(args, "write_cases", None):
         target = args.write_cases.resolve()
@@ -1091,25 +1266,9 @@ async def execute_live(
     custom_variants: dict[str, Variant] | None,
     directory: Path,
 ) -> None:
-    from copilot_evals.live_answer_schedule import FailureCircuit, case_blocks, classify_failure
+    from copilot_evals.live_answer_schedule import FailureCircuit, classify_failure
 
-    labels = getattr(args, "architectures", ["A", "D"])
-    if (
-        not labels
-        or len(set(labels)) != len(labels)
-        or any(label not in STRATEGIES for label in labels)
-    ):
-        raise ValueError("Select distinct architecture labels")
-    conditions = custom_variants or {
-        STRATEGIES[label]: Variant(
-            label,
-            STRATEGIES[label],
-            settings.model_copy(update={"answer_architecture": STRATEGIES[label]}),
-            fast_tier=getattr(args, "fast_tier", None),
-            expert_tier=getattr(args, "expert_tier", None),
-        )
-        for label in labels
-    }
+    conditions = configured_conditions(args, settings, custom_variants)
     strategies = {variant.label: condition for condition, variant in conditions.items()}
     circuit = FailureCircuit(getattr(args, "transport_failure_limit", 3))
     if not 1 <= circuit.threshold <= 10:
@@ -1128,11 +1287,18 @@ async def execute_live(
         if previous_stop.get("schema") != 1 or not isinstance(previous_stop.get("reason"), str):
             raise ValueError("Invalid persisted provider admission stop")
         admission.stop(previous_stop["reason"])
-    blocks = case_blocks(cases, list(strategies.values()), args.reps, args.seed)
-    planned = [item for block in blocks for item in block]
     identity = experiment_identity(
         cases, settings, args.reps, args.seed, args.concurrency, args.timeout
     )
+    blocks, explicit_schedule = replay_blocks(
+        args,
+        cases,
+        conditions,
+        execution=(
+            schedule_run_identity(args, identity) if getattr(args, "schedule_file", None) else None
+        ),
+    )
+    planned = [item for block in blocks for item in block]
     identity["rate_card"] = rate_identity
     identity["budget_limit_usd"] = args.max_cost
     identity["currency_cutoff_disabled"] = args.max_cost is None
@@ -1149,6 +1315,9 @@ async def execute_live(
         else None
     )
     identity["order_design"] = "counterbalanced_case_blocks"
+    if explicit_schedule is not None:
+        identity["order_design"] = "explicit_case_blocks"
+        identity["explicit_schedule"] = explicit_schedule
     identity["transport_failure_limit"] = circuit.threshold
     identity["max_provider_inflight"] = admission.limit
     identity["provider_admission_policy"] = "bounded-v1-stop-on-rate-auth-config"
@@ -1695,6 +1864,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
     parser.add_argument("--variants", type=Path, help="Explicit eval-only variant manifest")
+    parser.add_argument(
+        "--schedule-file",
+        type=Path,
+        help="Finite exact case/condition order, bound to effective inputs and request settings",
+    )
     parser.add_argument(
         "--rate-card", type=Path, help="Dated rates with source URLs; merges configured rates"
     )
