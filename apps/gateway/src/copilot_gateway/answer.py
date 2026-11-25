@@ -825,6 +825,8 @@ class AnswerEngine:
             "detector_depth_at_start": q.depth, "question_type_at_start": q.qtype,
             "recovery": {},
         }  # fmt: skip
+        cache_read: asyncio.Task[None] | None = None
+        cache_value: dict[str, Any] | None = None
         boundary = SentenceBoundary()
         strategy = self.strategy(q)
         plan = None
@@ -1061,6 +1063,23 @@ class AnswerEngine:
             memory: list[str] | None = None
             candidate_req: LLMRequest | None = None
             if plan is not None:
+                if reuse:
+
+                    async def prefetch_cache() -> None:
+                        nonlocal cache_value
+                        lookup_started = time.monotonic()
+                        try:
+                            cache_value = await self._cache_value(qhash)
+                        finally:
+                            # Full lookup duration, including work overlapped with retrieval.
+                            state["stages"]["cache_lookup_ms"] = round(
+                                (time.monotonic() - lookup_started) * 1000
+                            )
+
+                    cache_read = asyncio.create_task(prefetch_cache())
+                    # Retain ownership even if this pass is cancelled again during cleanup.
+                    self._tasks.add(cache_read)
+                    cache_read.add_done_callback(self._tasks.discard)
                 # A digest/pack version does not version live company memory. Resolve
                 # the same bounded evidence we would generate with before reusing an
                 # answer, and freeze the request so later speech cannot change its key.
@@ -1087,12 +1106,17 @@ class AnswerEngine:
                     ).encode()
                 ).hexdigest()[:24]
                 slot = f"{strategy}:{plan.depth}:{plan.job}:{slot}:style={style}:{identity}"
-            cache_started = time.monotonic()
-            cached = await self._cached(qhash, slot, cache_version) if reuse else None
-            if reuse:
-                state["stages"]["cache_lookup_ms"] = round(
-                    (time.monotonic() - cache_started) * 1000
-                )
+            if cache_read is not None:
+                await asyncio.shield(cache_read)
+                # A prefetched value is eligible only for the freshly resolved evidence.
+                cached = self._cache_entry(cache_value, slot, cache_version)
+            else:
+                cache_started = time.monotonic()
+                cached = await self._cached(qhash, slot, cache_version) if reuse else None
+                if reuse:
+                    state["stages"]["cache_lookup_ms"] = round(
+                        (time.monotonic() - cache_started) * 1000
+                    )
             if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -1361,13 +1385,24 @@ class AnswerEngine:
             log.exception("%s pass crashed for %s", pass_, q.qid)
             error("internal")
         finally:
-            log.debug(
-                "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
-            )
-            if pass_ == "fast" and not state["stopped"]:
-                # Done, failed or refused: the deep pass may start now.
-                q.fast_ended = True
-                self._auto_deep(q)
+            try:
+                if cache_read is not None and not cache_read.done():
+                    if not cache_read.cancelling():
+                        cache_read.cancel()
+                    # wait does not inject another cancellation into the read's cleanup.
+                    # The engine retains the child if this pass is interrupted again.
+                    await asyncio.wait({cache_read})
+            except asyncio.CancelledError:
+                state["stopped"] = True
+                raise
+            finally:
+                log.debug(
+                    "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
+                )
+                if pass_ == "fast" and not state["stopped"]:
+                    # Done, failed or refused: the deep pass may start now.
+                    q.fast_ended = True
+                    self._auto_deep(q)
 
     def _log_cancelled(
         self, q: Question, pass_: str, state: Mapping[str, Any], reason: str | None = None
@@ -1452,19 +1487,31 @@ class AnswerEngine:
         *,
         snapshot: RequestSnapshot | None = None,
     ) -> LLMRequest:
+        snapshot = snapshot or self._request_snapshot(q)
         req = self._base_request(q, pass_, memory, snapshot=snapshot)
         _, length = self._preferences(q, pass_)
         if length == "default":
             return req
         # A preference changes the next request, never an in-flight stream. Screens keep
-        # their code budget: brevity must not remove required code or the READ header.
+        # their code budget; Concise also preserves already-classified spoken coding.
+        # Brevity must not remove required code or the READ header.
         limit = req.max_tokens
         if q.screen is None and self.open_problem() is None:
-            if length == "concise":
+            if length == "concise" and q.qtype != "coding":
                 limit = min(limit, max(100, round(limit * 0.6)))
             elif length == "detailed" and self.strategy(q) != "legacy_dual":
                 limit = min(self.host.settings.adaptive_max_tokens, round(limit * 1.5))
-        return prompts.with_response_length(req, length, max_tokens=limit)
+        return prompts.with_response_length(
+            req,
+            length,
+            max_tokens=limit,
+            interview_drafting=(
+                snapshot.context.mode == "interview"
+                and self.strategy(q) != "legacy_dual"
+                and q.screen is None
+                and self.open_problem() is None
+            ),
+        )
 
     def _preferences(self, q: Question, pass_: str) -> tuple[str, str]:
         return q.preferences.get(pass_) or (
@@ -1670,13 +1717,20 @@ class AnswerEngine:
         by_id = {r.node_id: r for r in self.host.refs().values()}
         return [by_id.get(n) or NodeRef(node_id=n, label=answer.question) for n in answer.node_ids]
 
+    async def _cache_value(self, qhash: str) -> dict[str, Any] | None:
+        try:
+            return await asyncio.wait_for(self.host.qa_get(qhash), CACHE_READ_TIMEOUT_S)
+        except Exception:
+            return None
+
     async def _cached(
         self, qhash: str, pass_: str, version: str | None = None
     ) -> dict[str, Any] | None:
-        try:
-            value = await asyncio.wait_for(self.host.qa_get(qhash), CACHE_READ_TIMEOUT_S)
-        except Exception:
-            return None
+        return self._cache_entry(await self._cache_value(qhash), pass_, version)
+
+    def _cache_entry(
+        self, value: dict[str, Any] | None, pass_: str, version: str | None = None
+    ) -> dict[str, Any] | None:
         if not value or value.get("v") != (version or self.host.cache_version()):
             return None
         entry: Any = value.get(pass_)

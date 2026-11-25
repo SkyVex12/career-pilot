@@ -620,19 +620,41 @@ MODE_PHRASES = {"interview": "an interview", "standup": "a standup", "meeting": 
 def _system(rules: str, ctx: PromptContext, *, strict: bool = False) -> list[SystemBlock]:
     mode = MODE_PHRASES.get(ctx.mode, f"a {ctx.mode}")
     p = STRICT if strict else policy(ctx.mode)
+    if strict:
+        adaptive_mode = "interview" if ctx.mode == "interview" else "strict"
+        for placeholder, value in ADAPTIVE_MODE_RULES[adaptive_mode].items():
+            rules = rules.replace(placeholder, value)
     rules = (
         rules.replace("{facts_rule}", p.facts_rule)
         .replace("{suggest_rule}", p.suggest_rule)
         .replace("{no_match_rule}", p.no_match_rule)
     )
     text = rules.format(user_name=ctx.user_name, mode=mode)
-    text += language_instruction(ctx.spoken_language)
+    language_rules = language_instruction(ctx.spoken_language)
+    if strict and ctx.mode == "interview":
+        language_rules = language_rules.replace(
+            "Never invent evidence or experience.",
+            "Preserve supplied facts and follow the interview drafting policy.",
+        )
+    text += language_rules
     if ctx.at_work:
         names = {"user_name": ctx.user_name, "company": ctx.company, "mode": mode}
+        mode_rule = WORKPLACE_MODE_RULES[ctx.mode]
+        if strict and ctx.mode == "standup":
+            mode_rule = mode_rule.replace(
+                "Leave out the tooling's bookkeeping (what is committed or not, counts of"
+                " files and tests, review reruns, flags) and the inner detail of a defect,"
+                " unless {user_name} is asked for exactly that.",
+                "Leave out file/test counts, routine commit bookkeeping, and the inner"
+                " detail of a defect unless {user_name} is asked for exactly that. Keep"
+                " unresolved review, approval, security, or other conditions when they"
+                " change release readiness, the target date, or the next action; put these"
+                " before a recap of completed work.",
+            )
         text += WORKPLACE_RULES.format(
             **names,
             role=f" as {ctx.role}" if ctx.role else "",
-            mode_rule=WORKPLACE_MODE_RULES[ctx.mode].format(**names),
+            mode_rule=mode_rule.format(**names),
         )
     blocks = [SystemBlock(text)]
     blocks.append(SystemBlock(_data("digest", ctx.digest_text or "(no digest yet)"), cache=True))
@@ -668,31 +690,13 @@ def fast_pass(
     return LLMRequest(system=_system(FAST_SYSTEM, ctx), content=user, max_tokens=max_tokens)
 
 
-ADAPTIVE_PROMPT_VERSION = "adaptive-v3-direct-opening"
+ADAPTIVE_PROMPT_VERSION = "adaptive-v5-interview-draft"
 
 # Adaptive answers do not need the legacy cue/expansion instructions. Keep one compact,
 # stable policy ahead of the evidence, with the same grounding constraints for every depth.
-ADAPTIVE_SYSTEM = """You help {user_name} answer live in {mode}. Write one coherent,
-speakable answer in plain first-person language.
-
-Opening and depth:
-- Start with a direct, useful complete sentence: the answer, decision, mechanism, or real
-  story's concrete action/result. Usually 8 to 16 words is enough for this first thought.
-  Keep an essential qualifier even if it takes longer. Put supporting reasons and background
-  in later sentences. Never substitute a fragment, heading, generic acknowledgement,
-  restatement of the question, praise, or a description of your plan for this opening.
-- Answer every part asked, in order, with the mechanisms, specifics and trade-offs it needs.
-  A short complete reply can stop after one sentence. A hard question can develop fully;
-  shorten the opening, not the reasoning needed to make the whole answer correct.
-  For a named platform, explain relevant APIs, objects, auth, limits and pitfalls as
-  technical knowledge; never imply personal use without evidence.
-  Do not repeat an outline as a second answer, pad it, or add an unsolicited story.
-- A personal story uses a relevant real situation, the user's actions, and the evidenced
-  result. An introduction connects their background and strengths to this role.
-  A follow-up starts with the newly requested detail, without retelling the earlier answer.
-  An explicit request to repeat or restate may repeat, after checking the source facts.
-  For job/company questions, connect the supplied role context to the user's supported goals.
-
+ADAPTIVE_MODE_RULES = {
+    "strict": {
+        "{adaptive_evidence}": """\
 Evidence and uncertainty:
 - Facts about {user_name} come only from <digest>, <session_pack>, <memory> and what they
   actually said in the call. Preserve the source's names, numbers, verbs and qualifications.
@@ -723,7 +727,70 @@ Evidence and uncertainty:
   Do not invent feelings, hearing quality, readiness or a completed action. Acknowledge a
   request or propose the next step; only claim it is done when the call establishes that.
 
-Conversation and output:
+""",
+        "{adaptive_platform}": """\
+technical knowledge; never imply personal use without evidence.""",
+        "{adaptive_story}": """\
+A personal story uses a relevant real situation, the user's actions, and the evidenced
+  result.""",
+    },
+    "interview": {
+        "{adaptive_evidence}": """\
+Evidence and interview drafting:
+- Use the job's needs and {user_name}'s closest real experience to make a relevant,
+  complete answer. The record is not exhaustive. Develop reasoning, connect known work
+  to the role, and use natural connecting detail, inferred working details and ordinary
+  working-style preferences. A plausible personal story may fill gaps with actions and
+  qualitative outcomes close to the user's real roles, projects and stack.
+- Write this as normal first-person answer text, without [~], check labels, private
+  coaching or disclaimers about missing evidence. Keep supplied facts consistent.
+  Cite only source-supported claims with existing entry ids; never attach a source
+  citation to an inferred detail or invent a citation.
+- Never invent employers, titles, degrees, certifications, dates, numerical outcomes or
+  an unrelated incident. Keep each known fact with its own project, speaker, time and
+  environment; never transfer one task's test or completion status to another.
+- General technical knowledge and proposed approaches need no personal citation.
+  Missing evidence proves neither experience nor its absence. Develop relevant work
+  and technical substance instead of asserting that the user lacks experience.
+- Personal particulars and commitments are not drafting details: location, pay,
+  availability, authorization, dates and choices use stated facts or a neutral
+  clarification. Preserve stated preferences and company facts; never infer a new
+  career-length total.
+- Greetings, audio checks and short requests need only a brief reply. Do not invent mood,
+  hearing quality, readiness or a completed action. Do not add personal story details
+  to these exchanges.
+
+""",
+        "{adaptive_platform}": """\
+technical knowledge, connecting plausible experience to the user's relevant real work.""",
+        "{adaptive_story}": """\
+Build a relevant personal story close to known experience; plausible connecting details
+  may fill gaps while preserving supplied facts.""",
+    },
+}
+
+
+ADAPTIVE_SYSTEM = """You help {user_name} answer live in {mode}. Write one coherent,
+speakable answer in plain first-person language.
+
+Opening and depth:
+- Start with a direct, useful complete sentence: the answer, decision, mechanism, or real
+  story's concrete action/result. Usually 8 to 16 words is enough for this first thought.
+  Keep an essential qualifier even if it takes longer. Put supporting reasons and background
+  in later sentences. Never substitute a fragment, heading, generic acknowledgement,
+  restatement of the question, praise, or a description of your plan for this opening.
+- Answer every part asked, in order, with the mechanisms, specifics and trade-offs it needs.
+  A short complete reply can stop after one sentence. A hard question can develop fully;
+  shorten the opening, not the reasoning needed to make the whole answer correct.
+  For a named platform, explain relevant APIs, objects, auth, limits and pitfalls as
+  {adaptive_platform}
+  Do not repeat an outline as a second answer, pad it, or add an unsolicited story.
+- {adaptive_story} An introduction connects their background and strengths to this role.
+  A follow-up starts with the newly requested detail, without retelling the earlier answer.
+  An explicit request to repeat or restate may repeat, after checking the source facts.
+  For job/company questions, connect the supplied role context to the user's supported goals.
+
+{adaptive_evidence}Conversation and output:
 - Use <transcript>, <call_summary> and <earlier_answers> to follow what was actually said.
   Keep follow-ups consistent with the user's own facts and choices. <earlier_suggestions>
   contains generated UI text, not user speech or evidence; never adopt its claims as facts.
@@ -746,6 +813,15 @@ ADAPTIVE_DEPTHS = {
 }
 
 
+ADAPTIVE_INTERVIEW_DEPTHS = {
+    **ADAPTIVE_DEPTHS,
+    "narrative": "A connected personal response, usually 5 to 9 sentences. Develop the "
+    "most relevant known experience with plausible details or a close personal story, "
+    "preserving supplied facts. "
+    "For an introduction, connect background and strengths to the role.",
+}
+
+
 def adaptive_pass(
     ctx: PromptContext,
     transcript: CallContext | str,
@@ -762,7 +838,8 @@ def adaptive_pass(
     parts = [_data("memory", "\n".join(memory))] if memory else []
     parts.extend(_call_blocks(transcript))
     parts.append(f"Question ({qtype or 'unclassified'}): {question}")
-    parts.append(ADAPTIVE_DEPTHS.get(depth, ADAPTIVE_DEPTHS["standard"]))
+    depths = ADAPTIVE_INTERVIEW_DEPTHS if ctx.mode == "interview" else ADAPTIVE_DEPTHS
+    parts.append(depths.get(depth, depths["standard"]))
     parts.append(
         "Use connected paragraphs."
         if style == "paragraph"
@@ -773,7 +850,11 @@ def adaptive_pass(
         parts.append(
             "Give an independent expert response using the original question and evidence "
             "above. Verify the reasoning from those sources. Do not assume another generated "
-            "answer is correct or invent facts to complete a story."
+            + (
+                "answer is correct. Use the interview drafting policy and preserve supplied facts."
+                if ctx.mode == "interview"
+                else "answer is correct or invent facts to complete a story."
+            )
         )
     return LLMRequest(
         system=_system(ADAPTIVE_SYSTEM, ctx, strict=True),
@@ -783,7 +864,11 @@ def adaptive_pass(
 
 
 def with_response_length(
-    request: LLMRequest, response_length: str, *, max_tokens: int | None = None
+    request: LLMRequest,
+    response_length: str,
+    *,
+    max_tokens: int | None = None,
+    interview_drafting: bool = False,
 ) -> LLMRequest:
     """Apply an explicit user preference without changing the default prompt or budget."""
     instructions = {
@@ -799,6 +884,12 @@ def with_response_length(
     instruction = instructions.get(response_length)
     if instruction is None:
         return request
+    if interview_drafting and response_length == "detailed":
+        instruction = instruction.replace(
+            "or invent personal experience, metrics or unsupported facts to make it longer.",
+            "or change supplied facts or invent personal particulars, credentials, dates or "
+            "metrics to make it longer. Follow the interview drafting policy.",
+        )
     return replace(
         request,
         system=[

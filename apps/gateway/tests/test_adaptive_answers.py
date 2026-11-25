@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from copilot_core import prompts
+from copilot_core import prompts, screen
 from copilot_core.llm import LLMDone, LLMUsage, ModelRouter, Route
 from copilot_gateway.adaptive import SentenceBoundary, plan_answer
 from copilot_gateway.answer import AnswerEngine, AnswerHost, Question, ScreenAsk
@@ -116,7 +116,7 @@ async def test_simple_question_is_one_bounded_grounded_stream(settings_factory, 
     assert job == "fast"
     assert req.max_tokens == 100
     assert "<shown_cues>" not in str(req.content)
-    assert "Never invent personal actions" in req.system[0].text
+    assert "Personal particulars and commitments are not drafting details" in req.system[0].text
     assert "suggest specific details that are probably true" not in req.system[0].text
     deltas = [data for kind, data in events if kind == "AnswerDelta"]
     done = next(data for kind, data in events if kind == "AnswerDone")
@@ -198,20 +198,32 @@ async def test_superseded_stream_cannot_emit_or_restart_expert(settings_factory)
 
 
 async def test_held_stream_is_sequence_counted_only_when_released(settings_factory):
-    engine, _, events, _, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    engine, router, events, _, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    provider_finished = asyncio.Event()
+    original_stream = router.stream
+
+    async def observed_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[str | LLMDone]:
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+        provider_finished.set()
+
+    router.stream = observed_stream
     q = question(held=True)
-    engine.add(q)
-    await asyncio.sleep(0.01)
-    assert not events
-    engine.release(q.qid)
-    engine.confirm(q.qid, q.text, 0)
-    await engine.wait_idle()
-    deltas = [d for kind, d in events if kind == "AnswerDelta"]
-    assert len(deltas) == 1
-    assert deltas[0]["sequence"] == 0
-    done = next(d for kind, d in events if kind == "AnswerDone")
-    assert done["delta_count"] == 1
-    assert done["latency_ms"]["first_complete_sentence_ms"] >= done["latency_ms"]["release_ms"]
+    try:
+        engine.add(q)
+        await asyncio.wait_for(provider_finished.wait(), 1)
+        assert not events
+        engine.release(q.qid)
+        engine.confirm(q.qid, q.text, 0)
+        await engine.wait_idle()
+        deltas = [d for kind, d in events if kind == "AnswerDelta"]
+        assert len(deltas) == 1
+        assert deltas[0]["sequence"] == 0
+        done = next(d for kind, d in events if kind == "AnswerDone")
+        assert done["delta_count"] == 1
+        assert done["latency_ms"]["first_complete_sentence_ms"] >= done["latency_ms"]["release_ms"]
+    finally:
+        await engine.shutdown(within_s=1)
 
 
 def test_candidate_cache_does_not_read_legacy_fragment_or_leak_current_answer(settings_factory):
@@ -543,6 +555,63 @@ def test_default_length_keeps_prompt_and_request_budget_identical(settings_facto
         assert prompts.with_response_length(baseline, "default") is baseline
 
 
+@pytest.mark.parametrize("pass_", ["fast", "deep"])
+@pytest.mark.parametrize(
+    ("strategy", "mode", "surface", "drafting"),
+    [
+        ("adaptive", "interview", "spoken", True),
+        ("adaptive_hybrid", "interview", "spoken", True),
+        ("adaptive_on_demand", "interview", "spoken", True),
+        ("legacy_dual", "interview", "spoken", False),
+        ("adaptive", "standup", "spoken", False),
+        ("adaptive", "meeting", "spoken", False),
+        ("adaptive", "interview", "screen", False),
+        ("adaptive", "interview", "screen_followup", False),
+    ],
+)
+def test_detailed_preference_respects_interview_and_screen_policy(
+    settings_factory, strategy, mode, surface, drafting, pass_
+):
+    engine, _, _, _, _ = make_engine(settings_factory(answer_architecture=strategy))
+    engine.host.response_length = lambda: "detailed"
+    engine.host.prompt_context = lambda: prompts.PromptContext("Alex", mode, "Profile", None)
+    q = question()
+    if surface == "screen":
+        q.screen = ScreenAsk((), "interview", None, "Python")
+    elif surface == "screen_followup":
+        engine.problem = screen.Problem(
+            qid=uuid4(), shots=(), reading=None, answer="Read input", code="", at=time.monotonic()
+        )
+    instruction = engine._request(q, pass_).system[-1].text
+    assert "User response-length preference: detailed." in instruction
+    assert ("Follow the interview drafting policy." in instruction) is drafting
+    assert ("invent personal experience, metrics or unsupported facts" in instruction) is (
+        not drafting
+    )
+
+
+@pytest.mark.parametrize("initial_mode", ["interview", "standup"])
+def test_detailed_policy_uses_frozen_context_after_mode_change(settings_factory, initial_mode):
+    engine, _, _, _, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    engine.host.response_length = lambda: "detailed"
+    engine.host.prompt_context = lambda: prompts.PromptContext(
+        "Alex", initial_mode, "Original profile", None
+    )
+    q = question()
+    snapshot = engine._request_snapshot(q)
+    changed_mode = "standup" if initial_mode == "interview" else "interview"
+    engine.host.prompt_context = lambda: prompts.PromptContext(
+        "Alex", changed_mode, "New profile", None
+    )
+    request = engine._request(q, "fast", snapshot=snapshot)
+    system = "\n".join(block.text for block in request.system)
+    assert "Original profile" in system
+    assert "New profile" not in system
+    assert ("Follow the interview drafting policy." in request.system[-1].text) is (
+        initial_mode == "interview"
+    )
+
+
 @pytest.mark.parametrize("strategy", ["legacy_dual", "adaptive"])
 @pytest.mark.parametrize("length", ["concise", "detailed"])
 async def test_response_length_changes_only_next_generation_and_cache(
@@ -643,12 +712,18 @@ async def test_response_length_session_start_update_and_resume(env):
 
 @pytest.mark.parametrize("strategy", ["adaptive", "adaptive_hybrid", "adaptive_on_demand"])
 @pytest.mark.parametrize("pass_", ["fast", "deep"])
-def test_candidate_grounding_contract_preserves_missing_facts_and_task_provenance(
-    settings_factory, strategy, pass_
+@pytest.mark.parametrize("mode", ["standup", "meeting", "other"])
+def test_candidate_strict_grounding_preserves_missing_facts_and_task_provenance(
+    settings_factory, strategy, pass_, mode
 ):
     engine, _, _, _, _ = make_engine(settings_factory(answer_architecture=strategy))
     engine.host.prompt_context = lambda: prompts.PromptContext(
-        "Alex", "interview", "[n:ab12] Alex implemented payments reconciliation at LedgerCo.", None
+        "Alex",
+        mode,
+        "[n:ab12] Alex implemented payments reconciliation at LedgerCo.",
+        None,
+        company="LedgerCo",
+        role="Engineer",
     )
     engine.host.call_context = lambda: prompts.CallContext(
         recent=(
@@ -704,7 +779,7 @@ async def test_candidate_prompt_revision_invalidates_prior_cached_answer(
         await asyncio.gather(*engine._background)
     assert len(router.requests) == 2
     versions = [row["latency_ms"]["prompt_version"] for row in logs if row["kind"] == "answer"]
-    assert versions == ["prior-candidate", "adaptive-v3-direct-opening"]
+    assert versions == ["prior-candidate", prompts.ADAPTIVE_PROMPT_VERSION]
 
 
 @pytest.mark.parametrize("style", ["bullets", "paragraph"])
@@ -827,21 +902,32 @@ async def test_candidate_question_preload_refreshes_completed_memory_and_shares_
 async def test_stored_timing_separates_preparation_first_chunk_and_sentence(settings_factory):
     engine, _, events, logs, _ = make_engine(settings_factory(answer_architecture="adaptive"))
 
+    async def elapsed_step():
+        # Windows monotonic resolution can exceed a requested short asyncio sleep.
+        def wait_for_clock_step():
+            began = time.monotonic()
+            while time.monotonic() - began < 0.02:
+                time.sleep(0.02)
+
+        await asyncio.to_thread(wait_for_clock_step)
+
     async def memory(text, pass_):
-        await asyncio.sleep(0.012)
+        await elapsed_step()
         return ["[n:ab12] Redis cached reads."], {"memory_hits": 1}
 
     async def cache(qhash):
-        await asyncio.sleep(0.012)
+        await elapsed_step()
         return None
 
-    provider = ScriptedProvider(
+    class TimedProvider(ScriptedProvider):
+        async def stream(self, model, req, params):
+            async for chunk in super().stream(model, req, params):
+                await elapsed_step()
+                yield chunk
+
+    provider = TimedProvider(
         "openai",
-        lambda job, req: Reply(
-            ["I chose Redis", " for low latency. ", "It cached reads."],
-            first_delay_s=0.012,
-            chunk_delay_s=0.012,
-        ),
+        lambda job, req: Reply(["I chose Redis", " for low latency. ", "It cached reads."]),
     )
     engine.host.memory_lines = memory
     engine.host.qa_get = cache
@@ -859,7 +945,8 @@ async def test_stored_timing_separates_preparation_first_chunk_and_sentence(sett
         "stream_sentence_ms",
     ):
         assert lat[field] >= 8
-    assert lat["answer_prepare_ms"] >= lat["context_wait_ms"] + lat["cache_lookup_ms"] - 2
+    # Both full operation durations remain recorded even when their waits overlap.
+    assert lat["answer_prepare_ms"] >= max(lat["context_wait_ms"], lat["cache_lookup_ms"]) - 2
     assert lat["first_complete_sentence_ms"] >= lat["model_dispatch_ms"]
     wire = next(fields for name, fields in events if name == "AnswerDone")
     assert "context_wait_ms" not in wire["latency_ms"]
@@ -1203,22 +1290,39 @@ async def test_cancellation_during_recovery_never_publishes_stale_answer(setting
 
 async def test_held_recovery_releases_one_monotonic_stream(settings_factory):
     engine, _, expert, events, logs, _ = recovery_engine(settings_factory)
+    provider_finished = asyncio.Event()
+    original_stream = expert.stream
+
+    async def observed_stream(*args: Any, **kwargs: Any) -> AsyncGenerator[str | LLMDone]:
+        async for chunk in original_stream(*args, **kwargs):
+            if isinstance(chunk, LLMDone):
+                provider_finished.set()
+            yield chunk
+
+    expert.stream = observed_stream
     q = question(held=True)
-    engine.add(q)
-    await asyncio.sleep(0.02)
-    assert len(expert.calls) == 1
-    assert q.held_text
-    assert not events
-    engine.release(q.qid)
-    engine.confirm(q.qid, q.text, 0)
-    await engine.wait_idle()
-    deltas = [row for kind, row in events if kind == "AnswerDelta"]
-    assert len(deltas) == 1
-    assert deltas[0]["sequence"] == 0
-    done = next(row for kind, row in events if kind == "AnswerDone")
-    assert done["delta_count"] == 1
-    assert done["latency_ms"]["first_complete_sentence_ms"] >= done["latency_ms"]["release_ms"]
-    assert next(row for row in logs if row["kind"] == "answer")["latency_ms"]["failure_recovery"]
+    try:
+        engine.add(q)
+        # A held pass waits for release after provider completion. Observe the provider,
+        # without making scheduler speed or UI release a prerequisite for this assertion.
+        await asyncio.wait_for(provider_finished.wait(), 1)
+        assert len(expert.calls) == 1
+        assert q.held_text
+        assert not events
+        engine.release(q.qid)
+        engine.confirm(q.qid, q.text, 0)
+        await engine.wait_idle()
+        deltas = [row for kind, row in events if kind == "AnswerDelta"]
+        assert len(deltas) == 1
+        assert deltas[0]["sequence"] == 0
+        done = next(row for kind, row in events if kind == "AnswerDone")
+        assert done["delta_count"] == 1
+        assert done["latency_ms"]["first_complete_sentence_ms"] >= done["latency_ms"]["release_ms"]
+        assert next(row for row in logs if row["kind"] == "answer")["latency_ms"][
+            "failure_recovery"
+        ]
+    finally:
+        await engine.shutdown(within_s=1)
 
 
 async def test_recovery_uses_remaining_total_budget_not_a_new_deadline(
@@ -1488,3 +1592,268 @@ async def test_cancellation_before_request_keeps_unknown_routing_depth(settings_
     assert entry["detector_depth_at_start"] is None
     assert entry["detector_depth_at_cancellation"] is None
     assert router.requests == []
+
+
+@pytest.mark.parametrize("changed_evidence", [False, True])
+async def test_prefetch_waits_for_fresh_evidence_before_reuse(settings_factory, changed_evidence):
+    engine, router, events, logs, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    first = question(forced=True)
+    engine.add(first)
+    await engine.wait_idle()
+    await asyncio.gather(*engine._background)
+    engine.questions.clear()
+    router.requests.clear()
+    events.clear()
+    logs.clear()
+    engine.host.store_text = lambda: False
+    original_memory, original_get = engine.host.memory_lines, engine.host.qa_get
+    reading, retrieving, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def memory(text, pass_):
+        retrieving.set()
+        await release.wait()
+        if changed_evidence:
+            return ["[n:ab12] Verified updated source: MySQL owns the durable records."], {}
+        return await original_memory(text, pass_)
+
+    async def get(qhash):
+        reading.set()
+        return await original_get(qhash)
+
+    engine.host.memory_lines, engine.host.qa_get = memory, get
+    second = question(forced=True)
+    try:
+        engine.add(second)
+        # The prior serialized implementation cannot start this read until release.
+        await asyncio.wait_for(asyncio.gather(reading.wait(), retrieving.wait()), 1)
+        assert not router.requests
+        assert not any(name in {"AnswerDelta", "AnswerDone"} for name, _ in events)
+        release.set()
+        await asyncio.wait_for(engine.wait_idle(), 1)
+        [answer] = [row for row in logs if row["kind"] == "answer"]
+        assert answer["source"] == ("model" if changed_evidence else "cache")
+        assert len(router.requests) == int(changed_evidence)
+        if changed_evidence:
+            assert "MySQL owns the durable records" in str(router.requests[0][1].content)
+        assert "cache_lookup_ms" in answer["latency_ms"]
+    finally:
+        release.set()
+        await engine.shutdown(within_s=1)
+
+
+async def test_legacy_cache_lookup_still_precedes_memory(settings_factory):
+    engine, router, _, _, _ = make_engine(settings_factory(answer_architecture="legacy_dual"))
+    engine.host.store_text = lambda: False
+    reading, retrieving, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_memory = engine.host.memory_lines
+
+    async def memory(text, pass_):
+        retrieving.set()
+        return await original_memory(text, pass_)
+
+    async def get(qhash):
+        reading.set()
+        await release.wait()
+        return None
+
+    engine.host.memory_lines, engine.host.qa_get = memory, get
+    try:
+        engine.add(question(forced=True))
+        await asyncio.wait_for(reading.wait(), 1)
+        assert not retrieving.is_set()
+        release.set()
+        await asyncio.wait_for(engine.wait_idle(), 1)
+        assert retrieving.is_set()
+        assert len(router.requests) == 1
+    finally:
+        release.set()
+        await engine.shutdown(within_s=1)
+
+
+@pytest.mark.parametrize("excluded", ["follow", "private_context"])
+async def test_ineligible_generation_never_prefetches_cache(settings_factory, excluded):
+    settings = {"answer_architecture": "adaptive_on_demand"}
+    if excluded == "private_context":
+        settings["personal_ai_api_url"] = "https://context.invalid"
+    engine, router, _, _, _ = make_engine(settings_factory(**settings))
+    engine.host.store_text = lambda: False
+    reads = 0
+
+    async def get(qhash):
+        nonlocal reads
+        reads += 1
+        return None
+
+    engine.host.qa_get = get
+    try:
+        engine.add(question(qtype="follow" if excluded == "follow" else "technical", forced=True))
+        await asyncio.wait_for(engine.wait_idle(), 1)
+        assert reads == 0
+        assert len(router.requests) == 1
+    finally:
+        await engine.shutdown(within_s=1)
+
+
+@pytest.mark.parametrize("action", ["discard", "supersede", "retrieval_failure"])
+async def test_prefetch_cleanup_remains_owned_and_finalizes_cancellation(
+    settings_factory, monkeypatch, action
+):
+    monkeypatch.setattr("copilot_gateway.answer.CACHE_READ_TIMEOUT_S", 10)
+    engine, router, events, _, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    engine.host.store_text = lambda: False
+    reading, retrieving, cleaning, release = (asyncio.Event() for _ in range(4))
+    cancellations = 0
+
+    async def memory(text, pass_):
+        retrieving.set()
+        if action == "retrieval_failure":
+            await reading.wait()
+            raise ValueError("authored retrieval failure before cleanup cancellation")
+        await asyncio.Event().wait()
+        return [], {}
+
+    async def get(qhash):
+        nonlocal cancellations
+        reading.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellations += 1
+            cleaning.set()
+            await release.wait()
+            raise
+
+    engine.host.memory_lines, engine.host.qa_get = memory, get
+    q = question(forced=True, held=True)
+    try:
+        engine.add(q)
+        await asyncio.wait_for(asyncio.gather(reading.wait(), retrieving.wait()), 1)
+        if action == "discard":
+            engine.discard(q.qid)
+        elif action == "supersede":
+            engine.supersede(None)
+        await asyncio.wait_for(cleaning.wait(), 1)
+        # Interrupt cleanup after cancellation or retrieval failure; the child stays owned.
+        q.tasks["fast"].cancel()
+        await asyncio.gather(q.tasks["fast"], return_exceptions=True)
+        assert any(not task.done() for task in engine._tasks)
+        assert await engine.shutdown(within_s=0.01) is False
+        assert cancellations == 1
+        assert not q.fast_ended
+        assert "deep" not in q.tasks
+        assert not router.requests
+        assert not any(name in {"AnswerDelta", "AnswerDone"} for name, _ in events)
+        release.set()
+        assert await engine.shutdown(within_s=1) is True
+        assert cancellations == 1
+    finally:
+        release.set()
+        await engine.shutdown(within_s=1)
+
+
+async def test_retrieval_failure_cancels_prefetch_without_model_dispatch(settings_factory):
+    engine, router, _, _, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    reading, closed = asyncio.Event(), asyncio.Event()
+
+    async def memory(text, pass_):
+        await reading.wait()
+        raise ValueError("authored retrieval failure")
+
+    async def get(qhash):
+        reading.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    engine.host.memory_lines, engine.host.qa_get = memory, get
+    try:
+        engine.add(question(forced=True))
+        await asyncio.wait_for(engine.wait_idle(), 1)
+        assert closed.is_set()
+        assert not router.requests
+        assert all(task.done() for task in engine._tasks)
+    finally:
+        await engine.shutdown(within_s=1)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "unavailable"])
+async def test_bounded_prefetch_failure_is_one_cache_miss(settings_factory, monkeypatch, failure):
+    monkeypatch.setattr("copilot_gateway.answer.CACHE_READ_TIMEOUT_S", 0.01)
+    engine, router, _, logs, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    engine.host.store_text = lambda: False
+    reads = 0
+    closed = asyncio.Event()
+
+    async def get(qhash):
+        nonlocal reads
+        reads += 1
+        try:
+            if failure == "unavailable":
+                raise OSError("authored cache outage")
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    engine.host.qa_get = get
+    try:
+        engine.add(question(forced=True))
+        await asyncio.wait_for(engine.wait_idle(), 1)
+        assert reads == 1
+        assert closed.is_set()
+        assert len(router.requests) == 1
+        [answer] = [row for row in logs if row["kind"] == "answer"]
+        assert answer["source"] == "model"
+    finally:
+        await engine.shutdown(within_s=1)
+
+
+CODING_BUDGET_STRATEGIES = ["legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"]
+
+
+@pytest.mark.parametrize("strategy", CODING_BUDGET_STRATEGIES)
+@pytest.mark.parametrize("pass_", ["fast", "deep"])
+def test_spoken_coding_concise_preserves_default_ceiling(settings_factory, strategy, pass_):
+    engine, router, _, _, _ = make_engine(settings_factory(answer_architecture=strategy))
+    q = question("Implement a bounded async map in Python.", qtype="coding")
+    assert q.screen is None
+    assert engine.open_problem() is None
+    evidence = ["The interviewer requested Python and bounded active work."]
+    baseline = engine._base_request(q, pass_, evidence)
+    assert engine._request(q, pass_, evidence) == baseline
+
+    engine.host.response_length = lambda: "concise"
+    concise = engine._request(q, pass_, evidence)
+    assert concise.max_tokens == baseline.max_tokens
+    assert concise.content == baseline.content
+    assert concise.system[:-1] == baseline.system
+    assert "preference: concise." in concise.system[-1].text
+    assert "Do not omit required code" in concise.system[-1].text
+    assert not router.requests
+
+
+@pytest.mark.parametrize("strategy", CODING_BUDGET_STRATEGIES)
+@pytest.mark.parametrize("pass_", ["fast", "deep"])
+def test_ordinary_concise_keeps_existing_budget_reduction(settings_factory, strategy, pass_):
+    engine, router, _, _, _ = make_engine(settings_factory(answer_architecture=strategy))
+    q = question("Why did you choose Redis?", qtype="technical")
+    baseline = engine._base_request(q, pass_)
+    assert engine._request(q, pass_) == baseline
+
+    engine.host.response_length = lambda: "concise"
+    concise = engine._request(q, pass_)
+    expected = min(baseline.max_tokens, max(100, round(baseline.max_tokens * 0.6)))
+    assert concise.max_tokens == expected
+    assert concise.max_tokens < baseline.max_tokens
+    assert concise.content == baseline.content
+    assert concise.system[:-1] == baseline.system
+    assert "preference: concise." in concise.system[-1].text
+    assert not router.requests
