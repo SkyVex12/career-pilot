@@ -1067,6 +1067,25 @@ def run_identity(run: Run) -> str:
     )
 
 
+def response_preferences(answer: dict[str, Any]) -> dict[str, str] | None:
+    """Optional recorded user requirements; absence remains unknown for old reviews."""
+    if "response_preferences" not in answer:
+        return None
+    value = answer["response_preferences"]
+    if not isinstance(value, dict) or set(cast(dict[str, Any], value)) != {
+        "answer_style",
+        "response_length",
+    }:
+        raise ValueError("Response preferences require exactly style and length")
+    if value["answer_style"] not in ("bullets", "paragraph") or value["response_length"] not in (
+        "default",
+        "concise",
+        "detailed",
+    ):
+        raise ValueError("Unsupported recorded response preference")
+    return {"answer_style": value["answer_style"], "response_length": value["response_length"]}
+
+
 def review_content(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "question": item["question"],
@@ -1082,6 +1101,7 @@ def review_content(item: dict[str, Any]) -> dict[str, Any]:
                     "boundary_units",
                     "has_expansion",
                     "delivery",
+                    "response_preferences",
                 )
                 if key in item[side]
             }
@@ -1208,6 +1228,9 @@ def _blind_pairs(
                     "scores": dict.fromkeys(RUBRIC),
                     **dict.fromkeys(ASSESSMENTS),
                 }
+                preferences = response_preferences(answer)
+                if preferences is not None:
+                    item[side]["response_preferences"] = preferences
                 assignment[side] = {"architecture": run.architecture, "id": identifier}
             items.append(item)
             keys[pair_id] = {

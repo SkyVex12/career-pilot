@@ -93,7 +93,7 @@ function save(){try{localStorage.setItem(storageKey,JSON.stringify({review,index
 function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
 function updateProgress(){const n=review.items.filter(i=>i.preference!==null).length;byId('progress').max=review.items.length;byId('progress').value=n;byId('count').textContent=n+' / '+review.items.length+' pairs have a preference';}
 function selectValue(value,choices,onChange){const select=el('select');for(const [v,t] of choices){const option=el('option',t);option.value=v;select.append(option);}select.value=value===null?'':String(value);select.onchange=()=>{onChange(select.value);save();};return select;}
-function renderSide(side,item){const value=item[side],card=el('article');card.append(el('h3','Answer '+side));const delivery=value.delivery||{};
+function renderSide(side,item){const value=item[side],card=el('article');card.append(el('h3','Answer '+side));if(value.response_preferences){card.append(el('p','Requested style: '+value.response_preferences.answer_style+'; length: '+value.response_preferences.response_length));}const delivery=value.delivery||{};
  if(!delivery.primary_complete)card.append(el('p',value.initial?'Primary stream incomplete; judge the visible partial answer.':'No primary answer was delivered.','warning'));
  card.append(el('div',value.initial||'(No answer)','text'));
  const units=el('details');units.open=true;units.append(el('summary','Streaming boundary units'));

@@ -66,6 +66,17 @@ TRIAL = contextvars.ContextVar("live_eval_trial", default="")
 TRIAL_ORIGIN: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "live_eval_trial_origin", default=None
 )
+CONTEXT_TEXT_FIELDS = (
+    "user_name",
+    "spoken_language",
+    "company",
+    "role",
+    "company_digest",
+    "pack_text",
+    "call_summary",
+    "earlier_answers",
+)
+CONTEXT_SOURCE_FIELDS = ("pack_source", "earlier_answers_source")
 CASE_FIELDS = {
     "id",
     "question",
@@ -81,6 +92,8 @@ CASE_FIELDS = {
     "context_sha256",
     "answer_style",
     "response_length",
+    *CONTEXT_TEXT_FIELDS,
+    *CONTEXT_SOURCE_FIELDS,
 }
 CONFIG_FIELDS = {
     "llm_providers",
@@ -258,22 +271,74 @@ def validate_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for key in ("id", "question", "type", "mode", "digest", "recent", "source")
         ):
             raise ValueError("Cases require explicit question and source context strings")
+        if ("answer_style" in case) != ("response_length" in case):
+            raise ValueError("Response style and length must both be recorded or both absent")
+        if "answer_style" in case and (
+            case["answer_style"] not in ("bullets", "paragraph")
+            or case["response_length"] not in ("default", "concise", "detailed")
+        ):
+            raise ValueError("Unsupported recorded response preference")
         if case["mode"] not in ("interview", "standup", "meeting"):
             raise ValueError("Unsupported replay mode")
         if not isinstance(case.get("memory"), list) or any(
             not isinstance(line, str) for line in case["memory"]
         ):
             raise ValueError("Memory must contain source text lines")
-        digest = hashlib.sha256(
-            json.dumps(
-                {key: case[key] for key in ("digest", "recent", "memory")}, sort_keys=True
-            ).encode()
-        ).hexdigest()
+        for key in (*CONTEXT_TEXT_FIELDS, *CONTEXT_SOURCE_FIELDS):
+            if key in case and not isinstance(case[key], str):
+                raise ValueError(f"Optional context field {key} must be text; omit if unavailable")
+        if case.get("earlier_answers") and case.get("earlier_answers_source") != "user_speech":
+            raise ValueError(
+                "Earlier answers must be declared original user speech, never generated answers"
+            )
+        if case.get("pack_text") and case.get("pack_source") != "source_facts_only":
+            raise ValueError(
+                "Static pack text must be declared source facts without prepared/generated answers"
+            )
+        if case.get("earlier_answers_source") not in (None, "user_speech"):
+            raise ValueError("Unknown earlier-answer source declaration")
+        if case.get("pack_source") not in (None, "source_facts_only"):
+            raise ValueError("Unknown pack source declaration")
+        # Absent optional fields leave legacy context hashes byte-for-byte unchanged.
+        context = {key: case[key] for key in ("digest", "recent", "memory")}
+        context.update(
+            {
+                key: case[key]
+                for key in (*CONTEXT_TEXT_FIELDS, *CONTEXT_SOURCE_FIELDS)
+                if key in case
+            }
+        )
+        digest = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
         if case.get("context_sha256") not in (None, digest):
             raise ValueError("Source context fingerprint changed")
         case["context_sha256"] = digest
         case.setdefault("category", case["type"])
     return cases
+
+
+def context_fidelity(case: dict[str, Any]) -> dict[str, Any]:
+    """Describe declared controlled context; absence is not evidence that a fact is false."""
+    workplace = case["mode"] in ("standup", "meeting")
+    return {
+        "scope": "generation_only_static_equal_evidence",
+        "declared_fields": [key for key in CONTEXT_TEXT_FIELDS if key in case],
+        "workplace_rules_enabled": workplace and bool(case.get("company")),
+        "workplace_pack_missing": workplace and not bool(case.get("pack_text")),
+        "workplace_company_digest_missing": workplace and not bool(case.get("company_digest")),
+        "conversation_summary_missing": not bool(case.get("call_summary")),
+        "earlier_user_speech_missing": not bool(case.get("earlier_answers")),
+        "unconsumed_declared_fields": [
+            key
+            for key in ("company", "role", "company_digest")
+            if case.get(key)
+            and not (case.get("company") and case.get("mode") in prompts.GROUP_MODES)
+        ],
+        "retrieval_pass_invariant": True,
+        "retrieval_wait_measured": False,
+        "pack_source_declaration": case.get("pack_source"),
+        "earlier_answers_source_declaration": case.get("earlier_answers_source"),
+        "source_declarations_are_not_truth_verification": True,
+    }
 
 
 class Host:
@@ -301,10 +366,23 @@ class Host:
         return True
 
     def call_context(self) -> prompts.CallContext:
-        return prompts.CallContext(recent=self.case["recent"])
+        return prompts.CallContext(
+            recent=self.case["recent"],
+            summary=self.case.get("call_summary", ""),
+            answers=self.case.get("earlier_answers", ""),
+        )
 
     def prompt_context(self) -> prompts.PromptContext:
-        return prompts.PromptContext("Alex Rivera", self.case["mode"], self.case["digest"], None)
+        return prompts.PromptContext(
+            user_name=self.case.get("user_name", "Alex Rivera"),
+            mode=self.case["mode"],
+            digest_text=self.case["digest"],
+            pack_text=self.case.get("pack_text"),
+            company=self.case.get("company"),
+            role=self.case.get("role"),
+            company_digest=self.case.get("company_digest"),
+            spoken_language=self.case.get("spoken_language", "en"),
+        )
 
     def prepared_source_version(self, policy: str) -> str | None:
         return None  # Generation-only cases have no prepared answer cache.
@@ -515,6 +593,7 @@ async def trial(
         "category": case["category"],
         "mode": case["mode"],
         "context_sha256": case["context_sha256"],
+        "context_fidelity": context_fidelity(case),
         "events": host.events,
         "metadata_logs": host.logs,
         "failure": failure
@@ -1682,6 +1761,8 @@ def normalized_runs(
     """Adapt current generation-only trials without changing the private source artifacts."""
     from copilot_evals.live_answer_schedule import classify_failure
 
+    if any(("answer_style" in case) != ("response_length" in case) for case in cases):
+        raise ValueError("Response style and length must both be recorded or both absent")
     by_case = {case["id"]: case for case in cases}
     ids = {(row["id"], row["architecture"], row["rep"]) for row in trials}
     if len(ids) != len(trials):
@@ -1760,8 +1841,25 @@ def normalized_runs(
                         else classify_failure(real_failure_evidence(item), [])
                     ),
                     "not_started_reason": item.get("reason"),
+                    **(
+                        {
+                            "response_preferences": {
+                                "answer_style": case["answer_style"],
+                                "response_length": case["response_length"],
+                            }
+                        }
+                        if "answer_style" in case or "response_length" in case
+                        else {}
+                    ),
+                    "context_fidelity": context_fidelity(case),
                     "evidence": {
-                        key: case[key] for key in ("digest", "recent", "memory", "source")
+                        key: case[key]
+                        for key in ("digest", "recent", "memory", "source", *CONTEXT_TEXT_FIELDS)
+                        if key in case
+                        and (
+                            key not in {"company", "role", "company_digest"}
+                            or bool(case.get("company") and case.get("mode") in prompts.GROUP_MODES)
+                        )
                     },
                 }
             )
