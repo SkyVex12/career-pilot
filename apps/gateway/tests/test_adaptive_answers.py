@@ -714,3 +714,105 @@ def test_candidate_requests_require_the_selected_answer_format(settings_factory,
     else:
         assert "Use connected paragraphs." in str(req.content)
         assert "Write the answer as complete-sentence bullets." not in str(req.content)
+
+
+async def test_candidate_exact_cache_uses_current_retrieved_evidence(settings_factory):
+    engine, router, _, logs, cache = make_engine(settings_factory(answer_architecture="adaptive"))
+    evidence = ["[n:ab12] Carrier report preview is in development."]
+    retrievals = 0
+
+    async def memory(text, pass_):
+        nonlocal retrievals
+        retrievals += 1
+        return list(evidence), {"memory_hits": len(evidence)}
+
+    engine.host.memory_lines = memory
+    for next_evidence in [
+        "[n:ab12] Carrier report preview is in development.",
+        "[n:ab12] Carrier report preview is in development.",
+        "[n:ab12] Carrier report preview passed staging validation today.",
+    ]:
+        evidence[:] = [next_evidence]
+        engine.questions.clear()  # Same digest, pack, question, and call context throughout.
+        q = question("What is the carrier report preview status?", "status_follow_up", forced=True)
+        engine.add(q)
+        engine.confirm(q.qid, q.text, 0)
+        await engine.wait_idle()
+        await asyncio.gather(*engine._background)
+    assert retrievals == 3  # Exactly once per generation, including a cache hit.
+    assert len(router.requests) == 2
+    answers = [entry for entry in logs if entry["kind"] == "answer"]
+    assert [entry["source"] for entry in answers] == ["model", "cache", "model"]
+    assert "in development" in str(router.requests[0][1].content)
+    assert "passed staging validation today" in str(router.requests[1][1].content)
+    assert "in development" not in str(router.requests[1][1].content)
+    assert all("Carrier report" not in key for value in cache.values() for key in value)
+
+
+async def test_candidate_request_stays_bound_to_context_hashed_before_cache_read(settings_factory):
+    engine, router, _, _, _ = make_engine(settings_factory(answer_architecture="adaptive"))
+    lookup_started, release = asyncio.Event(), asyncio.Event()
+
+    async def get(qhash):
+        lookup_started.set()
+        await release.wait()
+        return None
+
+    engine.host.qa_get = get
+    engine.host.call_context = lambda: prompts.CallContext(recent="Alex: Original context.")
+    q = question(forced=True)
+    engine.add(q)
+    engine.confirm(q.qid, q.text, 0)
+    await lookup_started.wait()
+    engine.host.call_context = lambda: prompts.CallContext(recent="Alex: Later context.")
+    release.set()
+    await engine.wait_idle()
+    assert "Original context" in str(router.requests[0][1].content)
+    assert "Later context" not in str(router.requests[0][1].content)
+
+
+@pytest.mark.parametrize("strategy", ["legacy_dual", "adaptive"])
+async def test_candidate_question_preload_refreshes_completed_memory_and_shares_inflight(
+    settings_factory, monkeypatch, strategy
+):
+    from copilot_gateway.retrieval import CompanyMemory
+    from copilot_gateway.session import Session
+
+    retrieval = CompanyMemory(
+        cast(Any, None), uuid4(), uuid4(), embedding_model=None, budget_ms=100, limit=5
+    )
+    release = asyncio.Event()
+    calls = 0
+
+    async def query(text, vector, name, started):
+        nonlocal calls
+        calls += 1
+        await release.wait()
+        return []
+
+    monkeypatch.setattr(retrieval, "_query", query)
+    host = cast(
+        Session,
+        SimpleNamespace(
+            settings=settings_factory(answer_architecture=strategy),
+            company_memory=retrieval,
+            _memory_on=lambda: True,
+            _vector=lambda text: None,
+            spoken_language="en",
+            matcher=SimpleNamespace(enabled=False),
+        ),
+    )
+    Session.start_match(host, "What is the carrier report status?")
+    first = retrieval.lookups["What is the carrier report status?"]
+    Session.start_match(host, "What is the carrier report status?")
+    assert retrieval.lookups["What is the carrier report status?"] is first
+    release.set()
+    await asyncio.gather(first.fts, first.full)
+    Session.start_match(host, "What is the carrier report status?")
+    second = retrieval.lookups["What is the carrier report status?"]
+    assert (second is first) == (strategy == "legacy_dual")
+    await asyncio.gather(second.fts, second.full)
+    assert calls == (1 if strategy == "legacy_dual" else 2)
+    await retrieval.hits("What is the carrier report status?", None, True, 100)
+    assert retrieval.lookups["What is the carrier report status?"] is second
+    retrieval.close()

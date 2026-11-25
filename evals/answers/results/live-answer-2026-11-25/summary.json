@@ -40,7 +40,7 @@
     "private_identity_sha256": "17b504bbb243e2ec7d00f82ff8bc0e08a6031a9d44f15ef473868930dd359b83",
     "git_head_at_run": "1aaa62369886496e683506ddad12fb4609d79037",
     "source_hashes_recorded": 101,
-    "note": "Private run retains exact per-file source, configuration, request and context hashes. Later prompt, classification and length-control refinements were tested offline; these numbers do not measure those refinements."
+    "note": "Private run retains exact per-file source, configuration, request and context hashes. Later prompt, classification, length-control and evidence-sensitive cache refinements were tested offline; these numbers do not measure those refinements."
   },
   "historical_evidence": {
     "metadata_sessions": 98,

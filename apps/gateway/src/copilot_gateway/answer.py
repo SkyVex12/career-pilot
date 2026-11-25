@@ -811,19 +811,27 @@ class AnswerEngine:
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
             if response_length != "default":
                 slot += f":length={response_length}"
+            memory_pass = (
+                "deep" if plan is not None and plan.depth in {"narrative", "expert"} else pass_
+            )
+            memory: list[str] | None = None
+            candidate_req: LLMRequest | None = None
             if plan is not None:
-                # Never reuse legacy fragments as a complete adaptive response.
+                # A digest/pack version does not version live company memory. Resolve
+                # the same bounded evidence we would generate with before reusing an
+                # answer, and freeze the request so later speech cannot change its key.
+                state["start_at"] = time.monotonic()
+                memory, state["memory"] = await host.memory_lines(q.text, memory_pass)
+                if not host.settings.personal_ai_api_url:
+                    candidate_req = self._request(q, pass_, memory)
+                # Only hashes leave this scope; private text is never part of a cache key.
                 identity = hashlib.sha256(
                     (
                         cache_version
                         + "\n"
                         + prompts.ADAPTIVE_PROMPT_VERSION
                         + "\n"
-                        + repr(host.prompt_context())
-                        + "\n"
-                        + repr(host.call_context())
-                        + "\n"
-                        + self._earlier_suggestions(q)
+                        + repr(candidate_req)
                     ).encode()
                 ).hexdigest()[:24]
                 slot = f"{strategy}:{plan.depth}:{plan.job}:{slot}:style={style}:{identity}"
@@ -836,7 +844,8 @@ class AnswerEngine:
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
-            state["start_at"] = time.monotonic()
+            if plan is None:
+                state["start_at"] = time.monotonic()
             if q.screen is not None:
                 job = "screen" if pass_ == "fast" else "screen_code"
             else:
@@ -848,18 +857,15 @@ class AnswerEngine:
             state["job"] = job
             if job == "deep_light":
                 self.stats["deep_light"] += 1
-            memory_pass = (
-                "deep" if plan is not None and plan.depth in {"narrative", "expert"} else pass_
-            )
-            memory, memory_stats = (
-                await host.memory_lines(q.text, memory_pass) if q.screen is None else ([], {})
-            )
-            state["memory"] = memory_stats
+            if memory is None:
+                memory, state["memory"] = (
+                    await host.memory_lines(q.text, memory_pass) if q.screen is None else ([], {})
+                )
             if host.settings.personal_ai_api_url:
                 private = getattr(host, "private_memory", None)
                 if private is not None:
                     memory = [*memory, *(await private())]
-            req = self._request(q, pass_, memory)
+            req = candidate_req or self._request(q, pass_, memory)
             state["req"] = req
 
             def on_fallback(job: str, route: Route, reason: str) -> None:

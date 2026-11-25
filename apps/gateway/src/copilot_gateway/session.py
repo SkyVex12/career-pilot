@@ -1047,7 +1047,11 @@ class Session:
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if self._memory_on() and self.company_memory is not None:
             # Memory search starts with the detector, on the same text.
-            self.company_memory.lookup(utterance, self._vector(utterance))
+            self.company_memory.lookup(
+                utterance,
+                self._vector(utterance),
+                refresh_completed=self.settings.answer_architecture != "legacy_dual",
+            )
         # Prepared answers have no language metadata; keep their evidence in the prompt,
         # but generate localized output instead of displaying unverified verbatim text.
         if self.spoken_language != "en" or not self.matcher.enabled:

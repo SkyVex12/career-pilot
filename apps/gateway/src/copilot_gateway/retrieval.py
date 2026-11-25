@@ -76,13 +76,20 @@ class CompanyMemory:
         self.lookups: OrderedDict[str, Lookup] = OrderedDict()
         self.failures = 0
 
-    def lookup(self, text: str, vector: VectorSource | None) -> Lookup:
-        """The search for this text, started now or earlier (the turn starts it with the
-        detector; a pass asks again by the same text)."""
+    def lookup(
+        self, text: str, vector: VectorSource | None, *, refresh_completed: bool = False
+    ) -> Lookup:
+        """Share one turn's in-flight lookup; a new candidate turn can refresh old results.
+
+        Memory can change without a new digest or pack. Legacy callers retain the old
+        per-session text cache; candidate preloading refreshes completed prior lookups.
+        """
         found = self.lookups.get(text)
         if found is not None:
-            self.lookups.move_to_end(text)
-            return found
+            if not refresh_completed or not (found.fts.done() and found.full.done()):
+                self.lookups.move_to_end(text)
+                return found
+            self.lookups.pop(text)
         started = time.monotonic()
         fts = asyncio.create_task(self._query(text, None, "memory_fts_ms", started))
 
