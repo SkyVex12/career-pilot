@@ -29,6 +29,7 @@ from copilot_evals.live_answer_artifacts import (
 from copilot_evals.live_answer_artifacts import (
     source_archive,
 )
+from copilot_evals.live_answer_diagnostics import sanitized_exception_tree
 from copilot_evals.live_answer_eval import (
     ASSESSMENTS,
     fingerprint,
@@ -468,7 +469,12 @@ def failure_details(error: Exception) -> dict[str, Any]:
         kind = "judgment_invalid"
     else:
         kind = "unexpected_error"
-    return {"failure_kind": kind, "http_status": status, "error_type": type(error).__name__}
+    return {
+        "failure_kind": kind,
+        "http_status": status,
+        "error_type": type(error).__name__,
+        "exception": sanitized_exception_tree(error),
+    }
 
 
 class JudgeCircuit:
@@ -680,6 +686,7 @@ def source_hashes() -> dict[str, str]:
     root = Path(__file__).resolve().parents[3]
     sources = [
         "evals/src/copilot_evals/live_answer_judge.py",
+        "evals/src/copilot_evals/live_answer_diagnostics.py",
         "evals/src/copilot_evals/live_answer_artifacts.py",
         "evals/src/copilot_evals/live_answer_eval.py",
         "evals/src/copilot_evals/sensei_judge.py",

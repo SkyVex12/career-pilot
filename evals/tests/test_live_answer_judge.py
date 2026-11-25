@@ -667,9 +667,11 @@ def test_nested_configuration_exception_keeps_only_safe_failure_metadata() -> No
         wrapped = RuntimeError("SECRET raw provider details")
         wrapped.__cause__ = cause
     record = judge.failure_details(wrapped)
-    assert record == {
+    assert {k: v for k, v in record.items() if k != "exception"} == {
         "failure_kind": "request_configuration",
         "http_status": 404,
         "error_type": "RuntimeError",
     }
+    assert record["exception"]["type"] == "RuntimeError"
+    assert record["exception"]["cause"]["type"] == "MockAPIStatusError"
     assert "SECRET" not in json.dumps(record)
