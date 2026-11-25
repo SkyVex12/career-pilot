@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { rest, type UsageTotals } from "./api";
 import type { SessionView } from "./session";
-import { usePolling } from "./usePolling";
+import { useDataActivity, usePolling } from "./usePolling";
 import "./usage.css";
 
 export function connectedMinutes(seconds: number): string {
@@ -45,11 +45,58 @@ export function LiveUsage({ session, compact = false }: { session: SessionView; 
   const minutes = data?.session_seconds == null ? null : connectedMinutes(data.session_seconds);
   const paused = session.running && session.connection?.state !== "live";
   const note = paused ? "Connection paused; reconnect time is excluded." : "Includes silence while connected. Updates periodically.";
-  if (compact) return <span className="ov-usage ui-num" aria-label="This call's consumed minutes" title={`Recorded connected time for this call. ${note}${data ? ` Account total: ${connectedMinutes(data.total_seconds)} minutes.` : ""}${error ? " Waiting for an update." : ""}`}>
-    {minutes !== null ? `${minutes} min used` : error ? "Usage unavailable" : "Usage…"}
-  </span>;
+  if (compact) return <LiveCallTimer key={session.sessionId} session={session} data={data} error={error} />;
   return <div className="usage-summary" role="group" aria-label="This call's consumed minutes">
     <span className="ui-num">{minutes !== null ? <><strong>{minutes}</strong> minutes used this call <span className="usage-total">· {connectedMinutes(data!.total_seconds)} total minutes used</span></> : error ? "Usage is temporarily unavailable." : "Loading consumed minutes…"}</span>
     <span className="usage-note">{note} {error && data ? "Waiting for an update." : "Confirmed time only."}</span>
   </div>;
+}
+
+export function connectedDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  const parts = [minutes, total % 60].map(value => String(value).padStart(2, "0"));
+  return (hours ? [String(hours), ...parts] : parts).join(":");
+}
+
+/** A live display between ledger checkpoints. Account totals remain server-confirmed. */
+function LiveCallTimer({ session, data, error }: { session: SessionView; data: UsageTotals | null; error: boolean }) {
+  const connected = session.running && session.connection?.state === "live";
+  const visible = useDataActivity();
+  const clock = useRef({ seconds: data?.session_seconds ?? 0, at: performance.now(), connected, snapshot: data });
+  const [seconds, setSeconds] = useState(clock.current.seconds);
+
+  useEffect(() => {
+    const now = performance.now();
+    const previous = clock.current;
+    let elapsed = previous.seconds + (previous.connected ? Math.max(0, now - previous.at) / 1000 : 0);
+    if (data !== previous.snapshot && data?.session_seconds != null) {
+      // Checkpoints can lag. Keep the live timer steady; use the exact final ledger after end.
+      elapsed = session.running ? Math.max(elapsed, data.session_seconds) : data.session_seconds;
+    }
+    clock.current = { seconds: elapsed, at: now, connected, snapshot: data };
+    setSeconds(elapsed);
+  }, [connected, session.running, data]);
+
+  useEffect(() => {
+    if (!connected || !visible) return;
+    let timer: number;
+    const update = () => {
+      const elapsed = clock.current.seconds + Math.max(0, performance.now() - clock.current.at) / 1000;
+      setSeconds(elapsed);
+      // Align the next tick to a whole second even when a snapshot arrives between ticks.
+      timer = window.setTimeout(update, Math.ceil(1000 - (elapsed * 1000) % 1000));
+    };
+    update();
+    return () => window.clearTimeout(timer);
+  }, [connected, visible, data]);
+
+  const note = session.running
+    ? connected ? "Connected call time. Updates every second." : "Timer paused while reconnecting."
+    : "Final connected call time.";
+  const account = data ? " Recorded account total: " + connectedMinutes(data.total_seconds) + " minutes." : "";
+  return <span className="ov-usage ui-num" role="timer" aria-label="Call duration" aria-live="off" title={note + account + (error ? " Waiting for a usage update." : "")}>
+    {connectedDuration(seconds)}
+  </span>;
 }

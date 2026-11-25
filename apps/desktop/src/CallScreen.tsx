@@ -118,7 +118,7 @@ export interface CallProps {
 }
 
 export function CallScreen(props: CallProps) {
-  const { session, tokenSet, locked } = props;
+  const { session, tokenSet, locked, active = true } = props;
   const toast = useToast();
   const noticeScope = guestScope(props.settings, props.signedInAs, props.environment);
   const terminalKey = session.running || !session.stopped ? null : `${session.sessionId ?? ""}/${session.seat?.seatId ?? ""}/${session.stopped}`;
@@ -143,7 +143,7 @@ export function CallScreen(props: CallProps) {
       setPostCall(null);
     } else {
       const ended = postCallFor(session);
-      if (ended && activeCall.current === ended) setPostCall(ended);
+      if (active && ended && activeCall.current === ended) setPostCall(ended);
       // Native stop emits connection.stopped before the separate stopped event.
       // Keep this live call eligible until its final reason reaches the reducer.
       const awaitingStoppedEvent = session.stopped === null
@@ -153,7 +153,8 @@ export function CallScreen(props: CallProps) {
         && activeCall.current === session.sessionId;
       if (!awaitingStoppedEvent) activeCall.current = null;
     }
-  }, [session]);
+    if (!active) setPostCall(null);
+  }, [session, active]);
   if (!tokenSet || locked) return <Setup {...props} />;
   if (postCall && !session.running) {
     return (

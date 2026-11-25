@@ -21,6 +21,7 @@ mockWindows(...(location.hash === "#overlay" ? ["overlay", "main"] : ["main", "o
 const q = new URLSearchParams(location.search);
 const data = q.get("data") ?? "full";
 const call = q.get("call") ?? "none";
+const usageStartedAt = Date.now();
 const long = data === "long";
 const empty = data === "empty";
 
@@ -199,6 +200,11 @@ function rest(method: string, path: string, body?: unknown): unknown {
     return {};
   }
   if (p === "/me") return { id: "u1", email: "alex@example.com", display_name: "Alex Rivera", plan: "beta" };
+  if (p === "/usage/totals") {
+    const sessionId = new URLSearchParams(path.split("?")[1]).get("session_id");
+    const seconds = 90 + (["midcall", "stream", "degraded"].includes(call) ? Math.floor((Date.now() - usageStartedAt) / 1000) : 0);
+    return { tracking_only: true, measurement: "connected-v1", as_of: new Date().toISOString(), total_seconds: 9000 + seconds, total_minutes: (9000 + seconds) / 60, total_sessions: 4, session_id: sessionId, session_seconds: sessionId ? seconds : null, session_minutes: sessionId ? seconds / 60 : null, last_connected_at: new Date().toISOString() };
+  }
   if (p === "/usage") return { period: "October", live_seconds: 9000, live_minutes: empty ? 0 : 150, sessions: empty ? 0 : 4 };
   if (p === "/profiles") {
     return empty

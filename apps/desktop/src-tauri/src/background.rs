@@ -129,7 +129,7 @@ pub(crate) fn setup(app: &AppHandle) -> Result<(), String> {
     let pause_item = CheckMenuItem::with_id(
         app,
         PAUSE,
-        "Pause suggestions",
+        "Pause notifications",
         true,
         preferences.suggestions_paused,
         None::<&str>,
@@ -157,10 +157,10 @@ pub(crate) fn setup(app: &AppHandle) -> Result<(), String> {
             if let TrayIconEvent::Click { button, button_state: MouseButtonState::Up, position, .. } = event {
                 let app = tray.app_handle();
                 match button {
-                    MouseButton::Left => {
+                    MouseButton::Right => {
                         let _ = open(app);
                     }
-                    MouseButton::Right => {
+                    MouseButton::Left => {
                         if let Err(error) = crate::tray_menu::show(app, position) {
                             tracing::warn!("Tray menu: {error}");
                         }

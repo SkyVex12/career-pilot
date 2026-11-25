@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionDetail as Detail, SessionItem } from "../src/api";
 import { History, minutes, sessionTitle, statusBadge } from "../src/History";
+import { SessionNoteDrafts } from "../src/SessionNoteDrafts";
 import { SessionDetail } from "../src/SessionDetail";
 import { ToastProvider } from "../src/ui";
 import { ipc, pending } from "./ipc";
@@ -41,6 +42,29 @@ const view = (props: Partial<Parameters<typeof History>[0]> = {}) =>
   );
 
 describe("History list", () => {
+  it("returns to the list after switching tabs and preserves an unfinished note when the call is reopened", async () => {
+    routes([call("s1", "interview", "Northwind technical")]);
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ ...call("s1", "interview", "Northwind technical"), questions: 6, notes: "", outputs: { summary: "It went well." } }));
+    const tree = (active: boolean, scope = "account-a") => <ToastProvider><SessionNoteDrafts key={scope}><History active={active} running={false} liveId={null} onOpenLive={async () => {}} /></SessionNoteDrafts></ToastProvider>;
+    const result = render(tree(true));
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Call notes" }), "Follow up next week");
+    result.rerender(tree(false));
+    result.rerender(tree(true));
+    expect(await screen.findByRole("heading", { name: "Past calls" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    expect(screen.getByRole("textbox", { name: "Call notes" })).toHaveValue("Follow up next week");
+    expect(ipc.apiCalls().some(c => c.method === "PUT")).toBe(false);
+    // Drafts never cross an account/profile boundary.
+    result.rerender(tree(true, "account-b"));
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    expect(screen.getByRole("textbox", { name: "Call notes" })).toHaveValue("");
+  });
+
   it("loading: a skeleton in the list's place", () => {
     ipc.api("GET", /.*/, () => pending());
     view();

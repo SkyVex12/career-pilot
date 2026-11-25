@@ -1,3 +1,4 @@
+import { useSessionNoteDrafts, type SessionNoteDraft } from "./SessionNoteDrafts";
 import { openAsk } from "./Ask";
 // One call after it ended: the Call screen right after it ends, and a past call opened from
 // History. Polls compact status for up to 5 minutes until the outputs are ready, then shows
@@ -45,7 +46,13 @@ export function SessionDetail({
   const [tab, setTab] = useState("primary");
   const [deleting, setDeleting] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
-  const [notes, setNotes] = useState<{ id: string; loaded: boolean; saved: string; draft: string; revision?: number }>({ id: sessionId, loaded: false, saved: "", draft: "" });
+  const drafts = useSessionNoteDrafts();
+  const [notes, setNotes] = useState<SessionNoteDraft>(() => drafts?.get(sessionId) ?? { id: sessionId, loaded: false, saved: "", draft: "" });
+  useEffect(() => {
+    if (notes.id !== sessionId) return;
+    if (notes.draft !== notes.saved) drafts?.set(sessionId, notes);
+    else drafts?.delete(sessionId);
+  }, [drafts, notes, sessionId]);
   const [notesReview, setNotesReview] = useState<string | null>(null);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -57,7 +64,7 @@ export function SessionDetail({
   useEffect(() => {
     setTab("primary");
     setLeaving(null);
-    setNotes({ id: sessionId, loaded: false, saved: "", draft: "" });
+    setNotes(drafts?.get(sessionId) ?? { id: sessionId, loaded: false, saved: "", draft: "" });
     setNotesError(null);
     setNotesReview(null);
     setNotesSaved(false);
@@ -137,6 +144,9 @@ export function SessionDetail({
     setNotesSaved(false);
     try {
       const saved = await rest.saveSessionNotes(sessionId, draft, notes.revision);
+      const cached = drafts?.get(sessionId);
+      if (cached?.draft === draft) drafts?.delete(sessionId);
+      else if (cached) drafts?.set(sessionId, { ...cached, saved: saved.notes, revision: saved.revision ?? cached.revision });
       if (currentId.current !== sessionId) return;
       setNotes((current) => ({ ...current, saved: saved.notes, revision: saved.revision ?? current.revision }));
       setNotesSaved(true);
@@ -277,7 +287,7 @@ export function SessionDetail({
           { value: "notes", label: "Notes", content: notesPanel },
         ]} />
       ) : pendingOutput}
-      <ConfirmDialog open={leaving !== null} onOpenChange={(open) => !open && setLeaving(null)} title="Discard unsaved notes?" confirmLabel="Discard notes" onConfirm={async () => { leaving?.(); setLeaving(null); }}>Your changes have not been saved.</ConfirmDialog>
+      <ConfirmDialog open={leaving !== null} onOpenChange={(open) => !open && setLeaving(null)} title="Discard unsaved notes?" confirmLabel="Discard notes" onConfirm={async () => { drafts?.delete(sessionId); leaving?.(); setLeaving(null); }}>Your changes have not been saved.</ConfirmDialog>
       {onDeleted && (
         <ConfirmDialog
           open={deleting}
@@ -286,6 +296,7 @@ export function SessionDetail({
           confirmLabel="Delete call"
           onConfirm={async () => {
             await rest.deleteSession(sessionId);
+            drafts?.delete(sessionId);
             onDeleted();
           }}
         >

@@ -36,7 +36,7 @@ The Call audio summary keeps the same height in idle, editing, testing, and fail
 
 Quick settings in medium mode open below its 280 × 56px toolbar. Extend only the narrow canvas needed for the menu, cap its height to the monitor work area, and keep the setup page hidden. Closing the menu restores the toolbar bounds; explicit expansion still restores the saved full-window size. Pause automatic collapse while the menu is open. Medium also stays expanded while the native window has focus, even after the pointer leaves. After focus moves elsewhere, Small expands temporarily on hover and collapses on leave. Clicking or keyboard-selecting the window keeps Medium expanded until focus leaves again. Clicking the ruby in Medium selects it without opening Full; use the expand arrow for Full.
 
-The assistant picker opens with a search field and a compact selection count. Show matching people or necessary input guidance as the user types; avoid repeating the help text from the parent control.
+The assistant picker opens with a search field and a compact selection count. People use a single 32px row with the name and email side by side; long values truncate, with the full identity available on hover. Show matching people or necessary input guidance as the user types; avoid repeating the help text from the parent control.
 
 Visual verification should include populated, empty, and failed-loading pages, 400/920/1280px windows, both themes, touch emulation, dialog alignment, keyboard focus, and expanded Customize. At the 800 × 672 default size and font scale, Call should fit without scrolling its body.
 
@@ -46,12 +46,18 @@ Hide scrollbar tracks and their gutters throughout the app, including dialogs, m
 
 Operational errors, session warnings, and success notices share the bottom-right stack and never add rows to a form. A notice can be dismissed, and hidden pages do not continue showing their notifications. Dialogs own a notification outlet inside the focus trap, positioned at the window edge so retry actions stay keyboard-accessible. Field validation and saved document content remain with their fields.
 
+The overlay combines status, a live connected-time timer, language, Assistants, and window actions in one 40px header. At widths of 600px or less, call tools wrap into a second row while window actions remain at the top right. The timer shows minutes and seconds (hours for long calls), pauses during reconnection, and reconciles to confirmed time when the call ends; account totals remain server-confirmed.
+
 The host overlay keeps conversation content visible without a Screen tools tab or a read-only Live audio popover. Pending screenshots appear as a floating strip immediately above Ask anything, with only thumbnails and individual remove actions. The composer capture icon and existing shortcuts add screenshots; Answer sends pending screenshots when the text input is empty. Typed questions retain their existing behavior. Guest shared-screen viewing remains available when permitted.
 
 Assistants and Quick settings open on hover without moving keyboard focus. Moving into the panel keeps it open; leaving closes hover-opened panels, while click-opened panels remain until dismissed. Answer-format choices have equal widths within the settings panel.
 
 ## App lifecycle
 
-With Stealth off, the visible workspace or live overlay keeps its taskbar/dock entry. Reopening from the tray or another app instance brings an active hosted/guest call overlay forward. Left-clicking the tray opens CoRuby; right-clicking shows Pause/Resume suggestions and Exit. Windows and macOS use a compact menu with a red Exit label; Linux retains its native tray menu.
+With Stealth off, the visible workspace or live overlay keeps its taskbar/dock entry. Reopening from the tray or another app instance brings an active hosted/guest call overlay forward. Left-clicking the tray shows Pause/Resume notifications and Exit; right-clicking brings CoRuby forward, with an active call opening its overlay. The pause action controls automatic call-detection notifications. Windows and macOS use a compact menu with a red Exit label; Linux retains its native tray menu.
 
 Quit immediately hides app windows and the tray icon, then finishes session shutdown in the background. Local audio stops, the host sends session.end, and the process exits after confirmation. If acknowledgement is lost, retry ending only that exact session with the original account. A failed cleanup restores the app with a retryable notification. Leaving a guest session never ends its host’s call. A simultaneous startup is allowed to settle before cleanup; new starts and updates are blocked during shutdown.
+
+## Returning to tabs
+
+Leaving Past calls closes the open detail, so returning shows the list. Leaving an ended-call review returns Call to Start a call; a running call stays live. Unfinished call-note drafts stay in memory for the current account/profile and reappear when that call is opened again, without being saved automatically.
