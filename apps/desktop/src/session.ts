@@ -217,9 +217,13 @@ function stopAnswers(s: SessionView, reason: StopReason): SessionView {
   };
 }
 
+function terminalSession(s: SessionView): boolean {
+  return s.stopped !== null || s.connection?.state === "stopped";
+}
+
 export function reduce(s: SessionView, a: Action): SessionView {
   if (a.type === "reset") return { ...initial, running: a.running };
-  if (a.type === "deep_requested") return s.stopped !== null ? s : updateQuestion(s, a.id, (q) => q.deepRequested ? q : ({ ...q, deepRequested: true }));
+  if (a.type === "deep_requested") return terminalSession(s) ? s : updateQuestion(s, a.id, (q) => q.deepRequested ? q : ({ ...q, deepRequested: true }));
   if (a.type === "note_sent") return { ...s, sentNotes: [...s.sentNotes.slice(-49), { id: a.id, text: a.text, result: null }] };
   if (a.type === "note_asked") return { ...s, notes: s.notes.map((n) => (n.id === a.id ? { ...n, asked: true } : n)) };
   const e = a.event;
@@ -227,8 +231,12 @@ export function reduce(s: SessionView, a: Action): SessionView {
     case "context_reset":
       return { ...initial };
     case "connection": {
-      if (s.stopped !== null && e.state.state !== "stopped") return s;
-      if (e.state.state === "stopped") return { ...stopAnswers(s, e.state.reason), connection: e.state };
+      if (terminalSession(s) && e.state.state !== "stopped") return s;
+      if (e.state.state === "stopped") {
+        // End streaming immediately; the separate native stopped event makes the
+        // saved session ready for review. Keep that ordering for the call workspace.
+        return { ...stopAnswers(s, e.state.reason), stopped: s.stopped, connection: e.state };
+      }
       const next = { ...s, connection: e.state, running: true };
       if (e.state.state === "live") {
         return log({ ...next, stopped: null, socketClosed: false, sessionId: e.state.session_id }, `live ${e.state.resumed ? "(resumed)" : "(new session)"} ${e.state.session_id}`);
@@ -243,7 +251,7 @@ export function reduce(s: SessionView, a: Action): SessionView {
     case "warning":
       return log(s, `warning: ${e.message}`);
     case "vad":
-      if (s.stopped !== null) return s;
+      if (terminalSession(s)) return s;
       return { ...s, speaking: { ...s.speaking, [e.channel]: e.speaking } };
     case "latency":
       return { ...s, latency: { ...s.latency, [e.question.question_id]: e.question } };
