@@ -20,7 +20,7 @@ import subprocess
 import time
 import tomllib
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -30,13 +30,26 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import httpx2
 
 from copilot_core import prompts
-from copilot_core.llm import AttemptEvent, LLMDone, LLMRequest, ModelRouter, Route, error_chain
+from copilot_core.llm import (
+    AttemptEvent,
+    Decided,
+    LLMDone,
+    LLMRequest,
+    ModelRouter,
+    Route,
+    error_chain,
+)
 from copilot_core.packs import NodeRef
 from copilot_core.providers import close_providers, make_providers
-from copilot_evals.live_answer_artifacts import DispatchJournal, run_lock, source_archive
+from copilot_evals.live_answer_artifacts import DispatchJournal, source_archive
+from copilot_evals.live_answer_async_checkpoints import (
+    ASYNC_POLICY,
+    AnchoredLoopLagMonitor,
+    BufferedRecordStore,
+    DurableWriter,
+    require_async_directory,
+)
 from copilot_evals.live_answer_checkpoints import (
-    POLICY,
-    LoopLagMonitor,
     RecordDispatchJournal,
     RecordStore,
 )
@@ -751,6 +764,11 @@ class ProviderAdmission:
         }:
             self.stop("request_configuration")
 
+    def check_open(self) -> None:
+        """Recheck an existing admission after a durability await; do not acquire twice."""
+        if self.reason is not None:
+            raise AdmissionBlocked(self.reason)
+
     async def enter(self) -> float:
         started = time.monotonic()
         if self.reason:
@@ -893,6 +911,41 @@ class ProgressSnapshots:
                 await asyncio.sleep(delays[attempt])
 
 
+def record_finalization_failure(directory: Path, error: BaseException) -> None:
+    """Never write success progress from memory after a failed durable drain/export."""
+    with suppress(OSError):
+        save(
+            directory / "finalization-failure.json",
+            {
+                "status": "finalization_failed",
+                "finalized": False,
+                "error_type": type(error).__name__,
+                "scope": "Compatibility exports are not confirmed; inspect authoritative records",
+            },
+        )
+
+
+class BufferedProgressSnapshots(ProgressSnapshots):
+    def __init__(self, directory: Path, store: BufferedRecordStore):
+        super().__init__(directory)
+        self.buffered_store = store
+
+    def active(self, value: Any) -> None:
+        self.buffered_store.snapshot_file(
+            "progress.json", {**value, "finalized": False}, best_effort=True
+        )
+
+    async def final(self, value: Callable[[], Any]) -> None:
+        await super().final(lambda: {**value(), "finalized": True})
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            **super().diagnostics(),
+            "async_snapshot_errors": list(self.buffered_store.writer.snapshot_errors),
+            "omitted_async_snapshot_errors": self.buffered_store.writer.omitted_snapshot_errors,
+        }
+
+
 class AuditProvider(MeteredProvider):
     def __init__(
         self,
@@ -903,16 +956,115 @@ class AuditProvider(MeteredProvider):
         *,
         admission: ProviderAdmission | None = None,
         store: RecordStore | None = None,
+        dispatch_guard: Callable[[], None] | None = None,
     ):
         super().__init__(provider, budget)
         self.requests, self.directory = requests, directory
         self.admission, self.store = admission, store
+        self.dispatch_guard = dispatch_guard
+
+    def check_dispatch_open(self) -> None:
+        if self.admission is not None:
+            self.admission.check_open()
+        if self.dispatch_guard is not None:
+            self.dispatch_guard()
 
     def checkpoint(self, record: dict[str, Any]) -> None:
         if self.store is not None:
             self.store.put("requests", record["request_id"], record)
         else:
             save(self.directory / "request-identities.json", self.requests)
+
+    async def _unary(
+        self, operation: str, model: str, payload: Any, invoke: Callable[[], Awaitable[Any]]
+    ) -> Any:
+        started = time.monotonic()
+        record: dict[str, Any] = {
+            "request_id": str(uuid4()),
+            "started_epoch_s": time.time(),
+            "trial_id": TRIAL.get(),
+            "model": model,
+            "operation": operation,
+            "request_sha256": fingerprint(payload),
+            "status": "queued",
+            "dispatch_admitted": False,
+            "provider_invoked": None,
+        }
+        self.requests.append(record)
+        admitted = False
+        ticket = None
+        provider_started = None
+        try:
+            self.checkpoint(record)
+            record["admission_wait_ms"] = await self.admission.enter() if self.admission else 0.0
+            admitted = True
+            record.update(status="started", dispatch_admitted=True)
+            self.checkpoint(record)
+            ticket = self.budget.reserve(model, payload, 0)
+            if isinstance(self.store, BufferedRecordStore):
+                waiting = time.perf_counter()
+                try:
+                    permit = await self.store.flush()
+                    self.store.writer.assert_dispatch_ready(permit)
+                finally:
+                    record["durability_wait_ms"] = (time.perf_counter() - waiting) * 1000
+            self.check_dispatch_open()
+            provider_started = time.monotonic()
+            record.update(provider_invoked=True, provider_started_epoch_s=time.time())
+            result = await invoke()
+            if result is not None:
+                done = (
+                    LLMDone(result.usage, "decided", self.name, model)
+                    if operation == "decide"
+                    else result
+                )
+                self.budget.finish(ticket, done)
+            record["status"] = "completed"
+            return result
+        except BaseException as error:
+            record.update(status=type(error).__name__, error_types=error_chain(error))
+            if self.admission is not None:
+                self.admission.observe_error(error)
+            if ticket is not None and record["provider_invoked"] and isinstance(error, Exception):
+                self.connection_failure(ticket, error)
+            raise
+        finally:
+            if admitted and self.admission is not None:
+                self.admission.leave()
+            # An interrupted durable intent remains unknown until this terminal observation.
+            record["provider_invoked"] = provider_started is not None
+            record["elapsed_s"] = time.monotonic() - started
+            record["provider_elapsed_s"] = (
+                time.monotonic() - provider_started if provider_started is not None else None
+            )
+            storage_failed = (
+                isinstance(self.store, BufferedRecordStore) and self.store.writer.failed
+            )
+            if ticket is not None and not record["provider_invoked"] and not storage_failed:
+                self.budget.entries[ticket].update(
+                    charged_usd=0.0,
+                    status="failed_before_submission",
+                    local_reason="cancelled_or_blocked_before_provider_invocation",
+                )
+                self.budget.checkpoint(ticket)
+            if not storage_failed:
+                self.checkpoint(record)
+
+    async def decide(self, model: str, input: Any, questions: Any) -> Decided:
+        if not isinstance(self.store, BufferedRecordStore):
+            return await super().decide(model, input, questions)
+        return await self._unary(
+            "decide", model, [input, questions], lambda: self.inner.decide(model, input, questions)
+        )
+
+    async def prewarm(
+        self, model: str, req: LLMRequest, params: Mapping[str, Any]
+    ) -> LLMDone | None:
+        if not isinstance(self.store, BufferedRecordStore):
+            return await super().prewarm(model, req, params)
+        return await self._unary(
+            "prewarm", model, asdict(req), lambda: self.inner.prewarm(model, req, params)
+        )
 
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
@@ -928,8 +1080,11 @@ class AuditProvider(MeteredProvider):
             "output_limit": req.max_tokens,
             "status": "queued" if self.admission is not None else "started",
             "dispatch_admitted": False,
+            "provider_invoked": None,
         }
         admitted = False
+        provider_started: float | None = None
+        ticket: int | None = None
         self.requests.append(record)
         self.checkpoint(record)
         try:
@@ -943,6 +1098,17 @@ class AuditProvider(MeteredProvider):
                 req.max_tokens + int(params.get("max_output_tokens_extra", 0)),
                 str(params.get("service_tier", "standard")),
             )
+            if isinstance(self.store, BufferedRecordStore):
+                waiting = time.perf_counter()
+                try:
+                    permit = await self.store.flush()
+                    self.store.writer.assert_dispatch_ready(permit)
+                finally:
+                    record["durability_wait_ms"] = (time.perf_counter() - waiting) * 1000
+            self.check_dispatch_open()
+            record["provider_invoked"] = True
+            record["provider_started_epoch_s"] = time.time()
+            provider_started = time.monotonic()
             try:
                 # Hold the slot until the actual provider stream closes, including cancellation.
                 async with aclosing(self.inner.stream(model, req, params)) as stream:
@@ -975,8 +1141,26 @@ class AuditProvider(MeteredProvider):
             record.setdefault("admission_wait_ms", (time.monotonic() - started) * 1000)
             if admitted and self.admission is not None:
                 self.admission.leave()
+            # An interrupted durable intent remains unknown until this terminal observation.
+            record["provider_invoked"] = provider_started is not None
             record["elapsed_s"] = time.monotonic() - started
-            self.checkpoint(record)
+            record["provider_elapsed_s"] = (
+                time.monotonic() - provider_started if provider_started is not None else None
+            )
+            storage_failed = (
+                isinstance(self.store, BufferedRecordStore) and self.store.writer.failed
+            )
+            if not record["provider_invoked"] and ticket is not None and not storage_failed:
+                self.budget.entries[ticket].update(
+                    charged_usd=0.0,
+                    status="failed_before_submission",
+                    local_reason="cancelled_or_blocked_before_provider_invocation",
+                )
+                self.budget.checkpoint(ticket)
+            if storage_failed and isinstance(self.store, BufferedRecordStore):
+                record["checkpoint_failure_reason"] = self.store.writer.failure_reason
+            else:
+                self.checkpoint(record)
 
 
 def provider_configuration_fingerprint(settings: Settings) -> str:
@@ -1333,8 +1517,7 @@ async def execute(args: argparse.Namespace) -> None:
     ):
         raise ValueError("Invalid finite replay bounds")
     directory = private_directory(args.out)
-    with run_lock(directory):
-        await execute_live(args, cases, settings, rate_identity, custom_variants, directory)
+    await execute_live(args, cases, settings, rate_identity, custom_variants, directory)
 
 
 async def execute_live(
@@ -1344,6 +1527,31 @@ async def execute_live(
     rate_identity: dict[str, Any] | None,
     custom_variants: dict[str, Variant] | None,
     directory: Path,
+) -> None:
+    writer = DurableWriter(directory, initialization_guard=require_async_directory)
+    try:
+        await writer.ready()
+        await execute_live_owned(
+            args,
+            cases,
+            settings,
+            rate_identity,
+            custom_variants,
+            directory,
+            BufferedRecordStore(writer),
+        )
+    finally:
+        await writer.close(timeout_s=10)
+
+
+async def execute_live_owned(
+    args: argparse.Namespace,
+    cases: list[dict[str, Any]],
+    settings: Settings,
+    rate_identity: dict[str, Any] | None,
+    custom_variants: dict[str, Variant] | None,
+    directory: Path,
+    buffered_store: BufferedRecordStore,
 ) -> None:
     from copilot_evals.live_answer_schedule import FailureCircuit, classify_failure
 
@@ -1358,7 +1566,10 @@ async def execute_live(
     def stop_dispatch(reason: str) -> None:
         if circuit.reason is None:
             circuit.reason = reason
-        save(admission_stop_path, {"schema": 1, "reason": circuit.reason})
+        if not buffered_store.writer.failed:
+            buffered_store.snapshot_file(
+                admission_stop_path.name, {"schema": 1, "reason": circuit.reason}
+            )
 
     admission = ProviderAdmission(getattr(args, "max_provider_inflight", 8), stop_dispatch)
     if admission_stop_path.exists():
@@ -1408,7 +1619,7 @@ async def execute_live(
         directory / "checkpoint-records" / "manifest.json"
     ).exists() or not identity_path.exists()
     if use_records:
-        identity["checkpoint_policy"] = POLICY
+        identity["checkpoint_policy"] = ASYNC_POLICY
     if identity_path.exists():
         previous_identity = json.loads(identity_path.read_text("utf-8"))
         if not previous_identity.get("source_archive"):
@@ -1447,7 +1658,7 @@ async def execute_live(
             for block in blocks
         ],
     )
-    store = RecordStore(directory) if use_records else None
+    store = buffered_store if use_records else None
     if store is not None:
         store.on_error = lambda: admission.stop("checkpoint_error")
     budget = AuditBudget(
@@ -1547,7 +1758,7 @@ async def execute_live(
         else DispatchJournal(directory, *journal_arguments)
     )
 
-    progress = ProgressSnapshots(directory)
+    progress = BufferedProgressSnapshots(directory, buffered_store)
 
     def progress_value() -> dict[str, Any]:
         return {
@@ -1575,6 +1786,9 @@ async def execute_live(
         trial_id = f"{case['id']}:{strategy}:{rep}"
         if not journal.start(trial_id):
             return
+        # Keep journal setup before the generation clock, as in the synchronous runner.
+        if isinstance(store, BufferedRecordStore):
+            await store.flush()
         token = TRIAL.set(f"{case['id']}:{strategy}:{rep}")
         try:
             result = await trial(
@@ -1606,7 +1820,14 @@ async def execute_live(
         )
         attempts = [record for record in requests if record["trial_id"] == trial_id]
         result["request_attempts"] = len(attempts)
-        if attempts and all(not record.get("dispatch_admitted", True) for record in attempts):
+        if buffered_store.writer.failed:
+            result["instrumentation_failure"] = buffered_store.writer.failure_reason
+            if result["failure"]:
+                result["status"] = "checkpoint_failure"
+        if buffered_store.writer.failed:
+            result["failure_kind"] = "checkpoint_failure"
+            admission.stop("checkpoint_error")
+        elif attempts and all(not record.get("dispatch_admitted", True) for record in attempts):
             result["status"] = "admission_blocked"
             result["failure_kind"] = "admission_blocked"
         else:
@@ -1635,7 +1856,7 @@ async def execute_live(
         if not health["ready"]:
             circuit.reason = "connectivity_preflight"
 
-    monitor = LoopLagMonitor()
+    monitor = AnchoredLoopLagMonitor()
     if store is not None:
         store.phase = "active_workers"
     await monitor.start()
@@ -1655,6 +1876,7 @@ async def execute_live(
             # No provider work remains: compatibility snapshots cannot stall a live answer.
             if store is not None:
                 store.phase = "drained"
+                await store.flush()
                 for kind, filename in (
                     ("cost", "cost.json"),
                     ("requests", "request-identities.json"),
@@ -1667,11 +1889,16 @@ async def execute_live(
                     journal.export()
                 save(directory / "checkpoint-write-telemetry.json", store.telemetry())
             save(directory / "event-loop-lag.json", monitor.summary())
-        finally:
+        except BaseException as error:
+            record_finalization_failure(directory, error)
+            raise
+        else:
             try:
                 await progress.final(progress_value)
-            finally:
                 save(directory / "progress-write-errors.json", progress.diagnostics())
+            except BaseException as error:
+                record_finalization_failure(directory, error)
+                raise
     completed_ids = {(r["id"], r["architecture"], r["rep"]) for r in results}
     save(
         directory / "not-started.json",
@@ -2008,13 +2235,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fast-tier", choices=tiers)
     parser.add_argument("--expert-tier", choices=tiers)
     parser.add_argument("--timeout", type=float, default=60)
-    logging.disable(logging.CRITICAL)
     args = parser.parse_args(argv)
+    previous_logging_threshold = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
     try:
         asyncio.run(execute(args))
     except Exception as error:
         print(json.dumps(write_failure_report(args.out, error)))
         return 1
+    finally:
+        logging.disable(previous_logging_threshold)
     return 0
 
 

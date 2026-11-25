@@ -35,9 +35,15 @@ from copilot_core.packs import (
 )
 from copilot_core.pricing import ModelPrice
 from copilot_core.providers import close_providers, make_providers
-from copilot_evals.live_answer_artifacts import DispatchJournal, immutable, run_lock, source_archive
+from copilot_evals.live_answer_artifacts import DispatchJournal, immutable, source_archive
+from copilot_evals.live_answer_async_checkpoints import (
+    ASYNC_POLICY,
+    AnchoredLoopLagMonitor,
+    BufferedRecordStore,
+    DurableWriter,
+    require_async_directory,
+)
 from copilot_evals.live_answer_checkpoints import (
-    POLICY,
     LoopLagMonitor,
     RecordDispatchJournal,
     RecordStore,
@@ -48,11 +54,12 @@ from copilot_evals.live_answer_replay import (
     TRIAL,
     AuditBudget,
     AuditProvider,
-    ProgressSnapshots,
+    BufferedProgressSnapshots,
     ProviderAdmission,
     budget_limit,
     connectivity_check,
     experiment_identity,
+    record_finalization_failure,
     root_directory,
 )
 from copilot_evals.live_answer_schedule import FailureCircuit, case_blocks
@@ -154,6 +161,11 @@ class SessionAuditProvider(AuditProvider):
 
     async def decide(self, model: str, input: Any, questions: Any) -> Decided:
         token = PURPOSE.set("detector_decisions")
+        if isinstance(self.store, BufferedRecordStore):
+            try:
+                return await super().decide(model, input, questions)
+            finally:
+                PURPOSE.reset(token)
         started = time.monotonic()
         record: dict[str, Any] = {
             "request_id": str(uuid4()),
@@ -1072,18 +1084,36 @@ async def execute(args: argparse.Namespace) -> dict[str, Any]:
             "Session replay requires finite concurrency, repetitions, cycles and timeout"
         )
     directory = private_directory(args.out)
-    with run_lock(directory):
-        return await execute_locked(args, directory)
+    return await execute_locked(args, directory)
 
 
 def validate_directory(directory: Path) -> None:
     if not (directory / "identity.json").exists() and any(
-        path.name != "runner.lock" for path in directory.iterdir()
+        path.name not in {"runner.lock", "checkpoint-records"} for path in directory.iterdir()
+    ):
+        raise ValueError("Existing artifacts lack a resumable identity; use a fresh directory")
+    if (
+        not (directory / "identity.json").exists()
+        and (directory / "checkpoint-records").exists()
+        and any(
+            path.name != "manifest.json" for path in (directory / "checkpoint-records").iterdir()
+        )
     ):
         raise ValueError("Existing artifacts lack a resumable identity; use a fresh directory")
 
 
 async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str, Any]:
+    writer = DurableWriter(directory, initialization_guard=require_async_directory)
+    try:
+        await writer.ready()
+        return await execute_owned(args, directory, BufferedRecordStore(writer))
+    finally:
+        await writer.close(timeout_s=10)
+
+
+async def execute_owned(
+    args: argparse.Namespace, directory: Path, buffered_store: BufferedRecordStore
+) -> dict[str, Any]:
     validate_directory(directory)
     chosen = [s for s in scenarios(args.cycles) if not args.scenarios or s["id"] in args.scenarios]
     if not chosen or (args.scenarios and set(args.scenarios) - {s["id"] for s in chosen}):
@@ -1153,7 +1183,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         directory / "checkpoint-records" / "manifest.json"
     ).exists() or not identity_path.exists()
     if use_records:
-        identity["checkpoint_policy"] = POLICY
+        identity["checkpoint_policy"] = ASYNC_POLICY
     if identity_path.exists():
         previous = json.loads(identity_path.read_text("utf-8"))
         if (
@@ -1171,11 +1201,16 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
     circuit = FailureCircuit(3)
     gate_path = directory / "session-admission-stop.json"
     gate = DispatchGate(
-        args.max_inflight, on_stop=lambda reason: save(gate_path, {"reason": reason})
+        args.max_inflight,
+        on_stop=lambda reason: (
+            buffered_store.snapshot_file(gate_path.name, {"reason": reason})
+            if not buffered_store.writer.failed
+            else None
+        ),
     )
     if gate_path.exists():
         gate.stop(json.loads(gate_path.read_text("utf-8"))["reason"])
-    store = RecordStore(directory) if use_records else None
+    store = buffered_store if use_records else None
     if store is not None:
         store.on_error = lambda: gate.stop("checkpoint_error")
 
@@ -1223,7 +1258,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         if store is not None
         else DispatchJournal(directory, planned, completed, attempted)
     )
-    progress = ProgressSnapshots(directory)
+    progress = BufferedProgressSnapshots(directory, buffered_store)
     started_trials: list[str] = []
     invocation_id = str(uuid4())
     invocation_started = time.time()
@@ -1249,8 +1284,16 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         progress.active(progress_value())
 
     async def export_after_drain(monitor: LoopLagMonitor | None = None) -> None:
+        try:
+            await export_drained(monitor)
+        except BaseException as error:
+            record_finalization_failure(directory, error)
+            raise
+
+    async def export_drained(monitor: LoopLagMonitor | None = None) -> None:
         if store is not None:
             store.phase = "drained"
+            await store.flush()
             for kind, filename in (
                 ("sessions", "sessions.json"),
                 ("requests", "request-identities.json"),
@@ -1325,7 +1368,15 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
     )
     providers = [
         LimitedProvider(
-            SessionAuditProvider(FaultProvider(p), budget, requests, directory, store=store), gate
+            SessionAuditProvider(
+                FaultProvider(p),
+                budget,
+                requests,
+                directory,
+                store=store,
+                dispatch_guard=gate.check_open,
+            ),
+            gate,
         )
         for p in raw
     ]
@@ -1345,6 +1396,8 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                     or not journal.start(trial)
                 ):
                     return
+                if isinstance(store, BufferedRecordStore):
+                    await store.flush()
                 started_trials.append(trial)
                 result = await replay_session(
                     scenario,
@@ -1357,14 +1410,20 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 )
                 result["rep"] = rep
                 trial_requests = [r for r in requests if r["trial_id"] == trial]
+                # Storage failure is local instrumentation, not a model/network failure.
+                if buffered_store.writer.failed:
+                    result["instrumentation_failure"] = buffered_store.writer.failure_reason
+                    result["status"] = "checkpoint_failure"
+                    gate.stop("checkpoint_error")
                 # Successful detector/primary calls cannot mask an exhausted answer failure.
-                circuit.observe(
-                    {
-                        "failure": result["status"] != "completed",
-                        "metadata_logs": result.get("metadata_logs", []),
-                    },
-                    [row for row in trial_requests if row.get("status") != "completed"],
-                )
+                if not buffered_store.writer.failed:
+                    circuit.observe(
+                        {
+                            "failure": result["status"] != "completed",
+                            "metadata_logs": result.get("metadata_logs", []),
+                        },
+                        [row for row in trial_requests if row.get("status") != "completed"],
+                    )
                 # Durable results precede journal completion. A crash between these writes
                 # is recovered from the completed result and cannot repeat billed work.
                 if store is not None:
@@ -1387,7 +1446,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 return
             await one(*item)
 
-    monitor = LoopLagMonitor()
+    monitor = AnchoredLoopLagMonitor()
     if store is not None:
         store.phase = "active_workers"
     await monitor.start()
@@ -1420,7 +1479,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         if len(results) == len(schedule) and all(row["status"] == "completed" for row in results)
         else "partial",
         "live": args.live,
-        "checkpoint_policy": POLICY if store is not None else "legacy-aggregate",
+        "checkpoint_policy": ASYNC_POLICY if store is not None else "legacy-aggregate",
         "planned_sessions": len(schedule),
         "sessions": len(results),
         "dispatch_states": dict(states),
@@ -1429,7 +1488,8 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         "circuit_reason": gate.reason or circuit.reason,
         "statuses": dict(Counter(r["status"] for r in results)),
         "invariant_violations": sum(len(r.get("violations", [])) for r in results),
-        "provider_dispatches": len(requests),
+        "provider_dispatches": sum(bool(row.get("provider_invoked")) for row in requests),
+        "request_intents": len(requests),
         "peak_provider_inflight": max(gate.peak, previous_summary.get("peak_provider_inflight", 0)),
         "known_usage_usd": known,
         "observed_cost_usd": None if unresolved or states["ambiguous"] else known,

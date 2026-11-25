@@ -12,7 +12,8 @@ from uuid import uuid4
 import httpx2
 import pytest
 from copilot_evals import live_answer_session_replay as harness
-from copilot_evals.live_answer_checkpoints import POLICY, RecordStore
+from copilot_evals.live_answer_async_checkpoints import ASYNC_POLICY, BufferedRecordStore
+from copilot_evals.live_answer_checkpoints import RecordStore
 from copilot_evals.live_answer_replay import TRIAL, AdmissionBlocked
 
 from copilot_core.llm import Decided, LLMDone, LLMUsage
@@ -196,7 +197,7 @@ async def test_active_session_writes_records_only_and_exports_after_all_workers_
     options = args(tmp_path / "record-run")
     active = 0
     exported = []
-    original_export = RecordStore.export
+    original_export = BufferedRecordStore.export
 
     def export(store, kind, filename):
         assert active == 0
@@ -229,11 +230,11 @@ async def test_active_session_writes_records_only_and_exports_after_all_workers_
             TRIAL.reset(token)
             active -= 1
 
-    monkeypatch.setattr(RecordStore, "export", export)
+    monkeypatch.setattr(BufferedRecordStore, "export", export)
     monkeypatch.setattr(harness, "replay_session", replay)
     result = await harness.execute(options)
     assert result["sessions"] == 2
-    assert result["checkpoint_policy"] == POLICY
+    assert result["checkpoint_policy"] == ASYNC_POLICY
     assert set(exported) == {
         "sessions.json",
         "cost.json",
@@ -246,7 +247,8 @@ async def test_active_session_writes_records_only_and_exports_after_all_workers_
     assert result["observed_cost_usd"] is None
     writes = json.loads((options.out / "checkpoint-write-telemetry.json").read_text("utf-8"))
     assert any(
-        row["kind"] == "sessions" and row["phase"] == "active_workers" for row in writes["writes"]
+        row["kind"] == "sessions" and row["phase"] == "active_workers"
+        for row in writes["durable_store"]["writes"]
     )
     assert (options.out / "event-loop-lag.json").exists()
 

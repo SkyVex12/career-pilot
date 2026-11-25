@@ -220,8 +220,8 @@ async def test_loop_monitor_observes_blocking_without_adjusting_answer_timings()
 
 
 async def test_new_run_exports_after_drain_and_resume_ignores_stale_arrays(tmp_path, monkeypatch):
-    from copilot_evals import live_answer_checkpoints as checkpoints
     from copilot_evals import live_answer_replay as replay
+    from copilot_evals.live_answer_async_checkpoints import ASYNC_POLICY, BufferedRecordStore
 
     raw_runs = []
 
@@ -233,14 +233,14 @@ async def test_new_run_exports_after_drain_and_resume_ignores_stale_arrays(tmp_p
     monkeypatch.setattr(replay, "make_providers", scripted)
     monkeypatch.setattr(replay, "experiment_identity", lambda *args: {"code": {}, "test": "fixed"})
     exported = []
-    original_export = checkpoints.RecordStore.export
+    original_export = BufferedRecordStore.export
 
     def export(store, kind, filename):
         assert store.phase == "drained"
         exported.append(filename)
         original_export(store, kind, filename)
 
-    monkeypatch.setattr(checkpoints.RecordStore, "export", export)
+    monkeypatch.setattr(BufferedRecordStore, "export", export)
     args = Namespace(
         architectures=["A", "B", "C", "D"],
         reps=1,
@@ -263,10 +263,7 @@ async def test_new_run_exports_after_drain_and_resume_ignores_stale_arrays(tmp_p
         "attempt-events.json",
         "request-identities.json",
     }
-    assert (
-        json.loads((tmp_path / "identity.json").read_text())["checkpoint_policy"]
-        == "atomic-records-v1"
-    )
+    assert json.loads((tmp_path / "identity.json").read_text())["checkpoint_policy"] == ASYNC_POLICY
     for name in ("trials.json", "cost.json", "attempt-events.json", "request-identities.json"):
         (tmp_path / name).write_text("stale incomplete export")
     (tmp_path / "progress.json").write_text('{"completed":7,"in_flight":1}')

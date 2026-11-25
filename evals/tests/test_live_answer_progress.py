@@ -1,16 +1,22 @@
 """Progress readers cannot cancel durable replay work; failures retain safe diagnostics."""
 
+import asyncio
 import json
+import logging
 import sys
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
+from copilot_evals import live_answer_async_checkpoints as async_checkpoints
 from copilot_evals import live_answer_replay as replay
+from copilot_evals.live_answer_async_checkpoints import BufferedRecordStore
 from copilot_evals.live_answer_checkpoints import RecordStore
+from copilot_evals.sensei_runtime import save as save_artifact
 
 from copilot_core.pricing import ModelPrice
 from copilot_gateway.config import Settings
+from copilot_gateway.router import build_router
 from copilot_gateway.testing import Reply, ScriptedProvider
 
 
@@ -75,7 +81,7 @@ def test_active_programming_error_is_not_suppressed(tmp_path, monkeypatch):
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows read handles deny atomic replacement")
 async def test_real_windows_progress_read_lock_does_not_abort(tmp_path):
     snapshots = replay.ProgressSnapshots(tmp_path)
-    replay.save(snapshots.path, {"completed": 0})
+    save_artifact(snapshots.path, {"completed": 0})
     with snapshots.path.open("rb"):
         snapshots.active({"completed": 1})
     assert snapshots.failure_count == 1
@@ -98,7 +104,7 @@ async def test_final_snapshot_has_bounded_windows_retry(tmp_path, monkeypatch, s
         delays.append(delay)
 
     monkeypatch.setattr(replay, "save", fail)
-    monkeypatch.setattr(replay.asyncio, "sleep", sleep)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
     if succeeds:
         await snapshots.final(lambda: {"failures": snapshots.failure_count})
         assert snapshots.failure_count == 3
@@ -136,24 +142,21 @@ async def test_progress_failure_does_not_cancel_provider_work(
         drained = True
 
     monkeypatch.setattr(replay, "close_providers", close)
-    original_save = replay.save
+    original_save = save_artifact
     active_failures = 0
-    original_save(tmp_path / "progress.json", {"completed": 0})
 
     def save(path, value):
         nonlocal active_failures
         if path.name == "progress.json":
-            if drained and terminal_failure:
+            if value.get("finalized") and terminal_failure:
                 raise sharing_error()
-            if not drained and active_failures == 0:
+            if not value.get("finalized") and active_failures == 0:
                 active_failures += 1
-                if sys.platform == "win32":
-                    with path.open("rb"):
-                        original_save(path, value)
                 raise sharing_error()
         original_save(path, value)
 
     monkeypatch.setattr(replay, "save", save)
+    monkeypatch.setattr(async_checkpoints, "save", save)
     args = Namespace(
         architectures=["D"],
         reps=2,
@@ -177,13 +180,23 @@ async def test_progress_failure_does_not_cancel_provider_work(
     assert all(row["status"] == "completed" for row in trials)
     requests = json.loads((tmp_path / "request-identities.json").read_text())
     assert all(row["status"] == "completed" for row in requests)
-    errors = json.loads((tmp_path / "progress-write-errors.json").read_text())
-    assert errors["failures"] == (5 if terminal_failure else 1)
-    if not terminal_failure:
+    telemetry = json.loads((tmp_path / "checkpoint-write-telemetry.json").read_text())
+    assert len(telemetry["snapshot_errors"]) == 1
+    if terminal_failure:
+        failure = json.loads((tmp_path / "finalization-failure.json").read_text())
+        assert failure["status"] == "finalization_failed"
+        assert failure["finalized"] is False
+        assert failure["error_type"] == "PermissionError"
+        assert not (tmp_path / "progress-write-errors.json").exists()
+    else:
+        errors = json.loads((tmp_path / "progress-write-errors.json").read_text())
+        assert errors["failures"] == 0
+        assert len(errors["async_snapshot_errors"]) == 1
         progress = json.loads((tmp_path / "progress.json").read_text())
         assert progress["completed"] == progress["total"] == 4
         assert progress["in_flight"] == progress["not_started"] == 0
-        assert progress["progress_snapshot_errors"]["failures"] == 1
+        assert progress["finalized"] is True
+        assert len(progress["progress_snapshot_errors"]["async_snapshot_errors"]) == 1
 
 
 async def test_durable_record_replace_error_still_stops_before_dispatch(tmp_path, monkeypatch):
@@ -206,7 +219,7 @@ async def test_durable_record_replace_error_still_stops_before_dispatch(tmp_path
         "D",
         0,
         configuration(),
-        replay.build_router(configuration(), [provider]),
+        build_router(configuration(), [provider]),
         5,
     )
     assert result["failure"]
@@ -224,7 +237,9 @@ def test_main_exports_exception_leaves_without_messages_or_payloads(tmp_path, mo
             ) from cause
 
     monkeypatch.setattr(replay, "execute", fail)
+    threshold = logging.root.manager.disable
     assert replay.main(["--out", str(tmp_path)]) == 1
+    assert logging.root.manager.disable == threshold
     console = json.loads(capsys.readouterr().out)
     artifact = json.loads((tmp_path / "failure.json").read_text())
     assert console["failure_artifact_written"] is True
@@ -261,11 +276,11 @@ def test_exception_diagnostics_bound_groups_and_detect_cycles():
     assert "PRIVATE" not in json.dumps(tree)
 
 
-async def test_final_progress_survives_unrelated_post_drain_export_error(tmp_path, monkeypatch):
+async def test_final_progress_does_not_claim_finalized_after_export_error(tmp_path, monkeypatch):
     raw = ScriptedProvider("openai", lambda *args: Reply(["A complete answer."]))
     monkeypatch.setattr(replay, "make_providers", lambda *args, **kwargs: [raw])
     monkeypatch.setattr(replay, "experiment_identity", lambda *args: {"code": {}, "test": "fixed"})
-    original_export = RecordStore.export
+    original_export = BufferedRecordStore.export
 
     def export(store, kind, filename):
         assert store.phase == "drained"
@@ -273,7 +288,7 @@ async def test_final_progress_survives_unrelated_post_drain_export_error(tmp_pat
             raise OSError(28, "authored final export failure")
         original_export(store, kind, filename)
 
-    monkeypatch.setattr(RecordStore, "export", export)
+    monkeypatch.setattr(BufferedRecordStore, "export", export)
     args = Namespace(
         architectures=["D"],
         reps=1,
@@ -291,5 +306,9 @@ async def test_final_progress_survives_unrelated_post_drain_export_error(tmp_pat
     progress = json.loads((tmp_path / "progress.json").read_text())
     assert progress["completed"] == progress["total"] == 1
     assert progress["provider_admission"]["active"] == 0
-    assert (tmp_path / "progress-write-errors.json").exists()
+    assert progress["finalized"] is False
+    assert not (tmp_path / "progress-write-errors.json").exists()
+    failure = json.loads((tmp_path / "finalization-failure.json").read_text())
+    assert failure["status"] == "finalization_failed"
+    assert failure["finalized"] is False
     assert len(RecordStore(tmp_path).read("trials")) == 1

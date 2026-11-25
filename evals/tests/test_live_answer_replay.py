@@ -350,14 +350,15 @@ async def test_live_entry_holds_exclusive_lock_but_offline_preflight_does_not(
         with run_lock(target):
             checked.append("offline-unlocked")
 
-    async def live(args, cases, settings, rate_identity, variants, directory):
+    async def live(args, cases, settings, rate_identity, variants, directory, buffered_store):
         assert directory == target
+        assert buffered_store.writer.lock_owned
         with pytest.raises(ValueError, match="Another runner"), run_lock(directory):
             pytest.fail("Concurrent paid resume was allowed")
         checked.append("paid-locked")
 
     monkeypatch.setattr(harness, "preflight", offline)
-    monkeypatch.setattr(harness, "execute_live", live)
+    monkeypatch.setattr(harness, "execute_live_owned", live)
     args = Namespace(
         cases=None, live=True, out=target, reps=1, concurrency=1, max_cost=None, timeout=10
     )
