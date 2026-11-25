@@ -86,33 +86,147 @@ _COMMAND_WORDS = _COMMAND_VERBS | {
 }  # fmt: skip
 
 
-# A citation with no real short id ("[n: n/a]", "[n:]", "[n:none]"): the client shows it as
-# text. On 2026-10-30 a fast cue carried "[n: n/a]".
-BAD_CITATION = re.compile(r"[ \t]*\[n:(?![0-9a-z]{2,8}\])[^\]\n]{0,24}\]", re.IGNORECASE)
-_HOLD_MAX = 32  # an open "[" held this long at most, waiting for its "]"
+# Validate only citation shape here, not whether an ID belongs to the supplied sources.
+_CITATION_ID_MAX = 8
 
 
 class CitationFilter:
-    """Drops broken citations from streamed text. Text after an open "[" is held until its
-    "]" arrives (a few tokens at most), so a citation split across chunks is still seen."""
+    """Drop malformed citation markup with bounded, chunk-independent state.
+
+    A malformed ``[n:`` consumes through ``]`` or the next newline, never the next
+    paragraph. At most an 11-character possible tag is held; surrounding text and
+    whitespace stream immediately. Code delimiters, escapes, simple index slices
+    and ordinary link destinations protect literal uses of the reserved syntax.
+    """
 
     def __init__(self) -> None:
         self.buf = ""
+        self._discard = False
+        self._last = ""
+        self._index_prefix = False
+        self._escaped = False
+        self._code_marker: str = ""
+        self._code_length = 0
+        self._fenced_code = False
+        self._closing_fence = False
+        self._marker: str = ""
+        self._marker_length = 0
+        self._marker_leading = False
+        self._indent: int | None = 0
+        self._link_depth = 0
+
+    def _emit(self, text: str, out: list[str]) -> None:
+        out.append(text)
+        self._last = text[-1:]
+        for char in text:
+            if char in "\r\n":
+                self._indent = 0
+            elif self._indent is not None:
+                self._indent = self._indent + 1 if char == " " and self._indent < 3 else None
+
+    def _start_marker(self, char: str, out: list[str]) -> None:
+        self._marker, self._marker_length = char, 1
+        self._marker_leading = self._indent is not None
+        self._emit(char, out)
+
+    def _finish_marker(self) -> None:
+        if self._code_marker:
+            if self._fenced_code:
+                self._closing_fence = (
+                    self._marker_leading and self._marker_length >= self._code_length
+                )
+            elif self._marker_length == self._code_length:
+                self._code_marker = ""
+        elif self._marker == "`" or (self._marker_leading and self._marker_length >= 3):
+            self._code_marker = self._marker
+            self._code_length = self._marker_length
+            self._fenced_code = self._marker_leading and self._marker_length >= 3
+        self._marker = ""
+        self._marker_length = 0
 
     def feed(self, text: str) -> str:
-        self.buf += text
-        cut = self.buf.rfind("[")
-        tail = self.buf[cut:] if cut >= 0 else ""
-        if cut >= 0 and "]" not in tail and "\n" not in tail and len(tail) <= _HOLD_MAX:
-            while cut > 0 and self.buf[cut - 1] in " \t":
-                cut -= 1
-            out, self.buf = self.buf[:cut], self.buf[cut:]
-        else:
-            out, self.buf = self.buf, ""
-        return BAD_CITATION.sub("", out)
+        out: list[str] = []
+        for char in text:
+            if self._discard:
+                if char == "]":
+                    self._discard = False
+                elif char in "\r\n":
+                    self._discard = False
+                    self._emit(char, out)
+                continue
+            if self.buf:
+                if (self.buf == "[" and char.lower() == "n") or (
+                    self.buf.lower() == "[n" and char == ":"
+                ):
+                    self.buf += char
+                    continue
+                if self.buf.lower().startswith("[n:"):
+                    if char == "]":
+                        id_length = len(self.buf) - 3
+                        if 2 <= id_length <= _CITATION_ID_MAX or (
+                            self._index_prefix and id_length <= 1
+                        ):
+                            self._emit(self.buf + char, out)
+                        self.buf = ""
+                    elif char.isascii() and char.isalnum() and len(self.buf) < 3 + _CITATION_ID_MAX:
+                        self.buf += char
+                    else:
+                        self.buf = ""
+                        if char in "\r\n":
+                            self._emit(char, out)
+                        else:
+                            self._discard = True
+                    continue
+                self._emit(self.buf, out)
+                self.buf = ""
+            if self._marker:
+                if char == self._marker:
+                    self._marker_length += 1
+                    self._emit(char, out)
+                    continue
+                self._finish_marker()
+            if self._code_marker:
+                if self._closing_fence:
+                    if char in "\r\n":
+                        self._code_marker = ""
+                        self._closing_fence = False
+                    elif char not in " \t":
+                        self._closing_fence = False
+                if char == self._code_marker:
+                    self._start_marker(char, out)
+                else:
+                    self._emit(char, out)
+                continue
+            if self._escaped:
+                self._emit(char, out)
+                self._escaped = False
+                continue
+            if self._link_depth:
+                self._emit(char, out)
+                if char == "\\":
+                    self._escaped = True
+                elif char == "(":
+                    self._link_depth += 1
+                elif char == ")":
+                    self._link_depth -= 1
+                continue
+            if char in "`~":
+                self._start_marker(char, out)
+            elif char == "\\":
+                self._emit(char, out)
+                self._escaped = True
+            elif char == "[":
+                self._index_prefix = self._last.isalnum() or self._last in ("_", "]", ")")
+                self.buf = char
+            else:
+                if char == "(" and self._last == "]":
+                    self._link_depth = 1
+                self._emit(char, out)
+        return "".join(out)
 
     def flush(self) -> str:
-        out, self.buf = BAD_CITATION.sub("", self.buf), ""
+        out = "" if self._discard or self.buf.lower().startswith("[n:") else self.buf
+        self.__init__()
         return out
 
 
