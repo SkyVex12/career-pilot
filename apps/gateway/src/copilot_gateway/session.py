@@ -683,7 +683,8 @@ class Session:
                 render_pack(
                     self.pack, include_prepared=self.settings.answer_architecture == "legacy_dual"
                 )
-                if self.pack else None
+                if self.pack
+                else None
             ),
             company=employer.name if at_work and employer else None,
             role=(employer.title or None) if at_work and employer else None,
@@ -2135,6 +2136,18 @@ class Session:
             task.cancel()
         await asyncio.gather(*changing, return_exceptions=True)
         self.conv.close()
+        if self.company_memory is not None:
+            memory_tasks = {
+                task
+                for lookup in self.company_memory.lookups.values()
+                for task in (lookup.fts, lookup.full)
+                if not task.done()
+            }
+            self.company_memory.close()
+            if memory_tasks:
+                _, pending = await asyncio.wait(memory_tasks, timeout=0.25)
+                if pending:
+                    log.warning("company memory cancellation exceeded the shutdown drain bound")
         for task in list(self._settling):
             task.cancel()
         if self.send_q is not None:
