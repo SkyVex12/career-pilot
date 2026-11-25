@@ -2,18 +2,22 @@
 
 import asyncio
 import json
+import time
 from dataclasses import asdict, replace
+from uuid import uuid4
 
 import pytest
 from copilot_evals.live_answer_eval import blind_pairs, comparable, question_usage, summarize
 from copilot_evals.live_answer_replay import (
     CONFIG_FIELDS,
+    Host,
     load_cases,
     normalized_runs,
     tier_overrides,
     trial,
 )
 from copilot_evals.live_answer_variants import (
+    EvaluationEngine,
     adaptive_constant,
     load_rate_card,
     load_variants,
@@ -21,6 +25,7 @@ from copilot_evals.live_answer_variants import (
 )
 
 from copilot_core import prompts
+from copilot_gateway.answer import Question
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
 from copilot_gateway.testing import Reply, ScriptedProvider
@@ -101,6 +106,10 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
         one("old", "Pinned rules for {user_name} in {mode}."), one("current", None)
     )
     assert all(not row["failure"] for row in results)
+    assert all(
+        any(event["message"]["type"] == "answer.done" for event in row["events"])
+        for row in results
+    )
     assert before == prompts.ADAPTIVE_SYSTEM
     assert captured["old"]["system"][0]["text"].startswith("Pinned rules")
     assert captured["old"]["system"][1:] == captured["current"]["system"][1:]
@@ -135,6 +144,47 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
     review, _ = blind_pairs(records, 1, 4, baseline="D-v2")
     assert len(review["items"]) == 1
     assert "D-v2" not in json.dumps(review)
+
+
+@pytest.mark.parametrize("pass_", ["fast", "deep"])
+def test_pinned_prompt_uses_original_request_snapshot_after_context_changes(pass_):
+    settings = Settings(
+        _env_file=None, llm_providers=["openai"],
+        answer_architecture="adaptive_on_demand",
+        openai_fast_model="offline", openai_detector_model="offline", openai_deep_model="offline",
+    )
+    provider = ScriptedProvider("openai")
+    case = {
+        **load_cases()[0],
+        "mode": "interview",
+        "question": "Why did you choose Redis for the original project?",
+        "digest": "Alex built the original project with Redis.",
+        "recent": "Interviewer: Discuss the original project.",
+    }
+    host = Host(settings, build_router(settings, [provider]), case)
+    engine = EvaluationEngine(host, "Pinned rules for {user_name} in {mode}.")
+    question = Question(
+        qid=uuid4(), text=case["question"], qtype="technical", confidence=1,
+        addressed=True, speculative=False, forced=False, t0=time.monotonic(),
+        detector_ms=None, match=None,
+    )
+    snapshot = engine._request_snapshot(question)
+    question.text = "Describe the replacement project."
+    case.update(
+        mode="standup", digest="New unrelated profile.",
+        recent="New unrelated conversation.",
+    )
+    request = engine._request(
+        question, pass_, ["Original retrieved evidence."], snapshot=snapshot,
+    )
+    serialized = json.dumps(asdict(request))
+    assert request.system[0].text.startswith("Pinned rules for Alex Rivera in an interview.")
+    assert snapshot.text in serialized
+    assert snapshot.context.digest_text in serialized
+    assert snapshot.transcript.recent in serialized
+    assert "Original retrieved evidence." in serialized
+    assert "replacement project" not in serialized
+    assert "New unrelated" not in serialized
 
 
 def test_private_draft_is_inert_hashed_and_exclusive_with_commit(tmp_path):

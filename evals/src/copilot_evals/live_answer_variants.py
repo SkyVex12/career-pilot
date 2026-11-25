@@ -16,7 +16,7 @@ from typing import Any, cast
 from copilot_core import prompts
 from copilot_core.llm import LLMRequest, ModelRouter
 from copilot_core.pricing import ModelPrice, cost_usd, openai_cache_write_pricing
-from copilot_gateway.answer import AnswerEngine, AnswerHost, Question
+from copilot_gateway.answer import AnswerEngine, AnswerHost, Question, RequestSnapshot
 from copilot_gateway.config import Settings
 
 SETTINGS_FIELDS = {
@@ -334,16 +334,24 @@ class EvaluationEngine(AnswerEngine):
         super().__init__(host)
         self.rules = rules
 
-    def _base_request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
-        request = super()._base_request(q, pass_, memory)
+    def _base_request(
+        self,
+        q: Question,
+        pass_: str,
+        memory: list[str] | None = None,
+        *,
+        snapshot: RequestSnapshot | None = None,
+    ) -> LLMRequest:
+        snapshot = snapshot or self._request_snapshot(q)
+        request = super()._base_request(q, pass_, memory, snapshot=snapshot)
         if (
             self.strategy(q) == "legacy_dual"
             or q.screen is not None
             or self.open_problem() is not None
         ):
             return request
-        # Eval-only substitution intentionally calls the current context wrapper.
+        # Keep the pinned rules on the same pre-retrieval evidence snapshot as the body.
         replacement = prompts._system(  # pyright: ignore[reportPrivateUsage]
-            self.rules, self.host.prompt_context(), strict=True
+            self.rules, snapshot.context, strict=True
         )
         return replace(request, system=[replacement[0], *request.system[1:]])
