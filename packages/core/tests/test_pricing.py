@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from copilot_core.config import CoreSettings
-from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, cost_usd, model_key
+from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, cost_usd, model_key
 
 
 @pytest.mark.parametrize(
@@ -59,3 +59,19 @@ def test_configured_prices_merge_over_the_defaults(monkeypatch: pytest.MonkeyPat
     assert s.model_prices["claude-haiku-4-5"].output == 5.5
     assert s.model_prices["claude-opus-5-5"] == DEFAULT_PRICES["claude-opus-5-5"]
     assert s.tier_price_multipliers == {**DEFAULT_TIERS, "priority": 2.0}
+
+
+@pytest.mark.parametrize("tier", ["fast", "priority"])
+def test_openai_fast_alias_uses_model_specific_rate(tier: str) -> None:
+    prices = {"gpt-6-luna": ModelPrice(input=0.1, cached=0.01, output=0.5)}
+    # Include cache reads and output; a generic 1.75x rate would undercount.
+    assert cost_usd(
+        "gpt-6-luna-2026-09-01", tier, 1_000_000, 100_000, 100_000, prices, DEFAULT_TIERS
+    ) == Decimal("0.282000")
+    custom = {**DEFAULT_TIERS, f"gpt-6-luna:{tier}": 3.0}
+    assert cost_usd("gpt-6-luna", tier, 1_000_000, 0, 0, prices, custom) == Decimal("0.300000")
+
+
+def test_fast_does_not_guess_price_for_an_unverified_model() -> None:
+    prices = {"custom-model": ModelPrice(input=1, cached=0.1, output=5)}
+    assert cost_usd("custom-model", "fast", 100, 0, 10, prices, DEFAULT_TIERS) is None

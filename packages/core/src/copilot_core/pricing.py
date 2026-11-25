@@ -6,7 +6,8 @@ Prices are US dollars per million tokens, per model, from configuration
 prefixes or version suffixes, so `claude-haiku-4-5`, `anthropic.claude-haiku-4-5` and
 `us.anthropic.claude-haiku-4-5-20251001-v1:0` all use the `claude-haiku-4-5` price; an OpenAI
 snapshot like `gpt-6-luna-2026-09-01` uses the `gpt-6-luna` price. The tier multiplies the
-whole price: Priority costs 75% more, Flex and Batch half.
+whole price. Model-specific keys such as `gpt-6-luna:fast` override generic tiers;
+there is no universal Priority/Fast multiplier. Flex and Batch default to half.
 
 Only Claude prices are built in. OpenAI model names are configuration, so their prices are
 too: COPILOT_MODEL_PRICES in .env (.env.example has the list prices of its suggested models).
@@ -39,7 +40,20 @@ DEFAULT_PRICES: dict[str, ModelPrice] = {
     "claude-opus-5-5": ModelPrice(input=4.0, cached=0.20, output=20.0),
 }
 
-DEFAULT_TIERS: dict[str, float] = {"standard": 1.0, "priority": 1.75, "flex": 0.5, "batch": 0.5}
+# OpenAI Fast is the renamed Priority tier; these model rates are 2x Standard.
+# Verified 2026-11-25: https://developers.openai.com/api/docs/pricing.md
+# Keep unknown models/tiers unpriced instead of applying an invented multiplier.
+DEFAULT_TIERS: dict[str, float] = {
+    "standard": 1.0,
+    "priority": 1.75,
+    "flex": 0.5,
+    "batch": 0.5,
+    **{
+        f"{model}:{tier}": 2.0
+        for model in ("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra")
+        for tier in ("fast", "priority")
+    },
+}
 
 _PREFIX = re.compile(r"^(?:(?:us|eu|apac|global)\.)?(?:anthropic\.)?")
 _SUFFIX = re.compile(r"(?:-\d{8}|-\d{4}-\d{2}-\d{2})?(?:-v\d+(?::\d+)?)?$")
@@ -67,7 +81,7 @@ def cost_usd(
 ) -> Decimal | None:
     """The call's cost, rounded to six places; None when the model or tier has no price."""
     price = prices.get(model_key(model))
-    multiplier = tiers.get(tier)
+    multiplier = tiers.get(f"{model_key(model)}:{tier}", tiers.get(tier))
     if price is None or multiplier is None:
         return None
     cached = max(0, min(cached_tokens, input_tokens))
