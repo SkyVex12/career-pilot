@@ -80,6 +80,7 @@ CONFIG_FIELDS = {
     "openai_deep_retry_tier",
     "fast_pass_max_tokens",
     "deep_pass_max_tokens",
+    "adaptive_failure_recovery",
     "adaptive_max_tokens",
     "adaptive_stream_idle_timeout_s",
     "adaptive_stream_total_timeout_s",
@@ -764,9 +765,12 @@ def settings_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 def tier_overrides(router: ModelRouter, args: Any) -> None:
     """Apply recorded eval-only tiers to both primary and retry routes, without extra retries."""
-    for job, arg in (("fast", "fast_tier"), ("deep_light", "fast_tier"), ("deep", "expert_tier")):
+    for job, arg in (
+        ("fast", "fast_tier"), ("deep_light", "fast_tier"),
+        ("deep", "expert_tier"), ("answer_recovery", "expert_tier"),
+    ):
         tier = getattr(args, arg, None)
-        if tier is None:
+        if tier is None or job not in router.routes:
             continue
         routes: list[Route] = []
         for route in router.routes[job]:

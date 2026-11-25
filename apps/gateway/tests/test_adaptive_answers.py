@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -30,7 +31,9 @@ class RecordingRouter:
         self.expert_started = asyncio.Event()
         self.fail = False
 
-    async def stream(self, job, req, on_fallback, *, on_attempt=None):
+    async def stream(
+        self, job, req, on_fallback, *, on_attempt=None
+    ) -> AsyncGenerator[str | LLMDone]:
         self.requests.append((job, req))
         if self.fail:
             raise RuntimeError("provider stopped")
@@ -825,7 +828,7 @@ async def test_stored_timing_separates_preparation_first_chunk_and_sentence(sett
         await asyncio.sleep(0.012)
         return ["[n:ab12] Redis cached reads."], {"memory_hits": 1}
 
-    async def cache(key):
+    async def cache(qhash):
         await asyncio.sleep(0.012)
         return None
 
@@ -847,7 +850,10 @@ async def test_stored_timing_separates_preparation_first_chunk_and_sentence(sett
     answer = next(row for row in logs if row["kind"] == "answer")
     lat = answer["latency_ms"]
     for field in (
-        "context_wait_ms", "cache_lookup_ms", "router_first_chunk_ms", "stream_sentence_ms"
+        "context_wait_ms",
+        "cache_lookup_ms",
+        "router_first_chunk_ms",
+        "stream_sentence_ms",
     ):
         assert lat[field] >= 8
     assert lat["answer_prepare_ms"] >= lat["context_wait_ms"] + lat["cache_lookup_ms"] - 2
@@ -880,7 +886,8 @@ async def test_cancelled_attempt_has_no_invented_usage_or_cost(settings_factory)
     engine.discard(q.qid)
     await asyncio.gather(*q.tasks.values(), return_exceptions=True)
     terminals = [
-        row for row in logs
+        row
+        for row in logs
         if row["kind"] == "provider_attempt" and row["status"] in {"closed", "cancelled", "failed"}
     ]
     assert len(terminals) == 1
@@ -906,7 +913,7 @@ async def test_shutdown_awaits_discarded_pass_cleanup_without_recancelling(setti
                 closed.set()
 
     router = SlowCloseRouter()
-    engine.host.router = router
+    engine.host.router = cast(ModelRouter, router)
     q = question(forced=True)
     engine.add(q)
     await router.primary_started.wait()
@@ -946,3 +953,472 @@ async def test_shutdown_deadline_reports_unfinished_cleanup(settings_factory):
     assert not task.done()
     release.set()
     await asyncio.gather(task, return_exceptions=True)
+
+
+class RecoveryStatusError(Exception):
+    def __init__(self, status: int):
+        super().__init__("Synthetic typed HTTP failure")
+        self.status_code = status
+
+
+def recovery_engine(settings_factory, *, primary=None, expert=None, **settings):
+    settings.setdefault("answer_architecture", "adaptive_on_demand")
+    settings.setdefault("adaptive_failure_recovery", True)
+    settings.setdefault("deep_pass_auto", False)
+    engine, _, events, logs, cache = make_engine(settings_factory(**settings))
+    primary = primary or ScriptedProvider(
+        "openai", lambda job, req: Reply([], error=TimeoutError())
+    )
+    expert = expert or ScriptedProvider(
+        "openai", lambda job, req: Reply(["A grounded answer. ", "Supporting detail."])
+    )
+    engine.host.router = ModelRouter(
+        {
+            "fast": [Route(primary, "gpt-6-luna")],
+            "deep": [Route(expert, "gpt-6.2-sol", {"reasoning": {"effort": "low"}})],
+            "answer_recovery": [Route(expert, "gpt-6.2-sol", {"reasoning": {"effort": "low"}})],
+        },
+        1,
+    )
+    return engine, primary, expert, events, logs, cache
+
+
+@pytest.mark.parametrize("strategy", ["adaptive", "adaptive_on_demand"])
+async def test_failure_recovery_is_one_frozen_request_in_same_visible_pass(
+    settings_factory, strategy
+):
+    primary = ScriptedProvider(
+        "openai", lambda job, req: Reply([], first_delay_s=0.015, error=TimeoutError())
+    )
+    engine, primary, expert, events, logs, cache = recovery_engine(
+        settings_factory, primary=primary, answer_architecture=strategy
+    )
+    # Exhaust every primary route before the one independent expert attempt.
+    cast(dict[str, list[Route]], engine.host.router.routes)["fast"] = [
+        Route(primary, "gpt-6-luna"),
+        Route(primary, "gpt-6-luna"),
+    ]
+    q = question(forced=True)
+    engine.add(q)
+    engine.confirm(q.qid, q.text, 0)
+    await engine.wait_idle()
+    await asyncio.gather(*engine._background)
+    assert len(primary.calls) == 2
+    assert len(expert.calls) == 1
+    assert expert.requests[0][1] is primary.requests[0][1]
+    assert expert.requests[0][1].max_tokens == primary.requests[0][1].max_tokens
+    assert "<shown_cues>" not in str(expert.requests[0][1].content)
+    assert cache == {}
+    assert set(q.tasks) == {"fast"}
+    assert not any(kind == "AnswerError" for kind, _ in events)
+    deltas = [row for kind, row in events if kind == "AnswerDelta"]
+    assert [row["sequence"] for row in deltas] == list(range(len(deltas)))
+    done = [row for kind, row in events if kind == "AnswerDone"]
+    assert len(done) == 1
+    assert done[0]["pass"] == "fast"
+    answer = next(row for row in logs if row["kind"] == "answer")
+    latency = answer["latency_ms"]
+    assert latency["failure_recovery"] is True
+    assert latency["request_job"] == "answer_recovery"
+    assert latency["configured_reasoning"] == {"reasoning": {"effort": "low"}}
+    assert latency["failure_recovery_start_ms"] >= 20
+    assert latency["model_dispatch_ms"] < latency["failure_recovery_start_ms"]
+    assert latency["router_first_chunk_ms"] >= 20
+    assert latency["first_complete_sentence_ms"] >= latency["failure_recovery_start_ms"]
+    attempts = [row for row in logs if row["kind"] == "provider_attempt"]
+    failed = [row for row in attempts if row["status"] == "failed"]
+    assert len(failed) == 2
+    assert all(row["usage"] is None for row in failed)
+    completed = [row for row in attempts if row["status"] == "completed"]
+    assert len(completed) == 1
+    assert completed[0]["job"] == "answer_recovery"
+    assert completed[0]["failure_recovery"] is True
+    assert completed[0]["usage_observed"] is True
+
+
+async def test_failed_recovery_has_one_terminal_error_and_no_extra_routes(settings_factory):
+    expert = ScriptedProvider("openai", lambda job, req: Reply([], error=TimeoutError()))
+    engine, primary, expert, events, logs, _ = recovery_engine(settings_factory, expert=expert)
+    q = question()
+    engine.add(q)
+    engine.confirm(q.qid, q.text, 0)
+    await engine.wait_idle()
+    assert len(primary.calls) == len(expert.calls) == 1
+    assert [row["code"] for kind, row in events if kind == "AnswerError"] == ["llm_unavailable"]
+    assert not any(kind in {"AnswerDelta", "AnswerDone"} for kind, _ in events)
+    error = next(row for row in logs if row["kind"] == "answer_error")
+    assert error["failure_recovery"] is True
+    assert error["failure_recovery_job"] == "answer_recovery"
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 422, 429, 501])
+async def test_http_failure_outside_transient_allowlist_never_recovers(settings_factory, status):
+    primary = ScriptedProvider(
+        "openai", lambda job, req: Reply([], error=RecoveryStatusError(status))
+    )
+    engine, primary, expert, events, _, _ = recovery_engine(settings_factory, primary=primary)
+    q = question()
+    engine.add(q)
+    await engine.wait_idle()
+    assert len(primary.calls) == 1
+    assert expert.calls == []
+    assert [row["code"] for kind, row in events if kind == "AnswerError"] == ["llm_unavailable"]
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504, 529])
+async def test_typed_transient_server_failure_can_recover(settings_factory, status):
+    primary = ScriptedProvider(
+        "openai", lambda job, req: Reply([], error=RecoveryStatusError(status))
+    )
+    engine, _, expert, events, _, _ = recovery_engine(settings_factory, primary=primary)
+    engine.add(question())
+    await engine.wait_idle()
+    assert len(expert.calls) == 1
+    assert sum(kind == "AnswerDone" for kind, _ in events) == 1
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_refusal_including_mixed_refusal_and_timeout_never_recovers(settings_factory, mixed):
+    refusal = ScriptedProvider("openai", lambda job, req: Reply([], stop_reason="refusal"))
+    engine, primary, expert, events, logs, _ = recovery_engine(settings_factory, primary=refusal)
+    transient = ScriptedProvider("openai", lambda job, req: Reply([], error=TimeoutError()))
+    if mixed:
+        cast(dict[str, list[Route]], engine.host.router.routes)["fast"] = [
+            Route(primary, "gpt-6-luna"),
+            Route(transient, "gpt-6-sol"),
+        ]
+    engine.add(question())
+    await engine.wait_idle()
+    assert expert.calls == []
+    assert sum(kind == "AnswerError" for kind, _ in events) == 1
+    assert any(row["status"] == "completed" for row in logs if row["kind"] == "provider_attempt")
+    if mixed:
+        assert len(transient.calls) == 1
+
+
+@pytest.mark.parametrize("case", ["flag_off", "unknown", "no_routes", "multiple_recovery_routes"])
+async def test_unknown_unconfigured_or_disabled_recovery_never_calls_expert(settings_factory, case):
+    engine, _, expert, events, _, _ = recovery_engine(
+        settings_factory, adaptive_failure_recovery=case != "flag_off"
+    )
+    if case == "unknown":
+        cast(ScriptedProvider, engine.host.router.routes["fast"][0].provider).reply = (
+            lambda job, req: Reply([], error=RuntimeError("Unknown provider failure"))
+        )
+    elif case == "no_routes":
+        cast(dict[str, list[Route]], engine.host.router.routes)["fast"] = []
+    elif case == "multiple_recovery_routes":
+        cast(dict[str, list[Route]], engine.host.router.routes)["answer_recovery"] *= 2
+    engine.add(question())
+    await engine.wait_idle()
+    assert expert.calls == []
+    assert sum(kind == "AnswerError" for kind, _ in events) == 1
+
+
+@pytest.mark.parametrize("text", ["A partial answer. ", "[n:"])
+@pytest.mark.parametrize("held", [False, True])
+async def test_partial_or_citation_buffered_output_never_recovers(settings_factory, text, held):
+    from copilot_core.llm import AllRoutesFailedError
+
+    failed = asyncio.Event()
+
+    class PartialProvider(ScriptedProvider):
+        async def stream(self, model, req, params):
+            yield text
+            failed.set()
+            raise AllRoutesFailedError("fast", ["synthetic stream failure"])
+
+    engine, _, expert, events, _, _ = recovery_engine(
+        settings_factory, primary=PartialProvider("openai")
+    )
+    q = question(held=held)
+    engine.add(q)
+    await failed.wait()
+    if held:
+        assert not events
+        engine.release(q.qid)
+    await engine.wait_idle()
+    assert expert.calls == []
+    assert sum(kind == "AnswerError" for kind, _ in events) == 1
+
+
+@pytest.mark.parametrize("strategy", ["legacy_dual", "adaptive_hybrid"])
+async def test_other_architectures_do_not_gain_failure_recovery(settings_factory, strategy):
+    engine, _, expert, _, _, _ = recovery_engine(settings_factory, answer_architecture=strategy)
+    q = question()
+    engine.questions[q.qid] = q
+    engine.start_pass(q, "fast")  # Unconfirmed: no unrelated automatic legacy/hybrid deep pass.
+    await engine.wait_idle()
+    assert expert.calls == []
+
+
+async def test_adaptive_direct_expert_plan_does_not_retry_as_recovery(settings_factory):
+    engine, primary, expert, _, _, _ = recovery_engine(
+        settings_factory, answer_architecture="adaptive"
+    )
+    cast(dict[str, list[Route]], engine.host.router.routes)["deep"] = [
+        Route(primary, "gpt-6.2-sol")
+    ]
+    engine.add(question("Design a distributed notification system", "system_design", depth="deep"))
+    await engine.wait_idle()
+    assert len(primary.calls) == 1
+    assert expert.calls == []
+
+
+@pytest.mark.parametrize("action", ["cancel", "discard", "supersede", "shutdown"])
+async def test_cancellation_during_recovery_never_publishes_stale_answer(settings_factory, action):
+    entered = asyncio.Event()
+
+    def reply(job, req):
+        entered.set()
+        return Reply(["Must never be displayed."], first_delay_s=30)
+
+    engine, primary, expert, events, logs, cache = recovery_engine(
+        settings_factory, expert=ScriptedProvider("openai", reply)
+    )
+    q = question(held=action == "discard")
+    engine.add(q)
+    await asyncio.wait_for(entered.wait(), 1)
+    if action == "cancel":
+        engine.cancel_speculative(q.qid)
+    elif action == "discard":
+        engine.discard(q.qid)
+    elif action == "supersede":
+        engine.supersede(keep=None)
+    else:
+        assert await engine.shutdown()
+    await engine.wait_idle()
+    assert len(primary.calls) == len(expert.calls) == 1
+    assert expert.cancelled == 1
+    assert not any(kind in {"AnswerDelta", "AnswerDone"} for kind, _ in events)
+    assert cache == {}
+    cancelled = next(row for row in logs if row["kind"] == "pass_cancelled")
+    assert cancelled["failure_recovery"] is True
+    assert cancelled["request_job"] == "answer_recovery"
+    assert all(task.done() for task in q.tasks.values())
+
+
+async def test_held_recovery_releases_one_monotonic_stream(settings_factory):
+    engine, _, expert, events, logs, _ = recovery_engine(settings_factory)
+    q = question(held=True)
+    engine.add(q)
+    await asyncio.sleep(0.02)
+    assert len(expert.calls) == 1
+    assert q.held_text
+    assert not events
+    engine.release(q.qid)
+    engine.confirm(q.qid, q.text, 0)
+    await engine.wait_idle()
+    deltas = [row for kind, row in events if kind == "AnswerDelta"]
+    assert len(deltas) == 1
+    assert deltas[0]["sequence"] == 0
+    done = next(row for kind, row in events if kind == "AnswerDone")
+    assert done["delta_count"] == 1
+    assert done["latency_ms"]["first_complete_sentence_ms"] >= done["latency_ms"]["release_ms"]
+    assert next(row for row in logs if row["kind"] == "answer")["latency_ms"]["failure_recovery"]
+
+
+async def test_recovery_uses_remaining_total_budget_not_a_new_deadline(
+    settings_factory, monkeypatch
+):
+    import copilot_gateway.answer as answer_module
+    from copilot_gateway.adaptive import bounded_chunks as original_bound
+
+    budgets = []
+
+    def record_bound(chunks, idle_s, total_s):
+        budgets.append((idle_s, total_s))
+        return original_bound(chunks, idle_s=idle_s, total_s=total_s)
+
+    monkeypatch.setattr(answer_module, "bounded_chunks", record_bound)
+    primary = ScriptedProvider(
+        "openai", lambda job, req: Reply([], first_delay_s=0.1, error=TimeoutError())
+    )
+    expert = ScriptedProvider("openai", lambda job, req: Reply(["Too late."], first_delay_s=5))
+    engine, _, expert, events, logs, _ = recovery_engine(
+        settings_factory,
+        primary=primary,
+        expert=expert,
+        adaptive_stream_total_timeout_s=0.5,
+        adaptive_stream_idle_timeout_s=1,
+    )
+    engine.add(question())
+    await engine.wait_idle()
+    assert len(expert.calls) == 1
+    assert expert.cancelled == 1
+    assert budgets == [(1, 0.5)]  # One outer budget spans primary and recovery.
+    assert [row["code"] for kind, row in events if kind == "AnswerError"] == ["timeout"]
+    assert not any(kind in {"AnswerDelta", "AnswerDone"} for kind, _ in events)
+    assert next(row for row in logs if row["kind"] == "pass_cancelled")["failure_recovery"]
+
+
+async def test_primary_first_token_timeout_can_recover_with_remaining_budget(settings_factory):
+    primary = ScriptedProvider(
+        "openai", lambda job, req: Reply(["Never received."], first_delay_s=30)
+    )
+    engine, _, expert, events, logs, _ = recovery_engine(settings_factory, primary=primary)
+    cast(dict[str, list[Route]], engine.host.router.routes)["fast"] = [
+        Route(primary, "gpt-6-luna", first_token_timeout_s=0.01)
+    ]
+    engine.add(question())
+    await engine.wait_idle()
+    assert primary.cancelled == 1
+    assert len(expert.calls) == 1
+    assert sum(kind == "AnswerDone" for kind, _ in events) == 1
+    recovery = next(row for row in logs if row["kind"] == "answer_recovery")
+    assert recovery["failure_recovery_categories"] == ["first_token_timeout"]
+
+
+def test_recovery_routes_are_off_by_default_and_only_first_deep_route(settings_factory):
+    from copilot_gateway.router import build_router
+
+    providers = [ScriptedProvider("openai"), ScriptedProvider("anthropic")]
+    model_settings = {
+        "openai_detector_model": "gpt-6-luna",
+        "openai_fast_model": "gpt-6-luna",
+        "openai_deep_model": "gpt-6.2-sol",
+    }
+    off = build_router(settings_factory(**model_settings), providers)
+    assert "answer_recovery" not in off.routes
+    enabled = build_router(
+        settings_factory(adaptive_failure_recovery=True, **model_settings), providers
+    )
+    assert enabled.routes["answer_recovery"] == enabled.routes["deep"][:1]
+    assert len(enabled.routes["answer_recovery"]) == 1
+    assert "answer_recovery" not in enabled.hedge_after_s
+    assert len(enabled.routes["deep"]) > 1
+
+
+def test_recovery_does_not_opt_into_server_side_refusal_fallback(settings_factory):
+    from copilot_gateway.router import build_router
+
+    router = build_router(
+        settings_factory(adaptive_failure_recovery=True), [ScriptedProvider("anthropic")]
+    )
+    primary = router.routes["deep"][0]
+    recovery = router.routes["answer_recovery"][0]
+    assert primary.params["extra_body"]["fallbacks"] == "default"
+    assert "fallbacks" not in recovery.params.get("extra_body", {})
+    assert "server-side-fallback" not in str(recovery.params.get("extra_headers", {}))
+    assert recovery.model == primary.model
+    assert recovery.params["thinking"] == primary.params["thinking"]
+    assert recovery.params["output_config"] == primary.params["output_config"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "first_chunk",
+        "completed",
+        "cancelled",
+        "closed",
+        "missing_terminal",
+        "duplicate_terminal",
+        "unknown_category",
+        "untyped_connection",
+        "stream_failure",
+        "mixed_auth",
+        "mixed_rate_limit",
+    ],
+)
+def test_recovery_eligibility_requires_complete_transient_attempt_evidence(case):
+    from dataclasses import replace
+
+    from copilot_core.llm import AttemptEvent
+    from copilot_gateway.answer import _transient_before_text
+
+    started = AttemptEvent("r", "a", "fast", 0, "openai", "m", "started", "first_chunk", 0, 0)
+    failed = replace(started, status="failed", error_category="read_timeout")
+    events = [started, failed]
+    assert _transient_before_text(events)
+    if case in {"first_chunk", "completed", "cancelled", "closed"}:
+        events.insert(1, replace(started, status=case))
+    elif case == "missing_terminal":
+        events.pop()
+    elif case == "duplicate_terminal":
+        events.append(failed)
+    elif case == "unknown_category":
+        events[-1] = replace(failed, error_category="provider_error")
+    elif case == "untyped_connection":
+        events[-1] = replace(failed, error_category="connection_error")
+    elif case == "stream_failure":
+        events[-1] = replace(failed, stage="stream")
+    else:
+        status = 401 if case == "mixed_auth" else 429
+        other = replace(started, attempt_id="b", attempt=1)
+        events = [
+            other,
+            replace(other, status="failed", http_status=status, error_category="http_error"),
+            *events,
+        ]
+    assert not _transient_before_text(events)
+
+
+@pytest.mark.parametrize(
+    ("cause_name", "eligible"),
+    [
+        ("SSLZeroReturnError", True),
+        ("ConnectionResetError", True),
+        ("ReadError", True),
+        ("WriteError", True),
+        ("RemoteProtocolError", True),
+        ("SSLError", False),
+        ("SSLCertVerificationError", False),
+        (None, False),
+    ],
+)
+async def test_connection_recovery_requires_an_explicit_abrupt_transport_cause(
+    settings_factory, cause_name, eligible
+):
+    import ssl
+
+    import httpx2
+    from openai import APIConnectionError
+
+    causes = {
+        "SSLZeroReturnError": ssl.SSLZeroReturnError,
+        "ConnectionResetError": ConnectionResetError,
+        "ReadError": httpx2.ReadError,
+        "WriteError": httpx2.WriteError,
+        "RemoteProtocolError": httpx2.RemoteProtocolError,
+        "SSLError": ssl.SSLError,
+        "SSLCertVerificationError": ssl.SSLCertVerificationError,
+    }
+    failure = APIConnectionError(request=httpx2.Request("GET", "https://fixture.invalid"))
+    if cause_name is not None:
+        failure.__cause__ = causes[cause_name]("Synthetic transport cause")
+    primary = ScriptedProvider("openai", lambda job, req: Reply([], error=failure))
+    engine, _, expert, events, logs, _ = recovery_engine(settings_factory, primary=primary)
+    engine.add(question())
+    await engine.wait_idle()
+    assert len(expert.calls) == int(eligible)
+    assert sum(kind == "AnswerDone" for kind, _ in events) == int(eligible)
+    assert sum(kind == "AnswerError" for kind, _ in events) == int(not eligible)
+    failed = next(
+        row
+        for row in logs
+        if row["kind"] == "provider_attempt" and row["job"] == "fast" and row["status"] == "failed"
+    )
+    assert failed["error_category"] == "connection_error"
+    if cause_name is not None:
+        assert cause_name in failed["cause_types"]
+
+
+@pytest.mark.parametrize("category", ["connection_error", "connect_error", "read_timeout"])
+@pytest.mark.parametrize("certificate", ["SSLCertVerificationError", "CertificateError"])
+def test_certificate_verification_vetoes_otherwise_eligible_transport_failure(
+    category, certificate
+):
+    from dataclasses import replace
+
+    from copilot_core.llm import AttemptEvent
+    from copilot_gateway.answer import _transient_before_text
+
+    started = AttemptEvent("r", "a", "fast", 0, "openai", "m", "started", "first_chunk", 0, 0)
+    failed = replace(
+        started,
+        status="failed",
+        error_category=category,
+        cause_types=("APIConnectionError", "SSLZeroReturnError", certificate),
+    )
+    assert not _transient_before_text([started, failed])

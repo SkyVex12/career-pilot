@@ -16,6 +16,7 @@ first token by then, the second route starts alongside the first.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any, Literal
 
 from copilot_core.llm import AttemptHook, FallbackHook, LLMProvider, ModelRouter, Route
@@ -120,6 +121,30 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
                     Route(provider, settings.bedrock_refusal_model, refusal_params, True)
                 )
         routes[job] = job_routes
+    if settings.adaptive_failure_recovery:
+        # The recovery job has one provider invocation and no router hedge/retry.
+        # Do not inherit the direct API's server-side refusal-fallback opt-in.
+        first = next(iter(routes.get("deep", [])), None)
+        routes["answer_recovery"] = []
+        if first is not None and not first.refusal_only:
+            params = dict(first.params)
+            if first.provider.name == "anthropic":
+                body: dict[str, Any] = dict(params.pop("extra_body", {}))
+                body.pop("fallbacks", None)
+                if body:
+                    params["extra_body"] = body
+                headers: dict[str, str] = dict(params.pop("extra_headers", {}))
+                beta = ",".join(
+                    value.strip()
+                    for value in headers.get("anthropic-beta", "").split(",")
+                    if value.strip() and value.strip() != SERVER_FALLBACK_BETA
+                )
+                headers.pop("anthropic-beta", None)
+                if beta:
+                    headers["anthropic-beta"] = beta
+                if headers:
+                    params["extra_headers"] = headers
+            routes["answer_recovery"] = [replace(first, params=params)]
     return routes
 
 

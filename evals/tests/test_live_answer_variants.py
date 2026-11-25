@@ -2,11 +2,17 @@
 
 import asyncio
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 from copilot_evals.live_answer_eval import blind_pairs, comparable, question_usage, summarize
-from copilot_evals.live_answer_replay import load_cases, normalized_runs, trial
+from copilot_evals.live_answer_replay import (
+    CONFIG_FIELDS,
+    load_cases,
+    normalized_runs,
+    tier_overrides,
+    trial,
+)
 from copilot_evals.live_answer_variants import (
     adaptive_constant,
     load_rate_card,
@@ -183,3 +189,32 @@ def test_unpriced_routes_fail_before_billed_schedule():
     provider = ScriptedProvider("openai", lambda job, request: Reply(["never called"]))
     with pytest.raises(ValueError, match="rate missing"):
         validate_route_prices(build_router(settings, [provider]), settings)
+
+
+def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
+    base = Settings(
+        _env_file=None, llm_providers=["openai"],
+        openai_fast_model="gpt-6-luna", openai_detector_model="gpt-6-luna",
+        openai_deep_model="gpt-6.1-sol",
+    )
+    path = tmp_path / "recovery.json"
+    path.write_text(json.dumps({"schema": 1, "variants": [{
+        "label": "E", "architecture": "adaptive_on_demand",
+        "settings": {"adaptive_failure_recovery": True},
+        "expert_tier": "fast", "expert_route_limit": 1,
+    }]}))
+    variant = load_variants(path, base, tmp_path)["E"]
+    assert not base.adaptive_failure_recovery
+    assert variant.identity(CONFIG_FIELDS)["settings"]["adaptive_failure_recovery"] is True
+    router = build_router(variant.settings, [ScriptedProvider("openai")])
+    tier_overrides(router, variant)
+    variant.limit_routes(router)
+    assert len(router.routes["answer_recovery"]) == 1
+    assert router.routes["answer_recovery"][0].params["service_tier"] == "fast"
+    assert "answer_recovery" not in router.hedge_after_s
+    # An unpriced recovery cannot hide behind otherwise priced primary/expert routes.
+    router.routes = {**router.routes, "answer_recovery": [
+        replace(router.routes["answer_recovery"][0], model="unpriced-recovery")
+    ]}
+    with pytest.raises(ValueError, match="rate missing"):
+        validate_route_prices(router, variant.settings)

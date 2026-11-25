@@ -31,7 +31,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -322,6 +322,58 @@ class AnswerHost(Protocol):
     async def qa_get(self, qhash: str) -> dict[str, Any] | None: ...
 
     async def qa_put(self, qhash: str, value: Mapping[str, Any]) -> None: ...
+
+
+def _transient_before_text(events: list[AttemptEvent]) -> bool:
+    """Recovery needs complete typed evidence; mixed refusals and unknowns fail closed."""
+    if not events or any(event.job != "fast" for event in events):
+        return False
+    # A refusal is a completed first chunk, even when another route later fails.
+    # Reject any first chunk, completion, hedge cancellation, or incomplete lifecycle.
+    if any(event.status not in {"started", "failed"} for event in events):
+        return False
+    started = [event.attempt_id for event in events if event.status == "started"]
+    failures = [event for event in events if event.status == "failed"]
+    if (
+        not started
+        or len(started) != len(set(started))
+        or len(failures) != len(started)
+        or {event.attempt_id for event in failures} != set(started)
+    ):
+        return False
+    categories = {
+        "connect_error",
+        "connect_timeout",
+        "pool_timeout",
+        "read_timeout",
+        "write_timeout",
+        "provider_timeout",
+        "first_token_timeout",
+    }
+    # SDK connection_error alone includes permanent TLS/configuration failures. Only
+    # explicit abrupt-close/read/write/reset causes justify this bounded experiment.
+    closure_causes = {
+        "SSLZeroReturnError",
+        "ConnectionResetError",
+        "ReadError",
+        "WriteError",
+        "RemoteProtocolError",
+    }
+    certificate_causes = {"SSLCertVerificationError", "CertificateError"}
+    return all(
+        event.stage == "first_chunk"
+        and not certificate_causes.intersection(event.cause_types)
+        and (
+            event.http_status in {500, 502, 503, 504, 529} and event.error_category == "http_error"
+            if event.http_status is not None
+            else event.error_category in categories
+            or (
+                event.error_category == "connection_error"
+                and bool(closure_causes.intersection(event.cause_types))
+            )
+        )
+        for event in failures
+    )
 
 
 class AnswerEngine:
@@ -649,6 +701,7 @@ class AnswerEngine:
             "stopped": False, "first_sentence_at": None,
             "stages": {}, "router_started_at": None, "raw_first_chunk_at": None,
             "detector_depth_at_start": q.depth, "question_type_at_start": q.qtype,
+            "recovery": {},
         }  # fmt: skip
         boundary = SentenceBoundary()
         strategy = self.strategy(q)
@@ -767,6 +820,7 @@ class AnswerEngine:
             stored = {
                 **lat,
                 **stage_timings(),
+                **state["recovery"],
                 "provider": done_info.provider if done_info else source,
                 "fallback_attempt": done_info.attempt if done_info else 0,
                 "stop_reason": done_info.stop_reason if done_info else None,
@@ -832,7 +886,13 @@ class AnswerEngine:
         def error(code: str) -> None:
             host.emit(models.AnswerError, question_id=q.qid, **{"pass": pass_}, code=code)
             host.log_entry(
-                {"kind": "answer_error", "question_id": str(q.qid), "pass": pass_, "code": code}
+                {
+                    "kind": "answer_error",
+                    "question_id": str(q.qid),
+                    "pass": pass_,
+                    "code": code,
+                    **state["recovery"],
+                }
             )
 
         async def prepared(answer: PreparedAnswer) -> bool:
@@ -954,7 +1014,10 @@ class AnswerEngine:
                 )
             state["req"] = req
 
+            attempt_events: list[AttemptEvent] = []
+
             def on_attempt(event: AttemptEvent) -> None:
+                attempt_events.append(event)
                 # This ledger includes abandoned retries; do not sum it with answer costs.
                 entry = {
                     **asdict(event),
@@ -963,6 +1026,7 @@ class AnswerEngine:
                     "pass": pass_,
                     "answer_strategy": strategy,
                     "usage_observed": event.usage is not None,
+                    **state["recovery"],
                 }
                 if event.usage is not None:
                     entry["cost_usd"] = self._cost(
@@ -977,6 +1041,79 @@ class AnswerEngine:
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
                 host.llm_status(False)
+
+            async def routed_chunks() -> AsyncGenerator[str | LLMDone]:
+                try:
+                    async with contextlib.aclosing(
+                        host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
+                    ) as primary:
+                        async for chunk in primary:
+                            yield chunk
+                except AllRoutesFailedError as failure:
+                    recovery_routes = host.router.routes.get("answer_recovery", [])
+                    current = asyncio.current_task()
+                    if (
+                        not host.settings.adaptive_failure_recovery
+                        or strategy not in {"adaptive", "adaptive_on_demand"}
+                        or pass_ != "fast"
+                        or plan is None
+                        or plan.job != "fast"
+                        or job != "fast"
+                        or failure.refused
+                        or self._closing
+                        or q.cancelled
+                        or q.discarded
+                        or q.superseded
+                        or (current is not None and current.cancelling())
+                        or state["raw_first_chunk_at"] is not None
+                        or state["parts"]
+                        or state["emitted"]
+                        or q.held_text
+                        or q.fast_text
+                        or q.delta_counts.get(pass_, 0)
+                        or not _transient_before_text(attempt_events)
+                        or len(recovery_routes) != 1
+                        or recovery_routes[0].refusal_only
+                        or host.router.hedge_after_s.get("answer_recovery")
+                    ):
+                        raise
+                    route = recovery_routes[0]
+                    recovery = {
+                        "failure_recovery": True,
+                        "failure_recovery_reason": "transient_primary_exhausted_before_text",
+                        "failure_recovery_start_ms": max(0, int((time.monotonic() - q.t0) * 1000)),
+                        "failure_recovery_primary_job": job,
+                        "failure_recovery_job": "answer_recovery",
+                        "failure_recovery_model": route.model,
+                        "failure_recovery_provider": route.provider.name,
+                        "failure_recovery_categories": sorted(
+                            {
+                                event.error_category
+                                for event in attempt_events
+                                if event.status == "failed" and event.error_category is not None
+                            }
+                        ),
+                    }
+                    state["recovery"] = recovery
+                    state["job"] = "answer_recovery"
+                    host.log_entry(
+                        {
+                            "kind": "answer_recovery",
+                            "question_id": str(q.qid),
+                            "pass": pass_,
+                            "answer_strategy": strategy,
+                            **recovery,
+                        }
+                    )
+                    # Same original frozen question/evidence/depth/output cap, no quick
+                    # answer expansion. The outer bounded_chunks still owns ONE deadline.
+                    async with contextlib.aclosing(
+                        host.router.stream(
+                            "answer_recovery", req, on_fallback, on_attempt=on_attempt
+                        )
+                    ) as recovered:
+                        async for chunk in recovered:
+                            yield chunk
 
             async def stream() -> LLMDone:
                 finished: LLMDone | None = None
@@ -993,7 +1130,11 @@ class AnswerEngine:
                         self._on_read(q, reader.reading)
                     return text
 
-                chunks = host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
+                chunks = (
+                    routed_chunks()
+                    if host.settings.adaptive_failure_recovery
+                    else host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
+                )
                 if strategy != "legacy_dual":
                     chunks = bounded_chunks(
                         chunks,
@@ -1020,8 +1161,10 @@ class AnswerEngine:
             state["model"] = model
             match = q.match
             if (
-                strategy == "legacy_dual" and pass_ == "fast"
-                and match is not None and not match.done()
+                strategy == "legacy_dual"
+                and pass_ == "fast"
+                and match is not None
+                and not match.done()
             ):
                 # Candidates keep already-dispatched model progress rather than cancel it
                 # for a late prepared hit that could become stale before held release.
@@ -1053,7 +1196,13 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs()) if q.screen is None else []
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded and host.store_text() and reuse:
+            if (
+                not q.cancelled
+                and not q.superseded
+                and host.store_text()
+                and reuse
+                and not state["recovery"]
+            ):
                 task = asyncio.create_task(self._cache_put(qhash, slot, text, refs, cache_version))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
@@ -1121,6 +1270,7 @@ class AnswerEngine:
             "answer_strategy": self.strategy(q),
             "response_length": self._preferences(q, pass_)[1],
             "request_job": state.get("job"),
+            **state.get("recovery", {}),
         }
         req = cast(LLMRequest | None, state.get("req"))
         routes = self.host.router.routes.get(str(state.get("job") or pass_)) or []

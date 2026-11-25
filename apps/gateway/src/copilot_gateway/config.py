@@ -140,6 +140,9 @@ class Settings(CoreSettings):
     answer_architecture: Literal[
         "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"
     ] = "legacy_dual"
+    # Experimental: one independent expert attempt after a typed transient primary failure,
+    # only before any answer text. Off until paired failure-recovery evidence supports it.
+    adaptive_failure_recovery: bool = False
     adaptive_max_tokens: int = Field(default=1200, ge=100, le=4000)
     adaptive_stream_idle_timeout_s: float = Field(default=30.0, gt=0, le=120)
     adaptive_stream_total_timeout_s: float = Field(default=90.0, gt=0, le=300)

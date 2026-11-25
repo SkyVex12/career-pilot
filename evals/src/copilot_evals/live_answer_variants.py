@@ -32,6 +32,7 @@ SETTINGS_FIELDS = {
     "deep_hedge_ms",
     "fast_pass_max_tokens",
     "deep_pass_max_tokens",
+    "adaptive_failure_recovery",
     "adaptive_max_tokens",
     "adaptive_stream_idle_timeout_s",
     "adaptive_stream_total_timeout_s",
@@ -101,8 +102,8 @@ def load_rate_card(settings: Settings, path: Path) -> tuple[Settings, dict[str, 
 
 def validate_route_prices(router: ModelRouter, settings: Settings) -> None:
     """Reject unpriced eval routes before any model request, including possible retries."""
-    for job in ("fast", "deep_light", "deep"):
-        for route in router.routes[job]:
+    for job in ("fast", "deep_light", "deep", "answer_recovery"):
+        for route in router.routes.get(job, []):
             tier = route.params.get("service_tier") or "standard"
             if tier in ("auto", "default"):
                 tier = "standard"
