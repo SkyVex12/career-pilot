@@ -1,6 +1,10 @@
 //! Quit removes the app immediately; session cleanup finishes in the background.
 use crate::{AppState, Res, settings::Settings};
-use copilot_client::{auth::TokenProvider, engine::Engine, net::client};
+use copilot_client::{
+    auth::TokenProvider,
+    engine::Engine,
+    net::{client, close::StopReason},
+};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -93,15 +97,16 @@ async fn finish(app: &AppHandle, state: &AppState, quit: &QuitState) -> Res<()> 
     if let Some(target) = target {
         *quit.pending.lock().unwrap() = Some(target.clone());
         target.engine.stop_audio();
-        tokio::time::timeout(Duration::from_secs(15), target.engine.end())
+        let reason = tokio::time::timeout(Duration::from_secs(15), target.engine.end())
             .await
             .map_err(|_| "The call has not finished ending. Check your connection and try Exit again.")?;
+        require_retention(reason)?;
         let stats = target.engine.stats();
         let sid = target.engine.session_id().or_else(|| stats.session_ids.last().copied());
         // A dropped socket or an end timeout does not acknowledge the server-side end.
         // Reconnect only to this exact call; never end an unrelated last-session ID.
         if let Some(sid) = sid {
-            if !end_confirmed(stats.close_codes.last().copied().flatten()) {
+            if !current_end_confirmed(reason, stats.close_codes.last().copied().flatten()) {
                 let url = state.fill_url(app, &target.settings.session_url(), true).await?;
                 let code = tokio::time::timeout(
                     Duration::from_secs(15),
@@ -131,6 +136,22 @@ async fn finish(app: &AppHandle, state: &AppState, quit: &QuitState) -> Res<()> 
     crate::background::mark_exiting(app);
     app.exit(0);
     Ok(())
+}
+
+fn require_retention(reason: Option<StopReason>) -> Res<()> {
+    if reason == Some(StopReason::RetentionFailed) {
+        // A later normal close cannot override an explicit persistence failure. Keep the
+        // pending target and saved id so the existing quit-error UI can report it.
+        Err("The gateway could not save all call data. Check History for what is available.".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn current_end_confirmed(reason: Option<StopReason>, code: Option<u16>) -> bool {
+    // Close history spans reconnects and automatic 4408 restarts. A later local timeout
+    // has no close frame and must not borrow that older connection's confirmation.
+    matches!(reason, Some(StopReason::Ended | StopReason::NoMinutes)) && end_confirmed(code)
 }
 
 fn end_confirmed(code: Option<u16>) -> bool {
@@ -165,6 +186,31 @@ mod tests {
         assert!(!gate.claim_install(false));
         drop(quitting);
         assert!(gate.begin_start(false).is_ok());
+    }
+    #[test]
+    fn explicit_retention_failure_cannot_be_masked_by_a_normal_close() {
+        assert!(end_confirmed(Some(1000)));
+        assert!(require_retention(Some(StopReason::RetentionFailed)).is_err());
+    }
+    #[test]
+    fn unconfirmed_or_missing_terminal_reason_still_requires_the_existing_close_check() {
+        for reason in [None, Some(StopReason::EndUnconfirmed), Some(StopReason::Ended)] {
+            assert!(require_retention(reason).is_ok());
+            assert!(!end_confirmed(None));
+            assert!(!end_confirmed(Some(4500)));
+        }
+    }
+    #[test]
+    fn old_close_codes_cannot_confirm_a_new_unconfirmed_or_failed_end() {
+        for code in [Some(1000), Some(4408), Some(4403)] {
+            assert!(end_confirmed(code));
+            for reason in [None, Some(StopReason::EndUnconfirmed), Some(StopReason::RetentionFailed)] {
+                assert!(!current_end_confirmed(reason, code));
+            }
+        }
+        assert!(current_end_confirmed(Some(StopReason::Ended), Some(1000)));
+        assert!(current_end_confirmed(Some(StopReason::Ended), Some(4408)));
+        assert!(current_end_confirmed(Some(StopReason::NoMinutes), Some(4403)));
     }
     #[test]
     fn only_a_confirmed_end_or_already_gone_call_allows_exit() {

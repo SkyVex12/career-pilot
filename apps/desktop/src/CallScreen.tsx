@@ -28,7 +28,7 @@ import { useWorkspaceCallBusy, useWorkspaceCompactWindow } from "./Shell";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
-import { STOPPED, postCallFor, type SessionView } from "./session";
+import { STOPPED, stopMessage, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
@@ -359,7 +359,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const endOther = async () => { setMessage(null); try { setMessage(`${await api.endOtherSession()}. You can start now.`); } catch (error) { setMessage(String(error)); } };
   const employer = work.employers?.find(e => e.id === employerId);
   const forWhat = atWork ? employer?.name ?? "No company" : application ? `${application.company} · ${application.role}` : "Base resume";
-  const stopped = session.stopped && ["unauthorized", "session_active", "no_minutes"].includes(session.stopped) && !running ? session.stopped : null;
+  const stopped = session.stopped && ["unauthorized", "session_active", "no_minutes", "retention_failed", "end_unconfirmed"].includes(session.stopped) && !running ? session.stopped : null;
   if (session.seat && running) return <Watching s={session} dispatch={dispatch ?? (() => undefined)} />;
   if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} responseLength={responseLength} onResponseLength={changeLength} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
   const disabled = busy || joining;
@@ -382,7 +382,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
             {mini.error && <Banner tone="danger">{mini.error}</Banner>}
             {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
-            {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
+            {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined}>{stopMessage(stopped)}</Banner>}
             {message && <Banner tone="danger">{message}</Banner>}
           </div>
           <div className="call-setup-grid">

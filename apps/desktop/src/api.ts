@@ -9,7 +9,7 @@ import type { AnswerStyle, Channel, LatencyMs, Mode, ResponseLength, QuestionTyp
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** "outdated": the gateway closed with 4426; the app is updating. */
-export type StopReason = "ended" | "no_minutes" | "session_active" | "replaced" | "unauthorized" | "outdated" | "seat_removed" | "seat_closed" | "left";
+export type StopReason = "ended" | "retention_failed" | "end_unconfirmed" | "no_minutes" | "session_active" | "replaced" | "unauthorized" | "outdated" | "seat_removed" | "seat_closed" | "left";
 
 export type ConnectionState =
   | { state: "connecting"; attempt: number }

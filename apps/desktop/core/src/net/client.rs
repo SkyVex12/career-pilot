@@ -264,6 +264,7 @@ pub fn spawn(
         adopting: adopt.is_some(),
         last_capture_ms: 0,
         ending: false,
+        retention_failed: false,
         backoff: Backoff::new(),
         rng: StdRng::from_os_rng(),
         token_expires_at: None,
@@ -293,6 +294,7 @@ struct Client {
     adopting: bool,
     last_capture_ms: u32,
     ending: bool,
+    retention_failed: bool,
     backoff: Backoff,
     rng: StdRng,
     token_expires_at: Option<SystemTime>,
@@ -334,7 +336,7 @@ impl Client {
                     close_code: last_close,
                 });
                 if self.wait_offline(delay).await {
-                    return self.stop(StopReason::Ended);
+                    return self.stop(self.shutdown_reason());
                 }
             }
             if self.ending && self.session_id.is_none() {
@@ -361,7 +363,7 @@ impl Client {
             self.stats().connects += 1;
             let outcome = self.serve(ws).await;
             let (code, retry_after_ms) = match outcome {
-                Outcome::Shutdown => return self.stop(StopReason::Ended),
+                Outcome::Shutdown => return self.stop(self.shutdown_reason()),
                 Outcome::Closed { code, reason, retry_after_ms } => {
                     self.stats().close_codes.push(code);
                     self.emit(ClientEvent::Closed { code, reason });
@@ -372,10 +374,12 @@ impl Client {
             let ctx = CloseContext {
                 has_session: self.session_id.is_some(),
                 ending: self.ending,
+                retention_failed: self.retention_failed,
                 retry_after_ms,
                 refreshed_after_401,
             };
             if self.adopting
+                && !self.retention_failed
                 && code.and_then(copilot_protocol::CloseCode::from_code)
                     == Some(copilot_protocol::CloseCode::NoStart)
             {
@@ -415,6 +419,16 @@ impl Client {
         }
     }
 
+    fn shutdown_reason(&self) -> StopReason {
+        if self.retention_failed {
+            StopReason::RetentionFailed
+        } else if self.ending && self.session_id.is_some() {
+            StopReason::EndUnconfirmed
+        } else {
+            StopReason::Ended
+        }
+    }
+
     fn stop(&self, reason: StopReason) -> StopReason {
         self.state(ConnectionState::Stopped { reason });
         reason
@@ -423,6 +437,7 @@ impl Client {
     /// The next connection starts a new session: frame numbering and the ring start over.
     fn new_session(&mut self) {
         self.session_id = None;
+        self.retention_failed = false;
         self.last_seq = 0;
         self.frame_seq = [0, 0];
         self.me_audio = false;
@@ -611,6 +626,9 @@ impl Client {
                                 }
                             }
                             ServerMessage::ServerError(err) => {
+                                if err.fatal && err.code == "retention_unavailable" {
+                                    self.retention_failed = true;
+                                }
                                 if err.retry_after_ms.is_some() {
                                     retry_after_ms = err.retry_after_ms;
                                 }
@@ -725,14 +743,36 @@ pub async fn end_session(
         Client::send_json(&mut ws, &m).await?;
     }
     let deadline = tokio::time::Instant::now() + END_TIMEOUT;
+    let mut retention_failed = false;
     loop {
         match tokio::time::timeout_at(deadline, ws.next()).await {
-            Ok(Some(Ok(Message::Close(frame)))) => return Ok(frame.map(|f| u16::from(f.code))),
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if let Ok(ServerMessage::ServerError(error)) = parse_server(&text)
+                    && error.fatal
+                    && error.code == "retention_unavailable"
+                {
+                    retention_failed = true;
+                }
+            }
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                return end_result(frame.map(|f| u16::from(f.code)), retention_failed);
+            }
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(e))) => return Err(e.to_string()),
-            Ok(None) => return Ok(None),
-            Err(_) => return Err("timed out waiting for the gateway to end the session".into()),
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => return end_result(None, retention_failed),
         }
+    }
+}
+
+fn end_result(code: Option<u16>, retention_failed: bool) -> Result<Option<u16>, String> {
+    if retention_failed {
+        return Err("The gateway could not save all call data. Check History for what is available.".into());
+    }
+    // Existing exit semantics accept an already absent or exhausted call, too. Any other
+    // close, timeout or transport loss leaves completion unconfirmed and the saved id intact.
+    if matches!(code, Some(1000 | 4408 | 4403)) {
+        Ok(code)
+    } else {
+        Err("The gateway did not confirm that the call ended. Check History before trying again.".into())
     }
 }
 

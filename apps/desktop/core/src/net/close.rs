@@ -20,8 +20,12 @@ pub enum Delay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
-    /// 1000, or the socket closed after the user ended the session: show the post-call screen.
+    /// 1000: the gateway completed its normal close; show the post-call screen.
     Ended,
+    /// The gateway explicitly reported a fatal persistence failure.
+    RetentionFailed,
+    /// Stop was requested, but the gateway did not confirm its normal close.
+    EndUnconfirmed,
     /// 4403: show the upgrade prompt; do not retry.
     NoMinutes,
     /// 4409: offer to end the other session.
@@ -57,6 +61,8 @@ pub struct CloseContext {
     pub has_session: bool,
     /// The user ended the session (session.end was sent).
     pub ending: bool,
+    /// A fatal retention_unavailable error was received for this session.
+    pub retention_failed: bool,
     /// `retry_after_ms` of the last `error` message on this connection.
     pub retry_after_ms: Option<u64>,
     /// The previous close was a 4401 and the token was refreshed since.
@@ -67,10 +73,17 @@ pub struct CloseContext {
 pub fn on_close(code: Option<u16>, ctx: CloseContext) -> CloseAction {
     use CloseAction::{Reconnect, Stop};
     let code = code.and_then(CloseCode::from_code);
-    if ctx.ending && !matches!(code, Some(CloseCode::NoMinutes)) {
-        // session.end was sent; whatever the close, the session is over for the user. If the
-        // socket dropped first, the gateway ends the session after the resume window.
-        return Stop(StopReason::Ended);
+    if ctx.retention_failed {
+        return Stop(StopReason::RetentionFailed);
+    }
+    if ctx.ending {
+        // A local Stop ends capture; only the gateway's normal close confirms completion.
+        // A dropped connection may still finish on the server, but that is unknown here.
+        return Stop(match code {
+            Some(CloseCode::Normal) => StopReason::Ended,
+            Some(CloseCode::NoMinutes) => StopReason::NoMinutes,
+            _ => StopReason::EndUnconfirmed,
+        });
     }
     let resume = ctx.has_session;
     match code {
@@ -211,12 +224,23 @@ mod tests {
     }
 
     #[test]
-    fn after_session_end_any_close_ends() {
+    fn stop_requires_normal_close_to_confirm_completion() {
         let ctx = CloseContext { ending: true, ..live() };
-        for code in [None, Some(1000), Some(1001), Some(4500), Some(4410)] {
-            assert_eq!(on_close(code, ctx), CloseAction::Stop(StopReason::Ended), "{code:?}");
+        assert_eq!(on_close(Some(1000), ctx), CloseAction::Stop(StopReason::Ended));
+        for code in [None, Some(1001), Some(1006), Some(1011), Some(4500), Some(4410)] {
+            assert_eq!(on_close(code, ctx), CloseAction::Stop(StopReason::EndUnconfirmed), "{code:?}");
         }
         assert_eq!(on_close(Some(4403), ctx), CloseAction::Stop(StopReason::NoMinutes));
+    }
+
+    #[test]
+    fn explicit_retention_failure_stops_even_without_user_stop() {
+        for ending in [false, true] {
+            let ctx = CloseContext { ending, retention_failed: true, ..live() };
+            for code in [None, Some(1000), Some(1001), Some(4500)] {
+                assert_eq!(on_close(code, ctx), CloseAction::Stop(StopReason::RetentionFailed));
+            }
+        }
     }
 
     #[test]

@@ -532,6 +532,8 @@ export function useSession(): [SessionView, (a: Action) => void] {
 /// Why a call stopped, in words.
 export const STOPPED: Record<StopReason, string> = {
   ended: "Call ended",
+  retention_failed: "Call stopped; saving failed",
+  end_unconfirmed: "Call stopped; saving not confirmed",
   no_minutes: "No minutes left",
   session_active: "Another call is active",
   replaced: "Continued in another app",
@@ -541,6 +543,13 @@ export const STOPPED: Record<StopReason, string> = {
   seat_closed: "This seat is closed",
   left: "You left the call",
 };
+
+/** A stopped call may have saved only part of its history; do not imply data was lost. */
+export function stopMessage(reason: StopReason): string | undefined {
+  if (reason === "retention_failed") return "The gateway could not save all call data. Check History for what is available.";
+  if (reason === "end_unconfirmed") return "The connection closed before the gateway confirmed completion. Check History for what is available.";
+  return undefined;
+}
 
 /** The call whose post-call screen to show, if any: one of this app's own calls that ended.
  * A guest never gets one: the call was someone else's, and it may still be going on. */
