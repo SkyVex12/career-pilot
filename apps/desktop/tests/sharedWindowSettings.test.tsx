@@ -118,3 +118,26 @@ it("keeps answer generation preferences out of guest reading controls", () => {
   expect(screen.queryByRole("radiogroup", { name: "Response length" })).not.toBeInTheDocument();
   expect(screen.queryByRole("radiogroup", { name: "Answer format" })).not.toBeInTheDocument();
 });
+
+it.each([
+  ["bullets", "Bullets", "default", "Default"],
+  ["bullets", "Bullets", "concise", "Concise"],
+  ["bullets", "Bullets", "detailed", "Detailed"],
+  ["paragraph", "Paragraphs", "default", "Default"],
+  ["paragraph", "Paragraphs", "concise", "Concise"],
+  ["paragraph", "Paragraphs", "detailed", "Detailed"],
+] as const)("keeps format %s (%s) independent of length %s (%s)", async (style, styleLabel, length, lengthLabel) => {
+  // Begin with the opposite choices so each click must send a real live update.
+  localStorage.setItem("copilot.answerStyle", style === "bullets" ? "paragraph" : "bullets");
+  localStorage.setItem("copilot.responseLength", length === "default" ? "detailed" : "default");
+  render(<ReadingSettings running busy={false} run={action => { void action(); }} />);
+  await userEvent.click(screen.getByRole("radio", { name: styleLabel }));
+  await userEvent.click(screen.getByRole("radio", { name: lengthLabel }));
+  expect(screen.getByRole("radio", { name: styleLabel })).toBeChecked();
+  expect(screen.getByRole("radio", { name: lengthLabel })).toBeChecked();
+  const updates = ipc.calls.filter(call => call.cmd === "set_answer_style");
+  expect(updates[updates.length - 1]?.args).toEqual({ style, responseLength: length });
+  expect(localStorage.getItem("copilot.answerStyle")).toBe(style);
+  expect(localStorage.getItem("copilot.responseLength")).toBe(length);
+  expect(ipc.calls.some(call => call.cmd === "expand_answer" || call.cmd === "answer_now")).toBe(false);
+});

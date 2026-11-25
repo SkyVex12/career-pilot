@@ -56,8 +56,8 @@ export function DebugPanel({ session }: { session: SessionView }) {
                 <th>Question</th>
                 <th>From</th>
                 <th title="Client: speech end to question.detected">detected</th>
-                <th title="Client: speech end to the first fast answer word">first word</th>
-                <th title="Client: speech end to the first deep answer word">deep word</th>
+                <th title="Native receipt: speech end to the first non-empty fast delta; excludes UI rendering">first word</th>
+                <th title="Native receipt: speech end (or expand tap) to the first non-empty deep delta; excludes UI rendering">deep word</th>
                 <th title="Gateway latency_ms of the fast pass">gw turn_end / detector / first_token / first_delta / total</th>
               </tr>
             </thead>

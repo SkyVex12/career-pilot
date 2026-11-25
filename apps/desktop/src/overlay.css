@@ -574,6 +574,12 @@ html[data-window="overlay"] #root {
   border-top: 1px solid var(--ov-line);
 }
 
+/* Keep the first sentence at a fixed top while an adaptive answer grows or completes.
+   The legacy card retains its original content-sized behavior. */
+.ov-now-pinned.is-adaptive {
+  flex: 0 0 55%;
+}
+
 /* Compact: the answers only, with less chrome. The type keeps its size. */
 .ov.is-compact .ov-pane-body {
   padding: var(--space-2) var(--space-3) var(--space-4);

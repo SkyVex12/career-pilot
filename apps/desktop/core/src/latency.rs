@@ -1,6 +1,7 @@
 //! Per-question latency for the debug panel: from the end of the other side's speech to the
-//! first answer word on screen, measured on the client, next to the gateway's own
-//! `latency_ms` from `answer.done`.
+//! first non-empty answer delta received by the native client, next to the gateway's own
+//! `latency_ms` from `answer.done`. This is receipt timing, not WebView paint or useful
+//! sentence timing; native event forwarding and UI rendering happen afterward.
 //!
 //! The anchor is the true end of speech (the VAD's edge, so its hangover counts, as in the
 //! replay tool), or the moment a question was forced with the hotkey or typed. A deep pass the
