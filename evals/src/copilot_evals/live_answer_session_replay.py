@@ -36,12 +36,19 @@ from copilot_core.packs import (
 from copilot_core.pricing import ModelPrice
 from copilot_core.providers import close_providers, make_providers
 from copilot_evals.live_answer_artifacts import DispatchJournal, immutable, run_lock, source_archive
+from copilot_evals.live_answer_checkpoints import (
+    POLICY,
+    LoopLagMonitor,
+    RecordDispatchJournal,
+    RecordStore,
+)
 from copilot_evals.live_answer_eval import distribution, fingerprint
 from copilot_evals.live_answer_replay import (
     STRATEGIES,
     TRIAL,
     AuditBudget,
     AuditProvider,
+    ProgressSnapshots,
     ProviderAdmission,
     budget_limit,
     connectivity_check,
@@ -106,13 +113,19 @@ class SessionBudget(AuditBudget):
     def reserve(self, model: str, payload: Any, output: int, tier: str = "standard") -> int:
         # Anthropic request tier names differ from response billing tier names.
         tier = {"standard_only": "standard", "auto": "priority"}.get(tier, tier)
-        ticket = super().reserve(model, payload, output, tier)
-        self.entries[ticket]["purpose"] = PURPOSE.get()
-        save(self.path, self.entries)
-        return ticket
+        return super().reserve(model, payload, output, tier)
+
+    def checkpoint(self, ticket: int) -> None:
+        # Persist purpose in the initial reservation, without another full-array save.
+        self.entries[ticket].setdefault("purpose", PURPOSE.get())
+        super().checkpoint(ticket)
 
 
 class SessionAuditProvider(AuditProvider):
+    def checkpoint(self, record: dict[str, Any]) -> None:
+        record.setdefault("purpose", PURPOSE.get())
+        super().checkpoint(record)
+
     async def stream(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> AsyncGenerator[LLMChunk]:
@@ -143,6 +156,7 @@ class SessionAuditProvider(AuditProvider):
         token = PURPOSE.set("detector_decisions")
         started = time.monotonic()
         record: dict[str, Any] = {
+            "request_id": str(uuid4()),
             "trial_id": TRIAL.get(),
             "purpose": "detector_decisions",
             "model": model,
@@ -151,8 +165,8 @@ class SessionAuditProvider(AuditProvider):
             "started_epoch_s": time.time(),
         }
         self.requests.append(record)
-        save(self.directory / "request-identities.json", self.requests)
         try:
+            self.checkpoint(record)
             result = await super().decide(model, input, questions)
             record["status"] = "completed"
             return result
@@ -161,8 +175,10 @@ class SessionAuditProvider(AuditProvider):
             raise
         finally:
             record["elapsed_s"] = time.monotonic() - started
-            save(self.directory / "request-identities.json", self.requests)
-            PURPOSE.reset(token)
+            try:
+                self.checkpoint(record)
+            finally:
+                PURPOSE.reset(token)
 
 
 class FaultProvider:
@@ -718,6 +734,7 @@ async def replay_session(
     trial_id: str,
     timeout_s: float = 30,
     attempt_events: list[dict[str, Any]] | None = None,
+    attempt_store: RecordStore | None = None,
 ) -> dict[str, Any]:
     token = TRIAL.set(trial_id)
     control: dict[str, Any] = {"timeout_delay_s": 0.2, "injected_failures": 0}
@@ -735,11 +752,14 @@ async def replay_session(
     )
     await client_db.set(keys.digest(user), digest.model_dump_json(by_alias=True))
     them, me = TextSTTControl(final_delay_s=0.12), TextSTTControl(final_delay_s=0.01)
-    router = build_router(
-        settings,
-        providers,
-        on_attempt=lambda event: attempt_events.append({"trial_id": TRIAL.get(), **asdict(event)}),
-    )
+
+    def on_attempt(event: Any) -> None:
+        entry = {"trial_id": TRIAL.get(), **asdict(event)}
+        attempt_events.append(entry)
+        if attempt_store is not None:
+            attempt_store.put("attempts", f"{event.attempt_id}:{event.status}", entry)
+
+    router = build_router(settings, providers, on_attempt=on_attempt)
     services = Services(
         settings=settings,
         store=GatewayStore(FakeAsyncValkey(server=server), settings),
@@ -1129,6 +1149,11 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         ],
     )
     identity_path = directory / "identity.json"
+    use_records = (
+        directory / "checkpoint-records" / "manifest.json"
+    ).exists() or not identity_path.exists()
+    if use_records:
+        identity["checkpoint_policy"] = POLICY
     if identity_path.exists():
         previous = json.loads(identity_path.read_text("utf-8"))
         if (
@@ -1143,15 +1168,28 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
     immutable(identity_path, identity)
     immutable(directory / "scenarios.json", chosen)
 
-    def read_list(name: str) -> list[dict[str, Any]]:
+    circuit = FailureCircuit(3)
+    gate_path = directory / "session-admission-stop.json"
+    gate = DispatchGate(
+        args.max_inflight, on_stop=lambda reason: save(gate_path, {"reason": reason})
+    )
+    if gate_path.exists():
+        gate.stop(json.loads(gate_path.read_text("utf-8"))["reason"])
+    store = RecordStore(directory) if use_records else None
+    if store is not None:
+        store.on_error = lambda: gate.stop("checkpoint_error")
+
+    def read_list(kind: str, name: str) -> list[dict[str, Any]]:
+        if store is not None:
+            return store.read(kind)
         path = directory / name
         return json.loads(path.read_text("utf-8")) if path.exists() else []
 
-    requests = read_list("request-identities.json")
-    attempts = read_list("provider-attempts.json")
-    results = read_list("sessions.json")
+    requests = read_list("requests", "request-identities.json")
+    attempts = read_list("attempts", "provider-attempts.json")
+    results = read_list("sessions", "sessions.json")
     budget = SessionBudget(
-        directory, settings, math.inf if args.max_cost is None else args.max_cost
+        directory, settings, math.inf if args.max_cost is None else args.max_cost, store=store
     )
     schedule = [
         item
@@ -1175,25 +1213,71 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         if result.get("trial_id") != expected or expected not in planned or expected in completed:
             raise ValueError("Duplicate or mismatched completed session checkpoint")
         completed.add(expected)
-    journal = DispatchJournal(
-        directory,
-        planned,
-        completed,
+    attempted = (
         {str(row["trial_id"]) for row in requests if row.get("trial_id")}
-        | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")},
+        | {str(row["trial_id"]) for row in budget.entries if row.get("trial_id")}
+        | {str(row["trial_id"]) for row in attempts if row.get("trial_id")}
     )
-    circuit = FailureCircuit(3)
-    gate_path = directory / "session-admission-stop.json"
-    gate = DispatchGate(
-        args.max_inflight, on_stop=lambda reason: save(gate_path, {"reason": reason})
+    journal = (
+        RecordDispatchJournal(store, planned, completed, attempted)
+        if store is not None
+        else DispatchJournal(directory, planned, completed, attempted)
     )
-    if gate_path.exists():
-        gate.stop(json.loads(gate_path.read_text("utf-8"))["reason"])
+    progress = ProgressSnapshots(directory)
+    started_trials: list[str] = []
+    invocation_id = str(uuid4())
+    invocation_started = time.time()
+
+    def progress_value() -> dict[str, Any]:
+        states = Counter(journal.states.values())
+        return {
+            "planned_sessions": len(planned),
+            "completed": len(results),
+            "in_flight": states["in_flight"],
+            "not_started": states["not_started"],
+            "ambiguous": states["ambiguous"],
+            "circuit_reason": gate.reason or circuit.reason,
+            "provider_admission": gate.snapshot(),
+            "progress_snapshot_errors": progress.diagnostics(),
+        }
 
     def checkpoint() -> None:
-        save(directory / "sessions.json", results)
-        save(directory / "provider-attempts.json", attempts)
         journal.checkpoint()
+        if store is None:
+            save(directory / "sessions.json", results)
+            save(directory / "provider-attempts.json", attempts)
+        progress.active(progress_value())
+
+    async def export_after_drain(monitor: LoopLagMonitor | None = None) -> None:
+        if store is not None:
+            store.phase = "drained"
+            for kind, filename in (
+                ("sessions", "sessions.json"),
+                ("requests", "request-identities.json"),
+                ("attempts", "provider-attempts.json"),
+                ("cost", "cost.json"),
+            ):
+                store.export(kind, filename)
+            if isinstance(journal, RecordDispatchJournal):
+                journal.export()
+            telemetry = {
+                "invocation_id": invocation_id,
+                "started_epoch_s": invocation_started,
+                "finished_epoch_s": time.time(),
+                "started_trials": started_trials,
+                "checkpoint_writes": store.telemetry(),
+                "event_loop_lag": monitor.summary() if monitor is not None else None,
+            }
+            # Preserve measured earlier invocations when a no-dispatch resume refreshes exports.
+            if started_trials or not (directory / "checkpoint-write-telemetry.json").exists():
+                save(directory / "checkpoint-write-telemetry.json", store.telemetry())
+                if monitor is not None:
+                    save(directory / "event-loop-lag.json", monitor.summary())
+            history = directory / "instrumentation-invocations"
+            history.mkdir(exist_ok=True)
+            save(history / f"{invocation_id}.json", telemetry)
+        elif monitor is not None:
+            save(directory / "event-loop-lag.json", monitor.summary())
         save(
             directory / "not-started.json",
             [
@@ -1210,6 +1294,10 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 if journal.states[row["trial_id"]] != "completed"
             ],
         )
+        try:
+            await progress.final(progress_value)
+        finally:
+            save(directory / "progress-snapshot-errors.json", progress.diagnostics())
 
     checkpoint()
     pending = [row for row in scheduled if journal.states[row["trial_id"]] == "not_started"]
@@ -1217,6 +1305,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         check = await connectivity_check(settings)
         save(directory / "connectivity.json", check)
         if not check["ready"]:
+            await export_after_drain()
             return {
                 "status": "transport_unavailable",
                 "provider_calls_this_invocation": 0,
@@ -1235,7 +1324,9 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         else []
     )
     providers = [
-        LimitedProvider(SessionAuditProvider(FaultProvider(p), budget, requests, directory), gate)
+        LimitedProvider(
+            SessionAuditProvider(FaultProvider(p), budget, requests, directory, store=store), gate
+        )
         for p in raw
     ]
     semaphore = asyncio.Semaphore(args.concurrency)
@@ -1254,6 +1345,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                     or not journal.start(trial)
                 ):
                     return
+                started_trials.append(trial)
                 result = await replay_session(
                     scenario,
                     replay_settings(args.live, STRATEGIES[label]),
@@ -1261,6 +1353,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                     trial_id=trial,
                     timeout_s=args.timeout,
                     attempt_events=attempts,
+                    attempt_store=store,
                 )
                 result["rep"] = rep
                 trial_requests = [r for r in requests if r["trial_id"] == trial]
@@ -1272,10 +1365,14 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                     },
                     [row for row in trial_requests if row.get("status") != "completed"],
                 )
-                results.append(result)
                 # Durable results precede journal completion. A crash between these writes
                 # is recovered from the completed result and cannot repeat billed work.
-                save(directory / "sessions.json", results)
+                if store is not None:
+                    store.put("sessions", trial, result)
+                    results.append(result)
+                else:
+                    results.append(result)
+                    save(directory / "sessions.json", results)
                 journal.finish(trial)
                 checkpoint()
             except BaseException:
@@ -1290,6 +1387,10 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
                 return
             await one(*item)
 
+    monitor = LoopLagMonitor()
+    if store is not None:
+        store.phase = "active_workers"
+    await monitor.start()
     tasks = [asyncio.create_task(worker()) for _ in range(min(args.concurrency, len(schedule)))]
     try:
         await asyncio.gather(*tasks)
@@ -1299,8 +1400,12 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
     finally:
-        await close_providers(raw)
+        try:
+            await close_providers(raw)
+        finally:
+            await monitor.stop()
         checkpoint()
+        await export_after_drain(monitor)
     previous_summary_path = directory / "summary.json"
     previous_summary: dict[str, Any] = (
         json.loads(previous_summary_path.read_text("utf-8"))
@@ -1315,6 +1420,7 @@ async def execute_locked(args: argparse.Namespace, directory: Path) -> dict[str,
         if len(results) == len(schedule) and all(row["status"] == "completed" for row in results)
         else "partial",
         "live": args.live,
+        "checkpoint_policy": POLICY if store is not None else "legacy-aggregate",
         "planned_sessions": len(schedule),
         "sessions": len(results),
         "dispatch_states": dict(states),

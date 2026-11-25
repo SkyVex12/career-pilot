@@ -427,7 +427,7 @@ async def test_durable_result_recovers_crash_before_journal_finish(tmp_path, mon
     freeze_session_test_identity(monkeypatch)
     args = session_args(tmp_path)
     calls = []
-    original_finish = harness.DispatchJournal.finish
+    original_finish = harness.RecordDispatchJournal.finish
 
     async def replay(scenario, settings, providers, *, trial_id, **kwargs):
         calls.append(trial_id)
@@ -437,10 +437,10 @@ async def test_durable_result_recovers_crash_before_journal_finish(tmp_path, mon
         raise RuntimeError("synthetic crash between durable result and finish")
 
     monkeypatch.setattr(harness, "replay_session", replay)
-    monkeypatch.setattr(harness.DispatchJournal, "finish", crash_after_result)
+    monkeypatch.setattr(harness.RecordDispatchJournal, "finish", crash_after_result)
     with pytest.raises(RuntimeError, match="synthetic crash"):
         await harness.execute(args)
-    monkeypatch.setattr(harness.DispatchJournal, "finish", original_finish)
+    monkeypatch.setattr(harness.RecordDispatchJournal, "finish", original_finish)
     summary = await harness.execute(args)
     assert summary["sessions"] == 2
     assert summary["ambiguous_sessions"] == 0
