@@ -19,6 +19,8 @@ from copilot_gateway.testing import Reply, ScriptedProvider
 def settings(recovery=False):
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         answer_architecture="adaptive_on_demand",
         adaptive_failure_recovery=recovery,

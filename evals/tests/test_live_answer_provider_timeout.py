@@ -36,6 +36,8 @@ async def test_provider_factory_and_record_identity_keep_trial_deadline(
 ):
     settings = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         openai_detector_model="authored-fast",
         openai_detector_reasoning="none",

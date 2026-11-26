@@ -84,6 +84,8 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
     before = prompts.ADAPTIVE_SYSTEM
     settings = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         answer_architecture="adaptive_on_demand",
         openai_fast_model="offline",
@@ -151,6 +153,8 @@ async def test_parallel_pinned_prompt_substitution_is_per_engine_and_preserves_c
 def test_pinned_prompt_uses_original_request_snapshot_after_context_changes(pass_):
     settings = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
         answer_architecture="adaptive_on_demand",
         openai_fast_model="offline",
@@ -248,6 +252,8 @@ def test_rate_card_merges_without_mutating_base_and_rejects_nonfinite_rates(tmp_
 def test_unpriced_routes_fail_before_billed_schedule():
     settings = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         openai_fast_model="unpriced",
         openai_detector_model="unpriced",
@@ -261,6 +267,8 @@ def test_unpriced_routes_fail_before_billed_schedule():
 def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
     base = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
         openai_fast_model="gpt-6-luna",
         openai_detector_model="gpt-6-luna",
@@ -306,6 +314,8 @@ def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
 def test_production_primary_tiers_are_bound_without_eval_route_overrides(tmp_path):
     base = Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         openai_fast_model="fast-model",
         openai_deep_model="expert-model",

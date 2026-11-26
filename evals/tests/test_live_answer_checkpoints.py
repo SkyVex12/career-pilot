@@ -23,6 +23,8 @@ from copilot_gateway.testing import Reply, ScriptedProvider
 def configuration(architecture="adaptive_on_demand"):
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue] - BaseSettings runtime keyword.
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         answer_architecture=architecture,
         openai_detector_model="offline-fast",

@@ -184,6 +184,8 @@ async def test_worker_error_is_not_misreported_as_an_unconfirmed_drain():
 def config():
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         llm_providers=["openai"],
         answer_architecture="adaptive_on_demand",
         openai_detector_model="offline-fast",

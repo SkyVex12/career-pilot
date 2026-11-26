@@ -133,6 +133,7 @@ CONFIG_FIELDS = {
     "fast_pass_max_tokens",
     "deep_pass_max_tokens",
     "adaptive_expert_route",
+    "adaptive_technical_legacy",
     "adaptive_failure_recovery",
     "adaptive_max_tokens",
     "adaptive_stream_idle_timeout_s",
@@ -656,6 +657,8 @@ async def preflight(
             if variants
             else Settings(
                 _env_file=None,  # pyright: ignore[reportCallIssue]
+                adaptive_expert_route=None,
+                adaptive_technical_legacy=False,
                 llm_providers=["openai"],
                 answer_architecture=strategy,  # pyright: ignore[reportArgumentType]
                 openai_detector_model="offline-fast",
@@ -1676,11 +1679,33 @@ def configured_conditions(
         STRATEGIES[label]: Variant(
             label,
             STRATEGIES[label],
-            settings.model_copy(update={"answer_architecture": STRATEGIES[label]}),
+            # CLI architecture comparisons keep their historical global-deep routes.
+            # Product profiles and category policy require an explicit manifest condition.
+            settings.model_copy(
+                update={
+                    "answer_architecture": STRATEGIES[label],
+                    "adaptive_expert_route": None,
+                    "adaptive_technical_legacy": False,
+                }
+            ),
             fast_tier=getattr(args, "fast_tier", None),
             expert_tier=getattr(args, "expert_tier", None),
         )
         for label in labels
+    }
+
+
+def variants_with_cli_tiers(
+    variants: dict[str, Variant], args: argparse.Namespace
+) -> dict[str, Variant]:
+    """Resolve tier overlays before preflight; revalidate profile conflicts."""
+    return {
+        name: replace(
+            variant,
+            fast_tier=variant.fast_tier or getattr(args, "fast_tier", None),
+            expert_tier=variant.expert_tier or getattr(args, "expert_tier", None),
+        )
+        for name, variant in variants.items()
     }
 
 
@@ -1721,6 +1746,8 @@ async def execute(args: argparse.Namespace) -> None:
         case["answer_style"] = getattr(args, "answer_style", "bullets")
         case["response_length"] = getattr(args, "response_length", "default")
     settings = Settings(
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         openai_detector_retry_tier=None,
         openai_fast_retry_tier=None,
         openai_deep_retry_tier=None,
@@ -1732,9 +1759,7 @@ async def execute(args: argparse.Namespace) -> None:
     custom_variants: dict[str, Variant] | None = None
     if getattr(args, "variants", None):
         custom_variants = load_variants(args.variants, settings, root_directory())
-        for variant in custom_variants.values():
-            variant.fast_tier = variant.fast_tier or getattr(args, "fast_tier", None)
-            variant.expert_tier = variant.expert_tier or getattr(args, "expert_tier", None)
+        custom_variants = variants_with_cli_tiers(custom_variants, args)
     if getattr(args, "schedule_file", None):
         identity = experiment_identity(
             cases,
@@ -2508,7 +2533,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
-    parser.add_argument("--variants", type=Path, help="Explicit eval-only variant manifest")
+    parser.add_argument(
+        "--variants",
+        type=Path,
+        help="Variant manifest; expert profiles and category policies opt in per condition",
+    )
     parser.add_argument(
         "--schedule-file",
         type=Path,

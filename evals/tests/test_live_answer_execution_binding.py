@@ -216,7 +216,7 @@ def test_schedule_cannot_be_resolved_without_execution_binding(fixture):
         ("openai_base_url", "https://example.invalid/private?credential=fixture-only"),
         ("aws_region", "eu-west-2"),
         ("openai_http2", False),
-        ("openai_http2_cancel_fix", True),
+        ("openai_http2_cancel_fix", False),
         ("llm_keepalive_s", 17),
         ("llm_connect_timeout_s", 5),
     ],
@@ -293,21 +293,32 @@ def adaptive_expert_profile():
     }
 
 
-async def test_adaptive_expert_profile_drift_fails_before_provider_or_preflight(
-    fixture, monkeypatch
-):
+@pytest.mark.parametrize("field", ["adaptive_expert_route", "adaptive_technical_legacy"])
+async def test_explicit_product_policy_drift_fails_before_provider_or_preflight(fixture, field):
     args, *_ = fixture
-
-    def changed_settings(*values, **kwargs):
-        base = Settings(*values, **kwargs)
-        return Settings.model_validate(
+    # Product defaults are intentionally excluded. Mutating an explicit condition still
+    # invalidates the reviewed schedule before any provider or engine work.
+    args.variants = args.cases.parent / "changed-variants.json"
+    args.variants.write_text(
+        json.dumps(
             {
-                **base.model_dump(),
-                "adaptive_expert_route": adaptive_expert_profile(),
+                "schema": 1,
+                "variants": [
+                    {"label": "A", "architecture": "legacy_dual"},
+                    {
+                        "label": "D",
+                        "architecture": "adaptive_on_demand",
+                        "settings": {
+                            field: adaptive_expert_profile()
+                            if field == "adaptive_expert_route"
+                            else True,
+                        },
+                    },
+                ],
             }
-        )
-
-    monkeypatch.setattr(replay, "Settings", changed_settings)
+        ),
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError, match="request condition settings changed"):
         await replay.execute(args)
     assert not args.out.exists()
@@ -366,6 +377,7 @@ def test_adaptive_expert_profile_rejects_eval_expert_overrides(tmp_path, name, v
                         {
                             "label": "B",
                             "architecture": "adaptive",
+                            "settings": {"adaptive_expert_route": adaptive_expert_profile()},
                             name: value,
                         }
                     ],

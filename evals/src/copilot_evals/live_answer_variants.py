@@ -35,6 +35,7 @@ SETTINGS_FIELDS = {
     "fast_pass_max_tokens",
     "deep_pass_max_tokens",
     "adaptive_expert_route",
+    "adaptive_technical_legacy",
     "adaptive_failure_recovery",
     "adaptive_max_tokens",
     "adaptive_stream_idle_timeout_s",
@@ -293,8 +294,16 @@ def load_variants(path: Path, settings: Settings, root: Path) -> dict[str, Varia
             or set(cast(dict[str, Any], overrides)) - SETTINGS_FIELDS
         ):
             raise ValueError("Unsupported variant settings")
+        # Schema-1 conditions opt into product expert/category policies explicitly.
+        # Otherwise deployment defaults could silently override a chosen deep model.
         effective = Settings.model_validate(
-            {**settings.model_dump(), **overrides, "answer_architecture": item["architecture"]}
+            {
+                **settings.model_dump(),
+                "adaptive_expert_route": None,
+                "adaptive_technical_legacy": False,
+                **overrides,
+                "answer_architecture": item["architecture"],
+            }
         )
         options: dict[str, Any] = {}
         if item.get("synthetic_fault") is not None:
