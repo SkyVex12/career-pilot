@@ -824,6 +824,8 @@ mod tests {
 
     use super::*;
 
+    // Tungstenite requires this unboxed handshake ErrorResponse in its callback signature.
+    #[allow(clippy::result_large_err)]
     #[tokio::test]
     async fn connector_disables_nagle_and_preserves_auth_and_binary_payload() {
         tokio::time::timeout(Duration::from_secs(3), async {
