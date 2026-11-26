@@ -9,9 +9,11 @@
 //! observed affinity instead of reparenting WebView2: destroying a temporary parent after a
 //! failed restore can destroy the live WebView, and reparenting during resize is unsafe.
 //!
-//! While it is on, the main window also leaves the taskbar. It stays open and usable. The main
-//! window title is the configured display name. Task Manager's process name is the executable's
-//! description, which `program_name` writes when that name is saved; it shows up after the next
+//! While it is on, the main window also leaves the taskbar. It stays open and usable.
+//! Windows window titles are empty while it is on: Chromium/WebRTC's window picker enumerates
+//! titled windows independently of capture affinity, including ones with protected thumbnails.
+//! Turning it off restores the configured display name. Task Manager's process name is the
+//! executable's description, which `program_name` writes when that name is saved; it shows up after the next
 //! start. The executable file name stays `copilot-desktop.exe`.
 //!
 //! Affinity and transparent DWM surfaces are updated on the same window thread. Hidden windows
@@ -375,14 +377,17 @@ fn refresh_overlay(app: &AppHandle) {
 /// Visible workspace and live overlay both have a taskbar button unless Stealth is on.
 /// present_latest/show call this only at the safe presentation boundary.
 fn present(label: &str, window: &WebviewWindow, on: bool, display_name: &str) {
+    // Both WebRTC's GDI and WGC source lists skip untitled windows, but neither checks
+    // display affinity. Keeping the title here exposes a named (often blank) picker tile.
+    // Do this before show, and keep affinity enabled to protect actual screen capture.
+    let title = if cfg!(windows) && on { "" } else { display_name };
+    let _ = window.set_title(title);
     if label != "main" && label != "overlay" {
         if on {
             let _ = window.set_skip_taskbar(true);
-            let _ = window.set_title(display_name);
         }
         return;
     }
-    let _ = window.set_title(display_name);
     if on {
         if matches!(window.is_minimized(), Ok(true)) {
             let _ = window.unminimize();
