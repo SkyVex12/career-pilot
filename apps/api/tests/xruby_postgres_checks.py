@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from uuid import uuid4
 
 import asyncpg
@@ -21,7 +22,7 @@ import fakeredis.aioredis
 import httpx2
 from fastapi import FastAPI
 
-from copilot_api.deps import services
+from copilot_api.deps import Services, services
 from copilot_api.routes import xruby_oauth as auth
 from copilot_api.routes import xruby_reads as reads
 from copilot_core.db import create_pool
@@ -29,14 +30,13 @@ from copilot_core.db import create_pool
 
 async def run_checks(config):
     root = Path(__file__).resolve().parents[3]
-    kwargs = dict(
+    admin = await asyncpg.connect(
         host="127.0.0.1",
         port=config["port"],
         user=config["user"],
         password=config["password"],
         database="postgres",
     )
-    admin = await asyncpg.connect(**kwargs)
     assert (
         Path(await admin.fetchval("show data_directory")).resolve()
         == Path(config["cluster"]).resolve()
@@ -313,7 +313,7 @@ grant update on app.accounts,app.workspaces,app.employers,app.applications,app.i
             await valkey.set(auth.key("access", access), json.dumps(record), ex=600)
             # Real locks: owner revocation waits for the in-flight read, then future reads deny.
             grant = auth.Delegation(access, record)
-            async with auth.read_scope(svc, grant, "xruby:work:read"):
+            async with auth.read_scope(cast(Services, svc), grant, "xruby:work:read"):
 
                 async def revoke():
                     async with admin.transaction():

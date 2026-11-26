@@ -5,6 +5,7 @@
 import asyncio
 import hashlib
 import json
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -15,6 +16,12 @@ from copilot_api import xruby_preparation as prep
 from copilot_api.routes import xruby_oauth as auth
 from copilot_api.routes import xruby_reads as reads
 from copilot_core.db import user_tx
+
+
+async def claimed_row(runner: prep.Runner) -> dict[str, Any]:
+    row = await runner.claim()
+    assert row is not None
+    return row
 
 
 async def run_checks(svc, admin, account, profile, application, interview, record, access):
@@ -137,7 +144,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
         )
         == before + 1
     )
-    await runner.process(await runner.claim())
+    await runner.process(await claimed_row(runner))
     results["prepare_concurrent_reservation"] = True
     # A hard crash after marker commit is never reclaimed; expiry becomes terminal uncertain.
     crash = await reserve("crash")
@@ -163,13 +170,13 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
     results["prepare_crash_after_dispatch_never_retries"] = True
     # Before dispatch, expired leases can recover with a new generation; stale owner cannot call.
     recover = await reserve("recover")
-    stale = await runner.claim()
+    stale = await claimed_row(runner)
     await admin.execute(
         "update app.xruby_preparation_requests set lease_expires_at=now()-interval '1 second' where id=$1",
         UUID(recover["request_id"]),
     )
     fresh_runner = prep.Runner(svc, provider)
-    new = await fresh_runner.claim()
+    new = await claimed_row(fresh_runner)
     assert new["lease_generation"] > stale["lease_generation"]
     previous = calls
     await runner.process(stale)
@@ -184,7 +191,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
 
     await reserve("timeout")
     bad_runner = prep.Runner(svc, broken)
-    await bad_runner.process(await bad_runner.claim())
+    await bad_runner.process(await claimed_row(bad_runner))
     assert (await reserve("timeout"))["state"] == "uncertain"
     assert await bad_runner.claim() is None
     results["prepare_timeout_terminal"] = True
@@ -194,7 +201,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
 
     invalid = await reserve("invalid-response")
     invalid_runner = prep.Runner(svc, parsed_but_invalid)
-    await invalid_runner.process(await invalid_runner.claim())
+    await invalid_runner.process(await claimed_row(invalid_runner))
     observed = await prep.result(svc, grant, UUID(invalid["request_id"]))
     assert observed["state"] == "uncertain"
     assert observed["usage_status"] == "measured"
@@ -210,7 +217,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
 
     changed = await reserve("changed")
     changed_runner = prep.Runner(svc, changing)
-    await changed_runner.process(await changed_runner.claim())
+    await changed_runner.process(await claimed_row(changed_runner))
     out = await prep.result(svc, grant, UUID(changed["request_id"]))
     assert (
         out["state"] == "uncertain" and "result" not in out and out["usage"]["total_tokens"] == 31
@@ -264,7 +271,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
     results["prepare_exact_text_hash_bound"] = True
     # A nearly expired grant must not dispatch a model request that cannot publish in time.
     expiring = await reserve("expiry")
-    expiry_row = await runner.claim()
+    expiry_row = await claimed_row(runner)
     await admin.execute(
         "update app.xruby_preparation_requests set lease_expires_at=clock_timestamp()+interval '1 second' where id=$1",
         UUID(expiring["request_id"]),
@@ -282,7 +289,7 @@ async def run_checks(svc, admin, account, profile, application, interview, recor
 
     revoked = await reserve("revoked")
     revoke_runner = prep.Runner(svc, revoking)
-    await revoke_runner.process(await revoke_runner.claim())
+    await revoke_runner.process(await claimed_row(revoke_runner))
     row = await admin.fetchrow(
         "select state,usage,result_enc from app.xruby_preparation_requests where id=$1",
         UUID(revoked["request_id"]),

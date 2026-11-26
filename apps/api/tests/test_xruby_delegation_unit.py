@@ -17,6 +17,7 @@ import httpx2
 import pytest
 from fastapi import FastAPI, Header, HTTPException
 
+from copilot_api import xruby_preparation as preparation_service
 from copilot_api.deps import current_account, services
 from copilot_api.routes import personal_ai_oauth as oauth
 from copilot_api.routes import xruby_oauth as auth
@@ -218,7 +219,9 @@ async def code(
     )
     assert response.status_code == 200, response.text
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
-    handle = re.search(r"handle:'([A-Za-z0-9_-]+)'", response.text).group(1)
+    handle_match = re.search(r"handle:'([A-Za-z0-9_-]+)'", response.text)
+    assert handle_match is not None
+    handle = handle_match.group(1)
     response = await f.client.post(
         auth.PREFIX + "/consent",
         headers=f.headers,
@@ -342,7 +345,11 @@ async def test_exact_choices_and_unknown_profile_company_cannot_be_granted(fixtu
         {"employer_id": str(uuid4())},
     ):
         with pytest.raises(AssertionError):
-            await code(f, **changes)
+            await code(
+                f,
+                profile_id=changes.get("profile_id", str(f.state.profile)),
+                employer_id=changes.get("employer_id", str(f.state.employer)),
+            )
 
 
 def interview(f, at=None):
@@ -629,7 +636,7 @@ async def test_confirmed_prepare_route_keeps_explicit_citation_key_and_scope(fix
     ] is False
     f.state.writable = True
     accepted = AsyncMock(return_value={"request_id": str(uuid4()), "state": "queued"})
-    monkeypatch.setattr(commands.service, "reserve", accepted)
+    monkeypatch.setattr(preparation_service, "reserve", accepted)
     interview = uuid4()
     path = f"/v1/xruby/interviews/{interview}/preparation-requests"
     body = {"revision": "a" * 64, "expected_hash": "a" * 64}
@@ -642,6 +649,7 @@ async def test_confirmed_prepare_route_keeps_explicit_citation_key_and_scope(fix
     assert accepted.await_count == 0
     response = await f.client.post(path, headers=keyed, json=body)
     assert response.status_code == 202
+    assert accepted.await_args is not None
     assert accepted.await_args.args[2:] == (interview, "a" * 64, "explicit-confirmation-1")
 
 
@@ -674,7 +682,9 @@ async def test_preparation_consent_requires_read_scope_and_writable_membership(f
     page = await f.client.get(auth.PREFIX + "/authorize", params=params)
     assert "may incur provider charges" in page.text
     assert "cannot change your records or call an AI provider" not in page.text
-    handle = re.search(r"handle:'([A-Za-z0-9_-]+)'", page.text).group(1)
+    handle_match = re.search(r"handle:'([A-Za-z0-9_-]+)'", page.text)
+    assert handle_match is not None
+    handle = handle_match.group(1)
     response = await f.client.post(
         auth.PREFIX + "/consent",
         headers=f.headers,

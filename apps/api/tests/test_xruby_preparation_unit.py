@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from typing import cast
 
 import httpx2
 import pytest
@@ -9,10 +10,11 @@ from fastapi import HTTPException
 from pydantic import SecretStr
 
 from copilot_api import xruby_preparation as prep
+from copilot_api.deps import Services
 from copilot_api.routes import xruby_oauth as auth
 
 
-def fixture_service(**updates):
+def fixture_service(**updates) -> Services:
     config = dict(
         xruby_preparation_enabled=True,
         xruby_preparation_daily_limit=2,
@@ -23,7 +25,7 @@ def fixture_service(**updates):
         openai_base_url=None,
         xruby_preparation_max_output_tokens=2000,
     )
-    return SimpleNamespace(settings=SimpleNamespace(**(config | updates)))
+    return cast(Services, SimpleNamespace(settings=SimpleNamespace(**(config | updates))))
 
 
 def snapshot():
@@ -73,7 +75,7 @@ def transport(monkeypatch):
         state.kwargs = kwargs
         return real(transport=httpx2.MockTransport(handle), **kwargs)
 
-    monkeypatch.setattr(prep.httpx2, "AsyncClient", client)
+    monkeypatch.setattr(httpx2, "AsyncClient", client)
     return state, calls
 
 
