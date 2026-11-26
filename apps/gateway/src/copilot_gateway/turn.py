@@ -476,6 +476,10 @@ class _Turn:
     no_text_exit: bool = False
     late_recovery_pending: bool = False
     late_recovery_used: bool = False
+    late_text_at: float | None = None
+    late_partial: bool = False
+    late_partial_end_ms: int | None = None
+    late_text_changed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed_at: float | None = None  # when the STT final after this speech end arrived
     committed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -497,6 +501,10 @@ class _Early:
     cand: _Candidate
     held: UUID | None
     at: float
+
+
+class _LateRecoveryExpired(Exception):
+    """The opted-in late transcript did not settle within its original recovery horizon."""
 
 
 class TurnDetector:
@@ -624,9 +632,22 @@ class TurnDetector:
         if r.is_final:
             if r.text:
                 self.finals.append(r.text)
-            self.interim = ""
-        else:
+            if r.text or not owns_recovery_text:
+                self.interim = ""
+        elif r.text or not owns_recovery_text:
             self.interim = r.text
+        if owns_recovery_text and turn is not None:
+            if r.text:
+                turn.late_text_at = time.monotonic()
+                if not r.is_final:
+                    turn.late_partial = True
+                    turn.late_partial_end_ms = max(turn.late_partial_end_ms or 0, r.end_ms)
+                elif turn.late_partial_end_ms is None or r.end_ms >= turn.late_partial_end_ms:
+                    turn.late_partial = False
+                    turn.late_partial_end_ms = None
+                # A segment-final covering only a prefix cannot resolve the observed tail.
+            if r.text or r.flushed:
+                turn.late_text_changed.set()
         if r.text:
             self.text_arrived.set()
         if (
@@ -686,26 +707,57 @@ class TurnDetector:
         if turn.capture_end_ms is not None:
             self._retired_empty_end_ms = max(self._retired_empty_end_ms or 0, turn.capture_end_ms)
 
-    async def _recover_late_text(self, turn: _Turn) -> None:
+    async def _late_text_quiet(self, turn: _Turn) -> bool:
+        """Finite quiet heuristic, not proof that STT processed every captured sample.
+
+        Only recovery of an empty first-text timeout uses this extra reconciliation.
+        A fresh flush plus final_wait_s without nonempty text is required, with no
+        unresolved partial. The original recovery horizon and latency anchor stay fixed.
+        """
         horizon = self.late_first_text_recovery_s
         assert horizon is not None
-        try:
-            # Original silence/deadline clocks have elapsed. Require a fresh utterance flush
-            # before starting any pass; an ordinary segment-final is insufficient.
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    turn.flushed.wait(), max(0.0, turn.t0 + horizon - time.monotonic())
-                )
+        deadline = turn.t0 + horizon
+        while True:
+            turn.late_text_changed.clear()
+            now = time.monotonic()
             if (
-                self.turn is turn
-                and not self.speaking
-                and turn.late_recovery_pending
-                and time.monotonic() <= turn.t0 + horizon
-                and turn.flushed.is_set()
-                and self.utterance()
+                now > deadline
+                or turn.taken
+                or (turn.text is None and (self.turn is not turn or self.speaking))
             ):
+                return False
+            settled_at = (turn.late_text_at or now) + self.final_wait_s
+            ready = (
+                turn.flushed.is_set()
+                and not turn.late_partial
+                and bool(self._text(turn))
+                and turn.late_text_at is not None
+            )
+            if ready and now >= settled_at:
+                return True
+            wake_at = min(deadline, settled_at) if ready else deadline
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(turn.late_text_changed.wait(), max(0.0, wake_at - now))
+
+    async def _require_late_quiet(self, turn: _Turn) -> None:
+        if turn.late_recovery_used and not await self._late_text_quiet(turn):
+            raise _LateRecoveryExpired
+
+    async def _recover_late_text(self, turn: _Turn) -> None:
+        try:
+            if await self._late_text_quiet(turn):
                 turn.late_recovery_pending = False
-                await self._turn(turn)
+                horizon = self.late_first_text_recovery_s
+                assert horizon is not None
+                timeout = asyncio.timeout_at(turn.t0 + horizon)
+                try:
+                    async with timeout:
+                        await self._turn(turn)
+                except TimeoutError:
+                    if not timeout.expired():
+                        raise
+                    if self.turn is turn and turn.text is None and not self.speaking:
+                        self.reset()
         finally:
             if turn.late_recovery_pending and self.turn is turn and not self.speaking:
                 self.reset()
@@ -841,6 +893,10 @@ class TurnDetector:
                 task.cancel()
             return
         if task is None or task.done():
+            return
+        if turn is not None and turn.late_recovery_used and turn.late_partial:
+            self.reset()
+            task.cancel()  # A recovered unresolved fragment cannot become a detached answer.
             return
         if (
             turn is not None
@@ -989,6 +1045,9 @@ class TurnDetector:
 
     async def _turn_end(self, turn: _Turn) -> None:
         """Step 4's condition: the silence timer (or the turn model), then the STT final."""
+        if turn.late_recovery_used:
+            await self._require_late_quiet(turn)
+            return  # Its original silence timer already expired before recovery started.
         timer = asyncio.create_task(self._sleep_until(turn.t0 + self.silence_s))
         model = asyncio.create_task(self.turn_model.turn_complete(self._text(turn)))
         try:
@@ -1145,6 +1204,7 @@ class TurnDetector:
         the interim); a final that does not keeps the interim's decision."""
         deadline = turn.t0 + self.silence_s + self.final_wait_s
         while True:
+            await self._require_late_quiet(turn)
             if self.committed_final_recheck:
                 if not self._changed(turn, cand) and not cand.detection.done():
                     turn.committed.clear()
@@ -1167,10 +1227,15 @@ class TurnDetector:
                     final.cancel()
             elif not cand.detection.done():
                 await asyncio.wait({cand.detection})
+            await self._require_late_quiet(turn)
             if self._changed(turn, cand):
                 self.final_rechecks += 1
                 final = self._revision_text(turn)
-                if turn.held_qid is not None and self._extends(cand.text, final):
+                if (
+                    turn.held_qid is not None
+                    and not turn.late_recovery_used
+                    and self._extends(cand.text, final)
+                ):
                     cand.detection.cancel()
                     cand = self._redetect(turn, final, cand.match)
                 else:
@@ -1192,6 +1257,8 @@ class TurnDetector:
         """Shown before the detector (module doc): once the STT final is in and the held pass
         is on that text, a plain question in a one-on-one call goes on screen while the
         detector is still deciding."""
+        if turn.late_recovery_used:
+            return  # Recovered text is published only after the bounded quiet checks.
         n = self.first_show_min_words
         if n is None or self.group_call():
             return
@@ -1263,6 +1330,7 @@ class TurnDetector:
                     first.cancel()
                     await asyncio.gather(first, return_exceptions=True)
                 recovered = await self._recover(turn, detection)
+                await self._require_late_quiet(turn)
                 # Both recovery and the ordinary speech-end waits can outlast the
                 # detector. A final that adds a constraint must replace its generation,
                 # not just relabel a request already based on the interim.
@@ -1283,8 +1351,10 @@ class TurnDetector:
                         self._done(turn)
                     return
                 await self._wait_release(turn)
+                await self._require_late_quiet(turn)
                 if self._changed(turn, cand) and (
                     self.committed_final_recheck
+                    or turn.late_recovery_used
                     or self.early_final_release
                     or not self._extends(cand.text, self._text(turn))
                 ):
@@ -1300,7 +1370,9 @@ class TurnDetector:
                     self.speculative_starts += 1
                 await self._turn_end(turn)
                 if self._changed(turn, cand) and (
-                    self.committed_final_recheck or not self._extends(cand.text, self._text(turn))
+                    self.committed_final_recheck
+                    or turn.late_recovery_used
+                    or not self._extends(cand.text, self._text(turn))
                 ):
                     self._withdraw_shown(turn)
                     continue
@@ -1314,8 +1386,8 @@ class TurnDetector:
                 self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
                 self._done(turn)
                 return
-        except asyncio.CancelledError:
-            if self.committed_final_recheck:
+        except (asyncio.CancelledError, _LateRecoveryExpired) as exc:
+            if self.committed_final_recheck or turn.late_recovery_used:
                 cand = turn.cand or cand  # _decide may be awaiting a replacement candidate.
             if cand is not None and not turn.taken:
                 cand.cancel()
@@ -1326,4 +1398,8 @@ class TurnDetector:
                 )
             self._discard_held(turn)
             self._withdraw_shown(turn)
+            if isinstance(exc, _LateRecoveryExpired):
+                if turn.text is None and self.turn is turn:
+                    self.reset()
+                return
             raise

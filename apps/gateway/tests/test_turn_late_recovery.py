@@ -479,3 +479,244 @@ async def test_recovered_turn_does_not_drop_next_speech_results(detach_pending: 
             env.host.match.cancel()
     finally:
         await env.close()
+
+
+@pytest.mark.parametrize("rep", [0, 1])
+async def test_early_replay_flush_then_tail_final_retains_complete_observed_question(
+    rep: int,
+) -> None:
+    # Exact delayed-first4-r1 words/spans, with provider inter-result gaps scaled by 1/20.
+    # Existing final_wait_s scales from 1500ms to75ms; it is explicitly a quiet heuristic.
+    env = Harness(final_wait_max_ms=75)
+    try:
+        env.start_empty(440, 3840)  # 3400ms replayed audio, original capture clock.
+        await env.drain()
+        env.result("Tell me about your", start=440, end=1460)
+        if rep == 1:
+            await asyncio.sleep(0.066)  # Observed1313ms before early from_finalize.
+        split = 1420 if rep == 0 else 1320
+        env.result("Tell me about yourself", final=True, flushed=True, start=440, end=440 + split)
+        if rep == 0:
+            await asyncio.sleep(0.026)  # Observed517ms to tail partial.
+        partial = "your engineering" if rep == 0 else "and your engineering"
+        env.result(partial, start=440 + split, end=440 + split + 1000)
+        await asyncio.sleep(0)
+        assert not env.host.calls
+        assert not env.host.shown
+        await asyncio.sleep(0.036 if rep == 0 else 0.027)  # Observed719ms /533ms.
+        tail = "your engineering experience." if rep == 0 else "and your engineering experience."
+        env.result(tail, final=True, start=440 + split, end=3700)
+        await env.drain()
+        full = "Tell me about yourself " + tail
+        assert env.host.calls == [full]
+        assert [text for _, text, _, _ in env.host.confirmed] == [full]
+        assert not env.host.cancelled
+        assert env.turns.late_first_text_recoveries == 1
+    finally:
+        await env.close()
+
+
+@pytest.mark.parametrize("empty_final", [False, True])
+async def test_empty_ack_never_discards_unresolved_recovery_partial(empty_final: bool) -> None:
+    env = Harness(final_wait_max_ms=10, late_first_text_recovery_ms=80)
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True)
+        env.result("and your engineering")
+        env.result("", final=empty_final, flushed=empty_final, start=1100, end=1100)
+        await env.drain()
+        assert not env.host.calls
+        assert not env.host.confirmed
+        assert not env.turns.utterance()
+    finally:
+        await env.close()
+
+
+async def test_tail_during_recovered_detector_rechecks_full_final_before_release() -> None:
+    env = Harness(final_wait_max_ms=20, late_first_text_recovery_ms=500)
+    env.host.gate = asyncio.Event()
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        await asyncio.wait_for(env.host.detect_started.wait(), 1)
+        env.result("and your engineering", start=400)
+        env.result("", final=True, flushed=True, start=1100, end=1100)
+        env.host.gate.set()
+        await asyncio.sleep(0.025)
+        assert not env.host.shown
+        assert not env.host.confirmed
+        env.result("and your engineering experience.", final=True, start=400)
+        await env.drain()
+        full = PARTIAL + " and your engineering experience."
+        assert env.host.calls == [PARTIAL, full]
+        assert [text for _, text in env.host.shown] == [full]
+        assert [text for _, text, _, _ in env.host.confirmed] == [full]
+        assert env.host.discarded == [env.host.held[0][0]]
+        assert env.host.matches[0].cancelled()
+    finally:
+        await env.close()
+
+
+async def test_unresolved_tail_during_detector_expires_without_releasing_old_pass() -> None:
+    env = Harness(final_wait_max_ms=10, late_first_text_recovery_ms=100)
+    env.host.gate = asyncio.Event()
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        await asyncio.wait_for(env.host.detect_started.wait(), 1)
+        env.result("and your engineering", start=400)
+        env.host.gate.set()
+        await env.drain()
+        assert env.host.calls == [PARTIAL]
+        assert not env.host.shown
+        assert not env.host.confirmed
+        assert env.host.discarded == [env.host.held[0][0]]
+        assert env.host.match is not None
+        assert env.host.match.cancelled()
+        assert not env.turns.utterance()
+    finally:
+        await env.close()
+
+
+async def test_late_final_cannot_extend_original_horizon_to_finish_quiet_interval() -> None:
+    env = Harness(final_wait_max_ms=30, late_first_text_recovery_ms=90)
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        env.result("and your engineering", start=400)
+        await asyncio.sleep(0.04)
+        env.result("and your engineering experience.", final=True, start=400)
+        await env.drain()
+        assert not env.host.calls
+        assert not env.host.confirmed
+    finally:
+        await env.close()
+
+
+async def test_new_speech_cancels_unresolved_recovered_fragment_during_detector() -> None:
+    env = Harness(final_wait_max_ms=10)
+    env.host.gate = asyncio.Event()
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        await asyncio.wait_for(env.host.detect_started.wait(), 1)
+        env.result("and your engineering", start=400)
+        old_task = env.turns.task
+        assert old_task is not None
+        env.turns.on_speech_start(capture_ms=2000)
+        await asyncio.gather(old_task, return_exceptions=True)
+        assert old_task.cancelled()
+        assert env.host.detect_cancelled.is_set()
+        assert not env.host.shown
+        assert not env.turns.utterance()
+        assert env.turns.detached_turns == 0
+    finally:
+        await env.close()
+
+
+async def test_owned_final_during_release_wait_rebuilds_request_even_for_kept_extension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = Harness(
+        final_wait_max_ms=10,
+        speculative_start_ms=100,
+        keep_added_words=5,
+        late_first_text_recovery_ms=500,
+    )
+    release_entered = asyncio.Event()
+    release_continue = asyncio.Event()
+    original_release = env.turns._wait_release
+
+    async def release_barrier(turn: Any) -> None:
+        release_entered.set()
+        await release_continue.wait()
+        await original_release(turn)
+
+    monkeypatch.setattr(env.turns, "_wait_release", release_barrier)
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        await asyncio.wait_for(release_entered.wait(), 1)
+        assert not env.host.shown
+        env.result("and your engineering experience.", final=True, start=400)
+        release_continue.set()
+        await env.drain()
+        full = PARTIAL + " and your engineering experience."
+        assert env.host.calls == [PARTIAL, full]
+        assert [text for _, text, _ in env.host.held] == [PARTIAL, full]
+        assert env.host.discarded == [env.host.held[0][0]]
+        assert [text for _, text in env.host.shown] == [full]
+        assert [text for _, text, _, _ in env.host.confirmed] == [full]
+        assert env.turns.held_kept == 0
+    finally:
+        await env.close()
+
+
+async def test_recovered_hanging_detector_is_cancelled_at_original_horizon() -> None:
+    env = Harness(final_wait_max_ms=10, late_first_text_recovery_ms=100)
+    env.host.gate = asyncio.Event()
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(QUESTION, final=True, flushed=True)
+        await asyncio.wait_for(env.host.detect_started.wait(), 1)
+        await env.drain()
+        assert env.host.detect_cancelled.is_set()
+        assert env.host.match is not None
+        assert env.host.match.cancelled()
+        assert env.host.discarded == [env.host.held[0][0]]
+        assert not env.host.shown
+        assert not env.host.confirmed
+        assert not env.turns.utterance()
+    finally:
+        await env.close()
+
+
+@pytest.mark.parametrize("tail_arrives", [False, True])
+async def test_segment_prefix_final_does_not_resolve_already_observed_partial_tail(
+    tail_arrives: bool,
+) -> None:
+    env = Harness(final_wait_max_ms=10, late_first_text_recovery_ms=150)
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(PARTIAL + " and your engineering", end=1000)
+        env.result(PARTIAL, final=True, flushed=True, end=400)
+        await asyncio.sleep(0.02)
+        assert not env.host.calls
+        assert not env.host.shown
+        if tail_arrives:
+            env.result("and your engineering experience.", final=True, start=400, end=1000)
+        await env.drain()
+        expected = [PARTIAL + " and your engineering experience."] if tail_arrives else []
+        assert env.host.calls == expected
+        assert [text for _, text, _, _ in env.host.confirmed] == expected
+    finally:
+        await env.close()
+
+
+async def test_inner_timeout_is_not_misreported_as_recovery_horizon_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = Harness()
+
+    async def failing_detector(text: str) -> Detection:
+        raise TimeoutError("authored detector failure before recovery deadline")
+
+    monkeypatch.setattr(env.host, "detect", failing_detector)
+    try:
+        env.start_empty()
+        await env.drain()
+        env.result(QUESTION, final=True, flushed=True)
+        with pytest.raises(TimeoutError, match="authored detector failure"):
+            await env.drain()
+        assert not env.host.shown
+        assert not env.host.confirmed
+    finally:
+        await env.close()
