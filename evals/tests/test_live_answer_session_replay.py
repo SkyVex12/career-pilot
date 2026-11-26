@@ -641,10 +641,17 @@ def test_turn_experiments_are_distinct_and_preserve_model_configuration():
         Namespace(
             live=False,
             architectures=["B"],
-            turn_experiments=["baseline", "stable", "final", "combined", "committed"],
+            turn_experiments=["baseline", "stable", "final", "combined", "committed", "recovery"],
         )
     )
-    assert list(variants) == ["B:baseline", "B:stable", "B:final", "B:combined", "B:committed"]
+    assert list(variants) == [
+        "B:baseline",
+        "B:stable",
+        "B:final",
+        "B:combined",
+        "B:committed",
+        "B:recovery",
+    ]
     assert all(s.answer_architecture == "adaptive" for s in variants.values())
     assert variants["B:baseline"].early_stable_partial_ms is None
     assert variants["B:stable"].early_stable_partial_ms == 250
@@ -655,4 +662,8 @@ def test_turn_experiments_are_distinct_and_preserve_model_configuration():
     assert variants["B:committed"].committed_final_recheck
     assert not variants["B:baseline"].committed_final_recheck
     assert all(not v.committed_final_recheck for k, v in variants.items() if k != "B:committed")
+    assert variants["B:recovery"].late_first_text_recovery_ms == 10000
+    assert all(
+        v.late_first_text_recovery_ms is None for k, v in variants.items() if k != "B:recovery"
+    )
     assert len({s.openai_fast_model for s in variants.values()}) == 1

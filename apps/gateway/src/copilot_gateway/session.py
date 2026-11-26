@@ -367,6 +367,7 @@ class Session:
             early_stable_partial_ms=self.settings.early_stable_partial_ms,
             early_final_release=self.settings.early_final_release,
             committed_final_recheck=self.settings.committed_final_recheck,
+            late_first_text_recovery_ms=self.settings.late_first_text_recovery_ms,
         )
         self.answers = AnswerEngine(self)
         self._automatic_questions: OrderedDict[UUID, AutomaticQuestion] = OrderedDict()
@@ -2449,7 +2450,7 @@ class Session:
             self.them_open = frame.capture_ms
             if self.stt is not None:
                 self.stt.speech(True)
-            self.turns.on_speech_start()
+            self.turns.on_speech_start(capture_ms=frame.capture_ms)
         if frame.audio and self.stt is not None:
             await self.stt.send(frame.audio, frame.capture_ms)
         if frame.speech_end:
@@ -2460,7 +2461,7 @@ class Session:
                 self._check_mic()
             if self.stt is not None:
                 self.stt.speech(False)
-            self.turns.on_speech_end()
+            self.turns.on_speech_end(capture_ms=frame.capture_ms)
             if self.stt is not None:
                 await self.stt.finalize()
 

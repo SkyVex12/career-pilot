@@ -471,6 +471,11 @@ class _Turn:
     deciding while the next utterance starts (see `TurnDetector.on_speech_start`)."""
 
     t0: float
+    capture_start_ms: int | None = None
+    capture_end_ms: int | None = None
+    no_text_exit: bool = False
+    late_recovery_pending: bool = False
+    late_recovery_used: bool = False
     flushed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed_at: float | None = None  # when the STT final after this speech end arrived
     committed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -516,6 +521,7 @@ class TurnDetector:
         early_stable_partial_ms: int | None = None,
         early_final_release: bool = False,
         committed_final_recheck: bool = False,
+        late_first_text_recovery_ms: int | None = None,
         spoken_language: str = "en",
     ) -> None:
         self.host = host
@@ -554,6 +560,13 @@ class TurnDetector:
         )
         self.early_final_release = early_final_release
         self.committed_final_recheck = committed_final_recheck
+        # Only an empty first-text timeout can opt into this separate recovery window.
+        # It never extends the ordinary turn's wait or changes its latency anchor.
+        self.late_first_text_recovery_s = (
+            late_first_text_recovery_ms / 1000 if late_first_text_recovery_ms is not None else None
+        )
+        self._capture_start_ms: int | None = None
+        self._retired_empty_end_ms: int | None = None
         self._stable_timer: asyncio.TimerHandle | None = None
         self._stable_text: str | None = None
         self.speaking = False
@@ -582,6 +595,7 @@ class TurnDetector:
         self.first_withdrawn = 0
         self.held_kept = 0
         self.recovered = 0
+        self.late_first_text_recoveries = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
@@ -592,6 +606,21 @@ class TurnDetector:
         self.interim = ""
 
     def on_result(self, r: TimedResult) -> None:
+        turn = self.turn
+        recovering = turn is not None and turn.late_recovery_pending
+        owns_recovery_text = turn is not None and (
+            recovering or (turn.late_recovery_used and self.task is not None)
+        )
+        if self.late_first_text_recovery_s is not None:
+            # A delayed result spanning a retired empty turn cannot safely seed a new one.
+            if self._retired_empty_end_ms is not None and r.start_ms < self._retired_empty_end_ms:
+                return
+            if owns_recovery_text and turn is not None and not self._owns_late_result(turn, r):
+                return
+        if recovering and turn is not None and not turn.late_recovery_used and r.text:
+            # An empty flush received before any text is not completion of this transcript.
+            turn.flushed.clear()
+            turn.flushed_at = None
         if r.is_final:
             if r.text:
                 self.finals.append(r.text)
@@ -617,8 +646,70 @@ class TurnDetector:
         if r.flushed and self.turn is not None:
             self.turn.flushed_at = time.monotonic()
             self.turn.flushed.set()
+        if recovering and turn is not None and r.text and not turn.late_recovery_used:
+            turn.late_recovery_used = True
+            self.late_first_text_recoveries += 1
+            self.task = asyncio.create_task(self._recover_late_text(turn))
         if self.speaking and r.text:
             self._maybe_early()
+
+    def _owns_late_result(self, turn: _Turn, r: TimedResult) -> bool:
+        horizon = self.late_first_text_recovery_s
+        if (
+            horizon is None
+            or self.turn is not turn
+            or self.speaking
+            or turn.text is not None
+            or turn.taken
+            or self.task is None
+            or (not turn.late_recovery_used and not self.task.done())
+            or time.monotonic() > turn.t0 + horizon
+        ):
+            return False
+        start, end = turn.capture_start_ms, turn.capture_end_ms
+        # TimedResult uses the original audio capture clock, including replay on reconnect.
+        return (
+            start is not None
+            and end is not None
+            and 0 <= start < end
+            and 0 <= r.start_ms <= r.end_ms
+            and (not r.text or r.start_ms < r.end_ms)
+            and r.start_ms >= start
+            and (r.start_ms < end or (not r.text and r.flushed and r.start_ms == end))
+            and r.end_ms <= end
+        )
+
+    def _retire_empty(self, turn: _Turn | None) -> None:
+        if turn is None or not turn.no_text_exit:
+            return
+        turn.late_recovery_pending = False
+        if turn.capture_end_ms is not None:
+            self._retired_empty_end_ms = max(self._retired_empty_end_ms or 0, turn.capture_end_ms)
+
+    async def _recover_late_text(self, turn: _Turn) -> None:
+        horizon = self.late_first_text_recovery_s
+        assert horizon is not None
+        try:
+            # Original silence/deadline clocks have elapsed. Require a fresh utterance flush
+            # before starting any pass; an ordinary segment-final is insufficient.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    turn.flushed.wait(), max(0.0, turn.t0 + horizon - time.monotonic())
+                )
+            if (
+                self.turn is turn
+                and not self.speaking
+                and turn.late_recovery_pending
+                and time.monotonic() <= turn.t0 + horizon
+                and turn.flushed.is_set()
+                and self.utterance()
+            ):
+                turn.late_recovery_pending = False
+                await self._turn(turn)
+        finally:
+            if turn.late_recovery_pending and self.turn is turn and not self.speaking:
+                self.reset()
+            self._retire_empty(turn)
 
     def _maybe_early(self) -> None:
         """Start step 1 on the live text when it ends a sentence (the module doc)."""
@@ -719,16 +810,19 @@ class TurnDetector:
             self.held_discarded += 1
             self.host.discard_question(early.held)
 
-    def on_speech_start(self) -> None:
+    def on_speech_start(self, *, capture_ms: int | None = None) -> None:
         self._cancel_stable()
         self.speaking = True
         if self.carry_until is not None and time.monotonic() > self.carry_until:
             self.drop_carry()  # the speaker took too long: that sentence stays unfinished
         self._interrupt()
+        self._capture_start_ms = capture_ms
 
     def drop_carry(self) -> None:
         """Forget the words of a turn left unfinished: the pause was too long, or the user
         spoke in between."""
+        if self.turn is not None and self.turn.late_recovery_pending:
+            self._interrupt()  # User speech retires an unanswered empty turn as well.
         if self.carry_until is None:
             return
         self.carry_until = None
@@ -738,7 +832,14 @@ class TurnDetector:
 
     def _interrupt(self) -> None:
         task, turn = self.task, self.turn
+        pending_recovery = turn is not None and turn.late_recovery_pending
+        self._retire_empty(turn)
         self.task = None
+        if pending_recovery:
+            self.reset()
+            if task is not None and not task.done():
+                task.cancel()
+            return
         if task is None or task.done():
             return
         if (
@@ -758,17 +859,25 @@ class TurnDetector:
             return
         task.cancel()  # step 3; the task sends question.cancelled if needed
 
-    def on_speech_end(self) -> None:
+    def on_speech_end(self, *, capture_ms: int | None = None) -> None:
         self._cancel_stable()
         self._interrupt()
         self.speaking = False
         self.text_arrived.clear()
-        self.turn = _Turn(time.monotonic(), early=self.early)
+        self.turn = _Turn(
+            time.monotonic(),
+            capture_start_ms=self._capture_start_ms,
+            capture_end_ms=capture_ms,
+            early=self.early,
+        )
         self.early = None
         self.task = asyncio.create_task(self._turn(self.turn))
 
     def cancel(self) -> None:
         self._cancel_stable()
+        if self.turn is not None and self.turn.late_recovery_pending:
+            self.reset()
+        self._retire_empty(self.turn)
         for task in (self.task, *self._detached):
             if task is not None and not task.done():
                 task.cancel()
@@ -1125,6 +1234,16 @@ class TurnDetector:
         if not self.utterance():  # no text yet: start on the first interim or final
             await self._wait_text(t0 + self.final_wait_s)
             if not self.utterance():
+                if (
+                    self.late_first_text_recovery_s is not None
+                    and self.turn is turn
+                    and not self.speaking
+                    and turn.capture_start_ms is not None
+                    and turn.capture_end_ms is not None
+                    and 0 <= turn.capture_start_ms < turn.capture_end_ms
+                ):
+                    turn.no_text_exit = True
+                    turn.late_recovery_pending = True
                 return
         cand: _Candidate | None = None
         try:

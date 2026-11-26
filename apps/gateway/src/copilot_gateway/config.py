@@ -142,6 +142,9 @@ class Settings(CoreSettings):
     # Recheck committed transcript revisions before the delayed utterance-flush ACK.
     # Ordinary segment finals still do not confirm an entire spoken turn.
     committed_final_recheck: bool = False
+    # Re-arm a silent, still-current turn when its first transcript arrives after
+    # the ordinary wait. None keeps the existing behavior; capture spans fence ownership.
+    late_first_text_recovery_ms: int | None = Field(default=None, gt=0, le=30000)
     # Keep a held fast pass when the STT final only adds this many words at the end of the
     # text it started on; only the detector decides again (turn.py, "Kept on a longer final").
     # The final changed the words of 105 of 141 utterances in October's benchmark runs, and
