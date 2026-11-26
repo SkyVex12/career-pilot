@@ -1196,7 +1196,7 @@ class Session:
         text = self._continued(text)
         q.text = text
         q.qtype = detection.qtype
-        q.confidence = DETECTED_CONFIDENCE
+        q.confidence = 1.0 if q.forced else DETECTED_CONFIDENCE
         q.addressed = True
         q.detector_ms = detection.latency_ms
         q.decided_ms = detection.decided_ms
@@ -2761,9 +2761,10 @@ class Session:
         if q is None:
             return
         reply = respond and self.info.mode in prompts.GROUP_MODES
+        # The first detection identifies the button anchor before held text is released.
+        q.forced, q.confidence, q.detector_ms = True, 1.0, None
         self.release_question(qid, text, Detection("answer", "respond" if reply else "other"),
                               speculative=False)  # fmt: skip
-        q.forced, q.confidence, q.detector_ms = True, 1.0, None
         wait_s = self.settings.force_type_wait_ms / 1000
         call = self._named_detections.get(detection, detection)
         self._forced_detections[detection] = call

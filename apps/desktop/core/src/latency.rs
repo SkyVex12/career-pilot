@@ -274,6 +274,36 @@ mod tests {
     }
 
     #[test]
+    fn gateway_takeover_wire_uses_button_anchor_once() {
+        // This exact fixture is asserted against Session._force_taken's first
+        // actual wire event by the gateway test, not a separately invented shape.
+        let mut first =
+            copilot_protocol::parse_server(include_str!("../tests/fixtures/forced_takeover_detected.json"))
+                .unwrap();
+        let t0 = Instant::now();
+        let mut l = LatencyTracker::default();
+        l.on_them_speech_end(t0);
+        l.on_force(t0 + Duration::from_millis(100));
+        let record = l.on_message(&first, t0 + Duration::from_millis(150)).unwrap();
+        assert_eq!((record.anchor, record.detected_ms), (Anchor::Forced, Some(50)));
+        let record = l.on_message(&delta(Pass::Fast, "Ready."), t0 + Duration::from_millis(250)).unwrap();
+        assert_eq!(record.fast_first_word_ms, Some(150));
+        let reports = l.take_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].anchor, LatencyReportAnchor::Forced);
+        assert_eq!(reports[0].first_word_ms, 150);
+        assert!(l.pending_force.is_none());
+
+        // Even a confidence-1 automatic card inside the five-second force window
+        // must use the new speech edge, never inherit this consumed button press.
+        let ServerMessage::QuestionDetected(next) = &mut first else { unreachable!() };
+        next.question_id = Uuid::parse_str("0192f3c4-1d0a-7c55-b2e1-77c0a9d4e211").unwrap();
+        l.on_them_speech_end(t0 + Duration::from_millis(400));
+        let record = l.on_message(&first, t0 + Duration::from_millis(450)).unwrap();
+        assert_eq!((record.anchor, record.detected_ms), (Anchor::SpeechEnd, Some(50)));
+    }
+
+    #[test]
     fn keeps_the_gateway_latency() {
         let t0 = Instant::now();
         let mut l = LatencyTracker::default();
