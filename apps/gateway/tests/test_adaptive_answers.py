@@ -1857,3 +1857,30 @@ def test_ordinary_concise_keeps_existing_budget_reduction(settings_factory, stra
     assert concise.system[:-1] == baseline.system
     assert "preference: concise." in concise.system[-1].text
     assert not router.requests
+
+
+@pytest.mark.parametrize("change", ["same", "model", "reasoning", "fallback"])
+async def test_exact_answer_cache_respects_model_and_reasoning_policy(settings_factory, change):
+    engine, router, _, logs, _ = make_engine(
+        settings_factory(answer_architecture="adaptive_on_demand")
+    )
+    provider = ScriptedProvider("openai")
+    router.routes = {"fast": [Route(provider, "gpt-6-luna", {"reasoning": {"effort": "none"}})]}
+    engine.add(question(forced=True))
+    await engine.wait_idle()
+    await asyncio.gather(*engine._background)
+    engine.questions.clear()
+    router.requests.clear()
+    logs.clear()
+    if change == "model":
+        router.routes["fast"] = [Route(provider, "gpt-6.2-sol", {"reasoning": {"effort": "none"}})]
+    elif change == "reasoning":
+        router.routes["fast"][0].params["reasoning"]["effort"] = "low"
+    elif change == "fallback":
+        router.routes["fast"].append(Route(provider, "gpt-6.2-sol"))
+    engine.add(question(forced=True))
+    await engine.wait_idle()
+    [answer] = [row for row in logs if row["kind"] == "answer"]
+    assert answer["source"] == ("cache" if change == "same" else "model")
+    assert len(router.requests) == int(change != "same")
+    await engine.shutdown(within_s=1)

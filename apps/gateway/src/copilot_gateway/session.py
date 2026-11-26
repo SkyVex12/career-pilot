@@ -47,7 +47,7 @@ from copilot_core.db import actor_account, user_tx
 from copilot_core.embed import Embedder
 from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
-from copilot_core.llm import LLMDone, ModelRouter, prompt_cache_key
+from copilot_core.llm import LLMDone, LLMRequest, ModelRouter, prompt_cache_key
 from copilot_core.packs import (
     PREPARED_DIGEST_POLICY,
     PREPARED_STANDUP_POLICY,
@@ -1960,29 +1960,42 @@ class Session:
         ctx = self._prompt_ctx
         adaptive = self.settings.answer_architecture != "legacy_dual"
         warmed: list[tuple[object, str, Mapping[str, Any], str]] = []
+        targets: list[tuple[str, str, str, LLMRequest]] = []
         for job in self.settings.prewarm_jobs:
-            if not self._warm_current():
-                return
-            route_job = (
-                "adaptive_expert"
-                if adaptive and job == "deep" and self.settings.adaptive_expert_route is not None
-                else job
-            )
-            target = None
             if adaptive:
+                route_job = (
+                    "adaptive_expert"
+                    if job == "deep" and self.settings.adaptive_expert_route is not None
+                    else job
+                )
                 expert = job in ("deep", "deep_light")
                 req = prompts.adaptive_pass(
                     ctx, "", "(warm-up)", "other", self.settings.adaptive_max_tokens,
                     depth="expert" if expert else "standard", expert=expert,
                 )  # fmt: skip
+                targets.append((job, route_job, "adaptive", req))
+            # The category-specific rollback uses different rules, and its deep route
+            # can use a different model. Warm the actual prefixes on configured jobs.
+            if not adaptive or self.settings.adaptive_technical_legacy:
+                req = prompts.fast_pass(
+                    ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens
+                )
+                if job in ("deep", "deep_light"):
+                    req = prompts.deep_pass(
+                        ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+                    )
+                targets.append((job, job, "legacy_dual", req))
+        for job, route_job, architecture, req in targets:
+            if not self._warm_current():
+                return
+            target = None
+            if adaptive:
                 route = next(
                     (r for r in self.router.routes.get(route_job, ()) if not r.refusal_only), None
                 )
                 key = prompt_cache_key(req.system)
                 if route is not None and key is not None:
-                    # Keep configured targets/order, but do not pay twice for an identical
-                    # prefix after a successful write in this invocation. A failed/unsupported
-                    # warm does not prevent the next configured attempt. Snapshot nested params.
+                    # A failed warm never suppresses a later attempt; snapshot nested params.
                     if any(
                         provider is route.provider
                         and model == route.model
@@ -1992,14 +2005,6 @@ class Session:
                     ):
                         continue
                     target = (route.provider, route.model, deepcopy(route.params), key)
-            else:
-                req = prompts.fast_pass(
-                    ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens
-                )
-                if job in ("deep", "deep_light"):
-                    req = prompts.deep_pass(
-                        ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
-                    )
             started = time.monotonic()
             done = await self.router.prewarm(route_job, req)
             if done is None:
@@ -2018,6 +2023,7 @@ class Session:
                 {
                     "kind": "prewarm",
                     "pass": job,
+                    "prompt_architecture": architecture,
                     **({"request_job": route_job} if route_job != job else {}),
                     "model": done.model,
                     "tier": done.service_tier,

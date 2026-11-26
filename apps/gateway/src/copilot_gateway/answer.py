@@ -938,8 +938,8 @@ class AnswerEngine:
             and self.open_problem() is None
         )
 
-    @staticmethod
     def _fresh_cache_slot(
+        self,
         strategy: Architecture,
         plan: AnswerPlan | None,
         slot: str,
@@ -947,9 +947,28 @@ class AnswerEngine:
         version: str,
         request: LLMRequest | None,
     ) -> str:
-        # Only hashes leave this scope; private text is never part of a cache key.
+        # A model/reasoning policy change must not keep serving the old model's answer.
+        # Include fallback policy too; only hashes leave this scope, never private text.
+        routing = tuple(
+            (
+                job,
+                tuple(
+                    (route.provider.name, route.model, route.params, route.refusal_only)
+                    for route in self.host.router.routes.get(job, ())
+                ),
+            )
+            for job in ("fast", "deep", "deep_light", "adaptive_expert")
+        )
         identity = hashlib.sha256(
-            (version + "\n" + prompts.ADAPTIVE_PROMPT_VERSION + "\n" + repr(request)).encode()
+            (
+                version
+                + "\n"
+                + prompts.ADAPTIVE_PROMPT_VERSION
+                + "\n"
+                + repr(request)
+                + "\n"
+                + repr(routing)
+            ).encode()
         ).hexdigest()[:24]
         scope = f"{strategy}:{plan.depth}:{plan.job}" if plan is not None else "legacy-policy"
         return f"{scope}:{slot}:style={style}:{identity}"

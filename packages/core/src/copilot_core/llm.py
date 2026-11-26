@@ -372,8 +372,8 @@ class OpenAIProvider:
     """OpenAI through the Responses API, streaming.
 
     The system blocks go first, in order and unchanged, as one developer message, so the
-    stable prefix is byte-identical and OpenAI's automatic prompt caching can hit (there is no
-    cache_control; a breakpoint only sets `prompt_cache_key`). Requests are not stored
+    stable prefix is byte-identical. GPT-5.6+ uses explicit breakpoints; earlier models
+    use automatic prefix caching with `prompt_cache_key`. Requests are not stored
     (`store: false`). A JSON schema becomes a strict structured output.
     """
 

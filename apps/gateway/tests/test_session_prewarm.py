@@ -292,3 +292,37 @@ async def test_adaptive_uses_only_configured_targets_in_order(settings_factory, 
     await warm(obj)
     assert [model for model, _, _ in provider.calls] == [job + "-model" for job in jobs]
     assert [record["pass"] for record in obj.records] == jobs
+
+
+async def test_retained_technical_prompts_warm_actual_models_and_prefixes(settings_factory):
+    provider = WarmProvider()
+    obj = session(
+        settings_factory(
+            answer_architecture="adaptive",
+            adaptive_technical_legacy=True,
+            prewarm_jobs=["fast", "deep"],
+            adaptive_expert_route={"model": "gpt-6.2-sol", "reasoning": "low"},
+        ),
+        {
+            "fast": [Route(provider, "gpt-6-luna")],
+            "deep": [Route(provider, "gpt-6.1-sol")],
+            "adaptive_expert": [Route(provider, "gpt-6.2-sol")],
+        },
+    )
+    await warm(obj)
+    expected = [
+        ("gpt-6-luna", prompts.adaptive_pass(obj._prompt_ctx, "", "q", None, 100)),
+        ("gpt-6-luna", prompts.fast_pass(obj._prompt_ctx, "", "q", None, 100)),
+        ("gpt-6.2-sol", prompts.adaptive_pass(obj._prompt_ctx, "", "q", None, 100)),
+        ("gpt-6.1-sol", prompts.deep_pass(obj._prompt_ctx, "", "q", "technical", 100)),
+    ]
+    assert [(model, cached_prefix(req)) for model, req, _ in provider.calls] == [
+        (model, cached_prefix(req)) for model, req in expected
+    ]
+    assert [row["prompt_architecture"] for row in obj.records] == [
+        "adaptive",
+        "legacy_dual",
+        "adaptive",
+        "legacy_dual",
+    ]
+    assert obj.records[2]["request_job"] == "adaptive_expert"
