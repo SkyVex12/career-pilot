@@ -63,6 +63,8 @@ def make_engine(mode: str):
         llm_providers=["openai"],
         embedder="none",
         answer_architecture=mode,
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         adaptive_max_tokens=1200,
         fast_pass_max_tokens=180,
         deep_pass_max_tokens=900,

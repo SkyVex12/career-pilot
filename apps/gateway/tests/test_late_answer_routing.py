@@ -274,6 +274,8 @@ async def live_lab(
     settings = env.settings(
         llm_providers=["openai"],
         answer_architecture=architecture,
+        adaptive_expert_route=None,
+        adaptive_technical_legacy=False,
         detector_api="decisions",
         openai_detector_model="fixture-detector",
         openai_fast_model="fixture-fast",

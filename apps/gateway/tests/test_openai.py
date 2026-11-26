@@ -33,6 +33,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 OPENAI_SETTINGS: dict[str, Any] = {
     "llm_providers": ["openai"],
+    "answer_architecture": "legacy_dual",
+    "adaptive_expert_route": None,
+    "adaptive_technical_legacy": False,
     "openai_detector_model": "gpt-6-luna",
     "openai_detector_reasoning": "none",
     "openai_fast_model": "gpt-6-luna",

@@ -34,6 +34,7 @@ def settings_for(settings_factory: Any, **changes: Any) -> Any:
         **{
             "answer_architecture": "adaptive",
             "adaptive_expert_route": None,
+            "adaptive_technical_legacy": False,
             "llm_providers": ["openai"],
             "openai_detector_model": "gpt-6-luna",
             "openai_detector_reasoning": "none",

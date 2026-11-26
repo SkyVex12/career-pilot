@@ -465,8 +465,12 @@ class Session:
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
         qid = fields.get("question_id")
+        q = self.answers.questions.get(qid) if isinstance(qid, UUID) else None
+        if q is not None and cls in (models.AnswerDelta, models.AnswerDone, models.AnswerError):
+            q.answer_exposed = True
         if cls is models.QuestionDetected:
-            q = self.answers.questions.get(qid) if isinstance(qid, UUID) else None
+            if q is not None:
+                q.exposed = True
             fields.setdefault(
                 "answer_strategy",
                 (
@@ -1139,6 +1143,7 @@ class Session:
             question_type=q.qtype,
             confidence=q.confidence,
             speculative=speculative,
+            answer_strategy=self.answers.strategy(q),
         )
         self.answers.add(q)
         return q.qid
@@ -1201,15 +1206,16 @@ class Session:
         q.detector_ms = detection.latency_ms
         q.decided_ms = detection.decided_ms
         q.depth = detection.depth
-        q.speculative = speculative
+        q.speculative = speculative and not q.confirmed
         q.detected_at = datetime.now(UTC)
+        q = self.answers.reconcile_strategy(q)
         self.emit(
             models.QuestionDetected,
             question_id=q.qid,
             text=text,
             question_type=q.qtype,
             confidence=q.confidence,
-            speculative=speculative,
+            speculative=q.speculative,
         )
         self.answers.release(qid)
 
@@ -1235,6 +1241,7 @@ class Session:
             if detection.depth is not None:
                 q.depth = detection.depth
             q.first_shown = True
+            self.answers.reconcile_strategy(q)
 
     # STT callbacks.
 
@@ -1631,7 +1638,17 @@ class Session:
     def deep_auto_types(self) -> list[str]:
         s = self.settings
         if s.answer_architecture != "legacy_dual":
-            return []  # Candidate experts are chosen per question, never by UI type guesses.
+            # Each card's frozen strategy gates UI prediction; expert technical questions
+            # remain adaptive even though standard technical cards use legacy detail.
+            return (
+                ["technical"]
+                if (
+                    s.adaptive_technical_legacy
+                    and s.deep_pass_auto
+                    and "technical" in s.deep_pass_auto_types
+                )
+                else []
+            )
         # The client knows no "follow": a follow card reaches it as "other". Nor the types
         # used at work, which reach it as the protocol types of prompts.WIRE_TYPES.
         types = [t for t in s.deep_pass_auto_types if t in prompts.QUESTION_TYPES]
@@ -2794,10 +2811,14 @@ class Session:
                 raise
             if self.ending or self.lost or self._retention_failed:
                 return
+            q = self.answers.questions.get(qid)
+            if q is None:
+                return
             ok = detection.done() and not detection.cancelled() and not detection.exception()
             found = detection.result() if ok else None
             if found is not None and found.fires() and not reply:
                 q.qtype, q.detector_ms, q.depth = found.qtype, found.latency_ms, found.depth
+                q = self.answers.reconcile_strategy(q)
             if not (q.cancelled or q.discarded):
                 self.answers.confirm(qid, q.text, None)
                 self.conv.question(str(qid), q.text, self.capture_now)

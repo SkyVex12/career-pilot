@@ -310,6 +310,11 @@ class Question:
     fast_text: str = ""
     delta_counts: dict[str, int] = field(default_factory=dict[str, int])
     plans: dict[str, AnswerPlan] = field(default_factory=dict[str, AnswerPlan])
+    answer_strategy: Architecture | None = None  # frozen before scheduling this generation
+    exposed: bool = False  # QuestionDetected metadata has reached the client
+    answer_exposed: bool = False  # any delta (even whitespace), done or error is irreversible
+    snapshots: dict[str, RequestSnapshot] = field(default_factory=dict[str, RequestSnapshot])
+    retained_strategy: Architecture | None = None  # last late policy choice not applied
     preferences: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     # A screenshot question (coding mode): its shots, and the fast pass's reading of them.
     screen: "ScreenAsk | None" = None
@@ -518,6 +523,8 @@ class AnswerEngine:
     # Question lifecycle, driven by the turn detector and client messages.
 
     def add(self, q: Question) -> None:
+        q.answer_strategy = q.answer_strategy or self._selected_strategy(q)
+        q.exposed = q.exposed or not q.held
         self.questions[q.qid] = q
         while len(self.questions) > 100:
             _, old = self.questions.popitem(last=False)
@@ -570,6 +577,8 @@ class AnswerEngine:
     def _auto_deep(self, q: Question) -> None:
         """The deep pass starts on its own once the question is confirmed and its fast pass
         has ended, for the auto types; never for a question a newer one has replaced."""
+        if self.questions.get(q.qid) is not q:
+            return
         s = self.host.settings
         if q.screen is not None:
             # The code pass: started from the reading (`_on_read`), or here when the fast pass
@@ -635,6 +644,7 @@ class AnswerEngine:
         q = self.questions.get(qid)
         if q is None or not q.held:
             return
+        q.exposed = True
         q.held = False
         q.released_at = time.monotonic()
         if q.held_text:
@@ -781,20 +791,164 @@ class AnswerEngine:
     def start_pass(self, q: Question, pass_: str) -> None:
         if self._closing or pass_ in q.tasks or q.cancelled or q.discarded or q.superseded:
             return
+        q.answer_strategy = q.answer_strategy or self._selected_strategy(q)
+        if self.strategy(q) != "legacy_dual" and pass_ not in q.plans:
+            q.plans[pass_] = plan_answer(
+                q.text, q.qtype, q.depth, self.strategy(q), expert=pass_ == "deep"
+            )
         task = asyncio.create_task(self._run_pass(q, pass_))
         q.tasks[pass_] = task
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def strategy(self, q: Question) -> Architecture:
+    def _selected_strategy(self, q: Question) -> Architecture:
         # Screenshot reading/code and follow-ups retain their specialized prompts.
         if q.screen is not None or self.open_problem() is not None:
             return "legacy_dual"
-        return self.host.settings.answer_architecture
+        settings = self.host.settings
+        strategy = settings.answer_architecture
+        if (
+            strategy != "legacy_dual"
+            and settings.adaptive_technical_legacy
+            and q.qtype == "technical"
+            and plan_answer(q.text, q.qtype, q.depth, strategy).depth == "standard"
+        ):
+            return "legacy_dual"
+        return strategy
+
+    def strategy(self, q: Question) -> Architecture:
+        return q.answer_strategy or self._selected_strategy(q)
+
+    def reconcile_strategy(self, q: Question) -> Question:
+        """Replace a generation before answer content or terminal state is exposed.
+
+        Once any answer event or expert request exists, retain the frozen generation.
+        An exposed legacy card cannot become adaptive: the client may already predict its
+        dependent detail. No classifier, question cancellation or protocol reset is added.
+        """
+        if self.questions.get(q.qid) is not q or q.cancelled or q.discarded or q.superseded:
+            return q
+        desired = self._selected_strategy(q)
+        current = self.strategy(q)
+        if desired == current:
+            return q
+        shown = q.exposed or not q.held
+        if (
+            q.answer_exposed
+            or q.expanded_at is not None
+            or "deep" in q.tasks
+            or q.fast_ended
+            or q.logged
+            or (shown and (current == "legacy_dual" or desired != "legacy_dual"))
+        ):
+            if q.retained_strategy != desired:
+                q.retained_strategy = desired
+                self.host.log_entry(
+                    {
+                        "kind": "answer_strategy_retained",
+                        "question_id": str(q.qid),
+                        "answer_strategy": current,
+                        "desired_strategy": desired,
+                        "reason": "answer_or_expert_exposed"
+                        if q.answer_exposed or q.expanded_at is not None or "deep" in q.tasks
+                        else "generation_stable",
+                    }
+                )
+            return q
+        # Shared matching and frozen context/preferences transfer; revised question text
+        # belongs to the replacement request. Old tasks retain only their retired object.
+        replacement = Question(
+            qid=q.qid,
+            text=q.text,
+            qtype=q.qtype,
+            confidence=q.confidence,
+            addressed=q.addressed,
+            speculative=q.speculative,
+            forced=q.forced,
+            t0=q.t0,
+            detector_ms=q.detector_ms,
+            match=q.match,
+            decided_ms=q.decided_ms,
+            depth=q.depth,
+            detected_at=q.detected_at,
+            turn_end_ms=q.turn_end_ms,
+            final_ms=q.final_ms,
+            early_ms=q.early_ms,
+            first_shown=q.first_shown,
+            held=q.held,
+            confirmed=q.confirmed,
+            released_at=q.released_at if shown else None,
+            was_speculative=q.was_speculative,
+            exposed=shown,
+            answer_strategy=desired,
+            preferences=dict(q.preferences),
+            snapshots={
+                key: value if value.text == q.text else replace(value, text=q.text)
+                for key, value in q.snapshots.items()
+            },
+        )
+        q.match = None
+        q.discarded = True
+        self._cancel_tasks(q)
+        self.host.log_entry(
+            {
+                "kind": "answer_strategy_replaced",
+                "question_id": str(q.qid),
+                "previous_strategy": current,
+                "answer_strategy": desired,
+                "reason": "empty_card" if shown else "unexposed_held",
+            }
+        )
+        self.add(replacement)
+        if shown:
+            # Synchronous metadata update precedes every task step and replacement delta;
+            # forced/non-speculative confirmation may otherwise emit no detection at all.
+            self.host.emit(
+                models.QuestionDetected,
+                question_id=replacement.qid,
+                text=replacement.text,
+                question_type=replacement.qtype,
+                confidence=replacement.confidence,
+                speculative=replacement.speculative,
+                answer_strategy=desired,
+            )
+        return replacement
+
+    def _adaptive_evidence(self, q: Question) -> bool:
+        # A category-specific legacy prompt must not bypass adaptive deployment freshness.
+        # Explicit legacy rollback and specialized screenshot workflows stay unchanged.
+        return (
+            self.host.settings.answer_architecture != "legacy_dual"
+            and q.screen is None
+            and self.open_problem() is None
+        )
+
+    @staticmethod
+    def _fresh_cache_slot(
+        strategy: Architecture,
+        plan: AnswerPlan | None,
+        slot: str,
+        style: str,
+        version: str,
+        request: LLMRequest | None,
+    ) -> str:
+        # Only hashes leave this scope; private text is never part of a cache key.
+        identity = hashlib.sha256(
+            (version + "\n" + prompts.ADAPTIVE_PROMPT_VERSION + "\n" + repr(request)).encode()
+        ).hexdigest()[:24]
+        scope = f"{strategy}:{plan.depth}:{plan.job}" if plan is not None else "legacy-policy"
+        return f"{scope}:{slot}:style={style}:{identity}"
 
     def _emit_delta(self, q: Question, pass_: str, text: str) -> None:
-        if not text or q.cancelled or q.discarded or q.superseded:
+        if (
+            not text
+            or self.questions.get(q.qid) is not q
+            or q.cancelled
+            or q.discarded
+            or q.superseded
+        ):
             return
+        q.answer_exposed = True
         sequence = q.delta_counts.get(pass_, 0)
         self.host.emit(
             models.AnswerDelta,
@@ -815,8 +969,7 @@ class AnswerEngine:
     async def _run_pass(self, q: Question, pass_: str) -> None:
         q.started_passes.add(pass_)
         host = self.host
-        style = host.answer_style()
-        response_length = getattr(host, "response_length", lambda: "default")()
+        style, response_length = self._preferences(q, pass_)
         q.preferences[pass_] = (style, response_length)
         started = time.monotonic()
         state: dict[str, Any] = {
@@ -832,11 +985,20 @@ class AnswerEngine:
         strategy = self.strategy(q)
         plan = None
         if strategy != "legacy_dual":
-            plan = plan_answer(q.text, q.qtype, q.depth, strategy, expert=pass_ == "deep")
+            plan = q.plans.get(pass_) or plan_answer(
+                q.text, q.qtype, q.depth, strategy, expert=pass_ == "deep"
+            )
             q.plans[pass_] = plan
 
+        def current() -> bool:
+            return self.questions.get(q.qid) is q and not (q.cancelled or q.discarded)
+
+        def require_current() -> None:
+            if not current():
+                raise asyncio.CancelledError
+
         def delta(text: str) -> None:
-            if q.cancelled or q.discarded or q.superseded:
+            if not current() or q.superseded:
                 return
             if state["first_delta_at"] is None:
                 state["first_delta_at"] = time.monotonic()
@@ -905,6 +1067,8 @@ class AnswerEngine:
         def done(
             source: str, refs: list[NodeRef], done_info: LLMDone | None, first_token_ms: int | None
         ) -> None:
+            require_current()
+            q.answer_exposed = True
             if boundary.feed("", final=True):
                 state["first_sentence_at"] = time.monotonic()
             usage = done_info.usage if done_info else None
@@ -1005,10 +1169,15 @@ class AnswerEngine:
         async def shown() -> None:
             """A held pass waits here for the detector before it ends; if the detector says
             no, `discard` cancels it here and it ends unseen."""
+            require_current()
             if q.held:
                 await q.released.wait()
+            require_current()
 
         def error(code: str) -> None:
+            if not current():
+                return
+            q.answer_exposed = True
             host.emit(models.AnswerError, question_id=q.qid, **{"pass": pass_}, code=code)
             host.log_entry(
                 {
@@ -1021,7 +1190,7 @@ class AnswerEngine:
             )
 
         async def prepared(answer: PreparedAnswer) -> bool:
-            if strategy != "legacy_dual":
+            if self._adaptive_evidence(q):
                 # Nothing prepared enters held_text: release must first expose the latest
                 # transcript/source state. A changed fact falls through to fresh generation.
                 await shown()
@@ -1041,7 +1210,9 @@ class AnswerEngine:
                     return  # the match is current at display time: no model call
             # Prepared validation can wait for a final or a changed source. Snapshot
             # only when fresh generation begins, before retrieval/cache awaits.
-            snapshot = self._request_snapshot(q)
+            require_current()
+            snapshot = q.snapshots.get(pass_) or self._request_snapshot(q)
+            q.snapshots[pass_] = snapshot
             cache_version = host.cache_version()
             qhash = question_hash(snapshot.text)
             # A follow has the question's text but continues the user: never the cache. Nor
@@ -1061,7 +1232,8 @@ class AnswerEngine:
             memory_pass = "deep" if plan is not None else pass_
             memory: list[str] | None = None
             candidate_req: LLMRequest | None = None
-            if plan is not None:
+            fresh_cache = self._adaptive_evidence(q)
+            if fresh_cache:
                 if reuse:
 
                     async def prefetch_cache() -> None:
@@ -1085,6 +1257,7 @@ class AnswerEngine:
                 state["start_at"] = time.monotonic()
                 context_started = time.monotonic()
                 memory, state["memory"] = await host.memory_lines(snapshot.text, memory_pass)
+                require_current()
                 state["stages"]["context_wait_ms"] = round(
                     (time.monotonic() - context_started) * 1000
                 )
@@ -1094,19 +1267,12 @@ class AnswerEngine:
                     state["stages"]["prompt_build_ms"] = round(
                         (time.monotonic() - prompt_started) * 1000
                     )
-                # Only hashes leave this scope; private text is never part of a cache key.
-                identity = hashlib.sha256(
-                    (
-                        cache_version
-                        + "\n"
-                        + prompts.ADAPTIVE_PROMPT_VERSION
-                        + "\n"
-                        + repr(candidate_req)
-                    ).encode()
-                ).hexdigest()[:24]
-                slot = f"{strategy}:{plan.depth}:{plan.job}:{slot}:style={style}:{identity}"
+                slot = self._fresh_cache_slot(
+                    strategy, plan, slot, style, cache_version, candidate_req
+                )
             if cache_read is not None:
                 await asyncio.shield(cache_read)
+                require_current()
                 # A prefetched value is eligible only for the freshly resolved evidence.
                 cached = self._cache_entry(cache_value, slot, cache_version)
             else:
@@ -1116,6 +1282,7 @@ class AnswerEngine:
                     state["stages"]["cache_lookup_ms"] = round(
                         (time.monotonic() - cache_started) * 1000
                     )
+            require_current()
             if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -1124,7 +1291,7 @@ class AnswerEngine:
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
-            if plan is None:
+            if not fresh_cache:
                 state["start_at"] = time.monotonic()
             if q.screen is not None:
                 job = "screen" if pass_ == "fast" else "screen_code"
@@ -1162,6 +1329,7 @@ class AnswerEngine:
                     state["stages"]["private_context_wait_ms"] = round(
                         (time.monotonic() - context_started) * 1000
                     )
+            require_current()
             if candidate_req is not None:
                 req = candidate_req
             else:
@@ -1198,7 +1366,8 @@ class AnswerEngine:
                 host.log_entry(entry)
 
             def on_fallback(job: str, route: Route, reason: str) -> None:
-                host.llm_status(False)
+                if current():
+                    host.llm_status(False)
 
             async def routed_chunks() -> AsyncGenerator[str | LLMDone]:
                 try:
@@ -1305,10 +1474,12 @@ class AnswerEngine:
                         finished = chunk
                         state["done"] = chunk
                     else:
+                        require_current()
                         if chunk and state["raw_first_chunk_at"] is None:
                             state["raw_first_chunk_at"] = time.monotonic()
                         if text := shown_text(chunk):
                             delta(text)
+                require_current()
                 rest = cites.flush() if q.screen is None else (reader.flush() if reader else "")
                 if rest:
                     delta(rest)
@@ -1355,7 +1526,7 @@ class AnswerEngine:
             refs = cited_refs(text, host.refs()) if q.screen is None else []
             done("model", refs, done_info, done_info.first_token_ms)
             if (
-                not q.cancelled
+                current()
                 and not q.superseded
                 and host.store_text()
                 and reuse
@@ -1367,10 +1538,15 @@ class AnswerEngine:
         except TimeoutError:
             state["stopped"] = True
             self._log_cancelled(q, pass_, state, reason="timeout")
-            host.llm_status(False)
-            await shown()
-            error("timeout")
+            if current():
+                host.llm_status(False)
+                await shown()
+                error("timeout")
         except AllRoutesFailedError as e:
+            if not current():
+                state["stopped"] = True
+                self._log_cancelled(q, pass_, state)
+                return
             log.warning("%s pass failed for %s: %s", pass_, q.qid, e)
             await shown()
             if e.refused:  # every model that ran declined: not an outage
@@ -1388,6 +1564,10 @@ class AnswerEngine:
             self._log_cancelled(q, pass_, state)
             raise
         except Exception:
+            if not current():
+                state["stopped"] = True
+                self._log_cancelled(q, pass_, state)
+                return
             log.exception("%s pass crashed for %s", pass_, q.qid)
             error("internal")
         finally:
@@ -1405,7 +1585,7 @@ class AnswerEngine:
                 log.debug(
                     "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
                 )
-                if pass_ == "fast" and not state["stopped"]:
+                if pass_ == "fast" and not state["stopped"] and current():
                     # Done, failed or refused: the deep pass may start now.
                     q.fast_ended = True
                     self._auto_deep(q)
@@ -1684,7 +1864,7 @@ class AnswerEngine:
         result = self._match_result(q)
         answer = result.answer if result is not None else None
         if answer is not None:
-            if self.strategy(q) != "legacy_dual":
+            if self._adaptive_evidence(q):
                 # Citation IDs and a question match do not establish semantic grounding.
                 # Versioned provenance narrows eligibility; it is not human verification.
                 version_for = getattr(self.host, "prepared_source_version", None)

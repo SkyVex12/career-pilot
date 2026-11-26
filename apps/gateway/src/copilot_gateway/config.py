@@ -4,7 +4,8 @@ Live tuning settings carry the defaults from ARCHITECTURE.md ("Settings"). They 
 environment (prefix COPILOT_) or a .env file for now; AWS AppConfig replaces that later.
 """
 
-from typing import Annotated, Literal
+import json
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import NoDecode
@@ -72,6 +73,25 @@ class AdaptiveExpertRoute(BaseModel):
         if not value.strip() or value != value.strip():
             raise ValueError("Adaptive expert model must be a nonempty exact model ID")
         return value
+
+
+def _openai_only(values: dict[str, Any]) -> bool:
+    # Promote only the evaluated topology; mixed and other-provider deployments retain
+    # their existing defaults. Explicit constructor/environment fields skip factories.
+    return values.get("llm_providers") == ["openai"]
+
+
+def _default_adaptive_expert(values: dict[str, Any]) -> AdaptiveExpertRoute | None:
+    if not _openai_only(values):
+        return None
+    return AdaptiveExpertRoute(
+        model="gpt-6.2-sol",
+        reasoning="low",
+        service_tier="fast",
+        retry_tier="fast",
+        first_token_timeout_ms=20000,
+        hedge_ms=None,
+    )
 
 
 class Settings(CoreSettings):
@@ -163,16 +183,21 @@ class Settings(CoreSettings):
         default_factory=lambda: dict(DEFAULT_PREPARED_THRESHOLDS)
     )
     prepared_answer_min_similarity: float = 0.85
-    # Default remains the measured baseline until paired evaluations approve rollout.
+    # Defaults select the evaluated OpenAI-only system; explicit legacy remains rollback.
     answer_architecture: Literal[
         "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"
-    ] = "legacy_dual"
+    ] = Field(default_factory=lambda data: "adaptive" if _openai_only(data) else "legacy_dual")
     # Experimental: one independent expert attempt after a typed transient primary failure,
     # only before any answer text. Off until paired failure-recovery evidence supports it.
     adaptive_failure_recovery: bool = False
-    # Opt-in only: adaptive expert answers use this dedicated route. Legacy and screen
-    # routes retain their global deep settings; no model or tier is selected by default.
-    adaptive_expert_route: AdaptiveExpertRoute | None = None
+    # Isolated adaptive expert route. Explicit None restores the global deep route;
+    # legacy and screens ignore this profile even when it remains configured.
+    adaptive_expert_route: Annotated[AdaptiveExpertRoute | None, NoDecode] = Field(
+        default_factory=_default_adaptive_expert
+    )
+    # Standard technical answers retain the dependent legacy detail that won full-view
+    # review. Expert/coding/design plans keep precedence; False restores pure adaptive.
+    adaptive_technical_legacy: bool = Field(default_factory=_openai_only)
     adaptive_max_tokens: int = Field(default=1200, ge=100, le=4000)
     adaptive_stream_idle_timeout_s: float = Field(default=30.0, gt=0, le=120)
     adaptive_stream_total_timeout_s: float = Field(default=90.0, gt=0, le=300)
@@ -393,6 +418,12 @@ class Settings(CoreSettings):
     def prepared_threshold(self, model_id: str | None) -> PreparedThreshold:
         found = self.prepared_answer_thresholds.get(model_id or "")
         return found or PreparedThreshold(min_similarity=self.prepared_answer_min_similarity)
+
+    @field_validator("adaptive_expert_route", mode="before")
+    @classmethod
+    def _adaptive_expert_profile(cls, value: Any) -> Any:
+        # Keep an explicit environment JSON null distinct from an omitted field.
+        return json.loads(value) if isinstance(value, str) else value
 
     @field_validator("prepared_answer_thresholds", mode="after")
     @classmethod

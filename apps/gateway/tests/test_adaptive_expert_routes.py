@@ -29,6 +29,7 @@ def configured(settings_factory: Any, **changes: Any) -> Any:
         **{
             "answer_architecture": "adaptive",
             "adaptive_expert_route": None,
+            "adaptive_technical_legacy": False,
             "openai_detector_model": "detector-fixture",
             "openai_detector_reasoning": "none",
             "openai_fast_model": "gpt-6-luna",
