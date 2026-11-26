@@ -2,7 +2,7 @@
 //!
 //! Both channels send only speech. When speech starts, the 200 ms before it (the pre-roll) and
 //! the audio up to the start decision go out at once with the start flag on the first frame,
-//! in chunks of at most 1 s; then configured 20, 40 or 100 ms frames (100 ms by default);
+//! in chunks of at most 1 s; then configured 20, 40 or 100 ms frames (40 ms by default);
 //! when speech ends, the rest of
 //! the audio and an empty frame with the end flag. This is `schedule()` in
 //! evals/src/copilot_evals/replay.py, done live.
@@ -128,7 +128,7 @@ impl SpeechFramer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::FRAME_SAMPLES;
+    const DEFAULT_FRAME_SAMPLES: usize = 640;
 
     /// Samples whose value is their position, so a frame's audio shows where it came from.
     fn ramp(from: u64, n: usize) -> Vec<i16> {
@@ -167,11 +167,15 @@ mod tests {
         assert!(last.audio.is_empty());
         assert_eq!(last.capture_ms, 2_200);
 
-        // The audio between is contiguous, every frame is at most 100 ms after the burst,
+        // The audio between is contiguous, every frame is at most 40 ms after the burst,
         // and nothing outside the speech (plus pre-roll and hangover) goes out.
         let audio: Vec<i16> = frames.iter().flat_map(|f| f.audio.clone()).collect();
         assert_eq!(audio, ramp(12_800, 35_200 - 12_800));
-        assert!(frames[1..frames.len() - 1].iter().all(|f| f.flags == 0 && f.audio.len() <= FRAME_SAMPLES));
+        assert!(
+            frames[1..frames.len() - 1]
+                .iter()
+                .all(|f| f.flags == 0 && f.audio.len() <= DEFAULT_FRAME_SAMPLES)
+        );
         assert!(frames.iter().filter(|f| f.flags & FLAG_SPEECH_START != 0).count() == 1);
     }
 
@@ -179,7 +183,7 @@ mod tests {
     fn regular_frames_follow_in_real_time() {
         let mut f = SpeechFramer::new(CHANNEL_THEM);
         let start = VadEvent::Start { edge: 0, decided: 1_920 };
-        // Before the decision, nothing; at 1_920 the burst; then one frame per 1_600 samples.
+        // Before the decision, nothing; at 1_920 the burst; then one frame per 640 samples.
         let mut sent = Vec::new();
         for i in 0..40u64 {
             let at = (i + 1) * 160;
@@ -189,8 +193,8 @@ mod tests {
         }
         assert!(sent.iter().take_while(|(at, _)| *at < 1_920).all(|(_, f)| f.is_empty()));
         let after: Vec<&OutFrame> = sent.iter().filter(|(at, _)| *at > 1_920).flat_map(|(_, f)| f).collect();
-        assert!(after.iter().all(|f| f.audio.len() == FRAME_SAMPLES));
-        assert_eq!(after.len(), (6_400 - 1_920) / FRAME_SAMPLES);
+        assert!(after.iter().all(|f| f.audio.len() == DEFAULT_FRAME_SAMPLES));
+        assert_eq!(after.len(), (6_400 - 1_920) / DEFAULT_FRAME_SAMPLES);
     }
 
     #[test]

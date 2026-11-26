@@ -114,8 +114,9 @@ fn synthetic(duration: Option<FrameDuration>, channel: u8) -> Vec<Sent> {
 
 #[test]
 fn duration_accepts_only_the_three_reviewed_choices() {
-    assert_eq!(FrameDuration::default(), FrameDuration::Ms100);
-    assert_eq!(FrameDuration::default().samples(), FRAME_SAMPLES);
+    assert_eq!(FrameDuration::default(), FrameDuration::Ms40);
+    assert_eq!(FrameDuration::default().samples(), 640);
+    assert_eq!(FrameDuration::Ms100.samples(), FRAME_SAMPLES);
     for d in DURATIONS {
         assert_eq!(FrameDuration::try_from(d.millis()), Ok(d));
     }
@@ -128,7 +129,7 @@ fn duration_accepts_only_the_three_reviewed_choices() {
 fn all_frame_sizes_preserve_pcm_positions_preroll_and_immediate_end_flags() {
     for channel in [CHANNEL_THEM, CHANNEL_ME] {
         let baseline = synthetic(None, channel);
-        assert_eq!(baseline, synthetic(Some(FrameDuration::Ms100), channel));
+        assert_eq!(baseline, synthetic(Some(FrameDuration::Ms40), channel));
         let expected_pcm = sample_positions(&baseline, channel);
         let expected_flags = flags(&baseline);
         assert_eq!(expected_flags.len(), 4);
@@ -211,7 +212,7 @@ fn checked_in_speech_corpus_preserves_vad_and_pcm_with_measured_packet_ages() {
             assert_eq!(sample_positions(&sent, channel), sample_positions(&baseline, channel));
         }
         assert!(sent.iter().filter(|s| s.regular).all(|s| s.frame.audio.len() == duration.samples()));
-        if duration == FrameDuration::Ms100 {
+        if duration == FrameDuration::Ms40 {
             assert_eq!(sent, baseline);
         }
         println!("FRAMING_BENCH {}", report("checked_in_them_and_me", duration, &sent, elapsed_us));

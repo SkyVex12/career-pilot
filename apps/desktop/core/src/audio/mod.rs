@@ -30,13 +30,13 @@ pub const TICK_MS: u32 = 10;
 /// The baseline regular speech frame on the wire: 100 ms.
 pub const FRAME_SAMPLES: usize = 1_600;
 
-/// Supported regular speech-frame durations. The baseline remains 100 ms; changing this
+/// Supported regular speech-frame durations. Live capture defaults to 40 ms; changing this
 /// only changes packet boundaries, not VAD decisions, pre-roll or the immediate end flush.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FrameDuration {
     Ms20,
-    Ms40,
     #[default]
+    Ms40,
     Ms100,
 }
 
