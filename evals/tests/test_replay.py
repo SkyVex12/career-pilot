@@ -408,3 +408,34 @@ async def test_replacement_qid_after_next_segment_starts_is_not_assigned_to_it()
         "first_sentence_boundary": None,
         "completion": None,
     }
+
+
+@pytest.mark.parametrize("frame_ms", [20, 40, 100])
+def test_frame_size_preserves_pcm_burst_edges_and_capture_clock(frame_ms: int) -> None:
+    pcm, segments = two_questions()
+    baseline = rp.schedule(pcm, segments)
+    candidate = rp.schedule(pcm, segments, frame_ms=frame_ms)
+    assert b"".join(send.audio for send in candidate) == b"".join(send.audio for send in baseline)
+    assert [(s.segment, s.at_sample, s.capture_ms) for s in candidate if s.flags] == [
+        (s.segment, s.at_sample, s.capture_ms) for s in baseline if s.flags
+    ]
+    assert [s.at_sample for s in candidate] == sorted(s.at_sample for s in candidate)
+    for i, segment_ in enumerate(segments):
+        initial = [s for s in candidate if s.segment == i and s.at_sample == segment_.start_decided]
+        assert initial == [
+            s for s in baseline if s.segment == i and s.at_sample == segment_.start_decided
+        ]
+        streamed = [s for s in candidate if s.segment == i and s.at_sample > segment_.start_decided]
+        assert all(len(s.audio) <= frame_ms * 32 for s in streamed)
+        assert all(
+            s.capture_ms * 16 + len(s.audio) // 2 == s.at_sample for s in streamed if s.audio
+        )
+    if frame_ms == 100:
+        assert candidate == baseline
+
+
+@pytest.mark.parametrize("invalid", [0, -1, 41, 1000, True, 40.0])
+def test_frame_size_invalid_rejected(invalid: Any) -> None:
+    pcm, segments = two_questions()
+    with pytest.raises(ValueError, match="frame_ms"):
+        rp.schedule(pcm, segments, frame_ms=invalid)

@@ -5,8 +5,9 @@
     uv run copilot-replay clip.wav --drop-at 30   # cut the socket at 30 s, then resume
 
 The WAV plays as the "them" channel. Silero VAD runs on the client side, as on the desktop:
-only speech is sent, in 100 ms frames, with a speech-start flag on the first frame (after a
-short pre-roll) and an empty speech-end frame once the silence passes `--min-silence-ms`.
+only speech is sent, in 100 ms frames by default (20/40 ms are opt-in), with a speech-start
+flag on the first frame (after a short pre-roll) and an empty speech-end frame once the
+silence passes `--min-silence-ms`.
 The tool prints the transcript, detected questions and streamed answers as they arrive, then
 a per-question latency table and first-word p50/p95 against the 0.9 s / 1.5 s target
 (ARCHITECTURE.md, "SLOs, alerts and feature flags").
@@ -74,8 +75,13 @@ class Send:
     segment: int
 
 
-def schedule(pcm: bytes, segments: list[Segment], preroll_ms: int = 200) -> list[Send]:
+def schedule(
+    pcm: bytes, segments: list[Segment], preroll_ms: int = 200, *, frame_ms: int = 100
+) -> list[Send]:
     """The frames a VAD client sends: speech only, start flag first, then a speech-end frame."""
+    if type(frame_ms) is not int or frame_ms not in (20, 40, 100):
+        raise ValueError("frame_ms must be 20, 40, or 100")
+    frame_samples = frame_ms * SAMPLE_RATE // 1000
     out: list[Send] = []
     preroll = preroll_ms * SAMPLE_RATE // 1000
     prev_end = 0
@@ -89,8 +95,8 @@ def schedule(pcm: bytes, segments: list[Segment], preroll_ms: int = 200) -> list
             end = min(pos + SAMPLE_RATE, burst_end)
             out.append(Send(burst_end, 0b01 if first else 0, pcm[pos * 2 : end * 2], pos // 16, i))
             first, pos = False, end
-        while pos < seg.end_decided:  # then 100 ms frames in real time
-            end = min(pos + FRAME_SAMPLES, seg.end_decided)
+        while pos < seg.end_decided:  # then bounded frames in real time
+            end = min(pos + frame_samples, seg.end_decided)
             out.append(Send(end, 0b01 if first else 0, pcm[pos * 2 : end * 2], pos // 16, i))
             first, pos = False, end
         out.append(Send(seg.end_decided, 0b10, b"", seg.end_decided * 1000 // SAMPLE_RATE, i))
@@ -634,6 +640,7 @@ async def main(argv: list[str] | None = None) -> int:
     p.add_argument("--threshold", type=float, default=0.5, help="Silero speech threshold")
     p.add_argument("--min-silence-ms", type=int, default=200, help="VAD hangover before speech end")
     p.add_argument("--preroll-ms", type=int, default=200)
+    p.add_argument("--frame-ms", type=int, choices=(20, 40, 100), default=100)
     p.add_argument("--start", type=float, default=0.0, help="skip this many seconds")
     p.add_argument("--max-seconds", type=float, help="play at most this much audio")
     p.add_argument("--speed", type=float, default=1.0, help="above 1 is faster; latency invalid")
@@ -656,7 +663,7 @@ async def main(argv: list[str] | None = None) -> int:
         min_silence_ms=args.min_silence_ms,
         total_samples=len(pcm) // 2,
     )
-    sends = schedule(pcm, segments, args.preroll_ms)
+    sends = schedule(pcm, segments, args.preroll_ms, frame_ms=args.frame_ms)
     seconds = len(pcm) / 2 / SAMPLE_RATE
     print(f"{args.wav}: {seconds:.1f} s, {len(segments)} speech segments; streaming in real time")
     if args.speed != 1.0:
