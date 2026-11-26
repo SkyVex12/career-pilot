@@ -1,10 +1,8 @@
 //! The workspace and live overlay change visibility together at call boundaries.
 
-use std::sync::atomic::Ordering;
-
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{AppState, OPEN_CALL_EVENT, Res, apply_click_through, stealth, workspace_window};
+use crate::{OPEN_CALL_EVENT, Res, apply_click_through, stealth, workspace_window};
 
 trait Windows {
     fn show_overlay(&self) -> Res<()>;
@@ -34,15 +32,11 @@ impl Windows for DesktopWindows<'_> {
     fn show_overlay(&self) -> Res<()> {
         let window = self.0.get_webview_window("overlay").ok_or("no overlay window")?;
         window.set_ignore_cursor_events(false).map_err(|error| error.to_string())?;
-        self.0.state::<AppState>().overlay.click_through.store(false, Ordering::SeqCst);
         stealth::show(&window)?;
         if window.is_minimized().map_err(|error| error.to_string())? {
             window.unminimize().map_err(|error| error.to_string())?;
         }
-        if self.0.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst) {
-            let _ = window.set_skip_taskbar(true);
-        }
-        apply_click_through(self.0, false);
+        apply_click_through(self.0, false)?;
         let _ = window.set_focus();
         Ok(())
     }
@@ -50,9 +44,6 @@ impl Windows for DesktopWindows<'_> {
     fn hide_overlay(&self) -> Res<()> {
         let window = self.0.get_webview_window("overlay").ok_or("no overlay window")?;
         window.hide().map_err(|error| error.to_string())?;
-        if self.0.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst) {
-            let _ = window.set_skip_taskbar(true);
-        }
         Ok(())
     }
 
@@ -75,16 +66,27 @@ impl Windows for DesktopWindows<'_> {
 
 /// Call only with application locks released, on the native UI thread.
 pub(crate) fn started(app: &AppHandle) -> Res<()> {
+    if crate::shutdown::busy(app) {
+        return Ok(());
+    }
     enter(&DesktopWindows(app))
 }
 
 /// Every terminal stop, including a rejected or failed connection, brings setup back.
 pub(crate) fn stopped(app: &AppHandle) -> Res<()> {
+    if crate::shutdown::pending(app) {
+        return Ok(());
+    }
     leave(&DesktopWindows(app))
 }
 
 pub(crate) fn show_main(app: &AppHandle) -> Res<()> {
     DesktopWindows(app).show_main()
+}
+
+/// Reopening a running app brings its live controls forward, without reopening setup.
+pub(crate) fn show_overlay(app: &AppHandle) -> Res<()> {
+    DesktopWindows(app).show_overlay()
 }
 
 #[cfg(test)]

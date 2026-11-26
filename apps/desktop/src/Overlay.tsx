@@ -1,3 +1,5 @@
+import { QuitNotification } from "./AppNotifications";
+import { ToastProvider } from "./ui/Overlays";
 // The always-on-top overlay (docs/design/ui-proposal.md, "Overlay rules"). It is read
 // mid-sentence, so:
 // - the newest question ("Now") is always in the same place: the top of the answers pane (split
@@ -9,26 +11,27 @@
 // - the opacity setting fades the window's background only; all text stays opaque, and the
 //   answers keep a backing, so they stay readable over whatever is behind.
 // The transcript pane (split) keeps following its newest line. Text size steps with A-/A+ or
-// Ctrl+plus/minus/0; compact shows the answers only; hotkeys, click-through, keep on top, copy,
-// thumbs, the typed question (Ask) and the reply button (Answer) are as before.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+// Ctrl+plus/minus/0; compact shows the answers only. Window comfort settings are shared with
+// the main workspace; Ask and Answer remain available below the conversation.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, rest, type OverlayPrefs, type SessionDetail } from "./api";
 import { Icon } from "./ui/Icon";
 import { AnswerText } from "./AnswerText";
 import { CodeAnswer } from "./CodeAnswer";
-import { CodingBar, shotTitle } from "./CodingBar";
-import { copier, Follower } from "./follow";
+import { CodingBar, shotTitle, useScreenshotTray } from "./CodingBar";
+import { Follower } from "./follow";
 import { prettyKey } from "./hotkeys";
 import { GuestLeaveButton, GuestNoteBox, GuestNotice, GuestTalk, GuestsButton, NotesLane } from "./seats";
 import { startScreenHost } from "./screen";
 import { GuestScreenView, ScreenChip } from "./screenui";
 import { useSentShots } from "./sentShots";
 import { badge, conversation, isScreenQuestion, useSession, type ConversationItem, type PassView, type QuestionView, type SessionView } from "./session";
-import { LAYOUT_KEY, TEXT_SCALE_KEY, blockText, loadLayout, loadTextScale, savePref, stepScale, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
-import { ConfirmDialog, IconButton, Kbd, cx } from "./ui";
+import { blockText, transcriptBlocks, type OverlayLayout, type TranscriptBlock } from "./transcript";
+import { useTextScaleKeys, useViewPrefs, type ViewPrefs } from "./viewPreferences";
+export { textKeyStep, useViewPrefs, type ViewPrefs } from "./viewPreferences";
+import { Banner, ConfirmDialog, IconButton, Kbd, cx } from "./ui";
 import { RubyMark } from "./ui/RubyMark";
-import { OverlayAudio } from "./OverlayAudio";
 import { LiveCallLanguage } from "./LiveCallLanguage";
 import { LiveUsage } from "./Usage";
 import { OverlayQuickSettings } from "./OverlayQuickSettings";
@@ -60,8 +63,7 @@ const NO_HOTKEYS: OverlayPrefs["hotkeys"] = {
   opacity_down: "",
 };
 
-/** The overlay's comfort prefs, kept by the Rust core per monitor: opacity and view, and whether
- * clicks pass through. The core pushes changes (a hotkey, a move to another monitor); the overlay
+/** The overlay's comfort prefs, kept by the Rust core: shared appearance and a per-monitor compact view. The core pushes changes (a hotkey, a move to another monitor); the overlay
  * asks once on mount. `compact` keeps a localStorage copy so the first paint matches. */
 function useOverlayPrefs() {
   const [opacity, setOpacity] = useState(1);
@@ -101,53 +103,20 @@ function useOverlayPrefs() {
     saveCompact(on);
     if (inTauri) api.setOverlayView(on).catch(() => undefined);
   };
-  const setOpacityLive = (v: number) => {
+  const setOpacityLive = async (v: number) => {
     setOpacity(v);
-    if (inTauri) api.setOverlayOpacity(v).catch(() => undefined);
+    if (!inTauri) return;
+    try { await api.setOverlayOpacity(v); }
+    catch (error) {
+      await api.overlayPrefs().then(prefs => setOpacity(prefs.opacity)).catch(() => undefined);
+      throw error;
+    }
   };
-  const setOnTop = (on: boolean) => {
+  const setOnTop = async (on: boolean) => {
+    if (inTauri) await api.setOverlayOnTop(on);
     setOnTopState(on);
-    if (inTauri) api.setOverlayOnTop(on).catch(() => undefined);
   };
   return { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop };
-}
-
-/** Text size and layout, shared by the overlay and History's replay (the same localStorage),
- * and kept in step between the two windows. */
-export function useViewPrefs() {
-  const [textScale, setScale] = useState(loadTextScale);
-  const [layout, setLayoutState] = useState<OverlayLayout>(loadLayout);
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === TEXT_SCALE_KEY) setScale(loadTextScale());
-      if (e.key === LAYOUT_KEY) setLayoutState(loadLayout());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-  const stepText = useCallback((steps: number) => {
-    setScale((v) => {
-      const next = steps === 0 ? 1 : stepScale(v, steps);
-      savePref(TEXT_SCALE_KEY, String(next));
-      return next;
-    });
-  }, []);
-  const setLayout = useCallback((l: OverlayLayout) => {
-    setLayoutState(l);
-    savePref(LAYOUT_KEY, l);
-  }, []);
-  return { textScale, layout, stepText, setLayout };
-}
-
-export type ViewPrefs = ReturnType<typeof useViewPrefs>;
-
-/// The step Ctrl plus a key asks of the text size: +1, -1, 0 for the default, or null.
-export function textKeyStep(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): number | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (e.key === "=" || e.key === "+") return 1;
-  if (e.key === "-" || e.key === "_") return -1;
-  if (e.key === "0") return 0;
-  return null;
 }
 
 const STATUS_ICON: Record<string, string> = { ok: "●", degraded: "▲", reconnecting: "◌", off: "○" };
@@ -165,6 +134,10 @@ export function StatusBadge({ s }: { s: SessionView }) {
 }
 
 export default function Overlay() {
+  return <ToastProvider persistent={<QuitNotification />}><OverlayContent /></ToastProvider>;
+}
+
+function OverlayContent() {
   const [s, dispatch] = useSession();
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
@@ -173,17 +146,7 @@ export default function Overlay() {
   // Sharing the screen runs in the window where the host clicked (screen.ts).
   useEffect(() => (inTauri ? startScreenHost() : undefined), []);
 
-  // Ctrl+plus / Ctrl+minus / Ctrl+0 size the text while the overlay has focus.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const steps = textKeyStep(e);
-      if (steps === null) return;
-      e.preventDefault();
-      stepText(steps);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [stepText]);
+  useTextScaleKeys(stepText);
 
   const offKey = prettyKey(hotkeys.click_through_off || "CommandOrControl+Shift+G");
   // Watching someone else's call (a guest seat): read only, nothing acts on the call.
@@ -195,29 +158,33 @@ export default function Overlay() {
   const screenOpen = tab === "screen" && canViewScreen && !compact;
   return (
     <div className={cx("ov", compact && "is-compact", guest && "is-guest")} style={{ "--ov-alpha": opacity } as CSSProperties}>
-      <header className="ov-head" data-native-drag-region>
-        <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
-        {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
-        {!guest && <LiveUsage session={s} compact />}
-        <span className="ov-spacer" data-native-drag-region />
-        <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
-        <OverlayQuickSettings
-          opacity={opacity}
-          onOpacity={setOpacityLive}
-          onTop={onTop}
-          onToggleOnTop={setOnTop}
-          clickThrough={clickThrough}
-          hotkeys={hotkeys}
-          running={s.running}
-          guest={guest}
-          sessionId={s.sessionId}
-          view={view}
-          compact={compact}
-          onCompact={setCompact}
-        />
-        {guest
-          ? <><IconButton label="Hide overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} /><GuestLeaveButton s={s} /></>
-          : <><IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} /><OverlayPower running={s.running} sessionId={s.sessionId} /></>}
+      <header className="ov-head ov-call-head" data-native-drag-region="header">
+        <div className="ov-head-status" data-native-drag-region="header">
+          <span className="ov-brand" role="img" title="CoRuby" aria-label="CoRuby" data-native-drag-region><RubyMark /></span>
+          {guest ? <span className="ov-host-name" data-native-drag-region>{host}’s call <span>Assisting</span></span> : <StatusBadge s={s} />}
+          {!guest && <LiveUsage session={s} compact />}
+        </div>
+        {!guest && <div className="ov-call-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /></div>}
+        <div className="ov-window-actions">
+          <IconButton label={compact ? "Expand overlay" : "Compact: answers only"} icon={<Icon name={compact ? "expand" : "compact"} size={15} />} size="sm" pressed={compact} onClick={() => setCompact(!compact)} />
+          <OverlayQuickSettings
+            opacity={opacity}
+            onOpacity={setOpacityLive}
+            onTop={onTop}
+            onToggleOnTop={setOnTop}
+            clickThrough={clickThrough}
+            hotkeys={hotkeys}
+            running={s.running}
+            guest={guest}
+            sessionId={s.sessionId}
+            view={view}
+            compact={compact}
+            onCompact={setCompact}
+          />
+          {guest
+            ? <><IconButton label="Hide overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && getCurrentWindow().hide()} /><GuestLeaveButton s={s} /></>
+            : <><IconButton label="Minimize overlay" icon={<Icon name="minus" size={16} />} size="sm" onClick={() => inTauri && void api.minimizeOverlay().catch(() => undefined)} /><OverlayPower running={s.running} sessionId={s.sessionId} /></>}
+        </div>
       </header>
       {clickThrough && (
         <div className="ov-clickthrough" role="status">
@@ -226,20 +193,14 @@ export default function Overlay() {
       )}
       <GuestNotice s={s} />
       {!guest && <div className="ov-sharing-status"><ScreenChip s={s} /></div>}
-      {!compact && <div className="ov-toolbar">
+      {guest && !compact && <div className="ov-toolbar">
         <div className="ov-work-tabs" role="tablist" aria-label="Call tools">
           <button type="button" role="tab" id="ov-conversation-tab" aria-controls="ov-conversation-panel" aria-selected={!screenOpen} onClick={() => setTab("conversation")}>Conversation</button>
           {canViewScreen && <button type="button" role="tab" id="ov-screen-tab" aria-controls="ov-screen-panel" aria-selected={screenOpen} onClick={() => setTab("screen")}><Icon name="monitor" size={14} />{guest ? "Shared screen" : "Screen tools"}</button>}
         </div>
-        {!guest && <div className="ov-toolbar-actions">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
-      </div>}
-      {!guest && compact && <div className="ov-compact-tools">{s.running && <LiveCallLanguage key={s.sessionId} session={s} compact />}<GuestsButton s={s} /><OverlayAudio s={s} /></div>}
-      {/* Keep capture subscriptions and the conversation mounted when switching tools. */}
-      {!guest && <div id="ov-screen-panel" className="ov-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}>
-        <CodingBar running={s.running} onActivity={() => setTab("screen")} />
       </div>}
       {guest && canViewScreen && <div id="ov-screen-panel" className="ov-shared-screen-panel" role="tabpanel" aria-labelledby="ov-screen-tab" hidden={!screenOpen}><GuestScreenView s={s} active={screenOpen} window="overlay" /></div>}
-      <div id="ov-conversation-panel" className="ov-conversation-workarea" role="tabpanel" aria-labelledby={compact ? undefined : "ov-conversation-tab"} hidden={guest && screenOpen}>
+      <div id="ov-conversation-panel" className="ov-conversation-workarea" role={guest ? "tabpanel" : undefined} aria-labelledby={guest && !compact ? "ov-conversation-tab" : undefined} hidden={guest && screenOpen}>
       <ConversationView
         s={s}
         compact={compact}
@@ -608,17 +569,16 @@ function QuestionCard({
   past,
   readOnly = false,
 }: {
-  /** A guest's view: no expand, no thumbs; the host's choices show as they come. */
+  /** A guest's view: no expand; the host's choices show as they come. */
   readOnly?: boolean;
   q: QuestionView;
   /** The newest question: the largest type, in the fixed place. */
   now: boolean;
   compact: boolean;
   onExpand: () => void;
-  /** A past call (History): nothing can be asked or rated any more. */
+  /** A past call (History): nothing can be asked any more. */
   past: { rating: "up" | "down" | null } | null;
 }) {
-  const [rating, setRating] = useState<"up" | "down" | null>(past?.rating ?? null);
   // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
   const screen = isScreenQuestion(q);
   // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
@@ -641,11 +601,6 @@ function QuestionCard({
   const expand = () => {
     onExpand();
     api.expandAnswer(q.id).catch(() => undefined);
-  };
-  const rate = (up: boolean) => {
-    if (past) return;
-    setRating(up ? "up" : "down");
-    api.sendFeedback(q.id, up).catch(() => undefined);
   };
 
   return (
@@ -689,25 +644,13 @@ function QuestionCard({
         )
       )}
 
-      <footer className="card-tools">
-        {!screen && <CopyButton text={q.fast.text} label="Copy talking points" short="Copy" />}
-        {!screen && deepStarted && <CopyButton text={q.deep.text} label="Copy detailed answer" short="Copy detailed" />}
-        {!readOnly && (
-          <>
-            <button type="button" className="ov-thumb" aria-pressed={rating === "up"} aria-label="Helpful" title="Helpful" disabled={Boolean(past)} onClick={() => rate(true)}>
-              <Icon name="thumbUp" size={14} />
-            </button>
-            <button type="button" className="ov-thumb" aria-pressed={rating === "down"} aria-label="Not helpful" title="Not helpful" disabled={Boolean(past)} onClick={() => rate(false)}>
-              <Icon name="thumbDown" size={14} />
-            </button>
-          </>
-        )}
-        {!compact && q.fast.refs.length > 0 && (
+      {!compact && q.fast.refs.length > 0 && (
+        <footer className="card-tools">
           <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
           </span>
-        )}
-      </footer>
+        </footer>
+      )}
     </article>
   );
 }
@@ -781,51 +724,30 @@ function PassStatus({ state }: { state: PassState }) {
   );
 }
 
-function CopyButton({ text, label, short }: { text: string; label: string; short: string }) {
-  const [copied, setCopied] = useState(false);
-  const c = useMemo(() => copier(setCopied), []);
-  useEffect(() => () => c.dispose(), [c]);
-  return (
-    <button type="button" className="copy" disabled={!text} onClick={() => c.copy(text)} aria-label={label} title="Copy as plain text">
-      {copied ? "Copied" : short}
-    </button>
-  );
-}
-
 function AskBox({ disabled }: { disabled: boolean }) {
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const send = (value: string | null, respond = false) => {
-    setError(null);
-    (respond ? api.respond(value) : api.forceQuestion(value)).then(
-      () => setText(""),
-      (e) => setError(String(e)),
-    );
+  const shots = useScreenshotTray(!disabled);
+  const inFlight = useRef(false);
+  const run = async (action: () => Promise<unknown>, clear = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(null);
+    try { await action(); if (clear) setText(""); }
+    catch (e) { setError(String(e)); }
+    finally { inFlight.current = false; setBusy(false); }
   };
-  return (
-    <form
-      className="ov-ask"
-      onSubmit={(e) => {
-        e.preventDefault();
-        send(text.trim() || null, !text.trim());
-      }}
-    >
-      <input
-        className="ov-ask-input"
-        aria-label="Question"
-        value={text}
-        disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={disabled ? "No call running" : "Ask anything…"}
-      />
-      <button type="submit" className="ov-ask-btn" disabled={disabled}>
-        {text.trim() ? "Ask" : "Answer"}
-      </button>
-      {error && (
-        <span className="ov-ask-error" role="alert">
-          {error}
-        </span>
-      )}
+  return <div className="ov-composer">
+    <CodingBar shots={shots} disabled={busy} />
+    <form className="ov-ask" onSubmit={e => {
+      e.preventDefault(); if (disabled) return;
+      const value = text.trim();
+      void run(() => value ? api.forceQuestion(value) : shots.length ? api.codingSolve() : api.respond(null), true);
+    }}>
+      <IconButton label="Capture screenshot" icon={<Icon name="monitor" size={16} />} size="sm" disabled={disabled || busy || shots.length >= 6} onClick={() => void run(api.codingAddShot)} />
+      <input className="ov-ask-input" aria-label="Question" value={text} disabled={disabled || busy} onChange={e => setText(e.target.value)} placeholder={disabled ? "No call running" : "Ask anything…"} />
+      <button type="submit" className="ov-ask-btn" disabled={disabled || busy} title={!text.trim() && shots.length ? "Answer from screenshots" : undefined}>{text.trim() ? "Ask" : "Answer"}</button>
+      {error && <Banner tone="danger">{error}</Banner>}
     </form>
-  );
+  </div>;
 }

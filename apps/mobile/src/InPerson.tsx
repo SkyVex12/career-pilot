@@ -843,7 +843,7 @@ export function InPerson({
           <Segments
             value={answerStyle}
             options={[
-              { value: "bullets", label: "Bullet points" },
+              { value: "bullets", label: "Bullets" },
               { value: "paragraph", label: "Paragraphs" },
             ]}
             onChange={setAnswerStyle}

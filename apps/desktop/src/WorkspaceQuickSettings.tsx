@@ -2,19 +2,22 @@ import { CaptureProtectionStatus } from "./captureProtection";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, onSettingsChanged, onWorkspaceWindowPrefs, type OverlayPrefs } from "./api";
+import { ReadingSettings, TransparencyControl } from "./WindowSettingControls";
 import { prettyKey } from "./hotkeys";
 import { isMac } from "./platform";
-import { Button, ConfirmDialog, IconButton, Switch } from "./ui";
+import { Banner, Button, ConfirmDialog, IconButton, Switch } from "./ui";
 import { useHoverMenu, WORKSPACE_MENU_OPEN } from "./ui/useHoverMenu";
 import { Icon } from "./ui/Icon";
 import "./workspaceQuickSettings.css";
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [href], [tabindex="0"]';
 
-/** Quick controls for this workspace window, alongside the app-wide actions. */
-export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenChange, hoverOpen = false }: {
+/** Shared settings, edited from the workspace or its compact toolbar. */
+export function WorkspaceQuickSettings({ running, guest = false, open: controlledOpen, onOpenChange, compact = false }: {
   running: boolean;
-  hoverOpen?: boolean;
+  guest?: boolean;
+  /** Reserve a narrow menu below the medium toolbar without restoring the setup page. */
+  compact?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -62,8 +65,6 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     document.addEventListener(WORKSPACE_MENU_OPEN, otherOpened);
     return () => document.removeEventListener(WORKSPACE_MENU_OPEN, otherOpened);
   }, [id, changeOpen]);
-
-  useLayoutEffect(() => { if (open && hoverOpen) openedByHover.current = true; }, [open, hoverOpen]);
 
   const loadPrefs = useCallback(async () => {
     const request = ++prefsRequest.current;
@@ -130,10 +131,11 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
       const width = Math.min(292, Math.max(0, window.innerWidth - edge * 2));
       const below = window.innerHeight - anchor.bottom - gap - edge;
       const above = anchor.top - gap - edge;
-      const up = below < Math.min(360, panel.current.scrollHeight) && above > below;
-      const maxHeight = Math.max(0, up ? above : below);
+      const up = !compact && below < Math.min(360, panel.current.scrollHeight) && above > below;
+      const menuTop = compact ? 64 : anchor.bottom + gap;
+      const maxHeight = Math.max(0, compact ? window.innerHeight - menuTop - edge : up ? above : below);
       const height = Math.min(panel.current.scrollHeight + 2, maxHeight);
-      const next = { width, maxHeight, left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), top: up ? Math.max(edge, anchor.top - gap - height) : anchor.bottom + gap };
+      const next = { width, maxHeight, left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), top: up ? Math.max(edge, anchor.top - gap - height) : menuTop };
       setPosition(previous => Object.keys(next).every(key => previous[key as keyof CSSProperties] === next[key as keyof typeof next]) ? previous : next);
     };
     fit();
@@ -143,21 +145,24 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     window.addEventListener("resize", fit);
     window.addEventListener("scroll", fit, true);
     return () => { observer.disconnect(); window.removeEventListener("resize", fit); window.removeEventListener("scroll", fit, true); };
-  }, [open]);
+  }, [open, compact]);
 
   useEffect(() => {
     if (!open) return;
     if (!openedByHover.current) panel.current?.focus({ preventScroll: true });
     const outside = (event: Event) => {
+      if ((event.target as Element | null)?.closest?.(".ui-toast-viewport")) return;
       if (!panel.current?.contains(event.target as Node) && !gear.current?.contains(event.target as Node)) changeOpen(false);
     };
     const escape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") changeOpen(false, panel.current?.contains(document.activeElement) || document.activeElement === gear.current);
     };
     document.addEventListener("keydown", escape);
+    const blur = () => changeOpen(false);
+    window.addEventListener("blur", blur);
     document.addEventListener("pointerdown", outside);
     document.addEventListener("focusin", outside);
-    return () => { document.removeEventListener("keydown", escape); document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); };
+    return () => { window.removeEventListener("blur", blur); document.removeEventListener("keydown", escape); document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); };
   }, [open, changeOpen]);
   useEffect(() => {
     if (open && !openedByHover.current && prefs && document.activeElement === panel.current) panel.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
@@ -213,7 +218,6 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     void loadSettings();
   };
   const busy = saving !== null;
-  const transparency = prefs ? Math.round((1 - prefs.opacity) * 100) : 0;
 
   return <>
     <IconButton ref={gear} label="Quick settings" className="workspace-quick-settings-trigger" icon={<Icon name="settings" size={16} />} size="sm"
@@ -224,27 +228,21 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
     {open && createPortal(<div ref={panel} id={id} role="dialog" aria-label="Quick settings" tabIndex={-1} className="workspace-quick-settings" style={position} onKeyDown={onKeyDown}
       onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave} onPointerDown={() => { openedByHover.current = false; }}>
       <section aria-labelledby={`${id}-window`} className="workspace-quick-settings-group">
-        <h2 id={`${id}-window`}>This window</h2>
+        <h2 id={`${id}-window`}>Both windows</h2>
         {!prefs && !prefsError && <p role="status">Loading window settings…</p>}
         {prefs && <>
-          <div className="workspace-quick-settings-slider">
-            <label htmlFor={`${id}-transparency`}>Transparency <output aria-hidden="true">{transparency}%</output></label>
-            <input id={`${id}-transparency`} type="range" min={0} max={70} step={5} value={transparency} disabled={busy} aria-valuetext={`${transparency}% transparent`}
-              aria-describedby={`${id}-transparency-hint`} onChange={event => {
-                const opacity = 1 - Number(event.target.value) / 100;
-                setPrefs(current => current && { ...current, opacity });
-                opacityPending.current = opacity;
-                if (opacityTimer.current) clearTimeout(opacityTimer.current);
-                opacityTimer.current = setTimeout(flushOpacity, 160);
-              }} onPointerUp={flushOpacity} onBlur={flushOpacity} />
-            <p id={`${id}-transparency-hint`}>The background fades; text stays solid.</p>
-          </div>
+          <TransparencyControl opacity={prefs.opacity} disabled={busy} onChange={opacity => {
+            setPrefs(current => current && { ...current, opacity });
+            opacityPending.current = opacity;
+            if (opacityTimer.current) clearTimeout(opacityTimer.current);
+            opacityTimer.current = setTimeout(flushOpacity, 160);
+          }} onCommit={flushOpacity} />
           <Switch label="Keep on top" checked={prefs.on_top} disabled={busy} onChange={on => void run("on-top", async () => { await api.setWindowOnTop(on); await loadPrefs(); })} />
           <Switch label="Click-through" checked={prefs.click_through} disabled={busy}
-            hint={<>Clicks pass through this window. {prefs.hotkeys.click_through_off && <>{prettyKey(prefs.hotkeys.click_through_off)} turns it off.</>}</>}
+            hint={<>Clicks pass through both windows. {prefs.hotkeys.click_through_off && <>{prettyKey(prefs.hotkeys.click_through_off)} turns it off.</>}</>}
             onChange={on => void run("click-through", async () => { await api.setWindowClickThrough(on); await loadPrefs(); })} />
         </>}
-        {prefsError && <p role="alert" className="workspace-quick-settings-error">{prefsError}</p>}
+        {prefsError && <Banner tone="danger">{prefsError}</Banner>}
       </section>
       <section className="workspace-quick-settings-group" aria-label="App settings">
         {stealth === null && !settingsError ? <p role="status">Loading app settings…</p> : <Switch label={isMac() ? "Stealth mode (experimental)" : "Stealth mode"}
@@ -255,10 +253,13 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
             await loadSettings();
           })} />}
         <CaptureProtectionStatus active={open} enabled={stealth} />
-        {settingsError && <p role="alert" className="workspace-quick-settings-error">{settingsError}</p>}
+        {settingsError && <Banner tone="danger">{settingsError}</Banner>}
         {(prefsError || settingsError) && <Button size="sm" variant="ghost" onClick={retry} disabled={busy}>Retry settings</Button>}
       </section>
-      {actionError && <p role="alert" className="workspace-quick-settings-error">{actionError}</p>}
+      <section className="workspace-quick-settings-group" aria-label="Reading settings">
+        <ReadingSettings running={running} guest={guest} busy={busy} run={action => void run("reading", action)} />
+      </section>
+      {actionError && <Banner tone="danger">{actionError}</Banner>}
       <div className="workspace-quick-settings-actions">
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run("settings", async () => { await api.openMainSettings(); changeOpen(false, true); })}>All settings…</Button>
         <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => {
@@ -267,8 +268,8 @@ export function WorkspaceQuickSettings({ running, open: controlledOpen, onOpenCh
         }}>Quit CoRuby</Button>
       </div>
     </div>, document.body)}
-    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title="Quit during a call?" confirmLabel="Quit CoRuby" onConfirm={() => api.quitApp()}>
-      The call stops here. It can be opened again from History while it is still running.
+    <ConfirmDialog open={quitting} onOpenChange={setQuitting} title={guest ? "Stop assisting and quit CoRuby?" : "Quit during a call?"} confirmLabel="Quit CoRuby" onConfirm={() => api.quitApp()}>
+      {guest ? "You’ll stop assisting. The other person’s call will continue." : "Your call will end and CoRuby will close."}
     </ConfirmDialog>
   </>;
 }

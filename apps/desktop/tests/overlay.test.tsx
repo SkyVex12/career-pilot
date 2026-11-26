@@ -1,7 +1,7 @@
 // The overlay (docs/design/ui-proposal.md, "Overlay rules"): the newest question first and in
 // full with the earlier ones, each pass's state in words, no empty bullet, the opacity fading
 // the background only, and every behaviour kept: click-through and its way back, the menu,
-// quit, the detailed answer on request, thumbs, copy, text size, compact, Ask and Answer.
+// quit, the detailed answer on request, text size, compact, Ask and Answer.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { emit } from "@tauri-apps/api/event";
@@ -44,7 +44,7 @@ const twoQuestions = () => {
 };
 
 describe("the overlay's answers", () => {
-  it("keeps the live transcript and answers visible together, with screen tools on demand", async () => {
+  it("keeps the live transcript and answers visible together, without a separate screen-tools tab", async () => {
     start([...twoQuestions(), srv({ type: "transcript.partial", channel: "them", seg_id: 0, text: "What would you monitor?" })]);
     const answers = await screen.findByRole("region", { name: "Suggestions" });
     const transcript = screen.getByRole("region", { name: "Transcript" });
@@ -56,8 +56,8 @@ describe("the overlay's answers", () => {
     await act(() => emit("copilot://event", delta("q2", "fast", " Track latency")));
     expect(within(transcript).getByText("What would you monitor first?")).toBeVisible();
     expect(within(answers).getByText("Track latency")).toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "Screen tools" }));
-    expect(screen.getByRole("button", { name: "Solve" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Screen tools" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Capture screenshot" })).toBeVisible();
   });
 
   it("links a transcript question to its visible answer without changing the layout", async () => {
@@ -136,13 +136,14 @@ describe("the overlay's answers", () => {
     expect(within(now).getByRole("group", { name: "Detailed answer" })).toHaveTextContent("Queued");
   });
 
-  it("thumbs are named, pressed, and sent", async () => {
+  it("keeps the answers without copy or feedback action rows", async () => {
     start(twoQuestions());
-    const now = (await screen.findAllByRole("article"))[0];
-    const up = within(now).getByRole("button", { name: "Helpful" });
-    await userEvent.click(up);
-    expect(up).toHaveAttribute("aria-pressed", "true");
-    expect(ipc.calls.find((c) => c.cmd === "send_feedback")?.args).toMatchObject({ questionId: "q2", up: true });
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(2);
+    for (const card of cards) {
+      expect(within(card).queryByRole("button", { name: /Copy|Helpful|Not helpful/ })).not.toBeInTheDocument();
+    }
+    expect(within(cards[0]).getByRole("group", { name: "Talking points" })).not.toBeEmptyDOMElement();
   });
 
   it("scrolled down, a newer question offers New answer ↑ and does not move the view", async () => {
@@ -343,8 +344,7 @@ describe("a replay (History)", () => {
     render(<ConversationView s={s} compact={false} layout="split" textScale={1} live={false} ratings={{ a: "up", b: null }} emptyAnswers="" emptyTranscript="" showMe />);
     const cards = screen.getAllByRole("article");
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual(["First?", "Second?"]);
-    expect(within(cards[0]).getByRole("button", { name: "Helpful" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(cards[0]).getByRole("button", { name: "Helpful" })).toBeDisabled();
+    expect(within(cards[0]).queryByRole("button", { name: "Helpful" })).not.toBeInTheDocument();
   });
 });
 

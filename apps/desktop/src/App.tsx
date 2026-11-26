@@ -1,3 +1,5 @@
+import { useTextScaleKeys, useViewPrefs } from "./viewPreferences";
+import { SessionNoteDrafts } from "./SessionNoteDrafts";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 // The main window: the app shell (Shell.tsx) around the Call screen, Interview prep, Work,
@@ -6,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 // the Call screen walks through them, and the other screens wait.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, inTauri, onOpenCall, onOpenSettings, onSettingsChanged, onUpdate, onWorkspaceWindowPrefs, rest, type CareerOsConnection, type LiveSession, type SettingsView, type UpdateState } from "./api";
-import { ServerNotification, UpdateNotification } from "./AppNotifications";
+import { QuitNotification, ServerNotification, UpdateNotification } from "./AppNotifications";
 import { Applications, CatalogProvider } from "./Applications";
 import { DataActivity, useDataActivity } from "./usePolling";
 import { MeetingPreparation } from "./MeetingPreparation";
@@ -38,7 +40,7 @@ export function useWorkspaceWindowOpacity() {
     let revision = 0;
     let unlisten: (() => void) | undefined;
     const apply = (opacity: number) => {
-      if (!disposed && Number.isFinite(opacity)) document.documentElement.style.setProperty("--workspace-opacity", String(Math.max(0.3, Math.min(1, opacity))));
+      if (!disposed && Number.isFinite(opacity)) document.documentElement.style.setProperty("--workspace-opacity", String(Math.max(0.1, Math.min(1, opacity))));
     };
     const load = async () => {
       try {
@@ -58,6 +60,12 @@ export function useWorkspaceWindowOpacity() {
 
 export default function App() {
   useWorkspaceWindowOpacity();
+  const { textScale, stepText } = useViewPrefs();
+  useTextScaleKeys(stepText);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-text-scale", String(textScale));
+    return () => { document.documentElement.style.removeProperty("--app-text-scale"); };
+  }, [textScale]);
   const [session, dispatch] = useSession();
   // Guest seats' voice lives in this window alone (voice.ts); the overlay drives it by events.
   useEffect(() => (inTauri ? startVoice() : undefined), []);
@@ -220,7 +228,7 @@ export default function App() {
     );
 
   return (
-    <ToastProvider persistent={<><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
+    <ToastProvider persistent={<><QuitNotification /><ServerNotification /><UpdateNotification update={update} running={session.running} /></>}>
       <HostControlRequests s={session} />
       <Shell
         tab={tab}
@@ -235,6 +243,7 @@ export default function App() {
       >
         {/* A profile switch or another account remounts every screen, so each one loads its data. */}
         <ProfileContext.Provider value={profiles.state} key={`${account}/${profiles.state.here ?? "me"}`}>
+          <SessionNoteDrafts>
           <CatalogProvider enabled={tokenSet && !locked && (tab === "start" || tab === "applications")}>
           {page(
             "start",
@@ -301,6 +310,7 @@ export default function App() {
             ),
           )}
           </CatalogProvider>
+          </SessionNoteDrafts>
         </ProfileContext.Provider>
         {tab === "settings" && view && (
           <div className="shell-content">

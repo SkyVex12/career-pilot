@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionDetail as Detail, SessionItem } from "../src/api";
 import { History, minutes, sessionTitle, statusBadge } from "../src/History";
+import { SessionNoteDrafts } from "../src/SessionNoteDrafts";
 import { SessionDetail } from "../src/SessionDetail";
 import { ToastProvider } from "../src/ui";
 import { ipc, pending } from "./ipc";
@@ -41,6 +42,29 @@ const view = (props: Partial<Parameters<typeof History>[0]> = {}) =>
   );
 
 describe("History list", () => {
+  it("returns to the list after switching tabs and preserves an unfinished note when the call is reopened", async () => {
+    routes([call("s1", "interview", "Northwind technical")]);
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ ...call("s1", "interview", "Northwind technical"), questions: 6, notes: "", outputs: { summary: "It went well." } }));
+    const tree = (active: boolean, scope = "account-a") => <ToastProvider><SessionNoteDrafts key={scope}><History active={active} running={false} liveId={null} onOpenLive={async () => {}} /></SessionNoteDrafts></ToastProvider>;
+    const result = render(tree(true));
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Call notes" }), "Follow up next week");
+    result.rerender(tree(false));
+    result.rerender(tree(true));
+    expect(await screen.findByRole("heading", { name: "Past calls" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    expect(screen.getByRole("textbox", { name: "Call notes" })).toHaveValue("Follow up next week");
+    expect(ipc.apiCalls().some(c => c.method === "PUT")).toBe(false);
+    // Drafts never cross an account/profile boundary.
+    result.rerender(tree(true, "account-b"));
+    await userEvent.click(await screen.findByRole("button", { name: /Interview · Northwind technical/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Notes" }));
+    expect(screen.getByRole("textbox", { name: "Call notes" })).toHaveValue("");
+  });
+
   it("loading: a skeleton in the list's place", () => {
     ipc.api("GET", /.*/, () => pending());
     view();
@@ -82,18 +106,23 @@ describe("History list", () => {
     expect(within(list).getByText("Interview · Northwind technical")).toBeInTheDocument();
     expect(within(list).getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
     expect(within(list).getByText("Processing")).toBeInTheDocument();
-    expect(screen.getByText(/150 connected minutes in October \(UTC\) · 2 calls/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Account usage" })).toHaveTextContent(/150 connected minutes in October \(UTC\) · 2 calls/);
     await waitFor(() => expect(screen.getByRole("group", { name: "Lifetime account usage" })).toHaveTextContent("300.0 total minutes used"));
     expect(screen.queryByText(/estimated cost/)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByLabelText("Standups"));
+    expect(screen.queryByLabelText("Standups")).toBeNull();
+    expect(screen.queryByLabelText("Meetings")).toBeNull();
+    await userEvent.click(screen.getByLabelText("Work"));
     expect(screen.queryByText("Interview · Northwind technical")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText("Meetings"));
-    expect(screen.getByRole("heading", { name: "No meetings yet" })).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText("All"));
+    expect(screen.getByText("Standup · Fernhill Logistics")).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "Load older calls" }));
     expect(await screen.findByText("Meeting · Older one")).toBeInTheDocument();
+    expect(screen.getByText("Standup · Fernhill Logistics")).toBeVisible();
+    await userEvent.click(screen.getByLabelText("Interviews"));
+    expect(screen.getByText("Interview · Northwind technical")).toBeVisible();
+    expect(screen.queryByText("Standup · Fernhill Logistics")).toBeNull();
+    expect(screen.queryByText("Meeting · Older one")).toBeNull();
   });
 
   it("opening a call shows its detail, and Back returns", async () => {
@@ -195,10 +224,11 @@ describe("History list", () => {
     await userEvent.type(screen.getByRole("searchbox", { name: "Search past calls" }), "Fernhill");
     expect(screen.queryByText("Interview · Northwind technical")).not.toBeInTheDocument();
     expect(screen.getByText("Standup · Fernhill Logistics")).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText("Meetings"));
+    await userEvent.click(screen.getByLabelText("Interviews"));
     expect(screen.getByRole("heading", { name: "No matching calls" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Load older calls" })).toBeEnabled();
     await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    await userEvent.click(screen.getByLabelText("Work"));
     await userEvent.click(screen.getByRole("button", { name: "Load older calls" }));
     expect(await screen.findByText("Meeting · Older one")).toBeInTheDocument();
   });
@@ -243,6 +273,71 @@ describe("A call's detail", () => {
     expect(await screen.findByText("Tell me about an outage.")).toBeInTheDocument();
   });
 
+  it("copies the complete transcript in time order without per-entry actions", async () => {
+    const user = userEvent.setup();
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready());
+    ipc.api("GET", /^\/sessions\/s1\/replay$/, () => ({
+      session_id: "s1", stored: true, started_at: iso, questions: [],
+      segments: [
+        { channel: "me", seg_id: 2, start_ms: 62000, end_ms: 65000, text: "First line.\nSecond line." },
+        { channel: "them", seg_id: 1, start_ms: 59000, end_ms: 61000, text: "How did you approach it?" },
+      ],
+    }));
+    render(<ToastProvider><SessionDetail sessionId="s1" /></ToastProvider>);
+    await user.click(await screen.findByRole("tab", { name: "Transcript" }));
+    await screen.findByText("How did you approach it?");
+    const panel = screen.getByRole("tabpanel", { name: "Transcript" });
+    expect(within(panel).getAllByRole("button")).toHaveLength(1);
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(2);
+    await user.click(within(panel).getByRole("button", { name: "Copy" }));
+    expect(await navigator.clipboard.readText()).toBe("0:59 Them: How did you approach it?\n1:02 You: First line.\nSecond line.");
+    expect(await screen.findByText("Copied")).toBeVisible();
+  });
+
+  it("does not offer transcript copying while loading or when no speech was stored", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: unknown) => void;
+    ipc.api("GET", /^\/sessions\/s1$/, () => ready());
+    ipc.api("GET", /^\/sessions\/s1\/replay$/, () => new Promise(resolve => { finish = resolve; }));
+    render(<SessionDetail sessionId="s1" />);
+    await user.click(await screen.findByRole("tab", { name: "Transcript" }));
+    const panel = screen.getByRole("tabpanel", { name: "Transcript" });
+    expect(within(panel).getByRole("status")).toHaveTextContent("Loading the transcript");
+    expect(within(panel).queryByRole("button", { name: "Copy" })).toBeNull();
+    await act(async () => finish({ session_id: "s1", stored: true, started_at: iso, questions: [], segments: [] }));
+    expect(await within(panel).findByText("Nothing was transcribed")).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+
+  it.each(["success", "refused", "throws"])("handles clipboard fallback %s without leaving an editor or losing focus", async result => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Unavailable"));
+    const previous = Object.getOwnPropertyDescriptor(document, "execCommand");
+    const fallback = vi.fn(() => {
+      expect(document.querySelector("textarea")?.value).toBe("Summary text.");
+      if (result === "throws") throw new Error("Blocked");
+      return result === "success";
+    });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: fallback });
+    try {
+      ipc.api("GET", /^\/sessions\/s1$/, () => ready());
+      render(<ToastProvider><SessionDetail sessionId="s1" /></ToastProvider>);
+      const copy = await screen.findByRole("button", { name: "Copy" });
+      await user.click(copy);
+      expect(fallback).toHaveBeenCalledWith("copy");
+      expect(document.querySelector("textarea")).toBeNull();
+      expect(copy).toHaveFocus();
+      if (result === "success") expect(await screen.findByText("Copied")).toBeVisible();
+      else {
+        expect(await screen.findByText("Could not copy. Select the text and copy it manually.")).toBeVisible();
+        expect(screen.queryByText("Copied")).toBeNull();
+      }
+    } finally {
+      write.mockRestore();
+      if (previous) Object.defineProperty(document, "execCommand", previous);
+      else Reflect.deleteProperty(document, "execCommand");
+    }
+  });
   it("no transcript stored: outputs stay available without replay requests", async () => {
     ipc.api("GET", /^\/sessions\/s1$/, () => ready({ store_transcript: false }));
     render(<SessionDetail sessionId="s1" />);

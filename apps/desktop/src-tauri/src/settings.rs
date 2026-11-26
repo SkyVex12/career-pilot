@@ -63,7 +63,7 @@ pub struct Settings {
     /// The off switch always keeps a working key (hotkeys::click_through_off).
     pub click_through_hotkey: String,
     pub click_through_off_hotkey: String,
-    /// Step the overlay's opacity.
+    /// Step the shared background opacity of the main window and overlay.
     pub opacity_up_hotkey: String,
     pub opacity_down_hotkey: String,
     /// Coding mode (shots.rs): add a shot of the window in front to the tray, and send the
@@ -74,11 +74,13 @@ pub struct Settings {
     /// for the code ("" lets the screen decide). Set from the overlay, kept across calls.
     pub coding_mode: String,
     pub coding_language: String,
-    /// The overlay's frame, opacity and view remembered per monitor, and the monitor it was
+    /// Shared background opacity. None migrates the last overlay preference on older installs.
+    pub window_opacity: Option<f64>,
+    /// The overlay's frame and view remembered per monitor, and the monitor it was
     /// last on so it reopens there (layout.rs). Managed by the app, not the settings screen.
     pub layouts: BTreeMap<String, MonitorLayout>,
     pub overlay_monitor: Option<String>,
-    /// The overlay stays above other windows (the overlay's "Keep on top" toggle).
+    /// Both main and overlay stay above other windows. The legacy key is kept for compatibility.
     pub overlay_on_top: bool,
     /// Leave every app window out of screen capture while it stays visible on the monitor
     /// (stealth.rs). Off until turned on in Settings.
@@ -125,6 +127,7 @@ impl Default for Settings {
             solve_hotkey: "CommandOrControl+Shift+Enter".into(),
             coding_mode: "interview".into(),
             coding_language: String::new(),
+            window_opacity: None,
             layouts: BTreeMap::new(),
             overlay_monitor: None,
             overlay_on_top: true,
@@ -141,8 +144,23 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn window_opacity(&self) -> f64 {
+        crate::layout::clamp_opacity(self.window_opacity.unwrap_or_else(|| {
+            self.overlay_monitor
+                .as_ref()
+                .and_then(|key| self.layouts.get(key))
+                .map_or(crate::layout::MAX_OPACITY, |layout| layout.opacity)
+        }))
+    }
+
     pub fn load(path: &PathBuf) -> Self {
-        std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        let mut settings: Self = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        // Freeze the migration once: moving monitors must never change the shared setting.
+        settings.window_opacity = Some(settings.window_opacity());
+        settings
     }
 
     pub fn save(&self, path: &PathBuf) -> Result<(), String> {
@@ -344,6 +362,30 @@ mod tests {
         s.pin_to_release(&release);
         assert!(s.oauth.is_some());
         assert_eq!(s.session_url(), "ws://{host}/v1/session?profile=ab-12");
+    }
+
+    #[test]
+    fn shared_opacity_migrates_once_and_survives_monitor_changes_and_restart() {
+        let path = std::env::temp_dir().join(format!("coruby-opacity-{}.json", uuid::Uuid::now_v7()));
+        let mut old = Settings::default();
+        old.layouts.insert(
+            "first".into(),
+            MonitorLayout { x: 0, y: 0, w: 760, h: 620, opacity: 0.7, compact: false },
+        );
+        old.layouts.insert(
+            "second".into(),
+            MonitorLayout { x: 0, y: 0, w: 760, h: 620, opacity: 1.0, compact: false },
+        );
+        old.overlay_monitor = Some("first".into());
+        old.save(&path).unwrap();
+        let mut shared = Settings::load(&path);
+        assert_eq!(shared.window_opacity, Some(0.7));
+        shared.overlay_monitor = Some("second".into());
+        assert_eq!(shared.window_opacity(), 0.7);
+        shared.window_opacity = Some(0.1);
+        shared.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).window_opacity(), 0.1);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

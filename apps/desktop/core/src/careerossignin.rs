@@ -308,14 +308,19 @@ impl CareerOsTokenProvider {
     }
 
     pub async fn sign_out(&self) -> Result<(), AuthError> {
-        let refresh = self.store.get(&self.refresh_key()).ok().flatten();
-        *self.cached.lock().await = None;
-        self.store.delete(&self.refresh_key())?;
-        self.store.delete(&self.user_key())?;
+        let (refresh, cleared) = {
+            // Wait for any token rotation, then forget access, refresh and user together.
+            let mut cached = self.cached.lock().await;
+            let refresh = self.store.get(&self.refresh_key()).ok().flatten();
+            *cached = None;
+            let refresh_deleted = self.store.delete(&self.refresh_key());
+            let user_deleted = self.store.delete(&self.user_key());
+            (refresh, refresh_deleted.and(user_deleted))
+        };
         if let Some(refresh) = refresh {
             let _ = self.post("token/signout", serde_json::json!({ "refresh_token": refresh }), None).await;
         }
-        Ok(())
+        cleared
     }
 
     async fn token(&self, force: bool) -> Result<Token, AuthError> {
@@ -473,6 +478,38 @@ mod tests {
         let _ = p.refresh().await.unwrap();
         assert!(seen.lock().unwrap()[2].contains("/auth/token/refresh"));
         assert!(seen.lock().unwrap()[2].contains("\"refresh_token\":\"rt\""));
+    }
+
+    #[tokio::test]
+    async fn sign_out_revokes_the_latest_refresh_and_stays_signed_out_when_revocation_fails() {
+        let (base, seen) = fake_api(vec![(503, String::new())]).await;
+        let store = Arc::new(MemorySecretStore::default());
+        let p = CareerOsTokenProvider::new("stage", Arc::new(FixedApi(base)), store.clone());
+        p.keep(
+            r#"{"status":"signed_in","account":"new","access_token":"at-1","refresh_token":"rt-1","expires_in":3600,"name":"Sam"}"#,
+        )
+        .await
+        .unwrap();
+
+        // A refresh owns this lock while the server rotates the saved refresh token.
+        let cached = p.cached.lock().await;
+        let mut signing_out = Box::pin(p.sign_out());
+        tokio::select! {
+            biased;
+            result = &mut signing_out => panic!("sign-out did not wait for token rotation: {result:?}"),
+            _ = std::future::ready(()) => {}
+        }
+        store.set(&p.refresh_key(), "rt-2").unwrap();
+        drop(cached);
+        signing_out.await.unwrap();
+
+        let revoke = seen.lock().unwrap()[0].clone();
+        assert!(revoke.starts_with("POST /v1/auth/token/signout "));
+        assert!(revoke.contains("\"refresh_token\":\"rt-2\""));
+        assert!(store.get(&p.refresh_key()).unwrap().is_none());
+        assert!(store.get(&p.user_key()).unwrap().is_none());
+        assert!(p.signed_in_as().is_none());
+        assert!(matches!(p.current().await, Err(AuthError::NotSignedIn(_))));
     }
 
     #[tokio::test]

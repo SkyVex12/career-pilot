@@ -18,7 +18,7 @@ import { HotkeyInput } from "./ui/HotkeyInput";
 import { Banner, Button, Card, ConfirmDialog, Field as BaseField, Input, PageHeader, SegmentedControl, Select, Switch as BaseSwitch, useTheme, useToast } from "./ui";
 
 function Field(props: ComponentProps<typeof BaseField>) {
-  return <BaseField {...props} hintMode="tooltip" />;
+  return <BaseField {...props} className={`settings-field ${props.className ?? ""}`} hintMode="tooltip" />;
 }
 function Switch(props: ComponentProps<typeof BaseSwitch>) {
   return <BaseSwitch {...props} hintMode="tooltip" />;
@@ -449,7 +449,7 @@ function SignInMethods({ offered, onChanged }: { offered: boolean | null; onChan
           onClick={async () => {
             setBusy(true);
             try {
-              const out = await api.careerOsSignIn();
+              const out = await api.careerOsSignIn(true);
               if (out.status === "added" || out.status === "signed_in") {
                 toast({ tone: "success", text: "HubRuby sign-in added." });
                 reload();

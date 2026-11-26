@@ -4,14 +4,18 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalSize } from "@tauri-apps/api/dpi";
 import { flushSync } from "react-dom";
-import { clearCompactShape, isPointerInsideWindow, prepareCompactShape, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "./windowMotion";
+import { clearCompactShape, isPointerInsideWindow, openCompactMenu, prepareCompactShape, resizeCompactBounds, resizeWindowBounds, withWindowResize } from "./windowMotion";
 import { inTauri } from "./api";
 
 export type WindowMode = "full" | "toolbar" | "dot";
-/** Keep the full card open; only compact modes respond to pointer hover. */
+/** Keep full mode open; compact mode stays expanded while focused or hovered. */
 export function useWindowMode(overlay = false, autoHover = false) {
   const [mode, setMode] = useState<WindowMode>("full");
   const [busy, setBusy] = useState(false);
+  const [menuOpen, renderMenu] = useState(false);
+  const menuVisible = useRef(false);
+  const menuWanted = useRef(false);
+  const restoreMenu = useRef<(() => Promise<void>) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const saved = useRef<{ size: LogicalSize | PhysicalSize; decorated: boolean; maximized: boolean; fullscreen: boolean; resizable: boolean } | null>(null);
   const locked = useRef(false);
@@ -19,12 +23,16 @@ export function useWindowMode(overlay = false, autoHover = false) {
   const motion = useRef<ReturnType<typeof animateCompactMorph> | null>(null);
   const disposed = useRef(false);
   useEffect(() => { disposed.current = false; return () => { disposed.current = true; motion.current?.cancel(); }; }, []);
-  const change = async (next: WindowMode) => {
+  const focused = useRef<boolean | null>(null);
+  const change = async (next: WindowMode, automatic = false) => {
     if (locked.current) return false;
     if (next === mode) return true;
+    if ((menuVisible.current || menuWanted.current) && !await setMenuOpen(false)) return false;
+    if (locked.current) return false;
     cancelHover();
     locked.current = true; setBusy(true); setError(null);
     let completed = false;
+    let cancelled = false;
     document.documentElement.setAttribute("data-window-transition", "true");
     try {
       if (inTauri) {
@@ -80,6 +88,8 @@ export function useWindowMode(overlay = false, autoHover = false) {
                 motion.current = animateCompactMorph(compactRef.current, true);
                 if (!await motion.current.finished || disposed.current) throw new Error("Window transition interrupted.");
                 if (await win.isMinimized()) throw new Error("Restore the window before changing its size.");
+                // A click can focus the toolbar while its collapse animation is running.
+                if (automatic && focused.current !== false) { cancelled = true; return; }
                 await resizeCompactBounds(64, 44, () => {
                   flushSync(() => setMode(next));
                   motion.current?.cancel();
@@ -137,7 +147,7 @@ export function useWindowMode(overlay = false, autoHover = false) {
           }
         });
       }
-      if (disposed.current) return false;
+      if (disposed.current || cancelled) return false;
       flushSync(() => setMode(next));
       completed = true;
       return true;
@@ -148,9 +158,40 @@ export function useWindowMode(overlay = false, autoHover = false) {
     } finally {
       motion.current?.cancel(); motion.current = null;
       locked.current = false;
-      if (!disposed.current) { setBusy(false); if (completed) settleHover(); }
+      if (!disposed.current) { setBusy(false); if (completed || cancelled) settleHover(); }
       document.documentElement.removeAttribute("data-window-transition");
       window.dispatchEvent(new Event("copilot:window-layout"));
+    }
+  };
+  const setMenuOpen = async (open: boolean): Promise<boolean> => {
+    menuWanted.current = open;
+    cancelHover();
+    try {
+      return await withWindowResize(async () => {
+        if (disposed.current || locked.current || open !== menuWanted.current) return false;
+        if (menuVisible.current === open) return true;
+        if (open && latest.current.mode !== "toolbar") { menuWanted.current = false; return false; }
+        if (open) {
+          // Pin the toolbar before extending its transparent canvas downward.
+          flushSync(() => { menuVisible.current = true; renderMenu(true); });
+          try {
+            if (inTauri) restoreMenu.current = await openCompactMenu();
+          } catch (error) {
+            flushSync(() => { menuVisible.current = false; renderMenu(false); });
+            throw error;
+          }
+        } else {
+          await restoreMenu.current?.();
+          restoreMenu.current = null;
+          flushSync(() => { menuVisible.current = false; renderMenu(false); });
+          settleHover();
+        }
+        return true;
+      });
+    } catch (error) {
+      menuWanted.current = menuVisible.current;
+      if (!disposed.current) setError("Could not open quick settings: " + String(error));
+      return false;
     }
   };
   const latest = useRef({ mode, change, autoHover });
@@ -171,25 +212,64 @@ export function useWindowMode(overlay = false, autoHover = false) {
       hoverTimer.current = undefined;
       const current = next === "toolbar" ? "dot" : "toolbar";
       const stale = () => disposed.current || locked.current || !latest.current.autoHover
+        || menuVisible.current || menuWanted.current || (next === "dot" && focused.current !== false)
         || generation !== hoverGeneration.current || latest.current.mode !== current;
       if (stale()) return;
       let inside = pointerInside.current;
-      if (inTauri) {
+      if (inTauri && !(next === "toolbar" && focused.current)) {
         try { inside = await isPointerInsideWindow(current); }
         catch { return; } // Keep the current shape if native pointer state is unavailable.
       }
       if (stale()) return;
       pointerInside.current = inside;
-      if (inside === (next === "toolbar")) void latest.current.change(next);
+      if (inside === (next === "toolbar") || (next === "toolbar" && focused.current)) void latest.current.change(next, true);
     }, next === "toolbar" ? 160 : 260);
   };
   const settleHover = () => {
     cancelHover();
-    if (!autoHover || pointerInside.current === null) return;
+    if (!latest.current.autoHover || menuVisible.current || menuWanted.current) return;
     const current = latest.current.mode;
-    const next = current === "dot" && pointerInside.current ? "toolbar" : current === "toolbar" && !pointerInside.current ? "dot" : null;
+    const next = current === "dot" && (focused.current || pointerInside.current) ? "toolbar"
+      : current === "toolbar" && focused.current === false && pointerInside.current !== true ? "dot" : null;
     if (next) scheduleHover(next);
   };
+  useEffect(() => {
+    if (!autoHover) return;
+    focused.current = null;
+    let active = true;
+    let generation = 0;
+    let unlisten: (() => void) | undefined;
+    const update = (value: boolean) => {
+      if (!active) return;
+      generation++;
+      focused.current = value;
+      // A native blur can arrive without a DOM pointer-leave event.
+      if (!value) pointerInside.current = null;
+      settleHover();
+    };
+    if (inTauri) {
+      // Listen before querying so a late initial response cannot overwrite a click.
+      void (async () => {
+        const win = getCurrentWindow();
+        const stop = await win.onFocusChanged(event => update(event.payload));
+        if (!active) { stop(); return; }
+        unlisten = stop;
+        const requested = generation;
+        try {
+          const value = await win.isFocused();
+          if (active && generation === requested) update(Boolean(value));
+        } catch { /* Keep the toolbar open when native focus is unknown. */ }
+      })().catch(() => {});
+    } else {
+      const focus = () => update(true), blur = () => update(false);
+      window.addEventListener("focus", focus);
+      window.addEventListener("blur", blur);
+      update(document.hasFocus());
+      unlisten = () => { window.removeEventListener("focus", focus); window.removeEventListener("blur", blur); };
+    }
+    return () => { active = false; unlisten?.(); cancelHover(); };
+    // Event handlers use refs so mode changes do not re-register native listeners.
+  }, [autoHover]);
   const onPointerEnter = (event: PointerEvent) => {
     pointerInside.current = true;
     cancelHover();
@@ -199,10 +279,10 @@ export function useWindowMode(overlay = false, autoHover = false) {
   const onPointerLeave = (event: PointerEvent) => {
     pointerInside.current = false;
     cancelHover();
-    if (locked.current || !autoHover || event.pointerType === "touch" || event.buttons || latest.current.mode !== "toolbar") return;
+    if (locked.current || !autoHover || event.pointerType === "touch" || event.buttons || focused.current !== false || latest.current.mode !== "toolbar") return;
     // Brief grace period allows moving between controls without a collapse flicker.
     scheduleHover("dot");
   };
   const drag = () => { if (inTauri) void startWindowDrag().catch(e => setError(`Could not move the window: ${String(e)}`)); };
-  return { mode, busy, error, compactRef, change, drag, onPointerEnter, onPointerLeave, cancelHover };
+  return { mode, busy, error, menuOpen, setMenuOpen, compactRef, change, drag, onPointerEnter, onPointerLeave, cancelHover };
 }

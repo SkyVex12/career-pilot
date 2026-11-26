@@ -1,5 +1,5 @@
 /* CoRuby coral palette, with accessible text variants and a derived dark theme.
-   See docs/design/2026-11-desktop-redesign.md. */
+   See docs/design/desktop-proportions.md. */
 
 :root,
 :root[data-theme="light"] {
@@ -78,20 +78,21 @@
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
-  --text-2xl: 24px;
-  --lh-xs: 16px;
-  --lh-sm: 18px;
-  --lh-md: 20px;
-  --lh-lg: 24px;
-  --lh-xl: 28px;
-  --lh-2xl: 32px;
+  --text-xs: calc(12px * var(--app-text-scale, 1));
+  --text-sm: calc(13px * var(--app-text-scale, 1));
+  --text-md: calc(14px * var(--app-text-scale, 1));
+  --text-lg: calc(16px * var(--app-text-scale, 1));
+  --text-xl: calc(20px * var(--app-text-scale, 1));
+  --text-2xl: calc(24px * var(--app-text-scale, 1));
+  --lh-xs: calc(16px * var(--app-text-scale, 1));
+  --lh-sm: calc(20px * var(--app-text-scale, 1));
+  --lh-md: calc(20px * var(--app-text-scale, 1));
+  --lh-lg: calc(24px * var(--app-text-scale, 1));
+  --lh-xl: calc(28px * var(--app-text-scale, 1));
+  --lh-2xl: calc(32px * var(--app-text-scale, 1));
 
-  --space-1: 2px;
+  /* 4px optical spacing within controls; 8px rhythm between groups. */
+  --space-1: 4px;
   --space-2: 4px;
   --space-3: 8px;
   --space-4: 12px;
@@ -103,23 +104,28 @@
   --space-10: 48px;
 
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
 
   --control-h-sm: 28px;
   --option-h: 32px;
   --icon-sm: 16px;
   --layer-popup: 70;
-  --control-h-md: 36px;
-  --control-h-lg: 44px;
+  --control-h-md: 32px;
+  --control-h-lg: 40px;
 
   --dur-fast: 120ms;
   --dur: 200ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   --sidebar-w: 196px;
-  --content-max: 920px;
+  --content-max: 1280px;
+}
+
+/* Dense desktop controls retain generous hit areas on touch devices. */
+@media (pointer: coarse) {
+  :root { --control-h-sm:48px; --control-h-md:48px; --control-h-lg:48px; --option-h:48px; }
 }
 
 /* The overlay is always dark: it floats over whatever is on screen. */

@@ -44,6 +44,15 @@ describe("the approved overlay interactions", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument());
   });
 
+  it("keeps the shared on-top value when a native window rejects the change", async () => {
+    start();
+    ipc.handle("set_overlay_on_top", () => { throw "Window update failed"; });
+    await userEvent.click(screen.getByRole("button", { name: "Quick settings" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Keep on top" }));
+    expect((await screen.findByText("Window update failed")).closest('[role="alert"]')).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Keep on top" })).toBeChecked();
+  });
+
   it("saves Stealth with freshly read settings, preserving unrelated changes", async () => {
     start();
     let current = { ...SETTINGS, stealth: false, mic_device: "first" };
@@ -81,29 +90,42 @@ describe("the approved overlay interactions", () => {
     expect(screen.getByRole("dialog", { name: "Quick settings" })).toBeVisible();
     fireEvent.scroll(document);
     expect(screen.queryByRole("dialog", { name: "Quick settings" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Live audio" }));
-    expect(screen.getByRole("dialog", { name: "Live audio" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Assistants" }));
+    expect(screen.getByRole("dialog", { name: "Assistants" })).toBeVisible();
     fireEvent.blur(window);
-    expect(screen.queryByRole("dialog", { name: "Live audio" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Assistants" })).not.toBeInTheDocument();
   });
 
-  it("reveals a hotkey-captured shot and preserves conversation when switching tabs", async () => {
+  it("floats hotkey screenshots above the composer without switching away from the conversation", async () => {
     start();
     const answer = await screen.findByRole("article");
-    expect(screen.queryByRole("button", { name: "Solve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", {name:"Screen tools"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Live audio"})).not.toBeInTheDocument();
     await act(() => emit("copilot://coding-shots", [shot(7)]));
-    expect(await screen.findByRole("button", { name: "Solve 1" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Screen tools" })).toHaveAttribute("aria-selected", "true");
-    const reads = ipc.calls.filter(c => c.cmd === "coding_shots").length;
-    await userEvent.click(screen.getByRole("tab", { name: "Conversation" }));
-    expect(screen.queryByRole("button", { name: "Solve 1" })).not.toBeInTheDocument();
+    const tray = await screen.findByRole("list", {name:"Screenshots ready to answer"});
+    expect(tray).toBeVisible();
     expect(answer).toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "Screen tools" }));
-    expect(screen.getByRole("button", { name: "Solve 1" })).toBeVisible();
-    expect(ipc.calls.filter(c => c.cmd === "coding_shots")).toHaveLength(reads);
+    expect(tray.closest(".ov-composer")).toContainElement(screen.getByRole("textbox", {name:"Question"}));
+    await userEvent.click(screen.getByRole("button", {name:"Answer"}));
+    expect(ipc.calls.some(c => c.cmd === "coding_solve")).toBe(true);
+    expect(ipc.calls.some(c => c.cmd === "respond")).toBe(false);
   });
 
-  it("keeps assistant display controls local and stops assisting before quitting without ending the host call", async () => {
+  it("opens Assistants on hover, bridges to its panel, and closes after leaving", async () => {
+    start();
+    const button = await screen.findByRole("button", {name:/Assistants/});
+    button.focus();
+    fireEvent.pointerEnter(button, {pointerType:"mouse"});
+    const panel = await screen.findByRole("dialog", {name:"Assistants"});
+    expect(button).toHaveFocus();
+    fireEvent.pointerLeave(button, {pointerType:"mouse"});
+    fireEvent.pointerEnter(panel, {pointerType:"mouse"});
+    expect(panel).toBeVisible();
+    fireEvent.pointerLeave(panel, {pointerType:"mouse"});
+    await waitFor(() => expect(screen.queryByRole("dialog", {name:"Assistants"})).not.toBeInTheDocument());
+  });
+
+  it("keeps assistant display controls local and delegates quitting to native cleanup without ending the host call", async () => {
     start(true);
     await screen.findByText(/Alex.s call/);
     expect(screen.getByText("Assisting")).toBeVisible();
@@ -120,7 +142,7 @@ describe("the approved overlay interactions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Stop assisting & quit" }));
     await waitFor(() => expect(ipc.calls.some(c => c.cmd === "quit_app")).toBe(true));
     const actions = ipc.calls.filter(c => ["seat_leave", "quit_app", "end_session"].includes(c.cmd)).map(c => c.cmd);
-    expect(actions).toEqual(["seat_leave", "quit_app"]);
+    expect(actions).toEqual(["quit_app"]);
   });
 
   it("keeps the active controller visible while a second guest requests control", async () => {
@@ -138,10 +160,9 @@ describe("the approved overlay interactions", () => {
   });
 
   it("clears each pending shot through the native tray API", async () => {
-    ipc.handle("coding_shots", () => [shot(1), shot(2)]);
-    render(<CodingBar running />);
-    await screen.findByRole("button", { name: "Solve 2" });
-    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    render(<CodingBar shots={[shot(1), shot(2)]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Remove screenshot 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove screenshot 2" }));
     expect(ipc.calls.filter(c => c.cmd === "coding_remove_shot").map(c => c.args)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 });

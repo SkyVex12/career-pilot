@@ -20,9 +20,12 @@ mod remote;
 mod remote_macos;
 mod settings;
 mod shots;
+mod shutdown;
 mod stealth;
+mod tray_menu;
 mod voice;
 mod window_drag;
+mod window_visibility;
 mod workspace_window;
 
 use std::path::PathBuf;
@@ -90,6 +93,14 @@ const SERVER_ASLEEP: &str = "The server is asleep; it starts when you use the ap
 const CREDENTIAL_SERVICE: &str = "com.copilot.desktop";
 /// The Credential Manager entry older versions kept the recordings' key in.
 const OLD_RECORDING_KEY: &str = "me-audio-key";
+
+fn uses_wake(url: &str) -> bool {
+    let stage_urls = release::config()
+        .filter(|r| r.wake_url.as_ref().is_some_and(|wake| !wake.trim().is_empty()))
+        .map(|r| (r.api_url.as_str(), r.gateway_url.as_str()));
+    wake::uses_wake(url, stage_urls)
+}
+
 struct AppState {
     settings: Mutex<Settings>,
     settings_path: PathBuf,
@@ -120,7 +131,7 @@ struct AppState {
     /// (so the global-shortcut handler can tell which action fired), and a counter that lets a
     /// burst of move or resize events settle before the new frame is saved.
     overlay: OverlayState,
-    /// The stage VM's address while it is known to run (its URLs carry `{host}`; wake.rs).
+    /// The stage VM's address while it is known to run, including stages using fixed domains.
     server_host: Mutex<Option<String>>,
     /// One start at a time; other calls wait for it.
     server_start: tokio::sync::Mutex<()>,
@@ -143,7 +154,6 @@ const SENT_SHOTS_KEPT: usize = 10;
 #[derive(Default)]
 struct OverlayState {
     click_through: AtomicBool,
-    temporary_taskbar: AtomicBool,
     geom_gen: AtomicU64,
     shortcuts: Mutex<Vec<(Shortcut, Action)>>,
 }
@@ -187,6 +197,9 @@ impl AppState {
     /// For the installer: true if no session runs or starts, and none can start from now on.
     #[cfg_attr(not(feature = "release"), allow(dead_code))]
     fn claim_for_install(&self) -> bool {
+        if shutdown::pending(&self.handle) {
+            return false;
+        }
         let running = self.engine.lock().unwrap().is_some();
         self.gate.claim_install(running)
     }
@@ -194,6 +207,9 @@ impl AppState {
     /// For start_session: refuse while an update installs, else mark a session as starting
     /// until the returned guard drops.
     fn begin_start(&self) -> Res<Starting<'_>> {
+        if shutdown::pending(&self.handle) {
+            return Err("Finish ending the current call before starting another.".into());
+        }
         let running = self.engine.lock().unwrap().is_some();
         self.gate.begin_start(running).map_err(str::to_string)
     }
@@ -364,9 +380,9 @@ impl AppState {
             .with_profile(profile))
     }
 
-    /// `url` with the VM's address in place of `{host}` (wake.rs); unchanged if it has none.
+    /// Ensure an on-demand stage is awake; fill legacy `{host}` URLs and preserve fixed domains.
     async fn fill_url(&self, app: &AppHandle, url: &str, wake: bool) -> Res<String> {
-        if !wake::needs_host(url) {
+        if !uses_wake(url) {
             return Ok(url.to_string());
         }
         Ok(wake::fill(url, &self.server_host(app, wake).await?))
@@ -608,7 +624,8 @@ fn save_settings(
             pending_update: kept.pending_update,
             layouts: kept.layouts,
             overlay_monitor: kept.overlay_monitor,
-            overlay_on_top: kept.overlay_on_top,
+            overlay_on_top: s.overlay_on_top,
+            window_opacity: s.window_opacity,
             coding_mode: kept.coding_mode,
             coding_language: kept.coding_language,
             ..settings.clone()
@@ -771,7 +788,7 @@ async fn api_call(
     };
     // Refreshing an expired email token can itself use the wake function. Background
     // intent must be enforced before asking the token provider, not only before HTTP.
-    if !wake && wake::needs_host(&origin) && state.server_host.lock().unwrap().is_none() {
+    if !wake && uses_wake(&origin) && state.server_host.lock().unwrap().is_none() {
         return Err(SERVER_ASLEEP.into());
     }
     let tokens = state.tokens()?;
@@ -969,6 +986,7 @@ async fn email_sign_in_verify(
 async fn career_os_sign_in(
     app: AppHandle,
     state: State<'_, AppState>,
+    link_account: Option<bool>,
 ) -> Result<CareerOsOutcome, CareerOsFailure> {
     let provider = state
         .career_os()
@@ -984,13 +1002,21 @@ async fn career_os_sign_in(
     let Some(option) = cfg.career_os else {
         return Err(CareerOsFailure::new("not_offered", "This server does not offer HubRuby sign-in."));
     };
+    // Only Settings' explicit "Add HubRuby sign-in" may attach the current account.
+    // Capture its proof before opening the browser so a session change during the
+    // browser flow cannot silently choose a different account to link.
+    let bearer = if link_account.unwrap_or(false) {
+        Some(state.proof_token().await.ok_or_else(|| {
+            CareerOsFailure::new("proof_required", "Sign in to the account before adding HubRuby.")
+        })?)
+    } else {
+        None
+    };
     let opener = app.clone();
     let pending = copilot_client::careerossignin::browser_code(&option, move |url| {
         opener.opener().open_url(url, None::<&str>).map_err(|e| format!("could not open the browser: {e}"))
     })
     .await?;
-    // After the browser: a sign-in already on this computer adds Career-OS to that account.
-    let bearer = state.proof_token().await;
     let before = state.signed_in().map(|(who, _)| who);
     let outcome = provider.exchange(&pending, bearer.as_deref()).await?;
     if outcome.name().is_some() {
@@ -1029,22 +1055,39 @@ async fn career_os_complete(
 #[tauri::command]
 async fn sign_out(state: State<'_, AppState>) -> Res<()> {
     state.data_cache.clear();
-    let result = async {
-        if let Some(p) = state.email_signed_in() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        if let Some(p) = state.career_os_signed_in() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        if let Some(p) = state.oauth() {
-            p.sign_out().await.map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-    .await;
+    // Clear every provider, including an in-memory token whose saved credentials
+    // are already missing. A failure in one store entry must not skip the others.
+    let email = state.email();
+    let career_os = state.career_os();
+    let browser = state.oauth();
+    let (email_result, career_os_result, browser_result) = tokio::join!(
+        async {
+            match email {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+        async {
+            match career_os {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+        async {
+            match browser {
+                Some(p) => p.sign_out().await,
+                None => Ok(()),
+            }
+        },
+    );
     state.data_cache.clear();
     state.update_settings(|s| s.profile = None);
-    result
+    let errors: Vec<_> = [email_result, career_os_result, browser_result]
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|e| e.to_string())
+        .collect();
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
 }
 
 /// The profile switch (ARCHITECTURE.md, "Profiles"): the profile every API call and the next
@@ -1734,7 +1777,7 @@ fn update_status(app: AppHandle) -> UpdateState {
     }
 }
 
-/// "Install and restart": the downloaded update, now. Never during a session.
+/// "Update and restart": the downloaded update, now. Never during a session.
 #[tauri::command]
 fn install_update(app: AppHandle) -> Res<()> {
     #[cfg(feature = "release")]
@@ -1765,35 +1808,18 @@ fn show_overlay(app: AppHandle, show: bool) -> Res<()> {
     }
 }
 
-/// The overlay's minimize button. The overlay has no taskbar button, so it gets one while it is
-/// minimized; otherwise there would be nothing to click to bring it back. Restoring it removes
-/// that button again (the overlay's window events, in run).
+/// Minimize keeps the normal taskbar entry; Stealth uses the show hotkey to restore.
 #[tauri::command]
 fn minimize_overlay(app: AppHandle) -> Res<()> {
     let w = overlay_window(&app).ok_or("no overlay window")?;
-    // A temporary taskbar button is how a minimized overlay is restored. Stealth keeps that
-    // button hidden; the show hotkey brings the overlay back.
-    let stealth = app.state::<AppState>().settings.lock().unwrap().stealth;
-    if !stealth {
-        w.set_skip_taskbar(false).map_err(|e| e.to_string())?;
-        app.state::<AppState>().overlay.temporary_taskbar.store(true, Ordering::SeqCst);
-    }
-    if let Err(error) = w.minimize() {
-        if app.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst) {
-            let _ = w.set_skip_taskbar(true);
-        }
-        return Err(error.to_string());
-    }
-    Ok(())
+    w.minimize().map_err(|e| e.to_string())
 }
-
 /// Show the overlay, restoring it if it was minimized, and focus it.
 fn bring_back_overlay(w: &WebviewWindow) {
     let _ = stealth::show(w);
     if matches!(w.is_minimized(), Ok(true)) {
         let _ = w.unminimize();
     }
-    let _ = w.set_skip_taskbar(true);
     let _ = w.set_focus();
 }
 
@@ -1836,11 +1862,12 @@ fn dispatch(app: &AppHandle, action: Action) {
         Action::ToggleStealth => toggle_stealth(app),
         Action::ClickThrough => {
             let on = !app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
-            apply_click_through(app, on);
+            if let Err(error) = apply_click_through(app, on) {
+                tracing::warn!("click-through: {error}");
+            }
         }
         Action::ClickThroughOff => {
-            apply_click_through(app, false);
-            if let Err(error) = workspace_window::clear_click_through(app) {
+            if let Err(error) = apply_click_through(app, false) {
                 tracing::warn!("workspace click-through recovery: {error}");
             }
         }
@@ -1932,16 +1959,15 @@ fn store_layout(app: &AppHandle, key: &str, l: MonitorLayout) {
     });
 }
 
-/// Push the overlay's current prefs to the overlay window (opacity and view it renders, and
-/// whether to show the click-through indicator).
-/// The overlay's current prefs for the given opacity and view: click-through and on-top from
-/// the live window state, the hotkeys from settings.
-fn build_prefs(app: &AppHandle, opacity: f64, compact: bool) -> OverlayPrefs {
+/// Both windows read the same appearance and interaction preferences; only compact view
+/// belongs to the overlay. Geometry and monitor changes cannot override appearance.
+fn build_prefs(app: &AppHandle, compact: bool) -> OverlayPrefs {
     let state = app.state::<AppState>();
     let click_through = state.overlay.click_through.load(Ordering::SeqCst);
-    let (on_top, hotkeys) = {
+    let (opacity, on_top, hotkeys) = {
         let s = state.settings.lock().unwrap();
         (
+            s.window_opacity(),
             s.overlay_on_top,
             OverlayHotkeys {
                 toggle_overlay: s.toggle_overlay_hotkey.trim().to_string(),
@@ -1956,7 +1982,7 @@ fn build_prefs(app: &AppHandle, opacity: f64, compact: bool) -> OverlayPrefs {
 }
 
 fn emit_prefs(app: &AppHandle, l: MonitorLayout) {
-    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, l.opacity, l.compact));
+    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, l.compact));
 }
 
 fn toggle_overlay(app: &AppHandle) {
@@ -1969,32 +1995,42 @@ fn toggle_overlay(app: &AppHandle) {
     }
 }
 
-/// Let clicks pass through the overlay to the window underneath, or stop that. Turning it on
-/// also shows the overlay, so the indicator and its "off" key are on screen; turning it off is
-/// always reachable from the keyboard (hotkeys.rs), the escape hatch from a click-through state.
-fn apply_click_through(app: &AppHandle, on: bool) {
-    let Some(w) = overlay_window(app) else { return };
-    if on {
-        bring_back_overlay(&w);
+/// Notify both renderers, including a hidden window waiting for the next call.
+fn emit_window_prefs(app: &AppHandle) {
+    let compact = current_layout(app).is_some_and(|(_, layout)| layout.compact);
+    let _ = app.emit_to("overlay", OVERLAY_EVENT, build_prefs(app, compact));
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = workspace_window::emit_prefs(&main);
     }
-    let _ = w.set_ignore_cursor_events(on);
+}
+
+/// One click-through preference, with a temporary exception for main-window consent.
+fn apply_click_through(app: &AppHandle, on: bool) -> Res<()> {
+    if on && workspace_window::recovery_shortcut(app).is_none() {
+        return Err(
+            "Click-through needs a working recovery shortcut. Set a Click-through off key in Settings first."
+                .into(),
+        );
+    }
+    let previous = app.state::<AppState>().overlay.click_through.load(Ordering::SeqCst);
+    workspace_window::update_both(previous, on, on, |label, value| {
+        let Some(window) = app.get_webview_window(label) else { return Ok(()) };
+        if label == "main" {
+            workspace_window::apply_click_through(&window, value)
+        } else {
+            window.set_ignore_cursor_events(value).map_err(|error| error.to_string())
+        }
+    })?;
     app.state::<AppState>().overlay.click_through.store(on, Ordering::SeqCst);
-    let l = current_layout(app).map(|(_, l)| l).unwrap_or(MonitorLayout {
-        x: 0,
-        y: 0,
-        w: layout::DEFAULT_W,
-        h: layout::DEFAULT_H,
-        opacity: layout::MAX_OPACITY,
-        compact: false,
-    });
-    emit_prefs(app, l);
+    emit_window_prefs(app);
+    Ok(())
 }
 
 fn nudge_opacity(app: &AppHandle, steps: i32) {
-    let Some((key, mut l)) = current_layout(app) else { return };
-    l.opacity = layout::step_opacity(l.opacity, steps);
-    store_layout(app, &key, l);
-    emit_prefs(app, l);
+    app.state::<AppState>().update_settings(|settings| {
+        settings.window_opacity = Some(layout::step_opacity(settings.window_opacity(), steps));
+    });
+    emit_window_prefs(app);
 }
 
 /// Debounced save of the overlay's frame as it is dragged or resized: a burst of events bumps
@@ -2011,8 +2047,7 @@ fn schedule_remember(app: &AppHandle) {
 }
 
 /// File the overlay's current frame under the monitor it now sits on, keeping that monitor's
-/// remembered opacity and view. When it has crossed to a different monitor, that monitor's
-/// saved opacity and view are applied so each screen keeps its own feel.
+/// remembered view. Background opacity is shared and never changes when switching monitors.
 fn remember_geometry(app: &AppHandle) {
     let Some(w) = overlay_window(app) else { return };
     // Minimized, Windows parks the window off screen: not a place to remember.
@@ -2060,18 +2095,16 @@ fn place_overlay(app: &AppHandle) {
 /// The overlay's starting prefs, which the overlay window asks for as it mounts.
 #[tauri::command]
 fn overlay_prefs(app: AppHandle) -> OverlayPrefs {
-    let (opacity, compact) =
-        current_layout(&app).map(|(_, l)| (l.opacity, l.compact)).unwrap_or((layout::MAX_OPACITY, false));
-    build_prefs(&app, opacity, compact)
+    let compact = current_layout(&app).is_some_and(|(_, layout)| layout.compact);
+    build_prefs(&app, compact)
 }
 
-/// The opacity slider in settings, and the overlay's opacity hotkeys through `nudge_opacity`.
+/// Both window sliders and the opacity hotkeys update this shared preference.
 #[tauri::command]
 fn set_overlay_opacity(app: AppHandle, value: f64) {
-    let Some((key, mut l)) = current_layout(&app) else { return };
-    l.opacity = layout::clamp_opacity(value);
-    store_layout(&app, &key, l);
-    emit_prefs(&app, l);
+    app.state::<AppState>()
+        .update_settings(|settings| settings.window_opacity = Some(layout::clamp_opacity(value)));
+    emit_window_prefs(&app);
 }
 
 /// The overlay's compact toggle: remember the view for the monitor it is on.
@@ -2084,22 +2117,26 @@ fn set_overlay_view(app: AppHandle, compact: bool) {
 
 /// The overlay's click-through button (turning it on; the off switch is a hotkey).
 #[tauri::command]
-fn set_click_through(app: AppHandle, on: bool) {
-    apply_click_through(&app, on);
+fn set_click_through(app: AppHandle, on: bool) -> Res<()> {
+    apply_click_through(&app, on)
 }
 
-/// The overlay's "Keep on top" toggle: stay above other windows, remembered between runs.
+/// Both windows stay above other applications, remembered between runs.
 #[tauri::command]
-fn set_overlay_on_top(app: AppHandle, on: bool) {
-    if let Some(w) = overlay_window(&app) {
-        let _ = w.set_always_on_top(on);
-    }
+fn set_overlay_on_top(app: AppHandle, on: bool) -> Res<()> {
+    let previous = app.state::<AppState>().settings.lock().unwrap().overlay_on_top;
+    workspace_window::update_both(previous, on, true, |label, value| {
+        let Some(window) = app.get_webview_window(label) else { return Ok(()) };
+        if label == "main" {
+            workspace_window::apply_on_top(&window, value)
+        } else {
+            window.set_always_on_top(value).map_err(|error| error.to_string())
+        }
+    })?;
     app.state::<AppState>().update_settings(|s| s.overlay_on_top = on);
-    if let Some((_, l)) = current_layout(&app) {
-        emit_prefs(&app, l);
-    }
+    emit_window_prefs(&app);
+    Ok(())
 }
-
 /// The overlay's "All settings…": bring the main window forward on its Settings screen.
 #[tauri::command]
 fn open_main_settings(app: AppHandle) -> Res<()> {
@@ -2142,8 +2179,8 @@ fn open_log_file() -> Option<std::fs::File> {
 
 /// The overlay's "Quit": close the whole app.
 #[tauri::command]
-fn quit_app(app: AppHandle) {
-    app.exit(0);
+async fn quit_app(app: AppHandle) -> Res<()> {
+    shutdown::quit(&app).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2289,7 +2326,9 @@ pub fn run() {
             app.manage(release::updater::Updates::new(journal, updated.then(|| version.clone())));
             #[cfg(not(feature = "release"))]
             let _ = (updated, journal);
-            background::setup(app.handle(), remote::end)?;
+            app.manage(shutdown::QuitState::default());
+            tray_menu::setup(app.handle());
+            background::setup(app.handle())?;
             register_hotkeys(app.handle());
             // Passive startup checks never wake the VM. Foreground data reads and sign-in
             // still wake it when they need an online response.
@@ -2336,20 +2375,16 @@ pub fn run() {
                     .additional_browser_args(BROWSER_ARGS)
                     .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                     .build()?;
+            if let Some(main) = app.get_webview_window("main") {
+                workspace_window::apply_on_top(&main, overlay_on_top)?;
+            }
             window_drag::setup(app.handle())?;
+            window_visibility::setup(app.handle())?;
             // Save the overlay's frame per monitor as it is dragged or resized (debounced).
             let handle = app.handle().clone();
             overlay.on_window_event(move |event| {
                 if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
                     schedule_remember(&handle);
-                }
-                // Restored from its taskbar button after a minimize: drop that button again.
-                if matches!(event, WindowEvent::Focused(true))
-                    && let Some(w) = overlay_window(&handle)
-                    && matches!(w.is_minimized(), Ok(false))
-                    && handle.state::<AppState>().overlay.temporary_taskbar.swap(false, Ordering::SeqCst)
-                {
-                    let _ = w.set_skip_taskbar(true);
                 }
             });
             // Reopen where it was last left, recovering onto a monitor that still exists.
@@ -2358,6 +2393,9 @@ pub fn run() {
             // asked for only while a guest talks, needs no WebView2 prompt.
             if let Some(main) = app.get_webview_window("main") {
                 voice::allow_microphone(&main);
+                if let Err(error) = workspace_window::fit_initial_window(&main) {
+                    tracing::warn!("Initial workspace size: {error}");
+                }
             }
             // Both windows exist now. A saved stealth choice excludes them from capture.
             // The overlay stays hidden here, so applying stealth does not paint it.
@@ -2375,6 +2413,14 @@ pub fn run() {
                 if on { "on" } else { "off" }
             );
             stealth::apply(app.handle(), on, &name);
+            // Size the initially hidden workspace before presenting it. Background launches
+            // remain hidden; normal launches use the existing capture-aware show path.
+            if !background::background_start_requested()
+                && let Some(main) = app.get_webview_window("main")
+                && let Err(error) = stealth::show(&main)
+            {
+                tracing::warn!("Show workspace: {error}");
+            }
             // Task Manager reads the program file, not the window title. Write the saved name
             // now; it shows up the next time this program starts.
             if let Err(e) = program_name::install(&name) {
@@ -2386,6 +2432,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_calendar_authorization,
+            tray_menu::tray_menu_ready,
+            tray_menu::tray_menu_action,
             background::background_status,
             background::background_detection_status,
             background::background_hushed_devices,

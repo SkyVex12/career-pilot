@@ -36,6 +36,86 @@ async function chooseGuest(email: string) {
 }
 
 describe("the Call setup design", () => {
+  it("changes call type with arrow keys while keeping each context draft", async () => {
+    routes();
+    render(tree());
+    await screen.findByText("We build routing.");
+    const types = screen.getByRole("radiogroup", { name: "Call type" });
+    const interview = within(types).getByRole("radio", { name: "Interview" });
+    const work = within(types).getByRole("radio", { name: "Work" });
+    act(() => interview.focus());
+    await userEvent.keyboard("{ArrowRight}");
+    expect(work).toHaveFocus();
+    expect(work).toBeChecked();
+    expect(interview).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Company" })).toBeVisible();
+    await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Plan the release");
+    act(() => work.focus());
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(interview).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Application" })).toHaveValue("a1");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("textbox", { name: "Agenda" })).toHaveValue("Plan the release");
+    expect(ipc.calls.some(call => call.cmd === "start_session" || call.cmd === "set_mode")).toBe(false);
+  });
+
+  it("locks the call type while a call is starting", async () => {
+    routes();
+    let finish!: () => void;
+    ipc.handle("start_session", () => new Promise<void>(resolve => { finish = resolve; }));
+    render(tree());
+    await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByRole("button", { name: "Start call" }));
+    const work = screen.getByRole("radio", { name: "Work" });
+    expect(work).toBeDisabled();
+    await userEvent.click(work);
+    expect(screen.getByRole("radio", { name: "Interview" })).toBeChecked();
+    await act(async () => finish());
+    expect(work).toBeEnabled();
+  });
+
+  it.each([
+    ["Company context", "Work", /^\/employers$/],
+    ["Applications", "Interview", /^\/applications$/],
+  ] as const)("keeps %s failures concise with accessible details and a Settings action", async (label, mode, path) => {
+    routes();
+    const error = "Could not reach the server: the server URL needs a host.";
+    ipc.api("GET", path, () => { throw error; });
+    const onSettings = vi.fn();
+    render(tree({ onSettings }));
+    await userEvent.click(screen.getByRole("radio", { name: mode }));
+    expect(await screen.findByText(label + " unavailable")).toBeVisible();
+    expect(screen.getByText(error)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onSettings).toHaveBeenCalledOnce();
+  });
+
+  it("announces audio progress and exposes full results without adding feedback rows", async () => {
+    routes();
+    let fail!: (error: string) => void;
+    ipc.handle("audio_check", () => new Promise((_resolve, reject) => { fail = reject; }));
+    render(tree());
+    await screen.findByText("We build routing.");
+    await userEvent.click(screen.getByRole("button", { name: "Change or test" }));
+    const feedback = document.querySelector(".device-test-stable .device-feedback")!;
+    const meter = feedback.querySelector(".device-meter")!;
+    expect(meter).not.toBeVisible();
+    await userEvent.click(screen.getAllByRole("button", { name: "Test" })[0]);
+    expect(await screen.findByRole("button", { name: "Microphone test: Speak now" })).toBeVisible();
+    expect(feedback.querySelector("[aria-live=polite]")).toHaveTextContent("Speak now: say a sentence as you would on the call.");
+    expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
+    expect(meter).toBeVisible();
+    const error = "Microphone unavailable. Check the selected device and microphone permission before trying again.";
+    await act(async () => fail(error));
+    const result = await screen.findByRole("button", { name: "Microphone test: Check device" });
+    expect(feedback.querySelector("[aria-live=polite]")).toHaveTextContent(error);
+    act(() => result.focus());
+    expect(await screen.findByRole("tooltip", { name: error })).toBeVisible();
+    expect(document.querySelector(".device-test-stable .device-feedback")).toBe(feedback);
+    expect(meter).not.toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Test" })).toHaveLength(2);
+  });
+
   it("uses calendar context when returning to Call", async () => {
     routes();
     render(tree({ preset: { target: "job:a1", meetingTitle: "Team interview", mode: "interview", n: 1 } }));
@@ -180,7 +260,6 @@ describe("the Call setup design", () => {
     rememberGuest(scope, { email: "sam@example.com", name: "Sam Jones" });
     render(tree());
     await screen.findByText("We build routing.");
-    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("button", { name: "Add assistants" }));
     const picker = screen.getByRole("dialog", { name: "Add assistants" });
     await userEvent.click(within(picker).getByRole("checkbox", { name: /Dana Singh/ }));
@@ -190,7 +269,12 @@ describe("the Call setup design", () => {
     await userEvent.click(within(picker).getByRole("checkbox", { name: /Lee Park/ }));
     expect(within(picker).getByRole("checkbox", { name: /Sam Jones/ })).toBeDisabled();
     await userEvent.keyboard("{Escape}");
-    expect(screen.getByRole("button", { name: "Remove Dana Singh" })).toBeVisible();
+    const selection = screen.getByRole("button", { name: "Change assistants, 2 selected" });
+    expect(selection).toHaveTextContent("2 assistants");
+    await userEvent.click(selection);
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Add assistants" })).getByRole("checkbox", { name: /Dana Singh/ }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Change assistants, 1 selected" })).toHaveTextContent("1 assistant");
     expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
   });
 
@@ -200,11 +284,10 @@ describe("the Call setup design", () => {
     ipc.api("POST", /^\/employers\/e1\/packs$/, () => ({ status: "ready" }));
     ipc.api("GET", /^\/employers\/e1\/documents$/, () => ({ documents: [{ id: "d1", name: "Architecture", status: "ingested", approved_proposals: 3 }] }));
     render(tree());
-    await userEvent.click(screen.getByRole("radio", { name: "For work" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Work" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Agenda" }), "Discuss routing decisions");
     await userEvent.click(screen.getByText("Focus on documents"));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));
-    await userEvent.click(screen.getByText("Customize"));
     await userEvent.click(screen.getByRole("checkbox", { name: "Save transcript" }));
     await userEvent.click(screen.getByRole("radio", { name: "Paragraphs" }));
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
@@ -281,6 +364,34 @@ describe("guest contact privacy and delivery", () => {
   });
 });
 describe("workspace startup after a call", () => {
+  it("returns to Start call after leaving the ended-call review", async () => {
+    routes();
+    ipc.api("GET", /^\/sessions\/s1$/, () => ({ id: "s1", status: "ready", mode: "interview", store_transcript: false, questions: 1, outputs: { summary: "The call is complete." }, notes: "" }));
+    const live = { ...initial, running: true, sessionId: "s1" };
+    const ended = { ...initial, sessionId: "s1", stopped: "ended" as const };
+    const view = render(tree({ session: live }));
+    // Moving between tabs must not disturb an active call.
+    view.rerender(tree({ session: live, active: false }));
+    view.rerender(tree({ session: live, active: true }));
+    expect(await screen.findByRole("button", { name: "End call…" })).toBeInTheDocument();
+    view.rerender(tree({ session: ended }));
+    await screen.findByText("The call is complete.");
+    view.rerender(tree({ session: ended, active: false }));
+    view.rerender(tree({ session: ended, active: true }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(screen.queryByText("The call is complete.")).not.toBeInTheDocument();
+    expect(ipc.calls.some(c => c.cmd === "end_session")).toBe(false);
+  });
+  it("returns to Start call when the call ended while another tab was open", async () => {
+    routes();
+    const view = render(tree({ session: { ...initial, running: true, sessionId: "s1" }, active: false }));
+    const ended = { ...initial, sessionId: "s1", stopped: "ended" as const };
+    view.rerender(tree({ session: ended, active: false }));
+    view.rerender(tree({ session: ended, active: true }));
+    expect(await screen.findByRole("button", { name: "Start call" })).toBeInTheDocument();
+    expect(ipc.apiCalls().some(c => c.path === "/sessions/s1")).toBe(false);
+  });
+
   it("opens Start call when a previous ended session is restored, without loading its review", async () => {
     routes();
     render(tree({ session: { ...initial, sessionId: "s1", stopped: "ended" } }));

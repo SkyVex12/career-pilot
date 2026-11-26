@@ -2,7 +2,6 @@
 // and live minutes this period. The design system's reference screen
 // (docs/design/ui-proposal.md, "History"). Account deletion is in Settings.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Mode } from "@copilot/protocol";
 import { rest, type ReadPolicy, type LiveSession, type SessionItem, type Usage } from "./api";
 import { useOnShow, when } from "./shared";
 import { SessionDetail } from "./SessionDetail";
@@ -15,12 +14,11 @@ import "./feature-pages.css";
 
 export { MODE_LABEL, minutes, sessionTitle, statusBadge } from "./calls";
 
-type Filter = "all" | Mode;
+type Filter = "all" | "interview" | "work";
 const FILTERS = [
   ["all", "All"],
   ["interview", "Interviews"],
-  ["standup", "Standups"],
-  ["meeting", "Meetings"],
+  ["work", "Work"],
 ] as const;
 
 function UsageSummary({ usage }: { usage: Usage }) {
@@ -29,7 +27,7 @@ function UsageSummary({ usage }: { usage: Usage }) {
   const calls = usage.measured_sessions ?? 0;
   const minutes = (seconds: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(seconds / 60);
   return <div className="history-usage" role="group" aria-label="Account usage">
-    <span className="ui-num">{minutes(measured)} connected minutes in {usage.period} (UTC) · {calls} {calls === 1 ? "call" : "calls"}</span>
+    <span className="ui-num"><strong>{minutes(measured)}</strong> connected minutes in {usage.period} (UTC) · {calls} {calls === 1 ? "call" : "calls"}</span>
     {legacy > 0 && <span>Historical estimate: {minutes(legacy)} minutes · separate from recorded usage.</span>}
   </div>;
 }
@@ -61,6 +59,8 @@ export function History({
   const [usage, setUsage] = useState<Usage | null>(null);
   const [companies, setCompanies] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
+  // Returning to this tab always starts at the list; cached data and filters stay ready.
+  useEffect(() => { if (!active) setOpen(null); }, [active]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [loadingMore, setLoadingMore] = useState(false);
@@ -127,7 +127,7 @@ export function History({
 
   const shown = useMemo(() => {
     const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    return sessions === null ? null : sessions.filter(s => (filter === "all" || s.mode === filter) && words.every(word => `${sessionTitle(s, companies)} ${s.platform} ${s.started_at ? when(s.started_at) : ""}`.toLocaleLowerCase().includes(word)));
+    return sessions === null ? null : sessions.filter(s => (filter === "all" || (filter === "work" ? s.mode === "standup" || s.mode === "meeting" : s.mode === "interview")) && words.every(word => `${sessionTitle(s, companies)} ${s.platform} ${s.started_at ? when(s.started_at) : ""}`.toLocaleLowerCase().includes(word)));
   }, [sessions, filter, query, companies]);
 
   if (!ready) {
@@ -160,10 +160,8 @@ export function History({
       <PageHeader
         title="Past calls"
         actions={<Button size="sm" loading={refreshing} disabled={loadingMore} onClick={() => void read({ refresh: true })}>Refresh</Button>}
-        meta={
-          <div className="history-usage"><AccountUsage active={active && ready} running={running} />{usage && <UsageSummary usage={usage} />}</div>
-        }
       />
+      <section className="history-overview" aria-label="Usage overview"><AccountUsage active={active && ready} running={running} />{usage && <UsageSummary usage={usage} />}</section>
       {active && <LiveNow running={running} liveId={liveId} onOpen={onOpenLive} onEnded={load} />}
       <div className="history-filters">
         <SegmentedControl label="Show" size="sm" value={filter} options={FILTERS} onChange={setFilter} />
@@ -176,7 +174,7 @@ export function History({
         onRetry={() => read({ refresh: true })}
         loadingLabel="calls"
         empty={
-          <EmptyState icon={<Icon name="history" size={28} />} title={query.trim() ? "No matching calls" : filter === "all" ? "No calls yet" : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} yet`} action={query.trim() ? <Button size="sm" onClick={() => setQuery("")}>Clear search</Button> : filter !== "all" ? <Button size="sm" onClick={() => setFilter("all")}>Show all calls</Button> : undefined}>
+          <EmptyState icon={<Icon name="history" size={28} />} title={query.trim() ? "No matching calls" : filter === "all" ? "No calls yet" : filter === "work" ? "No work calls yet" : "No interviews yet"} action={query.trim() ? <Button size="sm" onClick={() => setQuery("")}>Clear search</Button> : filter !== "all" ? <Button size="sm" onClick={() => setFilter("all")}>Show all calls</Button> : undefined}>
             {query.trim() ? "Try a call title, company, or platform." : filter === "all" ? "Saved calls and their available summaries, transcripts and replays appear here." : "Calls of other kinds are under All."}
           </EmptyState>
         }

@@ -1,4 +1,4 @@
-import { openPractice } from "./Practice";
+import { useSessionNoteDrafts, type SessionNoteDraft } from "./SessionNoteDrafts";
 import { openAsk } from "./Ask";
 // One call after it ended: the Call screen right after it ends, and a past call opened from
 // History. Polls compact status for up to 5 minutes until the outputs are ready, then shows
@@ -11,7 +11,7 @@ import { ConversationView, useViewPrefs, ViewControls } from "./Overlay";
 import { fromReplay } from "./session";
 import { when } from "./shared";
 import { OUTPUT_TITLES, isSummaryNotice, outputsInOrder, pollSession, transcriptRows, waitingText, type PollState, type TranscriptRow } from "./postcall";
-import { Banner, Button, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
+import { Banner, Button, Card, ConfirmDialog, EmptyState, Field, Menu, PageHeader, Skeleton, SkeletonList, Spinner, Tabs, Textarea, useToast } from "./ui";
 import { MODE_LABEL } from "./calls";
 import { Icon } from "./ui/Icon";
 
@@ -46,7 +46,13 @@ export function SessionDetail({
   const [tab, setTab] = useState("primary");
   const [deleting, setDeleting] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
-  const [notes, setNotes] = useState<{ id: string; loaded: boolean; saved: string; draft: string; revision?: number }>({ id: sessionId, loaded: false, saved: "", draft: "" });
+  const drafts = useSessionNoteDrafts();
+  const [notes, setNotes] = useState<SessionNoteDraft>(() => drafts?.get(sessionId) ?? { id: sessionId, loaded: false, saved: "", draft: "" });
+  useEffect(() => {
+    if (notes.id !== sessionId) return;
+    if (notes.draft !== notes.saved) drafts?.set(sessionId, notes);
+    else drafts?.delete(sessionId);
+  }, [drafts, notes, sessionId]);
   const [notesReview, setNotesReview] = useState<string | null>(null);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -58,7 +64,7 @@ export function SessionDetail({
   useEffect(() => {
     setTab("primary");
     setLeaving(null);
-    setNotes({ id: sessionId, loaded: false, saved: "", draft: "" });
+    setNotes(drafts?.get(sessionId) ?? { id: sessionId, loaded: false, saved: "", draft: "" });
     setNotesError(null);
     setNotesReview(null);
     setNotesSaved(false);
@@ -138,6 +144,9 @@ export function SessionDetail({
     setNotesSaved(false);
     try {
       const saved = await rest.saveSessionNotes(sessionId, draft, notes.revision);
+      const cached = drafts?.get(sessionId);
+      if (cached?.draft === draft) drafts?.delete(sessionId);
+      else if (cached) drafts?.set(sessionId, { ...cached, saved: saved.notes, revision: saved.revision ?? cached.revision });
       if (currentId.current !== sessionId) return;
       setNotes((current) => ({ ...current, saved: saved.notes, revision: saved.revision ?? current.revision }));
       setNotesSaved(true);
@@ -193,7 +202,7 @@ export function SessionDetail({
           <Textarea rows={12} maxLength={20000} value={notes.draft} disabled={savingNotes} placeholder="Add reminders, questions or next steps…" onChange={(e) => { setNotes((n) => ({ ...n, draft: e.target.value })); setNotesSaved(false); }} />
         </Field>
         {notesError && <Banner tone="danger" title="Could not save notes" action={notesError.includes("HTTP 409") ? <Button size="sm" onClick={reloadNotes} loading={savingNotes}>Load latest notes</Button> : <Button size="sm" onClick={saveNotes} loading={savingNotes}>Retry</Button>}>{notesError}</Banner>}
-        {notesReview !== null && <Banner tone="warning" title="Latest saved notes"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{notesReview || "No saved notes."}</div></Banner>}
+        {notesReview !== null && <Card title="Latest saved notes"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{notesReview || "No saved notes."}</div></Card>}
       </> : <Banner tone="neutral">Notes are unavailable with this server version.</Banner>}
     </div>
   );
@@ -230,16 +239,21 @@ export function SessionDetail({
   ) : transcript.length === 0 ? (
     <EmptyState icon={<Icon name="mic" size={28} />} title="Nothing was transcribed" />
   ) : (
-    <>{matchingFocus && <p className="ui-field-hint">{focusKey ? "Supporting transcript moment highlighted." : "The referenced transcript moment is unavailable."}</p>}<ol className="sd-transcript">
-      {transcript.map((r) => (
-        <li key={r.key} ref={r.key === focusKey ? focusedRow : undefined} aria-current={r.key === focusKey ? "location" : undefined}>
-          <span className="sd-at ui-num">{r.at}</span>
-          <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
-          <span className="sd-text">{r.key === focusKey ? <mark style={{ background:"rgba(183, 38, 75, 0.16)", color:"inherit", borderRadius:3 }}>{r.text}</mark> : r.text}</span>
-          {r.who === "Them" && <Button size="sm" onClick={() => leave(() => openPractice({ source_question: { session_id: sessionId, channel: "them", seg_id: Number(r.key.split(":")[1]) }, topic: "Rehearse a saved interview question" }))}>Practice this question</Button>}
-        </li>
-      ))}
-    </ol></>
+    <div className="sd-transcript-panel">
+      <div className="sd-output-toolbar">
+        {matchingFocus && <span className="ui-field-hint">{focusKey ? "Supporting transcript moment highlighted." : "The referenced transcript moment is unavailable."}</span>}
+        <CopyButton text={transcript.map((r) => r.at + " " + r.who + ": " + r.text).join("\n")} />
+      </div>
+      <ol className="sd-transcript">
+        {transcript.map((r) => (
+          <li key={r.key} ref={r.key === focusKey ? focusedRow : undefined} aria-current={r.key === focusKey ? "location" : undefined}>
+            <span className="sd-at ui-num">{r.at}</span>
+            <span className={r.who === "You" ? "sd-who is-you" : "sd-who"}>{r.who}</span>
+            <span className="sd-text">{r.key === focusKey ? <mark style={{ background:"rgba(183, 38, 75, 0.16)", color:"inherit", borderRadius:3 }}>{r.text}</mark> : r.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 
   return (
@@ -273,7 +287,7 @@ export function SessionDetail({
           { value: "notes", label: "Notes", content: notesPanel },
         ]} />
       ) : pendingOutput}
-      <ConfirmDialog open={leaving !== null} onOpenChange={(open) => !open && setLeaving(null)} title="Discard unsaved notes?" confirmLabel="Discard notes" onConfirm={async () => { leaving?.(); setLeaving(null); }}>Your changes have not been saved.</ConfirmDialog>
+      <ConfirmDialog open={leaving !== null} onOpenChange={(open) => !open && setLeaving(null)} title="Discard unsaved notes?" confirmLabel="Discard notes" onConfirm={async () => { drafts?.delete(sessionId); leaving?.(); setLeaving(null); }}>Your changes have not been saved.</ConfirmDialog>
       {onDeleted && (
         <ConfirmDialog
           open={deleting}
@@ -282,6 +296,7 @@ export function SessionDetail({
           confirmLabel="Delete call"
           onConfirm={async () => {
             await rest.deleteSession(sessionId);
+            drafts?.delete(sessionId);
             onDeleted();
           }}
         >
@@ -358,16 +373,28 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   const toast = useToast();
   const copy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const focused = document.activeElement;
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.readOnly = true;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        try {
+          area.select();
+          if (!document.execCommand("copy")) throw new Error("Copy was refused");
+        } finally {
+          area.remove();
+          if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+        }
+      }
+      toast({ tone: "success", text: "Copied" });
     } catch {
-      const area = document.createElement("textarea");
-      area.value = text;
-      document.body.appendChild(area);
-      area.select();
-      document.execCommand("copy");
-      area.remove();
+      toast({ tone: "error", text: "Could not copy. Select the text and copy it manually." });
     }
-    toast({ tone: "success", text: "Copied" });
   }, [text, toast]);
   return (
     <Button size="sm" onClick={copy}>

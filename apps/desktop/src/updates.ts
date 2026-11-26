@@ -13,7 +13,7 @@ export type Bar =
       text: string;
       /** 0–100; null: under way, size unknown (a moving bar); undefined: no bar. */
       progress?: number | null;
-      /** The install button: "Install and restart" (ask me first) or "Restart now" (automatic). */
+      /** The install button: "Update and restart" (ask me first) or "Restart now" (automatic). */
       action?: { label: string; enabled: boolean };
       dismissible: boolean;
     };
@@ -53,7 +53,7 @@ export function bar(update: UpdateState, running: boolean): Bar {
           tone: "busy",
           text: running ? `Version ${v} is ready; install it after this call.` : `Version ${v} is ready.`,
           progress: 100,
-          action: { label: "Install and restart", enabled: !running },
+          action: { label: "Update and restart", enabled: !running },
           dismissible: false,
         };
       }
@@ -74,7 +74,7 @@ export function bar(update: UpdateState, running: boolean): Bar {
       return {
         kind: "bar",
         tone: "busy",
-        text: `Installing version ${update.version}. The app closes and opens again by itself…`,
+        text: `Updating to ${update.version}… CoRuby will restart shortly.`,
         progress: null,
         dismissible: false,
       };

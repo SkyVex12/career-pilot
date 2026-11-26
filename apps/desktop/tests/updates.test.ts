@@ -39,7 +39,7 @@ describe("the update status bar", () => {
   });
 
   it("offers the button in ask mode, never during a session", () => {
-    expect(bar(ready(false, null), false)).toMatchObject({ action: { label: "Install and restart", enabled: true } });
+    expect(bar(ready(false, null), false)).toMatchObject({ action: { label: "Update and restart", enabled: true } });
     const busy = bar(ready(false, null), true);
     expect(busy).toMatchObject({ action: { enabled: false } });
     expect(busy.kind === "bar" && busy.text).toContain("after this call");

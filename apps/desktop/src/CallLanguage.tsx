@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { request } from "./api";
-import { Button, Checkbox, Field, Select } from "./ui";
+import { Banner, Field, HelpTip, Select } from "./ui";
 import { Icon } from "./ui/Icon";
 import { useDataActivity } from "./usePolling";
 
@@ -20,12 +20,12 @@ export function validCatalog(value: unknown): value is Catalog {
 }
 
 /** Mounted under the account/profile boundary; a draft never crosses profiles. */
-export function CallLanguage({ value, onChange, disabled = false, onReady, children }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void; children?: ReactNode }) {
+export function CallLanguage({ value, onChange, disabled = false, onReady, answerFormat, children }: { value: string; onChange: (value: string) => void; disabled?: boolean; onReady?: (ready: boolean) => void; answerFormat?: ReactNode; children?: ReactNode }) {
   const active = useDataActivity();
   const initialized = useRef(false);
   const [items, setItems] = useState<Catalog["items"]>([{ id: "en", name: "English" }]);
   const [error, setError] = useState<string | null>(null);
-  const [remember, setRemember] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [legacyEnglish, setLegacyEnglish] = useState(false);
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
@@ -41,30 +41,41 @@ export function CallLanguage({ value, onChange, disabled = false, onReady, child
       if (!initialized.current) onChange(selection);
       initialized.current = true;
       setItems(catalog.items); setError(null); onReady?.(catalog.items.some(item => item.id === selection));
-    }).catch(e => { if (alive) { if (String(e).includes("HTTP 404")) { setLegacyEnglish(true); setItems([{ id: "en", name: "English" }]); setRemember(false); setError(null); onChange("en"); onReady?.(true); } else setError(String(e)); } }).finally(() => { if (alive) setLoading(false); });
+    }).catch(e => { if (alive) { if (String(e).includes("HTTP 404")) { setLegacyEnglish(true); setItems([{ id: "en", name: "English" }]); setError(null); onChange("en"); onReady?.(true); } else setError(String(e)); } }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [revision, active]); // Profile switches remount this component.
-  const change = async (language: string) => {
+  const change = (language: string) => {
     onChange(language); onReady?.(items.some(item => item.id === language)); setError(null);
-    if (remember) {
-      try { await request("PATCH", "/profile/call-preferences", { spoken_language: language }); }
-      catch (e) { setError(`Could not save the profile default: ${String(e)}`); }
-    }
   };
   const selection = items.find(item => item.id === value);
-  return <details className="call-options ui-disclosure"><summary><Icon name="settings" size={18} /><span>Customize</span><span className="ui-disclosure-meta">{loading ? "Loading languages…" : error ? "Language needs attention" : `${selection?.name ?? value} · call language`}</span></summary><div className="ui-disclosure-body ui-stack">
-    <Field label="Language" hint="Choose the spoken language for transcription and answers. You can also change it during a call.">
-      <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => void change(e.target.value)}>
-        {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
-        {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
-      </Select>
-    </Field>
-    {legacyEnglish && <p className="ui-field-hint">Using English compatibility mode. Update the CoRuby server to choose other languages.</p>}
-    <Checkbox label="Save selection as this profile’s default" checked={remember} disabled={disabled || loading || legacyEnglish} onChange={checked => {
-      setRemember(checked);
-      if (checked) request("PATCH", "/profile/call-preferences", { spoken_language: value }).catch(e => setError(String(e)));
-    }} />
-    {error && <p role="alert">{error} <Button size="sm" disabled={disabled} onClick={() => setRevision(n => n + 1)}>Retry language settings</Button></p>}
-    {children}
-  </div></details>;
+  return <details className="call-options ui-disclosure" open={expanded} onToggle={event => {
+    const open = event.currentTarget.open;
+    setExpanded(open);
+    if (open && error && !loading && !disabled) setRevision(n => n + 1);
+  }}>
+    <summary>
+      <Icon name="settings" size={16} /><span className="call-options-title">Customize</span>
+      <span className="ui-disclosure-meta">
+        {loading ? "Loading languages…" : error ? "Needs attention" : `${selection?.name ?? value} · call language`}
+      </span>
+    </summary>
+    <div className="ui-disclosure-body call-customize">
+      {error && <Banner tone="danger" title="Call languages unavailable">{error}</Banner>}
+      <div className="customize-group">
+        <div className="customize-row">
+          <span className="customize-label">Language<HelpTip label={error ? "Language error" : "Language"}>{error && <>{error} Reopen Customize to try again. </>}Spoken language for transcription and answers.{legacyEnglish && <> Using English compatibility mode. Update the CoRuby server to choose other languages.</>}</HelpTip></span>
+          <div className="customize-control customize-language-control">
+            <Field label="Language" hideLabel>
+              <Select aria-label="Language" searchLabel="Search languages" value={value} disabled={disabled || loading} onChange={e => change(e.target.value)}>
+                {!items.some(item => item.id === value) && <option value={value} disabled>{value} · unavailable</option>}
+                {items.map(item => <option key={item.id} value={item.id} lang={item.id} dir={item.direction ?? "auto"}>{item.native_name && item.native_name !== item.name ? `${item.native_name} · ${item.name}` : item.name}</option>)}
+              </Select>
+            </Field>
+          </div>
+        </div>
+        {answerFormat}
+      </div>
+      {children && <div className="customize-group">{children}</div>}
+    </div>
+  </details>;
 }

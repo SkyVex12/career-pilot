@@ -115,7 +115,6 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
       <div hidden={asking}>
       {!employers && !error && <SkeletonList rows={3} label="Loading companies" />}
       {error && <Banner tone="danger" title={employers ? "Could not refresh your companies" : "Could not load your companies"} action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Banner>}
-      {employers && <details className="work-personal-context feature-disclosure"><summary><span>Context from my AI</span><span className="work-personal-caption">Bring a private brief into your work</span></summary><PersonalAI /></details>}
       {!employers ? null : employers.length === 0 ? (
         <EmptyState
           icon={<Icon name="work" size={28} />}
@@ -159,6 +158,7 @@ export function Work({ active = true, askEntry }: { active?: boolean; askEntry?:
           )}
         </>
       )}
+      {employers && <details className="work-personal-context feature-disclosure"><summary><span>Context from my AI</span><span className="work-personal-caption">Bring a private brief into your work</span></summary><PersonalAI /></details>}
       </div>
       <EmployerForm
         open={form !== null}
@@ -395,6 +395,18 @@ function LogTab({ employer }: { employer: Employer }) {
           <span className="ui-spacer" />
           {dirty ? <span className="work-unsaved" role="status">Unsaved changes</span> : entry && <LogStatus log={entry} />}
         </div>
+        <Field label="What you worked on" hint="Tasks, decisions, blockers and next steps." hintMode="tooltip">
+          <Textarea
+            disabled={busy}
+            rows={10}
+            placeholder="What moved forward today? Add decisions, blockers, and what comes next."
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setDirty(true);
+            }}
+          />
+        </Field>
         <div className="form-actions work-log-toolbar">
           <input
             ref={file}
@@ -420,20 +432,8 @@ function LogTab({ employer }: { employer: Employer }) {
             Save
           </Button>
         </div>
-        <Field label="What you worked on" hint="Tasks, decisions, blockers and next steps." hintMode="tooltip">
-          <Textarea
-            disabled={busy}
-            rows={10}
-            placeholder="What moved forward today? Add decisions, blockers, and what comes next."
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setDirty(true);
-            }}
-          />
-        </Field>
         {conflict && <Banner tone="warning" title="This work log changed" action={<Button size="sm" loading={busy} onClick={reloadConflict}>Load latest log</Button>}>Your draft is preserved. Load the saved version before saving again.</Banner>}
-        {latestLog !== null && <Banner tone="warning" title="Latest saved log"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{latestLog || "No saved text."}</div></Banner>}
+        {latestLog !== null && <Card title="Latest saved log"><p>Your draft is preserved above. Review the saved version before saving again.</p><div className="feature-prose">{latestLog || "No saved text."}</div></Card>}
         {entry && entry.attachments.length > 0 && (
           <ul className="work-files" aria-label="Attachments">
             {entry.attachments.map((a) => (

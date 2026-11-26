@@ -20,12 +20,11 @@ use std::sync::{
 
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Window, WindowEvent};
 
 pub(crate) const EVENT: &str = "copilot://background";
 const BACKGROUND_ARG: &str = "--background";
-const OPEN: &str = "ruby-background-open";
 const PAUSE: &str = "ruby-background-pause";
 const EXIT: &str = "ruby-background-exit";
 #[cfg(any(target_os = "macos", test))]
@@ -91,10 +90,20 @@ fn save(path: &Path, preferences: &BackgroundPreferences) -> Result<(), String> 
 }
 
 pub(crate) fn open(app: &AppHandle) -> Result<(), String> {
-    let main = app.get_webview_window("main").ok_or("Workspace window is unavailable")?;
-    crate::stealth::show(&main)?;
-    main.unminimize().map_err(|e| e.to_string())?;
-    main.set_focus().map_err(|e| e.to_string())?;
+    if crate::shutdown::busy(app) {
+        return Ok(());
+    }
+    let live = app
+        .try_state::<crate::AppState>()
+        .is_some_and(|state| state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some());
+    if live {
+        crate::call_window::show_overlay(app)?;
+    } else {
+        let main = app.get_webview_window("main").ok_or("Workspace window is unavailable")?;
+        crate::stealth::show(&main)?;
+        main.unminimize().map_err(|e| e.to_string())?;
+        main.set_focus().map_err(|e| e.to_string())?;
+    }
     if let Some(state) = app.try_state::<BackgroundState>() {
         state.background_start.store(false, Ordering::SeqCst);
         let _ = app.emit(EVENT, ());
@@ -111,26 +120,36 @@ pub(crate) fn second_instance(app: &AppHandle, args: &[String]) {
     }
 }
 
-pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), String> {
+#[derive(Debug, PartialEq, Eq)]
+enum TrayClickAction {
+    Open,
+    Menu,
+}
+
+fn tray_click_action(button: MouseButton, state: MouseButtonState) -> Option<TrayClickAction> {
+    match (button, state) {
+        (MouseButton::Left, MouseButtonState::Up) => Some(TrayClickAction::Open),
+        (MouseButton::Right, MouseButtonState::Up) => Some(TrayClickAction::Menu),
+        _ => None,
+    }
+}
+pub(crate) fn setup(app: &AppHandle) -> Result<(), String> {
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("background.json");
     let preferences = load(&path).unwrap_or_else(|error| {
         tracing::warn!("{error}; background mode remains off");
         BackgroundPreferences::default()
     });
-    let open_item =
-        MenuItem::with_id(app, OPEN, "Open CoRuby", true, None::<&str>).map_err(|e| e.to_string())?;
     let pause_item = CheckMenuItem::with_id(
         app,
         PAUSE,
-        "Pause call suggestions",
+        "Pause notifications",
         true,
         preferences.suggestions_paused,
         None::<&str>,
     )
     .map_err(|e| e.to_string())?;
-    let exit_item =
-        MenuItem::with_id(app, EXIT, "Exit completely", true, None::<&str>).map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(app, &[&open_item, &pause_item, &exit_item]).map_err(|e| e.to_string())?;
+    let exit_item = MenuItem::with_id(app, EXIT, "Exit", true, None::<&str>).map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(app, &[&pause_item, &exit_item]).map_err(|e| e.to_string())?;
     let icon = app.default_window_icon().cloned().ok_or("CoRuby app icon is unavailable")?;
     // Register state only after native menu construction succeeds.
     app.manage(BackgroundState {
@@ -143,46 +162,41 @@ pub(crate) fn setup(app: &AppHandle, cleanup_before_exit: fn()) -> Result<(), St
         accepted: Mutex::new(None),
         detection_status: Mutex::new(DetectionCache::default()),
     });
-    TrayIconBuilder::with_id("ruby-background")
+    let tray = TrayIconBuilder::with_id("ruby-background")
         .icon(icon)
         .tooltip("CoRuby")
-        .menu(&menu)
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            OPEN => {
-                let _ = open(app);
-            }
-            PAUSE => {
-                let state = app.state::<BackgroundState>();
-                let result = (|| -> Result<(), String> {
-                    let mut prefs = state.preferences.lock().map_err(|e| e.to_string())?;
-                    let old = prefs.suggestions_paused;
-                    let mut next = prefs.clone();
-                    next.suggestions_paused = !old;
-                    if let Err(error) = save(&state.path, &next) {
-                        drop(prefs);
-                        let _ = state.pause_item.set_checked(old);
-                        return Err(error);
-                    }
-                    *prefs = next;
-                    let paused = prefs.suggestions_paused;
-                    drop(prefs);
-                    let _ = state.pause_item.set_checked(paused);
-                    let _ = app.emit(EVENT, ());
-                    Ok(())
-                })();
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button, button_state, position, .. } = event {
+                let app = tray.app_handle();
+                let result = match tray_click_action(button, button_state) {
+                    Some(TrayClickAction::Open) => open(app),
+                    Some(TrayClickAction::Menu) => crate::tray_menu::show(app, position),
+                    None => return,
+                };
                 if let Err(error) = result {
-                    tracing::warn!("Pause suggestions: {error}");
+                    tracing::warn!("Tray click: {error}");
                 }
             }
-            EXIT => {
-                app.state::<BackgroundState>().exiting.store(true, Ordering::SeqCst);
-                cleanup_before_exit();
-                app.exit(0);
+        });
+    // A small local popup supplies a red Exit action on Windows and macOS.
+    // Linux retains its native menu because tray click events are not supported there.
+    #[cfg(any(windows, target_os = "macos"))]
+    let tray = {
+        let _ = menu;
+        tray
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let tray = tray.menu(&menu).on_menu_event(|app, event| match event.id.as_ref() {
+        PAUSE => {
+            if let Err(error) = toggle_pause(app) {
+                tracing::warn!("Pause suggestions: {error}");
             }
-            _ => {}
-        })
-        .build(app)
-        .map_err(|e| e.to_string())?;
+        }
+        EXIT => crate::shutdown::request(app.clone()),
+        _ => {}
+    });
+    tray.build(app).map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     macos::setup(app.clone());
     start_detection(app.clone());
@@ -200,6 +214,9 @@ fn should_hide_on_close(main: bool, keep_running: bool, exiting: bool) -> bool {
 
 /// Return true when the close was consumed. Preserve all existing handlers otherwise.
 pub(crate) fn on_window_event(window: &Window, event: &WindowEvent) -> bool {
+    if crate::tray_menu::on_window_event(window, event) {
+        return true;
+    }
     let WindowEvent::CloseRequested { api, .. } = event else { return false };
     let Some(state) = window.app_handle().try_state::<BackgroundState>() else { return false };
     let keep_running = state.preferences.lock().map(|prefs| prefs.keep_running).unwrap_or(false);
@@ -210,7 +227,37 @@ pub(crate) fn on_window_event(window: &Window, event: &WindowEvent) -> bool {
             return true;
         }
     }
+    if window.label() == "main" && !state.exiting.load(Ordering::SeqCst) {
+        api.prevent_close();
+        crate::shutdown::request(window.app_handle().clone());
+        return true;
+    }
     false
+}
+
+pub(crate) fn mark_exiting(app: &AppHandle) {
+    app.state::<BackgroundState>().exiting.store(true, Ordering::SeqCst);
+}
+pub(crate) fn suggestions_paused(app: &AppHandle) -> bool {
+    app.state::<BackgroundState>().preferences.lock().unwrap().suggestions_paused
+}
+pub(crate) fn toggle_pause(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<BackgroundState>();
+    let mut current = state.preferences.lock().map_err(|e| e.to_string())?;
+    let mut next = current.clone();
+    next.suggestions_paused = !next.suggestions_paused;
+    if let Err(error) = save(&state.path, &next) {
+        let old = current.suggestions_paused;
+        drop(current);
+        let _ = state.pause_item.set_checked(old);
+        return Err(error);
+    }
+    let paused = next.suggestions_paused;
+    *current = next;
+    drop(current);
+    let _ = state.pause_item.set_checked(paused);
+    let _ = app.emit(EVENT, ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -495,6 +542,20 @@ pub(crate) fn foreground_external_process_id() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn left_click_opens_coruby_and_right_click_opens_the_menu() {
+        assert_eq!(tray_click_action(MouseButton::Left, MouseButtonState::Up), Some(TrayClickAction::Open));
+        assert_eq!(tray_click_action(MouseButton::Right, MouseButtonState::Up), Some(TrayClickAction::Menu));
+    }
+
+    #[test]
+    fn tray_press_and_unassigned_buttons_do_not_trigger_duplicate_actions() {
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            assert_eq!(tray_click_action(button, MouseButtonState::Down), None);
+        }
+        assert_eq!(tray_click_action(MouseButton::Middle, MouseButtonState::Up), None);
+    }
 
     #[test]
     fn changed_emulator_during_scan_does_not_strand_a_previous_prompt() {
@@ -1245,7 +1306,7 @@ fn start_detection(app: AppHandle) {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
             let state = app.state::<BackgroundState>();
-            if state.exiting.load(Ordering::SeqCst) {
+            if state.exiting.load(Ordering::SeqCst) || crate::shutdown::busy(&app) {
                 break;
             }
             let prefs = match state.preferences.lock() {
