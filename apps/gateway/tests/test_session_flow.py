@@ -887,6 +887,5 @@ async def test_session_end_retains_delayed_provider_cancellation_before_releasin
         kinds = [row["kind"] for row in retained]
         assert kinds.index("pass_cancelled") < kinds.index("session.ended")
         assert any(
-            row["kind"] == "provider_attempt" and row["status"] == "cancelled"
-            for row in retained
+            row["kind"] == "provider_attempt" and row["status"] == "cancelled" for row in retained
         )

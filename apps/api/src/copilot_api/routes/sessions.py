@@ -452,11 +452,20 @@ async def get_replay(
                 metadata = json.loads(metadata)
             strategy = (
                 cast(dict[str, Any], metadata).get("answer_strategy")
-                if isinstance(metadata, dict) else None
+                if isinstance(metadata, dict)
+                else None
             )
-            if a["pass"] == "fast" and isinstance(strategy, str) and strategy in {
-                "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand",
-            }:
+            if (
+                a["pass"] == "fast"
+                and isinstance(strategy, str)
+                and strategy
+                in {
+                    "legacy_dual",
+                    "adaptive",
+                    "adaptive_hybrid",
+                    "adaptive_on_demand",
+                }
+            ):
                 found["answer_strategy"] = strategy
             found[a["pass"]] = {
                 "text": a_text,

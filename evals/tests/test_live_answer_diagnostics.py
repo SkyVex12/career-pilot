@@ -78,6 +78,7 @@ def test_trace_keeps_basename_and_line_but_no_locals_or_full_path() -> None:
     def fail() -> None:
         secret_value = "SECRET-local"
         raise ValueError(secret_value)
+
     tree: dict[str, Any] = {}
     try:
         fail()

@@ -13,9 +13,7 @@ def test_rejects_unbounded_or_nonpositive_interval(interval):
 
 
 def test_declares_requested_and_effective_resolution(monkeypatch):
-    monkeypatch.setattr(
-        time, "get_clock_info", lambda name: SimpleNamespace(resolution=0.015625)
-    )
+    monkeypatch.setattr(time, "get_clock_info", lambda name: SimpleNamespace(resolution=0.015625))
     monitor = candidate.LoopLagMonitor(0.01)
     row = monitor.summary()
     assert row["requested_interval_ms"] == 10
@@ -34,9 +32,7 @@ async def test_early_wakeups_never_become_zero_time_samples(
 ):
     clock = [0.0]
     sleeps = []
-    monkeypatch.setattr(
-        time, "get_clock_info", lambda name: SimpleNamespace(resolution=resolution)
-    )
+    monkeypatch.setattr(time, "get_clock_info", lambda name: SimpleNamespace(resolution=resolution))
     monkeypatch.setattr(time, "perf_counter", lambda: clock[0])
     monitor = candidate.LoopLagMonitor(requested)
     observe = monitor.observe
@@ -68,9 +64,7 @@ async def test_early_wakeups_never_become_zero_time_samples(
 
 async def test_true_stall_is_retained_without_subtraction(monkeypatch):
     clock = [0.0]
-    monkeypatch.setattr(
-        time, "get_clock_info", lambda name: SimpleNamespace(resolution=1e-9)
-    )
+    monkeypatch.setattr(time, "get_clock_info", lambda name: SimpleNamespace(resolution=1e-9))
     monkeypatch.setattr(time, "perf_counter", lambda: clock[0])
     monitor = candidate.LoopLagMonitor(0.01)
 
