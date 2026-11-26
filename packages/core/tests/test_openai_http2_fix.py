@@ -1,4 +1,4 @@
-"""Socket-free production wiring; run only after candidate integration is authorized."""
+"""Socket-free production default, rollback, proxy and ownership wiring."""
 
 import builtins
 import json
@@ -25,6 +25,7 @@ def no_network_or_host_proxy(monkeypatch):
     for name in list(os.environ):
         if name.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}:
             monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("COPILOT_OPENAI_HTTP2", raising=False)
     monkeypatch.delenv("COPILOT_OPENAI_HTTP2_CANCEL_FIX", raising=False)
 
     def forbidden(*args, **kwargs):
@@ -34,9 +35,53 @@ def no_network_or_host_proxy(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", forbidden)
 
 
+async def test_default_uses_scoped_pool_and_preserves_sdk_defaults():
+    from copilot_core._http2_cancel import CancellationSafePool
+    from copilot_core._openai_http import ProxyPreservingHttpxClient
+
+    config = settings()
+    assert config.openai_http2 is True
+    assert config.openai_http2_cancel_fix is True
+    sdk = openai_client(config)
+    try:
+        client: Any = sdk._client
+        transport: Any = client._transport
+        assert isinstance(client, ProxyPreservingHttpxClient)
+        assert isinstance(transport._pool, CancellationSafePool)
+        assert client.transport_policy == "fixed_direct_http2_native_proxy_http1"
+        assert sdk.max_retries == 0
+        timeout: Any = sdk.timeout
+        assert timeout.read == 30
+        assert timeout.connect == 2
+    finally:
+        await sdk.close()
+
+
+@pytest.mark.parametrize("source", ["environment", "constructor"])
+async def test_false_rollback_skips_private_transport_even_with_new_default(monkeypatch, source):
+    monkeypatch.setenv(
+        "COPILOT_OPENAI_HTTP2_CANCEL_FIX", "false" if source == "environment" else "true"
+    )
+    config = settings() if source == "environment" else settings(openai_http2_cancel_fix=False)
+    assert config.openai_http2_cancel_fix is False
+    original_import = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name.endswith(("_openai_http", "_http2_cancel")):
+            raise AssertionError("False rollback imported private transport hooks")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    sdk = openai_client(config)
+    try:
+        assert type(sdk._client) is openai.DefaultAsyncHttpxClient
+        assert sdk.max_retries == 0
+    finally:
+        await sdk.close()
+
+
 @pytest.mark.parametrize(("enabled", "http2"), [(False, True), (False, False), (True, False)])
 async def test_native_and_explicit_h1_do_not_import_private_transport(monkeypatch, enabled, http2):
-    assert settings().openai_http2_cancel_fix is False
     original_import = builtins.__import__
 
     def guarded(name, *args, **kwargs):
@@ -56,7 +101,7 @@ async def test_native_and_explicit_h1_do_not_import_private_transport(monkeypatc
         await sdk.close()
 
 
-async def test_opt_in_keeps_proxy_auth_no_proxy_limits_and_timeouts(monkeypatch):
+async def test_default_keeps_proxy_auth_no_proxy_limits_and_timeouts(monkeypatch):
     from copilot_core._http2_cancel import CancellationSafePool
     from copilot_core._openai_http import ProxyPreservingHttpxClient
 
@@ -65,7 +110,6 @@ async def test_opt_in_keeps_proxy_auth_no_proxy_limits_and_timeouts(monkeypatch)
     sdk = openai_client(
         settings(
             openai_http2=True,
-            openai_http2_cancel_fix=True,
             llm_keepalive_s=91,
             llm_connect_timeout_s=3,
             openai_base_url="https://direct.invalid/v1",
@@ -96,7 +140,7 @@ async def test_opt_in_keeps_proxy_auth_no_proxy_limits_and_timeouts(monkeypatch)
 
 
 @pytest.mark.parametrize("kind", ["unsupported", "unreadable"])
-def test_enabled_unsupported_installation_fails_before_sdk_construction(monkeypatch, kind):
+def test_default_unsupported_installation_fails_before_sdk_construction(monkeypatch, kind):
     from copilot_core import _openai_http
 
     calls = []
@@ -114,7 +158,7 @@ def test_enabled_unsupported_installation_fails_before_sdk_construction(monkeypa
     monkeypatch.setattr(openai, "AsyncOpenAI", constructed)
     error = OSError if kind == "unreadable" else _openai_http.UnsupportedTransportVersion
     with pytest.raises(error):
-        openai_client(settings(openai_http2=True, openai_http2_cancel_fix=True))
+        openai_client(settings(openai_http2=True))
     assert calls == []
 
 

@@ -181,9 +181,9 @@ class CoreSettings(BaseSettings):
     # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
     # its first-token timeout cancels only its stream, not the connection the retry needs.
     openai_http2: bool = True
-    # Opt-in, version-pinned stream cancellation fix. Direct H2 only; proxy mounts use
-    # native H1. Leave off for the native SDK path; openai_http2=False also bypasses it.
-    openai_http2_cancel_fix: bool = False
+    # Version-pinned stream cancellation fix. Direct H2 only; proxy mounts use native H1.
+    # Explicit False restores the native SDK path; openai_http2=False also bypasses it.
+    openai_http2_cancel_fix: bool = True
 
     # Prices per million tokens, for answers.cost_usd (copilot_core.pricing). JSON; entries
     # given are merged over the defaults, e.g.
