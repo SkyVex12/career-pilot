@@ -18,12 +18,13 @@ from copilot_gateway.config import Settings
 REPO = Path(__file__).resolve().parents[2]
 
 
-def source_identity(cases, settings, reps, seed, concurrency, timeout):
+def source_identity(cases, settings, reps, seed, concurrency, timeout, provider_timeout=None):
     return {
         "schema": 1,
         "seed": seed,
         "concurrency": concurrency,
         "timeout_s": timeout,
+        "provider_timeout_s": timeout if provider_timeout is None else provider_timeout,
         "code": {"evals/src/copilot_evals/live_answer_replay.py": "a" * 64},
         "git_head": "b" * 40,
         "git_diff_sha256": "c" * 64,
@@ -98,6 +99,7 @@ def fixture(tmp_path, monkeypatch):
     ("field", "value"),
     [
         ("timeout", 20),
+        ("provider_timeout", 30),
         ("concurrency", 1),
         ("max_provider_inflight", 4),
         ("transport_failure_limit", 2),
@@ -131,7 +133,7 @@ async def test_changed_run_controls_fail_before_preflight(fixture, field, value)
 async def test_bool_and_nonfinite_controls_fail_before_preflight(fixture, field, value):
     args, *_ = fixture
     setattr(args, field, value)
-    with pytest.raises(ValueError, match="Invalid explicit schedule"):
+    with pytest.raises(ValueError, match=r"Invalid explicit schedule|Invalid provider timeout"):
         await replay.execute(args)
 
 

@@ -1435,6 +1435,14 @@ def provider_configuration_fingerprint(settings: Settings) -> str:
     )
 
 
+def effective_provider_timeout(timeout_s: float, override: float | None = None) -> float:
+    """SDK timeout; omission retains the replay's historical trial-timeout default."""
+    value = timeout_s if override is None else override
+    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+        raise ValueError("Invalid provider timeout: expected finite positive seconds")
+    return float(value)
+
+
 def experiment_identity(
     cases: list[dict[str, Any]],
     settings: Settings,
@@ -1442,7 +1450,9 @@ def experiment_identity(
     seed: int,
     concurrency: int,
     timeout_s: float,
+    provider_timeout_s: float | None = None,
 ) -> dict[str, Any]:
+    sdk_timeout = effective_provider_timeout(timeout_s, provider_timeout_s)
     root = root_directory()
     code = {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -1479,6 +1489,7 @@ def experiment_identity(
         "seed": seed,
         "concurrency": concurrency,
         "timeout_s": timeout_s,
+        "provider_timeout_s": sdk_timeout,
         "strategies": STRATEGIES,
         "settings": settings.model_dump(mode="json", include=CONFIG_FIELDS),
         "provider_configuration_sha256": provider_configuration_fingerprint(settings),
@@ -1525,6 +1536,10 @@ def schedule_run_identity(args: argparse.Namespace, identity: dict[str, Any]) ->
         )
     ):
         raise ValueError("Invalid explicit schedule seed, timeout, connectivity or budget")
+    sdk_timeout = effective_provider_timeout(timeout, getattr(args, "provider_timeout", None))
+    captured_timeout = effective_provider_timeout(timeout, identity.get("provider_timeout_s"))
+    if captured_timeout != sdk_timeout:
+        raise ValueError("Explicit schedule provider timeout differs from experiment identity")
     code = identity.get("code")
     source_fields = (identity.get("git_head"), identity.get("git_diff_sha256"))
     provider_configuration = identity.get("provider_configuration_sha256")
@@ -1548,6 +1563,7 @@ def schedule_run_identity(args: argparse.Namespace, identity: dict[str, Any]) ->
         raise ValueError("Explicit schedule requires the complete repository source identity")
     return {
         "timeout_s": float(timeout),
+        "provider_timeout_s": sdk_timeout,
         "concurrency": integer_bounds["concurrency"][0],
         "max_provider_inflight": integer_bounds["max_provider_inflight"][0],
         "transport_failure_limit": integer_bounds["transport_failure_limit"][0],
@@ -1692,6 +1708,7 @@ def replay_blocks(
 
 
 async def execute(args: argparse.Namespace) -> None:
+    effective_provider_timeout(args.timeout, getattr(args, "provider_timeout", None))
     from copilot_evals.live_answer_corpus import representative_cases
 
     cases = (
@@ -1719,7 +1736,13 @@ async def execute(args: argparse.Namespace) -> None:
             variant.expert_tier = variant.expert_tier or getattr(args, "expert_tier", None)
     if getattr(args, "schedule_file", None):
         identity = experiment_identity(
-            cases, settings, args.reps, args.seed, args.concurrency, args.timeout
+            cases,
+            settings,
+            args.reps,
+            args.seed,
+            args.concurrency,
+            args.timeout,
+            getattr(args, "provider_timeout", None),
         )
         replay_blocks(
             args,
@@ -1833,7 +1856,13 @@ async def execute_live_owned(
             raise ValueError("Invalid persisted provider admission stop")
         admission.stop(previous_stop["reason"])
     identity = experiment_identity(
-        cases, settings, args.reps, args.seed, args.concurrency, args.timeout
+        cases,
+        settings,
+        args.reps,
+        args.seed,
+        args.concurrency,
+        args.timeout,
+        getattr(args, "provider_timeout", None),
     )
     blocks, explicit_schedule = replay_blocks(
         args,
@@ -1950,7 +1979,10 @@ async def execute_live_owned(
         else:
             save(fault_path, list(fault_records.values()))
 
-    raw_providers = make_providers(settings, timeout_s=args.timeout)
+    raw_providers = make_providers(
+        settings,
+        timeout_s=effective_provider_timeout(args.timeout, getattr(args, "provider_timeout", None)),
+    )
     providers = [
         AuditProvider(provider, budget, requests, directory, admission=admission, store=store)
         for provider in raw_providers
@@ -2538,7 +2570,12 @@ def main(argv: list[str] | None = None) -> int:
     tiers = ("default", "priority", "fast", "flex")
     parser.add_argument("--fast-tier", choices=tiers)
     parser.add_argument("--expert-tier", choices=tiers)
-    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--timeout", type=float, default=60, help="Overall per-trial deadline")
+    parser.add_argument(
+        "--provider-timeout",
+        type=float,
+        help="SDK read/write/pool timeout; omitted uses --timeout (connect stays configured)",
+    )
     args = parser.parse_args(argv)
     previous_logging_threshold = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
