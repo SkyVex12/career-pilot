@@ -1058,9 +1058,7 @@ class AnswerEngine:
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
             if response_length != "default":
                 slot += f":length={response_length}"
-            memory_pass = (
-                "deep" if plan is not None and plan.depth in {"narrative", "expert"} else pass_
-            )
+            memory_pass = "deep" if plan is not None else pass_
             memory: list[str] | None = None
             candidate_req: LLMRequest | None = None
             if plan is not None:

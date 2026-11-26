@@ -331,7 +331,7 @@ async def finish(lab, client, q, *, ended=False):
     await asyncio.gather(*lab.session.answers._background)
     assert len(lab.requests) == 1
     assert lab.decisions == [QUESTION]
-    assert lab.memory_calls == [(QUESTION, "fast")]  # No hidden deeper lookup or new wait.
+    assert lab.memory_calls == [(QUESTION, "deep")]  # One rich lookup; no extra memory call.
     assert q.qtype == "technical"
     assert q.depth == "deep"
     assert q.delta_counts == {"fast": 1}
@@ -641,7 +641,7 @@ async def test_workplace_late_route_keeps_primary_and_hybrid_contract(
         lab.session.call_context = lambda: prompts.CallContext(recent="Frozen Boreal context.")
         q = await start_partial(lab, client)
         original_task = q.tasks["fast"]
-        assert lab.memory_calls == [(WORK_QUESTION, "fast")]
+        assert lab.memory_calls == [(WORK_QUESTION, "deep")]
         lab.session.call_context = lambda: prompts.CallContext(
             recent="Later unrelated Atlas context."
         )
@@ -726,9 +726,9 @@ async def test_workplace_late_route_keeps_primary_and_hybrid_contract(
         await asyncio.gather(*lab.session.answers._background)
         assert lab.decisions == [WORK_QUESTION]
         assert lab.memory_calls == (
-            [(WORK_QUESTION, "fast"), (WORK_QUESTION, "deep")]
+            [(WORK_QUESTION, "deep"), (WORK_QUESTION, "deep")]
             if architecture == "adaptive_hybrid"
-            else [(WORK_QUESTION, "fast")]
+            else [(WORK_QUESTION, "deep")]
         )  # The primary keeps its original evidence lookup, even when routing upgrades.
         assert len(lab.requests) == (2 if architecture == "adaptive_hybrid" else 1)
         assert q.delta_counts == (
