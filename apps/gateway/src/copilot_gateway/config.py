@@ -51,6 +51,29 @@ QuestionType = Literal[
 ]
 
 
+class AdaptiveExpertRoute(BaseModel):
+    """Explicit OpenAI route for adaptive expert answers; no global deep overrides.
+
+    Null reasoning/tier omits that wire field; null retry tier keeps the primary
+    tier. Null first-token timeout uses the router default; null hedge disables it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    model: str = Field(strict=True, min_length=1)
+    reasoning: ReasoningEffort | None = None
+    service_tier: Literal["default", "priority", "fast", "flex"] | None = None
+    retry_tier: Literal["default", "priority", "fast", "flex"] | None = None
+    first_token_timeout_ms: int | None = Field(default=None, strict=True, gt=0)
+    hedge_ms: int | None = Field(default=None, strict=True, gt=0)
+
+    @field_validator("model")
+    @classmethod
+    def _exact_model_id(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("Adaptive expert model must be a nonempty exact model ID")
+        return value
+
+
 class Settings(CoreSettings):
     """Shared fields (auth, Claude providers and models, Valkey, the queue) are in
     `CoreSettings`; these are the gateway's own."""
@@ -147,6 +170,9 @@ class Settings(CoreSettings):
     # Experimental: one independent expert attempt after a typed transient primary failure,
     # only before any answer text. Off until paired failure-recovery evidence supports it.
     adaptive_failure_recovery: bool = False
+    # Opt-in only: adaptive expert answers use this dedicated route. Legacy and screen
+    # routes retain their global deep settings; no model or tier is selected by default.
+    adaptive_expert_route: AdaptiveExpertRoute | None = None
     adaptive_max_tokens: int = Field(default=1200, ge=100, le=4000)
     adaptive_stream_idle_timeout_s: float = Field(default=30.0, gt=0, le=120)
     adaptive_stream_total_timeout_s: float = Field(default=90.0, gt=0, le=300)

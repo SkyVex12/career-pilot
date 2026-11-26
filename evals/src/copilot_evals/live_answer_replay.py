@@ -132,6 +132,7 @@ CONFIG_FIELDS = {
     "openai_deep_retry_tier",
     "fast_pass_max_tokens",
     "deep_pass_max_tokens",
+    "adaptive_expert_route",
     "adaptive_failure_recovery",
     "adaptive_max_tokens",
     "adaptive_stream_idle_timeout_s",

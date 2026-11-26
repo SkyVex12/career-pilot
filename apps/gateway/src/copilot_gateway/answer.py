@@ -1134,6 +1134,13 @@ class AnswerEngine:
                     if plan is not None
                     else (self.deep_job(q) if pass_ == "deep" else pass_)
                 )
+            # Keep the frozen plan/public pass; isolate only the actual adaptive expert route.
+            if (
+                plan is not None
+                and job == "deep"
+                and host.settings.adaptive_expert_route is not None
+            ):
+                job = "adaptive_expert"
             state["job"] = job
             if job == "deep_light":
                 self.stats["deep_light"] += 1

@@ -280,3 +280,126 @@ def test_provider_configuration_identity_contains_no_raw_endpoint_or_key(monkeyp
     assert set(identity) <= set("0123456789abcdef")
     assert "private" not in identity
     assert "endpoint.invalid" not in identity
+
+
+def adaptive_expert_profile():
+    return {
+        "model": "authored-expert",
+        "reasoning": "low",
+        "service_tier": "fast",
+        "retry_tier": "fast",
+        "first_token_timeout_ms": 20000,
+        "hedge_ms": None,
+    }
+
+
+async def test_adaptive_expert_profile_drift_fails_before_provider_or_preflight(
+    fixture, monkeypatch
+):
+    args, *_ = fixture
+
+    def changed_settings(*values, **kwargs):
+        base = Settings(*values, **kwargs)
+        return Settings.model_validate(
+            {
+                **base.model_dump(),
+                "adaptive_expert_route": adaptive_expert_profile(),
+            }
+        )
+
+    monkeypatch.setattr(replay, "Settings", changed_settings)
+    with pytest.raises(ValueError, match="request condition settings changed"):
+        await replay.execute(args)
+    assert not args.out.exists()
+
+
+def test_adaptive_expert_product_profile_roundtrips_into_variant_identity(tmp_path):
+    from copilot_evals.live_answer_variants import load_variants
+
+    file = tmp_path / "variants.json"
+    profile = adaptive_expert_profile()
+    file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "variants": [
+                    {
+                        "label": "B",
+                        "architecture": "adaptive",
+                        "settings": {"adaptive_expert_route": profile},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = Settings(_env_file=None, adaptive_expert_route=None)  # pyright: ignore[reportCallIssue]
+    loaded = load_variants(file, base, REPO)["B"]
+    assert loaded.settings.adaptive_expert_route is not None
+    assert loaded.settings.adaptive_expert_route.model_dump() == profile
+    assert loaded.identity(replay.CONFIG_FIELDS)["settings"]["adaptive_expert_route"] == profile
+    assert base.adaptive_expert_route is None
+
+
+@pytest.mark.parametrize(("name", "value"), [("expert_tier", "fast"), ("expert_route_limit", 1)])
+@pytest.mark.parametrize("entry", ["constructor", "manifest"])
+def test_adaptive_expert_profile_rejects_eval_expert_overrides(tmp_path, name, value, entry):
+    from copilot_evals.live_answer_variants import Variant, load_variants
+
+    base = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+    settings = Settings.model_validate(
+        {
+            **base.model_dump(),
+            "adaptive_expert_route": adaptive_expert_profile(),
+        }
+    )
+    if entry == "constructor":
+        with pytest.raises(ValueError, match="cannot use eval expert route overrides"):
+            Variant("B", "adaptive", settings, **{name: value})
+    else:
+        file = tmp_path / "variants.json"
+        file.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "variants": [
+                        {
+                            "label": "B",
+                            "architecture": "adaptive",
+                            name: value,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="cannot use eval expert route overrides"):
+            load_variants(file, settings, REPO)
+
+
+def test_adaptive_expert_unpriced_route_cannot_escape_pre_dispatch_check():
+    from typing import Any, cast
+
+    from copilot_evals.live_answer_variants import validate_route_prices
+
+    from copilot_core.llm import ModelRouter, Route
+    from copilot_core.pricing import ModelPrice
+
+    settings = Settings(_env_file=None, model_prices={})  # pyright: ignore[reportCallIssue]
+    router = ModelRouter(
+        {
+            "adaptive_expert": [
+                Route(cast(Any, object()), "authored-expert", {"service_tier": "fast"}),
+            ]
+        },
+        first_token_timeout_s=1,
+    )
+    with pytest.raises(ValueError, match="Model/tier rate missing"):
+        validate_route_prices(router, settings)
+    priced = settings.model_copy(
+        update={
+            "model_prices": {"authored-expert": ModelPrice(input=1, cached=0.1, output=2)},
+            "tier_price_multipliers": {"standard": 1, "authored-expert:fast": 2},
+        }
+    )
+    validate_route_prices(router, priced)

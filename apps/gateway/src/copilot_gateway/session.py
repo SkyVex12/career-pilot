@@ -1946,6 +1946,11 @@ class Session:
         for job in self.settings.prewarm_jobs:
             if not self._warm_current():
                 return
+            route_job = (
+                "adaptive_expert"
+                if adaptive and job == "deep" and self.settings.adaptive_expert_route is not None
+                else job
+            )
             target = None
             if adaptive:
                 expert = job in ("deep", "deep_light")
@@ -1954,7 +1959,7 @@ class Session:
                     depth="expert" if expert else "standard", expert=expert,
                 )  # fmt: skip
                 route = next(
-                    (r for r in self.router.routes.get(job, ()) if not r.refusal_only), None
+                    (r for r in self.router.routes.get(route_job, ()) if not r.refusal_only), None
                 )
                 key = prompt_cache_key(req.system)
                 if route is not None and key is not None:
@@ -1979,7 +1984,7 @@ class Session:
                         ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
                     )
             started = time.monotonic()
-            done = await self.router.prewarm(job, req)
+            done = await self.router.prewarm(route_job, req)
             if done is None:
                 continue
             if target is not None:
@@ -1996,6 +2001,7 @@ class Session:
                 {
                     "kind": "prewarm",
                     "pass": job,
+                    **({"request_job": route_job} if route_job != job else {}),
                     "model": done.model,
                     "tier": done.service_tier,
                     "input_tokens": done.usage.input_tokens,

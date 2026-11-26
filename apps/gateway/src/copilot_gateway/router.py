@@ -19,7 +19,14 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
-from copilot_core.llm import AttemptHook, FallbackHook, LLMProvider, ModelRouter, Route
+from copilot_core.llm import (
+    REASONING_HEADROOM,
+    AttemptHook,
+    FallbackHook,
+    LLMProvider,
+    ModelRouter,
+    Route,
+)
 from copilot_core.providers import make_providers, openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import DecisionsRoute
@@ -43,6 +50,11 @@ SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> tuple[str, str]:
     if provider == "openai":
+        if job == "adaptive_expert":
+            expert = settings.adaptive_expert_route
+            if expert is None:
+                raise ValueError("The adaptive expert route is not configured")
+            return expert.model, expert.model
         model, _ = settings.openai_route(OPENAI_JOB.get(job, job))
         if job == "screen_code" and settings.screen_code_model:
             model = settings.screen_code_model
@@ -58,6 +70,21 @@ def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> t
 
 
 def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
+    if job == "adaptive_expert":
+        expert = settings.adaptive_expert_route
+        if expert is None:
+            raise ValueError("The adaptive expert route is not configured")
+        if provider == "openai":
+            expert_params: dict[str, Any] = {}
+            if expert.reasoning is not None:
+                expert_params["reasoning"] = {"effort": expert.reasoning}
+                if expert.reasoning != "none":
+                    expert_params[REASONING_HEADROOM] = settings.openai_reasoning_headroom_tokens
+            if expert.service_tier is not None:
+                expert_params["service_tier"] = expert.service_tier
+            return expert_params
+        # Non-OpenAI fallback providers retain the existing deep-family policy.
+        job = "deep"
     if provider == "openai":
         params = openai_params(settings, OPENAI_JOB.get(job, job))
         tier = {
@@ -100,13 +127,27 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
         "screen": settings.screen_first_token_timeout_ms / 1000,
         "screen_code": settings.screen_code_first_token_timeout_ms / 1000,
     }
-    for job, family in JOBS.items():
+    jobs = dict(JOBS)
+    expert = (
+        settings.adaptive_expert_route if settings.answer_architecture != "legacy_dual" else None
+    )
+    if expert is not None:
+        jobs["adaptive_expert"] = "sonnet"
+        retry_tiers["adaptive_expert"] = expert.retry_tier
+    for job, family in jobs.items():
         job_routes: list[Route] = []
         for i, provider in enumerate(providers):
             primary, retry = _model_ids(settings, provider.name, job, family)
             params = job_params(settings, provider.name, job)
             timeout = screen_timeouts.get(job)
-            if timeout is None and provider.name == "openai":
+            if job == "adaptive_expert" and provider.name == "openai":
+                assert expert is not None
+                timeout = (
+                    expert.first_token_timeout_ms / 1000
+                    if expert.first_token_timeout_ms is not None
+                    else None
+                )
+            elif timeout is None and provider.name == "openai":
                 timeout = settings.openai_first_token_timeout_s(OPENAI_JOB.get(job, job))
             job_routes.append(Route(provider, primary, params, first_token_timeout_s=timeout))
             if i == 0:
@@ -117,7 +158,11 @@ def build_routes(settings: Settings, providers: Sequence[LLMProvider]) -> dict[s
                 job_routes.append(
                     Route(provider, retry, retry_params, first_token_timeout_s=timeout)
                 )
-            if job == "deep" and provider.name == "bedrock" and settings.bedrock_refusal_model:
+            if (
+                job in ("deep", "adaptive_expert")
+                and provider.name == "bedrock"
+                and settings.bedrock_refusal_model
+            ):
                 # What `fallbacks: "default"` does on the direct API: a refused Sonnet 5.5
                 # request reruns on Sonnet 5 with thinking off.
                 refusal_params = {
@@ -168,6 +213,8 @@ def build_router(
         "deep": settings.deep_hedge_ms,
         "deep_light": settings.fast_hedge_ms,
     }
+    if settings.answer_architecture != "legacy_dual" and settings.adaptive_expert_route is not None:
+        hedges["adaptive_expert"] = settings.adaptive_expert_route.hedge_ms
     return ModelRouter(
         build_routes(settings, providers),
         first_token_timeout_s=settings.first_token_timeout_ms / 1000,
