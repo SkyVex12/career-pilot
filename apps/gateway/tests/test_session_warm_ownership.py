@@ -1,4 +1,5 @@
 """Authored lifecycle regressions; providers and retained data stores are stubbed."""
+
 import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
@@ -30,6 +31,8 @@ def host() -> Any:
     obj._language_changes = set()
     obj._settling = set()
     obj._forced = set()
+    obj._forced_detections = {}
+    obj._named_detections = {}
     obj.info = SimpleNamespace(mode="interview")
     obj._build_prompt_ctx = lambda: None
     obj.writer = SimpleNamespace(set_state=lambda **_: None)
@@ -40,7 +43,8 @@ def host() -> Any:
 @pytest.mark.parametrize("terminal", ["ending", "lost", "_retention_failed"])
 @pytest.mark.parametrize("kind", ["message", "audio"])
 async def test_waiting_ingress_rechecks_terminal_after_language_lock(
-    terminal: str, kind: str,
+    terminal: str,
+    kind: str,
 ) -> None:
     obj = host()
     accepted: list[str] = []
@@ -178,8 +182,9 @@ async def test_every_stop_path_cancels_all_warm_tasks_before_its_first_await(pat
     obj.ws = None
     obj.usage_meter = SimpleNamespace(stop=lambda **_: None)
     obj.turns = SimpleNamespace(cancel=lambda: None)
-    obj.answers = SimpleNamespace(shutdown=AsyncMock(side_effect=StopBeforeDrain),
-                                  cancel_all=lambda: None)
+    obj.answers = SimpleNamespace(
+        shutdown=AsyncMock(side_effect=StopBeforeDrain), cancel_all=lambda: None
+    )
     obj.manager = SimpleNamespace(forget=lambda _: None)
     obj.seatdesk = SimpleNamespace(stop=AsyncMock(side_effect=StopBeforeDrain))
     obj._stop_lost = AsyncMock()
@@ -234,9 +239,17 @@ async def test_language_change_cancels_and_joins_all_old_warm_tasks() -> None:
 async def test_repeated_stop_does_not_recancel_returned_prewarm_usage() -> None:
     obj = host()
     entered, cancelling, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    returned = LLMDone(LLMUsage(input_tokens=12, cache_write_tokens=0,
-                              cache_write_30m_tokens=0, cache_write_12h_tokens=0),
-                       "prewarm", "authored", "authored-model")
+    returned = LLMDone(
+        LLMUsage(
+            input_tokens=12,
+            cache_write_tokens=0,
+            cache_write_30m_tokens=0,
+            cache_write_12h_tokens=0,
+        ),
+        "prewarm",
+        "authored",
+        "authored-model",
+    )
     records: list[dict[str, Any]] = []
 
     async def prewarm(*_: Any) -> LLMDone:

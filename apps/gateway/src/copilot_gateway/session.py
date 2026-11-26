@@ -417,6 +417,10 @@ class Session:
         self.totals_saved_at = 0.0
         self._settling: set[asyncio.Task[None]] = set()
         self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
+        # A takeover keeps its classifier after the typing deadline. A named-address
+        # wrapper may finish first, so retain its underlying call until it settles too.
+        self._forced_detections: dict[asyncio.Future[Detection], asyncio.Future[Detection]] = {}
+        self._named_detections: dict[asyncio.Future[Detection], asyncio.Future[Detection]] = {}
         self._followed: set[int] = set()  # ends (capture ms) of the turns already followed
         self._last_detection: Detection | None = None
         self._refs = ref_map(digest, pack)
@@ -975,7 +979,10 @@ class Session:
             and self.info.mode in prompts.GROUP_MODES
             and addressed_by_name(utterance, prompts.first_name(self.principal.display_name))
         ):
-            return asyncio.ensure_future(named_or_model(call, grace / 1000))
+            named = asyncio.ensure_future(named_or_model(call, grace / 1000))
+            self._named_detections[named] = call
+            call.add_done_callback(lambda _: self._named_detections.pop(named, None))
+            return named
         return call
 
     def _duplicate_question(self, utterance: str) -> Question | None:
@@ -2111,7 +2118,7 @@ class Session:
         self.usage_meter.stop()
         self.turns.cancel()
         self._cancel_warm()
-        if not await self.answers.shutdown():
+        if not await self._shutdown_answers(within_s=5):
             log.error("session %s answer cancellation exceeded the shutdown deadline", self.sid)
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
@@ -2158,7 +2165,7 @@ class Session:
         self.usage_meter.stop()
         self.turns.cancel()
         self._cancel_warm()
-        if not await self.answers.shutdown(within_s=2):
+        if not await self._shutdown_answers(within_s=2):
             log.error("session %s answer cancellation exceeded the abandon deadline", self.sid)
         await self.writer.drain(within_s=2)
         with contextlib.suppress(*UNAVAILABLE):
@@ -2187,8 +2194,38 @@ class Session:
             await close_ws(ws, CLOSE_REPLACED, "replaced by a newer connection")
         await self._stop()
 
+    def _cancel_forced(self) -> set[asyncio.Future[Any]]:
+        pending: set[asyncio.Future[Any]] = set(self._forced)
+        for detection, call in self._forced_detections.items():
+            pending.update((detection, call))
+            # Cancel the actual classifier once. Its named wrapper finishes when the
+            # call settles; cancelling both can interrupt the child's provider cleanup,
+            # while cancelling only a wrapper that has not started can orphan the call.
+            if not call.done() and not (isinstance(call, asyncio.Task) and call.cancelling()):
+                call.cancel()
+        for task in self._forced:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        return pending
+
+    async def _drain_forced(self, pending: set[asyncio.Future[Any]], *, within_s: float) -> bool:
+        if not pending:
+            return True
+        _, unfinished = await asyncio.wait(pending, timeout=max(0, within_s))
+        return not unfinished
+
+    async def _shutdown_answers(self, *, within_s: float) -> bool:
+        deadline = time.monotonic() + within_s
+        forced = self._cancel_forced()
+        answers_stopped = await self.answers.shutdown(within_s=within_s)
+        forced_stopped = await self._drain_forced(forced, within_s=deadline - time.monotonic())
+        return answers_stopped and forced_stopped
+
     async def _stop(self) -> None:
         self._cancel_warm()
+        # Also covers lease-loss/core-stop paths that do not call end or abandon.
+        if not await self._drain_forced(self._cancel_forced(), within_s=0.25):
+            log.warning("forced-question cancellation exceeded the stop drain bound")
         self.manager.forget(self)
         await self.seatdesk.stop()
         await self.companiondesk.stop()
@@ -2696,9 +2733,28 @@ class Session:
                               speculative=False)  # fmt: skip
         q.forced, q.confidence, q.detector_ms = True, 1.0, None
         wait_s = self.settings.force_type_wait_ms / 1000
+        call = self._named_detections.get(detection, detection)
+        self._forced_detections[detection] = call
+
+        def settled(future: asyncio.Future[Detection]) -> None:
+            if not future.cancelled():
+                future.exception()  # Observe failures even if the typing waiter was cancelled.
+            if detection.done() and call.done():
+                self._forced_detections.pop(detection, None)
+
+        detection.add_done_callback(settled)
+        if call is not detection:
+            call.add_done_callback(settled)
 
         async def typed() -> None:
-            await asyncio.wait({detection}, timeout=wait_s)
+            try:
+                await asyncio.wait({detection}, timeout=wait_s)
+            except asyncio.CancelledError:
+                if not call.done() and not (isinstance(call, asyncio.Task) and call.cancelling()):
+                    call.cancel()
+                raise
+            if self.ending or self.lost or self._retention_failed:
+                return
             ok = detection.done() and not detection.cancelled() and not detection.exception()
             found = detection.result() if ok else None
             if found is not None and found.fires() and not reply:

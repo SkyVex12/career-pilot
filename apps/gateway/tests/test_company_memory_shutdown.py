@@ -28,6 +28,8 @@ def host(memory: CompanyMemory | None) -> Session:
         _language_changes=set(),
         conv=SimpleNamespace(close=lambda: None),
         _settling=set(),
+        _forced=set(),
+        _forced_detections={},
         send_q=None,
         core_task=None,
         stt=None,
