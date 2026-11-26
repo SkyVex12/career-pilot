@@ -192,14 +192,21 @@ async def test_real_session_scenarios_preserve_question_and_terminal_invariants(
         assert route["detector_depth"] == "deep"
         complete = [r for r in result["metadata_logs"] if r["kind"] == "answer"]
         fast = next(r for r in complete if r["pass"] == "fast")["latency_ms"]
-        assert fast.get("detector_depth_at_start") is None
+        upgraded = architecture == "adaptive" and scenario["id"] == "early-technical-depth"
+        assert fast.get("detector_depth_at_start") == ("deep" if upgraded else None)
         assert fast["detector_depth_at_completion"] == "deep"
         if architecture == "adaptive":
-            # A model request cannot be upgraded after it has begun. Text-only planning
-            # recognizes explicit design, but late detector depth cannot upgrade technical.
-            expected = "deep" if scenario["id"] == "early-system-design" else "fast"
-            assert fast["request_job"] == expected
+            # Explicit design starts expert immediately. Standard technical can replace
+            # its provisional generation only before any answer is exposed.
+            assert fast["request_job"] == "deep"
+            assert fast["answer_depth"] == "expert"
             assert route["started_passes"] == ["fast"]
+            if upgraded:
+                assert any(
+                    row["kind"] == "answer_strategy_replaced"
+                    and row["reason"] == "pre_answer_expert_upgrade"
+                    for row in result["metadata_logs"]
+                )
         if architecture == "adaptive_hybrid":
             assert route["started_passes"] == ["deep", "fast"]
             assert {r["pass"] for r in complete} == {"fast", "deep"}
